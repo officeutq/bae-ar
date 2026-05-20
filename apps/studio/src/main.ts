@@ -1,5 +1,6 @@
 import { BeautyEngine } from "@bae-ar/engine"
 import type { BeautyEngineState } from "@bae-ar/engine"
+import type { FacePose } from "@bae-ar/engine"
 import type { CameraServiceState } from "./services/CameraService"
 import { MockFaceDetector } from "./detectors/MockFaceDetector"
 import { CameraService } from "./services/CameraService"
@@ -12,6 +13,11 @@ async function bootstrap(): Promise<void> {
   const stateLog: string[] = []
   let lastEngineState: BeautyEngineState | undefined
   let faceDetected = false
+  let facePose: FacePose = {
+    pitch: 0,
+    yaw: 0,
+    roll: 0,
+  }
 
   if (!app) {
     throw new Error("Studio app root was not found")
@@ -63,6 +69,10 @@ async function bootstrap(): Promise<void> {
         <p>${engine.getInput() ? "接続済み" : "未接続"}</p>
         <h2>顔検出:</h2>
         <p>${faceDetected ? "検出中" : "未検出"}</p>
+        <h2>顔姿勢:</h2>
+        <pre>Pitch:${facePose.pitch}
+Yaw:${facePose.yaw}
+Roll:${facePose.roll}</pre>
         <h2>プレビュー:</h2>
         <div id="camera-preview">${camera.getVideo() ? "" : "利用できません"}</div>
       </section>
@@ -112,6 +122,7 @@ async function bootstrap(): Promise<void> {
       if (input instanceof HTMLVideoElement) {
         const result = await detector.detect(input)
         faceDetected = result.detected
+        facePose = result.pose
 
         render()
 
