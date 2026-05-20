@@ -1,7 +1,9 @@
 import { BeautyEngine } from "@bae-ar/engine"
+import { CameraService } from "./services/CameraService"
 
 async function bootstrap(): Promise<void> {
   const engine = new BeautyEngine()
+  const camera = new CameraService()
   const app = document.querySelector<HTMLDivElement>("#app")
   const stateLog: string[] = []
 
@@ -23,6 +25,10 @@ async function bootstrap(): Promise<void> {
   }
 
   render()
+
+  await camera.start()
+
+  console.log(camera.getVideo()?.constructor.name)
 
   await engine.initialize()
 
