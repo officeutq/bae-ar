@@ -30,6 +30,12 @@ apps/studio
 * Engine SDK に機能を追加したら、Studio 側にも確認・調整できる機能を追加する
 * 配布対象は Engine SDK のみとする
 
+## Engine SDK
+
+`packages/engine` は、本番アプリに組み込むための Beauty Engine SDK です。
+
+現在は、`BeautyEngine` の最小ライフサイクルと状態管理のみを提供しています。
+
 ## 開発ドキュメント
 
 * [概要](docs/overview.md)
