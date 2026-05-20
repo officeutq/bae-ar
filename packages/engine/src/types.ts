@@ -4,3 +4,12 @@ export type BeautyEngineState =
   | "running"
   | "stopped"
   | "disposed"
+
+export type BeautyEngineInput =
+  | HTMLVideoElement
+  | HTMLCanvasElement
+  | HTMLImageElement
+
+export interface BeautyEngineOptions {
+  input?: BeautyEngineInput
+}
