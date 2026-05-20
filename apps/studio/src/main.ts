@@ -12,18 +12,26 @@ async function bootstrap(): Promise<void> {
   }
 
   function render(): void {
-    stateLog.push(engine.getState())
+    const currentState = engine.getState()
+
+    if (stateLog.at(-1) !== currentState) {
+      stateLog.push(currentState)
+    }
 
     app.innerHTML = `
       <section>
         <h2>Engine State:</h2>
-        <p>${engine.getState()}</p>
+        <p>${currentState}</p>
         <h2>State Log:</h2>
         <pre>${stateLog.join("\n")}</pre>
+        <h2>Camera Status:</h2>
+        <p>${camera.getState()}</p>
+        <h2>Camera Error:</h2>
+        <p>${camera.getError() ?? "none"}</p>
         <h2>Input:</h2>
         <p>${engine.getInput() ? "connected" : "none"}</p>
         <h2>Camera Preview:</h2>
-        <div id="camera-preview"></div>
+        <div id="camera-preview">${camera.getVideo() ? "" : "not available"}</div>
       </section>
     `
   }
@@ -38,7 +46,16 @@ async function bootstrap(): Promise<void> {
 
   render()
 
-  await camera.start()
+  const cameraStart = camera.start()
+
+  render()
+
+  try {
+    await cameraStart
+  } catch {
+    render()
+    return
+  }
 
   const video = camera.getVideo()
 
