@@ -2,16 +2,35 @@ import { BeautyEngine } from "@bae-ar/engine"
 
 async function bootstrap(): Promise<void> {
   const engine = new BeautyEngine()
+  const app = document.querySelector<HTMLDivElement>("#app")
+  const stateLog: string[] = []
 
-  console.log(engine.getState())
+  if (!app) {
+    throw new Error("Studio app root was not found")
+  }
+
+  function render(): void {
+    stateLog.push(engine.getState())
+
+    app.innerHTML = `
+      <section>
+        <h2>Engine State:</h2>
+        <p>${engine.getState()}</p>
+        <h2>State Log:</h2>
+        <pre>${stateLog.join("\n")}</pre>
+      </section>
+    `
+  }
+
+  render()
 
   await engine.initialize()
 
-  console.log(engine.getState())
+  render()
 
   await engine.start()
 
-  console.log(engine.getState())
+  render()
 }
 
 bootstrap()
