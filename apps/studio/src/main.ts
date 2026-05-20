@@ -20,6 +20,8 @@ async function bootstrap(): Promise<void> {
         <p>${engine.getState()}</p>
         <h2>State Log:</h2>
         <pre>${stateLog.join("\n")}</pre>
+        <h2>Input:</h2>
+        <p>${engine.getInput() ? "connected" : "none"}</p>
         <h2>Camera Preview:</h2>
         <div id="camera-preview"></div>
       </section>
@@ -41,7 +43,10 @@ async function bootstrap(): Promise<void> {
   const video = camera.getVideo()
 
   if (video) {
+    engine.setInput(video)
     video.width = 640
+
+    render()
 
     document
       .querySelector("#camera-preview")
