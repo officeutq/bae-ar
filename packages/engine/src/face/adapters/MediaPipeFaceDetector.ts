@@ -1,18 +1,39 @@
+import {
+  FaceLandmarker,
+  FilesetResolver,
+} from "@mediapipe/tasks-vision"
 import type { FaceDetector } from "../FaceDetector"
 import type { FaceDetectionResult } from "../types"
 
 export class MediaPipeFaceDetector implements FaceDetector {
+  private faceLandmarker?: FaceLandmarker
+
   async initialize(): Promise<void> {
-    // TODO:
-    //
-    // MediaPipe Tasks Vision
-    // 実装予定
+    const vision = await FilesetResolver.forVisionTasks(
+      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm",
+    )
+
+    this.faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
+      baseOptions: {
+        modelAssetPath:
+          "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+      },
+      runningMode: "VIDEO",
+      numFaces: 1,
+    })
   }
 
-  async detect(): Promise<FaceDetectionResult> {
+  async detect(input: HTMLVideoElement): Promise<FaceDetectionResult> {
+    if (!this.faceLandmarker) {
+      throw new Error("MediaPipeFaceDetector is not initialized")
+    }
+
+    const timestamp = Date.now()
+    const result = this.faceLandmarker.detectForVideo(input, timestamp)
+
     return {
-      detected: false,
-      timestamp: Date.now(),
+      detected: result.faceLandmarks.length > 0,
+      timestamp,
       landmarks: [],
       pose: {
         pitch: 0,
@@ -22,5 +43,8 @@ export class MediaPipeFaceDetector implements FaceDetector {
     }
   }
 
-  async dispose(): Promise<void> {}
+  async dispose(): Promise<void> {
+    this.faceLandmarker?.close()
+    this.faceLandmarker = undefined
+  }
 }
