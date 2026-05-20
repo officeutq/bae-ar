@@ -32,3 +32,5 @@ apps/studio
 
 * [概要](docs/overview.md)
 * [開発の流れ](docs/development-flow.md)
+* [アーキテクチャ](docs/architecture.md)
+* [リポジトリ構成](docs/repository-structure.md)
