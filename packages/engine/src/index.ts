@@ -1,4 +1,5 @@
 export * from "./BeautyEngine"
 export * from "./types"
 export * from "./face/FaceDetector"
+export * from "./face/FaceFrame"
 export * from "./face/types"

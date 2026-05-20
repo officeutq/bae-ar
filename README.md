@@ -34,7 +34,7 @@ apps/studio
 
 `packages/engine` は、本番アプリに組み込むための Beauty Engine SDK です。
 
-現在は、`BeautyEngine` の最小ライフサイクル、状態管理、入力保持 API、FaceDetector 抽象インターフェースのみを提供しています。
+現在は、`BeautyEngine` の最小ライフサイクル、状態管理、入力保持 API、FaceDetector 抽象インターフェース、FaceFrame モデルのみを提供しています。
 
 ## 開発ドキュメント
 
