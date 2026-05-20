@@ -47,6 +47,16 @@ async function bootstrap(): Promise<void> {
     return labels[state]
   }
 
+  function appendCameraPreview(): void {
+    const input = engine.getInput()
+
+    if (input instanceof HTMLVideoElement) {
+      document
+        .querySelector("#camera-preview")
+        ?.append(input)
+    }
+  }
+
   function render(): void {
     const currentState = engine.getState()
 
@@ -80,6 +90,13 @@ Roll:${facePose.roll}</pre>
   }
 
   engine.setFaceDetector(detector)
+  engine.onFaceFrame((frame) => {
+    faceDetected = frame.detected
+    facePose = frame.pose
+
+    render()
+    appendCameraPreview()
+  })
 
   await detector.initialize()
 
@@ -111,30 +128,7 @@ Roll:${facePose.roll}</pre>
     video.width = 640
 
     render()
-
-    document
-      .querySelector("#camera-preview")
-      ?.append(video)
-
-    async function updateFaceDetection(): Promise<void> {
-      const input = engine.getInput()
-
-      if (input instanceof HTMLVideoElement) {
-        const result = await detector.detect(input)
-        faceDetected = result.detected
-        facePose = result.pose
-
-        render()
-
-        document
-          .querySelector("#camera-preview")
-          ?.append(input)
-      }
-    }
-
-    await updateFaceDetection()
-
-    setInterval(updateFaceDetection, 1000)
+    appendCameraPreview()
   }
 }
 
