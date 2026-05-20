@@ -20,15 +20,13 @@ async function bootstrap(): Promise<void> {
         <p>${engine.getState()}</p>
         <h2>State Log:</h2>
         <pre>${stateLog.join("\n")}</pre>
+        <h2>Camera Preview:</h2>
+        <div id="camera-preview"></div>
       </section>
     `
   }
 
   render()
-
-  await camera.start()
-
-  console.log(camera.getVideo()?.constructor.name)
 
   await engine.initialize()
 
@@ -37,6 +35,18 @@ async function bootstrap(): Promise<void> {
   await engine.start()
 
   render()
+
+  await camera.start()
+
+  const video = camera.getVideo()
+
+  if (video) {
+    video.width = 640
+
+    document
+      .querySelector("#camera-preview")
+      ?.append(video)
+  }
 }
 
 bootstrap()
