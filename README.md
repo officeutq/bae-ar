@@ -20,6 +20,8 @@ apps/studio
   Engine SDK を開発・検証・調整するための Studio
 ```
 
+現在は、npm workspaces を使って `packages/engine` と `apps/studio` を同一リポジトリ内で管理する土台を置いています。
+
 ## 基本方針
 
 * Engine SDK は UI を持たない
