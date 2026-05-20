@@ -1,14 +1,14 @@
 import { BeautyEngine } from "@bae-ar/engine"
 import type { BeautyEngineState } from "@bae-ar/engine"
 import type { FacePose } from "@bae-ar/engine"
+import { MediaPipeFaceDetector } from "@bae-ar/engine"
 import type { CameraServiceState } from "./services/CameraService"
-import { MockFaceDetector } from "./detectors/MockFaceDetector"
 import { CameraService } from "./services/CameraService"
 
 async function bootstrap(): Promise<void> {
   const engine = new BeautyEngine()
   const camera = new CameraService()
-  const detector = new MockFaceDetector()
+  const detector = new MediaPipeFaceDetector()
   const app = document.querySelector<HTMLDivElement>("#app")
   const stateLog: string[] = []
   let lastEngineState: BeautyEngineState | undefined
