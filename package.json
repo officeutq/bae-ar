@@ -1,6 +1,9 @@
 {
   "name": "bae-ar",
   "private": true,
+  "scripts": {
+    "start": "npm run start --workspace @bae-ar/studio"
+  },
   "workspaces": [
     "packages/*",
     "apps/*"
