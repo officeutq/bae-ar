@@ -3,10 +3,12 @@ import type {
   BeautyEngineOptions,
   BeautyEngineState,
 } from "./types"
+import type { FaceDetector } from "./face/FaceDetector"
 
 export class BeautyEngine {
   private state: BeautyEngineState = "idle"
   private input?: BeautyEngineInput
+  private faceDetector?: FaceDetector
 
   constructor(options?: BeautyEngineOptions) {
     this.input = options?.input
@@ -44,5 +46,13 @@ export class BeautyEngine {
 
   getInput(): BeautyEngineInput | undefined {
     return this.input
+  }
+
+  setFaceDetector(detector: FaceDetector): void {
+    this.faceDetector = detector
+  }
+
+  getFaceDetector(): FaceDetector | undefined {
+    return this.faceDetector
   }
 }
