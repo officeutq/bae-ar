@@ -1,0 +1,8 @@
+{
+  "name": "bae-ar",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ]
+}
