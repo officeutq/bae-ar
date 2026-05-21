@@ -7,7 +7,12 @@ import { CameraService } from "./services/CameraService"
 
 interface DetectorDebugInfo {
   initialized: boolean
+  hasFaceLandmarker: boolean
   detectCount: number
+  detectAttemptCount: number
+  detectSuccessCount: number
+  detectErrorCount: number
+  lastDetectError: string | null
   videoWidth: number
   videoHeight: number
   lastDetectionTime: number | null
@@ -110,6 +115,18 @@ async function bootstrap(): Promise<void> {
         <p>${mediaPipeDebug ? (mediaPipeDebug.initialized ? "初期化済み" : "未初期化") : "不明"}</p>
         <h2>検出回数:</h2>
         <p>${mediaPipeDebug?.detectCount ?? 0}</p>
+        <h2>MediaPipe detect試行回数:</h2>
+        <p>${mediaPipeDebug?.detectAttemptCount ?? 0}</p>
+        <h2>MediaPipe detect成功回数:</h2>
+        <p>${mediaPipeDebug?.detectSuccessCount ?? 0}</p>
+        <h2>MediaPipe detectエラー回数:</h2>
+        <p>${mediaPipeDebug?.detectErrorCount ?? 0}</p>
+        <h2>MediaPipe detect最終エラー:</h2>
+        <p>${mediaPipeDebug?.lastDetectError ?? "なし"}</p>
+        <h2>MediaPipe initialized:</h2>
+        <p>${String(mediaPipeDebug?.initialized ?? false)}</p>
+        <h2>MediaPipe FaceLandmarker:</h2>
+        <p>${mediaPipeDebug?.hasFaceLandmarker ? "あり" : "なし"}</p>
         <h2>MediaPipe Video:</h2>
         <p>${mediaPipeDebug?.videoWidth ?? 0}x${mediaPipeDebug?.videoHeight ?? 0}</p>
         <h2>FaceFrame Video:</h2>
