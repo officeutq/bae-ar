@@ -120,6 +120,21 @@ chore/内容
 * PR本文には変更内容と確認結果を記載する
 * Issue がある場合は `Closes #xxx` を含める
 
+## Pull request creation
+
+When creating pull requests, use the local `gh` CLI authentication first.
+
+Do not attempt GitHub App based PR creation before trying `gh`.
+
+Preferred flow:
+
+```bash
+git push -u origin <branch-name>
+gh pr create --title "<title>" --body "<body>"
+```
+
+If `gh` authentication is unavailable or fails, report the error clearly.
+
 ## 禁止事項
 
 * Engine SDK に画面 UI を持たせること
