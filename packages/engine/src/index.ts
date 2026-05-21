@@ -1,6 +1,7 @@
 export * from "./BeautyEngine"
 export * from "./types"
 export * from "./face/FaceDetector"
+export * from "./face/FaceGeometry"
 export * from "./face/FaceFrame"
 export * from "./face/adapters/MediaPipeFaceDetector"
 export * from "./face/types"

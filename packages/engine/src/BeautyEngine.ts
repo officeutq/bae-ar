@@ -4,6 +4,10 @@ import type {
   BeautyEngineState,
 } from "./types"
 import type { FaceDetector } from "./face/FaceDetector"
+import {
+  analyzeFaceGeometry,
+  type FaceGeometry,
+} from "./face/FaceGeometry"
 import type { FaceFrame } from "./face/FaceFrame"
 
 type FaceFrameListener = (frame: FaceFrame) => void
@@ -36,6 +40,7 @@ export class BeautyEngine {
   private input?: BeautyEngineInput
   private faceDetector?: FaceDetector
   private currentFaceFrame?: FaceFrame
+  private currentFaceGeometry?: FaceGeometry
   private faceFrameListeners: FaceFrameListener[] = []
   private faceFrameLoopId?: ReturnType<typeof setInterval>
   private faceFrameLoopTickCount = 0
@@ -100,6 +105,10 @@ export class BeautyEngine {
 
   getFaceFrame(): FaceFrame | undefined {
     return this.currentFaceFrame
+  }
+
+  getFaceGeometry(): FaceGeometry | undefined {
+    return this.currentFaceGeometry
   }
 
   onFaceFrame(callback: FaceFrameListener): void {
@@ -179,6 +188,7 @@ export class BeautyEngine {
         const frame = await currentDetector.detect(currentInput)
 
         this.currentFaceFrame = frame
+        this.currentFaceGeometry = analyzeFaceGeometry(frame)
 
         this.faceFrameListeners.forEach((callback) => callback(frame))
       } catch {
