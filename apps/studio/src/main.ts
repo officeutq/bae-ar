@@ -18,6 +18,12 @@ interface DetectorDebugInfo {
   lastDetectionTime: number | null
 }
 
+type DebugSection =
+  | "faceFrame"
+  | "mediaPipe"
+  | "loopTiming"
+  | "fullDebugText"
+
 async function bootstrap(): Promise<void> {
   const engine = new BeautyEngine()
   const camera = new CameraService()
@@ -29,6 +35,12 @@ async function bootstrap(): Promise<void> {
   let previousFrameTimestamp: number | undefined
   let faceFrameFps: number | undefined
   let copyStatus = ""
+  const openDebugSections: Record<DebugSection, boolean> = {
+    faceFrame: false,
+    mediaPipe: false,
+    loopTiming: false,
+    fullDebugText: false,
+  }
 
   if (!app) {
     throw new Error("Studio app root was not found")
@@ -244,6 +256,26 @@ Camera:
       })
   }
 
+  function detailsOpenAttribute(section: DebugSection): string {
+    return openDebugSections[section] ? " open" : ""
+  }
+
+  function attachDebugDetailsHandlers(): void {
+    document
+      .querySelectorAll<HTMLDetailsElement>("details[data-debug-section]")
+      .forEach((details) => {
+        const section = details.dataset.debugSection as DebugSection | undefined
+
+        if (!section) {
+          return
+        }
+
+        details.addEventListener("toggle", () => {
+          openDebugSections[section] = details.open
+        })
+      })
+  }
+
   function render(): void {
     const currentState = engine.getState()
     const mediaPipeDebug =
@@ -273,7 +305,7 @@ Loop: ${faceFrameLoopDebug.running ? "実行中" : "停止中"}
 Detect: ${faceFrameLoopDebug.detectCallCount}/${mediaPipeDebug?.detectSuccessCount ?? 0}</pre>
         <h2>プレビュー</h2>
         <div id="camera-preview">${camera.getVideo() ? "" : "利用できません"}</div>
-        <details>
+        <details data-debug-section="faceFrame"${detailsOpenAttribute("faceFrame")}>
           <summary>FaceFrame Debug</summary>
           <pre>${escapeHtml(`Frame timestamp: ${frame?.timestamp ?? "なし"}
 顔検出: ${formatDetection(frame)}
@@ -289,7 +321,7 @@ ${formatBlendshapePreview(frame)}
 Pose preview:
 ${formatPosePreview(frame)}`)}</pre>
         </details>
-        <details>
+        <details data-debug-section="mediaPipe"${detailsOpenAttribute("mediaPipe")}>
           <summary>MediaPipe Debug</summary>
           <pre>${escapeHtml(`initialized: ${String(mediaPipeDebug?.initialized ?? false)}
 FaceLandmarker: ${mediaPipeDebug?.hasFaceLandmarker ? "あり" : "なし"}
@@ -302,7 +334,7 @@ lastDetectError: ${mediaPipeDebug?.lastDetectError ?? "なし"}
 video: ${mediaPipeDebug?.videoWidth ?? 0}x${mediaPipeDebug?.videoHeight ?? 0}
 lastDetectionTime: ${mediaPipeDebug?.lastDetectionTime ?? "なし"}`)}</pre>
         </details>
-        <details>
+        <details data-debug-section="loopTiming"${detailsOpenAttribute("loopTiming")}>
           <summary>Loop / Timing Debug</summary>
           <pre>${escapeHtml(`FaceFrameループ: ${faceFrameLoopDebug.running ? "実行中" : "停止中"}
 ループ回数: ${faceFrameLoopDebug.tickCount}
@@ -319,7 +351,7 @@ Video readyState: ${faceFrameLoopDebug.video?.readyState ?? 0}
 Video paused: ${faceFrameLoopDebug.video ? String(faceFrameLoopDebug.video.paused) : "true"}
 Video srcObject: ${faceFrameLoopDebug.video?.hasSrcObject ? "あり" : "なし"}`)}</pre>
         </details>
-        <details>
+        <details data-debug-section="fullDebugText"${detailsOpenAttribute("fullDebugText")}>
           <summary>Full Debug Text</summary>
           <textarea readonly rows="18">${escapeHtml(debugText)}</textarea>
         </details>
@@ -327,6 +359,7 @@ Video srcObject: ${faceFrameLoopDebug.video?.hasSrcObject ? "あり" : "なし"}
     `
 
     attachCopyDebugHandler(debugText)
+    attachDebugDetailsHandlers()
   }
 
   engine.setFaceDetector(detector)
