@@ -195,3 +195,17 @@ PR 本文には、変更内容と確認結果を記載します。
 - カメラ映像確認
 - Input: connected 確認
 ```
+
+## IdealFace Authoring Tool Step 1 の確認
+
+IdealFace Authoring Tool を変更した場合は、Runtime と Authoring の責務が混ざっていないことを確認します。
+
+確認観点:
+
+- `tools/ideal-face-authoring` が独立ツールとして起動する
+- `apps/studio` に Authoring 用タブを追加していない
+- Engine Runtime に UI や編集処理を追加していない
+- `natural_v1` の metadata / controlPoints / 2D preview / JSON preview を確認できる
+- ドラッグ編集、保存、ideal 478 landmarks 生成、canonical face mesh、動画 / 複数画像からの 3D 顔生成を Step 1 に含めていない
+
+PR 本文には IdealFace Authoring Tool の手動確認事項を記載します。

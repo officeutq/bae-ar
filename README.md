@@ -118,3 +118,19 @@ shape processing は個別パーツ加工ではありません。
 - [開発フロー](docs/development-flow.md)
 - [リポジトリ構成](docs/repository-structure.md)
 - [仕様書とロードマップ](docs/bae_ar_beauty_engine_spec_and_roadmap_2026_05.md)
+
+## IdealFace Authoring Tool Step 1
+
+`tools/ideal-face-authoring` を、BAE AR 独自の IdealFace asset を作るための独立ツールとして追加しました。Studio にタブは追加せず、Runtime 検証用の `apps/studio` と asset 作成用の authoring tool を分離しています。
+
+Step 1 では Engine Runtime の公開 API から `natural_v1` を読み込み、metadata、`coordinateSpace`、controlPoints 一覧、2D preview、JSON preview を表示します。
+
+未実装:
+
+- controlPoints のドラッグ編集
+- 保存 / export
+- ideal 478 landmarks 生成
+- canonical face mesh editor
+- 2D 動画 / 複数画像からの 3D 顔生成
+
+IdealFace Authoring Tool は MediaPipe canonical face model そのものを作るツールではありません。BAE AR 独自の IdealFace asset を作る作業場として扱い、編集処理や UI を Engine Runtime に混ぜません。
