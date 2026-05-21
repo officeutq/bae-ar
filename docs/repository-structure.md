@@ -101,11 +101,13 @@ IdealFace Authoring Tool を置く想定の場所です。
 
 責務:
 
-- IdealFace 3D model の作成
+- BAE AR 独自の IdealFace canonical face / お面データの作成
 - IdealFace プリセットの調整
 - 手作業による調整
 - 2D 動画 / 複数画像からのオフライン生成
 - Runtime で読み込む IdealFace asset の出力
+
+MediaPipe canonical face model そのものを作成・編集する場所ではありません。最初は `natural_v1` の controlPoints を編集・保存・出力する最小ツールとして始め、将来的に canonical face mesh、ideal landmark mapping、ideal 478 landmarks 生成へ拡張する想定です。
 
 この処理はリアルタイム Engine Runtime に含めません。
 
