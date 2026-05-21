@@ -98,6 +98,8 @@ Beauty Studio:
 - IdealFace 公開 API
 - IdealFace Projection v1 最小実装
 - projected IdealFace controlPoints overlay
+- Projection Difference Debug v1
+- representative point difference line overlay
 
 ### 3.2 未実装
 
@@ -123,6 +125,7 @@ Beauty Studio:
 - `IdealFace` は Runtime で読み込める最小構造と Natural v1 プリセットを持ちます。
 - `IdealFace` は MediaPipe 478 landmarks そのものではありません。
 - IdealFace Projection v1 は controlPoints のみの部分実装です。
+- Projection Difference Debug v1 は FaceGeometry 代表点と projected IdealFace controlPoints の差分確認用です。
 - `FaceGeometry` は landmarks から代表点やサイズを計算する補助解析です。
 - 実際の shape warp、color processing、rendering はまだありません。
 - Authoring Tool はまだありません。
@@ -187,6 +190,7 @@ getAvailableIdealFaces(): IdealFacePreset[]
 selectIdealFace(id: string): IdealFace | undefined
 getIdealFaceProjection(): IdealFaceProjectionResult
 projectIdealFace(): IdealFaceProjectionResult
+getIdealFaceProjectionDifference(): ProjectionDifference
 
 getFaceFrame(): FaceFrame | undefined
 getFaceGeometry(): FaceGeometry | undefined
@@ -306,6 +310,18 @@ IdealFace Projection v1 は部分実装済みです。
 - FacePose を受け取る
 - IdealFace の 3D controlPoints を現在姿勢へ回転する
 - overlay 用の projected 2D points を生成する
+- FaceGeometry 代表点と projected IdealFace controlPoints の差分を debug 用に計算する
+
+Projection Difference Debug v1:
+
+- `FaceGeometry.faceCenter` と `face_center`
+- `FaceGeometry.leftEyeCenter` と `left_eye_outer`
+- `FaceGeometry.rightEyeCenter` と `right_eye_outer`
+- `FaceGeometry.noseTip` と `nose_tip`
+- `FaceGeometry.mouthCenter` と `mouth_center`
+- `FaceGeometry.chin` と `chin`
+
+現在は上記の代表点対応のみを使い、`deltaX` / `deltaY` / `distance`、平均差分、最大差分点を debug 表示します。これは CorrectionPlan ではなく、warp へ渡す補正量も生成しません。
 
 未実装:
 
@@ -503,7 +519,7 @@ Studio は Engine の private field、内部状態、内部実装へ直接アク
 
 ### Milestone 4: IdealFace Projection v1
 
-状態: 部分実装済み（4-A / 4-B）
+状態: 部分実装済み（4-A / 4-B / 4-C）
 
 目的:
 
@@ -514,6 +530,9 @@ Studio は Engine の private field、内部状態、内部実装へ直接アク
 - BeautyEngine の公開 API から projected IdealFace points を取得できる。
 - Studio overlay で projected IdealFace controlPoints を確認できる。
 - yaw / pitch / roll に応じて projected points が変化する。
+- FaceGeometry 代表点と projected IdealFace controlPoints の差分を確認できる。
+- Studio overlay で difference line を確認できる。
+- 平均差分と最大差分点を確認できる。
 
 未実装:
 

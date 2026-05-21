@@ -45,6 +45,7 @@ Engine Runtime は UI を持たない中核 SDK です。
 - IdealFace v1 の読み込み
 - IdealFace 公開 API
 - IdealFace Projection v1 の controlPoints 投影
+- Projection Difference Debug v1
 
 将来予定:
 
@@ -68,7 +69,7 @@ Beauty Studio は Engine Runtime を開発・検証・調整するための開�
 - `HTMLVideoElement` を `BeautyEngine.setInput()` へ渡す接続
 - `MediaPipeFaceDetector` の初期化と Engine への設定
 - Engine 状態、カメラ状態、検出状態、FaceFrame、FaceGeometry、MediaPipe debug の表示
-- landmarks / geometry point / projected IdealFace controlPoints overlay
+- landmarks / geometry point / projected IdealFace controlPoints / difference line overlay
 - Copy Debug 用の debug text 生成
 
 Studio は Engine Runtime の公開 API のみを利用します。Engine の private field や内部実装ファイルへ直接依存しません。
@@ -120,6 +121,7 @@ apps/studio/src/main.ts
   -> engine.getFaceGeometry()
   -> engine.getIdealFace()
   -> engine.getIdealFaceProjection()
+  -> engine.getIdealFaceProjectionDifference()
   -> engine.getAvailableIdealFaces()
   -> engine.getFaceFrameLoopDebugInfo()
   -> engine.getFaceDetectorDebugInfo()
@@ -173,14 +175,18 @@ v1 の制限事項:
 - ideal 478 landmarks の生成は未実装
 - IdealFace Authoring Tool は未実装
 - IdealFace Projection v1 は controlPoints のみ部分実装
+- Projection Difference Debug v1 は代表点ベースの差分確認のみ実装
 
 IdealFace Projection v1 の責務:
 
 - FacePose を受け取る
 - IdealFace の 3D controlPoints を現在姿勢へ回転する
 - Studio overlay 用の projected 2D points を生成する
+- FaceGeometry 代表点と projected IdealFace controlPoints の差分を debug 用に計算する
 
-現在は Perspective camera、face surface、mesh、renderer、ideal 478 landmarks 生成は未実装です。将来の完全版では、Projection 後の ideal 2D landmarks はすでに現在姿勢を反映します。
+Projection Difference Debug v1 は、`faceCenter` / `leftEyeCenter` / `rightEyeCenter` / `noseTip` / `mouthCenter` / `chin` と、対応する projected IdealFace controlPoints の `deltaX` / `deltaY` / `distance` を計算します。平均差分、最大差分点、overlay 上の difference line は debug 用であり、CorrectionPlan ではありません。
+
+現在は Perspective camera、face surface、mesh、renderer、ideal 478 landmarks 生成、CorrectionPlan、Shape Warp は未実装です。将来の完全版では、Projection 後の ideal 2D landmarks はすでに現在姿勢を反映します。
 
 ## CorrectionPlan
 
