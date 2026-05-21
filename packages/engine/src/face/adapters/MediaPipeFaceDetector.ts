@@ -5,8 +5,20 @@ import {
 import type { FaceDetector } from "../FaceDetector"
 import type { FaceDetectionResult } from "../types"
 
+export interface MediaPipeFaceDetectorDebugInfo {
+  initialized: boolean
+  detectCount: number
+  videoWidth: number
+  videoHeight: number
+  lastDetectionTime: number | null
+}
+
 export class MediaPipeFaceDetector implements FaceDetector {
   private faceLandmarker?: FaceLandmarker
+  private detectCount = 0
+  private videoWidth = 0
+  private videoHeight = 0
+  private lastDetectionTime: number | null = null
 
   async initialize(): Promise<void> {
     const vision = await FilesetResolver.forVisionTasks(
@@ -29,6 +41,11 @@ export class MediaPipeFaceDetector implements FaceDetector {
     }
 
     const timestamp = Date.now()
+    this.detectCount += 1
+    this.videoWidth = input.videoWidth
+    this.videoHeight = input.videoHeight
+    this.lastDetectionTime = timestamp
+
     const result = this.faceLandmarker.detectForVideo(input, timestamp)
     const faceLandmarks = result.faceLandmarks[0] ?? []
 
@@ -51,5 +68,15 @@ export class MediaPipeFaceDetector implements FaceDetector {
   async dispose(): Promise<void> {
     this.faceLandmarker?.close()
     this.faceLandmarker = undefined
+  }
+
+  getDebugInfo(): MediaPipeFaceDetectorDebugInfo {
+    return {
+      initialized: Boolean(this.faceLandmarker),
+      detectCount: this.detectCount,
+      videoWidth: this.videoWidth,
+      videoHeight: this.videoHeight,
+      lastDetectionTime: this.lastDetectionTime,
+    }
   }
 }

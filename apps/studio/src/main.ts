@@ -60,6 +60,7 @@ async function bootstrap(): Promise<void> {
 
   function render(): void {
     const currentState = engine.getState()
+    const mediaPipeDebug = detector.getDebugInfo()
 
     if (lastEngineState !== currentState) {
       stateLog.push(formatEngineState(currentState))
@@ -82,6 +83,12 @@ async function bootstrap(): Promise<void> {
         <p>${faceDetected ? "検出中" : "未検出"}</p>
         <h2>ランドマーク数:</h2>
         <p>${landmarkCount}</p>
+        <h2>MediaPipe状態:</h2>
+        <p>${mediaPipeDebug.initialized ? "初期化済み" : "未初期化"}</p>
+        <h2>検出回数:</h2>
+        <p>${mediaPipeDebug.detectCount}</p>
+        <h2>Video:</h2>
+        <p>${mediaPipeDebug.videoWidth}x${mediaPipeDebug.videoHeight}</p>
         <h2>顔姿勢:</h2>
         <pre>Pitch:${facePose.pitch}
 Yaw:${facePose.yaw}
