@@ -21,11 +21,18 @@ export interface FaceFrameLoopVideoDebugInfo {
 export interface FaceFrameLoopDebugInfo {
   running: boolean
   tickCount: number
+  detectCallCount: number
+  detectSkipCount: number
+  lastDetectSkipReason: string | null
   inputType: string
   detectorType: string
   hasInput: boolean
   hasDetector: boolean
   video: FaceFrameLoopVideoDebugInfo | null
+}
+
+interface DetectorDebugInfo {
+  initialized?: boolean
 }
 
 export class BeautyEngine {
@@ -36,6 +43,9 @@ export class BeautyEngine {
   private faceFrameListeners: FaceFrameListener[] = []
   private faceFrameLoopId?: ReturnType<typeof setInterval>
   private faceFrameLoopTickCount = 0
+  private faceFrameLoopDetectCallCount = 0
+  private faceFrameLoopDetectSkipCount = 0
+  private faceFrameLoopLastDetectSkipReason: string | null = null
 
   constructor(options?: BeautyEngineOptions) {
     this.input = options?.input
@@ -100,6 +110,9 @@ export class BeautyEngine {
     return {
       running: Boolean(this.faceFrameLoopId),
       tickCount: this.faceFrameLoopTickCount,
+      detectCallCount: this.faceFrameLoopDetectCallCount,
+      detectSkipCount: this.faceFrameLoopDetectSkipCount,
+      lastDetectSkipReason: this.faceFrameLoopLastDetectSkipReason,
       inputType: this.getInputType(),
       detectorType: this.faceDetector?.constructor.name ?? "none",
       hasInput: Boolean(this.input),
@@ -130,14 +143,66 @@ export class BeautyEngine {
       const currentInput = this.getInput()
       const currentDetector = this.getFaceDetector()
 
-      if (currentDetector && currentInput instanceof HTMLVideoElement) {
-        const frame = await currentDetector.detect(currentInput)
-
-        this.currentFaceFrame = frame
-
-        this.faceFrameListeners.forEach((callback) => callback(frame))
+      if (this.state !== "running") {
+        this.recordDetectSkip("engine_not_running")
+        return
       }
+
+      if (!currentInput) {
+        this.recordDetectSkip("no_input")
+        return
+      }
+
+      if (!currentDetector) {
+        this.recordDetectSkip("no_detector")
+        return
+      }
+
+      if (!(currentInput instanceof HTMLVideoElement)) {
+        this.recordDetectSkip("input_not_video")
+        return
+      }
+
+      if (currentInput.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+        this.recordDetectSkip("video_not_ready")
+        return
+      }
+
+      if (currentInput.videoWidth === 0 || currentInput.videoHeight === 0) {
+        this.recordDetectSkip("video_size_zero")
+        return
+      }
+
+      if (this.isDetectorNotInitialized(currentDetector)) {
+        this.recordDetectSkip("detector_not_initialized")
+        return
+      }
+
+      this.faceFrameLoopDetectCallCount += 1
+      const frame = await currentDetector.detect(currentInput)
+
+      this.currentFaceFrame = frame
+
+      this.faceFrameListeners.forEach((callback) => callback(frame))
     }, 1000)
+  }
+
+  private recordDetectSkip(reason: string): void {
+    this.faceFrameLoopDetectSkipCount += 1
+    this.faceFrameLoopLastDetectSkipReason = reason
+  }
+
+  private isDetectorNotInitialized(detector: FaceDetector): boolean {
+    if (
+      "getDebugInfo" in detector &&
+      typeof detector.getDebugInfo === "function"
+    ) {
+      const debugInfo = detector.getDebugInfo() as DetectorDebugInfo
+
+      return debugInfo.initialized === false
+    }
+
+    return false
   }
 
   private getInputType(): string {
