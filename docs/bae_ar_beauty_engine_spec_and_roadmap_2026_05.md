@@ -306,6 +306,31 @@ MediaPipe の topology、landmark index、canonical model の考え方は参考�
 
 IdealFace Authoring Tool は BAE AR 独自の IdealFace asset を作成・調整するツールです。MediaPipe canonical face model そのものを作るツールではありません。`natural_v1` の controlPoints は現段階の投影検証用データであり、IdealFace 本体ではありません。
 
+### 7.2 IdealFace Authoring Tool における idealLandmarks3D 作成方針
+
+IdealFace の本体である `idealLandmarks3D` 478点は、IdealFace Authoring Tool 側で作成します。Engine Runtime は `idealLandmarks3D` を作成せず、完成済みの IdealFace asset を読み込んで使います。
+
+想定する流れ:
+
+```text
+動画 / 複数画像を入力
+  -> MediaPipe Face Landmarker で各フレームの 2D 478 landmarks と FacePose を取得
+  -> yaw / pitch / roll から代表フレーム候補を自動抽出
+  -> 人間が正面 / 左向き / 右向き / 上向き / 下向き / 除外を確定
+  -> 確定した代表フレーム群から 3D の idealLandmarks3D 478点候補を自動推測
+  -> Authoring Tool 上で 3D点群を確認
+  -> 必要な箇所を手動で微調整
+  -> IdealFace asset として保存 / export
+```
+
+代表フレーム候補は、yaw / pitch / roll を使って自動抽出します。正面候補は yaw / pitch / roll が 0 に近いフレーム、左向き候補と右向き候補は yaw が一定以上または一定以下で pitch が 0 に近いフレーム、上向き候補と下向き候補は pitch が一定以上または一定以下で yaw が 0 に近いフレームを想定します。
+
+ただし、自動抽出だけでは確定しません。ユーザーが Authoring Tool 上で、正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定します。
+
+確定された代表フレーム群から 3D の `idealLandmarks3D` 478点候補を自動推測します。この時点の生成結果は完成データではなく候補データとして扱います。自動推測した候補は Authoring Tool 上で 3D点群として確認し、必要に応じて手動で微調整します。手動補正後の `idealLandmarks3D` 478点を IdealFace asset として保存 / export します。
+
+この方針は完全自動生成ではなく、自動推測 + 手動補正です。詳細な 3D 推測アルゴリズムはこの段階では定義しません。
+
 v1 の制限事項:
 
 - 現在のプリセットは `natural_v1` / `Natural` の 1 つのみ
@@ -730,10 +755,15 @@ Step 1 の実装範囲:
 未実装:
 
 - controlPoints のドラッグ編集
+- 動画 / 複数画像の入力
+- フレーム抽出
+- MediaPipe によるフレームごとの 2D 478 landmarks 取得
+- 代表フレーム候補の自動抽出
+- 手動ラベル確定 UI
+- 3D 478点候補の自動推測
+- 3D点群 preview
+- 手動微調整
 - 保存 / export
-- ideal 478 landmarks 生成
-- canonical face mesh editor
-- 2D 動画 / 複数画像からの 3D 顔生成
 
 IdealFace Authoring Tool は MediaPipe canonical face model そのものを作るツールではありません。BAE AR 独自の IdealFace asset を作る作業場です。Authoring Tool の編集処理や UI は Engine Runtime に混ぜません。
 
