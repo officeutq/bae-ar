@@ -110,8 +110,10 @@ async function bootstrap(): Promise<void> {
         <p>${mediaPipeDebug ? (mediaPipeDebug.initialized ? "初期化済み" : "未初期化") : "不明"}</p>
         <h2>検出回数:</h2>
         <p>${mediaPipeDebug?.detectCount ?? 0}</p>
-        <h2>Video:</h2>
+        <h2>MediaPipe Video:</h2>
         <p>${mediaPipeDebug?.videoWidth ?? 0}x${mediaPipeDebug?.videoHeight ?? 0}</p>
+        <h2>FaceFrame Video:</h2>
+        <p>${videoDebug?.videoWidth ?? 0}x${videoDebug?.videoHeight ?? 0}</p>
         <h2>Video readyState:</h2>
         <p>${videoDebug?.readyState ?? 0}</p>
         <h2>Video paused:</h2>
