@@ -79,11 +79,14 @@ IdealFace Authoring Tool は将来予定です。
 
 責務:
 
-- IdealFace 3D model の作成
+- BAE AR 独自の IdealFace asset の作成
+- IdealFace canonical face / お面データの作成
 - IdealFace プリセットの調整
 - 手作業による調整
 - 2D 動画 / 複数画像からのオフライン生成
 - Runtime で読み込む IdealFace asset の出力
+
+IdealFace Authoring Tool は、MediaPipe canonical face model そのものを作るツールではありません。最初は `natural_v1` の controlPoints を編集・保存・出力する最小ツールとして始め、将来的に BAE AR 独自の canonical face mesh、ideal landmark mapping、ideal 478 landmarks 生成へ進む可能性があります。
 
 IdealFace Authoring Tool の処理はリアルタイム Engine Runtime には含めません。
 
@@ -163,7 +166,11 @@ FaceGeometry
 
 IdealFace v1 は実装済みです。Runtime は `natural_v1` / `Natural` の最小プリセットを読み込み、公開 API から選択中の IdealFace と利用可能な IdealFace を取得できます。
 
-IdealFace は独自の理想 3D 顔モデルを本体とします。MediaPipe 478 landmarks そのものではありません。
+IdealFace は独自の理想 3D 顔モデルを本体とします。MediaPipe 478 landmarks そのものではありません。また、MediaPipe canonical face model そのものでもありません。
+
+MediaPipe canonical face model は、MediaPipe 側が landmark 検出や face geometry のために使う標準顔モデル、つまり MediaPipe 内部の標準顔お面です。BAE AR はその topology、landmark index、canonical model の考え方を参考にする可能性がありますが、最終的な理想顔定義は BAE AR 独自の IdealFace asset として管理します。
+
+MediaPipe は検出側の基準です。BAE AR IdealFace は、「こう寄せたい」という理想顔を表す補正・比較側の基準です。MediaPipe 標準顔 = BAE AR 理想顔、とはしません。
 
 ただし、Engine Runtime で current face と比較するため、IdealFace から MediaPipe 478 landmarks と対応する ideal 478 landmarks を生成できる必要があります。
 

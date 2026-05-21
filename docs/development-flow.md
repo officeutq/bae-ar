@@ -58,6 +58,8 @@ CameraService.start()
 
 shape processing は current 478 landmarks と IdealFace 由来の ideal 478 landmarks を比較し、顔全体として自然に少し warp する方針で進めます。
 
+IdealFace は BAE AR 独自の canonical face / お面データです。MediaPipe canonical face model そのものではありません。MediaPipe の topology や landmark index は参考にする可能性がありますが、MediaPipe は検出側の基準、BAE AR IdealFace は補正・比較側の基準として分けて扱います。
+
 ```text
 現在顔から MediaPipe 478 landmarks を取得
   -> FacePose を推定
@@ -132,6 +134,7 @@ LayerMaskSpec の作成や手作業編集は Layer Mask Authoring Tool の責務
 Engine Runtime で行わないこと:
 
 - IdealFace の作成
+- MediaPipe canonical face model の生成・編集
 - 2D 動画からの 3D 顔生成
 - LayerMaskSpec の作成
 - mask の手作業編集

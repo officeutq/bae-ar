@@ -84,6 +84,12 @@ Camera input
 
 `FaceFrame` は MediaPipe 由来の現在フレームの生データです。`FaceGeometry` は debug / overlay / 顔サイズ確認 / 代表点確認などの補助情報であり、shape processing の中心ではありません。
 
+## IdealFace と MediaPipe canonical face model
+
+MediaPipe canonical face model は、MediaPipe 側が landmark 検出や face geometry のために使う標準顔モデル・基準顔です。BAE AR はその考え方を参考にする可能性はありますが、MediaPipe canonical face model そのものを作成・編集対象にはしません。
+
+BAE AR の IdealFace は、BAE AR 独自の理想顔 canonical face / お面データです。MediaPipe 478 landmarks そのものでも、MediaPipe canonical face model そのものでもありません。MediaPipe は検出側の基準、BAE AR IdealFace は補正・比較側の基準として分けて扱います。
+
 ## Shape Processing 方針
 
 shape processing は個別パーツ加工ではありません。
