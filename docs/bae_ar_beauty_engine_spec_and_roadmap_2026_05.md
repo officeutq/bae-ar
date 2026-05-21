@@ -736,3 +736,26 @@ Step 1 の実装範囲:
 - 2D 動画 / 複数画像からの 3D 顔生成
 
 IdealFace Authoring Tool は MediaPipe canonical face model そのものを作るツールではありません。BAE AR 独自の IdealFace asset を作る作業場です。Authoring Tool の編集処理や UI は Engine Runtime に混ぜません。
+
+## 19. IdealFace / Projection / Shape Processing 中核仕様
+
+BAE AR の shape processing では、IdealFace は最終的に 3D の `idealLandmarks3D` 478 点を持ちます。IdealFace は正面固定の 2D landmarks だけを持つものではありません。
+
+Runtime は、その 3D ideal landmarks を現在顔の `FacePose` へ投影し、2D の projected ideal 478 landmarks を生成します。正面 2D の 478 点だけでは顔の角度変化に追随できないため、顔の角度変化への対応は IdealFace の 3D landmarks を `FacePose` へ投影することで行います。
+
+Shape Processing は、MediaPipe Face Landmarker がカメラ映像から取得した current 478 landmarks と、IdealFace 由来の projected ideal 478 landmarks の差分を見ます。この差分をもとに、将来 `CorrectionPlan` / Shape Warp へ進みます。
+
+```text
+IdealFace
+  = idealLandmarks3D: 478点を持つ
+
+Runtime
+  = idealLandmarks3D を現在 FacePose へ投影する
+  = projected idealLandmarks2D: 478点を生成する
+
+Shape Processing
+  = current 478 landmarks と projected ideal 478 landmarks の差分を見る
+  = 差分をもとに CorrectionPlan / Shape Warp へ進む
+```
+
+`CorrectionPlan` は姿勢補正を担当しません。Projection 後の ideal 2D landmarks は、すでに現在姿勢を反映しているものとして扱います。

@@ -125,3 +125,24 @@ Beauty Studio では、開発確認用として overlay や簡易調整 UI を�
 `tools/ideal-face-authoring` は BAE AR 独自の IdealFace asset を作るための独立ツールです。Step 1 では `natural_v1` の metadata、controlPoints 一覧、2D preview、JSON preview を表示します。
 
 ドラッグ編集、保存、ideal 478 landmarks 生成、canonical face mesh editor、2D 動画 / 複数画像からの 3D 顔生成は未実装です。このツールは MediaPipe canonical face model そのものを作るツールではなく、Authoring Tool の編集処理を Engine Runtime に混ぜません。
+
+## IdealFace / Projection / Shape Processing 中核仕様
+
+BAE AR の shape processing では、IdealFace は最終的に 3D の `idealLandmarks3D` 478 点を持ちます。IdealFace が持つ基準は、正面固定の 2D landmarks ではありません。
+
+Runtime は IdealFace の 3D landmarks を現在顔の `FacePose` へ投影し、現在姿勢を反映した 2D の projected ideal 478 landmarks を生成します。正面 2D の 478 点だけでは、yaw / pitch / roll などの顔の角度変化に追随できないため、角度変化への対応は Projection の責務として扱います。
+
+Shape Processing は、MediaPipe Face Landmarker がカメラ映像から取得した current 478 landmarks と、IdealFace 由来の projected ideal 478 landmarks の差分を見ます。この差分が、将来の `CorrectionPlan` / Shape Warp へ渡される後段処理の入力になります。
+
+```text
+IdealFace
+  -> idealLandmarks3D: 478点
+Runtime Projection
+  -> idealLandmarks3D を現在 FacePose へ投影
+  -> projected idealLandmarks2D: 478点
+Shape Processing
+  -> current 478 landmarks と projected ideal 478 landmarks の差分を見る
+  -> CorrectionPlan / Shape Warp へ進む
+```
+
+`CorrectionPlan` は姿勢補正を担当しません。Projection 後の ideal 2D landmarks は、すでに現在姿勢を反映しているものとして扱います。
