@@ -31,10 +31,6 @@ export interface FaceFrameLoopDebugInfo {
   video: FaceFrameLoopVideoDebugInfo | null
 }
 
-interface DetectorDebugInfo {
-  initialized?: boolean
-}
-
 export class BeautyEngine {
   private state: BeautyEngineState = "idle"
   private input?: BeautyEngineInput
@@ -177,36 +173,23 @@ export class BeautyEngine {
         return
       }
 
-      if (this.isDetectorNotInitialized(currentDetector)) {
-        this.recordDetectSkip("detector_not_initialized")
+      this.faceFrameLoopDetectCallCount += 1
+
+      try {
+        const frame = await currentDetector.detect(currentInput)
+
+        this.currentFaceFrame = frame
+
+        this.faceFrameListeners.forEach((callback) => callback(frame))
+      } catch {
         return
       }
-
-      this.faceFrameLoopDetectCallCount += 1
-      const frame = await currentDetector.detect(currentInput)
-
-      this.currentFaceFrame = frame
-
-      this.faceFrameListeners.forEach((callback) => callback(frame))
     }, 1000)
   }
 
   private recordDetectSkip(reason: string): void {
     this.faceFrameLoopDetectSkipCount += 1
     this.faceFrameLoopLastDetectSkipReason = reason
-  }
-
-  private isDetectorNotInitialized(detector: FaceDetector): boolean {
-    if (
-      "getDebugInfo" in detector &&
-      typeof detector.getDebugInfo === "function"
-    ) {
-      const debugInfo = detector.getDebugInfo() as DetectorDebugInfo
-
-      return debugInfo.initialized === false
-    }
-
-    return false
   }
 
   private getInputType(): string {

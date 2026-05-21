@@ -155,6 +155,11 @@ Roll:${facePose.roll}</pre>
   }
 
   engine.setFaceDetector(detector)
+  window.setInterval(() => {
+    render()
+    appendCameraPreview()
+  }, 1000)
+
   engine.onFaceFrame((frame) => {
     faceDetected = frame.detected
     facePose = frame.pose
