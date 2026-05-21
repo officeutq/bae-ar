@@ -93,10 +93,12 @@ Beauty Studio:
 - FaceGeometry point overlay
 - Copy Debug
 - FacePose の実推定
+- IdealFace v1 型定義
+- Natural v1 最小プリセット
+- IdealFace 公開 API
 
 ### 3.2 未実装
 
-- IdealFace
 - IdealFace Projection
 - CorrectionPlan
 - Shape Warp
@@ -116,6 +118,9 @@ Beauty Studio:
 - FaceFrame loop は 1 秒間隔の `setInterval` です。
 - `MediaPipeFaceDetector` は 1 face のみを対象にしています。
 - `FacePose` は MediaPipe Face Landmarker の transformation matrix を優先して推定します。matrix が取得できない場合は landmarks から最小推定します。
+- `IdealFace` は Runtime で読み込める最小構造と Natural v1 プリセットを持ちます。
+- `IdealFace` は MediaPipe 478 landmarks そのものではありません。
+- IdealFace Projection は未実装です。
 - `FaceGeometry` は landmarks から代表点やサイズを計算する補助解析です。
 - 実際の shape warp、color processing、rendering はまだありません。
 - Authoring Tool はまだありません。
@@ -173,6 +178,11 @@ getInput(): BeautyEngineInput | undefined
 setFaceDetector(detector: FaceDetector): void
 getFaceDetector(): FaceDetector | undefined
 getFaceDetectorDebugInfo(): unknown | null
+
+setIdealFace(idealFace: IdealFace): void
+getIdealFace(): IdealFace
+getAvailableIdealFaces(): IdealFacePreset[]
+selectIdealFace(id: string): IdealFace | undefined
 
 getFaceFrame(): FaceFrame | undefined
 getFaceGeometry(): FaceGeometry | undefined
@@ -262,18 +272,24 @@ type FaceGeometry = {
 
 ## 7. IdealFace
 
-IdealFace は未実装です。
+IdealFace v1 は実装済みです。
 
 IdealFace は独自の理想 3D 顔モデルを本体とします。
 
 重要:
 
 - IdealFace は MediaPipe 478 landmarks そのものではない
-- Engine Runtime で current face と比較するため、IdealFace から MediaPipe 478 landmarks と対応する ideal 478 landmarks を生成できる必要がある
+- Engine Runtime で current face と比較するため、将来 IdealFace から MediaPipe 478 landmarks と対応する ideal 478 landmarks を生成できる必要がある
 - current 478 landmarks と ideal 478 landmarks を比較して shape processing へ進む
 - 2D 動画 / 複数画像から IdealFace を作る処理は、リアルタイム処理ではなく IdealFace Authoring Tool の責務
 
-IdealFace は `Natural`、`Sharp`、`Round` など複数プリセットを持つ想定ですが、具体的な型・データ構造・プリセット内容は未確定です。
+v1 の制限事項:
+
+- 現在のプリセットは `natural_v1` / `Natural` の 1 つのみ
+- 3D control point は Projection の土台確認用の最小点群
+- ideal 478 landmarks の生成は未実装
+- IdealFace Projection は未実装
+- CorrectionPlan / Shape Warp は未実装
 
 ## 8. IdealFace Projection
 
@@ -459,7 +475,7 @@ Studio は Engine の private field、内部状態、内部実装へ直接アク
 
 ### Milestone 3: IdealFace v1
 
-状態: 未実装
+状態: 実装済み
 
 目的:
 
