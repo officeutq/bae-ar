@@ -54,6 +54,16 @@ Engine Runtime では、IdealFace の `idealLandmarks3D` 478点を現在顔の `
 
 2D 動画 / 複数画像から IdealFace を作る処理は、リアルタイム処理ではなく IdealFace Authoring Tool の責務です。IdealFace Authoring Tool は BAE AR 独自の IdealFace asset を作成・調整するツールであり、MediaPipe canonical face model そのものを作るツールではありません。`natural_v1` の controlPoints は現段階の投影検証用データであり、IdealFace 本体ではありません。
 
+## IdealFace Authoring Tool における idealLandmarks3D 作成方針
+
+IdealFace Authoring Tool では、動画または複数画像を入力として受け取り、MediaPipe Face Landmarker で各フレームの 2D 478 landmarks と `FacePose` を取得します。取得したフレーム群から yaw / pitch / roll を使って代表フレーム候補を自動抽出し、ユーザーが正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動で確定します。
+
+確定した代表フレーム群から、3D の `idealLandmarks3D` 478点候補を自動推測します。この結果は完成データではなく候補データとして扱い、Authoring Tool 上で 3D点群を確認し、必要な箇所を手動で微調整します。手動補正後の `idealLandmarks3D` 478点を IdealFace asset として保存 / export します。
+
+この方針は完全自動生成ではなく、自動推測 + 手動補正です。Engine Runtime は動画 / 複数画像から `idealLandmarks3D` を作成せず、Authoring Tool で作成済みの IdealFace asset を読み込んで使うだけです。
+
+現時点では、動画 / 複数画像の入力、フレーム抽出、MediaPipe によるフレームごとの 2D 478 landmarks 取得、代表フレーム候補の自動抽出、手動ラベル確定 UI、3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export は未実装です。
+
 ## Shape Processing の考え方
 
 shape processing は、個別パーツを独立して大きく変える方向にはしません。

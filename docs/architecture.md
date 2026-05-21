@@ -91,6 +91,16 @@ IdealFace Authoring Tool は、MediaPipe canonical face model そのものを作
 
 IdealFace Authoring Tool の処理はリアルタイム Engine Runtime には含めません。
 
+### idealLandmarks3D 478点の作成方針
+
+IdealFace Authoring Tool は、動画または複数画像を入力として受け取り、MediaPipe Face Landmarker で各フレームの 2D 478 landmarks と `FacePose` を取得します。取得した yaw / pitch / roll を使い、正面候補、左向き候補、右向き候補、上向き候補、下向き候補を自動抽出します。
+
+自動抽出だけでは確定せず、ユーザーが Authoring Tool 上で正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定します。確定した代表フレーム群から 3D の `idealLandmarks3D` 478点候補を自動推測し、Authoring Tool 上で確認、必要箇所を手動微調整したうえで IdealFace asset として保存 / export します。
+
+Engine Runtime は `idealLandmarks3D` を作成しません。Runtime は完成済みの IdealFace asset を読み込み、`idealLandmarks3D` 478点を現在 `FacePose` へ投影して projected ideal 2D landmarks 478点を生成します。
+
+この段階では、代表フレーム抽出や 3D点群推測の詳細アルゴリズムは定義しません。
+
 ## Layer Mask Authoring Tool の責務
 
 Layer Mask Authoring Tool は将来予定です。
@@ -280,10 +290,15 @@ Step 1 では Runtime の公開 API から `natural_v1` を読み込み、metada
 未実装の範囲:
 
 - controlPoints のドラッグ編集
+- 動画 / 複数画像の入力
+- フレーム抽出
+- MediaPipe によるフレームごとの 2D 478 landmarks 取得
+- 代表フレーム候補の自動抽出
+- 手動ラベル確定 UI
+- 3D 478点候補の自動推測
+- 3D点群 preview
+- 手動微調整
 - 保存 / export
-- ideal 478 landmarks 生成
-- canonical face mesh editor
-- 2D 動画 / 複数画像からの 3D 顔生成
 
 IdealFace Authoring Tool は MediaPipe canonical face model そのものを作るツールではありません。BAE AR 独自の IdealFace asset を作る作業場として扱います。
 

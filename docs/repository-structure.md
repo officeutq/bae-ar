@@ -109,6 +109,10 @@ IdealFace Authoring Tool を置く想定の場所です。
 
 MediaPipe canonical face model そのものを作成・編集する場所ではありません。`natural_v1` の controlPoints は現段階の投影検証用データであり、IdealFace 本体ではありません。
 
+IdealFace Authoring Tool では、動画または複数画像から各フレームの 2D 478 landmarks と `FacePose` を取得し、yaw / pitch / roll から代表フレーム候補を自動抽出します。ユーザーが正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定し、確定した代表フレーム群から `idealLandmarks3D` 478点候補を自動推測します。
+
+自動推測した 3D点群は候補データとして扱い、Authoring Tool 上で確認、必要箇所を手動微調整してから IdealFace asset として保存 / export します。
+
 この処理はリアルタイム Engine Runtime に含めません。
 
 ## `tools/layer-mask-authoring`
@@ -166,9 +170,14 @@ Step 1 の範囲:
 未実装:
 
 - ドラッグ編集
+- 動画 / 複数画像の入力
+- フレーム抽出
+- MediaPipe によるフレームごとの 2D 478 landmarks 取得
+- 代表フレーム候補の自動抽出
+- 手動ラベル確定 UI
+- 3D 478点候補の自動推測
+- 3D点群 preview
+- 手動微調整
 - 保存 / export
-- ideal 478 landmarks 生成
-- canonical face mesh editor
-- 2D 動画 / 複数画像からの 3D 顔生成
 
 このツールは MediaPipe canonical face model そのものを作るツールではありません。Authoring Tool の編集処理や UI は Engine Runtime に混ぜません。
