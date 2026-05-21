@@ -29,7 +29,7 @@ export class BeautyEngine {
   async start(): Promise<void> {
     if (this.state === "initialized") {
       this.state = "running"
-      this.startFaceFrameLoop()
+      this.startFaceFrameLoopIfReady()
     }
   }
 
@@ -51,6 +51,7 @@ export class BeautyEngine {
 
   setInput(input: BeautyEngineInput): void {
     this.input = input
+    this.startFaceFrameLoopIfReady()
   }
 
   getInput(): BeautyEngineInput | undefined {
@@ -59,6 +60,7 @@ export class BeautyEngine {
 
   setFaceDetector(detector: FaceDetector): void {
     this.faceDetector = detector
+    this.startFaceFrameLoopIfReady()
   }
 
   getFaceDetector(): FaceDetector | undefined {
@@ -73,17 +75,28 @@ export class BeautyEngine {
     this.faceFrameListeners.push(callback)
   }
 
-  private startFaceFrameLoop(): void {
+  private startFaceFrameLoopIfReady(): void {
     if (this.faceFrameLoopId) {
       return
     }
 
-    this.faceFrameLoopId = setInterval(async () => {
-      const input = this.getInput()
-      const detector = this.getFaceDetector()
+    const input = this.getInput()
+    const detector = this.getFaceDetector()
 
-      if (detector && input instanceof HTMLVideoElement) {
-        const frame = await detector.detect(input)
+    if (
+      this.state !== "running" ||
+      !(input instanceof HTMLVideoElement) ||
+      !detector
+    ) {
+      return
+    }
+
+    this.faceFrameLoopId = setInterval(async () => {
+      const currentInput = this.getInput()
+      const currentDetector = this.getFaceDetector()
+
+      if (currentDetector && currentInput instanceof HTMLVideoElement) {
+        const frame = await currentDetector.detect(currentInput)
 
         this.currentFaceFrame = frame
 
