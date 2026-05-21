@@ -210,22 +210,44 @@ chore/内容
 * PR本文には変更内容と確認結果を記載する
 * Issue がある場合は `Closes #xxx` を含める
 
-## Pull request creation
+## Pull Request 作成ルール
 
-When creating pull requests, use the local `gh` CLI authentication first.
+Pull Request 作成時は、まずローカルの `gh` CLI 認証を利用すること。
 
-Do not attempt GitHub App based PR creation before trying `gh`.
+`gh` を試す前に、GitHub App ベースの PR 作成を試行しないこと。
 
-Preferred flow:
+推奨フロー:
 
 ```bash
 git push -u origin <branch-name>
 gh pr create --title "<title>" --body "<body>"
 ```
 
-If `gh` authentication is unavailable or fails, report the error clearly.
+`gh` の認証が利用できない、または失敗した場合は、エラー内容を明確に報告すること。
 
-* PRは日本語表記とすること。
+## 言語ルール
+
+PR タイトル、PR 本文、Issue コメント、完了報告、Studio UI 表示は原則として日本語で記載する。
+
+例:
+
+- Summary → 変更内容
+- Testing → 確認内容
+- Manual Testing → 手動確認事項
+
+ただし、API 名、型名、コード識別子、CLI コマンド、package 名、npm script 名は英語のままとする。
+
+例:
+
+```ts
+BeautyEngine
+FaceGeometry
+getIdealFaceProjection()
+npm run start
+```
+
+コミットメッセージも原則として日本語で記載する。
+
 
 ## 禁止事項
 
