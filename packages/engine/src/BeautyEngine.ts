@@ -98,6 +98,10 @@ export class BeautyEngine {
     return this.faceDetector
   }
 
+  getFaceDetectorDebugInfo(): unknown | null {
+    return this.faceDetector?.getDebugInfo?.() ?? null
+  }
+
   getFaceFrame(): FaceFrame | undefined {
     return this.currentFaceFrame
   }
