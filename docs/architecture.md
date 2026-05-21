@@ -42,10 +42,11 @@ Engine Runtime は UI を持たない中核 SDK です。
 - `FaceFrame` の保持と購読
 - `FaceGeometry` の補助解析
 - debug 情報の公開
+- IdealFace v1 の読み込み
+- IdealFace 公開 API
 
 将来予定:
 
-- IdealFace の読み込み
 - IdealFace Projection
 - CorrectionPlan 生成
 - Shape Warp
@@ -116,6 +117,8 @@ apps/studio/src/main.ts
   -> engine.onFaceFrame(...)
   -> engine.getFaceFrame()
   -> engine.getFaceGeometry()
+  -> engine.getIdealFace()
+  -> engine.getAvailableIdealFaces()
   -> engine.getFaceFrameLoopDebugInfo()
   -> engine.getFaceDetectorDebugInfo()
 ```
@@ -156,9 +159,18 @@ FaceGeometry
 
 ## IdealFace と Projection
 
+IdealFace v1 は実装済みです。Runtime は `natural_v1` / `Natural` の最小プリセットを読み込み、公開 API から選択中の IdealFace と利用可能な IdealFace を取得できます。
+
 IdealFace は独自の理想 3D 顔モデルを本体とします。MediaPipe 478 landmarks そのものではありません。
 
 ただし、Engine Runtime で current face と比較するため、IdealFace から MediaPipe 478 landmarks と対応する ideal 478 landmarks を生成できる必要があります。
+
+v1 の制限事項:
+
+- 3D model は Projection の土台確認用の最小 control point 群
+- ideal 478 landmarks の生成は未実装
+- IdealFace Authoring Tool は未実装
+- IdealFace Projection は未実装
 
 IdealFace Projection の責務:
 

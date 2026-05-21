@@ -9,6 +9,8 @@ import {
   type FaceGeometry,
 } from "./face/FaceGeometry"
 import type { FaceFrame } from "./face/FaceFrame"
+import type { IdealFace, IdealFacePreset } from "./ideal-face"
+import { DEFAULT_IDEAL_FACE_PRESETS } from "./ideal-face"
 
 type FaceFrameListener = (frame: FaceFrame) => void
 
@@ -38,6 +40,8 @@ export interface FaceFrameLoopDebugInfo {
 export class BeautyEngine {
   private state: BeautyEngineState = "idle"
   private input?: BeautyEngineInput
+  private availableIdealFaces: IdealFacePreset[] = DEFAULT_IDEAL_FACE_PRESETS
+  private idealFace: IdealFace = DEFAULT_IDEAL_FACE_PRESETS[0]
   private faceDetector?: FaceDetector
   private currentFaceFrame?: FaceFrame
   private currentFaceGeometry?: FaceGeometry
@@ -50,6 +54,7 @@ export class BeautyEngine {
 
   constructor(options?: BeautyEngineOptions) {
     this.input = options?.input
+    this.idealFace = options?.idealFace ?? this.idealFace
   }
 
   async initialize(): Promise<void> {
@@ -101,6 +106,32 @@ export class BeautyEngine {
 
   getFaceDetectorDebugInfo(): unknown | null {
     return this.faceDetector?.getDebugInfo?.() ?? null
+  }
+
+  setIdealFace(idealFace: IdealFace): void {
+    this.idealFace = idealFace
+  }
+
+  getIdealFace(): IdealFace {
+    return this.idealFace
+  }
+
+  getAvailableIdealFaces(): IdealFacePreset[] {
+    return [...this.availableIdealFaces]
+  }
+
+  selectIdealFace(id: string): IdealFace | undefined {
+    const selectedIdealFace = this.availableIdealFaces.find(
+      (idealFace) => idealFace.metadata.id === id,
+    )
+
+    if (!selectedIdealFace) {
+      return undefined
+    }
+
+    this.idealFace = selectedIdealFace
+
+    return selectedIdealFace
   }
 
   getFaceFrame(): FaceFrame | undefined {

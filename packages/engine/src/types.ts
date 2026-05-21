@@ -1,3 +1,5 @@
+import type { IdealFace } from "./ideal-face"
+
 export type BeautyEngineState =
   | "idle"
   | "initialized"
@@ -12,4 +14,5 @@ export type BeautyEngineInput =
 
 export interface BeautyEngineOptions {
   input?: BeautyEngineInput
+  idealFace?: IdealFace
 }

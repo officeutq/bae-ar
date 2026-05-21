@@ -4,6 +4,7 @@ import type {
   FaceFrame,
   FaceGeometry,
   FaceGeometryPoint,
+  IdealFace,
 } from "@bae-ar/engine"
 import { MediaPipeFaceDetector } from "@bae-ar/engine"
 import type { CameraServiceState } from "./services/CameraService"
@@ -26,6 +27,7 @@ interface DetectorDebugInfo {
 type DebugSection =
   | "faceFrame"
   | "faceGeometry"
+  | "idealFace"
   | "mediaPipe"
   | "loopTiming"
   | "fullDebugText"
@@ -45,6 +47,7 @@ async function bootstrap(): Promise<void> {
   const openDebugSections: Record<DebugSection, boolean> = {
     faceFrame: false,
     faceGeometry: false,
+    idealFace: false,
     mediaPipe: false,
     loopTiming: false,
     fullDebugText: false,
@@ -172,9 +175,23 @@ faceHeight: ${formatNullableNumber(geometry?.faceHeight)}
 eyeDistance: ${formatNullableNumber(geometry?.eyeDistance)}`
   }
 
+  function formatIdealFacePreview(idealFace: IdealFace): string {
+    return `IdealFace:
+名前: ${idealFace.metadata.name}
+preset id: ${idealFace.metadata.id}
+version: ${idealFace.metadata.version}
+point数: ${idealFace.model.controlPoints.length}
+座標系: ${idealFace.model.coordinateSpace}
+MediaPipe landmarks: ${idealFace.landmarkTopology.mediapipeLandmarkCount}
+ideal 478 landmarks生成: ${idealFace.landmarkTopology.canGenerateIdealLandmarks ? "可能" : "未実装"}
+Projection: ${idealFace.landmarkTopology.projectionStatus}`
+  }
+
   function buildDebugText(
     frame: FaceFrame | undefined,
     geometry: FaceGeometry | undefined,
+    idealFace: IdealFace,
+    availableIdealFaces: IdealFace[],
     mediaPipeDebug: DetectorDebugInfo | null,
     faceFrameLoopDebug: ReturnType<BeautyEngine["getFaceFrameLoopDebugInfo"]>,
   ): string {
@@ -217,6 +234,11 @@ ${formatBlendshapePreview(frame)}
 
 Pose:
 ${formatPosePreview(frame)}
+
+${formatIdealFacePreview(idealFace)}
+availableIdealFaces: ${availableIdealFaces
+  .map((availableIdealFace) => availableIdealFace.metadata.id)
+  .join(", ")}
 
 ${formatFaceGeometryPreview(geometry)}
 
@@ -409,9 +431,13 @@ Camera:
     const faceFrameLoopDebug = engine.getFaceFrameLoopDebugInfo()
     const frame = engine.getFaceFrame() ?? latestFaceFrame
     const geometry = engine.getFaceGeometry()
+    const idealFace = engine.getIdealFace()
+    const availableIdealFaces = engine.getAvailableIdealFaces()
     const debugText = buildDebugText(
       frame,
       geometry,
+      idealFace,
+      availableIdealFaces,
       mediaPipeDebug,
       faceFrameLoopDebug,
     )
@@ -454,6 +480,8 @@ Camera: ${formatCameraState(camera.getState())}
 Detection: ${formatDetection(frame)}
 Landmarks: ${frame?.landmarks.length ?? 0}
 顔姿勢: yaw ${frame ? formatNumber(frame.pose.yaw) : "なし"} / pitch ${frame ? formatNumber(frame.pose.pitch) : "なし"} / roll ${frame ? formatNumber(frame.pose.roll) : "なし"}
+IdealFace: ${idealFace.metadata.name} (${idealFace.metadata.id}) / ${idealFace.metadata.version} / ${idealFace.model.controlPoints.length} 点
+利用可能IdealFace: ${availableIdealFaces.length}
 FPS: ${formatFps(faceFrameFps)}
 Loop: ${faceFrameLoopDebug.running ? "実行中" : "停止中"}
 Detect: ${faceFrameLoopDebug.detectCallCount}/${mediaPipeDebug?.detectSuccessCount ?? 0}</pre>
@@ -478,6 +506,10 @@ ${formatPosePreview(frame)}`)}</pre>
         <details data-debug-section="faceGeometry"${detailsOpenAttribute("faceGeometry")}>
           <summary>FaceGeometry Debug</summary>
           <pre>${escapeHtml(formatFaceGeometryPreview(geometry))}</pre>
+        </details>
+        <details data-debug-section="idealFace"${detailsOpenAttribute("idealFace")}>
+          <summary>IdealFace 確認</summary>
+          <pre>${escapeHtml(formatIdealFacePreview(idealFace))}</pre>
         </details>
         <details data-debug-section="mediaPipe"${detailsOpenAttribute("mediaPipe")}>
           <summary>MediaPipe Debug</summary>
