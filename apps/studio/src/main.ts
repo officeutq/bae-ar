@@ -5,6 +5,27 @@ import { MediaPipeFaceDetector } from "@bae-ar/engine"
 import type { CameraServiceState } from "./services/CameraService"
 import { CameraService } from "./services/CameraService"
 
+interface DetectorDebugInfo {
+  initialized: boolean
+  detectCount: number
+  videoWidth: number
+  videoHeight: number
+  lastDetectionTime: number | null
+}
+
+function getDetectorDebugInfo(detector: unknown): DetectorDebugInfo | undefined {
+  if (
+    detector &&
+    typeof detector === "object" &&
+    "getDebugInfo" in detector &&
+    typeof detector.getDebugInfo === "function"
+  ) {
+    return detector.getDebugInfo() as DetectorDebugInfo
+  }
+
+  return undefined
+}
+
 async function bootstrap(): Promise<void> {
   const engine = new BeautyEngine()
   const camera = new CameraService()
@@ -60,7 +81,7 @@ async function bootstrap(): Promise<void> {
 
   function render(): void {
     const currentState = engine.getState()
-    const mediaPipeDebug = detector.getDebugInfo()
+    const mediaPipeDebug = getDetectorDebugInfo(detector)
 
     if (lastEngineState !== currentState) {
       stateLog.push(formatEngineState(currentState))
@@ -84,11 +105,11 @@ async function bootstrap(): Promise<void> {
         <h2>ランドマーク数:</h2>
         <p>${landmarkCount}</p>
         <h2>MediaPipe状態:</h2>
-        <p>${mediaPipeDebug.initialized ? "初期化済み" : "未初期化"}</p>
+        <p>${mediaPipeDebug ? (mediaPipeDebug.initialized ? "初期化済み" : "未初期化") : "不明"}</p>
         <h2>検出回数:</h2>
-        <p>${mediaPipeDebug.detectCount}</p>
+        <p>${mediaPipeDebug?.detectCount ?? 0}</p>
         <h2>Video:</h2>
-        <p>${mediaPipeDebug.videoWidth}x${mediaPipeDebug.videoHeight}</p>
+        <p>${mediaPipeDebug?.videoWidth ?? 0}x${mediaPipeDebug?.videoHeight ?? 0}</p>
         <h2>顔姿勢:</h2>
         <pre>Pitch:${facePose.pitch}
 Yaw:${facePose.yaw}
