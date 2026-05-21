@@ -92,10 +92,10 @@ Beauty Studio:
 - landmarks overlay
 - FaceGeometry point overlay
 - Copy Debug
+- FacePose の実推定
 
 ### 3.2 未実装
 
-- FacePose の実推定
 - IdealFace
 - IdealFace Projection
 - CorrectionPlan
@@ -115,7 +115,7 @@ Beauty Studio:
 
 - FaceFrame loop は 1 秒間隔の `setInterval` です。
 - `MediaPipeFaceDetector` は 1 face のみを対象にしています。
-- `FacePose` は型として存在しますが、現在は `pitch: 0` / `yaw: 0` / `roll: 0` の placeholder です。
+- `FacePose` は MediaPipe Face Landmarker の transformation matrix を優先して推定します。matrix が取得できない場合は landmarks から最小推定します。
 - `FaceGeometry` は landmarks から代表点やサイズを計算する補助解析です。
 - 実際の shape warp、color processing、rendering はまだありません。
 - Authoring Tool はまだありません。
@@ -230,7 +230,7 @@ interface FaceFrame {
 - blendshapes
 - pose
 
-現在、pose は placeholder です。FacePose の実推定は今後実装予定です。
+現在、pose は placeholder ではなく、検出顔の yaw / pitch / roll 推定値です。MediaPipe Face Landmarker の `facialTransformationMatrixes` を優先し、取得できない場合は eyes / nose / mouth landmarks から最小推定します。v1 は IdealFace Projection の入力用であり、高精度な head tracking は今後の改善対象です。
 
 ### 6.2 FaceGeometry
 
@@ -445,7 +445,7 @@ Studio は Engine の private field、内部状態、内部実装へ直接アク
 
 ### Milestone 2: FacePose v1
 
-状態: 未実装
+状態: 実装済み
 
 目的:
 

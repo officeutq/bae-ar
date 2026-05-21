@@ -63,10 +63,10 @@ Engine Runtime として使う Beauty Engine SDK を置く場所です。
 - `MediaPipeFaceDetector`
 - `FaceFrame`
 - `FaceGeometry`
+- FacePose の実推定
 
 将来追加予定:
 
-- FacePose の実推定
 - IdealFace の読み込み
 - IdealFace Projection
 - CorrectionPlan

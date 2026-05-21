@@ -152,10 +152,9 @@ z: ${formatNumber(landmark.z)}`,
       return "なし"
     }
 
-    return `Pitch: ${formatNumber(frame.pose.pitch)}
-Yaw: ${formatNumber(frame.pose.yaw)}
-Roll: ${formatNumber(frame.pose.roll)}
-Pose推定: 未実装（暫定値）`
+    return `pitch: ${formatNumber(frame.pose.pitch)}
+yaw: ${formatNumber(frame.pose.yaw)}
+roll: ${formatNumber(frame.pose.roll)}`
   }
 
   function formatFaceGeometryPreview(
@@ -206,6 +205,9 @@ FaceFrame:
 - timestamp: ${frame?.timestamp ?? "none"}
 - landmarks: ${frame?.landmarks.length ?? 0}
 - blendshapes: ${frame?.blendshapes?.length ?? 0}
+- pose.pitch: ${frame ? formatNumber(frame.pose.pitch) : "none"}
+- pose.yaw: ${frame ? formatNumber(frame.pose.yaw) : "none"}
+- pose.roll: ${frame ? formatNumber(frame.pose.roll) : "none"}
 
 Landmark preview:
 ${formatLandmarkPreview(frame)}
@@ -451,6 +453,7 @@ Camera:
 Camera: ${formatCameraState(camera.getState())}
 Detection: ${formatDetection(frame)}
 Landmarks: ${frame?.landmarks.length ?? 0}
+顔姿勢: yaw ${frame ? formatNumber(frame.pose.yaw) : "なし"} / pitch ${frame ? formatNumber(frame.pose.pitch) : "なし"} / roll ${frame ? formatNumber(frame.pose.roll) : "なし"}
 FPS: ${formatFps(faceFrameFps)}
 Loop: ${faceFrameLoopDebug.running ? "実行中" : "停止中"}
 Detect: ${faceFrameLoopDebug.detectCallCount}/${mediaPipeDebug?.detectSuccessCount ?? 0}</pre>
@@ -469,7 +472,7 @@ ${formatLandmarkPreview(frame)}
 Blendshape preview:
 ${formatBlendshapePreview(frame)}
 
-Pose preview:
+FacePose:
 ${formatPosePreview(frame)}`)}</pre>
         </details>
         <details data-debug-section="faceGeometry"${detailsOpenAttribute("faceGeometry")}>
