@@ -6,6 +6,7 @@ import type {
   FaceGeometryPoint,
   IdealFace,
   IdealFaceProjectionResult,
+  ProjectionDifference,
 } from "@bae-ar/engine"
 import { MediaPipeFaceDetector } from "@bae-ar/engine"
 import type { CameraServiceState } from "./services/CameraService"
@@ -30,6 +31,7 @@ type DebugSection =
   | "faceGeometry"
   | "idealFace"
   | "idealFaceProjection"
+  | "idealFaceProjectionDifference"
   | "mediaPipe"
   | "loopTiming"
   | "fullDebugText"
@@ -51,6 +53,7 @@ async function bootstrap(): Promise<void> {
     faceGeometry: false,
     idealFace: false,
     idealFaceProjection: false,
+    idealFaceProjectionDifference: false,
     mediaPipe: false,
     loopTiming: false,
     fullDebugText: false,
@@ -214,11 +217,40 @@ projected point preview:
 ${pointPreview}`
   }
 
+  function formatProjectionDifferencePreview(
+    difference: ProjectionDifference,
+  ): string {
+    const pointPreview =
+      difference.points.length === 0
+        ? "なし"
+        : difference.points
+            .map(
+              (point) =>
+                `${point.id}:
+dx: ${formatNumber(point.deltaX)}
+dy: ${formatNumber(point.deltaY)}
+distance: ${formatNumber(point.distance)}`,
+            )
+            .join("\n\n")
+    const maxPoint = difference.maxDistancePoint
+
+    return `差分確認:
+status: ${difference.status}
+source idealFace id: ${difference.idealFaceId}
+point count: ${difference.points.length}
+平均差分: ${formatNullableNumber(difference.averageDistance)}
+最大差分: ${formatNullableNumber(difference.maxDistance)}
+最大差分点: ${maxPoint ? maxPoint.id : "なし"}
+
+${pointPreview}`
+  }
+
   function buildDebugText(
     frame: FaceFrame | undefined,
     geometry: FaceGeometry | undefined,
     idealFace: IdealFace,
     idealFaceProjection: IdealFaceProjectionResult,
+    projectionDifference: ProjectionDifference,
     availableIdealFaces: IdealFace[],
     mediaPipeDebug: DetectorDebugInfo | null,
     faceFrameLoopDebug: ReturnType<BeautyEngine["getFaceFrameLoopDebugInfo"]>,
@@ -266,6 +298,8 @@ ${formatPosePreview(frame)}
 ${formatIdealFacePreview(idealFace)}
 
 ${formatIdealFaceProjectionPreview(idealFaceProjection)}
+
+${formatProjectionDifferencePreview(projectionDifference)}
 availableIdealFaces: ${availableIdealFaces
   .map((availableIdealFace) => availableIdealFace.metadata.id)
   .join(", ")}
@@ -313,6 +347,7 @@ Camera:
         latestFaceFrame,
         engine.getFaceGeometry(),
         engine.getIdealFaceProjection(),
+        engine.getIdealFaceProjectionDifference(),
       )
     }
   }
@@ -343,6 +378,7 @@ Camera:
     frame: FaceFrame | undefined,
     geometry: FaceGeometry | undefined,
     idealFaceProjection: IdealFaceProjectionResult,
+    projectionDifference: ProjectionDifference,
   ): void {
     const input = engine.getInput()
 
@@ -398,12 +434,31 @@ Camera:
       context.fill()
     })
 
+    if (projectionDifference.status === "calculated") {
+      context.strokeStyle = "#ffd166"
+      context.lineWidth = 2
+
+      projectionDifference.points.forEach((point) => {
+        context.beginPath()
+        context.moveTo(
+          point.current.x * overlayCanvas.width,
+          point.current.y * overlayCanvas.height,
+        )
+        context.lineTo(
+          point.projected.x * overlayCanvas.width,
+          point.projected.y * overlayCanvas.height,
+        )
+        context.stroke()
+      })
+    }
+
     if (idealFaceProjection.status !== "projected") {
       return
     }
 
     context.fillStyle = "#00c2ff"
     context.strokeStyle = "#004f66"
+    context.lineWidth = 1
     context.font = "12px sans-serif"
 
     idealFaceProjection.points.forEach((point) => {
@@ -487,12 +542,14 @@ Camera:
     const geometry = engine.getFaceGeometry()
     const idealFace = engine.getIdealFace()
     const idealFaceProjection = engine.getIdealFaceProjection()
+    const projectionDifference = engine.getIdealFaceProjectionDifference()
     const availableIdealFaces = engine.getAvailableIdealFaces()
     const debugText = buildDebugText(
       frame,
       geometry,
       idealFace,
       idealFaceProjection,
+      projectionDifference,
       availableIdealFaces,
       mediaPipeDebug,
       faceFrameLoopDebug,
@@ -538,6 +595,7 @@ Landmarks: ${frame?.landmarks.length ?? 0}
 顔姿勢: yaw ${frame ? formatNumber(frame.pose.yaw) : "なし"} / pitch ${frame ? formatNumber(frame.pose.pitch) : "なし"} / roll ${frame ? formatNumber(frame.pose.roll) : "なし"}
 IdealFace: ${idealFace.metadata.name} (${idealFace.metadata.id}) / ${idealFace.metadata.version} / ${idealFace.model.controlPoints.length} 点
 Projection: ${idealFaceProjection.status} / ${idealFaceProjection.points.length} 点
+差分: ${projectionDifference.status} / 平均 ${formatNullableNumber(projectionDifference.averageDistance)} / 最大 ${formatNullableNumber(projectionDifference.maxDistance)}
 利用可能IdealFace: ${availableIdealFaces.length}
 FPS: ${formatFps(faceFrameFps)}
 Loop: ${faceFrameLoopDebug.running ? "実行中" : "停止中"}
@@ -571,6 +629,10 @@ ${formatPosePreview(frame)}`)}</pre>
         <details data-debug-section="idealFaceProjection"${detailsOpenAttribute("idealFaceProjection")}>
           <summary>IdealFace Projection 確認</summary>
           <pre>${escapeHtml(formatIdealFaceProjectionPreview(idealFaceProjection))}</pre>
+        </details>
+        <details data-debug-section="idealFaceProjectionDifference"${detailsOpenAttribute("idealFaceProjectionDifference")}>
+          <summary>Projection 差分確認</summary>
+          <pre>${escapeHtml(formatProjectionDifferencePreview(projectionDifference))}</pre>
         </details>
         <details data-debug-section="mediaPipe"${detailsOpenAttribute("mediaPipe")}>
           <summary>MediaPipe Debug</summary>

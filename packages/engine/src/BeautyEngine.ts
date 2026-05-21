@@ -13,8 +13,10 @@ import type {
   IdealFace,
   IdealFacePreset,
   IdealFaceProjectionResult,
+  ProjectionDifference,
 } from "./ideal-face"
 import {
+  calculateProjectionDifference,
   DEFAULT_IDEAL_FACE_PRESETS,
   projectIdealFaceControlPoints,
 } from "./ideal-face"
@@ -151,6 +153,13 @@ export class BeautyEngine {
       this.currentFaceFrame?.pose,
       this.currentFaceGeometry,
       this.currentFaceFrame?.detected ?? false,
+    )
+  }
+
+  getIdealFaceProjectionDifference(): ProjectionDifference {
+    return calculateProjectionDifference(
+      this.currentFaceGeometry,
+      this.getIdealFaceProjection(),
     )
   }
 
