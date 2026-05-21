@@ -1,51 +1,99 @@
 # リポジトリ構成
 
-## 想定構成
-
-BAE AR のリポジトリは、以下の構成を想定します。
+## 現在の構成
 
 ```text
 bae-ar/
-├ packages/
-│  └ engine/
-│     └ 本番配布対象の Beauty Engine SDK
+├─ packages/
+│  └─ engine/
+│     ├─ package.json
+│     └─ src/
+│        ├─ BeautyEngine.ts
+│        ├─ types.ts
+│        ├─ index.ts
+│        └─ face/
+│           ├─ FaceDetector.ts
+│           ├─ FaceFrame.ts
+│           ├─ FaceGeometry.ts
+│           ├─ types.ts
+│           └─ adapters/
+│              └─ MediaPipeFaceDetector.ts
 │
-├ apps/
-│  └ studio/
-│     └ Engine SDK を確認・調整する開発用アプリ
+├─ apps/
+│  └─ studio/
+│     ├─ package.json
+│     ├─ index.html
+│     └─ src/
+│        ├─ main.ts
+│        ├─ services/
+│        │  └─ CameraService.ts
+│        └─ detectors/
+│           └─ MockFaceDetector.ts
 │
-└ docs/
-   └ 設計・仕様ドキュメント
+└─ docs/
+   ├─ overview.md
+   ├─ architecture.md
+   ├─ development-flow.md
+   ├─ repository-structure.md
+   └─ bae_ar_beauty_engine_spec_and_roadmap_2026_05.md
 ```
 
-## packages/engine
+## `packages/engine`
 
-`packages/engine` は、本番アプリケーションから利用する Beauty Engine SDK を配置する場所です。
+本番利用する Beauty Engine SDK を置く場所です。
 
-将来的には npm package 化することを想定します。
+現在含まれるもの:
 
-配布対象に含めるのは、原則としてこの Engine SDK です。
+- `BeautyEngine`
+- Engine の型定義
+- `FaceDetector` interface
+- `MediaPipeFaceDetector`
+- `FaceFrame`
+- `FaceGeometry`
 
-## apps/studio
+将来追加予定:
 
-`apps/studio` は、Engine SDK を確認・調整するための開発用アプリを配置する場所です。
+- IdealFace
+- CorrectionPlan
+- shape warp
+- color processing
+- Layer System
+- renderer
 
-Studio は配布対象に含めません。
+Engine SDK は UI を持ちません。debug 用 UI や一時的な検証 UI はここに入れません。
 
-Studio は Engine SDK の公開 API のみを利用し、Engine SDK の内部実装へ直接依存しないようにします。
+## `apps/studio`
 
-## docs
+Engine SDK を開発・検証・調整するための Beauty Studio を置く場所です。
 
-`docs` は、設計判断や仕様を残す場所です。
+現在含まれるもの:
 
-実装前の判断、開発の進め方、リポジトリ構成、アーキテクチャ上の制約などを記録します。
+- `CameraService`
+- `BeautyEngine` 接続
+- `MediaPipeFaceDetector` 接続
+- debug 表示
+- overlay 表示
+- Copy Debug
 
-## 開発方針
+Studio は配布対象ではありません。Studio は Engine SDK の公開 API のみを使い、Engine 内部実装へ直接依存しません。
 
-Engine SDK と Studio は同一リポジトリ内に置きます。
+## `docs`
 
-ただし、責務は分離します。
+設計、仕様、ロードマップ、開発方針を残す場所です。
 
-Engine SDK は本番利用する中核ライブラリとして扱い、Studio は開発・検証・調整のためのアプリとして扱います。
+実装が変わった場合は、該当する docs / README / 仕様書 / ロードマップも更新します。
 
-実装を追加するときは、原則として Issue 単位で目的を絞り、小さく進めます。
+## 配布方針
+
+配布対象は Engine SDK のみです。
+
+配布物に含めないもの:
+
+- `apps/studio`
+- `docs`
+- 開発用 debug UI
+- サンプルや検証ツール
+
+## 今後の構成変更
+
+IdealFace / CorrectionPlan / Layer System は未実装です。追加する場合も、Engine SDK の責務として実装し、Studio からは公開 API 経由で確認できるようにします。

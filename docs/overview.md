@@ -2,68 +2,60 @@
 
 ## BAE AR とは
 
-BAE AR は、Web 上でリアルタイムに顔加工・AR 表現を行うための Beauty Engine SDK を開発するプロジェクトです。
+BAE AR は、Web 上でリアルタイム顔加工・AR 表現を行う Beauty Engine SDK と、その開発・検証を行う Beauty Studio を含むプロジェクトです。
 
-目的は、TikTok のような自然な美顔表現を、本番サービスに組み込める形で実現することです。
+目標は、顔を単純な 2D 点群として動かすのではなく、現在の顔の構造・姿勢・表情を読み取り、自然で破綻しにくい補正を行う Engine SDK を作ることです。
 
-## 目指すもの
-
-BAE AR が目指すのは、単純なフィルターではありません。
-
-現在の顔を検出し、顔の構造・姿勢・表情を考慮しながら、自然で破綻しにくい加工結果を生成する Beauty Engine です。
-
-## 主な構成
+## 役割
 
 ```text
 BAE AR
 
-├ Engine SDK
-│  └ 本番アプリケーションから利用する顔加工エンジン
+├─ Engine SDK
+│  └─ 本番サービスから利用する UI なしの Beauty Engine
 │
-└ Studio
-   └ Engine SDK を開発・検証・調整するための開発環境
+└─ Beauty Studio
+   └─ Engine SDK を開発・検証・調整するための開発ツール
 ```
 
-## Engine SDK
+Engine SDK は本番利用される中核ライブラリです。Studio は Engine を育てるための環境であり、配布対象には含めません。
 
-Engine SDK は、本番アプリケーションに組み込むための中核ライブラリです。
+## 現在の到達点
 
-責務は以下です。
+現在の実装は、カメラ映像を `HTMLVideoElement` として取得し、`BeautyEngine.setInput()` に渡し、MediaPipe Face Landmarker を使って `FaceFrame` を更新する段階です。
+
+Studio では、Engine の公開 API から取得できる `FaceFrame` / `FaceGeometry` / debug 情報を表示し、landmarks と補助 geometry point を overlay で確認できます。
+
+## 現在の処理パイプライン
 
 ```text
-- 顔検出
-- 顔構造の解析
-- 顔姿勢の推定
-- 色加工
-- 変形加工
-- 品質制御
-- 描画
-- 実行状態の管理
+Camera input
+  -> HTMLVideoElement
+  -> BeautyEngine.setInput()
+  -> MediaPipeFaceDetector
+  -> FaceFrame loop
+  -> FaceFrame 更新
+  -> Studio debug / overlay
 ```
 
-Engine SDK は UI を持ちません。
+この流れは現在の実コードで確認済みです。
 
-## Studio
+## 変形加工の方針
 
-Studio は、Engine SDK を育てるための開発・検証環境です。
+shape processing は、個別パーツを独立して大きく変える方向にはしません。
 
-責務は以下です。
+基本方針:
 
-```text
-- カメラ映像での動作確認
-- 加工結果の確認
-- パラメータ調整
-- デバッグ情報の表示
-- プリセット確認
-- 将来的な比較・プロファイリング
-```
+- 現在 landmarks を入力として扱う。
+- IdealFace は複数プリセットを持つ理想 3D 顔として設計する。
+- 理想 3D 顔を現在姿勢へ投影し、理想 2D landmarks を得る。
+- 現在 landmarks を理想 2D landmarks へ、顔全体として少し寄せる。
+- 顎だけ、目だけ、鼻だけなどの個別パーツ加工を増やさない。
 
-Studio は Engine SDK の公開 API のみを利用します。
+`FaceGeometry` は顔サイズ正規化・安定化・debug などの補助情報です。変形加工の主役は、現在 landmarks と、現在姿勢に投影された IdealFace 側の理想 2D landmarks です。
 
-Engine SDK の内部実装に直接依存しないことで、本番利用時と近い形で検証できるようにします。
+## ドキュメントの読み方
 
-## 配布方針
-
-配布対象は Engine SDK のみです。
-
-Studio、開発用 UI、デバッグ機能、サンプル、ドキュメントは配布物には含めません。
+- 現在の実装状況とロードマップは [仕様書とロードマップ](bae_ar_beauty_engine_spec_and_roadmap_2026_05.md) を参照してください。
+- Engine / Studio の責務分離は [アーキテクチャ](architecture.md) を参照してください。
+- 実装時の進め方は [開発フロー](development-flow.md) を参照してください。
