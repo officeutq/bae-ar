@@ -6,6 +6,7 @@ import type { CameraServiceState } from "./services/CameraService"
 import { CameraService } from "./services/CameraService"
 
 interface DetectorDebugInfo {
+  debugInstanceId: string
   initialized: boolean
   hasFaceLandmarker: boolean
   detectCount: number
@@ -16,19 +17,6 @@ interface DetectorDebugInfo {
   videoWidth: number
   videoHeight: number
   lastDetectionTime: number | null
-}
-
-function getDetectorDebugInfo(detector: unknown): DetectorDebugInfo | undefined {
-  if (
-    detector &&
-    typeof detector === "object" &&
-    "getDebugInfo" in detector &&
-    typeof detector.getDebugInfo === "function"
-  ) {
-    return detector.getDebugInfo() as DetectorDebugInfo
-  }
-
-  return undefined
 }
 
 async function bootstrap(): Promise<void> {
@@ -86,7 +74,8 @@ async function bootstrap(): Promise<void> {
 
   function render(): void {
     const currentState = engine.getState()
-    const mediaPipeDebug = getDetectorDebugInfo(detector)
+    const mediaPipeDebug =
+      engine.getFaceDetectorDebugInfo() as DetectorDebugInfo | null
     const faceFrameLoopDebug = engine.getFaceFrameLoopDebugInfo()
     const videoDebug = faceFrameLoopDebug.video
 
@@ -113,6 +102,8 @@ async function bootstrap(): Promise<void> {
         <p>${landmarkCount}</p>
         <h2>MediaPipe状態:</h2>
         <p>${mediaPipeDebug ? (mediaPipeDebug.initialized ? "初期化済み" : "未初期化") : "不明"}</p>
+        <h2>MediaPipe debugInstanceId:</h2>
+        <p>${mediaPipeDebug?.debugInstanceId ?? "なし"}</p>
         <h2>検出回数:</h2>
         <p>${mediaPipeDebug?.detectCount ?? 0}</p>
         <h2>MediaPipe detect試行回数:</h2>

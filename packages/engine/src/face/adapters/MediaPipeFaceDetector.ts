@@ -6,6 +6,7 @@ import type { FaceDetector } from "../FaceDetector"
 import type { FaceDetectionResult } from "../types"
 
 export interface MediaPipeFaceDetectorDebugInfo {
+  debugInstanceId: string
   initialized: boolean
   hasFaceLandmarker: boolean
   detectCount: number
@@ -18,7 +19,10 @@ export interface MediaPipeFaceDetectorDebugInfo {
   lastDetectionTime: number | null
 }
 
+let mediaPipeFaceDetectorInstanceCount = 0
+
 export class MediaPipeFaceDetector implements FaceDetector {
+  private debugInstanceId: string
   private faceLandmarker?: FaceLandmarker
   private initialized = false
   private detectCount = 0
@@ -29,6 +33,11 @@ export class MediaPipeFaceDetector implements FaceDetector {
   private videoWidth = 0
   private videoHeight = 0
   private lastDetectionTime: number | null = null
+
+  constructor() {
+    mediaPipeFaceDetectorInstanceCount += 1
+    this.debugInstanceId = `MediaPipeFaceDetector-${mediaPipeFaceDetectorInstanceCount}`
+  }
 
   async initialize(): Promise<void> {
     const vision = await FilesetResolver.forVisionTasks(
@@ -96,6 +105,7 @@ export class MediaPipeFaceDetector implements FaceDetector {
 
   getDebugInfo(): MediaPipeFaceDetectorDebugInfo {
     return {
+      debugInstanceId: this.debugInstanceId,
       initialized: this.initialized,
       hasFaceLandmarker: Boolean(this.faceLandmarker),
       detectCount: this.detectCount,

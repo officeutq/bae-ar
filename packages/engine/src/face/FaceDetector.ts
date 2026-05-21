@@ -6,4 +6,6 @@ export interface FaceDetector {
   detect(input: HTMLVideoElement): Promise<FaceDetectionResult>
 
   dispose(): Promise<void>
+
+  getDebugInfo?(): unknown
 }
