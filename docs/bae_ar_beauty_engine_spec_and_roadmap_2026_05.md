@@ -185,32 +185,50 @@ FaceFrame は「現在検出された状態」を表す。
 
 ---
 
-## FaceGeometry（予定）
+## FaceGeometry（補助情報）
 
-FaceFrame から計算される意味構造。
+FaceGeometry は landmark 群から導出される補助的な顔情報。
 
 ```text
 FaceGeometry
 
-├ leftEyeCenter
-├ rightEyeCenter
-├ mouthCenter
-├ noseTip
-├ chin
 ├ faceCenter
 ├ faceWidth
 ├ faceHeight
 ├ eyeDistance
-└ contour
+└ contour metadata
 ```
 
 目的:
 
 ```text
-landmark番号依存を減らす
+- 顔サイズ正規化
+- 安全制御
+- pose補助
+- debug
 ```
 
-Beauty処理は landmark 生番号ではなく、FaceGeometry を使う。
+重要:
+
+```text
+FaceGeometry は変形加工の主役ではない
+```
+
+変形加工は:
+
+```text
+現在 landmarks
+↓
+理想3D顔を現在姿勢へ投影
+↓
+理想2D landmarks
+↓
+差分
+↓
+warp
+```
+
+を基本とする。
 
 ---
 
@@ -315,16 +333,41 @@ CorrectionPlan は:
 
 ## Shape processing
 
-方針:
+重要方針:
 
 ```text
-個別パーツ加工を増やしすぎない
+個別パーツ加工は行わない
 ```
 
-基本:
+NG:
 
 ```text
-現在顔を理想顔へ少し寄せる
+- 目だけ大きくする
+- 鼻だけ細くする
+- 顎だけ削る
+```
+
+基本仕様:
+
+```text
+現在顔 landmarks
+↓
+理想3D顔を現在姿勢へ投影
+↓
+理想2D landmarks
+↓
+現在 landmarks を少し寄せる
+↓
+warp
+```
+
+変形加工は:
+
+```text
+顔全体を自然に少し寄せる
+```
+
+思想とする。
 ```
 
 ---
@@ -409,43 +452,12 @@ Butterflyve 側:
 
 ## Milestone A
 
-### FaceGeometry v1
-
-目的:
-
-```text
-landmark 生点群を意味構造へ変換する
-```
-
-やること:
-
-```text
-- leftEyeCenter
-- rightEyeCenter
-- mouthCenter
-- noseTip
-- chin
-- faceWidth
-- faceHeight
-```
-
-完了条件:
-
-```text
-Engine が landmark番号ではなく
-意味構造を扱える
-```
-
----
-
-## Milestone B
-
 ### FacePose v1
 
 目的:
 
 ```text
-顔角度を取得する
+現在顔の姿勢を取得する
 ```
 
 やること:
@@ -459,110 +471,7 @@ Engine が landmark番号ではなく
 完了条件:
 
 ```text
-顔向きによる補正制御が可能
-```
-
----
-
-## Milestone C
-
-### IdealFace v1
-
-目的:
-
-```text
-理想3D顔定義を導入する
-```
-
-初期:
-
-```text
-- Natural
-- Sharp
-- Round
-- V-line
-```
-
-完了条件:
-
-```text
-Engine が IdealFace を保持できる
-```
-
----
-
-## Milestone D
-
-### CorrectionPlan v1
-
-目的:
-
-```text
-現在顔との差分を計算する
-```
-
-処理:
-
-```text
-Current face
-↓
-Project ideal face to current pose
-↓
-Difference
-↓
-CorrectionPlan
-```
-
-完了条件:
-
-```text
-差分ベース補正が可能
-```
-
----
-
-## Milestone E
-
-### Warp debug renderer
-
-目的:
-
-```text
-補正計画を視覚化する
-```
-
-やること:
-
-```text
-- displacement visualization
-- attenuation visualization
-- influence visualization
-```
-
----
-
-## Milestone F
-
-### Beauty warp v1
-
-目的:
-
-```text
-現在顔を理想顔へ少し寄せる
-```
-
-重要:
-
-```text
-完全一致ではなく自然補正
-```
-
-安全制御:
-
-```text
-- 最大補正量
-- pose attenuation
-- stability attenuation
+理想3D顔を現在姿勢へ投影できる
 ```
 
 ---
@@ -658,3 +567,59 @@ PR 作成は最初から `gh` CLI を使用する。
  git push -u origin <branch>
  gh pr create --title "..." --body "..."
 ```
+
+---
+
+# 13. 開発方針
+
+## 実コード確認
+
+症状だけから推測で実装しない。
+
+変更前に:
+
+```text
+- 呼び出し経路
+- 型定義
+- state ownership
+- lifecycle
+- guard / early return
+```
+
+を確認する。
+
+---
+
+## デバッグ方針
+
+Debug は:
+
+```text
+- compact
+- copyable
+- reproducible
+```
+
+を重視する。
+
+Studio は screenshot 前提ではなく:
+
+```text
+Copy Debug
+```
+
+を重視する。
+
+---
+
+## Git運用
+
+PR 作成は最初から `gh` CLI を使用する。
+
+推奨:
+
+```bash
+ git push -u origin <branch>
+ gh pr create --title "..." --body "..."
+```
+
