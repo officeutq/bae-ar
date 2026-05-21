@@ -147,6 +147,12 @@ async function bootstrap(): Promise<void> {
         <p>${faceFrameLoopDebug.inputType}</p>
         <h2>Detector:</h2>
         <p>${faceFrameLoopDebug.detectorType}</p>
+        <h2>Engine detect呼び出し回数:</h2>
+        <p>${faceFrameLoopDebug.detectCallCount}</p>
+        <h2>Engine detectスキップ回数:</h2>
+        <p>${faceFrameLoopDebug.detectSkipCount}</p>
+        <h2>Engine detect最終スキップ理由:</h2>
+        <p>${faceFrameLoopDebug.lastDetectSkipReason ?? "なし"}</p>
         <h2>顔姿勢:</h2>
         <pre>Pitch:${facePose.pitch}
 Yaw:${facePose.yaw}
