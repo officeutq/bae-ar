@@ -18,14 +18,32 @@ interface DetectorDebugInfo {
   lastDetectionTime: number | null
 }
 
+type DebugSection =
+  | "faceFrame"
+  | "mediaPipe"
+  | "loopTiming"
+  | "fullDebugText"
+
 async function bootstrap(): Promise<void> {
   const engine = new BeautyEngine()
   const camera = new CameraService()
   const detector = new MediaPipeFaceDetector()
   const app = document.querySelector<HTMLDivElement>("#app")
+  const overlayCanvas = document.createElement("canvas")
   const stateLog: string[] = []
   let lastEngineState: BeautyEngineState | undefined
   let latestFaceFrame: FaceFrame | undefined
+  let previousFrameTimestamp: number | undefined
+  let faceFrameFps: number | undefined
+  let copyStatus = ""
+  const openDebugSections: Record<DebugSection, boolean> = {
+    faceFrame: false,
+    mediaPipe: false,
+    loopTiming: false,
+    fullDebugText: false,
+  }
+
+  overlayCanvas.className = "overlay"
 
   if (!app) {
     throw new Error("Studio app root was not found")
@@ -55,8 +73,25 @@ async function bootstrap(): Promise<void> {
     return labels[state]
   }
 
+  function formatDetection(frame: FaceFrame | undefined): string {
+    return frame?.detected ? "検出中" : "未検出"
+  }
+
   function formatNumber(value: number): string {
     return value.toFixed(3)
+  }
+
+  function formatFps(value: number | undefined): string {
+    return value === undefined ? "計測中" : value.toFixed(1)
+  }
+
+  function escapeHtml(value: string): string {
+    return value
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#39;")
   }
 
   function formatLandmarkPreview(frame: FaceFrame | undefined): string {
@@ -68,7 +103,10 @@ async function bootstrap(): Promise<void> {
       .slice(0, 5)
       .map(
         (landmark, index) =>
-          `Landmark[${index}]:\nx: ${formatNumber(landmark.x)}\ny: ${formatNumber(landmark.y)}\nz: ${formatNumber(landmark.z)}`,
+          `Landmark[${index}]:
+x: ${formatNumber(landmark.x)}
+y: ${formatNumber(landmark.y)}
+z: ${formatNumber(landmark.z)}`,
       )
       .join("\n\n")
   }
@@ -99,14 +137,201 @@ Roll: ${formatNumber(frame.pose.roll)}
 Pose推定: 未実装（暫定値）`
   }
 
+  function buildDebugText(
+    frame: FaceFrame | undefined,
+    mediaPipeDebug: DetectorDebugInfo | null,
+    faceFrameLoopDebug: ReturnType<BeautyEngine["getFaceFrameLoopDebugInfo"]>,
+  ): string {
+    const videoDebug = faceFrameLoopDebug.video
+
+    return `Engine: ${engine.getState()}
+Camera: ${camera.getState()}
+Detection: ${frame?.detected ? "detected" : "not detected"}
+Landmarks: ${frame?.landmarks.length ?? 0}
+FPS: ${formatFps(faceFrameFps)}
+Loop: ${faceFrameLoopDebug.running ? "running" : "stopped"}
+Detect: ${faceFrameLoopDebug.detectCallCount}/${mediaPipeDebug?.detectSuccessCount ?? 0}
+
+MediaPipe:
+- debugInstanceId: ${mediaPipeDebug?.debugInstanceId ?? "none"}
+- initialized: ${String(mediaPipeDebug?.initialized ?? false)}
+- faceLandmarker: ${mediaPipeDebug?.hasFaceLandmarker ? "available" : "none"}
+- detectCount: ${mediaPipeDebug?.detectCount ?? 0}
+- detectAttempts: ${mediaPipeDebug?.detectAttemptCount ?? 0}
+- detectSuccess: ${mediaPipeDebug?.detectSuccessCount ?? 0}
+- detectErrors: ${mediaPipeDebug?.detectErrorCount ?? 0}
+- lastDetectError: ${mediaPipeDebug?.lastDetectError ?? "none"}
+- video: ${mediaPipeDebug?.videoWidth ?? 0}x${mediaPipeDebug?.videoHeight ?? 0}
+- lastDetectionTime: ${mediaPipeDebug?.lastDetectionTime ?? "none"}
+
+FaceFrame:
+- detected: ${String(frame?.detected ?? false)}
+- timestamp: ${frame?.timestamp ?? "none"}
+- landmarks: ${frame?.landmarks.length ?? 0}
+- blendshapes: ${frame?.blendshapes?.length ?? 0}
+
+Landmark preview:
+${formatLandmarkPreview(frame)}
+
+Blendshape preview:
+${formatBlendshapePreview(frame)}
+
+Pose:
+${formatPosePreview(frame)}
+
+Timing:
+- faceFrameFps: ${formatFps(faceFrameFps)}
+- videoCurrentTime: ${videoDebug?.currentTime ?? 0}
+- lastDetectionTime: ${mediaPipeDebug?.lastDetectionTime ?? "none"}
+
+Loop debug:
+- running: ${String(faceFrameLoopDebug.running)}
+- ticks: ${faceFrameLoopDebug.tickCount}
+- detectCalls: ${faceFrameLoopDebug.detectCallCount}
+- detectSkips: ${faceFrameLoopDebug.detectSkipCount}
+- lastDetectSkipReason: ${faceFrameLoopDebug.lastDetectSkipReason ?? "none"}
+- inputType: ${faceFrameLoopDebug.inputType}
+- detectorType: ${faceFrameLoopDebug.detectorType}
+- hasInput: ${String(faceFrameLoopDebug.hasInput)}
+- hasDetector: ${String(faceFrameLoopDebug.hasDetector)}
+
+Video:
+- size: ${videoDebug?.videoWidth ?? 0}x${videoDebug?.videoHeight ?? 0}
+- readyState: ${videoDebug?.readyState ?? 0}
+- paused: ${videoDebug ? String(videoDebug.paused) : "true"}
+- ended: ${videoDebug ? String(videoDebug.ended) : "false"}
+- srcObject: ${videoDebug?.hasSrcObject ? "available" : "none"}
+
+State log:
+${stateLog.join("\n") || "なし"}
+
+Camera:
+- error: ${camera.getError() ?? "none"}`
+  }
+
   function appendCameraPreview(): void {
     const input = engine.getInput()
 
     if (input instanceof HTMLVideoElement) {
       document
         .querySelector("#camera-preview")
-        ?.append(input)
+        ?.append(input, overlayCanvas)
+      drawLandmarkOverlay(latestFaceFrame)
     }
+  }
+
+  function resizeOverlayCanvas(video: HTMLVideoElement): boolean {
+    if (video.videoWidth === 0 || video.videoHeight === 0) {
+      return false
+    }
+
+    if (
+      overlayCanvas.width !== video.videoWidth ||
+      overlayCanvas.height !== video.videoHeight
+    ) {
+      overlayCanvas.width = video.videoWidth
+      overlayCanvas.height = video.videoHeight
+    }
+
+    return true
+  }
+
+  function clearLandmarkOverlay(): void {
+    const context = overlayCanvas.getContext("2d")
+
+    context?.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height)
+  }
+
+  function drawLandmarkOverlay(frame: FaceFrame | undefined): void {
+    const input = engine.getInput()
+
+    if (!(input instanceof HTMLVideoElement) || !resizeOverlayCanvas(input)) {
+      clearLandmarkOverlay()
+      return
+    }
+
+    const context = overlayCanvas.getContext("2d")
+
+    if (!context) {
+      return
+    }
+
+    context.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height)
+
+    if (!frame?.detected || frame.landmarks.length === 0) {
+      return
+    }
+
+    context.fillStyle = "#42f57b"
+
+    frame.landmarks.forEach((landmark) => {
+      const x = landmark.x * overlayCanvas.width
+      const y = landmark.y * overlayCanvas.height
+
+      context.beginPath()
+      context.arc(x, y, 1.5, 0, Math.PI * 2)
+      context.fill()
+    })
+  }
+
+  async function copyDebugText(debugText: string): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(debugText)
+      return
+    } catch {
+      const textarea = document.createElement("textarea")
+
+      textarea.value = debugText
+      textarea.readOnly = true
+      textarea.style.position = "fixed"
+      textarea.style.opacity = "0"
+      document.body.append(textarea)
+      textarea.select()
+
+      const copied = document.execCommand("copy")
+
+      textarea.remove()
+
+      if (!copied) {
+        throw new Error("Copy Debug failed")
+      }
+    }
+  }
+
+  function attachCopyDebugHandler(debugText: string): void {
+    document
+      .querySelector<HTMLButtonElement>("#copy-debug")
+      ?.addEventListener("click", async () => {
+        try {
+          await copyDebugText(debugText)
+          copyStatus = "コピーしました"
+        } catch {
+          copyStatus = "コピーに失敗しました"
+        }
+
+        render()
+        appendCameraPreview()
+      })
+  }
+
+  function detailsOpenAttribute(section: DebugSection): string {
+    return openDebugSections[section] ? " open" : ""
+  }
+
+  function attachDebugDetailsHandlers(): void {
+    document
+      .querySelectorAll<HTMLDetailsElement>("details[data-debug-section]")
+      .forEach((details) => {
+        const section = details.dataset.debugSection as DebugSection | undefined
+
+        if (!section) {
+          return
+        }
+
+        details.addEventListener("toggle", () => {
+          openDebugSections[section] = details.open
+        })
+      })
   }
 
   function render(): void {
@@ -114,8 +339,8 @@ Pose推定: 未実装（暫定値）`
     const mediaPipeDebug =
       engine.getFaceDetectorDebugInfo() as DetectorDebugInfo | null
     const faceFrameLoopDebug = engine.getFaceFrameLoopDebugInfo()
-    const videoDebug = faceFrameLoopDebug.video
     const frame = engine.getFaceFrame() ?? latestFaceFrame
+    const debugText = buildDebugText(frame, mediaPipeDebug, faceFrameLoopDebug)
 
     if (lastEngineState !== currentState) {
       stateLog.push(formatEngineState(currentState))
@@ -124,76 +349,96 @@ Pose推定: 未実装（暫定値）`
 
     app.innerHTML = `
       <section>
-        <h2>エンジン状態</h2>
-        <p>${formatEngineState(currentState)}</p>
-        <h2>状態ログ:</h2>
-        <pre>${stateLog.join("\n")}</pre>
-        <h2>カメラ状態</h2>
-        <p>${formatCameraState(camera.getState())}</p>
-        <h2>カメラエラー:</h2>
-        <p>${camera.getError() ?? "なし"}</p>
-        <h2>入力状態</h2>
-        <p>${engine.getInput() ? "接続済み" : "未接続"}</p>
-        <h2>顔検出:</h2>
-        <p>${frame?.detected ? "検出中" : "未検出"}</p>
-        <h2>ランドマーク数:</h2>
-        <p>${frame?.landmarks.length ?? 0}</p>
-        <h2>Frame timestamp:</h2>
-        <p>${frame?.timestamp ?? "なし"}</p>
-        <h2>Landmark preview</h2>
-        <pre>${formatLandmarkPreview(frame)}</pre>
-        <h2>Blendshape preview</h2>
-        <pre>${formatBlendshapePreview(frame)}</pre>
-        <h2>Pose preview</h2>
-        <pre>${formatPosePreview(frame)}</pre>
-        <h2>MediaPipe状態</h2>
-        <p>${mediaPipeDebug ? (mediaPipeDebug.initialized ? "初期化済み" : "未初期化") : "不明"}</p>
-        <h2>MediaPipe debugInstanceId:</h2>
-        <p>${mediaPipeDebug?.debugInstanceId ?? "なし"}</p>
-        <h2>検出回数:</h2>
-        <p>${mediaPipeDebug?.detectCount ?? 0}</p>
-        <h2>MediaPipe detect試行回数:</h2>
-        <p>${mediaPipeDebug?.detectAttemptCount ?? 0}</p>
-        <h2>MediaPipe detect成功回数:</h2>
-        <p>${mediaPipeDebug?.detectSuccessCount ?? 0}</p>
-        <h2>MediaPipe detectエラー回数:</h2>
-        <p>${mediaPipeDebug?.detectErrorCount ?? 0}</p>
-        <h2>MediaPipe detect最終エラー:</h2>
-        <p>${mediaPipeDebug?.lastDetectError ?? "なし"}</p>
-        <h2>MediaPipe initialized:</h2>
-        <p>${String(mediaPipeDebug?.initialized ?? false)}</p>
-        <h2>MediaPipe FaceLandmarker:</h2>
-        <p>${mediaPipeDebug?.hasFaceLandmarker ? "あり" : "なし"}</p>
-        <h2>MediaPipe Video:</h2>
-        <p>${mediaPipeDebug?.videoWidth ?? 0}x${mediaPipeDebug?.videoHeight ?? 0}</p>
-        <h2>FaceFrame Video:</h2>
-        <p>${videoDebug?.videoWidth ?? 0}x${videoDebug?.videoHeight ?? 0}</p>
-        <h2>Video readyState:</h2>
-        <p>${videoDebug?.readyState ?? 0}</p>
-        <h2>Video paused:</h2>
-        <p>${videoDebug ? String(videoDebug.paused) : "true"}</p>
-        <h2>Video currentTime:</h2>
-        <p>${videoDebug?.currentTime ?? 0}</p>
-        <h2>Video srcObject:</h2>
-        <p>${videoDebug?.hasSrcObject ? "あり" : "なし"}</p>
-        <h2>FaceFrameループ:</h2>
-        <p>${faceFrameLoopDebug.running ? "実行中" : "停止中"}</p>
-        <h2>ループ回数:</h2>
-        <p>${faceFrameLoopDebug.tickCount}</p>
-        <h2>入力型:</h2>
-        <p>${faceFrameLoopDebug.inputType}</p>
-        <h2>Detector:</h2>
-        <p>${faceFrameLoopDebug.detectorType}</p>
-        <h2>Engine detect呼び出し回数:</h2>
-        <p>${faceFrameLoopDebug.detectCallCount}</p>
-        <h2>Engine detectスキップ回数:</h2>
-        <p>${faceFrameLoopDebug.detectSkipCount}</p>
-        <h2>Engine detect最終スキップ理由:</h2>
-        <p>${faceFrameLoopDebug.lastDetectSkipReason ?? "なし"}</p>
-        <h2>プレビュー:</h2>
-        <div id="camera-preview">${camera.getVideo() ? "" : "利用できません"}</div>
+        <header>
+          <h2>Debug summary</h2>
+          <button id="copy-debug" type="button">Copy Debug</button>
+          <span aria-live="polite">${copyStatus}</span>
+        </header>
+        <style>
+          .preview-container {
+            position: relative;
+            display: inline-block;
+            max-width: 100%;
+          }
+
+          .preview-container video {
+            display: block;
+            max-width: 100%;
+            height: auto;
+          }
+
+          .preview-container .overlay {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+          }
+        </style>
+        <pre>Engine: ${formatEngineState(currentState)}
+Camera: ${formatCameraState(camera.getState())}
+Detection: ${formatDetection(frame)}
+Landmarks: ${frame?.landmarks.length ?? 0}
+FPS: ${formatFps(faceFrameFps)}
+Loop: ${faceFrameLoopDebug.running ? "実行中" : "停止中"}
+Detect: ${faceFrameLoopDebug.detectCallCount}/${mediaPipeDebug?.detectSuccessCount ?? 0}</pre>
+        <h2>プレビュー</h2>
+        <div id="camera-preview" class="preview-container">${camera.getVideo() ? "" : "利用できません"}</div>
+        <details data-debug-section="faceFrame"${detailsOpenAttribute("faceFrame")}>
+          <summary>FaceFrame Debug</summary>
+          <pre>${escapeHtml(`Frame timestamp: ${frame?.timestamp ?? "なし"}
+顔検出: ${formatDetection(frame)}
+ランドマーク数: ${frame?.landmarks.length ?? 0}
+blendshape数: ${frame?.blendshapes?.length ?? 0}
+
+Landmark preview:
+${formatLandmarkPreview(frame)}
+
+Blendshape preview:
+${formatBlendshapePreview(frame)}
+
+Pose preview:
+${formatPosePreview(frame)}`)}</pre>
+        </details>
+        <details data-debug-section="mediaPipe"${detailsOpenAttribute("mediaPipe")}>
+          <summary>MediaPipe Debug</summary>
+          <pre>${escapeHtml(`initialized: ${String(mediaPipeDebug?.initialized ?? false)}
+FaceLandmarker: ${mediaPipeDebug?.hasFaceLandmarker ? "あり" : "なし"}
+debugInstanceId: ${mediaPipeDebug?.debugInstanceId ?? "なし"}
+detectCount: ${mediaPipeDebug?.detectCount ?? 0}
+detectAttemptCount: ${mediaPipeDebug?.detectAttemptCount ?? 0}
+detectSuccessCount: ${mediaPipeDebug?.detectSuccessCount ?? 0}
+detectErrorCount: ${mediaPipeDebug?.detectErrorCount ?? 0}
+lastDetectError: ${mediaPipeDebug?.lastDetectError ?? "なし"}
+video: ${mediaPipeDebug?.videoWidth ?? 0}x${mediaPipeDebug?.videoHeight ?? 0}
+lastDetectionTime: ${mediaPipeDebug?.lastDetectionTime ?? "なし"}`)}</pre>
+        </details>
+        <details data-debug-section="loopTiming"${detailsOpenAttribute("loopTiming")}>
+          <summary>Loop / Timing Debug</summary>
+          <pre>${escapeHtml(`FaceFrameループ: ${faceFrameLoopDebug.running ? "実行中" : "停止中"}
+ループ回数: ${faceFrameLoopDebug.tickCount}
+Engine detect呼び出し回数: ${faceFrameLoopDebug.detectCallCount}
+Engine detectスキップ回数: ${faceFrameLoopDebug.detectSkipCount}
+Engine detect最終スキップ理由: ${faceFrameLoopDebug.lastDetectSkipReason ?? "なし"}
+入力型: ${faceFrameLoopDebug.inputType}
+Detector: ${faceFrameLoopDebug.detectorType}
+hasInput: ${String(faceFrameLoopDebug.hasInput)}
+hasDetector: ${String(faceFrameLoopDebug.hasDetector)}
+FPS: ${formatFps(faceFrameFps)}
+Video currentTime: ${faceFrameLoopDebug.video?.currentTime ?? 0}
+Video readyState: ${faceFrameLoopDebug.video?.readyState ?? 0}
+Video paused: ${faceFrameLoopDebug.video ? String(faceFrameLoopDebug.video.paused) : "true"}
+Video srcObject: ${faceFrameLoopDebug.video?.hasSrcObject ? "あり" : "なし"}`)}</pre>
+        </details>
+        <details data-debug-section="fullDebugText"${detailsOpenAttribute("fullDebugText")}>
+          <summary>Full Debug Text</summary>
+          <textarea readonly rows="18">${escapeHtml(debugText)}</textarea>
+        </details>
       </section>
     `
+
+    attachCopyDebugHandler(debugText)
+    attachDebugDetailsHandlers()
   }
 
   engine.setFaceDetector(detector)
@@ -203,6 +448,12 @@ Pose推定: 未実装（暫定値）`
   }, 1000)
 
   engine.onFaceFrame((frame) => {
+    if (previousFrameTimestamp !== undefined) {
+      const elapsedMs = frame.timestamp - previousFrameTimestamp
+      faceFrameFps = elapsedMs > 0 ? 1000 / elapsedMs : undefined
+    }
+
+    previousFrameTimestamp = frame.timestamp
     latestFaceFrame = frame
 
     render()
