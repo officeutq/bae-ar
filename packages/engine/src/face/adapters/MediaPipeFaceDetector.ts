@@ -51,6 +51,7 @@ export class MediaPipeFaceDetector implements FaceDetector {
       },
       runningMode: "VIDEO",
       numFaces: 1,
+      outputFaceBlendshapes: true,
     })
     this.initialized = true
   }
@@ -70,6 +71,7 @@ export class MediaPipeFaceDetector implements FaceDetector {
 
       const result = this.faceLandmarker.detectForVideo(input, timestamp)
       const faceLandmarks = result.faceLandmarks[0] ?? []
+      const faceBlendshapes = result.faceBlendshapes[0]?.categories ?? []
 
       this.detectSuccessCount += 1
       this.lastDetectError = null
@@ -81,6 +83,11 @@ export class MediaPipeFaceDetector implements FaceDetector {
           x: point.x,
           y: point.y,
           z: point.z,
+        })),
+        blendshapes: faceBlendshapes.map((category) => ({
+          categoryName: category.categoryName,
+          score: category.score,
+          displayName: category.displayName,
         })),
         pose: {
           pitch: 0,

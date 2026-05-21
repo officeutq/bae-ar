@@ -8,6 +8,7 @@ export class MockFaceDetector implements FaceDetector {
       detected: true,
       timestamp: Date.now(),
       landmarks: [],
+      blendshapes: [],
       pose: {
         pitch: 0,
         yaw: 0,

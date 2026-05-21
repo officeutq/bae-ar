@@ -1,6 +1,5 @@
 import { BeautyEngine } from "@bae-ar/engine"
-import type { BeautyEngineState } from "@bae-ar/engine"
-import type { FacePose } from "@bae-ar/engine"
+import type { BeautyEngineState, FaceFrame } from "@bae-ar/engine"
 import { MediaPipeFaceDetector } from "@bae-ar/engine"
 import type { CameraServiceState } from "./services/CameraService"
 import { CameraService } from "./services/CameraService"
@@ -26,13 +25,7 @@ async function bootstrap(): Promise<void> {
   const app = document.querySelector<HTMLDivElement>("#app")
   const stateLog: string[] = []
   let lastEngineState: BeautyEngineState | undefined
-  let faceDetected = false
-  let facePose: FacePose = {
-    pitch: 0,
-    yaw: 0,
-    roll: 0,
-  }
-  let landmarkCount = 0
+  let latestFaceFrame: FaceFrame | undefined
 
   if (!app) {
     throw new Error("Studio app root was not found")
@@ -62,6 +55,50 @@ async function bootstrap(): Promise<void> {
     return labels[state]
   }
 
+  function formatNumber(value: number): string {
+    return value.toFixed(3)
+  }
+
+  function formatLandmarkPreview(frame: FaceFrame | undefined): string {
+    if (!frame || frame.landmarks.length === 0) {
+      return "なし"
+    }
+
+    return frame.landmarks
+      .slice(0, 5)
+      .map(
+        (landmark, index) =>
+          `Landmark[${index}]:\nx: ${formatNumber(landmark.x)}\ny: ${formatNumber(landmark.y)}\nz: ${formatNumber(landmark.z)}`,
+      )
+      .join("\n\n")
+  }
+
+  function formatBlendshapePreview(frame: FaceFrame | undefined): string {
+    if (!frame?.blendshapes || frame.blendshapes.length === 0) {
+      return "なし"
+    }
+
+    return [...frame.blendshapes]
+      .sort((current, next) => next.score - current.score)
+      .slice(0, 5)
+      .map(
+        (blendshape) =>
+          `${blendshape.displayName || blendshape.categoryName}: ${formatNumber(blendshape.score)}`,
+      )
+      .join("\n")
+  }
+
+  function formatPosePreview(frame: FaceFrame | undefined): string {
+    if (!frame) {
+      return "なし"
+    }
+
+    return `Pitch: ${formatNumber(frame.pose.pitch)}
+Yaw: ${formatNumber(frame.pose.yaw)}
+Roll: ${formatNumber(frame.pose.roll)}
+Pose推定: 未実装（暫定値）`
+  }
+
   function appendCameraPreview(): void {
     const input = engine.getInput()
 
@@ -78,6 +115,7 @@ async function bootstrap(): Promise<void> {
       engine.getFaceDetectorDebugInfo() as DetectorDebugInfo | null
     const faceFrameLoopDebug = engine.getFaceFrameLoopDebugInfo()
     const videoDebug = faceFrameLoopDebug.video
+    const frame = engine.getFaceFrame() ?? latestFaceFrame
 
     if (lastEngineState !== currentState) {
       stateLog.push(formatEngineState(currentState))
@@ -86,21 +124,29 @@ async function bootstrap(): Promise<void> {
 
     app.innerHTML = `
       <section>
-        <h2>エンジン状態:</h2>
+        <h2>エンジン状態</h2>
         <p>${formatEngineState(currentState)}</p>
         <h2>状態ログ:</h2>
         <pre>${stateLog.join("\n")}</pre>
-        <h2>カメラ状態:</h2>
+        <h2>カメラ状態</h2>
         <p>${formatCameraState(camera.getState())}</p>
         <h2>カメラエラー:</h2>
         <p>${camera.getError() ?? "なし"}</p>
-        <h2>入力状態:</h2>
+        <h2>入力状態</h2>
         <p>${engine.getInput() ? "接続済み" : "未接続"}</p>
         <h2>顔検出:</h2>
-        <p>${faceDetected ? "検出中" : "未検出"}</p>
+        <p>${frame?.detected ? "検出中" : "未検出"}</p>
         <h2>ランドマーク数:</h2>
-        <p>${landmarkCount}</p>
-        <h2>MediaPipe状態:</h2>
+        <p>${frame?.landmarks.length ?? 0}</p>
+        <h2>Frame timestamp:</h2>
+        <p>${frame?.timestamp ?? "なし"}</p>
+        <h2>Landmark preview</h2>
+        <pre>${formatLandmarkPreview(frame)}</pre>
+        <h2>Blendshape preview</h2>
+        <pre>${formatBlendshapePreview(frame)}</pre>
+        <h2>Pose preview</h2>
+        <pre>${formatPosePreview(frame)}</pre>
+        <h2>MediaPipe状態</h2>
         <p>${mediaPipeDebug ? (mediaPipeDebug.initialized ? "初期化済み" : "未初期化") : "不明"}</p>
         <h2>MediaPipe debugInstanceId:</h2>
         <p>${mediaPipeDebug?.debugInstanceId ?? "なし"}</p>
@@ -144,10 +190,6 @@ async function bootstrap(): Promise<void> {
         <p>${faceFrameLoopDebug.detectSkipCount}</p>
         <h2>Engine detect最終スキップ理由:</h2>
         <p>${faceFrameLoopDebug.lastDetectSkipReason ?? "なし"}</p>
-        <h2>顔姿勢:</h2>
-        <pre>Pitch:${facePose.pitch}
-Yaw:${facePose.yaw}
-Roll:${facePose.roll}</pre>
         <h2>プレビュー:</h2>
         <div id="camera-preview">${camera.getVideo() ? "" : "利用できません"}</div>
       </section>
@@ -161,9 +203,7 @@ Roll:${facePose.roll}</pre>
   }, 1000)
 
   engine.onFaceFrame((frame) => {
-    faceDetected = frame.detected
-    facePose = frame.pose
-    landmarkCount = frame.landmarks.length
+    latestFaceFrame = frame
 
     render()
     appendCameraPreview()

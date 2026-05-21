@@ -10,9 +10,16 @@ export interface FaceLandmark {
   z: number
 }
 
+export interface FaceBlendshape {
+  categoryName: string
+  score: number
+  displayName?: string
+}
+
 export interface FaceFrame {
   detected: boolean
   timestamp: number
   landmarks: FaceLandmark[]
+  blendshapes?: FaceBlendshape[]
   pose: FacePose
 }
