@@ -45,7 +45,6 @@ Engine Runtime は UI を持たない中核 SDK です。
 
 将来予定:
 
-- FacePose の実推定
 - IdealFace の読み込み
 - IdealFace Projection
 - CorrectionPlan 生成
@@ -136,7 +135,7 @@ FaceFrame
   pose: FacePose
 ```
 
-現在、`pose` は `pitch: 0` / `yaw: 0` / `roll: 0` の placeholder です。FacePose の実推定は未実装です。
+現在、`pose` は MediaPipe Face Landmarker の `facialTransformationMatrixes` から推定します。matrix が取得できない場合は landmarks から yaw / pitch / roll を最小推定します。これは IdealFace Projection の入力に使うための v1 実装であり、高精度な head tracking ではありません。
 
 `FaceGeometry` は landmarks から導出する補助情報です。
 
