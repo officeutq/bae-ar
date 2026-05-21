@@ -82,6 +82,7 @@ async function bootstrap(): Promise<void> {
   function render(): void {
     const currentState = engine.getState()
     const mediaPipeDebug = getDetectorDebugInfo(detector)
+    const faceFrameLoopDebug = engine.getFaceFrameLoopDebugInfo()
 
     if (lastEngineState !== currentState) {
       stateLog.push(formatEngineState(currentState))
@@ -110,6 +111,14 @@ async function bootstrap(): Promise<void> {
         <p>${mediaPipeDebug?.detectCount ?? 0}</p>
         <h2>Video:</h2>
         <p>${mediaPipeDebug?.videoWidth ?? 0}x${mediaPipeDebug?.videoHeight ?? 0}</p>
+        <h2>FaceFrameループ:</h2>
+        <p>${faceFrameLoopDebug.running ? "実行中" : "停止中"}</p>
+        <h2>ループ回数:</h2>
+        <p>${faceFrameLoopDebug.tickCount}</p>
+        <h2>入力型:</h2>
+        <p>${faceFrameLoopDebug.inputType}</p>
+        <h2>Detector:</h2>
+        <p>${faceFrameLoopDebug.detectorType}</p>
         <h2>顔姿勢:</h2>
         <pre>Pitch:${facePose.pitch}
 Yaw:${facePose.yaw}

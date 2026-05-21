@@ -8,6 +8,15 @@ import type { FaceFrame } from "./face/FaceFrame"
 
 type FaceFrameListener = (frame: FaceFrame) => void
 
+export interface FaceFrameLoopDebugInfo {
+  running: boolean
+  tickCount: number
+  inputType: string
+  detectorType: string
+  hasInput: boolean
+  hasDetector: boolean
+}
+
 export class BeautyEngine {
   private state: BeautyEngineState = "idle"
   private input?: BeautyEngineInput
@@ -15,6 +24,7 @@ export class BeautyEngine {
   private currentFaceFrame?: FaceFrame
   private faceFrameListeners: FaceFrameListener[] = []
   private faceFrameLoopId?: ReturnType<typeof setInterval>
+  private faceFrameLoopTickCount = 0
 
   constructor(options?: BeautyEngineOptions) {
     this.input = options?.input
@@ -75,6 +85,17 @@ export class BeautyEngine {
     this.faceFrameListeners.push(callback)
   }
 
+  getFaceFrameLoopDebugInfo(): FaceFrameLoopDebugInfo {
+    return {
+      running: Boolean(this.faceFrameLoopId),
+      tickCount: this.faceFrameLoopTickCount,
+      inputType: this.getInputType(),
+      detectorType: this.faceDetector?.constructor.name ?? "none",
+      hasInput: Boolean(this.input),
+      hasDetector: Boolean(this.faceDetector),
+    }
+  }
+
   private startFaceFrameLoopIfReady(): void {
     if (this.faceFrameLoopId) {
       return
@@ -92,6 +113,8 @@ export class BeautyEngine {
     }
 
     this.faceFrameLoopId = setInterval(async () => {
+      this.faceFrameLoopTickCount += 1
+
       const currentInput = this.getInput()
       const currentDetector = this.getFaceDetector()
 
@@ -103,6 +126,26 @@ export class BeautyEngine {
         this.faceFrameListeners.forEach((callback) => callback(frame))
       }
     }, 1000)
+  }
+
+  private getInputType(): string {
+    if (!this.input) {
+      return "none"
+    }
+
+    if (this.input instanceof HTMLVideoElement) {
+      return "HTMLVideoElement"
+    }
+
+    if (this.input instanceof HTMLCanvasElement) {
+      return "HTMLCanvasElement"
+    }
+
+    if (this.input instanceof HTMLImageElement) {
+      return "HTMLImageElement"
+    }
+
+    return "unknown"
   }
 
   private stopFaceFrameLoop(): void {
