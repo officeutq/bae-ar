@@ -87,7 +87,7 @@ IdealFace Authoring Tool は将来予定です。
 - 2D 動画 / 複数画像からのオフライン生成
 - Runtime で読み込む IdealFace asset の出力
 
-IdealFace Authoring Tool は、MediaPipe canonical face model そのものを作るツールではありません。最初は `natural_v1` の controlPoints を編集・保存・出力する最小ツールとして始め、将来的に BAE AR 独自の canonical face mesh、ideal landmark mapping、ideal 478 landmarks 生成へ進む可能性があります。
+IdealFace Authoring Tool は、MediaPipe canonical face model そのものを作るツールではありません。`natural_v1` の controlPoints は現段階の投影検証用データであり、IdealFace 本体ではありません。
 
 IdealFace Authoring Tool の処理はリアルタイム Engine Runtime には含めません。
 
@@ -289,11 +289,13 @@ IdealFace Authoring Tool は MediaPipe canonical face model そのものを作�
 
 ## IdealFace / Projection / Shape Processing 中核仕様
 
-IdealFace は、BAE AR 独自の理想顔 asset として、最終的に 3D の `idealLandmarks3D` 478 点を持ちます。これは正面固定の 2D landmarks ではなく、現在顔の姿勢へ投影できる 3D landmarks です。
+IdealFace は、BAE AR 独自の理想 3D 顔プリセットとして、3D の `idealLandmarks3D` 478 点を本体とする asset です。これは正面固定の 2D landmarks ではなく、現在顔の姿勢へ投影できる 3D landmarks です。
 
 Runtime の Projection は、IdealFace の 3D landmarks を現在顔の `FacePose` に合わせて投影し、2D の projected ideal 478 landmarks を生成します。正面 2D landmarks だけを基準にすると、顔の角度変化へ追随できないため、yaw / pitch / roll への対応は Projection で行います。
 
 Shape Processing の入力は、カメラ映像から MediaPipe Face Landmarker が取得した current 478 landmarks と、Projection 後の projected ideal 478 landmarks です。Shape Processing はこの 2 つの差分を見て、後段の `CorrectionPlan` / Shape Warp へ進みます。
+
+現在の `natural_v1` の 6 点 controlPoints は、現段階の投影検証用データです。Projection の流れを検証するための暫定データであり、IdealFace 本体ではありません。
 
 ```text
 current 478 landmarks
