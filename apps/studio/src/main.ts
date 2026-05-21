@@ -5,6 +5,7 @@ import type {
   FaceGeometry,
   FaceGeometryPoint,
   IdealFace,
+  IdealFaceProjectionResult,
 } from "@bae-ar/engine"
 import { MediaPipeFaceDetector } from "@bae-ar/engine"
 import type { CameraServiceState } from "./services/CameraService"
@@ -28,6 +29,7 @@ type DebugSection =
   | "faceFrame"
   | "faceGeometry"
   | "idealFace"
+  | "idealFaceProjection"
   | "mediaPipe"
   | "loopTiming"
   | "fullDebugText"
@@ -48,6 +50,7 @@ async function bootstrap(): Promise<void> {
     faceFrame: false,
     faceGeometry: false,
     idealFace: false,
+    idealFaceProjection: false,
     mediaPipe: false,
     loopTiming: false,
     fullDebugText: false,
@@ -187,10 +190,35 @@ ideal 478 landmarks生成: ${idealFace.landmarkTopology.canGenerateIdealLandmark
 Projection: ${idealFace.landmarkTopology.projectionStatus}`
   }
 
+  function formatIdealFaceProjectionPreview(
+    projection: IdealFaceProjectionResult,
+  ): string {
+    const pointPreview =
+      projection.points.length === 0
+        ? "なし"
+        : projection.points
+            .slice(0, 5)
+            .map(
+              (point) =>
+                `${point.id}: x=${formatNumber(point.x)} y=${formatNumber(point.y)} z=${formatNumber(point.z)}`,
+            )
+            .join("\n")
+
+    return `IdealFace Projection:
+投影状態: ${projection.status}
+source idealFace id: ${projection.idealFaceId}
+version: ${projection.idealFaceVersion}
+projected point count: ${projection.points.length}
+
+projected point preview:
+${pointPreview}`
+  }
+
   function buildDebugText(
     frame: FaceFrame | undefined,
     geometry: FaceGeometry | undefined,
     idealFace: IdealFace,
+    idealFaceProjection: IdealFaceProjectionResult,
     availableIdealFaces: IdealFace[],
     mediaPipeDebug: DetectorDebugInfo | null,
     faceFrameLoopDebug: ReturnType<BeautyEngine["getFaceFrameLoopDebugInfo"]>,
@@ -236,6 +264,8 @@ Pose:
 ${formatPosePreview(frame)}
 
 ${formatIdealFacePreview(idealFace)}
+
+${formatIdealFaceProjectionPreview(idealFaceProjection)}
 availableIdealFaces: ${availableIdealFaces
   .map((availableIdealFace) => availableIdealFace.metadata.id)
   .join(", ")}
@@ -279,7 +309,11 @@ Camera:
       document
         .querySelector("#camera-preview")
         ?.append(input, overlayCanvas)
-      drawLandmarkOverlay(latestFaceFrame, engine.getFaceGeometry())
+      drawLandmarkOverlay(
+        latestFaceFrame,
+        engine.getFaceGeometry(),
+        engine.getIdealFaceProjection(),
+      )
     }
   }
 
@@ -308,6 +342,7 @@ Camera:
   function drawLandmarkOverlay(
     frame: FaceFrame | undefined,
     geometry: FaceGeometry | undefined,
+    idealFaceProjection: IdealFaceProjectionResult,
   ): void {
     const input = engine.getInput()
 
@@ -361,6 +396,25 @@ Camera:
       context.beginPath()
       context.arc(x, y, 4, 0, Math.PI * 2)
       context.fill()
+    })
+
+    if (idealFaceProjection.status !== "projected") {
+      return
+    }
+
+    context.fillStyle = "#00c2ff"
+    context.strokeStyle = "#004f66"
+    context.font = "12px sans-serif"
+
+    idealFaceProjection.points.forEach((point) => {
+      const x = point.x * overlayCanvas.width
+      const y = point.y * overlayCanvas.height
+
+      context.beginPath()
+      context.arc(x, y, 5, 0, Math.PI * 2)
+      context.fill()
+      context.stroke()
+      context.fillText(point.id, x + 7, y - 7)
     })
   }
 
@@ -432,11 +486,13 @@ Camera:
     const frame = engine.getFaceFrame() ?? latestFaceFrame
     const geometry = engine.getFaceGeometry()
     const idealFace = engine.getIdealFace()
+    const idealFaceProjection = engine.getIdealFaceProjection()
     const availableIdealFaces = engine.getAvailableIdealFaces()
     const debugText = buildDebugText(
       frame,
       geometry,
       idealFace,
+      idealFaceProjection,
       availableIdealFaces,
       mediaPipeDebug,
       faceFrameLoopDebug,
@@ -481,6 +537,7 @@ Detection: ${formatDetection(frame)}
 Landmarks: ${frame?.landmarks.length ?? 0}
 顔姿勢: yaw ${frame ? formatNumber(frame.pose.yaw) : "なし"} / pitch ${frame ? formatNumber(frame.pose.pitch) : "なし"} / roll ${frame ? formatNumber(frame.pose.roll) : "なし"}
 IdealFace: ${idealFace.metadata.name} (${idealFace.metadata.id}) / ${idealFace.metadata.version} / ${idealFace.model.controlPoints.length} 点
+Projection: ${idealFaceProjection.status} / ${idealFaceProjection.points.length} 点
 利用可能IdealFace: ${availableIdealFaces.length}
 FPS: ${formatFps(faceFrameFps)}
 Loop: ${faceFrameLoopDebug.running ? "実行中" : "停止中"}
@@ -510,6 +567,10 @@ ${formatPosePreview(frame)}`)}</pre>
         <details data-debug-section="idealFace"${detailsOpenAttribute("idealFace")}>
           <summary>IdealFace 確認</summary>
           <pre>${escapeHtml(formatIdealFacePreview(idealFace))}</pre>
+        </details>
+        <details data-debug-section="idealFaceProjection"${detailsOpenAttribute("idealFaceProjection")}>
+          <summary>IdealFace Projection 確認</summary>
+          <pre>${escapeHtml(formatIdealFaceProjectionPreview(idealFaceProjection))}</pre>
         </details>
         <details data-debug-section="mediaPipe"${detailsOpenAttribute("mediaPipe")}>
           <summary>MediaPipe Debug</summary>

@@ -21,7 +21,7 @@ export interface IdealFaceModel3D {
 export interface IdealFaceLandmarkTopology {
   mediapipeLandmarkCount: 478
   canGenerateIdealLandmarks: boolean
-  projectionStatus: "not_implemented"
+  projectionStatus: "not_implemented" | "control_points_projected"
 }
 
 // IdealFace owns an independent canonical 3D model. It is not a MediaPipe

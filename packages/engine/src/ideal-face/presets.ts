@@ -33,7 +33,7 @@ export const NATURAL_IDEAL_FACE_PRESET: IdealFacePreset = {
   landmarkTopology: {
     mediapipeLandmarkCount: 478,
     canGenerateIdealLandmarks: false,
-    projectionStatus: "not_implemented",
+    projectionStatus: "control_points_projected",
   },
 }
 
