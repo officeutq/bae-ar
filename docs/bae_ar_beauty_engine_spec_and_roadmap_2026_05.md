@@ -96,10 +96,12 @@ Beauty Studio:
 - IdealFace v1 型定義
 - Natural v1 最小プリセット
 - IdealFace 公開 API
+- IdealFace Projection v1 最小実装
+- projected IdealFace controlPoints overlay
 
 ### 3.2 未実装
 
-- IdealFace Projection
+- ideal 478 landmarks 生成
 - CorrectionPlan
 - Shape Warp
 - Color Processing
@@ -120,7 +122,7 @@ Beauty Studio:
 - `FacePose` は MediaPipe Face Landmarker の transformation matrix を優先して推定します。matrix が取得できない場合は landmarks から最小推定します。
 - `IdealFace` は Runtime で読み込める最小構造と Natural v1 プリセットを持ちます。
 - `IdealFace` は MediaPipe 478 landmarks そのものではありません。
-- IdealFace Projection は未実装です。
+- IdealFace Projection v1 は controlPoints のみの部分実装です。
 - `FaceGeometry` は landmarks から代表点やサイズを計算する補助解析です。
 - 実際の shape warp、color processing、rendering はまだありません。
 - Authoring Tool はまだありません。
@@ -183,6 +185,8 @@ setIdealFace(idealFace: IdealFace): void
 getIdealFace(): IdealFace
 getAvailableIdealFaces(): IdealFacePreset[]
 selectIdealFace(id: string): IdealFace | undefined
+getIdealFaceProjection(): IdealFaceProjectionResult
+projectIdealFace(): IdealFaceProjectionResult
 
 getFaceFrame(): FaceFrame | undefined
 getFaceGeometry(): FaceGeometry | undefined
@@ -288,20 +292,28 @@ v1 の制限事項:
 - 現在のプリセットは `natural_v1` / `Natural` の 1 つのみ
 - 3D control point は Projection の土台確認用の最小点群
 - ideal 478 landmarks の生成は未実装
-- IdealFace Projection は未実装
+- IdealFace Projection v1 は controlPoints のみ部分実装
 - CorrectionPlan / Shape Warp は未実装
 
 ## 8. IdealFace Projection
 
-IdealFace Projection は未実装です。
+IdealFace Projection v1 は部分実装済みです。
+
+現在は `IdealFace.model.controlPoints` を FacePose の yaw / pitch / roll に応じて回転し、Studio overlay 用の projected 2D points を生成します。これは Projection 検証用の最小実装であり、Perspective camera、face surface、mesh、renderer はまだ持ちません。
 
 責務:
 
 - FacePose を受け取る
-- IdealFace 3D model を現在姿勢へ投影する
-- ideal 2D landmarks 478 点を生成する
+- IdealFace の 3D controlPoints を現在姿勢へ回転する
+- overlay 用の projected 2D points を生成する
 
-Projection 後の ideal 2D landmarks はすでに現在姿勢を反映しています。したがって、CorrectionPlan は姿勢補正を担当しません。
+未実装:
+
+- ideal 478 landmarks の生成
+- current 478 landmarks と ideal 478 landmarks の比較
+- Shape Warp / CorrectionPlan
+
+将来の完全版では、Projection 後の ideal 2D landmarks はすでに現在姿勢を反映します。したがって、CorrectionPlan は姿勢補正を担当しません。
 
 ## 9. Shape Processing
 
@@ -491,17 +503,23 @@ Studio は Engine の private field、内部状態、内部実装へ直接アク
 
 ### Milestone 4: IdealFace Projection v1
 
-状態: 未実装
+状態: 部分実装済み（4-A / 4-B）
 
 目的:
 
-- IdealFace 3D model を現在 FacePose へ投影し、ideal 2D landmarks 478 点を得る。
+- IdealFace controlPoints を現在 FacePose へ投影し、overlay で現在顔と比較できるようにする。
 
 完了条件:
 
-- current 478 landmarks と ideal 478 landmarks を比較できる。
-- Projection 後の ideal 2D landmarks が現在姿勢を反映している。
-- Studio overlay で差分を確認できる。
+- BeautyEngine の公開 API から projected IdealFace points を取得できる。
+- Studio overlay で projected IdealFace controlPoints を確認できる。
+- yaw / pitch / roll に応じて projected points が変化する。
+
+未実装:
+
+- ideal 478 landmarks の生成
+- current 478 landmarks と ideal 478 landmarks の比較
+- Shape Warp / CorrectionPlan
 
 ### Milestone 5: CorrectionPlan v1
 

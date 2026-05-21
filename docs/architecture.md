@@ -44,10 +44,11 @@ Engine Runtime は UI を持たない中核 SDK です。
 - debug 情報の公開
 - IdealFace v1 の読み込み
 - IdealFace 公開 API
+- IdealFace Projection v1 の controlPoints 投影
 
 将来予定:
 
-- IdealFace Projection
+- ideal 478 landmarks 生成
 - CorrectionPlan 生成
 - Shape Warp
 - Color Processing
@@ -67,7 +68,7 @@ Beauty Studio は Engine Runtime を開発・検証・調整するための開�
 - `HTMLVideoElement` を `BeautyEngine.setInput()` へ渡す接続
 - `MediaPipeFaceDetector` の初期化と Engine への設定
 - Engine 状態、カメラ状態、検出状態、FaceFrame、FaceGeometry、MediaPipe debug の表示
-- landmarks / geometry point overlay
+- landmarks / geometry point / projected IdealFace controlPoints overlay
 - Copy Debug 用の debug text 生成
 
 Studio は Engine Runtime の公開 API のみを利用します。Engine の private field や内部実装ファイルへ直接依存しません。
@@ -118,6 +119,7 @@ apps/studio/src/main.ts
   -> engine.getFaceFrame()
   -> engine.getFaceGeometry()
   -> engine.getIdealFace()
+  -> engine.getIdealFaceProjection()
   -> engine.getAvailableIdealFaces()
   -> engine.getFaceFrameLoopDebugInfo()
   -> engine.getFaceDetectorDebugInfo()
@@ -170,15 +172,15 @@ v1 の制限事項:
 - 3D model は Projection の土台確認用の最小 control point 群
 - ideal 478 landmarks の生成は未実装
 - IdealFace Authoring Tool は未実装
-- IdealFace Projection は未実装
+- IdealFace Projection v1 は controlPoints のみ部分実装
 
-IdealFace Projection の責務:
+IdealFace Projection v1 の責務:
 
 - FacePose を受け取る
-- IdealFace 3D model を現在姿勢へ投影する
-- ideal 2D landmarks 478 点を生成する
+- IdealFace の 3D controlPoints を現在姿勢へ回転する
+- Studio overlay 用の projected 2D points を生成する
 
-Projection 後の ideal 2D landmarks はすでに現在姿勢を反映しています。
+現在は Perspective camera、face surface、mesh、renderer、ideal 478 landmarks 生成は未実装です。将来の完全版では、Projection 後の ideal 2D landmarks はすでに現在姿勢を反映します。
 
 ## CorrectionPlan
 

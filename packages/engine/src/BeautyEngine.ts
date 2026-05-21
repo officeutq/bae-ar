@@ -9,8 +9,15 @@ import {
   type FaceGeometry,
 } from "./face/FaceGeometry"
 import type { FaceFrame } from "./face/FaceFrame"
-import type { IdealFace, IdealFacePreset } from "./ideal-face"
-import { DEFAULT_IDEAL_FACE_PRESETS } from "./ideal-face"
+import type {
+  IdealFace,
+  IdealFacePreset,
+  IdealFaceProjectionResult,
+} from "./ideal-face"
+import {
+  DEFAULT_IDEAL_FACE_PRESETS,
+  projectIdealFaceControlPoints,
+} from "./ideal-face"
 
 type FaceFrameListener = (frame: FaceFrame) => void
 
@@ -132,6 +139,19 @@ export class BeautyEngine {
     this.idealFace = selectedIdealFace
 
     return selectedIdealFace
+  }
+
+  getIdealFaceProjection(): IdealFaceProjectionResult {
+    return this.projectIdealFace()
+  }
+
+  projectIdealFace(): IdealFaceProjectionResult {
+    return projectIdealFaceControlPoints(
+      this.idealFace,
+      this.currentFaceFrame?.pose,
+      this.currentFaceGeometry,
+      this.currentFaceFrame?.detected ?? false,
+    )
   }
 
   getFaceFrame(): FaceFrame | undefined {
