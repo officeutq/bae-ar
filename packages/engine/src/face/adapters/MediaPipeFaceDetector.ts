@@ -30,11 +30,16 @@ export class MediaPipeFaceDetector implements FaceDetector {
 
     const timestamp = Date.now()
     const result = this.faceLandmarker.detectForVideo(input, timestamp)
+    const faceLandmarks = result.faceLandmarks[0] ?? []
 
     return {
       detected: result.faceLandmarks.length > 0,
       timestamp,
-      landmarks: [],
+      landmarks: faceLandmarks.map((point) => ({
+        x: point.x,
+        y: point.y,
+        z: point.z,
+      })),
       pose: {
         pitch: 0,
         yaw: 0,
