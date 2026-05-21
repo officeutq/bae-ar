@@ -1,84 +1,122 @@
-# 開発の流れ
+# 開発フロー
 
 ## 基本方針
 
-BAE AR は、Engine SDK と Studio を並行して育てます。
+BAE AR は、Engine SDK と Beauty Studio を並行して育てます。ただし、責務は明確に分離します。
 
-Engine SDK だけを先に作り込まず、Studio だけを先に作り込まず、機能単位で小さく反復しながら開発します。
+- Engine SDK は本番利用する中核ライブラリです。
+- Beauty Studio は Engine SDK を開発・検証・調整するための開発ツールです。
+- Studio は Engine SDK の公開 API のみを使います。
+- Studio から Engine SDK の内部実装へ直接依存しません。
+- 1 つの Issue では目的を絞って小さく実装します。
 
-## 開発サイクル
+## 実装前に確認すること
 
-基本的な開発サイクルは以下です。
+症状や想像だけで原因を断定しません。修正前に必ず関連する実コードを確認します。
 
-```text
-1. Engine SDK の基本 API を作る
-2. Studio の基本 UI を作る
-3. Engine SDK に加工機能を1つ追加する
-4. Studio に、その加工を確認・調整できる機能を追加する
-5. Studio で実際の映像を確認する
-6. 必要に応じて Engine SDK の API や内部設計を見直す
-7. 次の加工機能へ進む
-```
+確認対象:
 
-## 重要な考え方
+- 呼び出し元と呼び出し先の実装
+- 型定義、インターフェース、公開 API
+- 状態の所有者と更新箇所
+- debug 値が、実行時に利用している同じインスタンスから来ているか
+- `initialize` / `start` / `setInput` / `setFaceDetector` などのライフサイクル順序
+- 既存の guard、early return、error handling
 
-Beauty Engine は、コード上の正しさだけでは品質を判断できません。
+## 現在の開発サイクル
 
-実際のカメラ映像で確認しながら、以下を検証する必要があります。
-
-```text
-- 自然に見えるか
-- 顔の向きで破綻しないか
-- 加工が強すぎないか
-- 弱・中・強の調整がしやすいか
-- 本番アプリに組み込みやすい API になっているか
-```
-
-## Studio の役割
-
-Studio は開発用アプリですが、Engine SDK の内部には依存しません。
-
-Studio が利用してよいのは、Engine SDK の公開 API のみです。
+現在は基盤実装の段階です。
 
 ```text
-OK:
-engine.start()
-engine.stop()
-engine.setPreset()
-engine.setIdealFace()
-engine.getRuntimeSnapshot()
-
-NG:
-engine 内部状態を直接変更する
-private な処理を呼び出す
-SDK 内部の一時実装に依存する
+1. Engine SDK の公開 API を小さく追加する
+2. Studio からその公開 API だけを使って確認する
+3. Studio に debug / overlay / copyable debug を追加する
+4. 実カメラまたは可能な範囲の構成確認を行う
+5. ドキュメントへ実装済み / 未実装 / 将来予定を反映する
+6. 次の小さな Issue へ進む
 ```
 
-## 最初のマイルストーン
-
-最初は、以下を目標にします。
+## 現在実装済みの確認経路
 
 ```text
-- Engine SDK の空の基本構造を作る
-- Studio の空の基本構造を作る
-- カメラ映像を取得する
-- canvas に映像を描画する
-- start / stop / dispose のライフサイクルを確認する
+CameraService.start()
+  -> navigator.mediaDevices.getUserMedia()
+  -> HTMLVideoElement
+  -> BeautyEngine.setInput()
+  -> BeautyEngine.setFaceDetector()
+  -> MediaPipeFaceDetector.detect()
+  -> FaceFrame 更新
+  -> analyzeFaceGeometry()
+  -> Studio debug / overlay
 ```
 
-この段階では、美顔加工の完成度は求めません。
+## Shape Processing の開発方針
 
-まずは、Engine SDK と Studio が分離された状態で接続できることを重視します。
+個別パーツ加工を増やす方向にはしません。
 
-````
+shape processing は、現在 landmarks を IdealFace 由来の理想 2D landmarks へ、顔全体として少し寄せる方針で進めます。
 
-作成コマンドは PowerShell ならこれでいけます。
+```text
+現在 landmarks
+  -> FacePose
+  -> IdealFace 3D を現在姿勢へ投影
+  -> 理想 2D landmarks
+  -> CorrectionPlan
+  -> 顔全体として弱く warp
+```
 
-```powershell
-cd C:\dev\bae-ar
+`FaceGeometry` は補助情報です。変形加工の中心として扱いません。
 
-mkdir docs
+## Studio UI 表示
 
-notepad README.md
-notepad docs\overview.md
-notepad docs\development-flow.md
+Studio の UI 表示は原則として日本語にします。
+
+例:
+
+```text
+エンジン状態
+入力状態
+カメラ状態
+カメラエラー
+プレビュー
+```
+
+API 名、型名、コード識別子は英語のままとします。
+
+```ts
+BeautyEngine
+CameraService
+getState()
+```
+
+## 確認コマンド
+
+現時点で root の `package.json` には `start` のみが定義されています。
+
+```bash
+npm run start
+```
+
+build / test / lint script は未定義です。追加後は、このドキュメントにも反映します。
+
+## PR に書くこと
+
+PR 本文には、変更内容と確認結果を記載します。
+
+実カメラ確認が Codex 環境でできない場合は、手動確認事項として明記します。
+
+```md
+## Summary
+
+- 変更内容
+
+## Testing
+
+- 実行した確認コマンド
+
+## Manual Testing
+
+- カメラ権限許可
+- カメラ映像確認
+- Input: connected 確認
+```
