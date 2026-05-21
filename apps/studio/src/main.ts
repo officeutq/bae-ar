@@ -83,6 +83,7 @@ async function bootstrap(): Promise<void> {
     const currentState = engine.getState()
     const mediaPipeDebug = getDetectorDebugInfo(detector)
     const faceFrameLoopDebug = engine.getFaceFrameLoopDebugInfo()
+    const videoDebug = faceFrameLoopDebug.video
 
     if (lastEngineState !== currentState) {
       stateLog.push(formatEngineState(currentState))
@@ -111,6 +112,14 @@ async function bootstrap(): Promise<void> {
         <p>${mediaPipeDebug?.detectCount ?? 0}</p>
         <h2>Video:</h2>
         <p>${mediaPipeDebug?.videoWidth ?? 0}x${mediaPipeDebug?.videoHeight ?? 0}</p>
+        <h2>Video readyState:</h2>
+        <p>${videoDebug?.readyState ?? 0}</p>
+        <h2>Video paused:</h2>
+        <p>${videoDebug ? String(videoDebug.paused) : "true"}</p>
+        <h2>Video currentTime:</h2>
+        <p>${videoDebug?.currentTime ?? 0}</p>
+        <h2>Video srcObject:</h2>
+        <p>${videoDebug?.hasSrcObject ? "あり" : "なし"}</p>
         <h2>FaceFrameループ:</h2>
         <p>${faceFrameLoopDebug.running ? "実行中" : "停止中"}</p>
         <h2>ループ回数:</h2>

@@ -8,6 +8,16 @@ import type { FaceFrame } from "./face/FaceFrame"
 
 type FaceFrameListener = (frame: FaceFrame) => void
 
+export interface FaceFrameLoopVideoDebugInfo {
+  videoWidth: number
+  videoHeight: number
+  readyState: number
+  paused: boolean
+  ended: boolean
+  currentTime: number
+  hasSrcObject: boolean
+}
+
 export interface FaceFrameLoopDebugInfo {
   running: boolean
   tickCount: number
@@ -15,6 +25,7 @@ export interface FaceFrameLoopDebugInfo {
   detectorType: string
   hasInput: boolean
   hasDetector: boolean
+  video: FaceFrameLoopVideoDebugInfo | null
 }
 
 export class BeautyEngine {
@@ -93,6 +104,7 @@ export class BeautyEngine {
       detectorType: this.faceDetector?.constructor.name ?? "none",
       hasInput: Boolean(this.input),
       hasDetector: Boolean(this.faceDetector),
+      video: this.getVideoDebugInfo(),
     }
   }
 
@@ -146,6 +158,22 @@ export class BeautyEngine {
     }
 
     return "unknown"
+  }
+
+  private getVideoDebugInfo(): FaceFrameLoopVideoDebugInfo | null {
+    if (!(this.input instanceof HTMLVideoElement)) {
+      return null
+    }
+
+    return {
+      videoWidth: this.input.videoWidth,
+      videoHeight: this.input.videoHeight,
+      readyState: this.input.readyState,
+      paused: this.input.paused,
+      ended: this.input.ended,
+      currentTime: this.input.currentTime,
+      hasSrcObject: Boolean(this.input.srcObject),
+    }
   }
 
   private stopFaceFrameLoop(): void {
