@@ -712,3 +712,27 @@ Codex 環境ではブラウザのカメラ許可や実映像確認ができな�
 - カメラ映像確認
 - Input: connected 確認
 ```
+
+## 18. IdealFace Authoring Tool Step 1
+
+状態: 実装済み
+
+`tools/ideal-face-authoring` を、BAE AR 独自の IdealFace asset を作るための独立ツールとして追加しました。`apps/studio` は Runtime 検証用、`tools/ideal-face-authoring` は IdealFace asset 作成用として分離します。
+
+Step 1 の実装範囲:
+
+- Engine Runtime の公開 export から `natural_v1` を読み込む
+- preset id / name / version / coordinateSpace / control point count を表示する
+- controlPoints の id / label / x / y / z を一覧表示する
+- x / y を使って controlPoints を 2D preview に点として表示する
+- 読み込んだ IdealFace asset を JSON preview として表示する
+
+未実装:
+
+- controlPoints のドラッグ編集
+- 保存 / export
+- ideal 478 landmarks 生成
+- canonical face mesh editor
+- 2D 動画 / 複数画像からの 3D 顔生成
+
+IdealFace Authoring Tool は MediaPipe canonical face model そのものを作るツールではありません。BAE AR 独自の IdealFace asset を作る作業場です。Authoring Tool の編集処理や UI は Engine Runtime に混ぜません。

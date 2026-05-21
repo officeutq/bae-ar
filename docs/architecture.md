@@ -270,3 +270,19 @@ LayerMask は FaceLandmarks から生成する 2D mask です。
 - docs
 - 開発用 debug UI
 - サンプルや検証ツール
+
+## IdealFace Authoring Tool Step 1
+
+`tools/ideal-face-authoring` は、BAE AR 独自の IdealFace asset を作るための独立した authoring tool です。Beauty Studio は Runtime 検証用、IdealFace Authoring Tool は asset 作成用として分離します。
+
+Step 1 では Runtime の公開 API から `natural_v1` を読み込み、metadata、`coordinateSpace`、controlPoints 一覧、2D preview、JSON preview を表示するだけに留めています。Studio へのタブ追加、Engine Runtime への UI 追加、Runtime への編集処理追加は行いません。
+
+未実装の範囲:
+
+- controlPoints のドラッグ編集
+- 保存 / export
+- ideal 478 landmarks 生成
+- canonical face mesh editor
+- 2D 動画 / 複数画像からの 3D 顔生成
+
+IdealFace Authoring Tool は MediaPipe canonical face model そのものを作るツールではありません。BAE AR 独自の IdealFace asset を作る作業場として扱います。

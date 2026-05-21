@@ -119,3 +119,9 @@ Engine Runtime で行わないこと:
 - Studio / Authoring 用 UI
 
 Beauty Studio では、開発確認用として overlay や簡易調整 UI を持ってよいです。ただし、本番配布対象には含めません。
+
+## IdealFace Authoring Tool Step 1
+
+`tools/ideal-face-authoring` は BAE AR 独自の IdealFace asset を作るための独立ツールです。Step 1 では `natural_v1` の metadata、controlPoints 一覧、2D preview、JSON preview を表示します。
+
+ドラッグ編集、保存、ideal 478 landmarks 生成、canonical face mesh editor、2D 動画 / 複数画像からの 3D 顔生成は未実装です。このツールは MediaPipe canonical face model そのものを作るツールではなく、Authoring Tool の編集処理を Engine Runtime に混ぜません。

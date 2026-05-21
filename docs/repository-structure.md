@@ -150,3 +150,25 @@ Layer Mask Authoring Tool を置く想定の場所です。
 ## 今後の構成変更
 
 IdealFace / CorrectionPlan / Layer System / LayerMaskSpec は未実装です。追加する場合も、Engine Runtime の責務と Authoring Tool の責務を分け、Studio からは公開 API 経由で確認できるようにします。
+
+## `tools/ideal-face-authoring` Step 1
+
+`tools/ideal-face-authoring` は IdealFace Authoring Tool の最小雛形として実装済みです。BAE AR 独自の IdealFace asset を作るための独立ツールであり、`apps/studio` には Authoring 用タブを追加しません。
+
+Step 1 の範囲:
+
+- Engine Runtime の公開 export から `natural_v1` を読み込む
+- preset id / name / version / coordinateSpace / control point count を表示する
+- controlPoints の id / label / x / y / z を一覧表示する
+- x / y を使った 2D preview を表示する
+- 読み込んだ IdealFace asset の JSON preview を表示する
+
+未実装:
+
+- ドラッグ編集
+- 保存 / export
+- ideal 478 landmarks 生成
+- canonical face mesh editor
+- 2D 動画 / 複数画像からの 3D 顔生成
+
+このツールは MediaPipe canonical face model そのものを作るツールではありません。Authoring Tool の編集処理や UI は Engine Runtime に混ぜません。

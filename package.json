@@ -2,10 +2,12 @@
   "name": "bae-ar",
   "private": true,
   "scripts": {
-    "start": "npm run start --workspace @bae-ar/studio"
+    "start": "npm run start --workspace @bae-ar/studio",
+    "start:ideal-face-authoring": "npm run start --workspace @bae-ar/ideal-face-authoring"
   },
   "workspaces": [
     "packages/*",
-    "apps/*"
+    "apps/*",
+    "tools/*"
   ]
 }
