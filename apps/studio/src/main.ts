@@ -18,6 +18,7 @@ async function bootstrap(): Promise<void> {
     yaw: 0,
     roll: 0,
   }
+  let landmarkCount = 0
 
   if (!app) {
     throw new Error("Studio app root was not found")
@@ -79,6 +80,8 @@ async function bootstrap(): Promise<void> {
         <p>${engine.getInput() ? "接続済み" : "未接続"}</p>
         <h2>顔検出:</h2>
         <p>${faceDetected ? "検出中" : "未検出"}</p>
+        <h2>ランドマーク数:</h2>
+        <p>${landmarkCount}</p>
         <h2>顔姿勢:</h2>
         <pre>Pitch:${facePose.pitch}
 Yaw:${facePose.yaw}
@@ -93,6 +96,7 @@ Roll:${facePose.roll}</pre>
   engine.onFaceFrame((frame) => {
     faceDetected = frame.detected
     facePose = frame.pose
+    landmarkCount = frame.landmarks.length
 
     render()
     appendCameraPreview()
