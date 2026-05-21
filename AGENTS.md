@@ -2,41 +2,131 @@
 
 ## プロジェクト概要
 
-BAE AR は、リアルタイム顔加工・AR 表現を行うための Beauty Engine SDK と、その開発・検証を行う Studio を含むプロジェクトです。
+BAE AR は、リアルタイム顔加工・AR 表現を行う Beauty Engine Runtime と、その開発・検証・調整を行う Beauty Studio、将来の authoring tool 群を含むプロジェクトです。
 
 目的は、本番サービスに組み込める自然で破綻しにくい Beauty Engine を開発することです。
 
-## 基本方針
+## 全体構成
 
-- Engine SDK は本番利用する中核ライブラリである
-- Studio は Engine SDK を開発・検証・調整するためのアプリである
-- Engine SDK は UI を持たない
-- Studio は Engine SDK の公開 API のみを利用する
-- Studio から Engine SDK の内部実装を直接参照・変更してはいけない
-- 配布対象は Engine SDK のみとする
+BAE AR は以下の 4 領域に分ける。
+
+### Engine Runtime
+
+- 本番でリアルタイム加工する中核 SDK
+- UI を持たない
+- 実行専用
+- 定義済みの IdealFace / LayerMaskSpec を読み込んで使う
+- IdealFace の作成、2D 動画からの 3D 顔生成、LayerMaskSpec の作成、mask の手作業編集、Studio / Authoring 用 UI は持たない
+
+### Beauty Studio
+
+- Engine を開発・検証・調整する開発ツール
+- Engine の公開 API のみを使う
+- Engine 内部実装へ直接依存しない
+- 開発確認用として overlay や簡易調整 UI を持ってよい
+- 本番配布対象には含めない
+
+### IdealFace Authoring Tool
+
+- 理想 3D 顔プリセットを作成する将来ツール
+- 手作業、調整ツール、2D 動画 / 複数画像からのオフライン生成を想定
+- リアルタイム Engine Runtime には含めない
+
+### Layer Mask Authoring Tool
+
+- 色加工用 LayerMaskSpec を作成する将来ツール
+- どの landmarks で囲うか、除外領域、膨張・収縮、ぼかしなどを定義する
+- リアルタイム Engine Runtime には含めない
 
 ## 想定構成
 
 ```text
 packages/engine
-  本番利用する Beauty Engine SDK
+  Engine Runtime として使う Beauty Engine SDK
 
 apps/studio
-  Engine SDK を開発・検証・調整するための Studio
+  Engine Runtime を開発・検証・調整する Beauty Studio
 
 docs
   設計・仕様ドキュメント
+
+tools/ideal-face-authoring
+  将来予定。IdealFace Authoring Tool
+
+tools/layer-mask-authoring
+  将来予定。Layer Mask Authoring Tool
 ```
 
 ## 開発ルール
 
 * 1つのIssueでは、目的を絞って小さく実装する
-* Engine SDK に機能を追加した場合、必要に応じて Studio 側にも確認手段を追加する
+* Engine Runtime に機能を追加した場合、必要に応じて Studio 側にも確認手段を追加する
 * 仕様が不明な場合は、推測で大きく作り込まず、最小実装に留める
 * 既存ドキュメントと矛盾する実装をしない
 * 実装前に関連ドキュメントを確認する
 * 不要な抽象化を増やさない
-* デバッグ用 UI や一時的な検証機能を SDK 本体に入れない
+* デバッグ用 UI や一時的な検証機能を Engine Runtime 本体に入れない
+* Authoring Tool の処理をリアルタイム Engine Runtime に混ぜない
+
+## 確定仕様
+
+### IdealFace
+
+- IdealFace は独自の理想 3D 顔モデルを本体とする
+- IdealFace は MediaPipe 478 landmarks そのものではない
+- Engine Runtime で current face と比較するため、IdealFace から MediaPipe 478 landmarks と対応する ideal 478 landmarks を生成できる必要がある
+- current 478 landmarks と ideal 478 landmarks を比較して shape processing へ進む
+- 2D 動画 / 複数画像から IdealFace を作る処理は、リアルタイム処理ではなく IdealFace Authoring Tool の責務
+
+### Shape Processing
+
+Shape processing は個別パーツ加工ではない。
+
+処理方針:
+
+```text
+現在顔から MediaPipe 478 landmarks を取得
+  -> FacePose を推定
+  -> IdealFace 3D model を現在姿勢へ投影
+  -> ideal 2D landmarks 478 点を生成
+  -> current 478 landmarks と ideal 478 landmarks の差分を取る
+  -> CorrectionPlan を生成
+  -> 顔全体として自然に少し warp
+```
+
+やらないこと:
+
+- 目だけ大きくする
+- 鼻だけ細くする
+- 顎だけ削る
+- 個別パーツ加工を主機能として増やす
+
+### CorrectionPlan
+
+- CorrectionPlan は姿勢補正を担当しない
+- 顔姿勢への対応は、IdealFace 3D model を現在 FacePose に投影する IdealFace Projection の責務
+- Projection 後の ideal 2D landmarks はすでに現在姿勢を反映している
+- CorrectionPlan は current 2D landmarks と ideal 2D landmarks の差分を受け取る
+- CorrectionPlan は実際に warp へ渡す安全な補正量を決める
+- 補正強度、移動量上限、滑らかさ、過補正防止、信頼度などを扱う
+- 個別パーツ加工命令セットにはしない
+
+### FaceGeometry
+
+- FaceGeometry は補助情報
+- 用途は debug、overlay、顔サイズ確認、代表点確認、将来の安定化・正規化補助
+- FaceGeometry は shape processing の中心ではない
+- shape processing の中心は current 478 landmarks と IdealFace 由来の ideal 478 landmarks
+
+### Layer System / LayerMask
+
+- Layer System は shape warp ではなく、color processing 用に使う
+- 対象は skin smoothing、whitening、brightness、tone、blood color、shadow / highlight、cheek / lip / eye area などの色補正
+- Layer System は変形加工には使わない
+- `jaw_layer` で顎を削る、`eye_layer` で目を大きくする、`nose_layer` で鼻を細くする、のような使い方はしない
+- Layer は色加工範囲、効果、強度、合成順を整理する仕組み
+- LayerMask は FaceLandmarks から生成する 2D mask
+- mask 値は 0.0〜1.0 の強度マップとする
 
 ## 実コード確認の方針
 
@@ -137,15 +227,22 @@ If `gh` authentication is unavailable or fails, report the error clearly.
 
 ## 禁止事項
 
-* Engine SDK に画面 UI を持たせること
-* Studio から Engine SDK の private/internal 実装へ依存すること
+* Engine Runtime に画面 UI を持たせること
+* Studio から Engine Runtime の private/internal 実装へ依存すること
+* Authoring Tool の生成・編集処理を Runtime に混ぜること
+* Shape processing と color processing を混同すること
+* Layer System を個別パーツ変形用にすること
 * Issue の範囲外の大規模リファクタリングを行うこと
 * 実験用コードを本番 SDK に混ぜること
-* 配布物に Studio / examples / docs を含めること
+* 配布物に Studio / examples / docs / authoring tools を含めること
 
 ## コマンド
 
-現時点では未定義。
+現時点では root には `start` のみ定義済み。
+
+```text
+npm run start
+```
 
 実装環境を作成した後、以下を定義する予定。
 
@@ -179,4 +276,3 @@ Summary
 Testing
 - 実行した確認コマンド
 ```
-

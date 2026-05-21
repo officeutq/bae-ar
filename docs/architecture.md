@@ -2,27 +2,35 @@
 
 ## 基本構成
 
-BAE AR は、Engine SDK と Beauty Studio を明確に分けて開発します。
+BAE AR は、Engine Runtime、Beauty Studio、IdealFace Authoring Tool、Layer Mask Authoring Tool の 4 領域に分けます。
 
 ```text
 BAE AR
 
 ├─ packages/engine
-│  └─ Beauty Engine SDK
+│  └─ Engine Runtime
+│     - 本番でリアルタイム加工する中核 SDK
 │     - UI を持たない
-│     - 本番サービスに組み込まれる
-│     - 顔検出、FaceFrame 更新、将来の加工処理を担当する
+│     - 実行専用
 │
-└─ apps/studio
-   └─ Beauty Studio
-      - Engine を育てるための開発ツール
-      - カメラ入力、debug 表示、overlay、調整 UI を担当する
-      - Engine の公開 API のみを使う
+├─ apps/studio
+│  └─ Beauty Studio
+│     - Engine を開発・検証・調整する開発ツール
+│     - Engine の公開 API のみを使う
+│     - Engine 内部実装へ直接依存しない
+│
+├─ tools/ideal-face-authoring
+│  └─ 将来予定。IdealFace を作成する authoring tool
+│
+└─ tools/layer-mask-authoring
+   └─ 将来予定。LayerMaskSpec を作成する authoring tool
 ```
 
-## Engine SDK の責務
+現在 `tools/*` は未実装です。
 
-Engine SDK は UI を持たない中核ライブラリです。
+## Engine Runtime の責務
+
+Engine Runtime は UI を持たない中核 SDK です。
 
 現在実装済み:
 
@@ -38,17 +46,20 @@ Engine SDK は UI を持たない中核ライブラリです。
 将来予定:
 
 - FacePose の実推定
-- IdealFace プリセット
-- IdealFace の現在姿勢への投影
+- IdealFace の読み込み
+- IdealFace Projection
 - CorrectionPlan 生成
-- shape warp
-- color processing
+- Shape Warp
+- Color Processing
 - Layer System
+- LayerMaskSpec の読み込み
 - rendering / runtime quality control
+
+Engine Runtime は定義済みの IdealFace / LayerMaskSpec を読み込んで使います。IdealFace の作成、2D 動画からの 3D 顔生成、LayerMaskSpec の作成、mask の手作業編集、Studio / Authoring 用 UI は Runtime に含めません。
 
 ## Beauty Studio の責務
 
-Beauty Studio は Engine SDK を開発・検証・調整するための開発ツールです。
+Beauty Studio は Engine Runtime を開発・検証・調整するための開発ツールです。
 
 現在実装済み:
 
@@ -59,7 +70,36 @@ Beauty Studio は Engine SDK を開発・検証・調整するための開発ツ
 - landmarks / geometry point overlay
 - Copy Debug 用の debug text 生成
 
-Studio は Engine SDK の公開 API のみを利用します。Engine の private field や内部実装ファイルへ直接依存しません。
+Studio は Engine Runtime の公開 API のみを利用します。Engine の private field や内部実装ファイルへ直接依存しません。
+
+## IdealFace Authoring Tool の責務
+
+IdealFace Authoring Tool は将来予定です。
+
+責務:
+
+- IdealFace 3D model の作成
+- IdealFace プリセットの調整
+- 手作業による調整
+- 2D 動画 / 複数画像からのオフライン生成
+- Runtime で読み込む IdealFace asset の出力
+
+IdealFace Authoring Tool の処理はリアルタイム Engine Runtime には含めません。
+
+## Layer Mask Authoring Tool の責務
+
+Layer Mask Authoring Tool は将来予定です。
+
+責務:
+
+- 色加工用 LayerMaskSpec の作成
+- どの landmarks で囲うかの定義
+- 除外領域の定義
+- 膨張・収縮の定義
+- feather / blur の定義
+- Runtime で読み込む LayerMaskSpec の出力
+
+Layer Mask Authoring Tool の編集 UI や手作業編集処理は Engine Runtime には含めません。
 
 ## 現在の呼び出し経路
 
@@ -81,7 +121,7 @@ apps/studio/src/main.ts
   -> engine.getFaceDetectorDebugInfo()
 ```
 
-Engine 側では、`BeautyEngine.startFaceFrameLoopIfReady()` が `running` 状態、`HTMLVideoElement` 入力、`FaceDetector` の存在を確認してから 1 秒間隔の検出ループを開始します。
+Engine 側では、`BeautyEngine.startFaceFrameLoopIfReady()` が `running` 状態、`HTMLVideoElement` 入力、`FaceDetector` の存在を確認してから 1 秒間隔の検出 loop を開始します。
 
 ## データモデル
 
@@ -96,7 +136,7 @@ FaceFrame
   pose: FacePose
 ```
 
-現在、`pose` は `pitch: 0` / `yaw: 0` / `roll: 0` の placeholder です。実推定は未実装です。
+現在、`pose` は `pitch: 0` / `yaw: 0` / `roll: 0` の placeholder です。FacePose の実推定は未実装です。
 
 `FaceGeometry` は landmarks から導出する補助情報です。
 
@@ -113,23 +153,94 @@ FaceGeometry
   eyeDistance
 ```
 
-`FaceGeometry` は顔サイズ正規化、安定化、debug、overlay などに使う補助情報です。変形加工の中心として扱いません。
+`FaceGeometry` は debug、overlay、顔サイズ確認、代表点確認、将来の安定化・正規化補助に使います。shape processing の中心として扱いません。
 
-## 変形加工の設計方針
+## IdealFace と Projection
 
-shape processing は、現在 landmarks と IdealFace 由来の理想 2D landmarks の差分を使って、顔全体を自然に少し寄せる方針です。
+IdealFace は独自の理想 3D 顔モデルを本体とします。MediaPipe 478 landmarks そのものではありません。
+
+ただし、Engine Runtime で current face と比較するため、IdealFace から MediaPipe 478 landmarks と対応する ideal 478 landmarks を生成できる必要があります。
+
+IdealFace Projection の責務:
+
+- FacePose を受け取る
+- IdealFace 3D model を現在姿勢へ投影する
+- ideal 2D landmarks 478 点を生成する
+
+Projection 後の ideal 2D landmarks はすでに現在姿勢を反映しています。
+
+## CorrectionPlan
+
+CorrectionPlan は姿勢補正を担当しません。姿勢への対応は IdealFace Projection の責務です。
+
+CorrectionPlan の責務:
+
+- current 2D landmarks と ideal 2D landmarks の差分を受け取る
+- 実際に warp へ渡す安全な補正量を決める
+- 補正強度、移動量上限、滑らかさ、過補正防止、信頼度などを扱う
+
+CorrectionPlan は個別パーツ加工命令セットにはしません。
+
+## Shape Processing
 
 ```text
-現在 landmarks
-  -> 現在姿勢の推定
-  -> IdealFace 3D プリセットを現在姿勢へ投影
-  -> 理想 2D landmarks
-  -> 差分から CorrectionPlan を生成
-  -> 顔全体として弱く warp
+現在顔から MediaPipe 478 landmarks を取得
+  -> FacePose を推定
+  -> IdealFace 3D model を現在姿勢へ投影
+  -> ideal 2D landmarks 478 点を生成
+  -> current 478 landmarks と ideal 478 landmarks の差分を取る
+  -> CorrectionPlan を生成
+  -> 顔全体として自然に少し warp
 ```
 
 顎だけ、目だけ、鼻だけなどの個別パーツ加工を独立機能として増やす方向にはしません。
 
+## Layer System / LayerMask
+
+Layer System は shape warp ではなく color processing 用に使います。
+
+対象:
+
+- skin smoothing
+- whitening
+- brightness
+- tone
+- blood color
+- shadow / highlight
+- cheek / lip / eye area などの色補正
+
+Layer は色加工範囲、効果、強度、合成順を整理する仕組みです。変形加工には使いません。
+
+LayerMask は FaceLandmarks から生成する 2D mask です。
+
+基本仕様:
+
+- どの landmarks で囲われた範囲かを定義する
+- landmarks を polygon 化する
+- polygon から mask を生成する
+- 必要に応じて除外領域を持つ
+- 必要に応じて膨張・収縮する
+- 境界は feather / blur して自然にする
+- mask 値は 0.0〜1.0 の強度マップとする
+
+例:
+
+- `skin_layer`: 顔輪郭の内側から目・眉・唇などを除外した肌領域
+- `lip_layer`: 唇 landmarks で囲った範囲
+- `cheek_layer`: 頬周辺の landmarks を基準にした soft mask
+- `eye_area_layer`: 目周辺 landmarks を少し広げた範囲
+
+`jaw_layer` で顎を削る、`eye_layer` で目を大きくする、`nose_layer` で鼻を細くする、のような使い方はしません。
+
 ## 配布方針
 
-配布対象は Engine SDK のみです。Studio、docs、開発用 debug UI、サンプル、検証ツールは本番配布物に含めません。
+本番配布対象は Engine Runtime のみです。
+
+配布物に含めないもの:
+
+- Beauty Studio
+- IdealFace Authoring Tool
+- Layer Mask Authoring Tool
+- docs
+- 開発用 debug UI
+- サンプルや検証ツール
