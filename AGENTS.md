@@ -225,6 +225,8 @@ gh pr create --title "<title>" --body "<body>"
 
 If `gh` authentication is unavailable or fails, report the error clearly.
 
+* PRは日本語表記とすること。
+
 ## 禁止事項
 
 * Engine Runtime に画面 UI を持たせること
