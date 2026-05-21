@@ -29,6 +29,7 @@ async function bootstrap(): Promise<void> {
   const camera = new CameraService()
   const detector = new MediaPipeFaceDetector()
   const app = document.querySelector<HTMLDivElement>("#app")
+  const overlayCanvas = document.createElement("canvas")
   const stateLog: string[] = []
   let lastEngineState: BeautyEngineState | undefined
   let latestFaceFrame: FaceFrame | undefined
@@ -41,6 +42,8 @@ async function bootstrap(): Promise<void> {
     loopTiming: false,
     fullDebugText: false,
   }
+
+  overlayCanvas.className = "overlay"
 
   if (!app) {
     throw new Error("Studio app root was not found")
@@ -212,8 +215,63 @@ Camera:
     if (input instanceof HTMLVideoElement) {
       document
         .querySelector("#camera-preview")
-        ?.append(input)
+        ?.append(input, overlayCanvas)
+      drawLandmarkOverlay(latestFaceFrame)
     }
+  }
+
+  function resizeOverlayCanvas(video: HTMLVideoElement): boolean {
+    if (video.videoWidth === 0 || video.videoHeight === 0) {
+      return false
+    }
+
+    if (
+      overlayCanvas.width !== video.videoWidth ||
+      overlayCanvas.height !== video.videoHeight
+    ) {
+      overlayCanvas.width = video.videoWidth
+      overlayCanvas.height = video.videoHeight
+    }
+
+    return true
+  }
+
+  function clearLandmarkOverlay(): void {
+    const context = overlayCanvas.getContext("2d")
+
+    context?.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height)
+  }
+
+  function drawLandmarkOverlay(frame: FaceFrame | undefined): void {
+    const input = engine.getInput()
+
+    if (!(input instanceof HTMLVideoElement) || !resizeOverlayCanvas(input)) {
+      clearLandmarkOverlay()
+      return
+    }
+
+    const context = overlayCanvas.getContext("2d")
+
+    if (!context) {
+      return
+    }
+
+    context.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height)
+
+    if (!frame?.detected || frame.landmarks.length === 0) {
+      return
+    }
+
+    context.fillStyle = "#42f57b"
+
+    frame.landmarks.forEach((landmark) => {
+      const x = landmark.x * overlayCanvas.width
+      const y = landmark.y * overlayCanvas.height
+
+      context.beginPath()
+      context.arc(x, y, 1.5, 0, Math.PI * 2)
+      context.fill()
+    })
   }
 
   async function copyDebugText(debugText: string): Promise<void> {
@@ -296,6 +354,27 @@ Camera:
           <button id="copy-debug" type="button">Copy Debug</button>
           <span aria-live="polite">${copyStatus}</span>
         </header>
+        <style>
+          .preview-container {
+            position: relative;
+            display: inline-block;
+            max-width: 100%;
+          }
+
+          .preview-container video {
+            display: block;
+            max-width: 100%;
+            height: auto;
+          }
+
+          .preview-container .overlay {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+          }
+        </style>
         <pre>Engine: ${formatEngineState(currentState)}
 Camera: ${formatCameraState(camera.getState())}
 Detection: ${formatDetection(frame)}
@@ -304,7 +383,7 @@ FPS: ${formatFps(faceFrameFps)}
 Loop: ${faceFrameLoopDebug.running ? "実行中" : "停止中"}
 Detect: ${faceFrameLoopDebug.detectCallCount}/${mediaPipeDebug?.detectSuccessCount ?? 0}</pre>
         <h2>プレビュー</h2>
-        <div id="camera-preview">${camera.getVideo() ? "" : "利用できません"}</div>
+        <div id="camera-preview" class="preview-container">${camera.getVideo() ? "" : "利用できません"}</div>
         <details data-debug-section="faceFrame"${detailsOpenAttribute("faceFrame")}>
           <summary>FaceFrame Debug</summary>
           <pre>${escapeHtml(`Frame timestamp: ${frame?.timestamp ?? "なし"}
