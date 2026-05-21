@@ -1,5 +1,10 @@
 import { BeautyEngine } from "@bae-ar/engine"
-import type { BeautyEngineState, FaceFrame } from "@bae-ar/engine"
+import type {
+  BeautyEngineState,
+  FaceFrame,
+  FaceGeometry,
+  FaceGeometryPoint,
+} from "@bae-ar/engine"
 import { MediaPipeFaceDetector } from "@bae-ar/engine"
 import type { CameraServiceState } from "./services/CameraService"
 import { CameraService } from "./services/CameraService"
@@ -20,6 +25,7 @@ interface DetectorDebugInfo {
 
 type DebugSection =
   | "faceFrame"
+  | "faceGeometry"
   | "mediaPipe"
   | "loopTiming"
   | "fullDebugText"
@@ -38,6 +44,7 @@ async function bootstrap(): Promise<void> {
   let copyStatus = ""
   const openDebugSections: Record<DebugSection, boolean> = {
     faceFrame: false,
+    faceGeometry: false,
     mediaPipe: false,
     loopTiming: false,
     fullDebugText: false,
@@ -79,6 +86,20 @@ async function bootstrap(): Promise<void> {
 
   function formatNumber(value: number): string {
     return value.toFixed(3)
+  }
+
+  function formatNullableNumber(value: number | null | undefined): string {
+    return value === null || value === undefined ? "なし" : formatNumber(value)
+  }
+
+  function formatGeometryPoint(
+    point: FaceGeometryPoint | null | undefined,
+  ): string {
+    if (!point) {
+      return "なし"
+    }
+
+    return `x=${formatNumber(point.x)} y=${formatNumber(point.y)} z=${formatNumber(point.z)}`
   }
 
   function formatFps(value: number | undefined): string {
@@ -137,8 +158,24 @@ Roll: ${formatNumber(frame.pose.roll)}
 Pose推定: 未実装（暫定値）`
   }
 
+  function formatFaceGeometryPreview(
+    geometry: FaceGeometry | undefined,
+  ): string {
+    return `FaceGeometry:
+leftEyeCenter: ${formatGeometryPoint(geometry?.leftEyeCenter)}
+rightEyeCenter: ${formatGeometryPoint(geometry?.rightEyeCenter)}
+mouthCenter: ${formatGeometryPoint(geometry?.mouthCenter)}
+noseTip: ${formatGeometryPoint(geometry?.noseTip)}
+chin: ${formatGeometryPoint(geometry?.chin)}
+faceCenter: ${formatGeometryPoint(geometry?.faceCenter)}
+faceWidth: ${formatNullableNumber(geometry?.faceWidth)}
+faceHeight: ${formatNullableNumber(geometry?.faceHeight)}
+eyeDistance: ${formatNullableNumber(geometry?.eyeDistance)}`
+  }
+
   function buildDebugText(
     frame: FaceFrame | undefined,
+    geometry: FaceGeometry | undefined,
     mediaPipeDebug: DetectorDebugInfo | null,
     faceFrameLoopDebug: ReturnType<BeautyEngine["getFaceFrameLoopDebugInfo"]>,
   ): string {
@@ -179,6 +216,8 @@ ${formatBlendshapePreview(frame)}
 Pose:
 ${formatPosePreview(frame)}
 
+${formatFaceGeometryPreview(geometry)}
+
 Timing:
 - faceFrameFps: ${formatFps(faceFrameFps)}
 - videoCurrentTime: ${videoDebug?.currentTime ?? 0}
@@ -216,7 +255,7 @@ Camera:
       document
         .querySelector("#camera-preview")
         ?.append(input, overlayCanvas)
-      drawLandmarkOverlay(latestFaceFrame)
+      drawLandmarkOverlay(latestFaceFrame, engine.getFaceGeometry())
     }
   }
 
@@ -242,7 +281,10 @@ Camera:
     context?.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height)
   }
 
-  function drawLandmarkOverlay(frame: FaceFrame | undefined): void {
+  function drawLandmarkOverlay(
+    frame: FaceFrame | undefined,
+    geometry: FaceGeometry | undefined,
+  ): void {
     const input = engine.getInput()
 
     if (!(input instanceof HTMLVideoElement) || !resizeOverlayCanvas(input)) {
@@ -270,6 +312,30 @@ Camera:
 
       context.beginPath()
       context.arc(x, y, 1.5, 0, Math.PI * 2)
+      context.fill()
+    })
+
+    context.fillStyle = "#ff3f81"
+
+    const geometryPoints = [
+      geometry?.leftEyeCenter,
+      geometry?.rightEyeCenter,
+      geometry?.mouthCenter,
+      geometry?.noseTip,
+      geometry?.chin,
+      geometry?.faceCenter,
+    ]
+
+    geometryPoints.forEach((point) => {
+      if (!point) {
+        return
+      }
+
+      const x = point.x * overlayCanvas.width
+      const y = point.y * overlayCanvas.height
+
+      context.beginPath()
+      context.arc(x, y, 4, 0, Math.PI * 2)
       context.fill()
     })
   }
@@ -340,7 +406,13 @@ Camera:
       engine.getFaceDetectorDebugInfo() as DetectorDebugInfo | null
     const faceFrameLoopDebug = engine.getFaceFrameLoopDebugInfo()
     const frame = engine.getFaceFrame() ?? latestFaceFrame
-    const debugText = buildDebugText(frame, mediaPipeDebug, faceFrameLoopDebug)
+    const geometry = engine.getFaceGeometry()
+    const debugText = buildDebugText(
+      frame,
+      geometry,
+      mediaPipeDebug,
+      faceFrameLoopDebug,
+    )
 
     if (lastEngineState !== currentState) {
       stateLog.push(formatEngineState(currentState))
@@ -399,6 +471,10 @@ ${formatBlendshapePreview(frame)}
 
 Pose preview:
 ${formatPosePreview(frame)}`)}</pre>
+        </details>
+        <details data-debug-section="faceGeometry"${detailsOpenAttribute("faceGeometry")}>
+          <summary>FaceGeometry Debug</summary>
+          <pre>${escapeHtml(formatFaceGeometryPreview(geometry))}</pre>
         </details>
         <details data-debug-section="mediaPipe"${detailsOpenAttribute("mediaPipe")}>
           <summary>MediaPipe Debug</summary>
