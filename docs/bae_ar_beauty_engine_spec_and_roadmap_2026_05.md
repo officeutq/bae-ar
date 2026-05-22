@@ -114,7 +114,7 @@ Beauty Studio:
 - renderer
 - runtime quality control
 - preset API
-- IdealFace Authoring Tool の 3D点群 preview、手動微調整、保存 / export
+- IdealFace Authoring Tool の手動微調整、保存 / export
 - Layer Mask Authoring Tool
 - Butterflyve integration
 - 本番向け package build / test / lint script
@@ -131,7 +131,7 @@ Beauty Studio:
 - Projection Difference Debug v1 は FaceGeometry 代表点と projected IdealFace controlPoints の差分確認用です。
 - `FaceGeometry` は landmarks から代表点やサイズを計算する補助解析です。
 - 実際の shape warp、color processing、rendering はまだありません。
-- IdealFace Authoring Tool は Step 2-G まで実装済みです。
+- IdealFace Authoring Tool は Step 2-H まで実装済みです。
 
 ## 4. 現在の処理パイプライン
 
@@ -350,7 +350,7 @@ MP4 動画を入力
 
 Step 2-E の dataset は front / left / right / up / down の代表フレームに対応する 2D 478 landmarks と FacePose を持つ入力データです。excluded は dataset に含めません。この dataset はまだ 3D の `idealLandmarks3D` 478点そのものではありません。Step 2-G v1 では、この dataset から 3D の `idealLandmarks3D` 478点候補を自動推測します。front の 2D 478 landmarks を x / y の基準にし、left / right / up / down との差分から z を簡易推定します。不足している代表フレームは confidence を下げる要素として扱います。この時点の生成結果は完成データではなく候補データです。将来的には、自動推測した候補を Authoring Tool 上で 3D点群として確認し、必要に応じて手動で微調整します。手動補正後の `idealLandmarks3D` 478点を IdealFace asset として保存 / export します。
 
-この方針は完全自動生成ではなく、自動推測 + 手動補正です。動画入力、フレーム抽出、詳細スキャン、Authoring 用フレーム解析、代表フレーム抽出、手動ラベル確定 UI、3D推測用 dataset 作成、3D候補生成は IdealFace Authoring Tool の責務であり、Engine Runtime には含めません。Step 2-G v1 は厳密な 3D reconstruction、三角測量、bundle adjustment、カメラ内部パラメータ推定には踏み込みません。3D点群 preview、手動微調整、保存 / export は未実装です。
+この方針は完全自動生成ではなく、自動推測 + 手動補正です。動画入力、フレーム抽出、詳細スキャン、Authoring 用フレーム解析、代表フレーム抽出、手動ラベル確定 UI、3D推測用 dataset 作成、3D候補生成、3D点群 preview は IdealFace Authoring Tool の責務であり、Engine Runtime には含めません。Step 2-G v1 は厳密な 3D reconstruction、三角測量、bundle adjustment、カメラ内部パラメータ推定には踏み込みません。Step 2-H の 3D点群 preview は debug / 確認用であり、本格 3D editor ではありません。手動微調整、保存 / export は未実装です。
 
 v1 の制限事項:
 
@@ -674,7 +674,7 @@ Studio は Engine の private field、内部状態、内部実装へ直接アク
 
 ### Milestone 10: IdealFace Authoring Tool
 
-状態: 一部実装済み / Step 2-G まで完了
+状態: 一部実装済み / Step 2-H まで完了
 
 目的:
 
@@ -814,7 +814,7 @@ Step 2-A 時点の制限:
 - 代表フレーム候補抽出は未実装
 - 手動ラベル確定 UI は未実装
 - 3D 478点候補の自動推測は未実装
-- 3D点群 preview、手動微調整、保存 / export は未実装
+- 3D点群 preview は Step 2-H で実装済み。手動微調整、保存 / export は未実装
 
 動画入力とフレーム抽出は IdealFace Authoring Tool の責務です。Engine Runtime には動画入力処理やフレーム抽出処理を入れません。
 
@@ -834,7 +834,7 @@ Step 2-B の制限:
 
 - 手動ラベル確定 UI は未実装
 - 3D 478点候補の自動推測は未実装
-- 3D点群 preview、手動微調整、保存 / export は未実装
+- 3D点群 preview は Step 2-H で実装済み。手動微調整、保存 / export は未実装
 - 複数画像入力は未実装 / 将来対応
 - JSON preview には 478 landmarks 全文を出さない
 
@@ -858,7 +858,7 @@ Step 2-C の実装範囲:
 Step 2-C の制限:
 
 - 3D 478点候補の自動推測は未実装
-- 3D点群 preview、手動微調整、保存 / export は未実装
+- 3D点群 preview は Step 2-H で実装済み。手動微調整、保存 / export は未実装
 - 複数画像入力は未実装 / 将来対応
 
 将来的に解析対象フレームが増えても、ユーザーには抽出フレーム一覧ではなく代表フレーム候補を中心に見せます。代表フレーム抽出処理と Authoring 用 UI は IdealFace Authoring Tool の責務です。Engine Runtime には動画入力、フレーム抽出、Authoring 用フレーム解析、代表フレーム抽出処理、抽出フレーム一覧 UI、代表フレーム表示 UI を入れません。
@@ -885,7 +885,7 @@ Step 2-D の実装範囲:
 Step 2-D の制限:
 
 - 3D 478点候補の自動推測は未実装
-- 3D点群 preview、手動微調整、保存 / export は未実装
+- 3D点群 preview は Step 2-H で実装済み。手動微調整、保存 / export は未実装
 - 複数画像入力は未実装 / 将来対応
 
 手動ラベル確定 UI は IdealFace Authoring Tool の責務です。Engine Runtime には動画入力、フレーム抽出、Authoring 用フレーム解析、代表フレーム抽出、手動ラベル確定 UI を入れません。Beauty Studio にも Authoring 用タブは追加しません。
@@ -910,7 +910,7 @@ Step 2-E の dataset は、3D の `idealLandmarks3D` 478点候補を推測する
 Step 2-E の制限:
 
 - 3D 478点候補の自動推測は未実装
-- 3D点群 preview、手動微調整、保存 / export は未実装
+- 3D点群 preview は Step 2-H で実装済み。手動微調整、保存 / export は未実装
 - 複数画像入力は未実装 / 将来対応
 
 dataset 作成処理は IdealFace Authoring Tool の責務です。Engine Runtime には動画入力、フレーム抽出、Authoring 用フレーム解析、代表フレーム抽出、手動ラベル確定 UI、dataset 作成処理を入れません。Beauty Studio にも Authoring 用タブは追加しません。
@@ -933,7 +933,7 @@ Step 2-F の実装範囲:
 Step 2-F の制限:
 
 - 3D 478点候補の自動推測は未実装
-- 3D点群 preview、手動微調整、保存 / export は未実装
+- 3D点群 preview は Step 2-H で実装済み。手動微調整、保存 / export は未実装
 - 複数画像入力は未実装 / 将来対応
 
 詳細スキャン処理は IdealFace Authoring Tool の責務です。Engine Runtime には動画入力、フレーム抽出、詳細スキャン、Authoring 用フレーム解析、代表フレーム抽出、手動ラベル確定 UI、dataset 作成処理を入れません。Beauty Studio にも Authoring 用タブは追加しません。
@@ -958,10 +958,31 @@ Step 2-G の制限:
 - 三角測量、bundle adjustment、最適化、カメラ内部パラメータ推定は行わない
 - 生成結果は完成済み IdealFace asset ではなく候補データとして扱う
 - JSON preview に 478 landmarks 全文やサムネイル data URL 全文は出さない
-- 3D点群 preview、手動微調整、保存 / export はまだ実装しない
+- 3D点群 preview は Step 2-H で実装済み。手動微調整、保存 / export はまだ実装しない
 - 複数画像入力はまだ実装しない
 
 3D候補生成処理は IdealFace Authoring Tool の責務です。Engine Runtime には 3D推測処理や Authoring UI を入れません。Beauty Studio にも Authoring 用タブは追加しません。
+
+## 18-H. IdealFace Authoring Tool Step 2-H
+
+状態: 実装済み
+
+Step 2-H の実装範囲:
+
+- 生成済みの `idealLandmarks3D` 478点候補を簡易点群 preview として表示する
+- 3D候補未生成時に、先に 3D候補生成を実行する案内を表示する
+- 表示方向を正面 x / y、横 z / y、上 x / z で切り替える
+- 点群が preview 範囲内に収まるよう center / scale を調整する
+- confidence が低い点を薄く表示する
+- landmark count、表示方向、x / y / z の min / max、average / min / max confidence を表示する
+
+Step 2-H の制限:
+
+- preview は debug / 確認用であり、本格 3D editor ではない
+- 手動微調整、保存 / export、複数画像入力はまだ実装しない
+- JSON preview には 478点全文や canvas data URL を出さず、`idealLandmarks3DCandidate` の概要と先頭 5 点程度の preview に留める
+
+3D点群 preview は IdealFace Authoring Tool の責務です。Engine Runtime に 3D点群 preview や Authoring UI を追加しません。Beauty Studio にも Authoring 用タブは追加しません。
 
 ## 19. IdealFace / Projection / Shape Processing 中核仕様
 

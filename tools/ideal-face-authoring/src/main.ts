@@ -50,6 +50,7 @@ const INFERENCE_DATASET_LABELS: SelectableRepresentativeFrameLabel[] = [
 ]
 const INFERENCE_DATASET_LANDMARK_PREVIEW_COUNT = 5
 const IDEAL_LANDMARKS_3D_PREVIEW_COUNT = 5
+const POINT_CLOUD_PREVIEW_PADDING = 7
 
 type RepresentativeFrameCandidateKey =
   | "front"
@@ -174,6 +175,8 @@ type IdealLandmarks3DCandidateStatus =
   | "insufficient_data"
   | "error"
 
+type PointCloudPreviewDirection = "front" | "side" | "top"
+
 interface IdealLandmark3DCandidate {
   index: number
   x: number
@@ -198,6 +201,21 @@ interface IdealLandmarks3DCandidateResult {
     maxConfidence: number
   }
   message: string | null
+}
+
+interface NumberRange {
+  min: number
+  max: number
+}
+
+interface PointCloudPreviewSummary {
+  landmarkCount: number
+  xRange: NumberRange | null
+  yRange: NumberRange | null
+  zRange: NumberRange | null
+  averageConfidence: number
+  minConfidence: number
+  maxConfidence: number
 }
 
 interface DetailedScanSummary {
@@ -239,6 +257,7 @@ let selectedRepresentativeFrames: SelectedRepresentativeFrames =
   createEmptySelectedRepresentativeFrames()
 let idealLandmarks3DCandidateResult: IdealLandmarks3DCandidateResult =
   createInitialIdealLandmarks3DCandidateResult()
+let pointCloudPreviewDirection: PointCloudPreviewDirection = "front"
 const extractionVideo = document.createElement("video")
 const analysisCanvas = document.createElement("canvas")
 const thumbnailCanvas = document.createElement("canvas")
@@ -1301,6 +1320,139 @@ function toIdealLandmarks3DCandidatePreview(
   }
 }
 
+function getNumberRange(values: number[]): NumberRange | null {
+  if (values.length === 0) {
+    return null
+  }
+
+  return {
+    min: Math.min(...values),
+    max: Math.max(...values),
+  }
+}
+
+function formatNumberRange(range: NumberRange | null): string {
+  return range
+    ? `${formatNumber(range.min)} / ${formatNumber(range.max)}`
+    : "なし"
+}
+
+function getPointCloudPreviewSummary(
+  landmarks: IdealLandmark3DCandidate[],
+): PointCloudPreviewSummary {
+  const confidenceValues = landmarks.map((landmark) => landmark.confidence)
+
+  return {
+    landmarkCount: landmarks.length,
+    xRange: getNumberRange(landmarks.map((landmark) => landmark.x)),
+    yRange: getNumberRange(landmarks.map((landmark) => landmark.y)),
+    zRange: getNumberRange(landmarks.map((landmark) => landmark.z)),
+    averageConfidence: Number(averageNumbers(confidenceValues).toFixed(4)),
+    minConfidence:
+      confidenceValues.length === 0
+        ? 0
+        : Number(Math.min(...confidenceValues).toFixed(4)),
+    maxConfidence:
+      confidenceValues.length === 0
+        ? 0
+        : Number(Math.max(...confidenceValues).toFixed(4)),
+  }
+}
+
+function formatPointCloudPreviewDirection(
+  direction: PointCloudPreviewDirection,
+): string {
+  const labels: Record<PointCloudPreviewDirection, string> = {
+    front: "正面",
+    side: "横",
+    top: "上",
+  }
+
+  return labels[direction]
+}
+
+function getPointCloudPreviewAxes(
+  direction: PointCloudPreviewDirection,
+): {
+  horizontal: "x" | "y" | "z"
+  vertical: "x" | "y" | "z"
+} {
+  if (direction === "side") {
+    return {
+      horizontal: "z",
+      vertical: "y",
+    }
+  }
+
+  if (direction === "top") {
+    return {
+      horizontal: "x",
+      vertical: "z",
+    }
+  }
+
+  return {
+    horizontal: "x",
+    vertical: "y",
+  }
+}
+
+function getPointCloudProjectedBounds(
+  landmarks: IdealLandmark3DCandidate[],
+  direction: PointCloudPreviewDirection,
+): {
+  centerHorizontal: number
+  centerVertical: number
+  scale: number
+} {
+  const axes = getPointCloudPreviewAxes(direction)
+  const horizontalRange = getNumberRange(
+    landmarks.map((landmark) => landmark[axes.horizontal]),
+  )
+  const verticalRange = getNumberRange(
+    landmarks.map((landmark) => landmark[axes.vertical]),
+  )
+
+  if (!horizontalRange || !verticalRange) {
+    return {
+      centerHorizontal: 0,
+      centerVertical: 0,
+      scale: 1,
+    }
+  }
+
+  const horizontalSpan = Math.max(
+    horizontalRange.max - horizontalRange.min,
+    0.001,
+  )
+  const verticalSpan = Math.max(verticalRange.max - verticalRange.min, 0.001)
+  const drawableSize = 100 - POINT_CLOUD_PREVIEW_PADDING * 2
+
+  return {
+    centerHorizontal: (horizontalRange.min + horizontalRange.max) / 2,
+    centerVertical: (verticalRange.min + verticalRange.max) / 2,
+    scale: drawableSize / Math.max(horizontalSpan, verticalSpan),
+  }
+}
+
+function mapLandmarkToPointCloudPreview(
+  landmark: IdealLandmark3DCandidate,
+  direction: PointCloudPreviewDirection,
+  bounds: ReturnType<typeof getPointCloudProjectedBounds>,
+): { x: number; y: number } {
+  const axes = getPointCloudPreviewAxes(direction)
+
+  return {
+    x:
+      50 + (landmark[axes.horizontal] - bounds.centerHorizontal) * bounds.scale,
+    y: 50 - (landmark[axes.vertical] - bounds.centerVertical) * bounds.scale,
+  }
+}
+
+function getConfidenceOpacity(confidence: number): string {
+  return (0.22 + clamp(confidence, 0, 1) * 0.68).toFixed(3)
+}
+
 function getAllRepresentativeCandidates(
   candidates: RepresentativeFrameCandidates,
 ): RepresentativeFrameCandidate[] {
@@ -1449,6 +1601,7 @@ function renderRepresentativeFrameCandidatesPanel(): string {
       ${renderReadinessPanel()}
       ${renderInferenceDatasetPanel()}
       ${renderIdealLandmarks3DCandidatePanel()}
+      ${renderIdealLandmarks3DPointCloudPreviewPanel()}
       <div class="candidate-category-stack">
         ${categories
           .map((category) =>
@@ -1809,6 +1962,131 @@ function renderIdealLandmarks3DCandidatePreview(
   `
 }
 
+function renderPointCloudDirectionButton(
+  direction: PointCloudPreviewDirection,
+): string {
+  const isActive = pointCloudPreviewDirection === direction
+
+  return `
+    <button
+      class="point-cloud-direction-button${isActive ? " point-cloud-direction-button-active" : ""}"
+      type="button"
+      data-point-cloud-direction="${direction}"
+      aria-pressed="${isActive ? "true" : "false"}"
+    >
+      ${formatPointCloudPreviewDirection(direction)}
+    </button>
+  `
+}
+
+function renderIdealLandmarks3DPointCloudPreviewPanel(): string {
+  const result = idealLandmarks3DCandidateResult
+  const hasGeneratedLandmarks =
+    result.status === "generated" && result.landmarks.length > 0
+  const summary = getPointCloudPreviewSummary(
+    hasGeneratedLandmarks ? result.landmarks : [],
+  )
+
+  return `
+    <section class="point-cloud-preview-panel" aria-label="3D点群 preview">
+      <div class="panel-heading">
+        <div>
+          <h2>3D点群 preview</h2>
+          <p>生成された idealLandmarks3D 候補を簡易表示します。</p>
+        </div>
+      </div>
+      <div class="point-cloud-controls" aria-label="表示方向">
+        <span>表示方向:</span>
+        ${renderPointCloudDirectionButton("front")}
+        ${renderPointCloudDirectionButton("side")}
+        ${renderPointCloudDirectionButton("top")}
+      </div>
+      ${
+        hasGeneratedLandmarks
+          ? renderIdealLandmarks3DPointCloudSvg(
+              result.landmarks,
+              pointCloudPreviewDirection,
+            )
+          : `<div class="point-cloud-empty">
+              <p>3D 478点候補がまだ生成されていません。<br />先に「3D候補を生成」を実行してください。</p>
+            </div>`
+      }
+      <dl class="point-cloud-summary-list">
+        <div>
+          <dt>landmark count</dt>
+          <dd>${summary.landmarkCount}</dd>
+        </div>
+        <div>
+          <dt>表示方向</dt>
+          <dd>${formatPointCloudPreviewDirection(pointCloudPreviewDirection)}</dd>
+        </div>
+        <div>
+          <dt>x min / max</dt>
+          <dd>${formatNumberRange(summary.xRange)}</dd>
+        </div>
+        <div>
+          <dt>y min / max</dt>
+          <dd>${formatNumberRange(summary.yRange)}</dd>
+        </div>
+        <div>
+          <dt>z min / max</dt>
+          <dd>${formatNumberRange(summary.zRange)}</dd>
+        </div>
+        <div>
+          <dt>average confidence</dt>
+          <dd>${formatNumber(summary.averageConfidence)}</dd>
+        </div>
+        <div>
+          <dt>min / max confidence</dt>
+          <dd>${formatNumber(summary.minConfidence)} / ${formatNumber(summary.maxConfidence)}</dd>
+        </div>
+      </dl>
+    </section>
+  `
+}
+
+function renderIdealLandmarks3DPointCloudSvg(
+  landmarks: IdealLandmark3DCandidate[],
+  direction: PointCloudPreviewDirection,
+): string {
+  const axes = getPointCloudPreviewAxes(direction)
+  const bounds = getPointCloudProjectedBounds(landmarks, direction)
+  const points = landmarks
+    .map((landmark) => {
+      const point = mapLandmarkToPointCloudPreview(landmark, direction, bounds)
+
+      return `
+        <circle
+          cx="${formatNumber(point.x)}"
+          cy="${formatNumber(point.y)}"
+          r="0.72"
+          opacity="${getConfidenceOpacity(landmark.confidence)}"
+        >
+          <title>#${landmark.index}: x ${landmark.x} / y ${landmark.y} / z ${landmark.z} / confidence ${landmark.confidence}</title>
+        </circle>
+      `
+    })
+    .join("")
+
+  return `
+    <svg
+      class="point-cloud-preview"
+      viewBox="0 0 100 100"
+      role="img"
+      aria-label="3D 478点候補 ${formatPointCloudPreviewDirection(direction)} 表示"
+    >
+      <rect x="0" y="0" width="100" height="100" rx="1.5" />
+      <line class="point-cloud-axis" x1="${POINT_CLOUD_PREVIEW_PADDING}" y1="50" x2="${100 - POINT_CLOUD_PREVIEW_PADDING}" y2="50" />
+      <line class="point-cloud-axis" x1="50" y1="${POINT_CLOUD_PREVIEW_PADDING}" x2="50" y2="${100 - POINT_CLOUD_PREVIEW_PADDING}" />
+      <text class="point-cloud-axis-label" x="${100 - POINT_CLOUD_PREVIEW_PADDING}" y="48">${axes.horizontal}</text>
+      <text class="point-cloud-axis-label" x="52" y="${POINT_CLOUD_PREVIEW_PADDING + 4}">${axes.vertical}</text>
+      <g class="point-cloud-points">
+        ${points}
+      </g>
+    </svg>
+  `
+}
+
 function renderAnalysisPanel(): string {
   const summary = getDetailedScanSummary()
   const displayFrameCount = videoSource?.extractedFrames.length ?? 0
@@ -2139,6 +2417,27 @@ function attachIdealLandmarks3DCandidateHandler(): void {
         buildIdealLandmarks3DCandidateResult(dataset)
       render()
     })
+
+  document
+    .querySelectorAll<HTMLButtonElement>("[data-point-cloud-direction]")
+    .forEach((button) => {
+      button.addEventListener("click", () => {
+        const direction = button.dataset.pointCloudDirection
+
+        if (!isPointCloudPreviewDirection(direction)) {
+          return
+        }
+
+        pointCloudPreviewDirection = direction
+        render()
+      })
+    })
+}
+
+function isPointCloudPreviewDirection(
+  value: string | undefined,
+): value is PointCloudPreviewDirection {
+  return value === "front" || value === "side" || value === "top"
 }
 
 async function analyzeExtractedFrames(): Promise<void> {
@@ -2790,7 +3089,7 @@ function render(): void {
           <p class="eyebrow">BAE AR</p>
           <h1>IdealFace Authoring Tool</h1>
         </div>
-        <span>Step 2-G</span>
+        <span>Step 2-H</span>
       </header>
 
       <section class="summary" aria-label="IdealFace metadata">
@@ -3015,7 +3314,8 @@ style.textContent = `
   .candidate-category-toggle-button,
   .candidate-label-button,
   .selected-clear-button,
-  .candidate-generate-button {
+  .candidate-generate-button,
+  .point-cloud-direction-button {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -3040,6 +3340,10 @@ style.textContent = `
     font-family: inherit;
   }
 
+  .point-cloud-direction-button {
+    font-family: inherit;
+  }
+
   .analysis-button:disabled {
     cursor: not-allowed;
     opacity: 0.55;
@@ -3056,7 +3360,8 @@ style.textContent = `
   .candidate-category-toggle-button:focus-visible,
   .candidate-label-button:focus-visible,
   .selected-clear-button:focus-visible,
-  .candidate-generate-button:focus-visible {
+  .candidate-generate-button:focus-visible,
+  .point-cloud-direction-button:focus-visible {
     outline: 3px solid #9fc8bd;
     outline-offset: 2px;
   }
@@ -3275,6 +3580,90 @@ style.textContent = `
     gap: 3px;
     margin: 0;
     padding-left: 18px;
+  }
+
+  .point-cloud-preview-panel {
+    display: grid;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+
+  .point-cloud-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    color: #25342e;
+    font-size: 13px;
+    font-weight: 800;
+  }
+
+  .point-cloud-direction-button {
+    min-height: 34px;
+    border: 1px solid #b7c7c2;
+    background: #edf4f1;
+    color: #25342e;
+    padding: 6px 11px;
+    font-size: 13px;
+  }
+
+  .point-cloud-direction-button-active {
+    border-color: #27594c;
+    background: #27594c;
+    color: #ffffff;
+  }
+
+  .point-cloud-preview,
+  .point-cloud-empty {
+    width: 100%;
+    border: 1px solid #ccd8d3;
+    border-radius: 8px;
+    background: #ffffff;
+  }
+
+  .point-cloud-preview {
+    display: block;
+    height: min(56vw, 520px);
+    min-height: 280px;
+  }
+
+  .point-cloud-preview rect {
+    fill: #ffffff;
+  }
+
+  .point-cloud-axis {
+    stroke: #b7c7c2;
+    stroke-width: 0.35;
+  }
+
+  .point-cloud-axis-label {
+    fill: #5d675f;
+    font-size: 3.2px;
+    font-weight: 800;
+  }
+
+  .point-cloud-points circle {
+    fill: #d94f45;
+  }
+
+  .point-cloud-empty {
+    display: grid;
+    min-height: 220px;
+    place-items: center;
+    padding: 18px;
+    color: #5d675f;
+    text-align: center;
+    font-size: 14px;
+    font-weight: 700;
+  }
+
+  .point-cloud-empty p {
+    margin: 0;
+    line-height: 1.6;
+  }
+
+  .point-cloud-summary-list {
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   }
 
   .dataset-entry-card {
