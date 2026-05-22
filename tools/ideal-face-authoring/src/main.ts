@@ -13,6 +13,8 @@ import {
 const idealFace = NATURAL_IDEAL_FACE_PRESET
 const app = document.querySelector<HTMLDivElement>("#app")
 const MAX_EXTRACTED_FRAME_COUNT = 20
+const DETAILED_SCAN_INTERVAL_SEC = 0.25
+const MAX_DETAILED_SCAN_FRAME_COUNT = 120
 const THUMBNAIL_WIDTH = 180
 const ANALYSIS_MAX_WIDTH = 640
 const EMPTY_FACE_POSE: FacePose = {
@@ -93,6 +95,13 @@ interface ExtractedVideoFrame {
   analysis?: FrameAnalysisResult
 }
 
+interface LandmarkPreviewPoint {
+  index: number
+  x: number
+  y: number
+  z: number
+}
+
 interface RepresentativeFrameCandidate {
   key: RepresentativeFrameCandidateKey
   rank: number
@@ -107,6 +116,7 @@ interface RepresentativeFrameCandidate {
   pitchAbs: number
   rollAbs: number
   thumbnailUrl: string
+  landmarkPreview: LandmarkPreviewPoint[]
 }
 
 type RepresentativeFrameCandidates = Record<
@@ -128,6 +138,7 @@ interface SelectedRepresentativeFrame {
   landmarksCount: number
   status: "selected" | "excluded"
   thumbnailUrl: string
+  landmarkPreview: LandmarkPreviewPoint[]
 }
 
 type SelectedRepresentativeFrames = Record<
@@ -145,12 +156,7 @@ interface RepresentativeFrameDatasetEntry {
   timestamp: number | null
   pose: FacePose | null
   landmarksCount: number
-  landmarkPreview: Array<{
-    index: number
-    x: number
-    y: number
-    z: number
-  }>
+  landmarkPreview: LandmarkPreviewPoint[]
   status: InferenceDatasetEntryStatus
   landmarks: FaceLandmark[]
   thumbnailUrl: string | null
@@ -160,6 +166,16 @@ interface IdealLandmarks3DInferenceDataset {
   readyCount: number
   requiredCount: number
   entries: RepresentativeFrameDatasetEntry[]
+}
+
+interface DetailedScanSummary {
+  scanIntervalSec: number
+  maxScanFrames: number
+  scannedFrameCount: number
+  analyzedFrameCount: number
+  detectedFrameCount: number
+  candidateSourceFrameCount: number
+  candidateCategoryCount: number
 }
 
 interface VideoSourceState {
@@ -173,6 +189,9 @@ interface VideoSourceState {
   isAnalyzing: boolean
   analysisError: string | null
   error: string | null
+  scanSummary: DetailedScanSummary
+  representativeFrameCandidates: RepresentativeFrameCandidates
+  representativeCandidateFrames: ExtractedVideoFrame[]
 }
 
 let videoSource: VideoSourceState | null = null
@@ -463,28 +482,46 @@ function formatPoseRange(range: { min: number; max: number } | null): string {
   return range ? `${formatNumber(range.min)} / ${formatNumber(range.max)}` : "なし"
 }
 
-function getRepresentativeFrameCandidates(): RepresentativeFrameCandidates {
-  const candidates = getCandidateSourceFrames()
+function getDetailedScanSummary(): DetailedScanSummary {
+  return videoSource?.scanSummary ?? createEmptyDetailedScanSummary()
+}
 
+function getCandidateCategoryCount(
+  candidates: RepresentativeFrameCandidates,
+): number {
+  return Object.values(candidates).filter((category) => category.length > 0)
+    .length
+}
+
+function getRepresentativeFrameCandidates(): RepresentativeFrameCandidates {
+  return (
+    videoSource?.representativeFrameCandidates ??
+    createEmptyRepresentativeFrameCandidates()
+  )
+}
+
+function buildRepresentativeFrameCandidatesFromFrames(
+  frames: ExtractedVideoFrame[],
+): RepresentativeFrameCandidates {
   return {
-    front: selectTopCandidates(candidates, "front", scoreFrontCandidate),
+    front: selectTopCandidates(frames, "front", scoreFrontCandidate),
     yawPositive: selectTopCandidates(
-      candidates,
+      frames,
       "yawPositive",
       scoreYawPositiveCandidate,
     ),
     yawNegative: selectTopCandidates(
-      candidates,
+      frames,
       "yawNegative",
       scoreYawNegativeCandidate,
     ),
     pitchPositive: selectTopCandidates(
-      candidates,
+      frames,
       "pitchPositive",
       scorePitchPositiveCandidate,
     ),
     pitchNegative: selectTopCandidates(
-      candidates,
+      frames,
       "pitchNegative",
       scorePitchNegativeCandidate,
     ),
@@ -492,7 +529,15 @@ function getRepresentativeFrameCandidates(): RepresentativeFrameCandidates {
 }
 
 function getCandidateSourceFrames(): ExtractedVideoFrame[] {
-  return (videoSource?.extractedFrames ?? []).filter((frame) => {
+  return getCandidateSourceFramesFromFrames(
+    videoSource?.representativeCandidateFrames ?? [],
+  )
+}
+
+function getCandidateSourceFramesFromFrames(
+  frames: ExtractedVideoFrame[],
+): ExtractedVideoFrame[] {
+  return frames.filter((frame) => {
     const analysis = frame.analysis
 
     return (
@@ -502,6 +547,28 @@ function getCandidateSourceFrames(): ExtractedVideoFrame[] {
       hasCompletePose(analysis.pose)
     )
   })
+}
+
+function createEmptyRepresentativeFrameCandidates(): RepresentativeFrameCandidates {
+  return {
+    front: [],
+    yawPositive: [],
+    yawNegative: [],
+    pitchPositive: [],
+    pitchNegative: [],
+  }
+}
+
+function createEmptyDetailedScanSummary(): DetailedScanSummary {
+  return {
+    scanIntervalSec: DETAILED_SCAN_INTERVAL_SEC,
+    maxScanFrames: MAX_DETAILED_SCAN_FRAME_COUNT,
+    scannedFrameCount: 0,
+    analyzedFrameCount: 0,
+    detectedFrameCount: 0,
+    candidateSourceFrameCount: 0,
+    candidateCategoryCount: 0,
+  }
 }
 
 function hasCompletePose(pose: FacePose | undefined): pose is FacePose {
@@ -569,6 +636,7 @@ function buildRepresentativeFrameCandidate(
     pitchAbs: Math.abs(pose.pitch),
     rollAbs: Math.abs(pose.roll),
     thumbnailUrl: frame.thumbnailUrl,
+    landmarkPreview: buildLandmarkPreview(frame.analysis?.landmarks ?? []),
   }
 }
 
@@ -706,6 +774,7 @@ function toRepresentativeCandidatePreview(
       pitchAbs: Number(candidate.pitchAbs.toFixed(3)),
       rollAbs: Number(candidate.rollAbs.toFixed(3)),
     },
+    landmarkPreview: candidate.landmarkPreview,
   }
 }
 
@@ -761,6 +830,7 @@ function toSelectedRepresentativeFramePreview(
     score: frame.score,
     landmarksCount: frame.landmarksCount,
     status: frame.status,
+    landmarkPreview: frame.landmarkPreview,
   }
 }
 
@@ -800,6 +870,9 @@ function buildLandmarkPreview(
 
 function findExtractedVideoFrame(frameIndex: number): ExtractedVideoFrame | null {
   return (
+    videoSource?.representativeCandidateFrames.find(
+      (frame) => frame.index === frameIndex,
+    ) ??
     videoSource?.extractedFrames.find((frame) => frame.index === frameIndex) ??
     null
   )
@@ -962,6 +1035,7 @@ function buildSelectedRepresentativeFrame(
     landmarksCount: candidate.landmarksCount,
     status: label === "excluded" ? "excluded" : "selected",
     thumbnailUrl: candidate.thumbnailUrl,
+    landmarkPreview: candidate.landmarkPreview,
   }
 }
 
@@ -1059,10 +1133,10 @@ function renderRepresentativeFrameCandidatesPanel(): string {
       <div class="panel-heading">
         <div>
           <h2>代表フレーム候補</h2>
-          <p>解析済みフレームの yaw / pitch / roll から候補を自動抽出します。</p>
+          <p>詳細スキャン済みフレームの yaw / pitch / roll から候補を自動抽出します。</p>
         </div>
       </div>
-      <p class="candidate-note">左右・上下の最終ラベルはユーザーが手動で確定します。Step 2-E では確定済み代表フレームから 3D推測用データセットを作成します。3D推測、3D点群 preview、手動微調整、保存 / export はまだ行いません。</p>
+      <p class="candidate-note">左右・上下の最終ラベルはユーザーが手動で確定します。Step 2-F では候補抽出用に動画全体を詳細スキャンし、確定済み代表フレームから 3D推測用データセットを作成します。3D推測、3D点群 preview、手動微調整、保存 / export はまだ行いません。</p>
       ${renderSelectedRepresentativeFramesPanel()}
       ${renderReadinessPanel()}
       ${renderInferenceDatasetPanel()}
@@ -1342,34 +1416,50 @@ function renderLandmarkPreview(
 }
 
 function renderAnalysisPanel(): string {
-  const summary = getAnalysisSummary()
-  const hasFrames = summary.extractedFrameCount > 0
+  const summary = getDetailedScanSummary()
+  const displayFrameCount = videoSource?.extractedFrames.length ?? 0
+  const hasVideo = Boolean(videoSource?.objectUrl && !videoSource.error)
   const isAnalyzing = videoSource?.isAnalyzing ?? false
-  const disabled = !hasFrames || isAnalyzing
+  const isExtracting = videoSource?.isExtracting ?? false
+  const disabled = !hasVideo || isAnalyzing || isExtracting
   const statusText = videoSource?.analysisError
     ? videoSource.analysisError
     : isAnalyzing
-      ? "MediaPipe 解析中です。"
-      : hasFrames
-        ? "抽出済みフレームを MediaPipe Face Landmarker で解析できます。"
-        : "フレーム抽出後に解析できます。"
+      ? "動画全体を詳細スキャン中です。"
+      : isExtracting
+        ? "表示用フレーム抽出後に詳細スキャンできます。"
+      : hasVideo
+        ? "動画全体を細かくスキャンし、代表フレーム候補を抽出できます。"
+        : "MP4 動画の選択後に詳細スキャンできます。"
 
   return `
     <section class="analysis-panel" aria-label="フレーム解析">
       <div class="panel-heading">
         <div>
-          <h2>解析概要</h2>
-          <p>抽出済みフレームから 2D 478 landmarks と FacePose を取得します。</p>
+          <h2>詳細スキャン</h2>
+          <p>表示用抽出とは別に、候補抽出用として動画全体を細かく解析します。</p>
         </div>
         <button id="analyze-frames-button" class="analysis-button" type="button" ${disabled ? "disabled" : ""}>
-          MediaPipe 解析を実行
+          詳細スキャンを実行
         </button>
       </div>
       <p class="status-text">${escapeHtml(statusText)}</p>
       <dl class="analysis-summary">
         <div>
-          <dt>抽出フレーム数</dt>
-          <dd>${summary.extractedFrameCount}</dd>
+          <dt>スキャン間隔</dt>
+          <dd>${summary.scanIntervalSec.toFixed(3)}s</dd>
+        </div>
+        <div>
+          <dt>最大スキャン数</dt>
+          <dd>${summary.maxScanFrames}</dd>
+        </div>
+        <div>
+          <dt>表示用抽出フレーム数</dt>
+          <dd>${displayFrameCount}</dd>
+        </div>
+        <div>
+          <dt>解析対象フレーム数</dt>
+          <dd>${summary.scannedFrameCount}</dd>
         </div>
         <div>
           <dt>解析済みフレーム数</dt>
@@ -1380,26 +1470,15 @@ function renderAnalysisPanel(): string {
           <dd>${summary.detectedFrameCount}</dd>
         </div>
         <div>
-          <dt>顔検出なし</dt>
-          <dd>${summary.noFaceFrameCount}</dd>
+          <dt>候補抽出対象</dt>
+          <dd>${summary.candidateSourceFrameCount}</dd>
         </div>
         <div>
-          <dt>解析エラー数</dt>
-          <dd>${summary.failedFrameCount}</dd>
-        </div>
-        <div>
-          <dt>pitch 範囲</dt>
-          <dd>${formatPoseRange(summary.pitchRange)}</dd>
-        </div>
-        <div>
-          <dt>yaw 範囲</dt>
-          <dd>${formatPoseRange(summary.yawRange)}</dd>
-        </div>
-        <div>
-          <dt>roll 範囲</dt>
-          <dd>${formatPoseRange(summary.rollRange)}</dd>
+          <dt>候補カテゴリ</dt>
+          <dd>${summary.candidateCategoryCount}</dd>
         </div>
       </dl>
+      <p class="candidate-note">候補以外の詳細スキャンフレームは表示しません。</p>
     </section>
   `
 }
@@ -1443,17 +1522,17 @@ function renderDebugFrameListPanel(): string {
     <section class="frames-panel frames-panel-debug" aria-label="抽出フレーム一覧 debug">
       <div class="debug-panel-heading">
         <div>
-          <h2>抽出フレーム一覧（debug）</h2>
-          <p>抽出フレーム全件の確認用表示です。通常は代表フレーム候補を確認します。</p>
+          <h2>表示用抽出フレーム一覧（debug）</h2>
+          <p>最大20件程度の表示確認用フレームです。詳細スキャン全件は表示しません。</p>
         </div>
         <button id="toggle-debug-frames-button" class="debug-toggle-button" type="button" aria-expanded="${isDebugFrameListOpen}">
-          ${isDebugFrameListOpen ? "抽出フレームを隠す" : "抽出フレームを表示"}
+          ${isDebugFrameListOpen ? "表示用フレームを隠す" : "表示用フレームを表示"}
         </button>
       </div>
       ${
         isDebugFrameListOpen
           ? renderFrameThumbnails()
-          : `<p class="debug-collapsed-text">抽出フレーム一覧は閉じています。</p>`
+          : `<p class="debug-collapsed-text">表示用抽出フレーム一覧は閉じています。候補以外の詳細スキャンフレームは表示しません。</p>`
       }
     </section>
   `
@@ -1461,12 +1540,22 @@ function renderDebugFrameListPanel(): string {
 
 function buildAuthoringDebugPreview(): unknown {
   const analysisSummary = getAnalysisSummary()
+  const scanSummary = getDetailedScanSummary()
   const representativeFrameCandidates = getRepresentativeFrameCandidates()
   const idealLandmarks3DInferenceDataset =
     getIdealLandmarks3DInferenceDataset()
 
   return {
     idealFace,
+    scanSummary: {
+      scanIntervalSec: scanSummary.scanIntervalSec,
+      maxScanFrames: scanSummary.maxScanFrames,
+      scannedFrameCount: scanSummary.scannedFrameCount,
+      analyzedFrameCount: scanSummary.analyzedFrameCount,
+      detectedFrameCount: scanSummary.detectedFrameCount,
+      candidateSourceFrameCount: scanSummary.candidateSourceFrameCount,
+      candidateCategoryCount: scanSummary.candidateCategoryCount,
+    },
     representativeFrameCandidates: toRepresentativeCandidatesPreview(
       representativeFrameCandidates,
     ),
@@ -1616,7 +1705,7 @@ function attachRepresentativeFrameSelectionHandler(): void {
 }
 
 async function analyzeExtractedFrames(): Promise<void> {
-  if (!videoSource || videoSource.extractedFrames.length === 0) {
+  if (!videoSource || !videoSource.objectUrl) {
     return
   }
 
@@ -1626,65 +1715,24 @@ async function analyzeExtractedFrames(): Promise<void> {
   updateVideoSource({
     isAnalyzing: true,
     analysisError: null,
-    extractedFrames: videoSource.extractedFrames.map((frame) => ({
-      ...frame,
-      status: "pending",
-      analysis: undefined,
-    })),
+    scanSummary: createEmptyDetailedScanSummary(),
+    representativeFrameCandidates: createEmptyRepresentativeFrameCandidates(),
+    representativeCandidateFrames: [],
   })
   render()
 
   try {
     const landmarker = await getFaceLandmarker()
+    const scanResult = await scanVideoForRepresentativeCandidates(
+      extractionVideo,
+      landmarker,
+    )
 
-    for (const frame of videoSource.extractedFrames) {
-      updateExtractedFrame(frame.index, {
-        status: "analyzing",
-        analysis: undefined,
-      })
-      render()
-
-      try {
-        const image = await loadFrameImage(frame.analysisImageUrl)
-        const result = landmarker.detect(image)
-        const landmarks = (result.faceLandmarks[0] ?? []).map((landmark) => ({
-          x: landmark.x,
-          y: landmark.y,
-          z: landmark.z,
-        }))
-        const detected = result.faceLandmarks.length > 0
-
-        updateExtractedFrame(frame.index, {
-          status: detected ? "analyzed" : "no_face",
-          analysis: {
-            detected,
-            landmarks,
-            pose: detected
-              ? estimateFacePose(
-                  landmarks,
-                  result.facialTransformationMatrixes[0],
-                )
-              : { ...EMPTY_FACE_POSE },
-            errorMessage: null,
-            analyzedAt: Date.now(),
-          },
-        })
-      } catch (error) {
-        updateExtractedFrame(frame.index, {
-          status: "error",
-          analysis: {
-            detected: false,
-            landmarks: [],
-            pose: { ...EMPTY_FACE_POSE },
-            errorMessage:
-              error instanceof Error ? error.message : String(error),
-            analyzedAt: Date.now(),
-          },
-        })
-      }
-
-      render()
-    }
+    updateVideoSource({
+      scanSummary: scanResult.scanSummary,
+      representativeFrameCandidates: scanResult.representativeFrameCandidates,
+      representativeCandidateFrames: scanResult.representativeCandidateFrames,
+    })
   } catch (error) {
     updateVideoSource({
       analysisError:
@@ -1698,6 +1746,182 @@ async function analyzeExtractedFrames(): Promise<void> {
     isAnalyzing: false,
   })
   render()
+}
+
+interface DetailedScanResult {
+  scanSummary: DetailedScanSummary
+  representativeFrameCandidates: RepresentativeFrameCandidates
+  representativeCandidateFrames: ExtractedVideoFrame[]
+}
+
+async function scanVideoForRepresentativeCandidates(
+  video: HTMLVideoElement,
+  landmarker: FaceLandmarker,
+): Promise<DetailedScanResult> {
+  const scanPlan = getDetailedScanPlan(video.duration)
+  const analysisContext = analysisCanvas.getContext("2d")
+  const thumbnailContext = thumbnailCanvas.getContext("2d")
+
+  if (
+    !analysisContext ||
+    !thumbnailContext ||
+    video.videoWidth === 0 ||
+    video.videoHeight === 0
+  ) {
+    throw new Error("詳細スキャン用フレームを canvas に描画できませんでした。")
+  }
+
+  const analysisWidth = Math.min(video.videoWidth, ANALYSIS_MAX_WIDTH)
+  const analysisHeight = Math.round(
+    (analysisWidth * video.videoHeight) / video.videoWidth,
+  )
+  const thumbnailHeight = Math.round(
+    (THUMBNAIL_WIDTH * video.videoHeight) / video.videoWidth,
+  )
+  analysisCanvas.width = analysisWidth
+  analysisCanvas.height = analysisHeight
+  thumbnailCanvas.width = THUMBNAIL_WIDTH
+  thumbnailCanvas.height = thumbnailHeight
+
+  const scannedFrames: ExtractedVideoFrame[] = []
+  let detectedFrameCount = 0
+
+  for (const [index, timestamp] of scanPlan.timestamps.entries()) {
+    const startedAt = performance.now()
+
+    if (Math.abs(video.currentTime - timestamp) > 0.001) {
+      video.currentTime = timestamp
+      await waitForVideoEvent("seeked")
+    } else if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+      await waitForVideoEvent("loadeddata")
+    }
+
+    analysisContext.drawImage(video, 0, 0, analysisWidth, analysisHeight)
+    thumbnailContext.drawImage(
+      analysisCanvas,
+      0,
+      0,
+      THUMBNAIL_WIDTH,
+      thumbnailHeight,
+    )
+
+    const frame = analyzeScannedCanvasFrame(
+      landmarker,
+      index + 1,
+      timestamp,
+      startedAt,
+    )
+    scannedFrames.push(frame)
+
+    if (frame.analysis?.detected) {
+      detectedFrameCount += 1
+    }
+
+    updateVideoSource({
+      scanSummary: {
+        scanIntervalSec: scanPlan.intervalSec,
+        maxScanFrames: MAX_DETAILED_SCAN_FRAME_COUNT,
+        scannedFrameCount: scanPlan.timestamps.length,
+        analyzedFrameCount: scannedFrames.length,
+        detectedFrameCount,
+        candidateSourceFrameCount: getCandidateSourceFramesFromFrames(
+          scannedFrames,
+        ).length,
+        candidateCategoryCount: 0,
+      },
+    })
+    render()
+  }
+
+  const candidateSourceFrames =
+    getCandidateSourceFramesFromFrames(scannedFrames)
+  const representativeFrameCandidates =
+    buildRepresentativeFrameCandidatesFromFrames(candidateSourceFrames)
+  const representativeCandidateFrames = pickRepresentativeCandidateFrames(
+    candidateSourceFrames,
+    representativeFrameCandidates,
+  )
+  const scanSummary: DetailedScanSummary = {
+    scanIntervalSec: scanPlan.intervalSec,
+    maxScanFrames: MAX_DETAILED_SCAN_FRAME_COUNT,
+    scannedFrameCount: scanPlan.timestamps.length,
+    analyzedFrameCount: scannedFrames.length,
+    detectedFrameCount,
+    candidateSourceFrameCount: candidateSourceFrames.length,
+    candidateCategoryCount: getCandidateCategoryCount(
+      representativeFrameCandidates,
+    ),
+  }
+
+  return {
+    scanSummary,
+    representativeFrameCandidates,
+    representativeCandidateFrames,
+  }
+}
+
+function analyzeScannedCanvasFrame(
+  landmarker: FaceLandmarker,
+  frameIndex: number,
+  timestamp: number,
+  startedAt: number,
+): ExtractedVideoFrame {
+  try {
+    const result = landmarker.detect(analysisCanvas)
+    const landmarks = (result.faceLandmarks[0] ?? []).map((landmark) => ({
+      x: landmark.x,
+      y: landmark.y,
+      z: landmark.z,
+    }))
+    const detected = result.faceLandmarks.length > 0
+
+    return {
+      index: frameIndex,
+      timestamp,
+      status: detected ? "analyzed" : "no_face",
+      thumbnailUrl: thumbnailCanvas.toDataURL("image/jpeg", 0.82),
+      analysisImageUrl: analysisCanvas.toDataURL("image/jpeg", 0.9),
+      extractionTimeMs: performance.now() - startedAt,
+      analysis: {
+        detected,
+        landmarks,
+        pose: detected
+          ? estimateFacePose(landmarks, result.facialTransformationMatrixes[0])
+          : { ...EMPTY_FACE_POSE },
+        errorMessage: null,
+        analyzedAt: Date.now(),
+      },
+    }
+  } catch (error) {
+    return {
+      index: frameIndex,
+      timestamp,
+      status: "error",
+      thumbnailUrl: thumbnailCanvas.toDataURL("image/jpeg", 0.82),
+      analysisImageUrl: analysisCanvas.toDataURL("image/jpeg", 0.9),
+      extractionTimeMs: performance.now() - startedAt,
+      analysis: {
+        detected: false,
+        landmarks: [],
+        pose: { ...EMPTY_FACE_POSE },
+        errorMessage: error instanceof Error ? error.message : String(error),
+        analyzedAt: Date.now(),
+      },
+    }
+  }
+}
+
+function pickRepresentativeCandidateFrames(
+  sourceFrames: ExtractedVideoFrame[],
+  candidates: RepresentativeFrameCandidates,
+): ExtractedVideoFrame[] {
+  const candidateFrameIndexes = new Set(
+    getAllRepresentativeCandidates(candidates).map(
+      (candidate) => candidate.frameIndex,
+    ),
+  )
+
+  return sourceFrames.filter((frame) => candidateFrameIndexes.has(frame.index))
 }
 
 function updateExtractedFrame(
@@ -1894,6 +2118,9 @@ async function handleVideoFileSelection(file: File): Promise<void> {
       isAnalyzing: false,
       analysisError: null,
       error: "初期対応は MP4 動画のみです。",
+      scanSummary: createEmptyDetailedScanSummary(),
+      representativeFrameCandidates: createEmptyRepresentativeFrameCandidates(),
+      representativeCandidateFrames: [],
     })
     render()
     return
@@ -1912,6 +2139,9 @@ async function handleVideoFileSelection(file: File): Promise<void> {
     isAnalyzing: false,
     analysisError: null,
     error: null,
+    scanSummary: createEmptyDetailedScanSummary(),
+    representativeFrameCandidates: createEmptyRepresentativeFrameCandidates(),
+    representativeCandidateFrames: [],
   })
   isDebugFrameListOpen = false
   render()
@@ -2009,6 +2239,34 @@ function getExtractionTimestamps(duration: number): number[] {
   )
 }
 
+function getDetailedScanPlan(duration: number): {
+  intervalSec: number
+  timestamps: number[]
+} {
+  const safeDuration = Math.max(0, duration)
+  const maxTimestamp = Math.max(0, safeDuration - 0.05)
+  const estimatedFrameCount =
+    Math.floor(maxTimestamp / DETAILED_SCAN_INTERVAL_SEC) + 1
+  const frameCount = Math.min(
+    MAX_DETAILED_SCAN_FRAME_COUNT,
+    Math.max(1, estimatedFrameCount),
+  )
+  const intervalSec =
+    frameCount <= 1
+      ? DETAILED_SCAN_INTERVAL_SEC
+      : Math.max(
+          DETAILED_SCAN_INTERVAL_SEC,
+          maxTimestamp / Math.max(1, frameCount - 1),
+        )
+
+  return {
+    intervalSec: Number(intervalSec.toFixed(3)),
+    timestamps: Array.from({ length: frameCount }, (_, index) =>
+      Math.min(maxTimestamp, Number((index * intervalSec).toFixed(3))),
+    ),
+  }
+}
+
 async function extractFramesFromVideo(
   video: HTMLVideoElement,
 ): Promise<ExtractedVideoFrame[]> {
@@ -2085,7 +2343,7 @@ function render(): void {
           <p class="eyebrow">BAE AR</p>
           <h1>IdealFace Authoring Tool</h1>
         </div>
-        <span>Step 2-E</span>
+        <span>Step 2-F</span>
       </header>
 
       <section class="summary" aria-label="IdealFace metadata">
@@ -2454,7 +2712,7 @@ style.textContent = `
     width: 96px;
     aspect-ratio: 16 / 9;
     border-radius: 6px;
-    object-fit: cover;
+    object-fit: contain;
     background: #1f2824;
   }
 
@@ -2537,7 +2795,7 @@ style.textContent = `
     width: 104px;
     aspect-ratio: 16 / 9;
     border-radius: 6px;
-    object-fit: cover;
+    object-fit: contain;
     background: #1f2824;
   }
 
@@ -2674,7 +2932,7 @@ style.textContent = `
     width: 116px;
     aspect-ratio: 16 / 9;
     border-radius: 6px;
-    object-fit: cover;
+    object-fit: contain;
     background: #1f2824;
   }
 
@@ -2782,7 +3040,7 @@ style.textContent = `
     display: block;
     width: 100%;
     aspect-ratio: 16 / 9;
-    object-fit: cover;
+    object-fit: contain;
     background: #1f2824;
   }
 
