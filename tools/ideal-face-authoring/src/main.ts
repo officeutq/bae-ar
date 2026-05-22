@@ -25,6 +25,26 @@ const LEFT_EYE_OUTER_INDEX = 263
 const RIGHT_EYE_OUTER_INDEX = 33
 const NOSE_TIP_INDEX = 4
 const MOUTH_CENTER_INDICES = [13, 14]
+const REQUIRED_LANDMARK_COUNT = 478
+const FRONT_POSE_LIMIT = {
+  yaw: 8,
+  pitch: 8,
+  roll: 6,
+}
+const DIRECTIONAL_POSE_LIMIT = {
+  yaw: 12,
+  pitch: 10,
+  roll: 8,
+}
+const YAW_CANDIDATE_MIN_ABS = 12
+const PITCH_CANDIDATE_MIN_ABS = 10
+
+type RepresentativeFrameCandidateKey =
+  | "front"
+  | "yawPositive"
+  | "yawNegative"
+  | "pitchPositive"
+  | "pitchNegative"
 
 type FrameAnalysisStatus =
   | "pending"
@@ -50,6 +70,26 @@ interface ExtractedVideoFrame {
   extractionTimeMs: number
   analysis?: FrameAnalysisResult
 }
+
+interface RepresentativeFrameCandidate {
+  key: RepresentativeFrameCandidateKey
+  frameIndex: number
+  timestamp: number
+  score: number
+  detected: boolean
+  landmarksCount: number
+  status: FrameAnalysisStatus
+  pose: FacePose
+  yawAbs: number
+  pitchAbs: number
+  rollAbs: number
+  thumbnailUrl: string
+}
+
+type RepresentativeFrameCandidates = Record<
+  RepresentativeFrameCandidateKey,
+  RepresentativeFrameCandidate | null
+>
 
 interface VideoSourceState {
   fileName: string
@@ -117,6 +157,10 @@ function formatFrameAnalysisStatus(status: FrameAnalysisStatus): string {
   }
 
   return labels[status]
+}
+
+function formatScore(value: number): string {
+  return value.toFixed(2)
 }
 
 function getPreviewBounds(points: IdealFacePoint3D[]): {
@@ -316,6 +360,307 @@ function formatPoseRange(range: { min: number; max: number } | null): string {
   return range ? `${formatNumber(range.min)} / ${formatNumber(range.max)}` : "なし"
 }
 
+function getRepresentativeFrameCandidates(): RepresentativeFrameCandidates {
+  const candidates = getCandidateSourceFrames()
+
+  return {
+    front: selectBestCandidate(candidates, "front", scoreFrontCandidate),
+    yawPositive: selectBestCandidate(
+      candidates,
+      "yawPositive",
+      scoreYawPositiveCandidate,
+    ),
+    yawNegative: selectBestCandidate(
+      candidates,
+      "yawNegative",
+      scoreYawNegativeCandidate,
+    ),
+    pitchPositive: selectBestCandidate(
+      candidates,
+      "pitchPositive",
+      scorePitchPositiveCandidate,
+    ),
+    pitchNegative: selectBestCandidate(
+      candidates,
+      "pitchNegative",
+      scorePitchNegativeCandidate,
+    ),
+  }
+}
+
+function getCandidateSourceFrames(): ExtractedVideoFrame[] {
+  return (videoSource?.extractedFrames ?? []).filter((frame) => {
+    const analysis = frame.analysis
+
+    return (
+      frame.status === "analyzed" &&
+      analysis?.detected === true &&
+      analysis.landmarks.length === REQUIRED_LANDMARK_COUNT
+    )
+  })
+}
+
+function selectBestCandidate(
+  frames: ExtractedVideoFrame[],
+  key: RepresentativeFrameCandidateKey,
+  scoreCandidate: (pose: FacePose) => number | null,
+): RepresentativeFrameCandidate | null {
+  const scoredCandidates = frames
+    .map((frame) => {
+      const pose = frame.analysis?.pose
+
+      if (!pose) {
+        return null
+      }
+
+      const score = scoreCandidate(pose)
+
+      if (score === null) {
+        return null
+      }
+
+      return buildRepresentativeFrameCandidate(frame, key, score)
+    })
+    .filter(
+      (candidate): candidate is RepresentativeFrameCandidate =>
+        candidate !== null,
+    )
+
+  if (scoredCandidates.length === 0) {
+    return null
+  }
+
+  return scoredCandidates.reduce((bestCandidate, candidate) =>
+    candidate.score > bestCandidate.score ? candidate : bestCandidate,
+  )
+}
+
+function buildRepresentativeFrameCandidate(
+  frame: ExtractedVideoFrame,
+  key: RepresentativeFrameCandidateKey,
+  score: number,
+): RepresentativeFrameCandidate {
+  const pose = frame.analysis?.pose ?? { ...EMPTY_FACE_POSE }
+
+  return {
+    key,
+    frameIndex: frame.index,
+    timestamp: frame.timestamp,
+    score: Number(clamp(score, 0, 1).toFixed(4)),
+    detected: frame.analysis?.detected ?? false,
+    landmarksCount: frame.analysis?.landmarks.length ?? 0,
+    status: frame.status,
+    pose,
+    yawAbs: Math.abs(pose.yaw),
+    pitchAbs: Math.abs(pose.pitch),
+    rollAbs: Math.abs(pose.roll),
+    thumbnailUrl: frame.thumbnailUrl,
+  }
+}
+
+function scoreFrontCandidate(pose: FacePose): number | null {
+  const yawAbs = Math.abs(pose.yaw)
+  const pitchAbs = Math.abs(pose.pitch)
+  const rollAbs = Math.abs(pose.roll)
+
+  if (
+    yawAbs > FRONT_POSE_LIMIT.yaw ||
+    pitchAbs > FRONT_POSE_LIMIT.pitch ||
+    rollAbs > FRONT_POSE_LIMIT.roll
+  ) {
+    return null
+  }
+
+  return (
+    1 -
+    (yawAbs / FRONT_POSE_LIMIT.yaw +
+      pitchAbs / FRONT_POSE_LIMIT.pitch +
+      rollAbs / FRONT_POSE_LIMIT.roll) /
+      3
+  )
+}
+
+function scoreYawPositiveCandidate(pose: FacePose): number | null {
+  if (
+    pose.yaw < YAW_CANDIDATE_MIN_ABS ||
+    Math.abs(pose.pitch) > DIRECTIONAL_POSE_LIMIT.pitch ||
+    Math.abs(pose.roll) > DIRECTIONAL_POSE_LIMIT.roll
+  ) {
+    return null
+  }
+
+  return scoreDirectionalCandidate(
+    Math.abs(pose.yaw),
+    Math.abs(pose.pitch),
+    Math.abs(pose.roll),
+    YAW_CANDIDATE_MIN_ABS,
+    DIRECTIONAL_POSE_LIMIT.pitch,
+    DIRECTIONAL_POSE_LIMIT.roll,
+  )
+}
+
+function scoreYawNegativeCandidate(pose: FacePose): number | null {
+  if (
+    pose.yaw > -YAW_CANDIDATE_MIN_ABS ||
+    Math.abs(pose.pitch) > DIRECTIONAL_POSE_LIMIT.pitch ||
+    Math.abs(pose.roll) > DIRECTIONAL_POSE_LIMIT.roll
+  ) {
+    return null
+  }
+
+  return scoreDirectionalCandidate(
+    Math.abs(pose.yaw),
+    Math.abs(pose.pitch),
+    Math.abs(pose.roll),
+    YAW_CANDIDATE_MIN_ABS,
+    DIRECTIONAL_POSE_LIMIT.pitch,
+    DIRECTIONAL_POSE_LIMIT.roll,
+  )
+}
+
+function scorePitchPositiveCandidate(pose: FacePose): number | null {
+  if (
+    pose.pitch < PITCH_CANDIDATE_MIN_ABS ||
+    Math.abs(pose.yaw) > DIRECTIONAL_POSE_LIMIT.yaw ||
+    Math.abs(pose.roll) > DIRECTIONAL_POSE_LIMIT.roll
+  ) {
+    return null
+  }
+
+  return scoreDirectionalCandidate(
+    Math.abs(pose.pitch),
+    Math.abs(pose.yaw),
+    Math.abs(pose.roll),
+    PITCH_CANDIDATE_MIN_ABS,
+    DIRECTIONAL_POSE_LIMIT.yaw,
+    DIRECTIONAL_POSE_LIMIT.roll,
+  )
+}
+
+function scorePitchNegativeCandidate(pose: FacePose): number | null {
+  if (
+    pose.pitch > -PITCH_CANDIDATE_MIN_ABS ||
+    Math.abs(pose.yaw) > DIRECTIONAL_POSE_LIMIT.yaw ||
+    Math.abs(pose.roll) > DIRECTIONAL_POSE_LIMIT.roll
+  ) {
+    return null
+  }
+
+  return scoreDirectionalCandidate(
+    Math.abs(pose.pitch),
+    Math.abs(pose.yaw),
+    Math.abs(pose.roll),
+    PITCH_CANDIDATE_MIN_ABS,
+    DIRECTIONAL_POSE_LIMIT.yaw,
+    DIRECTIONAL_POSE_LIMIT.roll,
+  )
+}
+
+function scoreDirectionalCandidate(
+  primaryAbs: number,
+  secondaryAbs: number,
+  rollAbs: number,
+  primaryMinAbs: number,
+  secondaryLimit: number,
+  rollLimit: number,
+): number {
+  const primaryScore = clamp((primaryAbs - primaryMinAbs) / 24, 0, 1)
+  const secondaryScore = 1 - clamp(secondaryAbs / secondaryLimit, 0, 1)
+  const rollScore = 1 - clamp(rollAbs / rollLimit, 0, 1)
+
+  return primaryScore * 0.65 + secondaryScore * 0.22 + rollScore * 0.13
+}
+
+function toRepresentativeCandidatePreview(
+  candidate: RepresentativeFrameCandidate | null,
+): unknown {
+  if (!candidate) {
+    return null
+  }
+
+  return {
+    frameIndex: candidate.frameIndex,
+    timestamp: Number(candidate.timestamp.toFixed(3)),
+    score: candidate.score,
+    status: candidate.status,
+    detected: candidate.detected,
+    landmarksCount: candidate.landmarksCount,
+    pose: {
+      pitch: candidate.pose.pitch,
+      yaw: candidate.pose.yaw,
+      roll: candidate.pose.roll,
+    },
+    evaluation: {
+      yawAbs: Number(candidate.yawAbs.toFixed(3)),
+      pitchAbs: Number(candidate.pitchAbs.toFixed(3)),
+      rollAbs: Number(candidate.rollAbs.toFixed(3)),
+    },
+  }
+}
+
+function toRepresentativeCandidatesPreview(
+  candidates: RepresentativeFrameCandidates,
+): unknown {
+  return {
+    front: toRepresentativeCandidatePreview(candidates.front),
+    yawPositive: toRepresentativeCandidatePreview(candidates.yawPositive),
+    yawNegative: toRepresentativeCandidatePreview(candidates.yawNegative),
+    pitchPositive: toRepresentativeCandidatePreview(candidates.pitchPositive),
+    pitchNegative: toRepresentativeCandidatePreview(candidates.pitchNegative),
+  }
+}
+
+function renderRepresentativeFrameCandidatesPanel(): string {
+  const candidates = getRepresentativeFrameCandidates()
+
+  return `
+    <section class="representative-panel" aria-label="代表フレーム候補">
+      <div class="panel-heading">
+        <div>
+          <h2>代表フレーム候補</h2>
+          <p>解析済みフレームの yaw / pitch / roll から候補を自動抽出します。</p>
+        </div>
+      </div>
+      <p class="candidate-note">左右・上下の最終ラベルは未確定です。現時点では MediaPipe 推定値の正負方向として確認します。</p>
+      <div class="candidate-grid">
+        ${renderRepresentativeCandidateCard("正面候補", candidates.front)}
+        ${renderRepresentativeCandidateCard("yaw 正方向候補", candidates.yawPositive)}
+        ${renderRepresentativeCandidateCard("yaw 負方向候補", candidates.yawNegative)}
+        ${renderRepresentativeCandidateCard("pitch 正方向候補", candidates.pitchPositive)}
+        ${renderRepresentativeCandidateCard("pitch 負方向候補", candidates.pitchNegative)}
+      </div>
+    </section>
+  `
+}
+
+function renderRepresentativeCandidateCard(
+  title: string,
+  candidate: RepresentativeFrameCandidate | null,
+): string {
+  if (!candidate) {
+    return `
+      <article class="candidate-card candidate-card-empty">
+        <h3>${escapeHtml(title)}</h3>
+        <strong>候補なし</strong>
+        <p>該当する解析済みフレームがありません。</p>
+      </article>
+    `
+  }
+
+  return `
+    <article class="candidate-card">
+      <img src="${escapeHtml(candidate.thumbnailUrl)}" alt="${escapeHtml(title)} Frame ${String(candidate.frameIndex).padStart(3, "0")}" />
+      <div>
+        <h3>${escapeHtml(title)}</h3>
+        <strong>Frame ${String(candidate.frameIndex).padStart(3, "0")} / ${candidate.timestamp.toFixed(1)}s</strong>
+        <span>yaw: ${formatNumber(candidate.pose.yaw)} / pitch: ${formatNumber(candidate.pose.pitch)} / roll: ${formatNumber(candidate.pose.roll)}</span>
+        <span>score: ${formatScore(candidate.score)}</span>
+        <span>landmarks 数: ${candidate.landmarksCount}</span>
+      </div>
+    </article>
+  `
+}
+
 function renderAnalysisPanel(): string {
   const summary = getAnalysisSummary()
   const hasFrames = summary.extractedFrameCount > 0
@@ -415,9 +760,13 @@ function renderFrameThumbnails(): string {
 
 function buildAuthoringDebugPreview(): unknown {
   const analysisSummary = getAnalysisSummary()
+  const representativeFrameCandidates = getRepresentativeFrameCandidates()
 
   return {
     idealFace,
+    representativeFrameCandidates: toRepresentativeCandidatesPreview(
+      representativeFrameCandidates,
+    ),
     videoSource: videoSource
       ? {
           fileName: videoSource.fileName,
@@ -948,7 +1297,7 @@ function render(): void {
           <p class="eyebrow">BAE AR</p>
           <h1>IdealFace Authoring Tool</h1>
         </div>
-        <span>Step 2-B</span>
+        <span>Step 2-C</span>
       </header>
 
       <section class="summary" aria-label="IdealFace metadata">
@@ -996,6 +1345,8 @@ function render(): void {
       </section>
 
       ${renderAnalysisPanel()}
+
+      ${renderRepresentativeFrameCandidatesPanel()}
 
       <section class="frames-panel" aria-label="抽出フレーム">
         <h2>抽出フレーム</h2>
@@ -1136,6 +1487,7 @@ style.textContent = `
 
   .video-panel,
   .analysis-panel,
+  .representative-panel,
   .frames-panel {
     margin-bottom: 24px;
   }
@@ -1251,9 +1603,81 @@ style.textContent = `
     font-weight: 700;
   }
 
+  .candidate-note {
+    margin: 0 0 12px;
+    border: 1px solid #ccd8d3;
+    border-radius: 8px;
+    background: #ffffff;
+    padding: 12px 14px;
+    color: #5d675f;
+    font-size: 13px;
+    font-weight: 700;
+  }
+
   .analysis-summary {
     grid-template-columns: repeat(4, minmax(0, 1fr));
     margin-top: 12px;
+  }
+
+  .candidate-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+    gap: 12px;
+  }
+
+  .candidate-card {
+    min-width: 0;
+    overflow: hidden;
+    border: 1px solid #ccd8d3;
+    border-radius: 8px;
+    background: #ffffff;
+  }
+
+  .candidate-card img {
+    display: block;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+    background: #1f2824;
+  }
+
+  .candidate-card div,
+  .candidate-card-empty {
+    display: grid;
+    gap: 6px;
+    padding: 12px;
+  }
+
+  .candidate-card h3,
+  .candidate-card strong,
+  .candidate-card span,
+  .candidate-card p {
+    min-width: 0;
+    margin: 0;
+    overflow-wrap: anywhere;
+    line-height: 1.35;
+  }
+
+  .candidate-card h3 {
+    color: #17201b;
+    font-size: 14px;
+  }
+
+  .candidate-card strong {
+    color: #25342e;
+    font-size: 13px;
+  }
+
+  .candidate-card span,
+  .candidate-card p {
+    color: #5d675f;
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .candidate-card-empty {
+    min-height: 180px;
+    align-content: start;
   }
 
   .frame-grid {

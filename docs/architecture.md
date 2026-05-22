@@ -26,7 +26,7 @@ BAE AR
    └─ 将来予定。LayerMaskSpec を作成する authoring tool
 ```
 
-現在 `tools/ideal-face-authoring` は Step 2-B まで実装済みです。`tools/layer-mask-authoring` は将来予定です。
+現在 `tools/ideal-face-authoring` は Step 2-C まで実装済みです。`tools/layer-mask-authoring` は将来予定です。
 
 ## Engine Runtime の責務
 
@@ -95,11 +95,11 @@ IdealFace Authoring Tool の処理はリアルタイム Engine Runtime には含
 
 IdealFace Authoring Tool は、将来的に動画または複数画像を入力として受け取り、MediaPipe Face Landmarker で各フレームの 2D 478 landmarks と `FacePose` を取得します。初期入力形式は MP4 動画のみとし、複数画像入力は将来対応とします。初期段階では入力形式を広げず、代表フレーム抽出とラベル確定の流れを優先します。
 
-Step 2-A では、MP4 動画入力と一定間隔でのフレーム抽出、サムネイル一覧表示までを実装済みです。Step 2-B では、抽出済みフレームに MediaPipe Face Landmarker 解析を実行し、2D 478 landmarks と FacePose を取得できるようにしました。
+Step 2-A では、MP4 動画入力と一定間隔でのフレーム抽出、サムネイル一覧表示までを実装済みです。Step 2-B では、抽出済みフレームに MediaPipe Face Landmarker 解析を実行し、2D 478 landmarks と FacePose を取得できるようにしました。Step 2-C では、解析済みフレームの yaw / pitch / roll から代表フレーム候補を自動抽出し、候補一覧と JSON preview に候補概要を表示できるようにしました。
 
-次の段階では、MediaPipe Face Landmarker で取得した yaw / pitch / roll を使って正面候補、左向き候補、右向き候補、上向き候補、下向き候補を自動抽出します。
+Step 2-C の代表フレーム候補抽出では、顔検出あり、landmarks 数 478 の解析済みフレームだけを候補評価に使います。正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を表示し、左右・上下の最終ラベルは次段階の手動確定 UI で扱います。
 
-自動抽出だけでは確定せず、ユーザーが Authoring Tool 上で正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定します。確定した代表フレーム群から 3D の `idealLandmarks3D` 478点候補を自動推測し、Authoring Tool 上で確認、必要箇所を手動微調整したうえで IdealFace asset として保存 / export します。これらは Step 2-B では未実装です。
+自動抽出だけでは確定せず、ユーザーが Authoring Tool 上で正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定します。確定した代表フレーム群から 3D の `idealLandmarks3D` 478点候補を自動推測し、Authoring Tool 上で確認、必要箇所を手動微調整したうえで IdealFace asset として保存 / export します。手動ラベル確定 UI、3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export は Step 2-C では未実装です。
 
 推奨する MP4 動画は、H.264 / AVC codec、5〜15秒程度、30fps程度、720p程度から開始できるものです。顔が大きく写り、正面、左向き、右向き、上向き、下向きをゆっくり含み、手ブレが少なく、明るい場所で撮影されていることを推奨します。口は閉じ気味、表情はできるだけ neutral とします。
 
@@ -107,7 +107,7 @@ Step 2-A では、MP4 動画入力と一定間隔でのフレーム抽出、サ�
 
 Engine Runtime は動画入力、フレーム抽出、`idealLandmarks3D` 作成を行いません。Runtime は完成済みの IdealFace asset を読み込み、`idealLandmarks3D` 478点を現在 `FacePose` へ投影して projected ideal 2D landmarks 478点を生成します。
 
-この段階では、代表フレーム抽出や 3D点群推測の詳細アルゴリズムは定義しません。
+この段階では、3D点群推測の詳細アルゴリズムは定義しません。
 
 ## Layer Mask Authoring Tool の責務
 
@@ -198,7 +198,7 @@ v1 の制限事項:
 
 - 3D model は Projection の土台確認用の最小 control point 群
 - ideal 478 landmarks の生成は未実装
-- IdealFace Authoring Tool は Step 2-B まで実装済み
+- IdealFace Authoring Tool は Step 2-C まで実装済み
 - IdealFace Projection v1 は controlPoints のみ部分実装
 - Projection Difference Debug v1 は代表点ベースの差分確認のみ実装
 
@@ -351,7 +351,6 @@ Step 2-B では、`tools/ideal-face-authoring` に抽出済みフレームの Me
 
 Step 2-B の未実装範囲:
 
-- 代表フレーム候補の自動抽出
 - 手動ラベル確定 UI
 - 3D 478点候補の自動推測
 - 3D点群 preview
@@ -360,6 +359,30 @@ Step 2-B の未実装範囲:
 - 複数画像入力
 
 Authoring 用フレーム解析は IdealFace Authoring Tool の責務です。Engine Runtime には動画入力、フレーム抽出、Authoring 用フレーム解析処理を追加しません。
+
+## IdealFace Authoring Tool Step 2-C
+
+Step 2-C では、`tools/ideal-face-authoring` に解析済みフレームから代表フレーム候補を自動抽出する最小実装を追加しました。
+
+実装済みの範囲:
+
+- 顔検出あり、landmarks 数 478 の解析済みフレームだけを候補評価に使う
+- yaw / pitch / roll から正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を抽出する
+- 候補一覧にサムネイル、frame index、timestamp、yaw / pitch / roll、score、landmarks 数を表示する
+- 候補が見つからない枠には「候補なし」と表示する
+- JSON preview に `representativeFrameCandidates` として候補概要を表示する
+- JSON preview には 478 landmarks 全文を出さない
+
+Step 2-C の未実装範囲:
+
+- 手動ラベル確定 UI
+- 3D 478点候補の自動推測
+- 3D点群 preview
+- 手動微調整
+- 保存 / export
+- 複数画像入力
+
+代表フレーム抽出処理は IdealFace Authoring Tool の責務です。Engine Runtime には動画入力、フレーム抽出、Authoring 用フレーム解析、代表フレーム抽出処理を追加しません。
 
 ## IdealFace / Projection / Shape Processing 中核仕様
 
