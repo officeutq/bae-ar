@@ -51,6 +51,7 @@ const INFERENCE_DATASET_LABELS: SelectableRepresentativeFrameLabel[] = [
 const INFERENCE_DATASET_LANDMARK_PREVIEW_COUNT = 5
 const IDEAL_LANDMARKS_3D_PREVIEW_COUNT = 5
 const POINT_CLOUD_PREVIEW_PADDING = 7
+const POINT_CLOUD_TOP_DEPTH_DISPLAY_SCALE = 2.4
 
 type RepresentativeFrameCandidateKey =
   | "front"
@@ -1365,7 +1366,7 @@ function formatPointCloudPreviewDirection(
   const labels: Record<PointCloudPreviewDirection, string> = {
     front: "正面",
     side: "横",
-    top: "上",
+    top: "上 / 奥行き確認",
   }
 
   return labels[direction]
@@ -1407,10 +1408,14 @@ function getPointCloudProjectedBounds(
 } {
   const axes = getPointCloudPreviewAxes(direction)
   const horizontalRange = getNumberRange(
-    landmarks.map((landmark) => landmark[axes.horizontal]),
+    landmarks.map((landmark) =>
+      getPointCloudPreviewDisplayValue(landmark, axes.horizontal, direction),
+    ),
   )
   const verticalRange = getNumberRange(
-    landmarks.map((landmark) => landmark[axes.vertical]),
+    landmarks.map((landmark) =>
+      getPointCloudPreviewDisplayValue(landmark, axes.vertical, direction),
+    ),
   )
 
   if (!horizontalRange || !verticalRange) {
@@ -1441,12 +1446,47 @@ function mapLandmarkToPointCloudPreview(
   bounds: ReturnType<typeof getPointCloudProjectedBounds>,
 ): { x: number; y: number } {
   const axes = getPointCloudPreviewAxes(direction)
+  const horizontalValue = getPointCloudPreviewDisplayValue(
+    landmark,
+    axes.horizontal,
+    direction,
+  )
+  const verticalValue = getPointCloudPreviewDisplayValue(
+    landmark,
+    axes.vertical,
+    direction,
+  )
+  const verticalOffset = (verticalValue - bounds.centerVertical) * bounds.scale
 
   return {
-    x:
-      50 + (landmark[axes.horizontal] - bounds.centerHorizontal) * bounds.scale,
-    y: 50 - (landmark[axes.vertical] - bounds.centerVertical) * bounds.scale,
+    x: 50 + (horizontalValue - bounds.centerHorizontal) * bounds.scale,
+    y: direction === "top" ? 50 - verticalOffset : 50 + verticalOffset,
   }
+}
+
+function getPointCloudPreviewDisplayValue(
+  landmark: IdealLandmark3DCandidate,
+  axis: "x" | "y" | "z",
+  direction: PointCloudPreviewDirection,
+): number {
+  const value = landmark[axis]
+
+  if (direction === "top" && axis === "z") {
+    return value * POINT_CLOUD_TOP_DEPTH_DISPLAY_SCALE
+  }
+
+  return value
+}
+
+function formatPointCloudPreviewAxisLabel(
+  axis: "x" | "y" | "z",
+  direction: PointCloudPreviewDirection,
+): string {
+  if (direction === "top" && axis === "z") {
+    return `z x${POINT_CLOUD_TOP_DEPTH_DISPLAY_SCALE}`
+  }
+
+  return axis
 }
 
 function getConfidenceOpacity(confidence: number): string {
@@ -2001,6 +2041,7 @@ function renderIdealLandmarks3DPointCloudPreviewPanel(): string {
         ${renderPointCloudDirectionButton("side")}
         ${renderPointCloudDirectionButton("top")}
       </div>
+      <p class="point-cloud-preview-note">この preview は確認用表示です。表示上、y 軸や z の見え方を調整しています。生成済み 3D 候補データ自体は変更していません。</p>
       ${
         hasGeneratedLandmarks
           ? renderIdealLandmarks3DPointCloudSvg(
@@ -2078,8 +2119,8 @@ function renderIdealLandmarks3DPointCloudSvg(
       <rect x="0" y="0" width="100" height="100" rx="1.5" />
       <line class="point-cloud-axis" x1="${POINT_CLOUD_PREVIEW_PADDING}" y1="50" x2="${100 - POINT_CLOUD_PREVIEW_PADDING}" y2="50" />
       <line class="point-cloud-axis" x1="50" y1="${POINT_CLOUD_PREVIEW_PADDING}" x2="50" y2="${100 - POINT_CLOUD_PREVIEW_PADDING}" />
-      <text class="point-cloud-axis-label" x="${100 - POINT_CLOUD_PREVIEW_PADDING}" y="48">${axes.horizontal}</text>
-      <text class="point-cloud-axis-label" x="52" y="${POINT_CLOUD_PREVIEW_PADDING + 4}">${axes.vertical}</text>
+      <text class="point-cloud-axis-label" x="${100 - POINT_CLOUD_PREVIEW_PADDING}" y="48">${formatPointCloudPreviewAxisLabel(axes.horizontal, direction)}</text>
+      <text class="point-cloud-axis-label" x="52" y="${POINT_CLOUD_PREVIEW_PADDING + 4}">${formatPointCloudPreviewAxisLabel(axes.vertical, direction)}</text>
       <g class="point-cloud-points">
         ${points}
       </g>
@@ -3596,6 +3637,18 @@ style.textContent = `
     color: #25342e;
     font-size: 13px;
     font-weight: 800;
+  }
+
+  .point-cloud-preview-note {
+    margin: 0;
+    border: 1px solid #ccd8d3;
+    border-radius: 8px;
+    background: #edf4f1;
+    padding: 10px 12px;
+    color: #5d675f;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.5;
   }
 
   .point-cloud-direction-button {

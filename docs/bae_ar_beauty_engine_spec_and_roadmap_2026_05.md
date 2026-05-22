@@ -958,7 +958,7 @@ Step 2-G の制限:
 - 三角測量、bundle adjustment、最適化、カメラ内部パラメータ推定は行わない
 - 生成結果は完成済み IdealFace asset ではなく候補データとして扱う
 - JSON preview に 478 landmarks 全文やサムネイル data URL 全文は出さない
-- 3D点群 preview は Step 2-H で実装済み。手動微調整、保存 / export はまだ実装しない
+- 3D点群 preview は Step 2-H で実装済み。preview は確認用表示であり、表示上の y 軸反転や z 表示倍率調整を行う場合がある。手動微調整、保存 / export はまだ実装しない
 - 複数画像入力はまだ実装しない
 
 3D候補生成処理は IdealFace Authoring Tool の責務です。Engine Runtime には 3D推測処理や Authoring UI を入れません。Beauty Studio にも Authoring 用タブは追加しません。
@@ -971,7 +971,9 @@ Step 2-H の実装範囲:
 
 - 生成済みの `idealLandmarks3D` 478点候補を簡易点群 preview として表示する
 - 3D候補未生成時に、先に 3D候補生成を実行する案内を表示する
-- 表示方向を正面 x / y、横 z / y、上 x / z で切り替える
+- 表示方向を正面 x / y、横 z / y、上 / 奥行き確認 x / z で切り替える
+- preview 表示上は、正面 / 横で y 軸を反転し、上 / 奥行き確認で z 表示倍率を調整する場合がある
+- y 軸反転や z 表示倍率調整は表示専用であり、`idealLandmarks3D` 候補データ自体や JSON preview の値は変更しない
 - 点群が preview 範囲内に収まるよう center / scale を調整する
 - confidence が低い点を薄く表示する
 - landmark count、表示方向、x / y / z の min / max、average / min / max confidence を表示する
@@ -979,6 +981,7 @@ Step 2-H の実装範囲:
 Step 2-H の制限:
 
 - preview は debug / 確認用であり、本格 3D editor ではない
+- preview 表示補正はデータ編集ではない
 - 手動微調整、保存 / export、複数画像入力はまだ実装しない
 - JSON preview には 478点全文や canvas data URL を出さず、`idealLandmarks3DCandidate` の概要と先頭 5 点程度の preview に留める
 

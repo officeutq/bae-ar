@@ -60,7 +60,7 @@ docs
 - IdealFace Authoring Tool Step 2-E: 確定済み代表フレームから front / left / right / up / down の 3D推測用データセットを作成し、readiness summary、dataset 一覧、JSON preview の `idealLandmarks3DInferenceDataset` で概要を確認する表示
 - IdealFace Authoring Tool Step 2-F: 候補抽出用に動画全体を詳細スキャンし、代表フレーム候補中心の UI と `scanSummary` 表示、サムネイル全体表示を追加
 - IdealFace Authoring Tool Step 2-G: 3D推測用データセットから `idealLandmarks3D` 478点候補を自動推測する v1 を追加。front の 2D landmarks を x / y の基準にし、left / right / up / down との差分から z を簡易推定し、不足ラベルは confidence に反映します。結果は候補 summary と先頭 5 点 preview、JSON preview の `idealLandmarks3DCandidate` 概要で確認します
-- IdealFace Authoring Tool Step 2-H: 生成済みの `idealLandmarks3D` 478点候補を 3D点群 preview として簡易表示し、正面 / 横 / 上方向の切り替え、x / y / z 範囲、confidence summary を確認できます
+- IdealFace Authoring Tool Step 2-H: 生成済みの `idealLandmarks3D` 478点候補を 3D点群 preview として簡易表示し、正面 / 横 / 上方向の切り替え、x / y / z 範囲、confidence summary を確認できます。preview は確認用表示であり、見やすさのために y 軸反転や z 表示倍率調整を行う場合がありますが、候補データ自体は変更しません
 
 未実装 / 将来予定:
 
@@ -129,7 +129,7 @@ shape processing は個別パーツ加工ではありません。
 
 Step 2-G では、`idealLandmarks3DInferenceDataset` の ready entry を使い、front / left / right / up / down の代表フレームから `idealLandmarks3D` 478点候補を生成する v1 を追加しました。これは厳密な 3D reconstruction ではなく、front の 2D 478 landmarks を x / y の基準にし、左右 / 上下フレームとの差分から z を仮推定する候補生成です。left / right / up / down が不足している場合も front が ready であれば生成しますが、不足ラベルは confidence に反映します。生成結果は完成済み IdealFace asset ではなく候補データです。
 
-Step 2-H では、生成された `idealLandmarks3D` 478点候補を Authoring Tool 上で簡易点群 preview として表示します。preview は debug / 確認用であり、本格 3D editor ではありません。正面表示は x / y、横方向確認は z / y、上方向確認は x / z を使い、点群が表示範囲に収まるように center / scale を調整します。近くに landmark count、表示方向、x / y / z の min / max、average / min / max confidence を表示します。低 confidence の点は薄く表示します。JSON preview は引き続き `idealLandmarks3DCandidate` の概要と先頭 5 点程度の preview に留め、478点全文や canvas data URL は出しません。手動微調整、保存 / export、複数画像入力はまだ実装しません。詳細スキャン、候補振り分け、手動ラベル確定、dataset 作成、3D候補生成、3D点群 preview は IdealFace Authoring Tool の責務であり、Engine Runtime には入れません。
+Step 2-H では、生成された `idealLandmarks3D` 478点候補を Authoring Tool 上で簡易点群 preview として表示します。preview は debug / 確認用であり、本格 3D editor ではありません。正面表示は x / y、横方向確認は z / y、上 / 奥行き確認は x / z を使い、点群が表示範囲に収まるように center / scale を調整します。画像座標系の y が下方向に増えることを考慮し、preview 表示上は正面 / 横で y 軸を反転して顔の上方向が画面上側に見えるようにします。上 / 奥行き確認では、判別しやすさのために preview 用の z 表示倍率を調整します。これらは表示専用の変換であり、生成済みの `idealLandmarks3D` 候補データや JSON preview の数値は変更しません。近くに landmark count、表示方向、x / y / z の min / max、average / min / max confidence を表示します。低 confidence の点は薄く表示します。JSON preview は引き続き `idealLandmarks3DCandidate` の概要と先頭 5 点程度の preview に留め、478点全文や canvas data URL は出しません。手動微調整、保存 / export、複数画像入力はまだ実装しません。詳細スキャン、候補振り分け、手動ラベル確定、dataset 作成、3D候補生成、3D点群 preview は IdealFace Authoring Tool の責務であり、Engine Runtime には入れません。
 
 ## ドキュメント
 
