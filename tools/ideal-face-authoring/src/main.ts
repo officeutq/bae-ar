@@ -1,21 +1,54 @@
 import {
   NATURAL_IDEAL_FACE_PRESET,
+  type FaceLandmark,
+  type FacePose,
   type IdealFacePoint3D,
 } from "@bae-ar/engine"
+import {
+  FaceLandmarker,
+  FilesetResolver,
+  type Matrix,
+} from "@mediapipe/tasks-vision"
 
 const idealFace = NATURAL_IDEAL_FACE_PRESET
 const app = document.querySelector<HTMLDivElement>("#app")
 const MAX_EXTRACTED_FRAME_COUNT = 20
 const THUMBNAIL_WIDTH = 180
+const ANALYSIS_MAX_WIDTH = 640
+const EMPTY_FACE_POSE: FacePose = {
+  pitch: 0,
+  yaw: 0,
+  roll: 0,
+}
+const RAD_TO_DEG = 180 / Math.PI
+const LEFT_EYE_OUTER_INDEX = 263
+const RIGHT_EYE_OUTER_INDEX = 33
+const NOSE_TIP_INDEX = 4
+const MOUTH_CENTER_INDICES = [13, 14]
 
-type FrameAnalysisStatus = "pending"
+type FrameAnalysisStatus =
+  | "pending"
+  | "analyzing"
+  | "analyzed"
+  | "no_face"
+  | "error"
+
+interface FrameAnalysisResult {
+  detected: boolean
+  landmarks: FaceLandmark[]
+  pose: FacePose
+  errorMessage: string | null
+  analyzedAt: number
+}
 
 interface ExtractedVideoFrame {
   index: number
   timestamp: number
   status: FrameAnalysisStatus
   thumbnailUrl: string
+  analysisImageUrl: string
   extractionTimeMs: number
+  analysis?: FrameAnalysisResult
 }
 
 interface VideoSourceState {
@@ -26,12 +59,17 @@ interface VideoSourceState {
   videoHeight: number | null
   extractedFrames: ExtractedVideoFrame[]
   isExtracting: boolean
+  isAnalyzing: boolean
+  analysisError: string | null
   error: string | null
 }
 
 let videoSource: VideoSourceState | null = null
+let faceLandmarker: FaceLandmarker | null = null
+let faceLandmarkerInitialization: Promise<FaceLandmarker> | null = null
 const extractionVideo = document.createElement("video")
-const extractionCanvas = document.createElement("canvas")
+const analysisCanvas = document.createElement("canvas")
+const thumbnailCanvas = document.createElement("canvas")
 
 if (!app) {
   throw new Error("IdealFace Authoring Tool app root was not found")
@@ -43,6 +81,10 @@ extractionVideo.preload = "metadata"
 
 function formatNumber(value: number): string {
   return value.toFixed(3)
+}
+
+function formatOptionalNumber(value: number | null | undefined): string {
+  return value === null || value === undefined ? "なし" : formatNumber(value)
 }
 
 function formatSeconds(value: number | null): string {
@@ -63,6 +105,18 @@ function escapeHtml(value: string): string {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;")
+}
+
+function formatFrameAnalysisStatus(status: FrameAnalysisStatus): string {
+  const labels: Record<FrameAnalysisStatus, string> = {
+    pending: "未解析",
+    analyzing: "解析中",
+    analyzed: "解析済み",
+    no_face: "顔検出なし",
+    error: "解析エラー",
+  }
+
+  return labels[status]
 }
 
 function getPreviewBounds(points: IdealFacePoint3D[]): {
@@ -208,6 +262,123 @@ function renderExtractionStatus(): string {
   return "フレーム抽出が完了しました。"
 }
 
+interface AnalysisSummary {
+  extractedFrameCount: number
+  analyzedFrameCount: number
+  detectedFrameCount: number
+  noFaceFrameCount: number
+  failedFrameCount: number
+  pitchRange: { min: number; max: number } | null
+  yawRange: { min: number; max: number } | null
+  rollRange: { min: number; max: number } | null
+}
+
+function getAnalysisSummary(): AnalysisSummary {
+  const frames = videoSource?.extractedFrames ?? []
+  const analyzedFrames = frames.filter((frame) =>
+    ["analyzed", "no_face", "error"].includes(frame.status),
+  )
+  const detectedFrames = frames.filter((frame) => frame.analysis?.detected)
+  const noFaceFrames = frames.filter((frame) => frame.status === "no_face")
+  const failedFrames = frames.filter((frame) => frame.status === "error")
+
+  return {
+    extractedFrameCount: frames.length,
+    analyzedFrameCount: analyzedFrames.length,
+    detectedFrameCount: detectedFrames.length,
+    noFaceFrameCount: noFaceFrames.length,
+    failedFrameCount: failedFrames.length,
+    pitchRange: getPoseRange(detectedFrames, "pitch"),
+    yawRange: getPoseRange(detectedFrames, "yaw"),
+    rollRange: getPoseRange(detectedFrames, "roll"),
+  }
+}
+
+function getPoseRange(
+  frames: ExtractedVideoFrame[],
+  key: keyof FacePose,
+): { min: number; max: number } | null {
+  const values = frames
+    .map((frame) => frame.analysis?.pose[key])
+    .filter((value): value is number => value !== undefined)
+
+  if (values.length === 0) {
+    return null
+  }
+
+  return {
+    min: Math.min(...values),
+    max: Math.max(...values),
+  }
+}
+
+function formatPoseRange(range: { min: number; max: number } | null): string {
+  return range ? `${formatNumber(range.min)} / ${formatNumber(range.max)}` : "なし"
+}
+
+function renderAnalysisPanel(): string {
+  const summary = getAnalysisSummary()
+  const hasFrames = summary.extractedFrameCount > 0
+  const isAnalyzing = videoSource?.isAnalyzing ?? false
+  const disabled = !hasFrames || isAnalyzing
+  const statusText = videoSource?.analysisError
+    ? videoSource.analysisError
+    : isAnalyzing
+      ? "MediaPipe 解析中です。"
+      : hasFrames
+        ? "抽出済みフレームを MediaPipe Face Landmarker で解析できます。"
+        : "フレーム抽出後に解析できます。"
+
+  return `
+    <section class="analysis-panel" aria-label="フレーム解析">
+      <div class="panel-heading">
+        <div>
+          <h2>フレーム解析</h2>
+          <p>抽出済みフレームから 2D 478 landmarks と FacePose を取得します。</p>
+        </div>
+        <button id="analyze-frames-button" class="analysis-button" type="button" ${disabled ? "disabled" : ""}>
+          MediaPipe 解析を実行
+        </button>
+      </div>
+      <p class="status-text">${escapeHtml(statusText)}</p>
+      <dl class="analysis-summary">
+        <div>
+          <dt>抽出フレーム数</dt>
+          <dd>${summary.extractedFrameCount}</dd>
+        </div>
+        <div>
+          <dt>解析済みフレーム数</dt>
+          <dd>${summary.analyzedFrameCount}</dd>
+        </div>
+        <div>
+          <dt>顔検出あり</dt>
+          <dd>${summary.detectedFrameCount}</dd>
+        </div>
+        <div>
+          <dt>顔検出なし</dt>
+          <dd>${summary.noFaceFrameCount}</dd>
+        </div>
+        <div>
+          <dt>解析エラー数</dt>
+          <dd>${summary.failedFrameCount}</dd>
+        </div>
+        <div>
+          <dt>pitch 範囲</dt>
+          <dd>${formatPoseRange(summary.pitchRange)}</dd>
+        </div>
+        <div>
+          <dt>yaw 範囲</dt>
+          <dd>${formatPoseRange(summary.yawRange)}</dd>
+        </div>
+        <div>
+          <dt>roll 範囲</dt>
+          <dd>${formatPoseRange(summary.rollRange)}</dd>
+        </div>
+      </dl>
+    </section>
+  `
+}
+
 function renderFrameThumbnails(): string {
   const frames = videoSource?.extractedFrames ?? []
 
@@ -228,7 +399,10 @@ function renderFrameThumbnails(): string {
               <img src="${escapeHtml(frame.thumbnailUrl)}" alt="Frame ${String(frame.index).padStart(3, "0")} / ${frame.timestamp.toFixed(1)}s" />
               <div>
                 <strong>Frame ${String(frame.index).padStart(3, "0")} / ${frame.timestamp.toFixed(1)}s</strong>
-                <span>状態: ${frame.status === "pending" ? "未解析" : frame.status}</span>
+                <span>解析状態: ${formatFrameAnalysisStatus(frame.status)}</span>
+                <span>landmarks 数: ${frame.analysis?.landmarks.length ?? 0}</span>
+                <span>pose pitch / yaw / roll: ${formatOptionalNumber(frame.analysis?.pose.pitch)} / ${formatOptionalNumber(frame.analysis?.pose.yaw)} / ${formatOptionalNumber(frame.analysis?.pose.roll)}</span>
+                ${frame.analysis?.errorMessage ? `<span>error: ${escapeHtml(frame.analysis.errorMessage)}</span>` : ""}
                 <span>抽出時間: ${frame.extractionTimeMs.toFixed(1)}ms</span>
               </div>
             </article>
@@ -240,6 +414,8 @@ function renderFrameThumbnails(): string {
 }
 
 function buildAuthoringDebugPreview(): unknown {
+  const analysisSummary = getAnalysisSummary()
+
   return {
     idealFace,
     videoSource: videoSource
@@ -249,12 +425,38 @@ function buildAuthoringDebugPreview(): unknown {
           videoWidth: videoSource.videoWidth,
           videoHeight: videoSource.videoHeight,
           extractedFrameCount: videoSource.extractedFrames.length,
+          analyzedFrameCount: analysisSummary.analyzedFrameCount,
+          detectedFrameCount: analysisSummary.detectedFrameCount,
+          failedFrameCount: analysisSummary.failedFrameCount,
+          noFaceFrameCount: analysisSummary.noFaceFrameCount,
+          poseRange: {
+            pitch: analysisSummary.pitchRange,
+            yaw: analysisSummary.yawRange,
+            roll: analysisSummary.rollRange,
+          },
           frames: videoSource.extractedFrames.map((frame) => ({
             frameIndex: frame.index,
             timestamp: frame.timestamp,
             status: frame.status,
+            detected: frame.analysis?.detected ?? false,
+            landmarksCount: frame.analysis?.landmarks.length ?? 0,
+            posePreview: frame.analysis
+              ? {
+                  pitch: frame.analysis.pose.pitch,
+                  yaw: frame.analysis.pose.yaw,
+                  roll: frame.analysis.pose.roll,
+                }
+              : null,
+            landmarkPreview:
+              frame.analysis?.landmarks.slice(0, 5).map((landmark) => ({
+                x: Number(landmark.x.toFixed(4)),
+                y: Number(landmark.y.toFixed(4)),
+                z: Number(landmark.z.toFixed(4)),
+              })) ?? [],
+            errorMessage: frame.analysis?.errorMessage ?? null,
             extractionTimeMs: Number(frame.extractionTimeMs.toFixed(1)),
             thumbnail: "omitted",
+            analysisImage: "omitted",
           })),
         }
       : null,
@@ -276,6 +478,273 @@ function attachVideoInputHandler(): void {
     })
 }
 
+function attachAnalysisHandler(): void {
+  document
+    .querySelector<HTMLButtonElement>("#analyze-frames-button")
+    ?.addEventListener("click", async () => {
+      await analyzeExtractedFrames()
+    })
+}
+
+async function analyzeExtractedFrames(): Promise<void> {
+  if (!videoSource || videoSource.extractedFrames.length === 0) {
+    return
+  }
+
+  updateVideoSource({
+    isAnalyzing: true,
+    analysisError: null,
+    extractedFrames: videoSource.extractedFrames.map((frame) => ({
+      ...frame,
+      status: "pending",
+      analysis: undefined,
+    })),
+  })
+  render()
+
+  try {
+    const landmarker = await getFaceLandmarker()
+
+    for (const frame of videoSource.extractedFrames) {
+      updateExtractedFrame(frame.index, {
+        status: "analyzing",
+        analysis: undefined,
+      })
+      render()
+
+      try {
+        const image = await loadFrameImage(frame.analysisImageUrl)
+        const result = landmarker.detect(image)
+        const landmarks = (result.faceLandmarks[0] ?? []).map((landmark) => ({
+          x: landmark.x,
+          y: landmark.y,
+          z: landmark.z,
+        }))
+        const detected = result.faceLandmarks.length > 0
+
+        updateExtractedFrame(frame.index, {
+          status: detected ? "analyzed" : "no_face",
+          analysis: {
+            detected,
+            landmarks,
+            pose: detected
+              ? estimateFacePose(
+                  landmarks,
+                  result.facialTransformationMatrixes[0],
+                )
+              : { ...EMPTY_FACE_POSE },
+            errorMessage: null,
+            analyzedAt: Date.now(),
+          },
+        })
+      } catch (error) {
+        updateExtractedFrame(frame.index, {
+          status: "error",
+          analysis: {
+            detected: false,
+            landmarks: [],
+            pose: { ...EMPTY_FACE_POSE },
+            errorMessage:
+              error instanceof Error ? error.message : String(error),
+            analyzedAt: Date.now(),
+          },
+        })
+      }
+
+      render()
+    }
+  } catch (error) {
+    updateVideoSource({
+      analysisError:
+        error instanceof Error
+          ? error.message
+          : "MediaPipe 解析の初期化に失敗しました。",
+    })
+  }
+
+  updateVideoSource({
+    isAnalyzing: false,
+  })
+  render()
+}
+
+function updateExtractedFrame(
+  frameIndex: number,
+  nextFrameState: Partial<ExtractedVideoFrame>,
+): void {
+  if (!videoSource) {
+    return
+  }
+
+  updateVideoSource({
+    extractedFrames: videoSource.extractedFrames.map((frame) =>
+      frame.index === frameIndex
+        ? {
+            ...frame,
+            ...nextFrameState,
+          }
+        : frame,
+    ),
+  })
+}
+
+async function getFaceLandmarker(): Promise<FaceLandmarker> {
+  if (faceLandmarker) {
+    return faceLandmarker
+  }
+
+  if (!faceLandmarkerInitialization) {
+    faceLandmarkerInitialization = initializeFaceLandmarker()
+  }
+
+  faceLandmarker = await faceLandmarkerInitialization
+
+  return faceLandmarker
+}
+
+async function initializeFaceLandmarker(): Promise<FaceLandmarker> {
+  const vision = await FilesetResolver.forVisionTasks(
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm",
+  )
+
+  return FaceLandmarker.createFromOptions(vision, {
+    baseOptions: {
+      modelAssetPath:
+        "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+    },
+    runningMode: "IMAGE",
+    numFaces: 1,
+    outputFaceBlendshapes: false,
+    outputFacialTransformationMatrixes: true,
+  })
+}
+
+async function loadFrameImage(src: string): Promise<HTMLImageElement> {
+  const image = new Image()
+
+  image.src = src
+
+  if (image.decode) {
+    await image.decode()
+    return image
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    image.addEventListener("load", () => resolve(), { once: true })
+    image.addEventListener(
+      "error",
+      () => reject(new Error("解析用フレーム画像を読み込めませんでした。")),
+      { once: true },
+    )
+  })
+
+  return image
+}
+
+function estimateFacePose(
+  landmarks: FaceLandmark[],
+  facialTransformationMatrix: Matrix | undefined,
+): FacePose {
+  return (
+    estimateFacePoseFromMatrix(facialTransformationMatrix) ??
+    estimateFacePoseFromLandmarks(landmarks) ?? { ...EMPTY_FACE_POSE }
+  )
+}
+
+function estimateFacePoseFromMatrix(
+  matrix: Matrix | undefined,
+): FacePose | null {
+  if (
+    !matrix ||
+    matrix.rows < 3 ||
+    matrix.columns < 3 ||
+    matrix.data.length < matrix.columns * 3
+  ) {
+    return null
+  }
+
+  const columns = matrix.columns
+  const m00 = matrix.data[0 * columns + 0]
+  const m10 = matrix.data[1 * columns + 0]
+  const m20 = matrix.data[2 * columns + 0]
+  const m21 = matrix.data[2 * columns + 1]
+  const m22 = matrix.data[2 * columns + 2]
+
+  if ([m00, m10, m20, m21, m22].some((value) => !Number.isFinite(value))) {
+    return null
+  }
+
+  const sy = Math.hypot(m00, m10)
+
+  return {
+    pitch: Math.atan2(m21, m22) * RAD_TO_DEG,
+    yaw: Math.atan2(-m20, sy) * RAD_TO_DEG,
+    roll: Math.atan2(m10, m00) * RAD_TO_DEG,
+  }
+}
+
+function estimateFacePoseFromLandmarks(
+  landmarks: FaceLandmark[],
+): FacePose | null {
+  const leftEye = landmarks[LEFT_EYE_OUTER_INDEX]
+  const rightEye = landmarks[RIGHT_EYE_OUTER_INDEX]
+  const noseTip = landmarks[NOSE_TIP_INDEX]
+  const mouthCenter = averageLandmarks(landmarks, MOUTH_CENTER_INDICES)
+
+  if (!leftEye || !rightEye || !noseTip || !mouthCenter) {
+    return null
+  }
+
+  const eyeCenter = {
+    x: (leftEye.x + rightEye.x) / 2,
+    y: (leftEye.y + rightEye.y) / 2,
+    z: (leftEye.z + rightEye.z) / 2,
+  }
+  const eyeDistance = Math.hypot(leftEye.x - rightEye.x, leftEye.y - rightEye.y)
+  const eyeToMouthDistance = Math.hypot(
+    mouthCenter.x - eyeCenter.x,
+    mouthCenter.y - eyeCenter.y,
+  )
+
+  if (eyeDistance === 0 || eyeToMouthDistance === 0) {
+    return null
+  }
+
+  return {
+    pitch: clamp(
+      ((noseTip.y - eyeCenter.y) / eyeToMouthDistance - 0.6) * 60,
+      -45,
+      45,
+    ),
+    yaw: clamp(((noseTip.x - eyeCenter.x) / eyeDistance) * 70, -45, 45),
+    roll:
+      Math.atan2(leftEye.y - rightEye.y, leftEye.x - rightEye.x) * RAD_TO_DEG,
+  }
+}
+
+function averageLandmarks(
+  landmarks: FaceLandmark[],
+  indices: number[],
+): FaceLandmark | null {
+  const points = indices
+    .map((index) => landmarks[index])
+    .filter((landmark): landmark is FaceLandmark => Boolean(landmark))
+
+  if (points.length !== indices.length) {
+    return null
+  }
+
+  return {
+    x: points.reduce((sum, point) => sum + point.x, 0) / points.length,
+    y: points.reduce((sum, point) => sum + point.y, 0) / points.length,
+    z: points.reduce((sum, point) => sum + point.z, 0) / points.length,
+  }
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max)
+}
+
 async function handleVideoFileSelection(file: File): Promise<void> {
   if (file.type !== "video/mp4" && !file.name.toLowerCase().endsWith(".mp4")) {
     replaceVideoSource({
@@ -286,6 +755,8 @@ async function handleVideoFileSelection(file: File): Promise<void> {
       videoHeight: null,
       extractedFrames: [],
       isExtracting: false,
+      isAnalyzing: false,
+      analysisError: null,
       error: "初期対応は MP4 動画のみです。",
     })
     render()
@@ -302,6 +773,8 @@ async function handleVideoFileSelection(file: File): Promise<void> {
     videoHeight: null,
     extractedFrames: [],
     isExtracting: true,
+    isAnalyzing: false,
+    analysisError: null,
     error: null,
   })
   render()
@@ -404,17 +877,29 @@ async function extractFramesFromVideo(
 ): Promise<ExtractedVideoFrame[]> {
   const duration = video.duration
   const timestamps = getExtractionTimestamps(duration)
-  const context = extractionCanvas.getContext("2d")
+  const analysisContext = analysisCanvas.getContext("2d")
+  const thumbnailContext = thumbnailCanvas.getContext("2d")
 
-  if (!context || video.videoWidth === 0 || video.videoHeight === 0) {
+  if (
+    !analysisContext ||
+    !thumbnailContext ||
+    video.videoWidth === 0 ||
+    video.videoHeight === 0
+  ) {
     throw new Error("動画フレームを canvas に描画できませんでした。")
   }
 
+  const analysisWidth = Math.min(video.videoWidth, ANALYSIS_MAX_WIDTH)
+  const analysisHeight = Math.round(
+    (analysisWidth * video.videoHeight) / video.videoWidth,
+  )
   const thumbnailHeight = Math.round(
     (THUMBNAIL_WIDTH * video.videoHeight) / video.videoWidth,
   )
-  extractionCanvas.width = THUMBNAIL_WIDTH
-  extractionCanvas.height = thumbnailHeight
+  analysisCanvas.width = analysisWidth
+  analysisCanvas.height = analysisHeight
+  thumbnailCanvas.width = THUMBNAIL_WIDTH
+  thumbnailCanvas.height = thumbnailHeight
 
   const frames: ExtractedVideoFrame[] = []
 
@@ -428,13 +913,21 @@ async function extractFramesFromVideo(
       await waitForVideoEvent("loadeddata")
     }
 
-    context.drawImage(video, 0, 0, THUMBNAIL_WIDTH, thumbnailHeight)
+    analysisContext.drawImage(video, 0, 0, analysisWidth, analysisHeight)
+    thumbnailContext.drawImage(
+      analysisCanvas,
+      0,
+      0,
+      THUMBNAIL_WIDTH,
+      thumbnailHeight,
+    )
 
     frames.push({
       index: index + 1,
       timestamp,
       status: "pending",
-      thumbnailUrl: extractionCanvas.toDataURL("image/jpeg", 0.82),
+      thumbnailUrl: thumbnailCanvas.toDataURL("image/jpeg", 0.82),
+      analysisImageUrl: analysisCanvas.toDataURL("image/jpeg", 0.9),
       extractionTimeMs: performance.now() - startedAt,
     })
 
@@ -455,7 +948,7 @@ function render(): void {
           <p class="eyebrow">BAE AR</p>
           <h1>IdealFace Authoring Tool</h1>
         </div>
-        <span>Step 2-A</span>
+        <span>Step 2-B</span>
       </header>
 
       <section class="summary" aria-label="IdealFace metadata">
@@ -502,6 +995,8 @@ function render(): void {
         </div>
       </section>
 
+      ${renderAnalysisPanel()}
+
       <section class="frames-panel" aria-label="抽出フレーム">
         <h2>抽出フレーム</h2>
         ${renderFrameThumbnails()}
@@ -542,6 +1037,7 @@ function render(): void {
   `
 
   attachVideoInputHandler()
+  attachAnalysisHandler()
 }
 
 const style = document.createElement("style")
@@ -639,6 +1135,7 @@ style.textContent = `
   }
 
   .video-panel,
+  .analysis-panel,
   .frames-panel {
     margin-bottom: 24px;
   }
@@ -666,7 +1163,8 @@ style.textContent = `
     white-space: nowrap;
   }
 
-  .file-button {
+  .file-button,
+  .analysis-button {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -682,7 +1180,17 @@ style.textContent = `
     white-space: nowrap;
   }
 
-  .file-button:focus-visible {
+  .analysis-button {
+    font-family: inherit;
+  }
+
+  .analysis-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+  }
+
+  .file-button:focus-visible,
+  .analysis-button:focus-visible {
     outline: 3px solid #9fc8bd;
     outline-offset: 2px;
   }
@@ -741,6 +1249,11 @@ style.textContent = `
     color: #25342e;
     font-size: 14px;
     font-weight: 700;
+  }
+
+  .analysis-summary {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    margin-top: 12px;
   }
 
   .frame-grid {
@@ -914,4 +1427,7 @@ style.textContent = `
 `
 
 document.head.append(style)
+window.addEventListener("beforeunload", () => {
+  faceLandmarker?.close()
+})
 render()
