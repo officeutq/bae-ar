@@ -93,11 +93,17 @@ IdealFace Authoring Tool の処理はリアルタイム Engine Runtime には含
 
 ### idealLandmarks3D 478点の作成方針
 
-IdealFace Authoring Tool は、動画または複数画像を入力として受け取り、MediaPipe Face Landmarker で各フレームの 2D 478 landmarks と `FacePose` を取得します。取得した yaw / pitch / roll を使い、正面候補、左向き候補、右向き候補、上向き候補、下向き候補を自動抽出します。
+IdealFace Authoring Tool は、将来的に動画または複数画像を入力として受け取り、MediaPipe Face Landmarker で各フレームの 2D 478 landmarks と `FacePose` を取得します。初期入力形式は MP4 動画のみとし、複数画像入力は将来対応とします。初期段階では入力形式を広げず、代表フレーム抽出とラベル確定の流れを優先します。
+
+初期実装では、MP4 動画から一定間隔でフレームを抽出し、取得した yaw / pitch / roll を使って正面候補、左向き候補、右向き候補、上向き候補、下向き候補を自動抽出します。
 
 自動抽出だけでは確定せず、ユーザーが Authoring Tool 上で正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定します。確定した代表フレーム群から 3D の `idealLandmarks3D` 478点候補を自動推測し、Authoring Tool 上で確認、必要箇所を手動微調整したうえで IdealFace asset として保存 / export します。
 
-Engine Runtime は `idealLandmarks3D` を作成しません。Runtime は完成済みの IdealFace asset を読み込み、`idealLandmarks3D` 478点を現在 `FacePose` へ投影して projected ideal 2D landmarks 478点を生成します。
+推奨する MP4 動画は、H.264 / AVC codec、5〜15秒程度、30fps程度、720p程度から開始できるものです。顔が大きく写り、正面、左向き、右向き、上向き、下向きをゆっくり含み、手ブレが少なく、明るい場所で撮影されていることを推奨します。口は閉じ気味、表情はできるだけ neutral とします。
+
+初期段階では、長時間動画、高解像度すぎる動画、HEVC / H.265、MOV、WebM、複数画像入力は非推奨または未対応です。これらは将来対応を検討します。
+
+Engine Runtime は動画入力、フレーム抽出、`idealLandmarks3D` 作成を行いません。Runtime は完成済みの IdealFace asset を読み込み、`idealLandmarks3D` 478点を現在 `FacePose` へ投影して projected ideal 2D landmarks 478点を生成します。
 
 この段階では、代表フレーム抽出や 3D点群推測の詳細アルゴリズムは定義しません。
 
@@ -290,15 +296,16 @@ Step 1 では Runtime の公開 API から `natural_v1` を読み込み、metada
 未実装の範囲:
 
 - controlPoints のドラッグ編集
-- 動画 / 複数画像の入力
+- MP4 動画入力
 - フレーム抽出
 - MediaPipe によるフレームごとの 2D 478 landmarks 取得
-- 代表フレーム候補の自動抽出
+- yaw / pitch / roll による代表フレーム候補の自動抽出
 - 手動ラベル確定 UI
 - 3D 478点候補の自動推測
 - 3D点群 preview
 - 手動微調整
 - 保存 / export
+- 複数画像入力
 
 IdealFace Authoring Tool は MediaPipe canonical face model そのものを作るツールではありません。BAE AR 独自の IdealFace asset を作る作業場として扱います。
 

@@ -308,20 +308,38 @@ IdealFace Authoring Tool は BAE AR 独自の IdealFace asset を作成・調整
 
 ### 7.2 IdealFace Authoring Tool における idealLandmarks3D 作成方針
 
-IdealFace の本体である `idealLandmarks3D` 478点は、IdealFace Authoring Tool 側で作成します。Engine Runtime は `idealLandmarks3D` を作成せず、完成済みの IdealFace asset を読み込んで使います。
+IdealFace の本体である `idealLandmarks3D` 478点は、IdealFace Authoring Tool 側で作成します。将来的には動画または複数画像から作成する方針ですが、初期入力形式は MP4 動画のみとします。複数画像入力は将来対応とし、初期段階では入力形式を広げず、代表フレーム抽出とラベル確定の流れを優先します。
 
-想定する流れ:
+Engine Runtime は `idealLandmarks3D` を作成せず、完成済みの IdealFace asset を読み込んで使います。
+
+初期実装で想定する流れ:
 
 ```text
-動画 / 複数画像を入力
+MP4 動画を入力
+  -> 一定間隔でフレーム抽出
   -> MediaPipe Face Landmarker で各フレームの 2D 478 landmarks と FacePose を取得
   -> yaw / pitch / roll から代表フレーム候補を自動抽出
-  -> 人間が正面 / 左向き / 右向き / 上向き / 下向き / 除外を確定
+  -> ユーザーが正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定
   -> 確定した代表フレーム群から 3D の idealLandmarks3D 478点候補を自動推測
-  -> Authoring Tool 上で 3D点群を確認
-  -> 必要な箇所を手動で微調整
+  -> Authoring Tool 上で確認・微調整
   -> IdealFace asset として保存 / export
 ```
+
+推奨する MP4 動画:
+
+- 形式: MP4
+- codec: H.264 / AVC 推奨
+- 長さ: 5〜15秒程度
+- fps: 30fps程度
+- 解像度: 720p程度から開始
+- 顔が大きく写っている
+- 正面、左向き、右向き、上向き、下向きをゆっくり含む
+- 手ブレが少ない
+- 明るい場所で撮影する
+- 口は閉じ気味
+- 表情はできるだけ neutral
+
+初期段階では、長時間動画、高解像度すぎる動画、HEVC / H.265、MOV、WebM、複数画像入力は非推奨または未対応です。これらは将来対応を検討する余地を残します。
 
 代表フレーム候補は、yaw / pitch / roll を使って自動抽出します。正面候補は yaw / pitch / roll が 0 に近いフレーム、左向き候補と右向き候補は yaw が一定以上または一定以下で pitch が 0 に近いフレーム、上向き候補と下向き候補は pitch が一定以上または一定以下で yaw が 0 に近いフレームを想定します。
 
@@ -329,7 +347,7 @@ IdealFace の本体である `idealLandmarks3D` 478点は、IdealFace Authoring 
 
 確定された代表フレーム群から 3D の `idealLandmarks3D` 478点候補を自動推測します。この時点の生成結果は完成データではなく候補データとして扱います。自動推測した候補は Authoring Tool 上で 3D点群として確認し、必要に応じて手動で微調整します。手動補正後の `idealLandmarks3D` 478点を IdealFace asset として保存 / export します。
 
-この方針は完全自動生成ではなく、自動推測 + 手動補正です。詳細な 3D 推測アルゴリズムはこの段階では定義しません。
+この方針は完全自動生成ではなく、自動推測 + 手動補正です。動画入力やフレーム抽出は IdealFace Authoring Tool の責務であり、Engine Runtime には含めません。詳細な 3D 推測アルゴリズムはこの段階では定義しません。
 
 v1 の制限事項:
 
@@ -755,15 +773,16 @@ Step 1 の実装範囲:
 未実装:
 
 - controlPoints のドラッグ編集
-- 動画 / 複数画像の入力
+- MP4 動画入力
 - フレーム抽出
 - MediaPipe によるフレームごとの 2D 478 landmarks 取得
-- 代表フレーム候補の自動抽出
+- yaw / pitch / roll による代表フレーム候補の自動抽出
 - 手動ラベル確定 UI
 - 3D 478点候補の自動推測
 - 3D点群 preview
 - 手動微調整
 - 保存 / export
+- 複数画像入力
 
 IdealFace Authoring Tool は MediaPipe canonical face model そのものを作るツールではありません。BAE AR 独自の IdealFace asset を作る作業場です。Authoring Tool の編集処理や UI は Engine Runtime に混ぜません。
 

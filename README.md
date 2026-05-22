@@ -137,19 +137,37 @@ IdealFace Authoring Tool は MediaPipe canonical face model そのものを作�
 
 ## IdealFace Authoring Tool の idealLandmarks3D 作成方針
 
-IdealFace の本体である `idealLandmarks3D` 478点は、IdealFace Authoring Tool 側で動画または複数画像から作成する方針です。
+IdealFace の本体である `idealLandmarks3D` 478点は、IdealFace Authoring Tool 側で将来的に動画または複数画像から作成する方針です。初期入力形式は MP4 動画のみとし、複数画像入力は将来対応とします。
+
+初期段階では入力形式を広げず、MP4 動画からの代表フレーム抽出とラベル確定の流れを安定して作ることを優先します。
 
 ```text
-動画 / 複数画像を入力
+MP4 動画を入力
+  -> 一定間隔でフレーム抽出
   -> MediaPipe Face Landmarker で各フレームの 2D 478 landmarks と FacePose を取得
   -> yaw / pitch / roll から代表フレーム候補を自動抽出
   -> 人間が正面 / 左向き / 右向き / 上向き / 下向き / 除外を確定
   -> 確定した代表フレーム群から 3D の idealLandmarks3D 478点候補を自動推測
-  -> Authoring Tool 上で 3D点群を確認
-  -> 必要な箇所を手動で微調整
+  -> Authoring Tool 上で確認・微調整
   -> IdealFace asset として保存 / export
 ```
 
-この処理は完全自動生成ではなく、自動推測 + 手動補正として扱います。Engine Runtime は `idealLandmarks3D` を作成せず、完成済みの IdealFace asset を読み込んで、現在 `FacePose` へ投影して使います。
+推奨する MP4 動画:
 
-現時点では、動画 / 複数画像の入力、フレーム抽出、MediaPipe によるフレームごとの 2D 478 landmarks 取得、代表フレーム候補の自動抽出、手動ラベル確定 UI、3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export は未実装です。
+- 形式: MP4
+- codec: H.264 / AVC 推奨
+- 長さ: 5〜15秒程度
+- fps: 30fps程度
+- 解像度: 720p程度から開始
+- 顔が大きく写っている
+- 正面、左向き、右向き、上向き、下向きをゆっくり含む
+- 手ブレが少ない
+- 明るい場所で撮影する
+- 口は閉じ気味
+- 表情はできるだけ neutral
+
+初期段階では、長時間動画、高解像度すぎる動画、HEVC / H.265、MOV、WebM、複数画像入力は非推奨または未対応です。これらは将来対応を検討します。
+
+この処理は完全自動生成ではなく、自動推測 + 手動補正として扱います。動画入力やフレーム抽出は IdealFace Authoring Tool の責務です。Engine Runtime は `idealLandmarks3D` を作成せず、完成済みの IdealFace asset を読み込んで、現在 `FacePose` へ投影して使います。
+
+現時点では、MP4 動画入力、フレーム抽出、MediaPipe によるフレームごとの 2D 478 landmarks 取得、yaw / pitch / roll による代表フレーム候補の自動抽出、手動ラベル確定 UI、3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力は未実装です。
