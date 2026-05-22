@@ -39,6 +39,14 @@ const DIRECTIONAL_POSE_LIMIT = {
 const YAW_CANDIDATE_MIN_ABS = 12
 const PITCH_CANDIDATE_MIN_ABS = 10
 const REPRESENTATIVE_CANDIDATE_LIMIT = 5
+const INFERENCE_DATASET_LABELS: SelectableRepresentativeFrameLabel[] = [
+  "front",
+  "left",
+  "right",
+  "up",
+  "down",
+]
+const INFERENCE_DATASET_LANDMARK_PREVIEW_COUNT = 5
 
 type RepresentativeFrameCandidateKey =
   | "front"
@@ -129,6 +137,31 @@ type SelectedRepresentativeFrames = Record<
   excluded: SelectedRepresentativeFrame[]
 }
 
+type InferenceDatasetEntryStatus = "ready" | "missing" | "invalid"
+
+interface RepresentativeFrameDatasetEntry {
+  label: SelectableRepresentativeFrameLabel
+  frameIndex: number | null
+  timestamp: number | null
+  pose: FacePose | null
+  landmarksCount: number
+  landmarkPreview: Array<{
+    index: number
+    x: number
+    y: number
+    z: number
+  }>
+  status: InferenceDatasetEntryStatus
+  landmarks: FaceLandmark[]
+  thumbnailUrl: string | null
+}
+
+interface IdealLandmarks3DInferenceDataset {
+  readyCount: number
+  requiredCount: number
+  entries: RepresentativeFrameDatasetEntry[]
+}
+
 interface VideoSourceState {
   fileName: string
   objectUrl: string
@@ -215,6 +248,18 @@ function formatManualRepresentativeFrameLabel(
   }
 
   return labels[label]
+}
+
+function formatInferenceDatasetEntryStatus(
+  status: InferenceDatasetEntryStatus,
+): string {
+  const labels: Record<InferenceDatasetEntryStatus, string> = {
+    ready: "準備済み",
+    missing: "未選択",
+    invalid: "無効",
+  }
+
+  return labels[status]
 }
 
 function formatScore(value: number): string {
@@ -740,6 +785,144 @@ function toSelectedRepresentativeFramesPreview(): unknown {
   }
 }
 
+function buildLandmarkPreview(
+  landmarks: FaceLandmark[],
+): RepresentativeFrameDatasetEntry["landmarkPreview"] {
+  return landmarks
+    .slice(0, INFERENCE_DATASET_LANDMARK_PREVIEW_COUNT)
+    .map((landmark, index) => ({
+      index,
+      x: Number(landmark.x.toFixed(4)),
+      y: Number(landmark.y.toFixed(4)),
+      z: Number(landmark.z.toFixed(4)),
+    }))
+}
+
+function findExtractedVideoFrame(frameIndex: number): ExtractedVideoFrame | null {
+  return (
+    videoSource?.extractedFrames.find((frame) => frame.index === frameIndex) ??
+    null
+  )
+}
+
+function buildMissingDatasetEntry(
+  label: SelectableRepresentativeFrameLabel,
+): RepresentativeFrameDatasetEntry {
+  return {
+    label,
+    frameIndex: null,
+    timestamp: null,
+    pose: null,
+    landmarksCount: 0,
+    landmarkPreview: [],
+    status: "missing",
+    landmarks: [],
+    thumbnailUrl: null,
+  }
+}
+
+function buildInvalidDatasetEntry(
+  label: SelectableRepresentativeFrameLabel,
+  selectedFrame: SelectedRepresentativeFrame,
+): RepresentativeFrameDatasetEntry {
+  return {
+    label,
+    frameIndex: selectedFrame.frameIndex,
+    timestamp: selectedFrame.timestamp,
+    pose: selectedFrame.pose,
+    landmarksCount: selectedFrame.landmarksCount,
+    landmarkPreview: [],
+    status: "invalid",
+    landmarks: [],
+    thumbnailUrl: selectedFrame.thumbnailUrl,
+  }
+}
+
+function buildReadyDatasetEntry(
+  label: SelectableRepresentativeFrameLabel,
+  selectedFrame: SelectedRepresentativeFrame,
+  extractedFrame: ExtractedVideoFrame,
+): RepresentativeFrameDatasetEntry {
+  const analysis = extractedFrame.analysis
+
+  if (
+    !analysis ||
+    analysis.detected !== true ||
+    analysis.landmarks.length !== REQUIRED_LANDMARK_COUNT ||
+    !hasCompletePose(analysis.pose)
+  ) {
+    return buildInvalidDatasetEntry(label, selectedFrame)
+  }
+
+  return {
+    label,
+    frameIndex: selectedFrame.frameIndex,
+    timestamp: selectedFrame.timestamp,
+    pose: analysis.pose,
+    landmarksCount: analysis.landmarks.length,
+    landmarkPreview: buildLandmarkPreview(analysis.landmarks),
+    status: "ready",
+    landmarks: analysis.landmarks,
+    thumbnailUrl: selectedFrame.thumbnailUrl,
+  }
+}
+
+function getIdealLandmarks3DInferenceDataset(): IdealLandmarks3DInferenceDataset {
+  const entries = INFERENCE_DATASET_LABELS.map((label) => {
+    const selectedFrame = selectedRepresentativeFrames[label]
+
+    if (!selectedFrame) {
+      return buildMissingDatasetEntry(label)
+    }
+
+    const extractedFrame = findExtractedVideoFrame(selectedFrame.frameIndex)
+
+    if (!extractedFrame) {
+      return buildInvalidDatasetEntry(label, selectedFrame)
+    }
+
+    return buildReadyDatasetEntry(label, selectedFrame, extractedFrame)
+  })
+  const readyCount = entries.filter((entry) => entry.status === "ready").length
+
+  return {
+    readyCount,
+    requiredCount: INFERENCE_DATASET_LABELS.length,
+    entries,
+  }
+}
+
+function toInferenceDatasetEntryPreview(
+  entry: RepresentativeFrameDatasetEntry,
+): unknown {
+  return {
+    label: entry.label,
+    frameIndex: entry.frameIndex,
+    timestamp:
+      entry.timestamp === null ? null : Number(entry.timestamp.toFixed(3)),
+    status: entry.status,
+    pose: entry.pose
+      ? {
+          pitch: entry.pose.pitch,
+          yaw: entry.pose.yaw,
+          roll: entry.pose.roll,
+        }
+      : null,
+    landmarksCount: entry.landmarksCount,
+    landmarkPreview: entry.landmarkPreview,
+  }
+}
+
+function toInferenceDatasetPreview(
+  dataset: IdealLandmarks3DInferenceDataset,
+): unknown {
+  return {
+    readyCount: dataset.readyCount,
+    requiredCount: dataset.requiredCount,
+    entries: dataset.entries.map(toInferenceDatasetEntryPreview),
+  }
+}
+
 function getAllRepresentativeCandidates(
   candidates: RepresentativeFrameCandidates,
 ): RepresentativeFrameCandidate[] {
@@ -879,9 +1062,10 @@ function renderRepresentativeFrameCandidatesPanel(): string {
           <p>解析済みフレームの yaw / pitch / roll から候補を自動抽出します。</p>
         </div>
       </div>
-      <p class="candidate-note">左右・上下の最終ラベルはユーザーが手動で確定します。Step 2-D では 3D 推測、3D 点群 preview、手動微調整、保存 / export はまだ行いません。</p>
+      <p class="candidate-note">左右・上下の最終ラベルはユーザーが手動で確定します。Step 2-E では確定済み代表フレームから 3D推測用データセットを作成します。3D推測、3D点群 preview、手動微調整、保存 / export はまだ行いません。</p>
       ${renderSelectedRepresentativeFramesPanel()}
       ${renderReadinessPanel()}
+      ${renderInferenceDatasetPanel()}
       <div class="candidate-category-stack">
         ${categories
           .map((category) =>
@@ -1065,29 +1249,94 @@ function renderSelectedRepresentativeFrameCard(
 }
 
 function renderReadinessPanel(): string {
-  const labels: SelectableRepresentativeFrameLabel[] = [
-    "front",
-    "left",
-    "right",
-    "up",
-    "down",
-  ]
+  const dataset = getIdealLandmarks3DInferenceDataset()
 
   return `
     <div class="readiness-panel">
-      <h3>3D推測準備</h3>
+      <h3>3D推測用データセット</h3>
       <dl class="readiness-list">
-        ${labels
+        ${dataset.entries
           .map(
-            (label) => `
+            (entry) => `
               <div>
-                <dt>${formatManualRepresentativeFrameLabel(label)}</dt>
-                <dd>${selectedRepresentativeFrames[label] ? "選択済み" : "未選択"}</dd>
+                <dt>${formatManualRepresentativeFrameLabel(entry.label)}</dt>
+                <dd>${formatInferenceDatasetEntryStatus(entry.status)}</dd>
               </div>
             `,
           )
           .join("")}
       </dl>
+      <p class="dataset-ready-count">準備済み: ${dataset.readyCount} / ${dataset.requiredCount}</p>
+      <p class="dataset-note">3D推測は未実装です。次のステップで、準備済みデータセットから idealLandmarks3D 478点候補を推測します。</p>
+    </div>
+  `
+}
+
+function renderInferenceDatasetPanel(): string {
+  const dataset = getIdealLandmarks3DInferenceDataset()
+
+  return `
+    <div class="inference-dataset-panel">
+      <h3>推測に使う代表フレーム</h3>
+      <div class="dataset-entry-grid">
+        ${dataset.entries.map(renderInferenceDatasetEntry).join("")}
+      </div>
+    </div>
+  `
+}
+
+function renderInferenceDatasetEntry(
+  entry: RepresentativeFrameDatasetEntry,
+): string {
+  const labelText = formatManualRepresentativeFrameLabel(entry.label)
+  const frameIndexText =
+    entry.frameIndex === null
+      ? "なし"
+      : String(entry.frameIndex).padStart(3, "0")
+  const timestampText =
+    entry.timestamp === null ? "なし" : `${entry.timestamp.toFixed(1)}s`
+  const poseText = entry.pose
+    ? `pitch: ${formatNumber(entry.pose.pitch)} / yaw: ${formatNumber(entry.pose.yaw)} / roll: ${formatNumber(entry.pose.roll)}`
+    : "pose: なし"
+  const thumbnailMarkup = entry.thumbnailUrl
+    ? `<img src="${escapeHtml(entry.thumbnailUrl)}" alt="${escapeHtml(labelText)} Frame ${frameIndexText}" />`
+    : `<div class="dataset-thumbnail-empty">未選択</div>`
+
+  return `
+    <article class="dataset-entry-card dataset-entry-${entry.status}">
+      ${thumbnailMarkup}
+      <div class="dataset-entry-body">
+        <h4>${escapeHtml(labelText)}</h4>
+        <strong>status: ${formatInferenceDatasetEntryStatus(entry.status)}</strong>
+        <span>frame index: ${frameIndexText}</span>
+        <span>timestamp: ${timestampText}</span>
+        <span>${poseText}</span>
+        <span>landmarks 数: ${entry.landmarksCount}</span>
+        ${renderLandmarkPreview(entry.landmarkPreview)}
+      </div>
+    </article>
+  `
+}
+
+function renderLandmarkPreview(
+  landmarkPreview: RepresentativeFrameDatasetEntry["landmarkPreview"],
+): string {
+  if (landmarkPreview.length === 0) {
+    return `<p class="landmark-preview-empty">landmark preview: なし</p>`
+  }
+
+  return `
+    <div class="landmark-preview">
+      <span>landmark preview</span>
+      <ol>
+        ${landmarkPreview
+          .map(
+            (landmark) => `
+              <li>#${landmark.index}: x ${landmark.x} / y ${landmark.y} / z ${landmark.z}</li>
+            `,
+          )
+          .join("")}
+      </ol>
     </div>
   `
 }
@@ -1213,6 +1462,8 @@ function renderDebugFrameListPanel(): string {
 function buildAuthoringDebugPreview(): unknown {
   const analysisSummary = getAnalysisSummary()
   const representativeFrameCandidates = getRepresentativeFrameCandidates()
+  const idealLandmarks3DInferenceDataset =
+    getIdealLandmarks3DInferenceDataset()
 
   return {
     idealFace,
@@ -1220,6 +1471,9 @@ function buildAuthoringDebugPreview(): unknown {
       representativeFrameCandidates,
     ),
     selectedRepresentativeFrames: toSelectedRepresentativeFramesPreview(),
+    idealLandmarks3DInferenceDataset: toInferenceDatasetPreview(
+      idealLandmarks3DInferenceDataset,
+    ),
     videoSource: videoSource
       ? {
           fileName: videoSource.fileName,
@@ -1831,7 +2085,7 @@ function render(): void {
           <p class="eyebrow">BAE AR</p>
           <h1>IdealFace Authoring Tool</h1>
         </div>
-        <span>Step 2-D</span>
+        <span>Step 2-E</span>
       </header>
 
       <section class="summary" aria-label="IdealFace metadata">
@@ -2161,7 +2415,8 @@ style.textContent = `
   }
 
   .selected-representative-panel,
-  .readiness-panel {
+  .readiness-panel,
+  .inference-dataset-panel {
     margin-bottom: 14px;
   }
 
@@ -2244,6 +2499,107 @@ style.textContent = `
 
   .readiness-list {
     grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .dataset-ready-count,
+  .dataset-note {
+    margin: 8px 0 0;
+    color: #25342e;
+    font-size: 13px;
+    font-weight: 800;
+  }
+
+  .dataset-note {
+    color: #5d675f;
+  }
+
+  .dataset-entry-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 10px;
+  }
+
+  .dataset-entry-card {
+    display: grid;
+    grid-template-columns: 104px minmax(0, 1fr);
+    gap: 10px;
+    min-width: 0;
+    overflow: hidden;
+    border: 1px solid #ccd8d3;
+    border-radius: 8px;
+    background: #ffffff;
+    padding: 10px;
+  }
+
+  .dataset-entry-card img,
+  .dataset-thumbnail-empty {
+    display: block;
+    width: 104px;
+    aspect-ratio: 16 / 9;
+    border-radius: 6px;
+    object-fit: cover;
+    background: #1f2824;
+  }
+
+  .dataset-thumbnail-empty {
+    display: grid;
+    place-items: center;
+    color: #f2f7f4;
+    font-size: 12px;
+    font-weight: 800;
+  }
+
+  .dataset-entry-body {
+    display: grid;
+    min-width: 0;
+    gap: 4px;
+    align-content: start;
+  }
+
+  .dataset-entry-card h4,
+  .dataset-entry-card strong,
+  .dataset-entry-card span,
+  .dataset-entry-card p,
+  .dataset-entry-card li {
+    min-width: 0;
+    margin: 0;
+    overflow-wrap: anywhere;
+    line-height: 1.35;
+  }
+
+  .dataset-entry-card h4 {
+    color: #17201b;
+    font-size: 13px;
+  }
+
+  .dataset-entry-card strong,
+  .dataset-entry-card span,
+  .dataset-entry-card p,
+  .dataset-entry-card li {
+    color: #5d675f;
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .dataset-entry-ready {
+    border-color: #9fc8bd;
+  }
+
+  .dataset-entry-invalid {
+    border-color: #d69a94;
+  }
+
+  .landmark-preview {
+    display: grid;
+    gap: 3px;
+    padding-top: 2px;
+  }
+
+  .landmark-preview ol {
+    display: grid;
+    gap: 2px;
+    margin: 0;
+    padding-left: 18px;
   }
 
   .analysis-summary {
@@ -2396,11 +2752,14 @@ style.textContent = `
   }
 
   @media (max-width: 520px) {
-    .candidate-item {
+    .candidate-item,
+    .dataset-entry-card {
       grid-template-columns: 1fr;
     }
 
-    .candidate-item img {
+    .candidate-item img,
+    .dataset-entry-card img,
+    .dataset-thumbnail-empty {
       width: 100%;
     }
   }

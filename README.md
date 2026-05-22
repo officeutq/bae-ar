@@ -57,6 +57,7 @@ docs
 - IdealFace Authoring Tool Step 2-B: 抽出フレームの MediaPipe 解析、2D 478 landmarks / FacePose 取得、解析 summary 表示
 - IdealFace Authoring Tool Step 2-C: yaw / pitch / roll による代表フレーム候補の自動抽出、各カテゴリ上位複数件の候補一覧表示、代表フレーム候補中心の UI 整理、JSON preview への候補概要表示
 - IdealFace Authoring Tool Step 2-D: 代表フレーム候補から正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定する UI、候補カテゴリのトグル表示、正面 / 左向き / 右向き / 上向き / 下向きだけを表示する確定済み代表フレーム一覧と3D推測準備状況、JSON preview への `selectedRepresentativeFrames` 表示
+- IdealFace Authoring Tool Step 2-E: 確定済み代表フレームから front / left / right / up / down の 3D推測用データセットを作成し、readiness summary、dataset 一覧、JSON preview の `idealLandmarks3DInferenceDataset` で概要を確認する表示
 
 未実装 / 将来予定:
 
@@ -157,7 +158,7 @@ Step 2-A でできること:
 - 各フレームに frame index / timestamp / 状態「未解析」を表示する
 - JSON preview に動画情報と抽出フレーム情報を表示する
 
-初期対応は MP4 動画のみです。複数画像入力は未実装で、将来対応とします。Step 2-A 時点では MediaPipe による 2D 478 landmarks 取得と FacePose 取得は未実装でしたが、Step 2-B で抽出済みフレームの解析まで追加済みです。Step 2-C で代表フレーム候補抽出、Step 2-D で手動ラベル確定 UI まで追加済みです。3D 478点推測、手動微調整、保存 / export はまだ未実装です。
+初期対応は MP4 動画のみです。複数画像入力は未実装で、将来対応とします。Step 2-A 時点では MediaPipe による 2D 478 landmarks 取得と FacePose 取得は未実装でしたが、Step 2-B で抽出済みフレームの解析まで追加済みです。Step 2-C で代表フレーム候補抽出、Step 2-D で手動ラベル確定 UI、Step 2-E で3D推測用データセット作成まで追加済みです。3D 478点推測、手動微調整、保存 / export はまだ未実装です。
 
 動画入力とフレーム抽出は IdealFace Authoring Tool の責務です。Engine Runtime には動画入力処理やフレーム抽出処理を入れません。
 
@@ -173,7 +174,7 @@ Step 2-B でできること:
 - 解析結果 summary として解析済み数、顔検出あり / なし、解析エラー数、yaw / pitch / roll 範囲を表示する
 - JSON preview に解析概要と先頭数点の `landmarkPreview` を表示する
 
-JSON preview には 478 landmarks 全文は出しません。代表フレーム候補抽出は Step 2-C、手動ラベル確定 UI は Step 2-D で追加済みです。3D 478点推測、3D点群 preview、手動微調整、保存 / export はまだ未実装です。
+JSON preview には 478 landmarks 全文は出しません。代表フレーム候補抽出は Step 2-C、手動ラベル確定 UI は Step 2-D、3D推測用データセット概要表示は Step 2-E で追加済みです。3D 478点推測、3D点群 preview、手動微調整、保存 / export はまだ未実装です。
 
 MediaPipe による Authoring 用フレーム解析は IdealFace Authoring Tool の責務です。Engine Runtime には動画入力、フレーム抽出、Authoring 用フレーム解析処理を入れません。
 
@@ -194,7 +195,7 @@ Step 2-C でできること:
 
 将来的に解析対象フレームが増えても、ユーザーには全抽出フレーム一覧ではなく代表フレーム候補を中心に見せます。抽出フレーム一覧は debug / 確認用として折りたたみ表示に残します。
 
-候補 1 件だけで確定せず、上位複数件を比較して手動ラベル確定 UI へ進む方針です。Step 2-D で手動ラベル確定 UI まで追加済みです。3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力はまだ未実装です。代表フレーム抽出処理と候補表示 UI、抽出フレーム一覧 UI、手動ラベル確定 UI は IdealFace Authoring Tool の責務であり、Engine Runtime には入れません。
+候補 1 件だけで確定せず、上位複数件を比較して手動ラベル確定 UI へ進む方針です。Step 2-D で手動ラベル確定 UI、Step 2-E で確定済み代表フレームからの3D推測用データセット作成まで追加済みです。3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力はまだ未実装です。代表フレーム抽出処理と候補表示 UI、抽出フレーム一覧 UI、手動ラベル確定 UI、dataset 作成処理は IdealFace Authoring Tool の責務であり、Engine Runtime には入れません。
 
 ## IdealFace Authoring Tool Step 2-D
 
@@ -216,6 +217,24 @@ Step 2-D でできること:
 - JSON preview には 478 landmarks 全文やサムネイル data URL 全文を出さない
 
 Step 2-D では、3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力はまだ実装しません。手動ラベル確定 UI は IdealFace Authoring Tool の責務であり、Engine Runtime や Beauty Studio には追加しません。
+
+## IdealFace Authoring Tool Step 2-E
+
+`tools/ideal-face-authoring` に、確定済み代表フレームから 3D推測用データセットを組み立てる最小実装を追加しました。
+
+Step 2-E でできること:
+
+- front / left / right / up / down の確定済み代表フレームを dataset 対象にする
+- excluded は 3D推測用データセットに含めない
+- 未選択ラベルは `missing`、対応する解析済みフレームがない場合は `invalid`、2D 478 landmarks と FacePose が揃う場合は `ready` として扱う
+- 3D推測用データセットの readiness summary と ready 数を表示する
+- dataset entry ごとに label、frame index、timestamp、pose、landmarks 数、status、先頭数点の landmark preview を表示する
+- JSON preview に `idealLandmarks3DInferenceDataset` の概要を表示する
+- JSON preview には 478 landmarks 全文やサムネイル data URL 全文を出さない
+
+Step 2-E の dataset は、3D の `idealLandmarks3D` 478点候補を推測するための入力データセットです。各 entry は代表フレームに対応する 2D 478 landmarks と FacePose を内部状態として参照しますが、まだ `idealLandmarks3D` 478点そのものではありません。
+
+Step 2-E では、3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力はまだ実装しません。dataset 作成処理は IdealFace Authoring Tool の責務であり、Engine Runtime や Beauty Studio には追加しません。
 
 ## IdealFace Authoring Tool の idealLandmarks3D 作成方針
 
@@ -252,4 +271,4 @@ MP4 動画を入力
 
 この処理は完全自動生成ではなく、自動推測 + 手動補正として扱います。動画入力やフレーム抽出は IdealFace Authoring Tool の責務です。Engine Runtime は `idealLandmarks3D` を作成せず、完成済みの IdealFace asset を読み込んで、現在 `FacePose` へ投影して使います。
 
-現時点では、MP4 動画入力とフレーム抽出は Step 2-A、抽出フレームの MediaPipe 解析は Step 2-B、yaw / pitch / roll による代表フレーム候補の自動抽出、各カテゴリ上位複数件の候補一覧 / JSON preview への概要表示、代表フレーム候補を主表示にした Step 2-C UI 整理、代表フレーム候補から正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定する Step 2-D UI、候補カテゴリを必要なものだけ開くトグル表示、確定済み代表フレーム一覧と3D推測準備状況からの除外表示の削除は実装済みです。3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力は未実装です。
+現時点では、MP4 動画入力とフレーム抽出は Step 2-A、抽出フレームの MediaPipe 解析は Step 2-B、yaw / pitch / roll による代表フレーム候補の自動抽出、各カテゴリ上位複数件の候補一覧 / JSON preview への概要表示、代表フレーム候補を主表示にした Step 2-C UI 整理、代表フレーム候補から正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定する Step 2-D UI、候補カテゴリを必要なものだけ開くトグル表示、確定済み代表フレーム一覧、Step 2-E として確定済み代表フレームから front / left / right / up / down の3D推測用データセットを作成し、readiness summary、dataset 一覧、JSON preview の概要で確認する表示は実装済みです。dataset は 2D 478 landmarks と FacePose を持つ代表フレーム群であり、まだ `idealLandmarks3D` 478点そのものではありません。3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力は未実装です。
