@@ -146,7 +146,7 @@ Beauty Studio では、開発確認用として overlay や簡易調整 UI を�
 
 IdealFace Authoring Tool は、BAE AR 独自の IdealFace asset を作成するための領域です。IdealFace の本体である `idealLandmarks3D` 478点は、Authoring Tool 側で将来的に動画または複数画像から作成する方針です。初期入力形式は MP4 動画のみとし、複数画像入力は将来対応とします。
 
-初期段階では入力形式を広げず、MP4 動画からのフレーム抽出、代表フレーム候補の自動抽出、ユーザーによるラベル確定の流れを優先して作ります。Step 2-A では、MP4 動画入力と一定間隔でのフレーム抽出、サムネイル一覧表示までを実装済みです。Step 2-B では、抽出済みフレームの MediaPipe 解析、2D 478 landmarks と FacePose の取得、解析結果 summary 表示までを実装済みです。Step 2-C では、yaw / pitch / roll による代表フレーム候補の自動抽出、各カテゴリ上位複数件の候補一覧表示、JSON preview への候補概要表示、代表フレーム候補中心の UI 整理までを実装済みです。
+初期段階では入力形式を広げず、MP4 動画からのフレーム抽出、代表フレーム候補の自動抽出、ユーザーによるラベル確定の流れを優先して作ります。Step 2-A では、MP4 動画入力と一定間隔でのフレーム抽出、サムネイル一覧表示までを実装済みです。Step 2-B では、抽出済みフレームの MediaPipe 解析、2D 478 landmarks と FacePose の取得、解析結果 summary 表示までを実装済みです。Step 2-C では、yaw / pitch / roll による代表フレーム候補の自動抽出、各カテゴリ上位複数件の候補一覧表示、JSON preview への候補概要表示、代表フレーム候補中心の UI 整理までを実装済みです。Step 2-D では、候補カードから正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定し、確定済み代表フレーム一覧、3D推測準備状況、JSON preview の `selectedRepresentativeFrames` を確認できるようにしました。
 
 想定する流れ:
 
@@ -172,7 +172,23 @@ Step 2-C では候補 1 件だけで確定せず、正面候補、yaw 正方向�
 
 Step 2-C で未実装のもの:
 
-- 手動ラベル確定 UI
+- 3D 478点候補の自動推測
+- 3D点群 preview
+- 手動微調整
+- 保存 / export
+- 複数画像入力
+
+Step 2-D で実装済みのもの:
+
+- 候補カードから正面 / 左向き / 右向き / 上向き / 下向き / 除外を選択する UI
+- 確定済み代表フレーム一覧
+- front / left / right / up / down の選択状態と除外フレーム複数件の表示
+- 確定済み代表フレームの解除と同一ラベルの上書き
+- JSON preview の `selectedRepresentativeFrames`
+- 3D推測準備状況の表示
+
+Step 2-D でまだ未実装のもの:
+
 - 3D 478点候補の自動推測
 - 3D点群 preview
 - 手動微調整
@@ -234,7 +250,7 @@ PR 本文には、変更内容と確認結果を記載します。
 - Input: connected 確認
 ```
 
-## IdealFace Authoring Tool Step 1 / Step 2-A / Step 2-B / Step 2-C の確認
+## IdealFace Authoring Tool Step 1 / Step 2-A / Step 2-B / Step 2-C / Step 2-D の確認
 
 IdealFace Authoring Tool を変更した場合は、Runtime と Authoring の責務が混ざっていないことを確認します。
 
@@ -259,9 +275,16 @@ IdealFace Authoring Tool を変更した場合は、Runtime と Authoring の責
 - 解析 summary が代表フレーム候補の近くに表示される
 - 抽出フレーム一覧が debug / 折りたたみ表示になっている
 - JSON preview に `representativeFrameCandidates` のカテゴリごとの候補配列を表示できる
+- 候補カードから正面 / 左向き / 右向き / 上向き / 下向き / 除外を選択できる
+- 確定済み代表フレーム一覧を確認できる
+- front / left / right / up / down の選択状態を確認できる
+- 除外フレームを複数件確認できる
+- 確定済み代表フレームを解除または上書きできる
+- JSON preview に `selectedRepresentativeFrames` を表示できる
+- 3D推測準備状況を確認できる
 - 478 landmarks 全文を JSON preview に出していない
 - サムネイル data URL 全文を JSON preview に出していない
-- 手動ラベル確定 UI、3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力を Step 2-C に含めていない
+- 3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力を Step 2-D に含めていない
 - Engine Runtime に動画入力、フレーム抽出、Authoring 用フレーム解析処理を追加していない
 
 PR 本文には IdealFace Authoring Tool の手動確認事項を記載します。

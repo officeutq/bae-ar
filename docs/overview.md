@@ -79,7 +79,7 @@ MP4 動画を入力
 
 この方針は完全自動生成ではなく、自動推測 + 手動補正です。Engine Runtime は動画 / 複数画像から `idealLandmarks3D` を作成せず、Authoring Tool で作成済みの IdealFace asset を読み込んで使うだけです。
 
-現時点では、MP4 動画入力とフレーム抽出は IdealFace Authoring Tool Step 2-A、抽出フレームの MediaPipe 解析は Step 2-B、yaw / pitch / roll による代表フレーム候補の自動抽出、各カテゴリ上位複数件の候補一覧 / JSON preview への概要表示は Step 2-C として実装済みです。手動ラベル確定 UI、3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力は未実装です。
+現時点では、MP4 動画入力とフレーム抽出は IdealFace Authoring Tool Step 2-A、抽出フレームの MediaPipe 解析は Step 2-B、yaw / pitch / roll による代表フレーム候補の自動抽出、各カテゴリ上位複数件の候補一覧 / JSON preview への概要表示は Step 2-C、代表フレーム候補から正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定する UI は Step 2-D として実装済みです。3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力は未実装です。
 
 ## Shape Processing の考え方
 
@@ -166,7 +166,7 @@ Beauty Studio では、開発確認用として overlay や簡易調整 UI を�
 - サムネイル一覧での frame index / timestamp / 状態「未解析」の表示
 - JSON preview での動画情報と抽出フレーム情報の表示
 
-初期対応は MP4 動画のみです。複数画像入力は未実装 / 将来対応です。Step 2-A 時点では MediaPipe による 2D 478 landmarks 取得と FacePose 取得は未実装でしたが、Step 2-B で抽出済みフレームの解析まで追加済みです。Step 2-C で代表フレーム候補抽出まで追加済みです。手動ラベル確定、3D 478点推測、3D点群 preview、手動微調整、保存 / export はまだ未実装です。
+初期対応は MP4 動画のみです。複数画像入力は未実装 / 将来対応です。Step 2-A 時点では MediaPipe による 2D 478 landmarks 取得と FacePose 取得は未実装でしたが、Step 2-B で抽出済みフレームの解析まで追加済みです。Step 2-C で代表フレーム候補抽出、Step 2-D で手動ラベル確定 UI まで追加済みです。3D 478点推測、3D点群 preview、手動微調整、保存 / export はまだ未実装です。
 
 動画入力やフレーム抽出処理は IdealFace Authoring Tool の責務です。Runtime には動画入力やフレーム抽出処理を入れません。
 
@@ -182,7 +182,7 @@ Beauty Studio では、開発確認用として overlay や簡易調整 UI を�
 - 解析結果 summary での解析済み数、顔検出あり / なし、解析エラー数、yaw / pitch / roll 範囲表示
 - JSON preview での解析概要と `landmarkPreview` 表示
 
-JSON preview には 478 landmarks 全文は出しません。代表フレーム候補抽出は Step 2-C で追加済みです。手動ラベル確定、3D 478点推測、3D点群 preview、手動微調整、保存 / export はまだ未実装です。
+JSON preview には 478 landmarks 全文は出しません。代表フレーム候補抽出は Step 2-C、手動ラベル確定 UI は Step 2-D で追加済みです。3D 478点推測、3D点群 preview、手動微調整、保存 / export はまだ未実装です。
 
 MediaPipe 解析は Authoring Tool の抽出フレームに対する処理です。Runtime には動画入力、フレーム抽出、Authoring 用フレーム解析処理を入れません。
 
@@ -203,7 +203,25 @@ MediaPipe 解析は Authoring Tool の抽出フレームに対する処理です
 
 将来的に解析対象フレームが増えても、ユーザーには代表フレーム候補を中心に見せ、抽出フレーム一覧は debug / 確認用として折りたたみます。
 
-候補 1 件だけで確定せず、候補を複数比較して次の手動ラベル確定 UI へ進む方針です。手動ラベル確定 UI、3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力はまだ未実装です。代表フレーム抽出処理と Authoring 用 UI は IdealFace Authoring Tool の責務であり、Runtime には入れません。
+候補 1 件だけで確定せず、候補を複数比較して手動ラベル確定 UI へ進む方針です。Step 2-D で手動ラベル確定 UI まで追加済みです。3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力はまだ未実装です。代表フレーム抽出処理と Authoring 用 UI は IdealFace Authoring Tool の責務であり、Runtime には入れません。
+
+## IdealFace Authoring Tool Step 2-D
+
+`tools/ideal-face-authoring` では、Step 2-D として代表フレーム候補から最終ラベルを手動確定する UI を追加済みです。
+
+実装済み:
+
+- 候補カードから正面 / 左向き / 右向き / 上向き / 下向き / 除外を選択する
+- 正面 / 左向き / 右向き / 上向き / 下向きは各 1 件を確定し、同じラベルに別候補を選ぶと上書きする
+- 除外フレームは複数件確定する
+- 確定済み代表フレーム一覧でサムネイル、frame index、timestamp、yaw / pitch / roll、score、landmarks 数を確認する
+- 確定済み代表フレームを解除する
+- 3D推測準備状況として正面 / 左向き / 右向き / 上向き / 下向きの選択状態を確認する
+- JSON preview に `selectedRepresentativeFrames` を表示する
+- `representativeFrameCandidates` は引き続き JSON preview に表示する
+- JSON preview には 478 landmarks 全文やサムネイル data URL 全文を出さない
+
+Step 2-D では、3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力はまだ実装しません。手動ラベル確定 UI は IdealFace Authoring Tool の責務であり、Runtime や Beauty Studio には入れません。
 
 ## IdealFace / Projection / Shape Processing 中核仕様
 
