@@ -288,7 +288,7 @@ PR 本文には、変更内容と確認結果を記載します。
 - Input: connected 確認
 ```
 
-## IdealFace Authoring Tool Step 1 / Step 2-A / Step 2-B / Step 2-C / Step 2-D / Step 2-E / Step 2-F の確認
+## IdealFace Authoring Tool Step 1 / Step 2-A / Step 2-B / Step 2-C / Step 2-D / Step 2-E / Step 2-F / Step 2-G の確認
 
 IdealFace Authoring Tool を変更した場合は、Runtime と Authoring の責務が混ざっていないことを確認します。
 
@@ -335,7 +335,10 @@ IdealFace Authoring Tool を変更した場合は、Runtime と Authoring の責
 - JSON preview に `idealLandmarks3DInferenceDataset` の概要を表示できる
 - 478 landmarks 全文を JSON preview に出していない
 - サムネイル data URL 全文を JSON preview に出していない
-- 3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力を Step 2-F に含めていない
+- Step 2-G では front が ready の場合に `idealLandmarks3D` 478点候補を生成できる
+- Step 2-G では front が missing / invalid の場合に 3D候補を生成できないことを表示できる
+- Step 2-G の JSON preview は `idealLandmarks3DCandidate` の概要と先頭 5 点程度の preview に留め、478点全文やサムネイル data URL 全文を出さない
+- 3D点群 preview、手動微調整、保存 / export、複数画像入力を Step 2-G に含めていない
 - Engine Runtime に動画入力、フレーム抽出、Authoring 用フレーム解析、代表フレーム抽出、手動ラベル確定、dataset 作成処理を追加していない
 
 PR 本文には IdealFace Authoring Tool の手動確認事項を記載します。
@@ -352,5 +355,21 @@ Step 2-F 改良では、詳細スキャン間隔を `0.1` 秒にし、最大ス�
 - 除外した候補は候補 UI 一覧から外れ、`selectedRepresentativeFrames.excluded` には残る
 - 除外候補は確定済み代表フレーム一覧、3D推測準備状況、`idealLandmarks3DInferenceDataset` に含まれない
 - JSON preview の `representativeFrameCandidates` に `rank`、478 landmarks 全文、サムネイル data URL 全文が出ない
-- 3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力を Step 2-F に含めない
+- 3D点群 preview、手動微調整、保存 / export、複数画像入力を Step 2-F / Step 2-G に含めない
 - Engine Runtime と Beauty Studio に詳細スキャンや候補振り分け処理を追加しない
+
+## IdealFace Authoring Tool Step 2-G の確認
+
+Step 2-G では、`idealLandmarks3DInferenceDataset` から `idealLandmarks3D` 478点候補を生成します。v1 は厳密な 3D reconstruction ではなく、front の 2D 478 landmarks を x / y の基準にし、left / right / up / down との差分から z を簡易推定する仮の候補生成です。不足している代表フレームは confidence を下げる要素として扱います。
+
+確認観点:
+
+- front が ready の場合に 3D候補を生成できる
+- front が missing / invalid の場合に生成不可として表示される
+- 生成結果 summary に状態、landmark 数、ready labels、missing labels、average / min / max confidence が表示される
+- landmark preview は先頭 5 点程度に留める
+- JSON preview に `idealLandmarks3DCandidate` が表示される
+- JSON preview に 478 landmarks 全文やサムネイル data URL 全文を出さない
+- 生成結果は完成済み IdealFace asset ではなく候補データとして扱う
+- 3D点群 preview、手動微調整、保存 / export はまだ実装しない
+- Engine Runtime と Beauty Studio に 3D推測処理や Authoring 用 UI を追加しない
