@@ -95,11 +95,11 @@ IdealFace Authoring Tool の処理はリアルタイム Engine Runtime には含
 
 IdealFace Authoring Tool は、将来的に動画または複数画像を入力として受け取り、MediaPipe Face Landmarker で各フレームの 2D 478 landmarks と `FacePose` を取得します。初期入力形式は MP4 動画のみとし、複数画像入力は将来対応とします。初期段階では入力形式を広げず、代表フレーム抽出とラベル確定の流れを優先します。
 
-Step 2-A では、MP4 動画入力と一定間隔でのフレーム抽出、サムネイル一覧表示までを実装済みです。Step 2-B では、抽出済みフレームに MediaPipe Face Landmarker 解析を実行し、2D 478 landmarks と FacePose を取得できるようにしました。Step 2-C では、解析済みフレームの yaw / pitch / roll から代表フレーム候補を自動抽出し、各カテゴリ上位複数件の候補一覧と JSON preview に候補概要を表示できるようにしました。Step 2-D では、候補カードから正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定し、確定済み代表フレーム一覧、3D推測準備状況、JSON preview の `selectedRepresentativeFrames` を確認できるようにしました。
+Step 2-A では、MP4 動画入力と一定間隔でのフレーム抽出、サムネイル一覧表示までを実装済みです。Step 2-B では、抽出済みフレームに MediaPipe Face Landmarker 解析を実行し、2D 478 landmarks と FacePose を取得できるようにしました。Step 2-C では、解析済みフレームの yaw / pitch / roll から代表フレーム候補を自動抽出し、各カテゴリ上位複数件の候補一覧と JSON preview に候補概要を表示できるようにしました。Step 2-D では、候補カードから正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定し、候補カテゴリを必要なものだけ開くトグル表示、確定済み代表フレーム一覧、3D推測準備状況、JSON preview の `selectedRepresentativeFrames` を確認できるようにしました。確定済み代表フレーム一覧と3D推測準備状況には、正面 / 左向き / 右向き / 上向き / 下向きだけを表示します。
 
 Step 2-C の代表フレーム候補抽出では、顔検出あり、landmarks 数 478、pose pitch / yaw / roll 取得済みの解析済みフレームだけを候補評価に使います。正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を各カテゴリ上位複数件表示し、左右・上下の最終ラベルは次段階の手動確定 UI で扱います。
 
-候補 1 件だけでは確定せず、上位複数件を比較して手動確定します。Step 2-D ではユーザーが Authoring Tool 上で正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定します。将来的には、確定した代表フレーム群から 3D の `idealLandmarks3D` 478点候補を自動推測し、Authoring Tool 上で確認、必要箇所を手動微調整したうえで IdealFace asset として保存 / export します。3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export は Step 2-D では未実装です。
+候補 1 件だけでは確定せず、上位複数件を比較して手動確定します。Step 2-D ではユーザーが Authoring Tool 上で正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定します。除外は代表フレームではないため確定済み代表フレーム一覧には表示せず、状態や JSON preview / debug 情報として保持します。将来的には、確定した代表フレーム群から 3D の `idealLandmarks3D` 478点候補を自動推測し、Authoring Tool 上で確認、必要箇所を手動微調整したうえで IdealFace asset として保存 / export します。3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export は Step 2-D では未実装です。
 
 推奨する MP4 動画は、H.264 / AVC codec、5〜15秒程度、30fps程度、720p程度から開始できるものです。顔が大きく写り、正面、左向き、右向き、上向き、下向きをゆっくり含み、手ブレが少なく、明るい場所で撮影されていることを推奨します。口は閉じ気味、表情はできるだけ neutral とします。
 
@@ -388,16 +388,19 @@ Step 2-C の未実装範囲:
 
 ## IdealFace Authoring Tool Step 2-D
 
-Step 2-D では、`tools/ideal-face-authoring` に代表フレーム候補から最終ラベルを手動確定する UI を追加しました。
+Step 2-D では、`tools/ideal-face-authoring` に代表フレーム候補から最終ラベルを手動確定する UI を追加しました。Step 2-D UI整理では、代表フレーム候補カテゴリをトグル表示にし、必要なカテゴリだけを開いて確認する構成にしました。
 
 Step 2-D の実装範囲:
 
 - 候補カードから正面 / 左向き / 右向き / 上向き / 下向き / 除外を選択できる
+- 正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補をカテゴリごとに開閉できる
+- 開いたカテゴリだけ候補カードを表示し、候補件数を表示する
 - 正面 / 左向き / 右向き / 上向き / 下向きは各 1 件を確定し、同じラベルに別候補を選ぶと上書きできる
-- 除外フレームは複数件確定できる
-- 確定済み代表フレーム一覧でサムネイル、frame index、timestamp、yaw / pitch / roll、score、landmarks 数を表示する
+- 除外フレームは複数件確定でき、状態や JSON preview / debug 情報として保持できる
+- 確定済み代表フレーム一覧では正面 / 左向き / 右向き / 上向き / 下向きだけを表示する
+- 除外は代表フレームではないため、確定済み代表フレーム一覧には表示しない
 - 確定済み代表フレームを解除できる
-- 3D推測準備状況として正面 / 左向き / 右向き / 上向き / 下向きの選択状態を表示する
+- 3D推測準備状況として正面 / 左向き / 右向き / 上向き / 下向きの選択状態だけを表示する
 - JSON preview に `selectedRepresentativeFrames` を表示する
 - `representativeFrameCandidates` は引き続き JSON preview に表示する
 - JSON preview に 478 landmarks 全文やサムネイル data URL 全文を出さない

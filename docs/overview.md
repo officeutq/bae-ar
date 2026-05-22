@@ -79,7 +79,7 @@ MP4 動画を入力
 
 この方針は完全自動生成ではなく、自動推測 + 手動補正です。Engine Runtime は動画 / 複数画像から `idealLandmarks3D` を作成せず、Authoring Tool で作成済みの IdealFace asset を読み込んで使うだけです。
 
-現時点では、MP4 動画入力とフレーム抽出は IdealFace Authoring Tool Step 2-A、抽出フレームの MediaPipe 解析は Step 2-B、yaw / pitch / roll による代表フレーム候補の自動抽出、各カテゴリ上位複数件の候補一覧 / JSON preview への概要表示は Step 2-C、代表フレーム候補から正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定する UI は Step 2-D として実装済みです。3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力は未実装です。
+現時点では、MP4 動画入力とフレーム抽出は IdealFace Authoring Tool Step 2-A、抽出フレームの MediaPipe 解析は Step 2-B、yaw / pitch / roll による代表フレーム候補の自動抽出、各カテゴリ上位複数件の候補一覧 / JSON preview への概要表示は Step 2-C、代表フレーム候補から正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定する UI と、候補カテゴリを必要なものだけ開く Step 2-D UI整理は実装済みです。確定済み代表フレーム一覧と3D推測準備状況には正面 / 左向き / 右向き / 上向き / 下向きだけを表示します。3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力は未実装です。
 
 ## Shape Processing の考え方
 
@@ -207,16 +207,19 @@ MediaPipe 解析は Authoring Tool の抽出フレームに対する処理です
 
 ## IdealFace Authoring Tool Step 2-D
 
-`tools/ideal-face-authoring` では、Step 2-D として代表フレーム候補から最終ラベルを手動確定する UI を追加済みです。
+`tools/ideal-face-authoring` では、Step 2-D として代表フレーム候補から最終ラベルを手動確定する UI を追加済みです。Step 2-D UI整理では、代表フレーム候補カテゴリをトグル表示にし、ユーザーが必要な候補カテゴリだけを開いて確認できるようにしました。
 
 実装済み:
 
 - 候補カードから正面 / 左向き / 右向き / 上向き / 下向き / 除外を選択する
+- 正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補をカテゴリごとに開閉する
+- 開いた候補カテゴリだけ候補カードを表示し、各カテゴリの候補件数を表示する
 - 正面 / 左向き / 右向き / 上向き / 下向きは各 1 件を確定し、同じラベルに別候補を選ぶと上書きする
-- 除外フレームは複数件確定する
-- 確定済み代表フレーム一覧でサムネイル、frame index、timestamp、yaw / pitch / roll、score、landmarks 数を確認する
+- 除外フレームは複数件確定し、状態や JSON preview / debug 情報として保持する
+- 確定済み代表フレーム一覧では正面 / 左向き / 右向き / 上向き / 下向きだけを確認する
+- 除外は代表フレームではないため、確定済み代表フレーム一覧には表示しない
 - 確定済み代表フレームを解除する
-- 3D推測準備状況として正面 / 左向き / 右向き / 上向き / 下向きの選択状態を確認する
+- 3D推測準備状況として正面 / 左向き / 右向き / 上向き / 下向きの選択状態だけを確認する
 - JSON preview に `selectedRepresentativeFrames` を表示する
 - `representativeFrameCandidates` は引き続き JSON preview に表示する
 - JSON preview には 478 landmarks 全文やサムネイル data URL 全文を出さない
