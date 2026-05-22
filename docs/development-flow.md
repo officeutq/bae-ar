@@ -288,7 +288,7 @@ PR 本文には、変更内容と確認結果を記載します。
 - Input: connected 確認
 ```
 
-## IdealFace Authoring Tool Step 1 / Step 2-A / Step 2-B / Step 2-C / Step 2-D / Step 2-E / Step 2-F / Step 2-G の確認
+## IdealFace Authoring Tool Step 1 / Step 2-A / Step 2-B / Step 2-C / Step 2-D / Step 2-E / Step 2-F / Step 2-G / Step 2-H の確認
 
 IdealFace Authoring Tool を変更した場合は、Runtime と Authoring の責務が混ざっていないことを確認します。
 
@@ -338,7 +338,13 @@ IdealFace Authoring Tool を変更した場合は、Runtime と Authoring の責
 - Step 2-G では front が ready の場合に `idealLandmarks3D` 478点候補を生成できる
 - Step 2-G では front が missing / invalid の場合に 3D候補を生成できないことを表示できる
 - Step 2-G の JSON preview は `idealLandmarks3DCandidate` の概要と先頭 5 点程度の preview に留め、478点全文やサムネイル data URL 全文を出さない
-- 3D点群 preview、手動微調整、保存 / export、複数画像入力を Step 2-G に含めていない
+- Step 2-H では 3D候補未生成時に未生成メッセージが表示される
+- Step 2-H では 3D候補生成後に 3D 478点候補を点群として preview 表示できる
+- Step 2-H では正面 / 横 / 上方向の表示を切り替えられる
+- Step 2-H では点群が preview 範囲内に収まる
+- Step 2-H では landmark count、x / y / z の min / max、average / min / max confidence が表示される
+- Step 2-H の JSON preview は `idealLandmarks3DCandidate` の概要と先頭 5 点程度の preview に留め、478点全文や canvas data URL を出さない
+- 3D点群 preview は debug / 確認用であり、本格 3D editor、手動微調整、保存 / export、複数画像入力を Step 2-H に含めていない
 - Engine Runtime に動画入力、フレーム抽出、Authoring 用フレーム解析、代表フレーム抽出、手動ラベル確定、dataset 作成処理を追加していない
 
 PR 本文には IdealFace Authoring Tool の手動確認事項を記載します。
@@ -355,7 +361,7 @@ Step 2-F 改良では、詳細スキャン間隔を `0.1` 秒にし、最大ス�
 - 除外した候補は候補 UI 一覧から外れ、`selectedRepresentativeFrames.excluded` には残る
 - 除外候補は確定済み代表フレーム一覧、3D推測準備状況、`idealLandmarks3DInferenceDataset` に含まれない
 - JSON preview の `representativeFrameCandidates` に `rank`、478 landmarks 全文、サムネイル data URL 全文が出ない
-- 3D点群 preview、手動微調整、保存 / export、複数画像入力を Step 2-F / Step 2-G に含めない
+- 3D点群 preview は Step 2-H で確認用として扱い、手動微調整、保存 / export、複数画像入力は Step 2-F / Step 2-G / Step 2-H に含めない
 - Engine Runtime と Beauty Studio に詳細スキャンや候補振り分け処理を追加しない
 
 ## IdealFace Authoring Tool Step 2-G の確認
@@ -371,5 +377,21 @@ Step 2-G では、`idealLandmarks3DInferenceDataset` から `idealLandmarks3D` 4
 - JSON preview に `idealLandmarks3DCandidate` が表示される
 - JSON preview に 478 landmarks 全文やサムネイル data URL 全文を出さない
 - 生成結果は完成済み IdealFace asset ではなく候補データとして扱う
-- 3D点群 preview、手動微調整、保存 / export はまだ実装しない
+- 3D点群 preview は Step 2-H で追加済み。手動微調整、保存 / export はまだ実装しない
 - Engine Runtime と Beauty Studio に 3D推測処理や Authoring 用 UI を追加しない
+
+## IdealFace Authoring Tool Step 2-H の確認
+
+Step 2-H では、生成済みの `idealLandmarks3D` 478点候補を Authoring Tool 上の debug / 確認用 preview として表示します。本格 3D editor ではなく、点群が顔らしい形になっているかを目視確認するための簡易表示です。
+
+確認観点:
+
+- 3D候補未生成時に「3D 478点候補がまだ生成されていません。」の案内が表示される
+- 3D候補生成後に 478点候補が点群として表示される
+- 正面 x / y、横 z / y、上 x / z の表示を切り替えられる
+- 点群が preview 範囲内に収まる
+- confidence が低い点が薄く表示される
+- landmark count、表示方向、x / y / z の min / max、average / min / max confidence が表示される
+- JSON preview に 478点全文や canvas data URL を出さない
+- 手動微調整、保存 / export、複数画像入力はまだ実装しない
+- Engine Runtime と Beauty Studio に 3D点群 preview や Authoring 用 UI を追加しない
