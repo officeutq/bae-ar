@@ -133,6 +133,16 @@ Layer System は shape warp ではなく、color processing 用に使います�
 
 Layer は色加工範囲、効果、強度、合成順を整理する仕組みです。`jaw_layer` で顎を削る、`eye_layer` で目を大きくする、`nose_layer` で鼻を細くする、のような使い方はしません。
 
+## IdealFace Authoring Tool Step 2-F 改良
+
+Step 2-F 改良では、代表フレーム候補抽出用の詳細スキャン間隔を `0.1` 秒にしました。長い動画を無制限に解析しないよう、最大スキャン数の上限は残します。
+
+詳細スキャンで検出できた各フレームは、条件に合えば `front` / `yawPositive` / `yawNegative` / `pitchPositive` / `pitchNegative` の候補カテゴリへ保持します。上位5件だけに限定せず、カテゴリごとの保持上限の範囲で広く候補を残し、UI ではカテゴリトグル内に候補を表示します。候補カードでは順位を表示せず、`score` を表示します。
+
+候補条件は緩めており、yaw 候補では pitch が多少ずれていても、pitch 候補では yaw が多少ずれていても候補として拾います。除外した候補は候補 UI から外し、`selectedRepresentativeFrames.excluded` として状態 / JSON preview には残せますが、3D推測用 dataset には含めません。
+
+3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力は引き続き未実装です。詳細スキャンや候補振り分け処理は IdealFace Authoring Tool の責務であり、Runtime には入れません。
+
 ## Runtime と Authoring の分離
 
 Engine Runtime は、定義済みの IdealFace / LayerMaskSpec を読み込んで使うだけです。
@@ -195,7 +205,7 @@ MediaPipe 解析は Authoring Tool の抽出フレームに対する処理です
 
 - 顔検出あり、landmarks 数 478 の解析済みフレームだけを候補評価に使う
 - yaw / pitch / roll を使って正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を各カテゴリ上位複数件抽出する
-- 候補一覧にサムネイル、順位、frame index、timestamp、yaw / pitch / roll、score、landmarks 数を表示する
+- 候補一覧にサムネイル、frame index、timestamp、yaw / pitch / roll、score、landmarks 数を表示する
 - 候補がない場合は「候補なし」と表示する
 - 解析 summary を代表フレーム候補の近くに表示する
 - 抽出フレーム一覧は debug / 折りたたみ表示として扱う
@@ -247,12 +257,12 @@ Step 2-E では、3D 478点候補の自動推測、3D点群 preview、手動微�
 
 ## IdealFace Authoring Tool Step 2-F
 
-`tools/ideal-face-authoring` では、Step 2-F として代表フレーム候補抽出用の詳細スキャンを追加済みです。表示用抽出は最大20件程度に抑えたまま、候補抽出では動画全体を 0.25 秒間隔、最大 120 フレーム程度まで解析します。
+`tools/ideal-face-authoring` では、Step 2-F として代表フレーム候補抽出用の詳細スキャンを追加済みです。表示用抽出は最大20件程度に抑えたまま、候補抽出では動画全体を 0.1 秒間隔、最大スキャン数の上限付きで解析します。
 
 実装済み:
 
 - 詳細スキャン済みフレームから、顔検出あり、landmarks 数 478、FacePose 取得済みのフレームだけを候補評価に使う
-- yaw / pitch / roll から正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を各カテゴリ上位複数件表示する
+- yaw / pitch / roll から正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を各カテゴリに複数件保持・表示する
 - 全スキャンフレーム一覧は UI に表示せず、代表フレーム候補を中心に表示する
 - 候補に採用されたフレームは、手動確定と 3D推測用 dataset 作成に使えるようサムネイル、frame index、timestamp、pose、2D 478 landmarks、landmark preview を保持する
 - 詳細スキャン summary と JSON preview の `scanSummary` を表示する

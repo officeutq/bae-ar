@@ -117,6 +117,16 @@ shape processing は個別パーツ加工ではありません。
 - 顎だけ削る
 - 個別パーツ加工を主機能として増やす
 
+## IdealFace Authoring Tool Step 2-F 改良
+
+`tools/ideal-face-authoring` では Step 2-F 改良として、代表フレーム候補抽出用の詳細スキャンを `scanIntervalSec: 0.1` にしました。長い動画で無制限に解析しないよう、最大スキャン数の上限は維持しています。
+
+候補選定では、上位少数件だけに絞らず、条件に合うフレームを `front` / `yawPositive` / `yawNegative` / `pitchPositive` / `pitchNegative` ごとに保持します。UI では候補カテゴリトグル内に候補を表示し、順位ではなく `score` を表示します。候補に入れるハードルは緩めており、pitch / yaw の片方に多少のズレがあっても候補として拾います。
+
+候補カードで除外したフレームは候補 UI 一覧から外します。除外情報は `selectedRepresentativeFrames.excluded` として状態 / JSON preview に残してよいものとし、確定済み代表フレーム一覧、3D推測準備状況、`idealLandmarks3DInferenceDataset` には含めません。
+
+Step 2-F では、3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力はまだ実装しません。詳細スキャン、候補振り分け、手動ラベル確定、dataset 作成は IdealFace Authoring Tool の責務であり、Engine Runtime には入れません。
+
 ## ドキュメント
 
 - [概要](docs/overview.md)
@@ -187,7 +197,7 @@ Step 2-C でできること:
 
 - 顔検出あり、landmarks 数 478 の解析済みフレームだけを候補評価に使う
 - yaw / pitch / roll から正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を各カテゴリ上位複数件抽出する
-- 候補一覧にサムネイル、順位、frame index、timestamp、yaw / pitch / roll、score、landmarks 数を表示する
+- 候補一覧にサムネイル、frame index、timestamp、yaw / pitch / roll、score、landmarks 数を表示する
 - 候補がない場合は「候補なし」と表示する
 - 解析 summary を代表フレーム候補の近くに表示する
 - 代表フレーム候補を主表示とし、抽出フレーム一覧は debug / 折りたたみ表示として扱う
@@ -239,13 +249,13 @@ Step 2-E では、3D 478点候補の自動推測、3D点群 preview、手動微�
 
 ## IdealFace Authoring Tool Step 2-F
 
-`tools/ideal-face-authoring` に、代表フレーム候補抽出用の詳細スキャンを追加しました。表示用抽出フレームは最大20件程度の確認用として残し、候補抽出では動画全体を 0.25 秒間隔、最大 120 フレーム程度まで細かく解析します。
+`tools/ideal-face-authoring` に、代表フレーム候補抽出用の詳細スキャンを追加しました。表示用抽出フレームは最大20件程度の確認用として残し、候補抽出では動画全体を 0.1 秒間隔、最大スキャン数の上限付きで細かく解析します。
 
 Step 2-F でできること:
 
 - MP4 動画全体を候補抽出用に詳細スキャンする
 - 詳細スキャン済みフレームから、顔検出あり、landmarks 数 478、FacePose 取得済みのフレームだけを候補評価に使う
-- yaw / pitch / roll から正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を各カテゴリ上位複数件表示する
+- yaw / pitch / roll から正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を各カテゴリに複数件保持・表示する
 - 候補以外の詳細スキャンフレームは UI に大量表示せず、候補中心に表示する
 - 候補に採用されたフレームは、サムネイル、frame index、timestamp、pose、2D 478 landmarks、landmark preview を保持し、手動確定と 3D推測用 dataset 作成に使う
 - 詳細スキャン summary と JSON preview の `scanSummary` を表示する

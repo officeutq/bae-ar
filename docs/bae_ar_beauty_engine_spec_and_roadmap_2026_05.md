@@ -344,7 +344,7 @@ MP4 動画を入力
 
 初期段階では、長時間動画、高解像度すぎる動画、HEVC / H.265、MOV、WebM、複数画像入力は非推奨または未対応です。これらは将来対応を検討する余地を残します。
 
-代表フレーム候補は、yaw / pitch / roll を使って自動抽出します。Step 2-F では、表示用の最大20件程度の抽出フレームだけでなく、動画全体を 0.25 秒間隔、最大 120 フレーム程度まで詳細スキャンします。顔検出あり、landmarks 数 478、pose pitch / yaw / roll 取得済みの詳細スキャンフレームだけを評価し、正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を各カテゴリ上位複数件、候補一覧と JSON preview に表示します。全スキャンフレーム一覧は UI に表示せず、候補に採用されたフレームだけを手動確定と dataset 作成に使えるよう保持します。Step 2-D UI整理では候補カテゴリをトグル表示にし、必要なカテゴリだけを開いて候補カードを確認します。候補 1 件だけで確定せず、複数候補を比較して Step 2-D の手動確定 UI で最終ラベルを決めます。Step 2-E では確定済み代表フレームから 3D推測用データセットを作成します。
+代表フレーム候補は、yaw / pitch / roll を使って自動抽出します。Step 2-F 改良では、表示用の最大20件程度の抽出フレームだけでなく、動画全体を 0.1 秒間隔、最大スキャン数の上限付きで詳細スキャンします。顔検出あり、landmarks 数 478、pose pitch / yaw / roll 取得済みの詳細スキャンフレームだけを評価し、正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を上位少数件だけに絞らず、カテゴリごとに複数件保持して候補一覧と JSON preview に表示します。候補条件は緩め、pitch / yaw の片方に多少のズレがあっても候補として拾います。全スキャンフレーム一覧は UI に表示せず、候補に採用されたフレームだけを手動確定と dataset 作成に使えるよう保持します。候補カードでは順位ではなく `score` を表示します。除外された候補は候補 UI 一覧から外し、`selectedRepresentativeFrames.excluded` として状態 / JSON preview に残せますが、3D推測用 dataset には含めません。Step 2-D UI整理では候補カテゴリをトグル表示にし、必要なカテゴリだけを開いて候補カードを確認します。候補 1 件だけで確定せず、複数候補を比較して Step 2-D の手動確定 UI で最終ラベルを決めます。Step 2-E では確定済み代表フレームから 3D推測用データセットを作成します。
 
 ただし、自動抽出だけでは確定しません。ユーザーが Authoring Tool 上で、正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定します。除外は代表フレームではないため、確定済み代表フレーム一覧には表示しません。除外情報は状態や JSON preview / debug 情報として保持してよいものとします。
 
@@ -688,7 +688,7 @@ Studio は Engine の private field、内部状態、内部実装へ直接アク
 - Step 2-C として yaw / pitch / roll による代表フレーム候補の自動抽出、各カテゴリ上位複数件の候補一覧表示、JSON preview への候補概要表示ができる。
 - Step 2-D として代表フレーム候補から正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定し、候補カテゴリを必要なものだけ開くトグル表示、正面 / 左向き / 右向き / 上向き / 下向きだけを表示する確定済み代表フレーム一覧と3D推測準備状況、JSON preview の `selectedRepresentativeFrames` を確認できる。
 - Step 2-E として確定済み代表フレームから front / left / right / up / down の 3D推測用データセットを作成し、readiness summary、dataset 一覧、JSON preview の `idealLandmarks3DInferenceDataset` 概要を確認できる。
-- Step 2-F として候補抽出用の詳細スキャン、詳細スキャン summary、JSON preview の `scanSummary`、トリムしないサムネイル表示を確認できる。
+- Step 2-F として候補抽出用の詳細スキャン、詳細スキャン summary、JSON preview の `scanSummary`、`candidateCounts`、`excludedCandidateCount`、トリムしないサムネイル表示を確認できる。
 - 現段階の `natural_v1` の controlPoints は投影検証用の暫定データであり、IdealFace 本体ではない。
 - IdealFace 本体は `idealLandmarks3D` 478 点を中核に持つ asset として扱う。
 - 2D 動画 / 複数画像からのオフライン生成を Runtime と分離して扱える。
@@ -847,7 +847,7 @@ Step 2-C の実装範囲:
 
 - 顔検出あり、landmarks 数 478、pose pitch / yaw / roll 取得済みの解析済みフレームだけを候補評価に使う
 - yaw / pitch / roll から正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を各カテゴリ上位複数件抽出する
-- 候補一覧にサムネイル、順位、frame index、timestamp、yaw / pitch / roll、score、landmarks 数を表示する
+- 候補一覧にサムネイル、frame index、timestamp、yaw / pitch / roll、score、landmarks 数を表示する
 - 候補がない場合に「候補なし」と表示する
 - 解析 summary を代表フレーム候補の近くに表示する
 - 代表フレーム候補を主表示にし、抽出フレーム一覧を debug / 折りたたみ表示として扱う
@@ -920,9 +920,9 @@ dataset 作成処理は IdealFace Authoring Tool の責務です。Engine Runtim
 
 Step 2-F の実装範囲:
 
-- 表示用抽出フレームとは別に、候補抽出用として MP4 動画全体を 0.25 秒間隔、最大 120 フレーム程度まで詳細スキャンする
+- 表示用抽出フレームとは別に、候補抽出用として MP4 動画全体を 0.1 秒間隔、最大スキャン数の上限付きで詳細スキャンする
 - 詳細スキャン済みフレームのうち、顔検出あり、landmarks 数 478、FacePose 取得済みのフレームだけを候補評価に使う
-- yaw / pitch / roll から正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を各カテゴリ上位複数件表示する
+- yaw / pitch / roll から正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を各カテゴリに複数件保持・表示する
 - 全スキャンフレーム一覧は UI に表示せず、代表フレーム候補中心に表示する
 - 候補に採用されたフレームは、サムネイル、frame index、timestamp、pose、2D 478 landmarks、landmark preview を保持し、手動確定と 3D推測用 dataset 作成に使う
 - 詳細スキャン summary と JSON preview の `scanSummary` を表示する
