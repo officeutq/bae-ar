@@ -111,9 +111,9 @@ MediaPipe canonical face model そのものを作成・編集する場所では�
 
 IdealFace Authoring Tool では、将来的に動画または複数画像から各フレームの 2D 478 landmarks と `FacePose` を取得します。初期入力形式は MP4 動画のみとし、複数画像入力は将来対応とします。初期段階では入力形式を広げず、代表フレーム抽出とラベル確定の流れを優先します。
 
-Step 2-A では、MP4 動画入力、metadata 表示、一定間隔でのフレーム抽出、サムネイル一覧表示、JSON preview への抽出フレーム情報表示までを実装済みです。Step 2-B では、抽出済みフレームの MediaPipe 解析、2D 478 landmarks と `FacePose` の取得、解析結果 summary と JSON preview への概要表示までを実装済みです。Step 2-C では、yaw / pitch / roll による代表フレーム候補の自動抽出、候補一覧表示、JSON preview への候補概要表示までを実装済みです。
+Step 2-A では、MP4 動画入力、metadata 表示、一定間隔でのフレーム抽出、サムネイル一覧表示、JSON preview への抽出フレーム情報表示までを実装済みです。Step 2-B では、抽出済みフレームの MediaPipe 解析、2D 478 landmarks と `FacePose` の取得、解析結果 summary と JSON preview への概要表示までを実装済みです。Step 2-C では、yaw / pitch / roll による代表フレーム候補の自動抽出、各カテゴリ上位複数件の候補一覧表示、JSON preview への候補概要表示までを実装済みです。
 
-MP4 動画から一定間隔でフレームを抽出し、yaw / pitch / roll から代表フレーム候補を自動抽出します。Step 2-C では、顔検出あり、landmarks 数 478 の解析済みフレームから正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を抽出します。ユーザーが正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定し、確定した代表フレーム群から `idealLandmarks3D` 478点候補を自動推測する流れは将来対応です。
+MP4 動画から一定間隔でフレームを抽出し、yaw / pitch / roll から代表フレーム候補を自動抽出します。Step 2-C では、顔検出あり、landmarks 数 478、pose pitch / yaw / roll 取得済みの解析済みフレームから正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を各カテゴリ上位複数件抽出します。候補 1 件だけで確定せず、候補を比較して次の手動確定 UI へ進む方針です。ユーザーが正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定し、確定した代表フレーム群から `idealLandmarks3D` 478点候補を自動推測する流れは将来対応です。
 
 自動推測した 3D点群は候補データとして扱い、Authoring Tool 上で確認、必要箇所を手動微調整してから IdealFace asset として保存 / export します。
 
@@ -227,11 +227,11 @@ Step 2-B の範囲:
 
 Step 2-C の範囲:
 
-- 顔検出あり、landmarks 数 478 の解析済みフレームだけを候補評価に使う
-- yaw / pitch / roll から正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を抽出する
-- 候補一覧にサムネイル、frame index、timestamp、yaw / pitch / roll、score、landmarks 数を表示する
+- 顔検出あり、landmarks 数 478、pose pitch / yaw / roll 取得済みの解析済みフレームだけを候補評価に使う
+- yaw / pitch / roll から正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を各カテゴリ上位複数件抽出する
+- 候補一覧にサムネイル、順位、frame index、timestamp、yaw / pitch / roll、score、landmarks 数を表示する
 - 候補がない場合に「候補なし」を表示する
-- JSON preview に `representativeFrameCandidates` として候補概要を表示する
+- JSON preview に `representativeFrameCandidates` としてカテゴリごとの候補配列を表示する
 - JSON preview には 478 landmarks 全文を出さない
 
 未実装:

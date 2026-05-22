@@ -38,6 +38,7 @@ const DIRECTIONAL_POSE_LIMIT = {
 }
 const YAW_CANDIDATE_MIN_ABS = 12
 const PITCH_CANDIDATE_MIN_ABS = 10
+const REPRESENTATIVE_CANDIDATE_LIMIT = 5
 
 type RepresentativeFrameCandidateKey =
   | "front"
@@ -73,6 +74,7 @@ interface ExtractedVideoFrame {
 
 interface RepresentativeFrameCandidate {
   key: RepresentativeFrameCandidateKey
+  rank: number
   frameIndex: number
   timestamp: number
   score: number
@@ -88,7 +90,7 @@ interface RepresentativeFrameCandidate {
 
 type RepresentativeFrameCandidates = Record<
   RepresentativeFrameCandidateKey,
-  RepresentativeFrameCandidate | null
+  RepresentativeFrameCandidate[]
 >
 
 interface VideoSourceState {
@@ -364,23 +366,23 @@ function getRepresentativeFrameCandidates(): RepresentativeFrameCandidates {
   const candidates = getCandidateSourceFrames()
 
   return {
-    front: selectBestCandidate(candidates, "front", scoreFrontCandidate),
-    yawPositive: selectBestCandidate(
+    front: selectTopCandidates(candidates, "front", scoreFrontCandidate),
+    yawPositive: selectTopCandidates(
       candidates,
       "yawPositive",
       scoreYawPositiveCandidate,
     ),
-    yawNegative: selectBestCandidate(
+    yawNegative: selectTopCandidates(
       candidates,
       "yawNegative",
       scoreYawNegativeCandidate,
     ),
-    pitchPositive: selectBestCandidate(
+    pitchPositive: selectTopCandidates(
       candidates,
       "pitchPositive",
       scorePitchPositiveCandidate,
     ),
-    pitchNegative: selectBestCandidate(
+    pitchNegative: selectTopCandidates(
       candidates,
       "pitchNegative",
       scorePitchNegativeCandidate,
@@ -395,16 +397,26 @@ function getCandidateSourceFrames(): ExtractedVideoFrame[] {
     return (
       frame.status === "analyzed" &&
       analysis?.detected === true &&
-      analysis.landmarks.length === REQUIRED_LANDMARK_COUNT
+      analysis.landmarks.length === REQUIRED_LANDMARK_COUNT &&
+      hasCompletePose(analysis.pose)
     )
   })
 }
 
-function selectBestCandidate(
+function hasCompletePose(pose: FacePose | undefined): pose is FacePose {
+  return (
+    pose !== undefined &&
+    Number.isFinite(pose.pitch) &&
+    Number.isFinite(pose.yaw) &&
+    Number.isFinite(pose.roll)
+  )
+}
+
+function selectTopCandidates(
   frames: ExtractedVideoFrame[],
   key: RepresentativeFrameCandidateKey,
   scoreCandidate: (pose: FacePose) => number | null,
-): RepresentativeFrameCandidate | null {
+): RepresentativeFrameCandidate[] {
   const scoredCandidates = frames
     .map((frame) => {
       const pose = frame.analysis?.pose
@@ -425,14 +437,14 @@ function selectBestCandidate(
       (candidate): candidate is RepresentativeFrameCandidate =>
         candidate !== null,
     )
+    .sort((a, b) => b.score - a.score || a.frameIndex - b.frameIndex)
+    .slice(0, REPRESENTATIVE_CANDIDATE_LIMIT)
+    .map((candidate, index) => ({
+      ...candidate,
+      rank: index + 1,
+    }))
 
-  if (scoredCandidates.length === 0) {
-    return null
-  }
-
-  return scoredCandidates.reduce((bestCandidate, candidate) =>
-    candidate.score > bestCandidate.score ? candidate : bestCandidate,
-  )
+  return scoredCandidates
 }
 
 function buildRepresentativeFrameCandidate(
@@ -444,6 +456,7 @@ function buildRepresentativeFrameCandidate(
 
   return {
     key,
+    rank: 0,
     frameIndex: frame.index,
     timestamp: frame.timestamp,
     score: Number(clamp(score, 0, 1).toFixed(4)),
@@ -572,13 +585,10 @@ function scoreDirectionalCandidate(
 }
 
 function toRepresentativeCandidatePreview(
-  candidate: RepresentativeFrameCandidate | null,
+  candidate: RepresentativeFrameCandidate,
 ): unknown {
-  if (!candidate) {
-    return null
-  }
-
   return {
+    rank: candidate.rank,
     frameIndex: candidate.frameIndex,
     timestamp: Number(candidate.timestamp.toFixed(3)),
     score: candidate.score,
@@ -602,11 +612,11 @@ function toRepresentativeCandidatesPreview(
   candidates: RepresentativeFrameCandidates,
 ): unknown {
   return {
-    front: toRepresentativeCandidatePreview(candidates.front),
-    yawPositive: toRepresentativeCandidatePreview(candidates.yawPositive),
-    yawNegative: toRepresentativeCandidatePreview(candidates.yawNegative),
-    pitchPositive: toRepresentativeCandidatePreview(candidates.pitchPositive),
-    pitchNegative: toRepresentativeCandidatePreview(candidates.pitchNegative),
+    front: candidates.front.map(toRepresentativeCandidatePreview),
+    yawPositive: candidates.yawPositive.map(toRepresentativeCandidatePreview),
+    yawNegative: candidates.yawNegative.map(toRepresentativeCandidatePreview),
+    pitchPositive: candidates.pitchPositive.map(toRepresentativeCandidatePreview),
+    pitchNegative: candidates.pitchNegative.map(toRepresentativeCandidatePreview),
   }
 }
 
@@ -623,21 +633,21 @@ function renderRepresentativeFrameCandidatesPanel(): string {
       </div>
       <p class="candidate-note">左右・上下の最終ラベルは未確定です。現時点では MediaPipe 推定値の正負方向として確認します。</p>
       <div class="candidate-grid">
-        ${renderRepresentativeCandidateCard("正面候補", candidates.front)}
-        ${renderRepresentativeCandidateCard("yaw 正方向候補", candidates.yawPositive)}
-        ${renderRepresentativeCandidateCard("yaw 負方向候補", candidates.yawNegative)}
-        ${renderRepresentativeCandidateCard("pitch 正方向候補", candidates.pitchPositive)}
-        ${renderRepresentativeCandidateCard("pitch 負方向候補", candidates.pitchNegative)}
+        ${renderRepresentativeCandidateCategory("正面候補", candidates.front)}
+        ${renderRepresentativeCandidateCategory("yaw 正方向候補", candidates.yawPositive)}
+        ${renderRepresentativeCandidateCategory("yaw 負方向候補", candidates.yawNegative)}
+        ${renderRepresentativeCandidateCategory("pitch 正方向候補", candidates.pitchPositive)}
+        ${renderRepresentativeCandidateCategory("pitch 負方向候補", candidates.pitchNegative)}
       </div>
     </section>
   `
 }
 
-function renderRepresentativeCandidateCard(
+function renderRepresentativeCandidateCategory(
   title: string,
-  candidate: RepresentativeFrameCandidate | null,
+  candidates: RepresentativeFrameCandidate[],
 ): string {
-  if (!candidate) {
+  if (candidates.length === 0) {
     return `
       <article class="candidate-card candidate-card-empty">
         <h3>${escapeHtml(title)}</h3>
@@ -649,15 +659,32 @@ function renderRepresentativeCandidateCard(
 
   return `
     <article class="candidate-card">
-      <img src="${escapeHtml(candidate.thumbnailUrl)}" alt="${escapeHtml(title)} Frame ${String(candidate.frameIndex).padStart(3, "0")}" />
-      <div>
+      <div class="candidate-category-header">
         <h3>${escapeHtml(title)}</h3>
-        <strong>Frame ${String(candidate.frameIndex).padStart(3, "0")} / ${candidate.timestamp.toFixed(1)}s</strong>
+        <span>上位 ${candidates.length} 件</span>
+      </div>
+      <div class="candidate-list">
+        ${candidates.map((candidate) => renderRepresentativeCandidateItem(title, candidate)).join("")}
+      </div>
+    </article>
+  `
+}
+
+function renderRepresentativeCandidateItem(
+  title: string,
+  candidate: RepresentativeFrameCandidate,
+): string {
+  return `
+    <div class="candidate-item">
+      <img src="${escapeHtml(candidate.thumbnailUrl)}" alt="${escapeHtml(title)} ${candidate.rank}位 Frame ${String(candidate.frameIndex).padStart(3, "0")}" />
+      <div class="candidate-item-body">
+        <strong>${candidate.rank}位 Frame ${String(candidate.frameIndex).padStart(3, "0")} / ${candidate.timestamp.toFixed(1)}s</strong>
         <span>yaw: ${formatNumber(candidate.pose.yaw)} / pitch: ${formatNumber(candidate.pose.pitch)} / roll: ${formatNumber(candidate.pose.roll)}</span>
         <span>score: ${formatScore(candidate.score)}</span>
         <span>landmarks 数: ${candidate.landmarksCount}</span>
+        <span>解析状態: ${formatFrameAnalysisStatus(candidate.status)}</span>
       </div>
-    </article>
+    </div>
   `
 }
 
@@ -1621,7 +1648,7 @@ style.textContent = `
 
   .candidate-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
     gap: 12px;
   }
 
@@ -1633,15 +1660,7 @@ style.textContent = `
     background: #ffffff;
   }
 
-  .candidate-card img {
-    display: block;
-    width: 100%;
-    aspect-ratio: 16 / 9;
-    object-fit: cover;
-    background: #1f2824;
-  }
-
-  .candidate-card div,
+  .candidate-category-header,
   .candidate-card-empty {
     display: grid;
     gap: 6px;
@@ -1663,6 +1682,36 @@ style.textContent = `
     font-size: 14px;
   }
 
+  .candidate-list {
+    display: grid;
+    gap: 1px;
+    background: #dde6e2;
+  }
+
+  .candidate-item {
+    display: grid;
+    grid-template-columns: 116px minmax(0, 1fr);
+    gap: 10px;
+    background: #ffffff;
+    padding: 10px 12px;
+  }
+
+  .candidate-item img {
+    display: block;
+    width: 116px;
+    aspect-ratio: 16 / 9;
+    border-radius: 6px;
+    object-fit: cover;
+    background: #1f2824;
+  }
+
+  .candidate-item-body {
+    display: grid;
+    min-width: 0;
+    gap: 4px;
+    align-content: start;
+  }
+
   .candidate-card strong {
     color: #25342e;
     font-size: 13px;
@@ -1678,6 +1727,20 @@ style.textContent = `
   .candidate-card-empty {
     min-height: 180px;
     align-content: start;
+  }
+
+  @media (max-width: 520px) {
+    .candidate-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .candidate-item {
+      grid-template-columns: 1fr;
+    }
+
+    .candidate-item img {
+      width: 100%;
+    }
   }
 
   .frame-grid {

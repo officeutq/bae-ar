@@ -55,7 +55,7 @@ docs
 - Studio 側のカメラ入力、debug 表示、landmark / geometry overlay
 - IdealFace Authoring Tool Step 2-A: MP4 動画入力、metadata 表示、フレーム抽出、サムネイル一覧表示
 - IdealFace Authoring Tool Step 2-B: 抽出フレームの MediaPipe 解析、2D 478 landmarks / FacePose 取得、解析 summary 表示
-- IdealFace Authoring Tool Step 2-C: yaw / pitch / roll による代表フレーム候補の自動抽出、候補一覧表示、JSON preview への候補概要表示
+- IdealFace Authoring Tool Step 2-C: yaw / pitch / roll による代表フレーム候補の自動抽出、各カテゴリ上位複数件の候補一覧表示、JSON preview への候補概要表示
 
 未実装 / 将来予定:
 
@@ -178,17 +178,18 @@ MediaPipe による Authoring 用フレーム解析は IdealFace Authoring Tool 
 
 ## IdealFace Authoring Tool Step 2-C
 
-`tools/ideal-face-authoring` に、解析済みフレームから代表フレーム候補を自動抽出する最小実装を追加しました。
+`tools/ideal-face-authoring` に、解析済みフレームから代表フレーム候補を自動抽出し、各カテゴリの上位複数件を比較できる表示を追加しました。
 
 Step 2-C でできること:
 
 - 顔検出あり、landmarks 数 478 の解析済みフレームだけを候補評価に使う
-- yaw / pitch / roll から正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を抽出する
-- 候補一覧にサムネイル、frame index、timestamp、yaw / pitch / roll、score、landmarks 数を表示する
+- yaw / pitch / roll から正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を各カテゴリ上位複数件抽出する
+- 候補一覧にサムネイル、順位、frame index、timestamp、yaw / pitch / roll、score、landmarks 数を表示する
 - 候補がない場合は「候補なし」と表示する
-- JSON preview に `representativeFrameCandidates` として候補概要を表示する
+- JSON preview に `representativeFrameCandidates` としてカテゴリごとの候補配列を表示する
+- JSON preview には 478 landmarks 全文を出さない
 
-左右・上下の最終ラベル確定 UI はまだ未実装です。3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力もまだ未実装です。代表フレーム抽出処理は IdealFace Authoring Tool の責務であり、Engine Runtime には入れません。
+候補 1 件だけで確定せず、上位複数件を比較して次の手動ラベル確定 UI へ進む方針です。手動ラベル確定 UI、3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力はまだ未実装です。代表フレーム抽出処理は IdealFace Authoring Tool の責務であり、Engine Runtime には入れません。
 
 ## IdealFace Authoring Tool の idealLandmarks3D 作成方針
 
@@ -225,4 +226,4 @@ MP4 動画を入力
 
 この処理は完全自動生成ではなく、自動推測 + 手動補正として扱います。動画入力やフレーム抽出は IdealFace Authoring Tool の責務です。Engine Runtime は `idealLandmarks3D` を作成せず、完成済みの IdealFace asset を読み込んで、現在 `FacePose` へ投影して使います。
 
-現時点では、MP4 動画入力とフレーム抽出は Step 2-A、抽出フレームの MediaPipe 解析は Step 2-B、yaw / pitch / roll による代表フレーム候補の自動抽出と候補一覧 / JSON preview への概要表示は Step 2-C として実装済みです。手動ラベル確定 UI、3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力は未実装です。
+現時点では、MP4 動画入力とフレーム抽出は Step 2-A、抽出フレームの MediaPipe 解析は Step 2-B、yaw / pitch / roll による代表フレーム候補の自動抽出、各カテゴリ上位複数件の候補一覧 / JSON preview への概要表示は Step 2-C として実装済みです。手動ラベル確定 UI、3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力は未実装です。
