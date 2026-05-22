@@ -53,6 +53,7 @@ docs
 - `FaceFrame` の更新: `detected` / `timestamp` / `landmarks` / `blendshapes` / `pose`
 - `FaceGeometry` の補助解析
 - Studio 側のカメラ入力、debug 表示、landmark / geometry overlay
+- IdealFace Authoring Tool Step 2-A: MP4 動画入力、metadata 表示、フレーム抽出、サムネイル一覧表示
 
 未実装 / 将来予定:
 
@@ -64,7 +65,7 @@ docs
 - Color Processing
 - Layer System
 - LayerMaskSpec
-- IdealFace Authoring Tool
+- IdealFace Authoring Tool の MediaPipe 解析以降
 - Layer Mask Authoring Tool
 - Butterflyve integration
 
@@ -131,9 +132,34 @@ Step 1 では Engine Runtime の公開 API から `natural_v1` を読み込み�
 - 保存 / export
 - ideal 478 landmarks 生成
 - canonical face mesh editor
-- 2D 動画 / 複数画像からの 3D 顔生成
+- MediaPipe によるフレームごとの 2D 478 landmarks 取得
+- FacePose 取得
+- 代表フレーム候補の自動抽出
+- 手動ラベル確定 UI
+- 3D 478点候補の自動推測
+- 3D点群 preview
+- 手動微調整
+- 複数画像入力
 
 IdealFace Authoring Tool は MediaPipe canonical face model そのものを作るツールではありません。BAE AR 独自の IdealFace asset を作る作業場として扱い、編集処理や UI を Engine Runtime に混ぜません。
+
+## IdealFace Authoring Tool Step 2-A
+
+`tools/ideal-face-authoring` に、MP4 動画入力とフレーム抽出の最小実装を追加しました。
+
+Step 2-A でできること:
+
+- MP4 動画ファイルを選択する
+- 選択した MP4 をブラウザ上の `<video>` として読み込む
+- `duration` / `videoWidth` / `videoHeight` を表示する
+- 1秒ごと、または最大 20 フレーム程度に抑えてフレームを抽出する
+- 抽出フレームをサムネイル一覧で確認する
+- 各フレームに frame index / timestamp / 状態「未解析」を表示する
+- JSON preview に動画情報と抽出フレーム情報を表示する
+
+初期対応は MP4 動画のみです。複数画像入力は未実装で、将来対応とします。MediaPipe による 2D 478 landmarks 取得、FacePose 取得、代表フレーム候補抽出、手動ラベル確定、3D 478点推測、手動微調整、保存 / export はまだ未実装です。
+
+動画入力とフレーム抽出は IdealFace Authoring Tool の責務です。Engine Runtime には動画入力処理やフレーム抽出処理を入れません。
 
 ## IdealFace Authoring Tool の idealLandmarks3D 作成方針
 
@@ -170,4 +196,4 @@ MP4 動画を入力
 
 この処理は完全自動生成ではなく、自動推測 + 手動補正として扱います。動画入力やフレーム抽出は IdealFace Authoring Tool の責務です。Engine Runtime は `idealLandmarks3D` を作成せず、完成済みの IdealFace asset を読み込んで、現在 `FacePose` へ投影して使います。
 
-現時点では、MP4 動画入力、フレーム抽出、MediaPipe によるフレームごとの 2D 478 landmarks 取得、yaw / pitch / roll による代表フレーム候補の自動抽出、手動ラベル確定 UI、3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力は未実装です。
+現時点では、MP4 動画入力とフレーム抽出は Step 2-A として実装済みです。MediaPipe によるフレームごとの 2D 478 landmarks 取得、yaw / pitch / roll による代表フレーム候補の自動抽出、手動ラベル確定 UI、3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力は未実装です。
