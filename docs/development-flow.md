@@ -146,14 +146,15 @@ Beauty Studio では、開発確認用として overlay や簡易調整 UI を�
 
 IdealFace Authoring Tool は、BAE AR 独自の IdealFace asset を作成するための領域です。IdealFace の本体である `idealLandmarks3D` 478点は、Authoring Tool 側で将来的に動画または複数画像から作成する方針です。初期入力形式は MP4 動画のみとし、複数画像入力は将来対応とします。
 
-初期段階では入力形式を広げず、MP4 動画からのフレーム抽出、代表フレーム候補の自動抽出、ユーザーによるラベル確定の流れを優先して作ります。Step 2-A では、MP4 動画入力と一定間隔でのフレーム抽出、サムネイル一覧表示までを実装済みです。Step 2-B では、抽出済みフレームの MediaPipe 解析、2D 478 landmarks と FacePose の取得、解析結果 summary 表示までを実装済みです。Step 2-C では、yaw / pitch / roll による代表フレーム候補の自動抽出、各カテゴリ上位複数件の候補一覧表示、JSON preview への候補概要表示、代表フレーム候補中心の UI 整理までを実装済みです。Step 2-D では、候補カードから正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定し、候補カテゴリを必要なものだけ開くトグル表示、確定済み代表フレーム一覧、3D推測準備状況、JSON preview の `selectedRepresentativeFrames` を確認できるようにしました。Step 2-E では、確定済み代表フレームから front / left / right / up / down の 3D推測用データセットを作成し、readiness summary、dataset 一覧、JSON preview の `idealLandmarks3DInferenceDataset` 概要を確認できるようにしました。確定済み代表フレーム一覧と3D推測用データセットには、正面 / 左向き / 右向き / 上向き / 下向きだけを表示します。
+初期段階では入力形式を広げず、MP4 動画からのフレーム抽出、代表フレーム候補の自動抽出、ユーザーによるラベル確定の流れを優先して作ります。Step 2-A では、MP4 動画入力と一定間隔でのフレーム抽出、サムネイル一覧表示までを実装済みです。Step 2-B では、抽出済みフレームの MediaPipe 解析、2D 478 landmarks と FacePose の取得、解析結果 summary 表示までを実装済みです。Step 2-C では、yaw / pitch / roll による代表フレーム候補の自動抽出、各カテゴリ上位複数件の候補一覧表示、JSON preview への候補概要表示、代表フレーム候補中心の UI 整理までを実装済みです。Step 2-D では、候補カードから正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定し、候補カテゴリを必要なものだけ開くトグル表示、確定済み代表フレーム一覧、3D推測準備状況、JSON preview の `selectedRepresentativeFrames` を確認できるようにしました。Step 2-E では、確定済み代表フレームから front / left / right / up / down の 3D推測用データセットを作成し、readiness summary、dataset 一覧、JSON preview の `idealLandmarks3DInferenceDataset` 概要を確認できるようにしました。Step 2-F では、候補抽出用に動画全体を詳細スキャンし、詳細スキャン summary、JSON preview の `scanSummary`、トリムしないサムネイル表示を追加しました。確定済み代表フレーム一覧と3D推測用データセットには、正面 / 左向き / 右向き / 上向き / 下向きだけを表示します。
 
 想定する流れ:
 
 ```text
 MP4 動画を入力
-  -> 一定間隔でフレーム抽出
-  -> MediaPipe Face Landmarker で各フレームの 2D 478 landmarks と FacePose を取得
+  -> 表示用に一定間隔でフレーム抽出
+  -> 候補抽出用に動画全体を詳細スキャン
+  -> MediaPipe Face Landmarker で各スキャンフレームの 2D 478 landmarks と FacePose を取得
   -> yaw / pitch / roll から各カテゴリ上位複数件の代表フレーム候補を自動抽出
   -> 候補を複数比較する
   -> 人間が正面 / 左向き / 右向き / 上向き / 下向き / 除外を確定
@@ -169,7 +170,7 @@ MP4 動画を入力
 
 この処理は完全自動生成ではなく、自動推測 + 手動補正として扱います。動画入力、フレーム抽出、Authoring 用フレーム解析、代表フレーム抽出、手動ラベル確定、3D推測用 dataset 作成は IdealFace Authoring Tool の責務です。Engine Runtime は動画入力やフレーム抽出、Authoring 用フレーム解析、dataset 作成、`idealLandmarks3D` 作成を行わず、完成済みの IdealFace asset を読み込んで使います。
 
-Step 2-C では候補 1 件だけで確定せず、正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を各カテゴリ上位複数件表示し、次の手動ラベル確定 UI へ進む土台にします。主画面では代表フレーム候補を中心に見せ、抽出フレーム一覧は debug / 折りたたみ表示として扱います。代表フレーム抽出処理と Authoring 用 UI は IdealFace Authoring Tool の責務であり、Engine Runtime には入れません。
+Step 2-F では候補 1 件だけで確定せず、正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を各カテゴリ上位複数件表示し、手動ラベル確定 UI へ進む土台にします。主画面では代表フレーム候補を中心に見せ、表示用抽出フレーム一覧は debug / 折りたたみ表示として扱います。候補以外の詳細スキャンフレームは UI に大量表示せず、必要がなければ破棄してよいものとします。候補に採用されたフレームは、手動確定と dataset 作成に使えるよう 2D 478 landmarks と FacePose を保持します。代表フレーム抽出処理と Authoring 用 UI は IdealFace Authoring Tool の責務であり、Engine Runtime には入れません。
 
 Step 2-C で未実装のもの:
 
@@ -208,6 +209,23 @@ Step 2-E で実装済みのもの:
 - JSON preview の `idealLandmarks3DInferenceDataset`
 
 Step 2-E でまだ未実装のもの:
+
+- 3D 478点候補の自動推測
+- 3D点群 preview
+- 手動微調整
+- 保存 / export
+- 複数画像入力
+
+Step 2-F で実装済みのもの:
+
+- 候補抽出用として MP4 動画全体を 0.25 秒間隔、最大 120 フレーム程度まで詳細スキャンする
+- 詳細スキャン済みフレームから、顔検出あり、landmarks 数 478、FacePose 取得済みのフレームだけを候補評価に使う
+- 全スキャンフレーム一覧を UI に表示せず、代表フレーム候補中心に表示する
+- 詳細スキャン summary と JSON preview の `scanSummary` を表示する
+- 候補に採用されたフレームを手動確定と 3D推測用 dataset 作成に使えるよう保持する
+- 候補カード、確定済み代表フレーム、dataset entry のサムネイルをトリムせず全体表示する
+
+Step 2-F でまだ未実装のもの:
 
 - 3D 478点候補の自動推測
 - 3D点群 preview
@@ -270,7 +288,7 @@ PR 本文には、変更内容と確認結果を記載します。
 - Input: connected 確認
 ```
 
-## IdealFace Authoring Tool Step 1 / Step 2-A / Step 2-B / Step 2-C / Step 2-D / Step 2-E の確認
+## IdealFace Authoring Tool Step 1 / Step 2-A / Step 2-B / Step 2-C / Step 2-D / Step 2-E / Step 2-F の確認
 
 IdealFace Authoring Tool を変更した場合は、Runtime と Authoring の責務が混ざっていないことを確認します。
 
@@ -306,13 +324,18 @@ IdealFace Authoring Tool を変更した場合は、Runtime と Authoring の責
 - JSON preview に `selectedRepresentativeFrames` を表示できる
 - 3D推測準備状況に正面 / 左向き / 右向き / 上向き / 下向きだけが表示されることを確認できる
 - 確定済み代表フレームから 3D推測用データセットが作られる
+- 詳細スキャンが実行される
+- 詳細スキャン summary が表示される
+- 候補以外の詳細スキャンフレームが大量表示されていない
+- JSON preview に `scanSummary` が表示される
+- 候補サムネイル、確定済み代表フレームサムネイル、dataset entry サムネイルがトリムされず全体表示される
 - front / left / right / up / down の readiness が表示される
 - excluded が 3D推測用データセットに含まれない
 - dataset entry に label / frame index / timestamp / pose / landmarks 数 / status / landmark preview が表示される
 - JSON preview に `idealLandmarks3DInferenceDataset` の概要を表示できる
 - 478 landmarks 全文を JSON preview に出していない
 - サムネイル data URL 全文を JSON preview に出していない
-- 3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力を Step 2-E に含めていない
+- 3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力を Step 2-F に含めていない
 - Engine Runtime に動画入力、フレーム抽出、Authoring 用フレーム解析、代表フレーム抽出、手動ラベル確定、dataset 作成処理を追加していない
 
 PR 本文には IdealFace Authoring Tool の手動確認事項を記載します。
