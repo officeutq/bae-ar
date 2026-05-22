@@ -106,6 +106,11 @@ type RepresentativeFrameCandidates = Record<
   RepresentativeFrameCandidate[]
 >
 
+type RepresentativeCandidateCategoryOpenState = Record<
+  RepresentativeFrameCandidateKey,
+  boolean
+>
+
 interface SelectedRepresentativeFrame {
   label: ManualRepresentativeFrameLabel
   frameIndex: number
@@ -141,6 +146,8 @@ let videoSource: VideoSourceState | null = null
 let faceLandmarker: FaceLandmarker | null = null
 let faceLandmarkerInitialization: Promise<FaceLandmarker> | null = null
 let isDebugFrameListOpen = false
+let representativeCandidateCategoryOpenState =
+  createDefaultRepresentativeCandidateCategoryOpenState()
 let selectedRepresentativeFrames: SelectedRepresentativeFrames =
   createEmptySelectedRepresentativeFrames()
 const extractionVideo = document.createElement("video")
@@ -680,6 +687,16 @@ function createEmptySelectedRepresentativeFrames(): SelectedRepresentativeFrames
   }
 }
 
+function createDefaultRepresentativeCandidateCategoryOpenState(): RepresentativeCandidateCategoryOpenState {
+  return {
+    front: true,
+    yawPositive: false,
+    yawNegative: false,
+    pitchPositive: false,
+    pitchNegative: false,
+  }
+}
+
 function toSelectedRepresentativeFramePreview(
   frame: SelectedRepresentativeFrame | null,
 ): unknown {
@@ -822,6 +839,37 @@ function clearSelectedRepresentativeFrame(
 
 function renderRepresentativeFrameCandidatesPanel(): string {
   const candidates = getRepresentativeFrameCandidates()
+  const categories: Array<{
+    key: RepresentativeFrameCandidateKey
+    title: string
+    candidates: RepresentativeFrameCandidate[]
+  }> = [
+    {
+      key: "front",
+      title: "正面候補",
+      candidates: candidates.front,
+    },
+    {
+      key: "yawPositive",
+      title: "yaw 正方向候補",
+      candidates: candidates.yawPositive,
+    },
+    {
+      key: "yawNegative",
+      title: "yaw 負方向候補",
+      candidates: candidates.yawNegative,
+    },
+    {
+      key: "pitchPositive",
+      title: "pitch 正方向候補",
+      candidates: candidates.pitchPositive,
+    },
+    {
+      key: "pitchNegative",
+      title: "pitch 負方向候補",
+      candidates: candidates.pitchNegative,
+    },
+  ]
 
   return `
     <section class="representative-panel" aria-label="代表フレーム候補">
@@ -834,40 +882,74 @@ function renderRepresentativeFrameCandidatesPanel(): string {
       <p class="candidate-note">左右・上下の最終ラベルはユーザーが手動で確定します。Step 2-D では 3D 推測、3D 点群 preview、手動微調整、保存 / export はまだ行いません。</p>
       ${renderSelectedRepresentativeFramesPanel()}
       ${renderReadinessPanel()}
-      <div class="candidate-grid">
-        ${renderRepresentativeCandidateCategory("正面候補", candidates.front)}
-        ${renderRepresentativeCandidateCategory("yaw 正方向候補", candidates.yawPositive)}
-        ${renderRepresentativeCandidateCategory("yaw 負方向候補", candidates.yawNegative)}
-        ${renderRepresentativeCandidateCategory("pitch 正方向候補", candidates.pitchPositive)}
-        ${renderRepresentativeCandidateCategory("pitch 負方向候補", candidates.pitchNegative)}
+      <div class="candidate-category-stack">
+        ${categories
+          .map((category) =>
+            renderRepresentativeCandidateCategory(
+              category.key,
+              category.title,
+              category.candidates,
+            ),
+          )
+          .join("")}
       </div>
     </section>
   `
 }
 
 function renderRepresentativeCandidateCategory(
+  key: RepresentativeFrameCandidateKey,
   title: string,
   candidates: RepresentativeFrameCandidate[],
 ): string {
+  const isOpen = representativeCandidateCategoryOpenState[key]
+  const toggleLabel = isOpen ? "閉じる" : "開く"
+  const countText = `${candidates.length}件`
+
   if (candidates.length === 0) {
     return `
-      <article class="candidate-card candidate-card-empty">
-        <h3>${escapeHtml(title)}</h3>
-        <strong>候補なし</strong>
-        <p>該当する解析済みフレームがありません。</p>
+      <article class="candidate-card candidate-card-empty" data-candidate-category="${key}">
+        <div class="candidate-category-toggle-row">
+          <div>
+            <h3>${escapeHtml(title)}（${countText}）</h3>
+            <p>該当する解析済みフレームがありません。</p>
+          </div>
+          <button
+            class="candidate-category-toggle-button"
+            type="button"
+            aria-expanded="${isOpen}"
+            data-candidate-category-key="${key}"
+          >
+            ${toggleLabel}
+          </button>
+        </div>
       </article>
     `
   }
 
   return `
-    <article class="candidate-card">
-      <div class="candidate-category-header">
-        <h3>${escapeHtml(title)}</h3>
-        <span>上位 ${candidates.length} 件</span>
+    <article class="candidate-card" data-candidate-category="${key}">
+      <div class="candidate-category-toggle-row">
+        <div>
+          <h3>${escapeHtml(title)}（${countText}）</h3>
+          <span>上位 ${candidates.length} 件</span>
+        </div>
+        <button
+          class="candidate-category-toggle-button"
+          type="button"
+          aria-expanded="${isOpen}"
+          data-candidate-category-key="${key}"
+        >
+          ${toggleLabel}
+        </button>
       </div>
-      <div class="candidate-list">
-        ${candidates.map((candidate) => renderRepresentativeCandidateItem(title, candidate)).join("")}
-      </div>
+      ${
+        isOpen
+          ? `<div class="candidate-list">
+              ${candidates.map((candidate) => renderRepresentativeCandidateItem(title, candidate)).join("")}
+            </div>`
+          : `<p class="candidate-collapsed-text">この候補カテゴリは閉じています。</p>`
+      }
     </article>
   `
 }
@@ -933,7 +1015,6 @@ function renderSelectedRepresentativeFramesPanel(): string {
         ${renderSingleSelectedRepresentativeFrame("right")}
         ${renderSingleSelectedRepresentativeFrame("up")}
         ${renderSingleSelectedRepresentativeFrame("down")}
-        ${renderExcludedRepresentativeFrames()}
       </div>
     </div>
   `
@@ -955,30 +1036,6 @@ function renderSingleSelectedRepresentativeFrame(
   }
 
   return renderSelectedRepresentativeFrameCard(selectedFrame, labelText)
-}
-
-function renderExcludedRepresentativeFrames(): string {
-  const excludedFrames = selectedRepresentativeFrames.excluded
-
-  if (excludedFrames.length === 0) {
-    return `
-      <article class="selected-frame-card selected-frame-empty">
-        <h4>除外</h4>
-        <p>未選択</p>
-      </article>
-    `
-  }
-
-  return `
-    <div class="selected-excluded-group">
-      <h4>除外</h4>
-      <div class="excluded-frame-list">
-        ${excludedFrames
-          .map((frame) => renderSelectedRepresentativeFrameCard(frame, "除外"))
-          .join("")}
-      </div>
-    </div>
-  `
 }
 
 function renderSelectedRepresentativeFrameCard(
@@ -1240,6 +1297,27 @@ function attachDebugFrameListHandler(): void {
     })
 }
 
+function attachRepresentativeCandidateCategoryToggleHandler(): void {
+  document
+    .querySelectorAll<HTMLButtonElement>("[data-candidate-category-key]")
+    .forEach((button) => {
+      button.addEventListener("click", () => {
+        const key = button.dataset
+          .candidateCategoryKey as RepresentativeFrameCandidateKey
+
+        if (!key) {
+          return
+        }
+
+        representativeCandidateCategoryOpenState = {
+          ...representativeCandidateCategoryOpenState,
+          [key]: !representativeCandidateCategoryOpenState[key],
+        }
+        render()
+      })
+    })
+}
+
 function attachRepresentativeFrameSelectionHandler(): void {
   document
     .querySelectorAll<HTMLButtonElement>("[data-selection-label]")
@@ -1289,6 +1367,8 @@ async function analyzeExtractedFrames(): Promise<void> {
   }
 
   selectedRepresentativeFrames = createEmptySelectedRepresentativeFrames()
+  representativeCandidateCategoryOpenState =
+    createDefaultRepresentativeCandidateCategoryOpenState()
   updateVideoSource({
     isAnalyzing: true,
     analysisError: null,
@@ -1545,6 +1625,8 @@ function clamp(value: number, min: number, max: number): number {
 
 async function handleVideoFileSelection(file: File): Promise<void> {
   selectedRepresentativeFrames = createEmptySelectedRepresentativeFrames()
+  representativeCandidateCategoryOpenState =
+    createDefaultRepresentativeCandidateCategoryOpenState()
 
   if (file.type !== "video/mp4" && !file.name.toLowerCase().endsWith(".mp4")) {
     replaceVideoSource({
@@ -1838,6 +1920,7 @@ function render(): void {
 
   attachVideoInputHandler()
   attachAnalysisHandler()
+  attachRepresentativeCandidateCategoryToggleHandler()
   attachRepresentativeFrameSelectionHandler()
   attachDebugFrameListHandler()
 }
@@ -1969,6 +2052,7 @@ style.textContent = `
   .file-button,
   .analysis-button,
   .debug-toggle-button,
+  .candidate-category-toggle-button,
   .candidate-label-button,
   .selected-clear-button {
     display: inline-flex;
@@ -1988,6 +2072,7 @@ style.textContent = `
 
   .analysis-button,
   .debug-toggle-button,
+  .candidate-category-toggle-button,
   .candidate-label-button,
   .selected-clear-button {
     font-family: inherit;
@@ -2001,6 +2086,7 @@ style.textContent = `
   .file-button:focus-visible,
   .analysis-button:focus-visible,
   .debug-toggle-button:focus-visible,
+  .candidate-category-toggle-button:focus-visible,
   .candidate-label-button:focus-visible,
   .selected-clear-button:focus-visible {
     outline: 3px solid #9fc8bd;
@@ -2085,8 +2171,7 @@ style.textContent = `
     gap: 10px;
   }
 
-  .selected-frame-card,
-  .selected-excluded-group {
+  .selected-frame-card {
     min-width: 0;
     overflow: hidden;
     border: 1px solid #ccd8d3;
@@ -2126,7 +2211,6 @@ style.textContent = `
   }
 
   .selected-frame-card h4,
-  .selected-excluded-group h4,
   .selected-frame-card strong,
   .selected-frame-card span,
   .selected-frame-card p {
@@ -2136,26 +2220,9 @@ style.textContent = `
     line-height: 1.35;
   }
 
-  .selected-frame-card h4,
-  .selected-excluded-group h4 {
+  .selected-frame-card h4 {
     color: #17201b;
     font-size: 13px;
-  }
-
-  .selected-excluded-group {
-    display: grid;
-    gap: 8px;
-    padding: 12px;
-  }
-
-  .excluded-frame-list {
-    display: grid;
-    gap: 8px;
-  }
-
-  .excluded-frame-list .selected-frame-detail {
-    border: 1px solid #dde6e2;
-    border-radius: 8px;
   }
 
   .selected-frame-card strong,
@@ -2184,9 +2251,8 @@ style.textContent = `
     margin-top: 12px;
   }
 
-  .candidate-grid {
+  .candidate-category-stack {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
     gap: 12px;
   }
 
@@ -2198,10 +2264,11 @@ style.textContent = `
     background: #ffffff;
   }
 
-  .candidate-category-header,
-  .candidate-card-empty {
+  .candidate-category-toggle-row {
     display: grid;
-    gap: 6px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 12px;
     padding: 12px;
   }
 
@@ -2218,6 +2285,18 @@ style.textContent = `
   .candidate-card h3 {
     color: #17201b;
     font-size: 14px;
+  }
+
+  .candidate-category-toggle-button {
+    min-height: 32px;
+    padding: 6px 11px;
+    font-size: 12px;
+  }
+
+  .candidate-collapsed-text {
+    margin: 0;
+    border-top: 1px solid #dde6e2;
+    padding: 12px;
   }
 
   .candidate-list {
@@ -2317,10 +2396,6 @@ style.textContent = `
   }
 
   @media (max-width: 520px) {
-    .candidate-grid {
-      grid-template-columns: 1fr;
-    }
-
     .candidate-item {
       grid-template-columns: 1fr;
     }

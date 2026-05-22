@@ -308,7 +308,7 @@ IdealFace Authoring Tool は BAE AR 独自の IdealFace asset を作成・調整
 
 ### 7.2 IdealFace Authoring Tool における idealLandmarks3D 作成方針
 
-IdealFace の本体である `idealLandmarks3D` 478点は、IdealFace Authoring Tool 側で作成します。将来的には動画または複数画像から作成する方針ですが、初期入力形式は MP4 動画のみとします。複数画像入力は将来対応とし、初期段階では入力形式を広げず、代表フレーム抽出とラベル確定の流れを優先します。Step 2-A では、MP4 動画入力、metadata 表示、一定間隔でのフレーム抽出、サムネイル一覧表示までを実装済みです。Step 2-B では、抽出済みフレームの MediaPipe 解析、2D 478 landmarks と FacePose の取得、解析結果 summary 表示までを実装済みです。Step 2-C では、yaw / pitch / roll による代表フレーム候補の自動抽出、各カテゴリ上位複数件の候補一覧表示、JSON preview への候補概要表示までを実装済みです。Step 2-D では、代表フレーム候補から正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定し、確定済み代表フレーム一覧、3D推測準備状況、JSON preview の `selectedRepresentativeFrames` を確認できるようにしました。
+IdealFace の本体である `idealLandmarks3D` 478点は、IdealFace Authoring Tool 側で作成します。将来的には動画または複数画像から作成する方針ですが、初期入力形式は MP4 動画のみとします。複数画像入力は将来対応とし、初期段階では入力形式を広げず、代表フレーム抽出とラベル確定の流れを優先します。Step 2-A では、MP4 動画入力、metadata 表示、一定間隔でのフレーム抽出、サムネイル一覧表示までを実装済みです。Step 2-B では、抽出済みフレームの MediaPipe 解析、2D 478 landmarks と FacePose の取得、解析結果 summary 表示までを実装済みです。Step 2-C では、yaw / pitch / roll による代表フレーム候補の自動抽出、各カテゴリ上位複数件の候補一覧表示、JSON preview への候補概要表示までを実装済みです。Step 2-D では、代表フレーム候補から正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定し、候補カテゴリを必要なものだけ開くトグル表示、確定済み代表フレーム一覧、3D推測準備状況、JSON preview の `selectedRepresentativeFrames` を確認できるようにしました。確定済み代表フレーム一覧と3D推測準備状況には、正面 / 左向き / 右向き / 上向き / 下向きだけを表示します。
 
 Engine Runtime は `idealLandmarks3D` を作成せず、完成済みの IdealFace asset を読み込んで使います。
 
@@ -342,9 +342,9 @@ MP4 動画を入力
 
 初期段階では、長時間動画、高解像度すぎる動画、HEVC / H.265、MOV、WebM、複数画像入力は非推奨または未対応です。これらは将来対応を検討する余地を残します。
 
-代表フレーム候補は、yaw / pitch / roll を使って自動抽出します。Step 2-C では、顔検出あり、landmarks 数 478、pose pitch / yaw / roll 取得済みの解析済みフレームだけを評価し、正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を各カテゴリ上位複数件、候補一覧と JSON preview に表示します。候補 1 件だけで確定せず、複数候補を比較して Step 2-D の手動確定 UI で最終ラベルを決めます。
+代表フレーム候補は、yaw / pitch / roll を使って自動抽出します。Step 2-C では、顔検出あり、landmarks 数 478、pose pitch / yaw / roll 取得済みの解析済みフレームだけを評価し、正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を各カテゴリ上位複数件、候補一覧と JSON preview に表示します。Step 2-D UI整理では候補カテゴリをトグル表示にし、必要なカテゴリだけを開いて候補カードを確認します。候補 1 件だけで確定せず、複数候補を比較して Step 2-D の手動確定 UI で最終ラベルを決めます。
 
-ただし、自動抽出だけでは確定しません。ユーザーが Authoring Tool 上で、正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定します。
+ただし、自動抽出だけでは確定しません。ユーザーが Authoring Tool 上で、正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定します。除外は代表フレームではないため、確定済み代表フレーム一覧には表示しません。除外情報は状態や JSON preview / debug 情報として保持してよいものとします。
 
 確定された代表フレーム群から 3D の `idealLandmarks3D` 478点候補を自動推測します。この時点の生成結果は完成データではなく候補データとして扱います。自動推測した候補は Authoring Tool 上で 3D点群として確認し、必要に応じて手動で微調整します。手動補正後の `idealLandmarks3D` 478点を IdealFace asset として保存 / export します。
 
@@ -684,7 +684,7 @@ Studio は Engine の private field、内部状態、内部実装へ直接アク
 - Step 2-A として MP4 動画入力、metadata 表示、フレーム抽出、サムネイル一覧表示ができる。
 - Step 2-B として抽出済みフレームの MediaPipe 解析、2D 478 landmarks と FacePose の取得、解析 summary 表示ができる。
 - Step 2-C として yaw / pitch / roll による代表フレーム候補の自動抽出、各カテゴリ上位複数件の候補一覧表示、JSON preview への候補概要表示ができる。
-- Step 2-D として代表フレーム候補から正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定し、確定済み代表フレーム一覧、3D推測準備状況、JSON preview の `selectedRepresentativeFrames` を確認できる。
+- Step 2-D として代表フレーム候補から正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定し、候補カテゴリを必要なものだけ開くトグル表示、正面 / 左向き / 右向き / 上向き / 下向きだけを表示する確定済み代表フレーム一覧と3D推測準備状況、JSON preview の `selectedRepresentativeFrames` を確認できる。
 - 現段階の `natural_v1` の controlPoints は投影検証用の暫定データであり、IdealFace 本体ではない。
 - IdealFace 本体は `idealLandmarks3D` 478 点を中核に持つ asset として扱う。
 - 2D 動画 / 複数画像からのオフライン生成を Runtime と分離して扱える。
@@ -865,11 +865,14 @@ Step 2-C の制限:
 Step 2-D の実装範囲:
 
 - 候補カードから正面 / 左向き / 右向き / 上向き / 下向き / 除外を選択できる
+- 正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補をカテゴリごとに開閉できる
+- 開いたカテゴリだけ候補カードを表示し、候補件数を表示する
 - 正面 / 左向き / 右向き / 上向き / 下向きは各 1 件を確定し、同じラベルに別候補を選ぶと上書きできる
-- 除外フレームは複数件確定できる
-- 確定済み代表フレーム一覧でサムネイル、frame index、timestamp、yaw / pitch / roll、score、landmarks 数を表示する
+- 除外フレームは複数件確定でき、状態や JSON preview / debug 情報として保持できる
+- 確定済み代表フレーム一覧では正面 / 左向き / 右向き / 上向き / 下向きだけを表示する
+- 除外は代表フレームではないため、確定済み代表フレーム一覧には表示しない
 - 確定済み代表フレームを解除できる
-- 3D推測準備状況として正面 / 左向き / 右向き / 上向き / 下向きの選択状態を表示する
+- 3D推測準備状況として正面 / 左向き / 右向き / 上向き / 下向きの選択状態だけを表示する
 - JSON preview に `selectedRepresentativeFrames` を表示する
 - `representativeFrameCandidates` は引き続き JSON preview に表示する
 - JSON preview に 478 landmarks 全文やサムネイル data URL 全文を出さない

@@ -56,7 +56,7 @@ docs
 - IdealFace Authoring Tool Step 2-A: MP4 動画入力、metadata 表示、フレーム抽出、サムネイル一覧表示
 - IdealFace Authoring Tool Step 2-B: 抽出フレームの MediaPipe 解析、2D 478 landmarks / FacePose 取得、解析 summary 表示
 - IdealFace Authoring Tool Step 2-C: yaw / pitch / roll による代表フレーム候補の自動抽出、各カテゴリ上位複数件の候補一覧表示、代表フレーム候補中心の UI 整理、JSON preview への候補概要表示
-- IdealFace Authoring Tool Step 2-D: 代表フレーム候補から正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定する UI、確定済み代表フレーム一覧、3D推測準備状況、JSON preview への `selectedRepresentativeFrames` 表示
+- IdealFace Authoring Tool Step 2-D: 代表フレーム候補から正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定する UI、候補カテゴリのトグル表示、正面 / 左向き / 右向き / 上向き / 下向きだけを表示する確定済み代表フレーム一覧と3D推測準備状況、JSON preview への `selectedRepresentativeFrames` 表示
 
 未実装 / 将来予定:
 
@@ -198,16 +198,19 @@ Step 2-C でできること:
 
 ## IdealFace Authoring Tool Step 2-D
 
-`tools/ideal-face-authoring` に、代表フレーム候補から最終ラベルを手動確定する UI を追加しました。
+`tools/ideal-face-authoring` に、代表フレーム候補から最終ラベルを手動確定する UI を追加しました。Step 2-D UI整理では、代表フレーム候補カテゴリをトグル表示にし、必要なカテゴリだけを開いて候補カードを確認する方針にしました。
 
 Step 2-D でできること:
 
 - 候補カードから正面 / 左向き / 右向き / 上向き / 下向き / 除外を選択する
+- 正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補をカテゴリごとに開閉する
+- 開いた候補カテゴリだけ候補カードを表示し、各カテゴリの候補件数を表示する
 - 正面 / 左向き / 右向き / 上向き / 下向きは各 1 件を確定し、同じラベルに別候補を選んだ場合は上書きする
-- 除外フレームは複数件確定する
-- 確定済み代表フレーム一覧でサムネイル、frame index、timestamp、yaw / pitch / roll、score、landmarks 数を確認する
+- 除外フレームは複数件確定し、状態や JSON preview / debug 情報として保持する
+- 確定済み代表フレーム一覧では、正面 / 左向き / 右向き / 上向き / 下向きだけのサムネイル、frame index、timestamp、yaw / pitch / roll、score、landmarks 数を確認する
+- 除外は代表フレームではないため、確定済み代表フレーム一覧には表示しない
 - 確定済み代表フレームを解除する
-- 3D推測準備状況として正面 / 左向き / 右向き / 上向き / 下向きの選択状態を確認する
+- 3D推測準備状況として正面 / 左向き / 右向き / 上向き / 下向きの選択状態だけを確認する
 - JSON preview に `selectedRepresentativeFrames` を表示する
 - `representativeFrameCandidates` は引き続き JSON preview に表示する
 - JSON preview には 478 landmarks 全文やサムネイル data URL 全文を出さない
@@ -249,4 +252,4 @@ MP4 動画を入力
 
 この処理は完全自動生成ではなく、自動推測 + 手動補正として扱います。動画入力やフレーム抽出は IdealFace Authoring Tool の責務です。Engine Runtime は `idealLandmarks3D` を作成せず、完成済みの IdealFace asset を読み込んで、現在 `FacePose` へ投影して使います。
 
-現時点では、MP4 動画入力とフレーム抽出は Step 2-A、抽出フレームの MediaPipe 解析は Step 2-B、yaw / pitch / roll による代表フレーム候補の自動抽出、各カテゴリ上位複数件の候補一覧 / JSON preview への概要表示、代表フレーム候補を主表示にした Step 2-C UI 整理、代表フレーム候補から正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定する Step 2-D UI は実装済みです。3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力は未実装です。
+現時点では、MP4 動画入力とフレーム抽出は Step 2-A、抽出フレームの MediaPipe 解析は Step 2-B、yaw / pitch / roll による代表フレーム候補の自動抽出、各カテゴリ上位複数件の候補一覧 / JSON preview への概要表示、代表フレーム候補を主表示にした Step 2-C UI 整理、代表フレーム候補から正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定する Step 2-D UI、候補カテゴリを必要なものだけ開くトグル表示、確定済み代表フレーム一覧と3D推測準備状況からの除外表示の削除は実装済みです。3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力は未実装です。
