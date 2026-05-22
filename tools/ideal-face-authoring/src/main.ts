@@ -5,13 +5,55 @@ import {
 
 const idealFace = NATURAL_IDEAL_FACE_PRESET
 const app = document.querySelector<HTMLDivElement>("#app")
+const MAX_EXTRACTED_FRAME_COUNT = 20
+const THUMBNAIL_WIDTH = 180
+
+type FrameAnalysisStatus = "pending"
+
+interface ExtractedVideoFrame {
+  index: number
+  timestamp: number
+  status: FrameAnalysisStatus
+  thumbnailUrl: string
+  extractionTimeMs: number
+}
+
+interface VideoSourceState {
+  fileName: string
+  objectUrl: string
+  duration: number | null
+  videoWidth: number | null
+  videoHeight: number | null
+  extractedFrames: ExtractedVideoFrame[]
+  isExtracting: boolean
+  error: string | null
+}
+
+let videoSource: VideoSourceState | null = null
+const extractionVideo = document.createElement("video")
+const extractionCanvas = document.createElement("canvas")
 
 if (!app) {
   throw new Error("IdealFace Authoring Tool app root was not found")
 }
 
+extractionVideo.muted = true
+extractionVideo.playsInline = true
+extractionVideo.preload = "metadata"
+
 function formatNumber(value: number): string {
   return value.toFixed(3)
+}
+
+function formatSeconds(value: number | null): string {
+  return value === null ? "未読み込み" : `${value.toFixed(1)}s`
+}
+
+function formatPixels(
+  width: number | null,
+  height: number | null,
+): string {
+  return width === null || height === null ? "未読み込み" : `${width} x ${height}`
 }
 
 function escapeHtml(value: string): string {
@@ -103,6 +145,308 @@ function renderControlPointRows(points: IdealFacePoint3D[]): string {
     .join("")
 }
 
+function renderVideoMetadata(): string {
+  const fileName = videoSource?.fileName ?? "未選択"
+  const duration = videoSource?.duration ?? null
+  const videoWidth = videoSource?.videoWidth ?? null
+  const videoHeight = videoSource?.videoHeight ?? null
+  const frameCount = videoSource?.extractedFrames.length ?? 0
+
+  return `
+    <dl>
+      <div>
+        <dt>選択中の動画</dt>
+        <dd>${escapeHtml(fileName)}</dd>
+      </div>
+      <div>
+        <dt>動画の長さ</dt>
+        <dd>${formatSeconds(duration)}</dd>
+      </div>
+      <div>
+        <dt>動画サイズ</dt>
+        <dd>${formatPixels(videoWidth, videoHeight)}</dd>
+      </div>
+      <div>
+        <dt>抽出フレーム数</dt>
+        <dd>${frameCount}</dd>
+      </div>
+    </dl>
+  `
+}
+
+function renderVideoPreview(): string {
+  if (!videoSource?.objectUrl) {
+    return `
+      <div class="video-empty">
+        <p>MP4 動画を選択すると、メタデータと抽出フレームがここに表示されます。</p>
+      </div>
+    `
+  }
+
+  return `
+    <video class="video-preview" src="${escapeHtml(videoSource.objectUrl)}" controls muted playsinline></video>
+  `
+}
+
+function renderExtractionStatus(): string {
+  if (!videoSource) {
+    return "動画は未選択です。"
+  }
+
+  if (videoSource.error) {
+    return videoSource.error
+  }
+
+  if (videoSource.isExtracting) {
+    return "フレーム抽出中です。"
+  }
+
+  if (videoSource.extractedFrames.length === 0) {
+    return "metadata 読み込み後にフレームを抽出します。"
+  }
+
+  return "フレーム抽出が完了しました。"
+}
+
+function renderFrameThumbnails(): string {
+  const frames = videoSource?.extractedFrames ?? []
+
+  if (frames.length === 0) {
+    return `
+      <div class="frame-empty">
+        <p>抽出済みフレームはまだありません。</p>
+      </div>
+    `
+  }
+
+  return `
+    <div class="frame-grid">
+      ${frames
+        .map(
+          (frame) => `
+            <article class="frame-card">
+              <img src="${escapeHtml(frame.thumbnailUrl)}" alt="Frame ${String(frame.index).padStart(3, "0")} / ${frame.timestamp.toFixed(1)}s" />
+              <div>
+                <strong>Frame ${String(frame.index).padStart(3, "0")} / ${frame.timestamp.toFixed(1)}s</strong>
+                <span>状態: ${frame.status === "pending" ? "未解析" : frame.status}</span>
+                <span>抽出時間: ${frame.extractionTimeMs.toFixed(1)}ms</span>
+              </div>
+            </article>
+          `,
+        )
+        .join("")}
+    </div>
+  `
+}
+
+function buildAuthoringDebugPreview(): unknown {
+  return {
+    idealFace,
+    videoSource: videoSource
+      ? {
+          fileName: videoSource.fileName,
+          duration: videoSource.duration,
+          videoWidth: videoSource.videoWidth,
+          videoHeight: videoSource.videoHeight,
+          extractedFrameCount: videoSource.extractedFrames.length,
+          frames: videoSource.extractedFrames.map((frame) => ({
+            frameIndex: frame.index,
+            timestamp: frame.timestamp,
+            status: frame.status,
+            extractionTimeMs: Number(frame.extractionTimeMs.toFixed(1)),
+            thumbnail: "omitted",
+          })),
+        }
+      : null,
+  }
+}
+
+function attachVideoInputHandler(): void {
+  document
+    .querySelector<HTMLInputElement>("#video-file-input")
+    ?.addEventListener("change", async (event) => {
+      const input = event.currentTarget
+      const file = input.files?.[0]
+
+      if (!file) {
+        return
+      }
+
+      await handleVideoFileSelection(file)
+    })
+}
+
+async function handleVideoFileSelection(file: File): Promise<void> {
+  if (file.type !== "video/mp4" && !file.name.toLowerCase().endsWith(".mp4")) {
+    replaceVideoSource({
+      fileName: file.name,
+      objectUrl: "",
+      duration: null,
+      videoWidth: null,
+      videoHeight: null,
+      extractedFrames: [],
+      isExtracting: false,
+      error: "初期対応は MP4 動画のみです。",
+    })
+    render()
+    return
+  }
+
+  const objectUrl = URL.createObjectURL(file)
+
+  replaceVideoSource({
+    fileName: file.name,
+    objectUrl,
+    duration: null,
+    videoWidth: null,
+    videoHeight: null,
+    extractedFrames: [],
+    isExtracting: true,
+    error: null,
+  })
+  render()
+
+  try {
+    extractionVideo.src = objectUrl
+    extractionVideo.load()
+    await waitForVideoEvent("loadedmetadata")
+
+    if (!Number.isFinite(extractionVideo.duration)) {
+      throw new Error("動画の長さを取得できませんでした。")
+    }
+
+    updateVideoSource({
+      duration: extractionVideo.duration,
+      videoWidth: extractionVideo.videoWidth,
+      videoHeight: extractionVideo.videoHeight,
+    })
+    render()
+
+    const frames = await extractFramesFromVideo(extractionVideo)
+
+    updateVideoSource({
+      extractedFrames: frames,
+      isExtracting: false,
+    })
+  } catch (error) {
+    updateVideoSource({
+      isExtracting: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "動画の読み込みまたはフレーム抽出に失敗しました。",
+    })
+  }
+
+  render()
+}
+
+function replaceVideoSource(nextSource: VideoSourceState): void {
+  if (videoSource?.objectUrl) {
+    URL.revokeObjectURL(videoSource.objectUrl)
+  }
+
+  videoSource = nextSource
+}
+
+function updateVideoSource(nextState: Partial<VideoSourceState>): void {
+  if (!videoSource) {
+    return
+  }
+
+  videoSource = {
+    ...videoSource,
+    ...nextState,
+  }
+}
+
+function waitForVideoEvent(
+  eventName: "loadedmetadata" | "loadeddata" | "seeked",
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const handleEvent = (): void => {
+      cleanup()
+      resolve()
+    }
+    const handleError = (): void => {
+      cleanup()
+      reject(new Error("動画を読み込めませんでした。"))
+    }
+    const cleanup = (): void => {
+      extractionVideo.removeEventListener(eventName, handleEvent)
+      extractionVideo.removeEventListener("error", handleError)
+    }
+
+    extractionVideo.addEventListener(eventName, handleEvent, { once: true })
+    extractionVideo.addEventListener("error", handleError, { once: true })
+  })
+}
+
+function getExtractionTimestamps(duration: number): number[] {
+  const safeDuration = Math.max(0, duration)
+  const maxTimestamp = Math.max(0, safeDuration - 0.05)
+  const interval =
+    safeDuration <= MAX_EXTRACTED_FRAME_COUNT - 1
+      ? 1
+      : safeDuration / (MAX_EXTRACTED_FRAME_COUNT - 1)
+  const frameCount = Math.min(
+    MAX_EXTRACTED_FRAME_COUNT,
+    Math.max(1, Math.floor(safeDuration / interval) + 1),
+  )
+
+  return Array.from({ length: frameCount }, (_, index) =>
+    Math.min(maxTimestamp, Number((index * interval).toFixed(3))),
+  )
+}
+
+async function extractFramesFromVideo(
+  video: HTMLVideoElement,
+): Promise<ExtractedVideoFrame[]> {
+  const duration = video.duration
+  const timestamps = getExtractionTimestamps(duration)
+  const context = extractionCanvas.getContext("2d")
+
+  if (!context || video.videoWidth === 0 || video.videoHeight === 0) {
+    throw new Error("動画フレームを canvas に描画できませんでした。")
+  }
+
+  const thumbnailHeight = Math.round(
+    (THUMBNAIL_WIDTH * video.videoHeight) / video.videoWidth,
+  )
+  extractionCanvas.width = THUMBNAIL_WIDTH
+  extractionCanvas.height = thumbnailHeight
+
+  const frames: ExtractedVideoFrame[] = []
+
+  for (const [index, timestamp] of timestamps.entries()) {
+    const startedAt = performance.now()
+
+    if (Math.abs(video.currentTime - timestamp) > 0.001) {
+      video.currentTime = timestamp
+      await waitForVideoEvent("seeked")
+    } else if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+      await waitForVideoEvent("loadeddata")
+    }
+
+    context.drawImage(video, 0, 0, THUMBNAIL_WIDTH, thumbnailHeight)
+
+    frames.push({
+      index: index + 1,
+      timestamp,
+      status: "pending",
+      thumbnailUrl: extractionCanvas.toDataURL("image/jpeg", 0.82),
+      extractionTimeMs: performance.now() - startedAt,
+    })
+
+    updateVideoSource({
+      extractedFrames: [...frames],
+    })
+    render()
+  }
+
+  return frames
+}
+
 function render(): void {
   app.innerHTML = `
     <main>
@@ -111,7 +455,7 @@ function render(): void {
           <p class="eyebrow">BAE AR</p>
           <h1>IdealFace Authoring Tool</h1>
         </div>
-        <span>Step 1</span>
+        <span>Step 2-A</span>
       </header>
 
       <section class="summary" aria-label="IdealFace metadata">
@@ -137,6 +481,30 @@ function render(): void {
             <dd>${idealFace.model.controlPoints.length}</dd>
           </div>
         </dl>
+      </section>
+
+      <section class="video-panel" aria-label="動画素材">
+        <div class="panel-heading">
+          <div>
+            <h2>動画素材</h2>
+            <p>推奨: MP4 / H.264 / 5〜15秒 / 720p程度</p>
+          </div>
+          <label class="file-button" for="video-file-input">MP4 動画を選択</label>
+          <input id="video-file-input" type="file" accept="video/mp4,.mp4" />
+        </div>
+        ${renderVideoMetadata()}
+        <div class="video-workspace">
+          ${renderVideoPreview()}
+          <div>
+            <h3>抽出状態</h3>
+            <p class="status-text">${escapeHtml(renderExtractionStatus())}</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="frames-panel" aria-label="抽出フレーム">
+        <h2>抽出フレーム</h2>
+        ${renderFrameThumbnails()}
       </section>
 
       <section class="workspace">
@@ -168,10 +536,12 @@ function render(): void {
 
       <section class="json-panel">
         <h2>JSON preview</h2>
-        <pre>${escapeHtml(JSON.stringify(idealFace, null, 2))}</pre>
+        <pre>${escapeHtml(JSON.stringify(buildAuthoringDebugPreview(), null, 2))}</pre>
       </section>
     </main>
   `
+
+  attachVideoInputHandler()
 }
 
 const style = document.createElement("style")
@@ -265,6 +635,157 @@ style.textContent = `
     margin: 5px 0 0;
     overflow-wrap: anywhere;
     font-size: 15px;
+    font-weight: 700;
+  }
+
+  .video-panel,
+  .frames-panel {
+    margin-bottom: 24px;
+  }
+
+  .panel-heading {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 12px;
+  }
+
+  .panel-heading p {
+    margin: 5px 0 0;
+    color: #5d675f;
+    font-size: 13px;
+  }
+
+  #video-file-input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .file-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 40px;
+    border: 0;
+    border-radius: 6px;
+    background: #27594c;
+    color: #ffffff;
+    padding: 9px 13px;
+    font-size: 14px;
+    font-weight: 800;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .file-button:focus-visible {
+    outline: 3px solid #9fc8bd;
+    outline-offset: 2px;
+  }
+
+  .video-workspace {
+    display: grid;
+    grid-template-columns: minmax(320px, 0.9fr) minmax(260px, 1.1fr);
+    gap: 18px;
+    align-items: stretch;
+    margin-top: 14px;
+  }
+
+  .video-preview,
+  .video-empty,
+  .frame-empty {
+    width: 100%;
+    border: 1px solid #ccd8d3;
+    border-radius: 8px;
+    background: #ffffff;
+  }
+
+  .video-preview {
+    display: block;
+    aspect-ratio: 16 / 9;
+    object-fit: contain;
+  }
+
+  .video-empty,
+  .frame-empty {
+    display: grid;
+    min-height: 160px;
+    place-items: center;
+    padding: 18px;
+    color: #5d675f;
+    text-align: center;
+  }
+
+  .video-empty p,
+  .frame-empty p,
+  .status-text {
+    margin: 0;
+  }
+
+  h3 {
+    margin: 0 0 8px;
+    font-size: 15px;
+    line-height: 1.25;
+    letter-spacing: 0;
+  }
+
+  .status-text {
+    border: 1px solid #ccd8d3;
+    border-radius: 8px;
+    background: #ffffff;
+    padding: 14px;
+    color: #25342e;
+    font-size: 14px;
+    font-weight: 700;
+  }
+
+  .frame-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 12px;
+  }
+
+  .frame-card {
+    min-width: 0;
+    overflow: hidden;
+    border: 1px solid #ccd8d3;
+    border-radius: 8px;
+    background: #ffffff;
+  }
+
+  .frame-card img {
+    display: block;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+    background: #1f2824;
+  }
+
+  .frame-card div {
+    display: grid;
+    gap: 5px;
+    padding: 10px;
+  }
+
+  .frame-card strong,
+  .frame-card span {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    line-height: 1.35;
+  }
+
+  .frame-card strong {
+    color: #17201b;
+    font-size: 13px;
+  }
+
+  .frame-card span {
+    color: #5d675f;
+    font-size: 12px;
     font-weight: 700;
   }
 
@@ -380,8 +901,14 @@ style.textContent = `
     }
 
     dl,
+    .video-workspace,
     .workspace {
       grid-template-columns: 1fr;
+    }
+
+    .panel-heading {
+      align-items: flex-start;
+      flex-direction: column;
     }
   }
 `

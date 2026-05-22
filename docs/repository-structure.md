@@ -49,7 +49,7 @@ tools/
    └─ Layer Mask Authoring Tool
 ```
 
-`tools/*` は現在未実装です。
+`tools/ideal-face-authoring` は Step 2-A まで実装済みです。`tools/layer-mask-authoring` は将来予定です。
 
 ## `packages/engine`
 
@@ -110,6 +110,8 @@ IdealFace Authoring Tool を置く想定の場所です。
 MediaPipe canonical face model そのものを作成・編集する場所ではありません。`natural_v1` の controlPoints は現段階の投影検証用データであり、IdealFace 本体ではありません。
 
 IdealFace Authoring Tool では、将来的に動画または複数画像から各フレームの 2D 478 landmarks と `FacePose` を取得します。初期入力形式は MP4 動画のみとし、複数画像入力は将来対応とします。初期段階では入力形式を広げず、代表フレーム抽出とラベル確定の流れを優先します。
+
+Step 2-A では、MP4 動画入力、metadata 表示、一定間隔でのフレーム抽出、サムネイル一覧表示、JSON preview への抽出フレーム情報表示までを実装済みです。各フレームの状態は、MediaPipe 解析前の「未解析」として扱います。
 
 MP4 動画から一定間隔でフレームを抽出し、yaw / pitch / roll から代表フレーム候補を自動抽出します。ユーザーが正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定し、確定した代表フレーム群から `idealLandmarks3D` 478点候補を自動推測します。
 
@@ -174,9 +176,8 @@ Step 1 の範囲:
 未実装:
 
 - ドラッグ編集
-- MP4 動画入力
-- フレーム抽出
 - MediaPipe によるフレームごとの 2D 478 landmarks 取得
+- FacePose 取得
 - yaw / pitch / roll による代表フレーム候補の自動抽出
 - 手動ラベル確定 UI
 - 3D 478点候補の自動推測
@@ -186,3 +187,19 @@ Step 1 の範囲:
 - 複数画像入力
 
 このツールは MediaPipe canonical face model そのものを作るツールではありません。Authoring Tool の編集処理や UI は Engine Runtime に混ぜません。
+
+## `tools/ideal-face-authoring` Step 2-A
+
+Step 2-A の範囲:
+
+- MP4 動画ファイルを選択する
+- 選択した MP4 を `<video>` と Object URL で読み込む
+- `duration` / `videoWidth` / `videoHeight` を表示する
+- 1秒ごと、または最大 20 フレーム程度に抑えて canvas へ抽出する
+- 抽出したフレームをサムネイル一覧で表示する
+- 各フレームに frame index / timestamp / 状態「未解析」を表示する
+- JSON preview に file name / duration / videoWidth / videoHeight / extracted frame count / frames を表示する
+
+初期対応は MP4 動画のみです。複数画像入力は未実装 / 将来対応です。MediaPipe による 2D 478 landmarks 取得、FacePose 取得、代表フレーム候補抽出、手動ラベル確定、3D 478点推測、3D点群 preview、手動微調整、保存 / export はまだ未実装です。
+
+動画入力とフレーム抽出は IdealFace Authoring Tool の責務であり、Engine Runtime には追加しません。

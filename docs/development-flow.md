@@ -146,7 +146,7 @@ Beauty Studio では、開発確認用として overlay や簡易調整 UI を�
 
 IdealFace Authoring Tool は、BAE AR 独自の IdealFace asset を作成するための領域です。IdealFace の本体である `idealLandmarks3D` 478点は、Authoring Tool 側で将来的に動画または複数画像から作成する方針です。初期入力形式は MP4 動画のみとし、複数画像入力は将来対応とします。
 
-初期段階では入力形式を広げず、MP4 動画からのフレーム抽出、代表フレーム候補の自動抽出、ユーザーによるラベル確定の流れを優先して作ります。
+初期段階では入力形式を広げず、MP4 動画からのフレーム抽出、代表フレーム候補の自動抽出、ユーザーによるラベル確定の流れを優先して作ります。Step 2-A では、MP4 動画入力と一定間隔でのフレーム抽出、サムネイル一覧表示までを実装済みです。
 
 想定する流れ:
 
@@ -165,7 +165,19 @@ MP4 動画を入力
 
 長時間動画、高解像度すぎる動画、HEVC / H.265、MOV、WebM、複数画像入力は、初期段階では非推奨または未対応です。これらは将来対応を検討します。
 
-この処理は完全自動生成ではなく、自動推測 + 手動補正として扱います。動画入力やフレーム抽出は IdealFace Authoring Tool の責務です。Engine Runtime は `idealLandmarks3D` を作成せず、完成済みの IdealFace asset を読み込んで使います。
+この処理は完全自動生成ではなく、自動推測 + 手動補正として扱います。動画入力やフレーム抽出は IdealFace Authoring Tool の責務です。Engine Runtime は動画入力やフレーム抽出、`idealLandmarks3D` 作成を行わず、完成済みの IdealFace asset を読み込んで使います。
+
+Step 2-A で未実装のもの:
+
+- MediaPipe によるフレームごとの 2D 478 landmarks 取得
+- FacePose 取得
+- yaw / pitch / roll による代表フレーム候補の自動抽出
+- 手動ラベル確定 UI
+- 3D 478点候補の自動推測
+- 3D点群 preview
+- 手動微調整
+- 保存 / export
+- 複数画像入力
 
 ## Studio UI 表示
 
@@ -191,10 +203,11 @@ getState()
 
 ## 確認コマンド
 
-現時点で root の `package.json` には `start` のみが定義されています。
+現時点で root の `package.json` には `start` と `start:ideal-face-authoring` が定義されています。
 
 ```bash
 npm run start
+npm run start:ideal-face-authoring
 ```
 
 build / test / lint script は未定義です。追加後は、このドキュメントにも反映します。
@@ -221,7 +234,7 @@ PR 本文には、変更内容と確認結果を記載します。
 - Input: connected 確認
 ```
 
-## IdealFace Authoring Tool Step 1 の確認
+## IdealFace Authoring Tool Step 1 / Step 2-A の確認
 
 IdealFace Authoring Tool を変更した場合は、Runtime と Authoring の責務が混ざっていないことを確認します。
 
@@ -231,6 +244,12 @@ IdealFace Authoring Tool を変更した場合は、Runtime と Authoring の責
 - `apps/studio` に Authoring 用タブを追加していない
 - Engine Runtime に UI や編集処理を追加していない
 - `natural_v1` の metadata / controlPoints / 2D preview / JSON preview を確認できる
-- MP4 動画入力、フレーム抽出、MediaPipe によるフレームごとの 2D 478 landmarks 取得、yaw / pitch / roll による代表フレーム候補の自動抽出、手動ラベル確定 UI、3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力を Step 1 に含めていない
+- MP4 動画を選択できる
+- 選択した MP4 の metadata を表示できる
+- 一定間隔でフレームを抽出し、サムネイル一覧で確認できる
+- 各フレームに frame index / timestamp / 未解析を表示できる
+- JSON preview に動画情報と抽出フレーム情報を表示できる
+- MediaPipe によるフレームごとの 2D 478 landmarks 取得、FacePose 取得、代表フレーム候補の自動抽出、手動ラベル確定 UI、3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力を Step 2-A に含めていない
+- Engine Runtime に動画入力やフレーム抽出処理を追加していない
 
 PR 本文には IdealFace Authoring Tool の手動確認事項を記載します。

@@ -20,13 +20,13 @@ BAE AR
 │     - Engine 内部実装へ直接依存しない
 │
 ├─ tools/ideal-face-authoring
-│  └─ 将来予定。IdealFace を作成する authoring tool
+│  └─ IdealFace を作成する authoring tool
 │
 └─ tools/layer-mask-authoring
    └─ 将来予定。LayerMaskSpec を作成する authoring tool
 ```
 
-現在 `tools/*` は未実装です。
+現在 `tools/ideal-face-authoring` は Step 2-A まで実装済みです。`tools/layer-mask-authoring` は将来予定です。
 
 ## Engine Runtime の責務
 
@@ -76,7 +76,7 @@ Studio は Engine Runtime の公開 API のみを利用します。Engine の pr
 
 ## IdealFace Authoring Tool の責務
 
-IdealFace Authoring Tool は将来予定です。
+IdealFace Authoring Tool は、BAE AR 独自の IdealFace asset を作成するための独立ツールです。
 
 責務:
 
@@ -95,9 +95,11 @@ IdealFace Authoring Tool の処理はリアルタイム Engine Runtime には含
 
 IdealFace Authoring Tool は、将来的に動画または複数画像を入力として受け取り、MediaPipe Face Landmarker で各フレームの 2D 478 landmarks と `FacePose` を取得します。初期入力形式は MP4 動画のみとし、複数画像入力は将来対応とします。初期段階では入力形式を広げず、代表フレーム抽出とラベル確定の流れを優先します。
 
-初期実装では、MP4 動画から一定間隔でフレームを抽出し、取得した yaw / pitch / roll を使って正面候補、左向き候補、右向き候補、上向き候補、下向き候補を自動抽出します。
+Step 2-A では、MP4 動画入力と一定間隔でのフレーム抽出、サムネイル一覧表示までを実装済みです。各フレームの状態は、MediaPipe 解析前の「未解析」として扱います。
 
-自動抽出だけでは確定せず、ユーザーが Authoring Tool 上で正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定します。確定した代表フレーム群から 3D の `idealLandmarks3D` 478点候補を自動推測し、Authoring Tool 上で確認、必要箇所を手動微調整したうえで IdealFace asset として保存 / export します。
+次の段階では、MediaPipe Face Landmarker で取得した yaw / pitch / roll を使って正面候補、左向き候補、右向き候補、上向き候補、下向き候補を自動抽出します。
+
+自動抽出だけでは確定せず、ユーザーが Authoring Tool 上で正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定します。確定した代表フレーム群から 3D の `idealLandmarks3D` 478点候補を自動推測し、Authoring Tool 上で確認、必要箇所を手動微調整したうえで IdealFace asset として保存 / export します。これらは Step 2-A では未実装です。
 
 推奨する MP4 動画は、H.264 / AVC codec、5〜15秒程度、30fps程度、720p程度から開始できるものです。顔が大きく写り、正面、左向き、右向き、上向き、下向きをゆっくり含み、手ブレが少なく、明るい場所で撮影されていることを推奨します。口は閉じ気味、表情はできるだけ neutral とします。
 
@@ -105,7 +107,7 @@ IdealFace Authoring Tool は、将来的に動画または複数画像を入力�
 
 Engine Runtime は動画入力、フレーム抽出、`idealLandmarks3D` 作成を行いません。Runtime は完成済みの IdealFace asset を読み込み、`idealLandmarks3D` 478点を現在 `FacePose` へ投影して projected ideal 2D landmarks 478点を生成します。
 
-この段階では、代表フレーム抽出や 3D点群推測の詳細アルゴリズムは定義しません。
+この段階では、MediaPipe による 2D 478 landmarks 取得、FacePose 取得、代表フレーム抽出や 3D点群推測の詳細アルゴリズムは定義しません。
 
 ## Layer Mask Authoring Tool の責務
 
@@ -196,7 +198,7 @@ v1 の制限事項:
 
 - 3D model は Projection の土台確認用の最小 control point 群
 - ideal 478 landmarks の生成は未実装
-- IdealFace Authoring Tool は未実装
+- IdealFace Authoring Tool は Step 2-A まで実装済み
 - IdealFace Projection v1 は controlPoints のみ部分実装
 - Projection Difference Debug v1 は代表点ベースの差分確認のみ実装
 
@@ -296,8 +298,6 @@ Step 1 では Runtime の公開 API から `natural_v1` を読み込み、metada
 未実装の範囲:
 
 - controlPoints のドラッグ編集
-- MP4 動画入力
-- フレーム抽出
 - MediaPipe によるフレームごとの 2D 478 landmarks 取得
 - yaw / pitch / roll による代表フレーム候補の自動抽出
 - 手動ラベル確定 UI
@@ -308,6 +308,33 @@ Step 1 では Runtime の公開 API から `natural_v1` を読み込み、metada
 - 複数画像入力
 
 IdealFace Authoring Tool は MediaPipe canonical face model そのものを作るツールではありません。BAE AR 独自の IdealFace asset を作る作業場として扱います。
+
+## IdealFace Authoring Tool Step 2-A
+
+Step 2-A では、`tools/ideal-face-authoring` に MP4 動画入力とフレーム抽出の最小実装を追加しました。
+
+実装済みの範囲:
+
+- MP4 動画ファイルの選択
+- 選択した MP4 の `<video>` / Object URL 読み込み
+- `duration` / `videoWidth` / `videoHeight` の metadata 表示
+- 1秒ごと、または最大 20 フレーム程度に抑えた canvas 抽出
+- サムネイル一覧での frame index / timestamp / 状態「未解析」の表示
+- JSON preview での動画情報と抽出フレーム情報の表示
+
+未実装の範囲:
+
+- 複数画像入力
+- MediaPipe によるフレームごとの 2D 478 landmarks 取得
+- FacePose 取得
+- 代表フレーム候補の自動抽出
+- 手動ラベル確定 UI
+- 3D 478点候補の自動推測
+- 3D点群 preview
+- 手動微調整
+- 保存 / export
+
+動画入力やフレーム抽出処理は Authoring Tool の責務です。Engine Runtime には動画入力やフレーム抽出処理を追加しません。
 
 ## IdealFace / Projection / Shape Processing 中核仕様
 
