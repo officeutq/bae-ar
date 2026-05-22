@@ -113,7 +113,7 @@ IdealFace Authoring Tool では、将来的に動画または複数画像から�
 
 Step 2-A では、MP4 動画入力、metadata 表示、一定間隔でのフレーム抽出、サムネイル一覧表示、JSON preview への抽出フレーム情報表示までを実装済みです。Step 2-B では、抽出済みフレームの MediaPipe 解析、2D 478 landmarks と `FacePose` の取得、解析結果 summary と JSON preview への概要表示までを実装済みです。Step 2-C では、yaw / pitch / roll による代表フレーム候補の自動抽出、各カテゴリ上位複数件の候補一覧表示、JSON preview への候補概要表示までを実装済みです。Step 2-D では、候補カードから正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定し、候補カテゴリを必要なものだけ開くトグル表示、確定済み代表フレーム一覧、3D推測準備状況、JSON preview の `selectedRepresentativeFrames` を確認できるようにしました。Step 2-E では、確定済み代表フレームから front / left / right / up / down の 3D推測用データセットを作成し、readiness summary、dataset 一覧、JSON preview の `idealLandmarks3DInferenceDataset` 概要を確認できるようにしました。Step 2-F では、候補抽出用の詳細スキャン、詳細スキャン summary、JSON preview の `scanSummary`、サムネイル全体表示を追加しました。確定済み代表フレーム一覧と3D推測用データセットには、正面 / 左向き / 右向き / 上向き / 下向きだけを表示します。
 
-MP4 動画から表示用フレームを一定間隔で抽出し、候補抽出用には動画全体を 0.25 秒間隔、最大 120 フレーム程度まで詳細スキャンします。詳細スキャン済みフレームのうち、顔検出あり、landmarks 数 478、pose pitch / yaw / roll 取得済みのフレームから正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を各カテゴリ上位複数件抽出します。全スキャンフレーム一覧は UI に表示せず、代表フレーム候補を中心に表示します。Step 2-D では、候補カテゴリを必要なものだけ開いて比較し、ユーザーが正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定します。Step 2-E では、確定済み代表フレームから 3D推測用データセットを作成します。除外は代表フレームではないため確定済み代表フレーム一覧には表示せず、3D推測用データセットにも含めません。dataset は 2D 478 landmarks と FacePose を持つ入力データであり、まだ `idealLandmarks3D` 478点そのものではありません。dataset から `idealLandmarks3D` 478点候補を自動推測する流れは将来対応です。候補に採用されたフレームは手動確定と dataset 作成に使えるよう保持し、候補以外の詳細スキャンフレームは一覧表示しません。サムネイルはトリムせず画像全体を表示します。
+MP4 動画から表示用フレームを一定間隔で抽出し、候補抽出用には動画全体を 0.1 秒間隔、最大スキャン数の上限付きで詳細スキャンします。詳細スキャン済みフレームのうち、顔検出あり、landmarks 数 478、pose pitch / yaw / roll 取得済みのフレームから正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を各カテゴリに複数件保持します。全スキャンフレーム一覧は UI に表示せず、代表フレーム候補を中心に表示します。Step 2-D では、候補カテゴリを必要なものだけ開いて比較し、ユーザーが正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定します。Step 2-E では、確定済み代表フレームから 3D推測用データセットを作成します。除外は代表フレームではないため確定済み代表フレーム一覧には表示せず、3D推測用データセットにも含めません。dataset は 2D 478 landmarks と FacePose を持つ入力データであり、まだ `idealLandmarks3D` 478点そのものではありません。dataset から `idealLandmarks3D` 478点候補を自動推測する流れは将来対応です。候補に採用されたフレームは手動確定と dataset 作成に使えるよう保持し、候補以外の詳細スキャンフレームは一覧表示しません。サムネイルはトリムせず画像全体を表示します。
 
 自動推測した 3D点群は候補データとして扱い、Authoring Tool 上で確認、必要箇所を手動微調整してから IdealFace asset として保存 / export します。
 
@@ -143,6 +143,16 @@ Layer Mask Authoring Tool を置く想定の場所です。
 設計、仕様、ロードマップ、開発方針を残す場所です。
 
 実装が変わった場合は、該当する docs / README / 仕様書 / ロードマップも更新します。
+
+## `tools/ideal-face-authoring` Step 2-F 改良
+
+Step 2-F 改良として、`tools/ideal-face-authoring` の詳細スキャンは `0.1` 秒間隔で実行します。長い動画で無制限に解析しないよう、最大スキャン数の上限は維持します。
+
+詳細スキャンで解析されたフレームは、条件に合えば `front` / `yawPositive` / `yawNegative` / `pitchPositive` / `pitchNegative` の候補カテゴリへ保持します。候補は上位5件だけに絞らず、カテゴリごとの保持上限の範囲で広く残します。UI では候補カテゴリトグル内に候補を表示し、候補カードには順位ではなく `score` を表示します。
+
+候補条件は緩め、pitch / yaw の片方に多少のズレがあっても候補として拾います。除外した候補は UI 候補一覧から外しますが、`selectedRepresentativeFrames.excluded` として状態 / JSON preview に残せます。除外候補は確定済み代表フレーム一覧、3D推測準備状況、`idealLandmarks3DInferenceDataset` には含めません。
+
+3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力はまだ未実装です。詳細スキャンや候補振り分け処理は IdealFace Authoring Tool 配下に置き、`packages/engine/src` や `apps/studio/src` へ入れません。
 
 ## 配布方針
 
@@ -229,7 +239,7 @@ Step 2-C の範囲:
 
 - 顔検出あり、landmarks 数 478、pose pitch / yaw / roll 取得済みの解析済みフレームだけを候補評価に使う
 - yaw / pitch / roll から正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を各カテゴリ上位複数件抽出する
-- 候補一覧にサムネイル、順位、frame index、timestamp、yaw / pitch / roll、score、landmarks 数を表示する
+- 候補一覧にサムネイル、frame index、timestamp、yaw / pitch / roll、score、landmarks 数を表示する
 - 候補がない場合に「候補なし」を表示する
 - 解析 summary を代表フレーム候補の近くに表示する
 - 代表フレーム候補を主表示にし、抽出フレーム一覧を debug / 折りたたみ表示として扱う
@@ -302,9 +312,9 @@ dataset 作成処理は IdealFace Authoring Tool の責務であり、Engine Run
 
 Step 2-F の範囲:
 
-- 表示用抽出フレームとは別に、候補抽出用として MP4 動画全体を 0.25 秒間隔、最大 120 フレーム程度まで詳細スキャンする
+- 表示用抽出フレームとは別に、候補抽出用として MP4 動画全体を 0.1 秒間隔、最大スキャン数の上限付きで詳細スキャンする
 - 詳細スキャン済みフレームのうち、顔検出あり、landmarks 数 478、FacePose 取得済みのフレームを候補評価に使う
-- yaw / pitch / roll から正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を各カテゴリ上位複数件抽出する
+- yaw / pitch / roll から正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を各カテゴリに複数件保持する
 - 全スキャンフレーム一覧は UI に表示せず、代表フレーム候補中心に表示する
 - 候補に採用されたフレームは、サムネイル、frame index、timestamp、pose、2D 478 landmarks、landmark preview を保持し、手動確定と 3D推測用 dataset 作成に使う
 - 詳細スキャン summary と JSON preview の `scanSummary` を表示する

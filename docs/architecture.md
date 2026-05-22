@@ -97,9 +97,9 @@ IdealFace Authoring Tool は、将来的に動画または複数画像を入力�
 
 Step 2-A では、MP4 動画入力と一定間隔でのフレーム抽出、サムネイル一覧表示までを実装済みです。Step 2-B では、抽出済みフレームに MediaPipe Face Landmarker 解析を実行し、2D 478 landmarks と FacePose を取得できるようにしました。Step 2-C では、解析済みフレームの yaw / pitch / roll から代表フレーム候補を自動抽出し、各カテゴリ上位複数件の候補一覧と JSON preview に候補概要を表示できるようにしました。Step 2-D では、候補カードから正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定し、候補カテゴリを必要なものだけ開くトグル表示、確定済み代表フレーム一覧、3D推測準備状況、JSON preview の `selectedRepresentativeFrames` を確認できるようにしました。Step 2-E では、確定済み代表フレームから front / left / right / up / down の 3D推測用データセットを作成し、readiness summary、dataset 一覧、JSON preview の `idealLandmarks3DInferenceDataset` 概要を確認できるようにしました。Step 2-F では、表示用抽出とは別に候補抽出用の詳細スキャンを追加し、詳細スキャン summary と JSON preview の `scanSummary` を確認できるようにしました。確定済み代表フレーム一覧と3D推測用データセットには、正面 / 左向き / 右向き / 上向き / 下向きだけを表示します。
 
-Step 2-F 以降の代表フレーム候補抽出では、表示用の最大20件程度の抽出フレームだけではなく、動画全体を 0.25 秒間隔、最大 120 フレーム程度まで詳細スキャンします。顔検出あり、landmarks 数 478、pose pitch / yaw / roll 取得済みの詳細スキャンフレームだけを候補評価に使います。正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を各カテゴリ上位複数件表示し、左右・上下の最終ラベルは次段階の手動確定 UI で扱います。全スキャンフレーム一覧は UI に表示せず、候補に採用されたフレームだけを手動確定と dataset 作成に使えるよう保持します。サムネイルはトリムせず、画像全体が見えるように表示します。
+Step 2-F 以降の代表フレーム候補抽出では、表示用の最大20件程度の抽出フレームだけではなく、動画全体を 0.1 秒間隔、最大スキャン数の上限付きで詳細スキャンします。顔検出あり、landmarks 数 478、pose pitch / yaw / roll 取得済みの詳細スキャンフレームだけを候補評価に使います。正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補は上位少数件だけに絞らず、条件に合うものをカテゴリごとに保持・表示します。左右・上下の最終ラベルは手動確定 UI で扱います。全スキャンフレーム一覧は UI に表示せず、候補に採用されたフレームだけを手動確定と dataset 作成に使えるよう保持します。サムネイルはトリムせず、画像全体が見えるように表示します。
 
-候補 1 件だけでは確定せず、上位複数件を比較して手動確定します。Step 2-D ではユーザーが Authoring Tool 上で正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定します。Step 2-E では、除外を dataset に含めず、front / left / right / up / down の各ラベルについて未選択を `missing`、対応する解析済みフレームがない状態を `invalid`、2D 478 landmarks と FacePose が揃う状態を `ready` として扱います。この dataset は 3D の `idealLandmarks3D` 478点候補を推測するための入力であり、まだ `idealLandmarks3D` 478点そのものではありません。将来的には、dataset から 3D の `idealLandmarks3D` 478点候補を自動推測し、Authoring Tool 上で確認、必要箇所を手動微調整したうえで IdealFace asset として保存 / export します。3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export は Step 2-F では未実装です。
+候補 1 件だけでは確定せず、カテゴリ内の複数候補を比較して手動確定します。Step 2-D ではユーザーが Authoring Tool 上で正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定します。Step 2-E では、除外を dataset に含めず、front / left / right / up / down の各ラベルについて未選択を `missing`、対応する解析済みフレームがない状態を `invalid`、2D 478 landmarks と FacePose が揃う状態を `ready` として扱います。この dataset は 3D の `idealLandmarks3D` 478点候補を推測するための入力であり、まだ `idealLandmarks3D` 478点そのものではありません。将来的には、dataset から 3D の `idealLandmarks3D` 478点候補を自動推測し、Authoring Tool 上で確認、必要箇所を手動微調整したうえで IdealFace asset として保存 / export します。3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export は Step 2-F では未実装です。
 
 推奨する MP4 動画は、H.264 / AVC codec、5〜15秒程度、30fps程度、720p程度から開始できるものです。顔が大きく写り、正面、左向き、右向き、上向き、下向きをゆっくり含み、手ブレが少なく、明るい場所で撮影されていることを推奨します。口は閉じ気味、表情はできるだけ neutral とします。
 
@@ -289,6 +289,16 @@ LayerMask は FaceLandmarks から生成する 2D mask です。
 - 開発用 debug UI
 - サンプルや検証ツール
 
+## IdealFace Authoring Tool Step 2-F 改良
+
+`tools/ideal-face-authoring` の Step 2-F は、代表フレーム候補抽出用の詳細スキャンを `0.1` 秒間隔で行います。最大スキャン数の上限を残し、長い動画で無制限に解析しない構成にします。
+
+候補抽出は、解析できたフレームを `front` / `yawPositive` / `yawNegative` / `pitchPositive` / `pitchNegative` のカテゴリへ振り分ける方式です。候補は上位少数件だけに絞らず、カテゴリごとの保持上限の範囲で残します。UI は候補カテゴリトグル内に候補を表示し、候補カードでは順位ではなく `score` を表示します。
+
+候補に入れる条件は緩め、pitch / yaw の片方に多少のズレがあっても候補として拾います。除外された候補は UI 候補一覧から外し、状態 / JSON preview には `selectedRepresentativeFrames.excluded` として残せます。ただし、除外候補は確定済み代表フレーム一覧、3D推測準備状況、`idealLandmarks3DInferenceDataset` には含めません。
+
+3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力はまだ実装しません。詳細スキャン、候補振り分け、手動ラベル確定、dataset 作成は IdealFace Authoring Tool の責務であり、Engine Runtime や Beauty Studio へ Authoring 用処理を入れません。
+
 ## IdealFace Authoring Tool Step 1
 
 `tools/ideal-face-authoring` は、BAE AR 独自の IdealFace asset を作るための独立した authoring tool です。Beauty Studio は Runtime 検証用、IdealFace Authoring Tool は asset 作成用として分離します。
@@ -368,7 +378,7 @@ Step 2-C では、`tools/ideal-face-authoring` に解析済みフレームから
 
 - 顔検出あり、landmarks 数 478、pose pitch / yaw / roll 取得済みの解析済みフレームだけを候補評価に使う
 - yaw / pitch / roll から正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を各カテゴリ上位複数件抽出する
-- 候補一覧にサムネイル、順位、frame index、timestamp、yaw / pitch / roll、score、landmarks 数を表示する
+- 候補一覧にサムネイル、frame index、timestamp、yaw / pitch / roll、score、landmarks 数を表示する
 - 候補が見つからない枠には「候補なし」と表示する
 - 解析 summary を代表フレーム候補の近くに表示する
 - 抽出フレーム一覧を初期状態では閉じ、debug / 確認用として開けるようにする
@@ -443,9 +453,9 @@ Step 2-F では、`tools/ideal-face-authoring` に代表フレーム候補抽出
 
 Step 2-F の実装範囲:
 
-- 表示用抽出フレームとは別に、候補抽出用として動画全体を 0.25 秒間隔、最大 120 フレーム程度まで詳細スキャンする
+- 表示用抽出フレームとは別に、候補抽出用として動画全体を 0.1 秒間隔、最大スキャン数の上限付きで詳細スキャンする
 - 詳細スキャン済みフレームのうち、顔検出あり、landmarks 数 478、FacePose 取得済みのフレームを候補評価に使う
-- yaw / pitch / roll から正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を各カテゴリ上位複数件表示する
+- yaw / pitch / roll から正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を各カテゴリに複数件保持・表示する
 - 全スキャンフレーム一覧は UI に表示せず、代表フレーム候補中心に表示する
 - 候補に採用されたフレームは、サムネイル、frame index、timestamp、pose、2D 478 landmarks、landmark preview を保持し、手動確定と 3D推測用 dataset 作成に使う
 - 詳細スキャン summary と JSON preview の `scanSummary` を表示する

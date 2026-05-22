@@ -13,8 +13,8 @@ import {
 const idealFace = NATURAL_IDEAL_FACE_PRESET
 const app = document.querySelector<HTMLDivElement>("#app")
 const MAX_EXTRACTED_FRAME_COUNT = 20
-const DETAILED_SCAN_INTERVAL_SEC = 0.25
-const MAX_DETAILED_SCAN_FRAME_COUNT = 120
+const DETAILED_SCAN_INTERVAL_SEC = 0.1
+const MAX_DETAILED_SCAN_FRAME_COUNT = 150
 const THUMBNAIL_WIDTH = 180
 const ANALYSIS_MAX_WIDTH = 640
 const EMPTY_FACE_POSE: FacePose = {
@@ -29,18 +29,18 @@ const NOSE_TIP_INDEX = 4
 const MOUTH_CENTER_INDICES = [13, 14]
 const REQUIRED_LANDMARK_COUNT = 478
 const FRONT_POSE_LIMIT = {
-  yaw: 8,
-  pitch: 8,
-  roll: 6,
+  yaw: 12,
+  pitch: 12,
+  roll: 9,
 }
 const DIRECTIONAL_POSE_LIMIT = {
-  yaw: 12,
-  pitch: 10,
-  roll: 8,
+  yaw: 24,
+  pitch: 24,
+  roll: 14,
 }
-const YAW_CANDIDATE_MIN_ABS = 12
-const PITCH_CANDIDATE_MIN_ABS = 10
-const REPRESENTATIVE_CANDIDATE_LIMIT = 5
+const YAW_CANDIDATE_MIN_ABS = 6
+const PITCH_CANDIDATE_MIN_ABS = 5
+const MAX_CANDIDATES_PER_CATEGORY = 30
 const INFERENCE_DATASET_LABELS: SelectableRepresentativeFrameLabel[] = [
   "front",
   "left",
@@ -104,7 +104,6 @@ interface LandmarkPreviewPoint {
 
 interface RepresentativeFrameCandidate {
   key: RepresentativeFrameCandidateKey
-  rank: number
   frameIndex: number
   timestamp: number
   score: number
@@ -171,11 +170,14 @@ interface IdealLandmarks3DInferenceDataset {
 interface DetailedScanSummary {
   scanIntervalSec: number
   maxScanFrames: number
+  maxCandidatesPerCategory: number
   scannedFrameCount: number
   analyzedFrameCount: number
   detectedFrameCount: number
   candidateSourceFrameCount: number
+  candidateCounts: Record<RepresentativeFrameCandidateKey, number>
   candidateCategoryCount: number
+  excludedCandidateCount: number
 }
 
 interface VideoSourceState {
@@ -483,7 +485,30 @@ function formatPoseRange(range: { min: number; max: number } | null): string {
 }
 
 function getDetailedScanSummary(): DetailedScanSummary {
-  return videoSource?.scanSummary ?? createEmptyDetailedScanSummary()
+  if (!videoSource) {
+    return createEmptyDetailedScanSummary()
+  }
+
+  const candidates = getRepresentativeFrameCandidates()
+
+  return {
+    ...videoSource.scanSummary,
+    candidateCounts: getCandidateCounts(candidates),
+    candidateCategoryCount: getCandidateCategoryCount(candidates),
+    excludedCandidateCount: selectedRepresentativeFrames.excluded.length,
+  }
+}
+
+function getCandidateCounts(
+  candidates: RepresentativeFrameCandidates,
+): Record<RepresentativeFrameCandidateKey, number> {
+  return {
+    front: candidates.front.length,
+    yawPositive: candidates.yawPositive.length,
+    yawNegative: candidates.yawNegative.length,
+    pitchPositive: candidates.pitchPositive.length,
+    pitchNegative: candidates.pitchNegative.length,
+  }
 }
 
 function getCandidateCategoryCount(
@@ -494,9 +519,48 @@ function getCandidateCategoryCount(
 }
 
 function getRepresentativeFrameCandidates(): RepresentativeFrameCandidates {
-  return (
+  const candidates =
     videoSource?.representativeFrameCandidates ??
     createEmptyRepresentativeFrameCandidates()
+  const excludedFrameIndexes = getExcludedCandidateFrameIndexes()
+
+  if (excludedFrameIndexes.size === 0) {
+    return candidates
+  }
+
+  return {
+    front: filterExcludedCandidates(candidates.front, excludedFrameIndexes),
+    yawPositive: filterExcludedCandidates(
+      candidates.yawPositive,
+      excludedFrameIndexes,
+    ),
+    yawNegative: filterExcludedCandidates(
+      candidates.yawNegative,
+      excludedFrameIndexes,
+    ),
+    pitchPositive: filterExcludedCandidates(
+      candidates.pitchPositive,
+      excludedFrameIndexes,
+    ),
+    pitchNegative: filterExcludedCandidates(
+      candidates.pitchNegative,
+      excludedFrameIndexes,
+    ),
+  }
+}
+
+function getExcludedCandidateFrameIndexes(): Set<number> {
+  return new Set(
+    selectedRepresentativeFrames.excluded.map((frame) => frame.frameIndex),
+  )
+}
+
+function filterExcludedCandidates(
+  candidates: RepresentativeFrameCandidate[],
+  excludedFrameIndexes: Set<number>,
+): RepresentativeFrameCandidate[] {
+  return candidates.filter(
+    (candidate) => !excludedFrameIndexes.has(candidate.frameIndex),
   )
 }
 
@@ -504,23 +568,23 @@ function buildRepresentativeFrameCandidatesFromFrames(
   frames: ExtractedVideoFrame[],
 ): RepresentativeFrameCandidates {
   return {
-    front: selectTopCandidates(frames, "front", scoreFrontCandidate),
-    yawPositive: selectTopCandidates(
+    front: collectCategoryCandidates(frames, "front", scoreFrontCandidate),
+    yawPositive: collectCategoryCandidates(
       frames,
       "yawPositive",
       scoreYawPositiveCandidate,
     ),
-    yawNegative: selectTopCandidates(
+    yawNegative: collectCategoryCandidates(
       frames,
       "yawNegative",
       scoreYawNegativeCandidate,
     ),
-    pitchPositive: selectTopCandidates(
+    pitchPositive: collectCategoryCandidates(
       frames,
       "pitchPositive",
       scorePitchPositiveCandidate,
     ),
-    pitchNegative: selectTopCandidates(
+    pitchNegative: collectCategoryCandidates(
       frames,
       "pitchNegative",
       scorePitchNegativeCandidate,
@@ -563,11 +627,16 @@ function createEmptyDetailedScanSummary(): DetailedScanSummary {
   return {
     scanIntervalSec: DETAILED_SCAN_INTERVAL_SEC,
     maxScanFrames: MAX_DETAILED_SCAN_FRAME_COUNT,
+    maxCandidatesPerCategory: MAX_CANDIDATES_PER_CATEGORY,
     scannedFrameCount: 0,
     analyzedFrameCount: 0,
     detectedFrameCount: 0,
     candidateSourceFrameCount: 0,
+    candidateCounts: getCandidateCounts(
+      createEmptyRepresentativeFrameCandidates(),
+    ),
     candidateCategoryCount: 0,
+    excludedCandidateCount: 0,
   }
 }
 
@@ -580,7 +649,7 @@ function hasCompletePose(pose: FacePose | undefined): pose is FacePose {
   )
 }
 
-function selectTopCandidates(
+function collectCategoryCandidates(
   frames: ExtractedVideoFrame[],
   key: RepresentativeFrameCandidateKey,
   scoreCandidate: (pose: FacePose) => number | null,
@@ -606,11 +675,7 @@ function selectTopCandidates(
         candidate !== null,
     )
     .sort((a, b) => b.score - a.score || a.frameIndex - b.frameIndex)
-    .slice(0, REPRESENTATIVE_CANDIDATE_LIMIT)
-    .map((candidate, index) => ({
-      ...candidate,
-      rank: index + 1,
-    }))
+    .slice(0, MAX_CANDIDATES_PER_CATEGORY)
 
   return scoredCandidates
 }
@@ -624,7 +689,6 @@ function buildRepresentativeFrameCandidate(
 
   return {
     key,
-    rank: 0,
     frameIndex: frame.index,
     timestamp: frame.timestamp,
     score: Number(clamp(score, 0, 1).toFixed(4)),
@@ -746,35 +810,27 @@ function scoreDirectionalCandidate(
   secondaryLimit: number,
   rollLimit: number,
 ): number {
-  const primaryScore = clamp((primaryAbs - primaryMinAbs) / 24, 0, 1)
+  const primaryScore = clamp((primaryAbs - primaryMinAbs) / 30, 0, 1)
   const secondaryScore = 1 - clamp(secondaryAbs / secondaryLimit, 0, 1)
   const rollScore = 1 - clamp(rollAbs / rollLimit, 0, 1)
 
-  return primaryScore * 0.65 + secondaryScore * 0.22 + rollScore * 0.13
+  return primaryScore * 0.7 + secondaryScore * 0.18 + rollScore * 0.12
 }
 
 function toRepresentativeCandidatePreview(
   candidate: RepresentativeFrameCandidate,
 ): unknown {
   return {
-    rank: candidate.rank,
     frameIndex: candidate.frameIndex,
     timestamp: Number(candidate.timestamp.toFixed(3)),
     score: candidate.score,
-    status: candidate.status,
-    detected: candidate.detected,
-    landmarksCount: candidate.landmarksCount,
     pose: {
       pitch: candidate.pose.pitch,
       yaw: candidate.pose.yaw,
       roll: candidate.pose.roll,
     },
-    evaluation: {
-      yawAbs: Number(candidate.yawAbs.toFixed(3)),
-      pitchAbs: Number(candidate.pitchAbs.toFixed(3)),
-      rollAbs: Number(candidate.rollAbs.toFixed(3)),
-    },
-    landmarkPreview: candidate.landmarkPreview,
+    landmarksCount: candidate.landmarksCount,
+    status: candidate.status,
   }
 }
 
@@ -1136,7 +1192,7 @@ function renderRepresentativeFrameCandidatesPanel(): string {
           <p>詳細スキャン済みフレームの yaw / pitch / roll から候補を自動抽出します。</p>
         </div>
       </div>
-      <p class="candidate-note">左右・上下の最終ラベルはユーザーが手動で確定します。Step 2-F では候補抽出用に動画全体を詳細スキャンし、確定済み代表フレームから 3D推測用データセットを作成します。3D推測、3D点群 preview、手動微調整、保存 / export はまだ行いません。</p>
+      <p class="candidate-note">左右・上下の最終ラベルはユーザーが手動で確定します。Step 2-F では候補抽出用に動画全体を 0.1 秒間隔で詳細スキャンし、候補カテゴリごとに複数候補を保持します。3D推測、3D点群 preview、手動微調整、保存 / export はまだ行いません。</p>
       ${renderSelectedRepresentativeFramesPanel()}
       ${renderReadinessPanel()}
       ${renderInferenceDatasetPanel()}
@@ -1190,7 +1246,7 @@ function renderRepresentativeCandidateCategory(
       <div class="candidate-category-toggle-row">
         <div>
           <h3>${escapeHtml(title)}（${countText}）</h3>
-          <span>上位 ${candidates.length} 件</span>
+          <span>候補 ${candidates.length} 件</span>
         </div>
         <button
           class="candidate-category-toggle-button"
@@ -1218,13 +1274,12 @@ function renderRepresentativeCandidateItem(
 ): string {
   return `
     <div class="candidate-item">
-      <img src="${escapeHtml(candidate.thumbnailUrl)}" alt="${escapeHtml(title)} ${candidate.rank}位 Frame ${String(candidate.frameIndex).padStart(3, "0")}" />
+      <img src="${escapeHtml(candidate.thumbnailUrl)}" alt="${escapeHtml(title)} Frame ${String(candidate.frameIndex).padStart(3, "0")}" />
       <div class="candidate-item-body">
-        <strong>${candidate.rank}位</strong>
+        <strong>score: ${formatScore(candidate.score)}</strong>
         <span>frame index: ${candidate.frameIndex}</span>
         <span>timestamp: ${candidate.timestamp.toFixed(1)}s</span>
         <span>yaw: ${formatNumber(candidate.pose.yaw)} / pitch: ${formatNumber(candidate.pose.pitch)} / roll: ${formatNumber(candidate.pose.roll)}</span>
-        <span>score: ${formatScore(candidate.score)}</span>
         <span>landmarks 数: ${candidate.landmarksCount}</span>
         <span>解析状態: ${formatFrameAnalysisStatus(candidate.status)}</span>
         <div class="candidate-action-group" aria-label="手動ラベル確定">
@@ -1477,6 +1532,30 @@ function renderAnalysisPanel(): string {
           <dt>候補カテゴリ</dt>
           <dd>${summary.candidateCategoryCount}</dd>
         </div>
+        <div>
+          <dt>front 候補</dt>
+          <dd>${summary.candidateCounts.front}</dd>
+        </div>
+        <div>
+          <dt>yawPositive 候補</dt>
+          <dd>${summary.candidateCounts.yawPositive}</dd>
+        </div>
+        <div>
+          <dt>yawNegative 候補</dt>
+          <dd>${summary.candidateCounts.yawNegative}</dd>
+        </div>
+        <div>
+          <dt>pitchPositive 候補</dt>
+          <dd>${summary.candidateCounts.pitchPositive}</dd>
+        </div>
+        <div>
+          <dt>pitchNegative 候補</dt>
+          <dd>${summary.candidateCounts.pitchNegative}</dd>
+        </div>
+        <div>
+          <dt>除外候補</dt>
+          <dd>${summary.excludedCandidateCount}</dd>
+        </div>
       </dl>
       <p class="candidate-note">候補以外の詳細スキャンフレームは表示しません。</p>
     </section>
@@ -1550,11 +1629,14 @@ function buildAuthoringDebugPreview(): unknown {
     scanSummary: {
       scanIntervalSec: scanSummary.scanIntervalSec,
       maxScanFrames: scanSummary.maxScanFrames,
+      maxCandidatesPerCategory: scanSummary.maxCandidatesPerCategory,
       scannedFrameCount: scanSummary.scannedFrameCount,
       analyzedFrameCount: scanSummary.analyzedFrameCount,
       detectedFrameCount: scanSummary.detectedFrameCount,
       candidateSourceFrameCount: scanSummary.candidateSourceFrameCount,
+      candidateCounts: scanSummary.candidateCounts,
       candidateCategoryCount: scanSummary.candidateCategoryCount,
+      excludedCandidateCount: scanSummary.excludedCandidateCount,
     },
     representativeFrameCandidates: toRepresentativeCandidatesPreview(
       representativeFrameCandidates,
@@ -1821,13 +1903,18 @@ async function scanVideoForRepresentativeCandidates(
       scanSummary: {
         scanIntervalSec: scanPlan.intervalSec,
         maxScanFrames: MAX_DETAILED_SCAN_FRAME_COUNT,
+        maxCandidatesPerCategory: MAX_CANDIDATES_PER_CATEGORY,
         scannedFrameCount: scanPlan.timestamps.length,
         analyzedFrameCount: scannedFrames.length,
         detectedFrameCount,
         candidateSourceFrameCount: getCandidateSourceFramesFromFrames(
           scannedFrames,
         ).length,
+        candidateCounts: getCandidateCounts(
+          createEmptyRepresentativeFrameCandidates(),
+        ),
         candidateCategoryCount: 0,
+        excludedCandidateCount: selectedRepresentativeFrames.excluded.length,
       },
     })
     render()
@@ -1844,13 +1931,16 @@ async function scanVideoForRepresentativeCandidates(
   const scanSummary: DetailedScanSummary = {
     scanIntervalSec: scanPlan.intervalSec,
     maxScanFrames: MAX_DETAILED_SCAN_FRAME_COUNT,
+    maxCandidatesPerCategory: MAX_CANDIDATES_PER_CATEGORY,
     scannedFrameCount: scanPlan.timestamps.length,
     analyzedFrameCount: scannedFrames.length,
     detectedFrameCount,
     candidateSourceFrameCount: candidateSourceFrames.length,
+    candidateCounts: getCandidateCounts(representativeFrameCandidates),
     candidateCategoryCount: getCandidateCategoryCount(
       representativeFrameCandidates,
     ),
+    excludedCandidateCount: selectedRepresentativeFrames.excluded.length,
   }
 
   return {

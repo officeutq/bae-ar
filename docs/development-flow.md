@@ -155,7 +155,7 @@ MP4 動画を入力
   -> 表示用に一定間隔でフレーム抽出
   -> 候補抽出用に動画全体を詳細スキャン
   -> MediaPipe Face Landmarker で各スキャンフレームの 2D 478 landmarks と FacePose を取得
-  -> yaw / pitch / roll から各カテゴリ上位複数件の代表フレーム候補を自動抽出
+  -> yaw / pitch / roll から各カテゴリに条件に合う代表フレーム候補を自動抽出
   -> 候補を複数比較する
   -> 人間が正面 / 左向き / 右向き / 上向き / 下向き / 除外を確定
   -> 確定済み代表フレームから 3D 推測用データセットを作成
@@ -170,7 +170,7 @@ MP4 動画を入力
 
 この処理は完全自動生成ではなく、自動推測 + 手動補正として扱います。動画入力、フレーム抽出、Authoring 用フレーム解析、代表フレーム抽出、手動ラベル確定、3D推測用 dataset 作成は IdealFace Authoring Tool の責務です。Engine Runtime は動画入力やフレーム抽出、Authoring 用フレーム解析、dataset 作成、`idealLandmarks3D` 作成を行わず、完成済みの IdealFace asset を読み込んで使います。
 
-Step 2-F では候補 1 件だけで確定せず、正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を各カテゴリ上位複数件表示し、手動ラベル確定 UI へ進む土台にします。主画面では代表フレーム候補を中心に見せ、表示用抽出フレーム一覧は debug / 折りたたみ表示として扱います。候補以外の詳細スキャンフレームは UI に大量表示せず、必要がなければ破棄してよいものとします。候補に採用されたフレームは、手動確定と dataset 作成に使えるよう 2D 478 landmarks と FacePose を保持します。代表フレーム抽出処理と Authoring 用 UI は IdealFace Authoring Tool の責務であり、Engine Runtime には入れません。
+Step 2-F では候補 1 件だけで確定せず、正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を各カテゴリに複数件保持・表示し、手動ラベル確定 UI へ進む土台にします。主画面では代表フレーム候補を中心に見せ、表示用抽出フレーム一覧は debug / 折りたたみ表示として扱います。候補以外の詳細スキャンフレームは UI に大量表示せず、必要がなければ破棄してよいものとします。候補に採用されたフレームは、手動確定と dataset 作成に使えるよう 2D 478 landmarks と FacePose を保持します。代表フレーム抽出処理と Authoring 用 UI は IdealFace Authoring Tool の責務であり、Engine Runtime には入れません。
 
 Step 2-C で未実装のもの:
 
@@ -218,7 +218,7 @@ Step 2-E でまだ未実装のもの:
 
 Step 2-F で実装済みのもの:
 
-- 候補抽出用として MP4 動画全体を 0.25 秒間隔、最大 120 フレーム程度まで詳細スキャンする
+- 候補抽出用として MP4 動画全体を 0.1 秒間隔、最大スキャン数の上限付きで詳細スキャンする
 - 詳細スキャン済みフレームから、顔検出あり、landmarks 数 478、FacePose 取得済みのフレームだけを候補評価に使う
 - 全スキャンフレーム一覧を UI に表示せず、代表フレーム候補中心に表示する
 - 詳細スキャン summary と JSON preview の `scanSummary` を表示する
@@ -312,7 +312,7 @@ IdealFace Authoring Tool を変更した場合は、Runtime と Authoring の責
 - 代表フレーム候補カテゴリをトグルで開閉できる
 - 開いたカテゴリだけ候補カードが表示される
 - 各カテゴリの候補件数が表示される
-- 各候補に順位 / frame index / timestamp / yaw / pitch / roll / score / landmarks 数が表示される
+- 各候補に frame index / timestamp / yaw / pitch / roll / score / landmarks 数が表示される
 - 解析 summary が代表フレーム候補の近くに表示される
 - 抽出フレーム一覧が debug / 折りたたみ表示になっている
 - JSON preview に `representativeFrameCandidates` のカテゴリごとの候補配列を表示できる
@@ -339,3 +339,18 @@ IdealFace Authoring Tool を変更した場合は、Runtime と Authoring の責
 - Engine Runtime に動画入力、フレーム抽出、Authoring 用フレーム解析、代表フレーム抽出、手動ラベル確定、dataset 作成処理を追加していない
 
 PR 本文には IdealFace Authoring Tool の手動確認事項を記載します。
+
+## IdealFace Authoring Tool Step 2-F 改良の確認
+
+Step 2-F 改良では、詳細スキャン間隔を `0.1` 秒にし、最大スキャン数の上限を残します。候補は上位5件だけに限定せず、`front` / `yawPositive` / `yawNegative` / `pitchPositive` / `pitchNegative` ごとに条件に合うものを保持します。
+
+確認観点:
+
+- UI の `scanSummary` と JSON preview に `scanIntervalSec` / `candidateCounts` / `excludedCandidateCount` が表示される
+- 候補カテゴリトグル内に複数候補が表示され、順位ではなく `score` が表示される
+- pitch / yaw の片方に多少のズレがあっても候補として拾われる
+- 除外した候補は候補 UI 一覧から外れ、`selectedRepresentativeFrames.excluded` には残る
+- 除外候補は確定済み代表フレーム一覧、3D推測準備状況、`idealLandmarks3DInferenceDataset` に含まれない
+- JSON preview の `representativeFrameCandidates` に `rank`、478 landmarks 全文、サムネイル data URL 全文が出ない
+- 3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力を Step 2-F に含めない
+- Engine Runtime と Beauty Studio に詳細スキャンや候補振り分け処理を追加しない
