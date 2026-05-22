@@ -362,7 +362,7 @@ Authoring 用フレーム解析は IdealFace Authoring Tool の責務です。En
 
 ## IdealFace Authoring Tool Step 2-C
 
-Step 2-C では、`tools/ideal-face-authoring` に解析済みフレームから代表フレーム候補を自動抽出し、各カテゴリ上位複数件を比較できる実装を追加しました。
+Step 2-C では、`tools/ideal-face-authoring` に解析済みフレームから代表フレーム候補を自動抽出し、各カテゴリ上位複数件を比較できる実装を追加しました。Step 2-C UI 整理では、代表フレーム候補を主表示にし、抽出フレーム一覧は debug / 折りたたみ表示にしました。
 
 実装済みの範囲:
 
@@ -370,8 +370,10 @@ Step 2-C では、`tools/ideal-face-authoring` に解析済みフレームから
 - yaw / pitch / roll から正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を各カテゴリ上位複数件抽出する
 - 候補一覧にサムネイル、順位、frame index、timestamp、yaw / pitch / roll、score、landmarks 数を表示する
 - 候補が見つからない枠には「候補なし」と表示する
+- 解析 summary を代表フレーム候補の近くに表示する
+- 抽出フレーム一覧を初期状態では閉じ、debug / 確認用として開けるようにする
 - JSON preview に `representativeFrameCandidates` としてカテゴリごとの候補配列を表示する
-- JSON preview には 478 landmarks 全文を出さない
+- JSON preview には 478 landmarks 全文やサムネイル data URL 全文を出さない
 
 Step 2-C の未実装範囲:
 
@@ -382,7 +384,7 @@ Step 2-C の未実装範囲:
 - 保存 / export
 - 複数画像入力
 
-代表フレーム抽出処理は IdealFace Authoring Tool の責務です。Engine Runtime には動画入力、フレーム抽出、Authoring 用フレーム解析、代表フレーム抽出処理を追加しません。
+将来的に解析対象フレームが増えても、ユーザーには代表フレーム候補を中心に見せます。代表フレーム抽出処理と Authoring 用 UI は IdealFace Authoring Tool の責務です。Engine Runtime には動画入力、フレーム抽出、Authoring 用フレーム解析、代表フレーム抽出処理、抽出フレーム一覧 UI、代表フレーム表示 UI を追加しません。
 
 ## IdealFace / Projection / Shape Processing 中核仕様
 

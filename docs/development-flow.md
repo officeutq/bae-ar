@@ -146,7 +146,7 @@ Beauty Studio では、開発確認用として overlay や簡易調整 UI を�
 
 IdealFace Authoring Tool は、BAE AR 独自の IdealFace asset を作成するための領域です。IdealFace の本体である `idealLandmarks3D` 478点は、Authoring Tool 側で将来的に動画または複数画像から作成する方針です。初期入力形式は MP4 動画のみとし、複数画像入力は将来対応とします。
 
-初期段階では入力形式を広げず、MP4 動画からのフレーム抽出、代表フレーム候補の自動抽出、ユーザーによるラベル確定の流れを優先して作ります。Step 2-A では、MP4 動画入力と一定間隔でのフレーム抽出、サムネイル一覧表示までを実装済みです。Step 2-B では、抽出済みフレームの MediaPipe 解析、2D 478 landmarks と FacePose の取得、解析結果 summary 表示までを実装済みです。Step 2-C では、yaw / pitch / roll による代表フレーム候補の自動抽出、各カテゴリ上位複数件の候補一覧表示、JSON preview への候補概要表示までを実装済みです。
+初期段階では入力形式を広げず、MP4 動画からのフレーム抽出、代表フレーム候補の自動抽出、ユーザーによるラベル確定の流れを優先して作ります。Step 2-A では、MP4 動画入力と一定間隔でのフレーム抽出、サムネイル一覧表示までを実装済みです。Step 2-B では、抽出済みフレームの MediaPipe 解析、2D 478 landmarks と FacePose の取得、解析結果 summary 表示までを実装済みです。Step 2-C では、yaw / pitch / roll による代表フレーム候補の自動抽出、各カテゴリ上位複数件の候補一覧表示、JSON preview への候補概要表示、代表フレーム候補中心の UI 整理までを実装済みです。
 
 想定する流れ:
 
@@ -168,7 +168,7 @@ MP4 動画を入力
 
 この処理は完全自動生成ではなく、自動推測 + 手動補正として扱います。動画入力、フレーム抽出、Authoring 用フレーム解析は IdealFace Authoring Tool の責務です。Engine Runtime は動画入力やフレーム抽出、Authoring 用フレーム解析、`idealLandmarks3D` 作成を行わず、完成済みの IdealFace asset を読み込んで使います。
 
-Step 2-C では候補 1 件だけで確定せず、正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を各カテゴリ上位複数件表示し、次の手動ラベル確定 UI へ進む土台にします。代表フレーム抽出処理は IdealFace Authoring Tool の責務であり、Engine Runtime には入れません。
+Step 2-C では候補 1 件だけで確定せず、正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を各カテゴリ上位複数件表示し、次の手動ラベル確定 UI へ進む土台にします。主画面では代表フレーム候補を中心に見せ、抽出フレーム一覧は debug / 折りたたみ表示として扱います。代表フレーム抽出処理と Authoring 用 UI は IdealFace Authoring Tool の責務であり、Engine Runtime には入れません。
 
 Step 2-C で未実装のもの:
 
@@ -256,8 +256,11 @@ IdealFace Authoring Tool を変更した場合は、Runtime と Authoring の責
 - 代表フレーム候補がカテゴリ別に複数件表示される
 - 正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を確認できる
 - 各候補に順位 / frame index / timestamp / yaw / pitch / roll / score / landmarks 数が表示される
+- 解析 summary が代表フレーム候補の近くに表示される
+- 抽出フレーム一覧が debug / 折りたたみ表示になっている
 - JSON preview に `representativeFrameCandidates` のカテゴリごとの候補配列を表示できる
 - 478 landmarks 全文を JSON preview に出していない
+- サムネイル data URL 全文を JSON preview に出していない
 - 手動ラベル確定 UI、3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力を Step 2-C に含めていない
 - Engine Runtime に動画入力、フレーム抽出、Authoring 用フレーム解析処理を追加していない
 

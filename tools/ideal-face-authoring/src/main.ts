@@ -109,6 +109,7 @@ interface VideoSourceState {
 let videoSource: VideoSourceState | null = null
 let faceLandmarker: FaceLandmarker | null = null
 let faceLandmarkerInitialization: Promise<FaceLandmarker> | null = null
+let isDebugFrameListOpen = false
 const extractionVideo = document.createElement("video")
 const analysisCanvas = document.createElement("canvas")
 const thumbnailCanvas = document.createElement("canvas")
@@ -678,7 +679,9 @@ function renderRepresentativeCandidateItem(
     <div class="candidate-item">
       <img src="${escapeHtml(candidate.thumbnailUrl)}" alt="${escapeHtml(title)} ${candidate.rank}位 Frame ${String(candidate.frameIndex).padStart(3, "0")}" />
       <div class="candidate-item-body">
-        <strong>${candidate.rank}位 Frame ${String(candidate.frameIndex).padStart(3, "0")} / ${candidate.timestamp.toFixed(1)}s</strong>
+        <strong>${candidate.rank}位</strong>
+        <span>frame index: ${candidate.frameIndex}</span>
+        <span>timestamp: ${candidate.timestamp.toFixed(1)}s</span>
         <span>yaw: ${formatNumber(candidate.pose.yaw)} / pitch: ${formatNumber(candidate.pose.pitch)} / roll: ${formatNumber(candidate.pose.roll)}</span>
         <span>score: ${formatScore(candidate.score)}</span>
         <span>landmarks 数: ${candidate.landmarksCount}</span>
@@ -705,7 +708,7 @@ function renderAnalysisPanel(): string {
     <section class="analysis-panel" aria-label="フレーム解析">
       <div class="panel-heading">
         <div>
-          <h2>フレーム解析</h2>
+          <h2>解析概要</h2>
           <p>抽出済みフレームから 2D 478 landmarks と FacePose を取得します。</p>
         </div>
         <button id="analyze-frames-button" class="analysis-button" type="button" ${disabled ? "disabled" : ""}>
@@ -785,6 +788,27 @@ function renderFrameThumbnails(): string {
   `
 }
 
+function renderDebugFrameListPanel(): string {
+  return `
+    <section class="frames-panel frames-panel-debug" aria-label="抽出フレーム一覧 debug">
+      <div class="debug-panel-heading">
+        <div>
+          <h2>抽出フレーム一覧（debug）</h2>
+          <p>抽出フレーム全件の確認用表示です。通常は代表フレーム候補を確認します。</p>
+        </div>
+        <button id="toggle-debug-frames-button" class="debug-toggle-button" type="button" aria-expanded="${isDebugFrameListOpen}">
+          ${isDebugFrameListOpen ? "抽出フレームを隠す" : "抽出フレームを表示"}
+        </button>
+      </div>
+      ${
+        isDebugFrameListOpen
+          ? renderFrameThumbnails()
+          : `<p class="debug-collapsed-text">抽出フレーム一覧は閉じています。</p>`
+      }
+    </section>
+  `
+}
+
 function buildAuthoringDebugPreview(): unknown {
   const analysisSummary = getAnalysisSummary()
   const representativeFrameCandidates = getRepresentativeFrameCandidates()
@@ -859,6 +883,15 @@ function attachAnalysisHandler(): void {
     .querySelector<HTMLButtonElement>("#analyze-frames-button")
     ?.addEventListener("click", async () => {
       await analyzeExtractedFrames()
+    })
+}
+
+function attachDebugFrameListHandler(): void {
+  document
+    .querySelector<HTMLButtonElement>("#toggle-debug-frames-button")
+    ?.addEventListener("click", () => {
+      isDebugFrameListOpen = !isDebugFrameListOpen
+      render()
     })
 }
 
@@ -1153,6 +1186,7 @@ async function handleVideoFileSelection(file: File): Promise<void> {
     analysisError: null,
     error: null,
   })
+  isDebugFrameListOpen = false
   render()
 
   try {
@@ -1375,10 +1409,7 @@ function render(): void {
 
       ${renderRepresentativeFrameCandidatesPanel()}
 
-      <section class="frames-panel" aria-label="抽出フレーム">
-        <h2>抽出フレーム</h2>
-        ${renderFrameThumbnails()}
-      </section>
+      ${renderDebugFrameListPanel()}
 
       <section class="workspace">
         <div class="preview-panel">
@@ -1416,6 +1447,7 @@ function render(): void {
 
   attachVideoInputHandler()
   attachAnalysisHandler()
+  attachDebugFrameListHandler()
 }
 
 const style = document.createElement("style")
@@ -1543,7 +1575,8 @@ style.textContent = `
   }
 
   .file-button,
-  .analysis-button {
+  .analysis-button,
+  .debug-toggle-button {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -1559,7 +1592,8 @@ style.textContent = `
     white-space: nowrap;
   }
 
-  .analysis-button {
+  .analysis-button,
+  .debug-toggle-button {
     font-family: inherit;
   }
 
@@ -1569,7 +1603,8 @@ style.textContent = `
   }
 
   .file-button:focus-visible,
-  .analysis-button:focus-visible {
+  .analysis-button:focus-visible,
+  .debug-toggle-button:focus-visible {
     outline: 3px solid #9fc8bd;
     outline-offset: 2px;
   }
@@ -1727,6 +1762,35 @@ style.textContent = `
   .candidate-card-empty {
     min-height: 180px;
     align-content: start;
+  }
+
+  .frames-panel-debug {
+    border-top: 1px solid #ccd8d3;
+    padding-top: 16px;
+  }
+
+  .debug-panel-heading {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 12px;
+  }
+
+  .debug-panel-heading p,
+  .debug-collapsed-text {
+    margin: 5px 0 0;
+    color: #5d675f;
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  .debug-collapsed-text {
+    margin: 0;
+    border: 1px solid #ccd8d3;
+    border-radius: 8px;
+    background: #ffffff;
+    padding: 14px;
   }
 
   @media (max-width: 520px) {
@@ -1906,7 +1970,8 @@ style.textContent = `
       grid-template-columns: 1fr;
     }
 
-    .panel-heading {
+    .panel-heading,
+    .debug-panel-heading {
       align-items: flex-start;
       flex-direction: column;
     }

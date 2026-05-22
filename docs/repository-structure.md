@@ -231,8 +231,10 @@ Step 2-C の範囲:
 - yaw / pitch / roll から正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を各カテゴリ上位複数件抽出する
 - 候補一覧にサムネイル、順位、frame index、timestamp、yaw / pitch / roll、score、landmarks 数を表示する
 - 候補がない場合に「候補なし」を表示する
+- 解析 summary を代表フレーム候補の近くに表示する
+- 代表フレーム候補を主表示にし、抽出フレーム一覧を debug / 折りたたみ表示として扱う
 - JSON preview に `representativeFrameCandidates` としてカテゴリごとの候補配列を表示する
-- JSON preview には 478 landmarks 全文を出さない
+- JSON preview には 478 landmarks 全文やサムネイル data URL 全文を出さない
 
 未実装:
 
@@ -243,4 +245,4 @@ Step 2-C の範囲:
 - 保存 / export
 - 複数画像入力
 
-代表フレーム抽出処理は IdealFace Authoring Tool の責務であり、Engine Runtime には追加しません。
+将来的に解析対象フレームが増えても、ユーザーには代表フレーム候補を中心に見せます。代表フレーム抽出処理と Authoring 用 UI は IdealFace Authoring Tool の責務であり、Engine Runtime には動画入力、フレーム抽出、代表フレーム抽出、Authoring UI を追加しません。

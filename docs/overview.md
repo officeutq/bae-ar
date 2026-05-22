@@ -188,7 +188,7 @@ MediaPipe 解析は Authoring Tool の抽出フレームに対する処理です
 
 ## IdealFace Authoring Tool Step 2-C
 
-`tools/ideal-face-authoring` では、Step 2-C として解析済みフレームから代表フレーム候補を自動抽出し、各カテゴリの上位複数件を比較できる実装を追加済みです。
+`tools/ideal-face-authoring` では、Step 2-C として解析済みフレームから代表フレーム候補を自動抽出し、各カテゴリの上位複数件を比較できる実装を追加済みです。Step 2-C UI 整理では、ユーザーが見る主画面を抽出フレーム一覧ではなく代表フレーム候補中心にしました。
 
 実装済み:
 
@@ -196,10 +196,14 @@ MediaPipe 解析は Authoring Tool の抽出フレームに対する処理です
 - yaw / pitch / roll を使って正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を各カテゴリ上位複数件抽出する
 - 候補一覧にサムネイル、順位、frame index、timestamp、yaw / pitch / roll、score、landmarks 数を表示する
 - 候補がない場合は「候補なし」と表示する
+- 解析 summary を代表フレーム候補の近くに表示する
+- 抽出フレーム一覧は debug / 折りたたみ表示として扱う
 - JSON preview に `representativeFrameCandidates` としてカテゴリごとの候補配列を表示する
-- JSON preview には 478 landmarks 全文を出さない
+- JSON preview には 478 landmarks 全文やサムネイル data URL 全文を出さない
 
-候補 1 件だけで確定せず、候補を複数比較して次の手動ラベル確定 UI へ進む方針です。手動ラベル確定 UI、3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力はまだ未実装です。代表フレーム抽出処理は IdealFace Authoring Tool の責務であり、Runtime には入れません。
+将来的に解析対象フレームが増えても、ユーザーには代表フレーム候補を中心に見せ、抽出フレーム一覧は debug / 確認用として折りたたみます。
+
+候補 1 件だけで確定せず、候補を複数比較して次の手動ラベル確定 UI へ進む方針です。手動ラベル確定 UI、3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力はまだ未実装です。代表フレーム抽出処理と Authoring 用 UI は IdealFace Authoring Tool の責務であり、Runtime には入れません。
 
 ## IdealFace / Projection / Shape Processing 中核仕様
 

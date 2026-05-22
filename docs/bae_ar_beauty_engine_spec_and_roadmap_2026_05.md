@@ -844,8 +844,10 @@ Step 2-C の実装範囲:
 - yaw / pitch / roll から正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を各カテゴリ上位複数件抽出する
 - 候補一覧にサムネイル、順位、frame index、timestamp、yaw / pitch / roll、score、landmarks 数を表示する
 - 候補がない場合に「候補なし」と表示する
+- 解析 summary を代表フレーム候補の近くに表示する
+- 代表フレーム候補を主表示にし、抽出フレーム一覧を debug / 折りたたみ表示として扱う
 - JSON preview に `representativeFrameCandidates` としてカテゴリごとの候補配列を表示する
-- JSON preview には 478 landmarks 全文を出さない
+- JSON preview には 478 landmarks 全文やサムネイル data URL 全文を出さない
 
 Step 2-C の制限:
 
@@ -854,7 +856,7 @@ Step 2-C の制限:
 - 3D点群 preview、手動微調整、保存 / export は未実装
 - 複数画像入力は未実装 / 将来対応
 
-代表フレーム抽出処理は IdealFace Authoring Tool の責務です。Engine Runtime には動画入力、フレーム抽出、Authoring 用フレーム解析、代表フレーム抽出処理を入れません。
+将来的に解析対象フレームが増えても、ユーザーには抽出フレーム一覧ではなく代表フレーム候補を中心に見せます。代表フレーム抽出処理と Authoring 用 UI は IdealFace Authoring Tool の責務です。Engine Runtime には動画入力、フレーム抽出、Authoring 用フレーム解析、代表フレーム抽出処理、抽出フレーム一覧 UI、代表フレーム表示 UI を入れません。
 
 ## 19. IdealFace / Projection / Shape Processing 中核仕様
 
