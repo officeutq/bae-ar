@@ -47,6 +47,19 @@ type RepresentativeFrameCandidateKey =
   | "pitchPositive"
   | "pitchNegative"
 
+type ManualRepresentativeFrameLabel =
+  | "front"
+  | "left"
+  | "right"
+  | "up"
+  | "down"
+  | "excluded"
+
+type SelectableRepresentativeFrameLabel = Exclude<
+  ManualRepresentativeFrameLabel,
+  "excluded"
+>
+
 type FrameAnalysisStatus =
   | "pending"
   | "analyzing"
@@ -93,6 +106,24 @@ type RepresentativeFrameCandidates = Record<
   RepresentativeFrameCandidate[]
 >
 
+interface SelectedRepresentativeFrame {
+  label: ManualRepresentativeFrameLabel
+  frameIndex: number
+  timestamp: number
+  pose: FacePose
+  score: number
+  landmarksCount: number
+  status: "selected" | "excluded"
+  thumbnailUrl: string
+}
+
+type SelectedRepresentativeFrames = Record<
+  SelectableRepresentativeFrameLabel,
+  SelectedRepresentativeFrame | null
+> & {
+  excluded: SelectedRepresentativeFrame[]
+}
+
 interface VideoSourceState {
   fileName: string
   objectUrl: string
@@ -110,6 +141,8 @@ let videoSource: VideoSourceState | null = null
 let faceLandmarker: FaceLandmarker | null = null
 let faceLandmarkerInitialization: Promise<FaceLandmarker> | null = null
 let isDebugFrameListOpen = false
+let selectedRepresentativeFrames: SelectedRepresentativeFrames =
+  createEmptySelectedRepresentativeFrames()
 const extractionVideo = document.createElement("video")
 const analysisCanvas = document.createElement("canvas")
 const thumbnailCanvas = document.createElement("canvas")
@@ -160,6 +193,21 @@ function formatFrameAnalysisStatus(status: FrameAnalysisStatus): string {
   }
 
   return labels[status]
+}
+
+function formatManualRepresentativeFrameLabel(
+  label: ManualRepresentativeFrameLabel,
+): string {
+  const labels: Record<ManualRepresentativeFrameLabel, string> = {
+    front: "正面",
+    left: "左向き",
+    right: "右向き",
+    up: "上向き",
+    down: "下向き",
+    excluded: "除外",
+  }
+
+  return labels[label]
 }
 
 function formatScore(value: number): string {
@@ -621,6 +669,157 @@ function toRepresentativeCandidatesPreview(
   }
 }
 
+function createEmptySelectedRepresentativeFrames(): SelectedRepresentativeFrames {
+  return {
+    front: null,
+    left: null,
+    right: null,
+    up: null,
+    down: null,
+    excluded: [],
+  }
+}
+
+function toSelectedRepresentativeFramePreview(
+  frame: SelectedRepresentativeFrame | null,
+): unknown {
+  if (!frame) {
+    return null
+  }
+
+  return {
+    label: frame.label,
+    frameIndex: frame.frameIndex,
+    timestamp: Number(frame.timestamp.toFixed(3)),
+    pose: {
+      pitch: frame.pose.pitch,
+      yaw: frame.pose.yaw,
+      roll: frame.pose.roll,
+    },
+    score: frame.score,
+    landmarksCount: frame.landmarksCount,
+    status: frame.status,
+  }
+}
+
+function toSelectedRepresentativeFramesPreview(): unknown {
+  return {
+    front: toSelectedRepresentativeFramePreview(
+      selectedRepresentativeFrames.front,
+    ),
+    left: toSelectedRepresentativeFramePreview(
+      selectedRepresentativeFrames.left,
+    ),
+    right: toSelectedRepresentativeFramePreview(
+      selectedRepresentativeFrames.right,
+    ),
+    up: toSelectedRepresentativeFramePreview(selectedRepresentativeFrames.up),
+    down: toSelectedRepresentativeFramePreview(
+      selectedRepresentativeFrames.down,
+    ),
+    excluded: selectedRepresentativeFrames.excluded.map((frame) =>
+      toSelectedRepresentativeFramePreview(frame),
+    ),
+  }
+}
+
+function getAllRepresentativeCandidates(
+  candidates: RepresentativeFrameCandidates,
+): RepresentativeFrameCandidate[] {
+  return [
+    ...candidates.front,
+    ...candidates.yawPositive,
+    ...candidates.yawNegative,
+    ...candidates.pitchPositive,
+    ...candidates.pitchNegative,
+  ]
+}
+
+function findRepresentativeCandidate(
+  candidateKey: RepresentativeFrameCandidateKey,
+  frameIndex: number,
+): RepresentativeFrameCandidate | null {
+  const candidates = getRepresentativeFrameCandidates()
+
+  return (
+    getAllRepresentativeCandidates(candidates).find(
+      (candidate) =>
+        candidate.key === candidateKey && candidate.frameIndex === frameIndex,
+    ) ?? null
+  )
+}
+
+function buildSelectedRepresentativeFrame(
+  label: ManualRepresentativeFrameLabel,
+  candidate: RepresentativeFrameCandidate,
+): SelectedRepresentativeFrame {
+  return {
+    label,
+    frameIndex: candidate.frameIndex,
+    timestamp: candidate.timestamp,
+    pose: candidate.pose,
+    score: candidate.score,
+    landmarksCount: candidate.landmarksCount,
+    status: label === "excluded" ? "excluded" : "selected",
+    thumbnailUrl: candidate.thumbnailUrl,
+  }
+}
+
+function removeFrameFromSelectedRepresentativeFrames(frameIndex: number): void {
+  const selectableLabels: SelectableRepresentativeFrameLabel[] = [
+    "front",
+    "left",
+    "right",
+    "up",
+    "down",
+  ]
+
+  for (const label of selectableLabels) {
+    if (selectedRepresentativeFrames[label]?.frameIndex === frameIndex) {
+      selectedRepresentativeFrames[label] = null
+    }
+  }
+
+  selectedRepresentativeFrames.excluded =
+    selectedRepresentativeFrames.excluded.filter(
+      (frame) => frame.frameIndex !== frameIndex,
+    )
+}
+
+function selectRepresentativeFrame(
+  label: ManualRepresentativeFrameLabel,
+  candidate: RepresentativeFrameCandidate,
+): void {
+  removeFrameFromSelectedRepresentativeFrames(candidate.frameIndex)
+
+  const selectedFrame = buildSelectedRepresentativeFrame(label, candidate)
+
+  if (label === "excluded") {
+    selectedRepresentativeFrames.excluded = [
+      ...selectedRepresentativeFrames.excluded,
+      selectedFrame,
+    ].sort((a, b) => a.frameIndex - b.frameIndex)
+    return
+  }
+
+  selectedRepresentativeFrames[label] = selectedFrame
+}
+
+function clearSelectedRepresentativeFrame(
+  label: ManualRepresentativeFrameLabel,
+  frameIndex?: number,
+): void {
+  if (label === "excluded") {
+    selectedRepresentativeFrames.excluded =
+      selectedRepresentativeFrames.excluded.filter(
+        (frame) => frame.frameIndex !== frameIndex,
+      )
+    return
+  }
+
+  selectedRepresentativeFrames[label] = null
+}
+
 function renderRepresentativeFrameCandidatesPanel(): string {
   const candidates = getRepresentativeFrameCandidates()
 
@@ -632,7 +831,9 @@ function renderRepresentativeFrameCandidatesPanel(): string {
           <p>解析済みフレームの yaw / pitch / roll から候補を自動抽出します。</p>
         </div>
       </div>
-      <p class="candidate-note">左右・上下の最終ラベルは未確定です。現時点では MediaPipe 推定値の正負方向として確認します。</p>
+      <p class="candidate-note">左右・上下の最終ラベルはユーザーが手動で確定します。Step 2-D では 3D 推測、3D 点群 preview、手動微調整、保存 / export はまだ行いません。</p>
+      ${renderSelectedRepresentativeFramesPanel()}
+      ${renderReadinessPanel()}
       <div class="candidate-grid">
         ${renderRepresentativeCandidateCategory("正面候補", candidates.front)}
         ${renderRepresentativeCandidateCategory("yaw 正方向候補", candidates.yawPositive)}
@@ -686,7 +887,150 @@ function renderRepresentativeCandidateItem(
         <span>score: ${formatScore(candidate.score)}</span>
         <span>landmarks 数: ${candidate.landmarksCount}</span>
         <span>解析状態: ${formatFrameAnalysisStatus(candidate.status)}</span>
+        <div class="candidate-action-group" aria-label="手動ラベル確定">
+          <span>この候補を:</span>
+          ${renderCandidateSelectionButton(candidate, "front")}
+          ${renderCandidateSelectionButton(candidate, "left")}
+          ${renderCandidateSelectionButton(candidate, "right")}
+          ${renderCandidateSelectionButton(candidate, "up")}
+          ${renderCandidateSelectionButton(candidate, "down")}
+          ${renderCandidateSelectionButton(candidate, "excluded")}
+        </div>
       </div>
+    </div>
+  `
+}
+
+function renderCandidateSelectionButton(
+  candidate: RepresentativeFrameCandidate,
+  label: ManualRepresentativeFrameLabel,
+): string {
+  const buttonLabel =
+    label === "excluded"
+      ? "除外"
+      : `${formatManualRepresentativeFrameLabel(label)}にする`
+
+  return `
+    <button
+      class="candidate-label-button"
+      type="button"
+      data-selection-label="${label}"
+      data-candidate-key="${candidate.key}"
+      data-frame-index="${candidate.frameIndex}"
+    >
+      ${buttonLabel}
+    </button>
+  `
+}
+
+function renderSelectedRepresentativeFramesPanel(): string {
+  return `
+    <div class="selected-representative-panel">
+      <h3>確定済み代表フレーム</h3>
+      <div class="selected-frame-grid">
+        ${renderSingleSelectedRepresentativeFrame("front")}
+        ${renderSingleSelectedRepresentativeFrame("left")}
+        ${renderSingleSelectedRepresentativeFrame("right")}
+        ${renderSingleSelectedRepresentativeFrame("up")}
+        ${renderSingleSelectedRepresentativeFrame("down")}
+        ${renderExcludedRepresentativeFrames()}
+      </div>
+    </div>
+  `
+}
+
+function renderSingleSelectedRepresentativeFrame(
+  label: SelectableRepresentativeFrameLabel,
+): string {
+  const selectedFrame = selectedRepresentativeFrames[label]
+  const labelText = formatManualRepresentativeFrameLabel(label)
+
+  if (!selectedFrame) {
+    return `
+      <article class="selected-frame-card selected-frame-empty">
+        <h4>${labelText}</h4>
+        <p>未選択</p>
+      </article>
+    `
+  }
+
+  return renderSelectedRepresentativeFrameCard(selectedFrame, labelText)
+}
+
+function renderExcludedRepresentativeFrames(): string {
+  const excludedFrames = selectedRepresentativeFrames.excluded
+
+  if (excludedFrames.length === 0) {
+    return `
+      <article class="selected-frame-card selected-frame-empty">
+        <h4>除外</h4>
+        <p>未選択</p>
+      </article>
+    `
+  }
+
+  return `
+    <div class="selected-excluded-group">
+      <h4>除外</h4>
+      <div class="excluded-frame-list">
+        ${excludedFrames
+          .map((frame) => renderSelectedRepresentativeFrameCard(frame, "除外"))
+          .join("")}
+      </div>
+    </div>
+  `
+}
+
+function renderSelectedRepresentativeFrameCard(
+  frame: SelectedRepresentativeFrame,
+  title: string,
+): string {
+  return `
+    <article class="selected-frame-card selected-frame-detail">
+      <img src="${escapeHtml(frame.thumbnailUrl)}" alt="${escapeHtml(title)} Frame ${String(frame.frameIndex).padStart(3, "0")}" />
+      <div>
+        <h4>${escapeHtml(title)}</h4>
+        <strong>Frame ${String(frame.frameIndex).padStart(3, "0")} / ${frame.timestamp.toFixed(1)}s</strong>
+        <span>yaw: ${formatNumber(frame.pose.yaw)} / pitch: ${formatNumber(frame.pose.pitch)} / roll: ${formatNumber(frame.pose.roll)}</span>
+        <span>score: ${formatScore(frame.score)}</span>
+        <span>landmarks 数: ${frame.landmarksCount}</span>
+        <button
+          class="selected-clear-button"
+          type="button"
+          data-clear-label="${frame.label}"
+          data-frame-index="${frame.frameIndex}"
+        >
+          解除
+        </button>
+      </div>
+    </article>
+  `
+}
+
+function renderReadinessPanel(): string {
+  const labels: SelectableRepresentativeFrameLabel[] = [
+    "front",
+    "left",
+    "right",
+    "up",
+    "down",
+  ]
+
+  return `
+    <div class="readiness-panel">
+      <h3>3D推測準備</h3>
+      <dl class="readiness-list">
+        ${labels
+          .map(
+            (label) => `
+              <div>
+                <dt>${formatManualRepresentativeFrameLabel(label)}</dt>
+                <dd>${selectedRepresentativeFrames[label] ? "選択済み" : "未選択"}</dd>
+              </div>
+            `,
+          )
+          .join("")}
+      </dl>
     </div>
   `
 }
@@ -818,6 +1162,7 @@ function buildAuthoringDebugPreview(): unknown {
     representativeFrameCandidates: toRepresentativeCandidatesPreview(
       representativeFrameCandidates,
     ),
+    selectedRepresentativeFrames: toSelectedRepresentativeFramesPreview(),
     videoSource: videoSource
       ? {
           fileName: videoSource.fileName,
@@ -895,11 +1240,55 @@ function attachDebugFrameListHandler(): void {
     })
 }
 
+function attachRepresentativeFrameSelectionHandler(): void {
+  document
+    .querySelectorAll<HTMLButtonElement>("[data-selection-label]")
+    .forEach((button) => {
+      button.addEventListener("click", () => {
+        const label = button.dataset
+          .selectionLabel as ManualRepresentativeFrameLabel
+        const candidateKey = button.dataset
+          .candidateKey as RepresentativeFrameCandidateKey
+        const frameIndex = Number(button.dataset.frameIndex)
+
+        if (!label || !candidateKey || !Number.isFinite(frameIndex)) {
+          return
+        }
+
+        const candidate = findRepresentativeCandidate(candidateKey, frameIndex)
+
+        if (!candidate) {
+          return
+        }
+
+        selectRepresentativeFrame(label, candidate)
+        render()
+      })
+    })
+
+  document
+    .querySelectorAll<HTMLButtonElement>("[data-clear-label]")
+    .forEach((button) => {
+      button.addEventListener("click", () => {
+        const label = button.dataset.clearLabel as ManualRepresentativeFrameLabel
+        const frameIndex = Number(button.dataset.frameIndex)
+
+        if (!label) {
+          return
+        }
+
+        clearSelectedRepresentativeFrame(label, frameIndex)
+        render()
+      })
+    })
+}
+
 async function analyzeExtractedFrames(): Promise<void> {
   if (!videoSource || videoSource.extractedFrames.length === 0) {
     return
   }
 
+  selectedRepresentativeFrames = createEmptySelectedRepresentativeFrames()
   updateVideoSource({
     isAnalyzing: true,
     analysisError: null,
@@ -1155,6 +1544,8 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 async function handleVideoFileSelection(file: File): Promise<void> {
+  selectedRepresentativeFrames = createEmptySelectedRepresentativeFrames()
+
   if (file.type !== "video/mp4" && !file.name.toLowerCase().endsWith(".mp4")) {
     replaceVideoSource({
       fileName: file.name,
@@ -1358,7 +1749,7 @@ function render(): void {
           <p class="eyebrow">BAE AR</p>
           <h1>IdealFace Authoring Tool</h1>
         </div>
-        <span>Step 2-C</span>
+        <span>Step 2-D</span>
       </header>
 
       <section class="summary" aria-label="IdealFace metadata">
@@ -1447,6 +1838,7 @@ function render(): void {
 
   attachVideoInputHandler()
   attachAnalysisHandler()
+  attachRepresentativeFrameSelectionHandler()
   attachDebugFrameListHandler()
 }
 
@@ -1576,7 +1968,9 @@ style.textContent = `
 
   .file-button,
   .analysis-button,
-  .debug-toggle-button {
+  .debug-toggle-button,
+  .candidate-label-button,
+  .selected-clear-button {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -1593,7 +1987,9 @@ style.textContent = `
   }
 
   .analysis-button,
-  .debug-toggle-button {
+  .debug-toggle-button,
+  .candidate-label-button,
+  .selected-clear-button {
     font-family: inherit;
   }
 
@@ -1604,7 +2000,9 @@ style.textContent = `
 
   .file-button:focus-visible,
   .analysis-button:focus-visible,
-  .debug-toggle-button:focus-visible {
+  .debug-toggle-button:focus-visible,
+  .candidate-label-button:focus-visible,
+  .selected-clear-button:focus-visible {
     outline: 3px solid #9fc8bd;
     outline-offset: 2px;
   }
@@ -1674,6 +2072,111 @@ style.textContent = `
     color: #5d675f;
     font-size: 13px;
     font-weight: 700;
+  }
+
+  .selected-representative-panel,
+  .readiness-panel {
+    margin-bottom: 14px;
+  }
+
+  .selected-frame-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 10px;
+  }
+
+  .selected-frame-card,
+  .selected-excluded-group {
+    min-width: 0;
+    overflow: hidden;
+    border: 1px solid #ccd8d3;
+    border-radius: 8px;
+    background: #ffffff;
+  }
+
+  .selected-frame-empty {
+    display: grid;
+    min-height: 126px;
+    align-content: start;
+    gap: 8px;
+    padding: 12px;
+  }
+
+  .selected-frame-detail {
+    display: grid;
+    grid-template-columns: 96px minmax(0, 1fr);
+    gap: 10px;
+    padding: 10px;
+  }
+
+  .selected-frame-detail img {
+    display: block;
+    width: 96px;
+    aspect-ratio: 16 / 9;
+    border-radius: 6px;
+    object-fit: cover;
+    background: #1f2824;
+  }
+
+  .selected-frame-detail div {
+    display: grid;
+    min-width: 0;
+    gap: 4px;
+    align-content: start;
+  }
+
+  .selected-frame-card h4,
+  .selected-excluded-group h4,
+  .selected-frame-card strong,
+  .selected-frame-card span,
+  .selected-frame-card p {
+    min-width: 0;
+    margin: 0;
+    overflow-wrap: anywhere;
+    line-height: 1.35;
+  }
+
+  .selected-frame-card h4,
+  .selected-excluded-group h4 {
+    color: #17201b;
+    font-size: 13px;
+  }
+
+  .selected-excluded-group {
+    display: grid;
+    gap: 8px;
+    padding: 12px;
+  }
+
+  .excluded-frame-list {
+    display: grid;
+    gap: 8px;
+  }
+
+  .excluded-frame-list .selected-frame-detail {
+    border: 1px solid #dde6e2;
+    border-radius: 8px;
+  }
+
+  .selected-frame-card strong,
+  .selected-frame-card span,
+  .selected-frame-card p {
+    color: #5d675f;
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .selected-clear-button {
+    min-height: 30px;
+    justify-self: start;
+    margin-top: 3px;
+    background: #5f6c66;
+    padding: 5px 9px;
+    font-size: 12px;
+  }
+
+  .readiness-list {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 
   .analysis-summary {
@@ -1762,6 +2265,26 @@ style.textContent = `
   .candidate-card-empty {
     min-height: 180px;
     align-content: start;
+  }
+
+  .candidate-action-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding-top: 6px;
+  }
+
+  .candidate-action-group > span {
+    flex-basis: 100%;
+  }
+
+  .candidate-label-button {
+    min-height: 30px;
+    background: #edf4f1;
+    color: #25342e;
+    border: 1px solid #b7c7c2;
+    padding: 5px 8px;
+    font-size: 12px;
   }
 
   .frames-panel-debug {
