@@ -54,6 +54,7 @@ docs
 - `FaceGeometry` の補助解析
 - Studio 側のカメラ入力、debug 表示、landmark / geometry overlay
 - IdealFace Authoring Tool Step 2-A: MP4 動画入力、metadata 表示、フレーム抽出、サムネイル一覧表示
+- IdealFace Authoring Tool Step 2-B: 抽出フレームの MediaPipe 解析、2D 478 landmarks / FacePose 取得、解析 summary 表示
 
 未実装 / 将来予定:
 
@@ -132,8 +133,6 @@ Step 1 では Engine Runtime の公開 API から `natural_v1` を読み込み�
 - 保存 / export
 - ideal 478 landmarks 生成
 - canonical face mesh editor
-- MediaPipe によるフレームごとの 2D 478 landmarks 取得
-- FacePose 取得
 - 代表フレーム候補の自動抽出
 - 手動ラベル確定 UI
 - 3D 478点候補の自動推測
@@ -157,9 +156,25 @@ Step 2-A でできること:
 - 各フレームに frame index / timestamp / 状態「未解析」を表示する
 - JSON preview に動画情報と抽出フレーム情報を表示する
 
-初期対応は MP4 動画のみです。複数画像入力は未実装で、将来対応とします。MediaPipe による 2D 478 landmarks 取得、FacePose 取得、代表フレーム候補抽出、手動ラベル確定、3D 478点推測、手動微調整、保存 / export はまだ未実装です。
+初期対応は MP4 動画のみです。複数画像入力は未実装で、将来対応とします。Step 2-A 時点では MediaPipe による 2D 478 landmarks 取得と FacePose 取得は未実装でしたが、Step 2-B で抽出済みフレームの解析まで追加済みです。代表フレーム候補抽出、手動ラベル確定、3D 478点推測、手動微調整、保存 / export はまだ未実装です。
 
 動画入力とフレーム抽出は IdealFace Authoring Tool の責務です。Engine Runtime には動画入力処理やフレーム抽出処理を入れません。
+
+## IdealFace Authoring Tool Step 2-B
+
+`tools/ideal-face-authoring` に、抽出済みフレームへ MediaPipe Face Landmarker 解析をかける最小実装を追加しました。
+
+Step 2-B でできること:
+
+- 抽出済みフレームに対して MediaPipe 解析を実行する
+- 各フレームから 2D 478 landmarks と FacePose を取得する
+- 各フレームに解析状態、landmarks 数、pose pitch / yaw / roll を表示する
+- 解析結果 summary として解析済み数、顔検出あり / なし、解析エラー数、yaw / pitch / roll 範囲を表示する
+- JSON preview に解析概要と先頭数点の `landmarkPreview` を表示する
+
+JSON preview には 478 landmarks 全文は出しません。代表フレーム候補抽出、手動ラベル確定、3D 478点推測、3D点群 preview、手動微調整、保存 / export はまだ未実装です。
+
+MediaPipe による Authoring 用フレーム解析は IdealFace Authoring Tool の責務です。Engine Runtime には動画入力、フレーム抽出、Authoring 用フレーム解析処理を入れません。
 
 ## IdealFace Authoring Tool の idealLandmarks3D 作成方針
 
@@ -196,4 +211,4 @@ MP4 動画を入力
 
 この処理は完全自動生成ではなく、自動推測 + 手動補正として扱います。動画入力やフレーム抽出は IdealFace Authoring Tool の責務です。Engine Runtime は `idealLandmarks3D` を作成せず、完成済みの IdealFace asset を読み込んで、現在 `FacePose` へ投影して使います。
 
-現時点では、MP4 動画入力とフレーム抽出は Step 2-A として実装済みです。MediaPipe によるフレームごとの 2D 478 landmarks 取得、yaw / pitch / roll による代表フレーム候補の自動抽出、手動ラベル確定 UI、3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力は未実装です。
+現時点では、MP4 動画入力とフレーム抽出は Step 2-A、抽出フレームの MediaPipe 解析は Step 2-B として実装済みです。yaw / pitch / roll による代表フレーム候補の自動抽出、手動ラベル確定 UI、3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力は未実装です。

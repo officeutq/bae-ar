@@ -49,7 +49,7 @@ tools/
    └─ Layer Mask Authoring Tool
 ```
 
-`tools/ideal-face-authoring` は Step 2-A まで実装済みです。`tools/layer-mask-authoring` は将来予定です。
+`tools/ideal-face-authoring` は Step 2-B まで実装済みです。`tools/layer-mask-authoring` は将来予定です。
 
 ## `packages/engine`
 
@@ -111,7 +111,7 @@ MediaPipe canonical face model そのものを作成・編集する場所では�
 
 IdealFace Authoring Tool では、将来的に動画または複数画像から各フレームの 2D 478 landmarks と `FacePose` を取得します。初期入力形式は MP4 動画のみとし、複数画像入力は将来対応とします。初期段階では入力形式を広げず、代表フレーム抽出とラベル確定の流れを優先します。
 
-Step 2-A では、MP4 動画入力、metadata 表示、一定間隔でのフレーム抽出、サムネイル一覧表示、JSON preview への抽出フレーム情報表示までを実装済みです。各フレームの状態は、MediaPipe 解析前の「未解析」として扱います。
+Step 2-A では、MP4 動画入力、metadata 表示、一定間隔でのフレーム抽出、サムネイル一覧表示、JSON preview への抽出フレーム情報表示までを実装済みです。Step 2-B では、抽出済みフレームの MediaPipe 解析、2D 478 landmarks と `FacePose` の取得、解析結果 summary と JSON preview への概要表示までを実装済みです。
 
 MP4 動画から一定間隔でフレームを抽出し、yaw / pitch / roll から代表フレーム候補を自動抽出します。ユーザーが正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定し、確定した代表フレーム群から `idealLandmarks3D` 478点候補を自動推測します。
 
@@ -176,8 +176,6 @@ Step 1 の範囲:
 未実装:
 
 - ドラッグ編集
-- MediaPipe によるフレームごとの 2D 478 landmarks 取得
-- FacePose 取得
 - yaw / pitch / roll による代表フレーム候補の自動抽出
 - 手動ラベル確定 UI
 - 3D 478点候補の自動推測
@@ -200,6 +198,29 @@ Step 2-A の範囲:
 - 各フレームに frame index / timestamp / 状態「未解析」を表示する
 - JSON preview に file name / duration / videoWidth / videoHeight / extracted frame count / frames を表示する
 
-初期対応は MP4 動画のみです。複数画像入力は未実装 / 将来対応です。MediaPipe による 2D 478 landmarks 取得、FacePose 取得、代表フレーム候補抽出、手動ラベル確定、3D 478点推測、3D点群 preview、手動微調整、保存 / export はまだ未実装です。
+初期対応は MP4 動画のみです。複数画像入力は未実装 / 将来対応です。Step 2-A 時点では MediaPipe による 2D 478 landmarks 取得と FacePose 取得は未実装でしたが、Step 2-B で抽出済みフレームの解析まで追加済みです。代表フレーム候補抽出、手動ラベル確定、3D 478点推測、3D点群 preview、手動微調整、保存 / export はまだ未実装です。
 
 動画入力とフレーム抽出は IdealFace Authoring Tool の責務であり、Engine Runtime には追加しません。
+
+## `tools/ideal-face-authoring` Step 2-B
+
+Step 2-B の範囲:
+
+- 抽出済みフレームに MediaPipe Face Landmarker 解析を実行する
+- 各フレームから 2D 478 landmarks と `FacePose` を取得する
+- 各フレームに解析状態、landmarks 数、pose pitch / yaw / roll を表示する
+- 解析結果 summary に解析済み数、顔検出あり / なし、解析エラー数、yaw / pitch / roll 範囲を表示する
+- JSON preview に video file name、extracted frame count、analyzed frame count、detected frame count、failed frame count、frame ごとの解析概要を表示する
+- JSON preview には 478 landmarks 全文を出さず、先頭 5 点までの `landmarkPreview` に留める
+
+未実装:
+
+- 代表フレーム候補の自動抽出
+- 手動ラベル確定 UI
+- 3D 478点候補の自動推測
+- 3D点群 preview
+- 手動微調整
+- 保存 / export
+- 複数画像入力
+
+動画入力、フレーム抽出、Authoring 用フレーム解析は IdealFace Authoring Tool の責務であり、Engine Runtime には追加しません。

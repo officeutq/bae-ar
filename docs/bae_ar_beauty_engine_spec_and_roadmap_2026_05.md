@@ -114,7 +114,7 @@ Beauty Studio:
 - renderer
 - runtime quality control
 - preset API
-- IdealFace Authoring Tool の MediaPipe 解析以降
+- IdealFace Authoring Tool の代表フレーム抽出以降
 - Layer Mask Authoring Tool
 - Butterflyve integration
 - 本番向け package build / test / lint script
@@ -131,7 +131,7 @@ Beauty Studio:
 - Projection Difference Debug v1 は FaceGeometry 代表点と projected IdealFace controlPoints の差分確認用です。
 - `FaceGeometry` は landmarks から代表点やサイズを計算する補助解析です。
 - 実際の shape warp、color processing、rendering はまだありません。
-- Authoring Tool はまだありません。
+- IdealFace Authoring Tool は Step 2-B まで実装済みです。
 
 ## 4. 現在の処理パイプライン
 
@@ -308,7 +308,7 @@ IdealFace Authoring Tool は BAE AR 独自の IdealFace asset を作成・調整
 
 ### 7.2 IdealFace Authoring Tool における idealLandmarks3D 作成方針
 
-IdealFace の本体である `idealLandmarks3D` 478点は、IdealFace Authoring Tool 側で作成します。将来的には動画または複数画像から作成する方針ですが、初期入力形式は MP4 動画のみとします。複数画像入力は将来対応とし、初期段階では入力形式を広げず、代表フレーム抽出とラベル確定の流れを優先します。Step 2-A では、MP4 動画入力、metadata 表示、一定間隔でのフレーム抽出、サムネイル一覧表示までを実装済みです。
+IdealFace の本体である `idealLandmarks3D` 478点は、IdealFace Authoring Tool 側で作成します。将来的には動画または複数画像から作成する方針ですが、初期入力形式は MP4 動画のみとします。複数画像入力は将来対応とし、初期段階では入力形式を広げず、代表フレーム抽出とラベル確定の流れを優先します。Step 2-A では、MP4 動画入力、metadata 表示、一定間隔でのフレーム抽出、サムネイル一覧表示までを実装済みです。Step 2-B では、抽出済みフレームの MediaPipe 解析、2D 478 landmarks と FacePose の取得、解析結果 summary 表示までを実装済みです。
 
 Engine Runtime は `idealLandmarks3D` を作成せず、完成済みの IdealFace asset を読み込んで使います。
 
@@ -347,7 +347,7 @@ MP4 動画を入力
 
 確定された代表フレーム群から 3D の `idealLandmarks3D` 478点候補を自動推測します。この時点の生成結果は完成データではなく候補データとして扱います。自動推測した候補は Authoring Tool 上で 3D点群として確認し、必要に応じて手動で微調整します。手動補正後の `idealLandmarks3D` 478点を IdealFace asset として保存 / export します。
 
-この方針は完全自動生成ではなく、自動推測 + 手動補正です。動画入力やフレーム抽出は IdealFace Authoring Tool の責務であり、Engine Runtime には含めません。MediaPipe による 2D 478 landmarks 取得、FacePose 取得、代表フレーム候補抽出、手動ラベル確定、3D 478点推測、手動微調整、保存 / export は Step 2-A では未実装です。詳細な 3D 推測アルゴリズムはこの段階では定義しません。
+この方針は完全自動生成ではなく、自動推測 + 手動補正です。動画入力、フレーム抽出、Authoring 用フレーム解析は IdealFace Authoring Tool の責務であり、Engine Runtime には含めません。代表フレーム候補抽出、手動ラベル確定、3D 478点推測、手動微調整、保存 / export は Step 2-B では未実装です。詳細な 3D 推測アルゴリズムはこの段階では定義しません。
 
 v1 の制限事項:
 
@@ -671,7 +671,7 @@ Studio は Engine の private field、内部状態、内部実装へ直接アク
 
 ### Milestone 10: IdealFace Authoring Tool
 
-状態: 一部実装済み / Step 2-A まで完了
+状態: 一部実装済み / Step 2-B まで完了
 
 目的:
 
@@ -681,6 +681,7 @@ Studio は Engine の private field、内部状態、内部実装へ直接アク
 完了条件:
 
 - Step 2-A として MP4 動画入力、metadata 表示、フレーム抽出、サムネイル一覧表示ができる。
+- Step 2-B として抽出済みフレームの MediaPipe 解析、2D 478 landmarks と FacePose の取得、解析 summary 表示ができる。
 - 現段階の `natural_v1` の controlPoints は投影検証用の暫定データであり、IdealFace 本体ではない。
 - IdealFace 本体は `idealLandmarks3D` 478 点を中核に持つ asset として扱う。
 - 2D 動画 / 複数画像からのオフライン生成を Runtime と分離して扱える。
@@ -774,8 +775,6 @@ Step 1 の実装範囲:
 未実装:
 
 - controlPoints のドラッグ編集
-- MediaPipe によるフレームごとの 2D 478 landmarks 取得
-- FacePose 取得
 - yaw / pitch / roll による代表フレーム候補の自動抽出
 - 手動ラベル確定 UI
 - 3D 478点候補の自動推測
@@ -799,7 +798,7 @@ Step 2-A の実装範囲:
 - サムネイル一覧での frame index / timestamp / 状態「未解析」の表示
 - JSON preview での file name / duration / videoWidth / videoHeight / extracted frame count / frames の表示
 
-Step 2-A の制限:
+Step 2-A 時点の制限:
 
 - 初期対応は MP4 動画のみ
 - 複数画像入力は未実装 / 将来対応
@@ -811,6 +810,29 @@ Step 2-A の制限:
 - 3D点群 preview、手動微調整、保存 / export は未実装
 
 動画入力とフレーム抽出は IdealFace Authoring Tool の責務です。Engine Runtime には動画入力処理やフレーム抽出処理を入れません。
+
+## 18-B. IdealFace Authoring Tool Step 2-B
+
+状態: 実装済み
+
+Step 2-B の実装範囲:
+
+- 抽出済みフレームへの MediaPipe Face Landmarker 解析
+- 2D 478 landmarks と FacePose の取得
+- フレームごとの解析状態、landmarks 数、pose pitch / yaw / roll 表示
+- 解析結果 summary での解析済み数、顔検出あり / なし、解析エラー数、yaw / pitch / roll 範囲表示
+- JSON preview での解析概要、pose preview、先頭 5 点までの `landmarkPreview` 表示
+
+Step 2-B の制限:
+
+- 代表フレーム候補の自動抽出は未実装
+- 手動ラベル確定 UI は未実装
+- 3D 478点候補の自動推測は未実装
+- 3D点群 preview、手動微調整、保存 / export は未実装
+- 複数画像入力は未実装 / 将来対応
+- JSON preview には 478 landmarks 全文を出さない
+
+動画入力、フレーム抽出、Authoring 用フレーム解析は IdealFace Authoring Tool の責務です。Engine Runtime にはこれらの処理や Authoring UI を入れません。
 
 ## 19. IdealFace / Projection / Shape Processing 中核仕様
 
