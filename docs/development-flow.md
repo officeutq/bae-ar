@@ -144,22 +144,28 @@ Beauty Studio では、開発確認用として overlay や簡易調整 UI を�
 
 ## IdealFace Authoring Tool の開発方針
 
-IdealFace Authoring Tool は、BAE AR 独自の IdealFace asset を作成するための領域です。IdealFace の本体である `idealLandmarks3D` 478点は、Authoring Tool 側で動画または複数画像から作成する方針です。
+IdealFace Authoring Tool は、BAE AR 独自の IdealFace asset を作成するための領域です。IdealFace の本体である `idealLandmarks3D` 478点は、Authoring Tool 側で将来的に動画または複数画像から作成する方針です。初期入力形式は MP4 動画のみとし、複数画像入力は将来対応とします。
+
+初期段階では入力形式を広げず、MP4 動画からのフレーム抽出、代表フレーム候補の自動抽出、ユーザーによるラベル確定の流れを優先して作ります。
 
 想定する流れ:
 
 ```text
-動画 / 複数画像を入力
+MP4 動画を入力
+  -> 一定間隔でフレーム抽出
   -> MediaPipe Face Landmarker で各フレームの 2D 478 landmarks と FacePose を取得
   -> yaw / pitch / roll から代表フレーム候補を自動抽出
   -> 人間が正面 / 左向き / 右向き / 上向き / 下向き / 除外を確定
   -> 確定した代表フレーム群から 3D の idealLandmarks3D 478点候補を自動推測
-  -> Authoring Tool 上で 3D点群を確認
-  -> 必要な箇所を手動で微調整
+  -> Authoring Tool 上で確認・微調整
   -> IdealFace asset として保存 / export
 ```
 
-この処理は完全自動生成ではなく、自動推測 + 手動補正として扱います。Engine Runtime は `idealLandmarks3D` を作成せず、完成済みの IdealFace asset を読み込んで使います。
+推奨する MP4 動画は、H.264 / AVC codec、5〜15秒程度、30fps程度、720p程度から開始できるものです。顔が大きく写り、正面、左向き、右向き、上向き、下向きをゆっくり含み、手ブレが少なく、明るい場所で撮影され、口は閉じ気味で表情はできるだけ neutral なものを想定します。
+
+長時間動画、高解像度すぎる動画、HEVC / H.265、MOV、WebM、複数画像入力は、初期段階では非推奨または未対応です。これらは将来対応を検討します。
+
+この処理は完全自動生成ではなく、自動推測 + 手動補正として扱います。動画入力やフレーム抽出は IdealFace Authoring Tool の責務です。Engine Runtime は `idealLandmarks3D` を作成せず、完成済みの IdealFace asset を読み込んで使います。
 
 ## Studio UI 表示
 
@@ -225,6 +231,6 @@ IdealFace Authoring Tool を変更した場合は、Runtime と Authoring の責
 - `apps/studio` に Authoring 用タブを追加していない
 - Engine Runtime に UI や編集処理を追加していない
 - `natural_v1` の metadata / controlPoints / 2D preview / JSON preview を確認できる
-- 動画 / 複数画像の入力、フレーム抽出、代表フレーム候補の自動抽出、手動ラベル確定 UI、3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export を Step 1 に含めていない
+- MP4 動画入力、フレーム抽出、MediaPipe によるフレームごとの 2D 478 landmarks 取得、yaw / pitch / roll による代表フレーム候補の自動抽出、手動ラベル確定 UI、3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力を Step 1 に含めていない
 
 PR 本文には IdealFace Authoring Tool の手動確認事項を記載します。
