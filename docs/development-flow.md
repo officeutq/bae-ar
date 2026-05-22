@@ -146,7 +146,7 @@ Beauty Studio では、開発確認用として overlay や簡易調整 UI を�
 
 IdealFace Authoring Tool は、BAE AR 独自の IdealFace asset を作成するための領域です。IdealFace の本体である `idealLandmarks3D` 478点は、Authoring Tool 側で将来的に動画または複数画像から作成する方針です。初期入力形式は MP4 動画のみとし、複数画像入力は将来対応とします。
 
-初期段階では入力形式を広げず、MP4 動画からのフレーム抽出、代表フレーム候補の自動抽出、ユーザーによるラベル確定の流れを優先して作ります。Step 2-A では、MP4 動画入力と一定間隔でのフレーム抽出、サムネイル一覧表示までを実装済みです。Step 2-B では、抽出済みフレームの MediaPipe 解析、2D 478 landmarks と FacePose の取得、解析結果 summary 表示までを実装済みです。Step 2-C では、yaw / pitch / roll による代表フレーム候補の自動抽出、候補一覧表示、JSON preview への候補概要表示までを実装済みです。
+初期段階では入力形式を広げず、MP4 動画からのフレーム抽出、代表フレーム候補の自動抽出、ユーザーによるラベル確定の流れを優先して作ります。Step 2-A では、MP4 動画入力と一定間隔でのフレーム抽出、サムネイル一覧表示までを実装済みです。Step 2-B では、抽出済みフレームの MediaPipe 解析、2D 478 landmarks と FacePose の取得、解析結果 summary 表示までを実装済みです。Step 2-C では、yaw / pitch / roll による代表フレーム候補の自動抽出、各カテゴリ上位複数件の候補一覧表示、JSON preview への候補概要表示までを実装済みです。
 
 想定する流れ:
 
@@ -154,7 +154,8 @@ IdealFace Authoring Tool は、BAE AR 独自の IdealFace asset を作成する�
 MP4 動画を入力
   -> 一定間隔でフレーム抽出
   -> MediaPipe Face Landmarker で各フレームの 2D 478 landmarks と FacePose を取得
-  -> yaw / pitch / roll から代表フレーム候補を自動抽出
+  -> yaw / pitch / roll から各カテゴリ上位複数件の代表フレーム候補を自動抽出
+  -> 候補を複数比較する
   -> 人間が正面 / 左向き / 右向き / 上向き / 下向き / 除外を確定
   -> 確定した代表フレーム群から 3D の idealLandmarks3D 478点候補を自動推測
   -> Authoring Tool 上で確認・微調整
@@ -166,6 +167,8 @@ MP4 動画を入力
 長時間動画、高解像度すぎる動画、HEVC / H.265、MOV、WebM、複数画像入力は、初期段階では非推奨または未対応です。これらは将来対応を検討します。
 
 この処理は完全自動生成ではなく、自動推測 + 手動補正として扱います。動画入力、フレーム抽出、Authoring 用フレーム解析は IdealFace Authoring Tool の責務です。Engine Runtime は動画入力やフレーム抽出、Authoring 用フレーム解析、`idealLandmarks3D` 作成を行わず、完成済みの IdealFace asset を読み込んで使います。
+
+Step 2-C では候補 1 件だけで確定せず、正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を各カテゴリ上位複数件表示し、次の手動ラベル確定 UI へ進む土台にします。代表フレーム抽出処理は IdealFace Authoring Tool の責務であり、Engine Runtime には入れません。
 
 Step 2-C で未実装のもの:
 
@@ -250,10 +253,10 @@ IdealFace Authoring Tool を変更した場合は、Runtime と Authoring の責
 - 解析済みフレームに landmarks 数と pose pitch / yaw / roll を表示できる
 - 解析結果 summary を確認できる
 - JSON preview に解析概要を表示できる
-- 代表フレーム候補が表示される
-- 正面候補、yaw 方向候補、pitch 方向候補を確認できる
-- 各候補に frame index / timestamp / yaw / pitch / roll / score が表示される
-- JSON preview に `representativeFrameCandidates` の候補概要を表示できる
+- 代表フレーム候補がカテゴリ別に複数件表示される
+- 正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を確認できる
+- 各候補に順位 / frame index / timestamp / yaw / pitch / roll / score / landmarks 数が表示される
+- JSON preview に `representativeFrameCandidates` のカテゴリごとの候補配列を表示できる
 - 478 landmarks 全文を JSON preview に出していない
 - 手動ラベル確定 UI、3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力を Step 2-C に含めていない
 - Engine Runtime に動画入力、フレーム抽出、Authoring 用フレーム解析処理を追加していない
