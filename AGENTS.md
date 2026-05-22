@@ -225,6 +225,19 @@ gh pr create --title "<title>" --body "<body>"
 
 `gh` の認証が利用できない、または失敗した場合は、エラー内容を明確に報告すること。
 
+## GitHub CLI 文字化け防止ルール
+
+PR タイトル、PR 本文、Issue コメントなど日本語を `gh` CLI に渡す場合は、PowerShell の pipe や既定エンコーディングに依存しない。
+
+推奨フロー:
+
+```bash
+gh pr create --title "日本語タイトル" --body-file pr-body.md
+gh pr edit <number> --body-file pr-body.md
+```
+
+Codex が PR 本文を作る場合は、UTF-8 の本文ファイルを作成して `--body-file` を使うこと。PowerShell here-string をそのまま `gh` へ pipe しないこと。
+
 ## 言語ルール
 
 PR タイトル、PR 本文、Issue コメント、完了報告、Studio UI 表示は原則として日本語で記載する。

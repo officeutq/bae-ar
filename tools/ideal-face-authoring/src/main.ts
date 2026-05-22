@@ -49,6 +49,7 @@ const INFERENCE_DATASET_LABELS: SelectableRepresentativeFrameLabel[] = [
   "down",
 ]
 const INFERENCE_DATASET_LANDMARK_PREVIEW_COUNT = 5
+const IDEAL_LANDMARKS_3D_PREVIEW_COUNT = 5
 
 type RepresentativeFrameCandidateKey =
   | "front"
@@ -167,6 +168,38 @@ interface IdealLandmarks3DInferenceDataset {
   entries: RepresentativeFrameDatasetEntry[]
 }
 
+type IdealLandmarks3DCandidateStatus =
+  | "not_ready"
+  | "generated"
+  | "insufficient_data"
+  | "error"
+
+interface IdealLandmark3DCandidate {
+  index: number
+  x: number
+  y: number
+  z: number
+  confidence: number
+  source: "inferred_v1"
+}
+
+interface IdealLandmarks3DCandidateResult {
+  status: IdealLandmarks3DCandidateStatus
+  requiredLabels: SelectableRepresentativeFrameLabel[]
+  readyLabels: SelectableRepresentativeFrameLabel[]
+  missingLabels: SelectableRepresentativeFrameLabel[]
+  landmarkCount: number
+  landmarks: IdealLandmark3DCandidate[]
+  landmarksPreview: IdealLandmark3DCandidate[]
+  summary: {
+    generatedCount: number
+    averageConfidence: number
+    minConfidence: number
+    maxConfidence: number
+  }
+  message: string | null
+}
+
 interface DetailedScanSummary {
   scanIntervalSec: number
   maxScanFrames: number
@@ -204,6 +237,8 @@ let representativeCandidateCategoryOpenState =
   createDefaultRepresentativeCandidateCategoryOpenState()
 let selectedRepresentativeFrames: SelectedRepresentativeFrames =
   createEmptySelectedRepresentativeFrames()
+let idealLandmarks3DCandidateResult: IdealLandmarks3DCandidateResult =
+  createInitialIdealLandmarks3DCandidateResult()
 const extractionVideo = document.createElement("video")
 const analysisCanvas = document.createElement("canvas")
 const thumbnailCanvas = document.createElement("canvas")
@@ -1052,6 +1087,220 @@ function toInferenceDatasetPreview(
   }
 }
 
+function createInitialIdealLandmarks3DCandidateResult(): IdealLandmarks3DCandidateResult {
+  return {
+    status: "not_ready",
+    requiredLabels: [...INFERENCE_DATASET_LABELS],
+    readyLabels: [],
+    missingLabels: [...INFERENCE_DATASET_LABELS],
+    landmarkCount: 0,
+    landmarks: [],
+    landmarksPreview: [],
+    summary: {
+      generatedCount: 0,
+      averageConfidence: 0,
+      minConfidence: 0,
+      maxConfidence: 0,
+    },
+    message: null,
+  }
+}
+
+function resetIdealLandmarks3DCandidateResult(): void {
+  idealLandmarks3DCandidateResult =
+    createInitialIdealLandmarks3DCandidateResult()
+}
+
+function getReadyDatasetLabels(
+  dataset: IdealLandmarks3DInferenceDataset,
+): SelectableRepresentativeFrameLabel[] {
+  return dataset.entries
+    .filter((entry) => entry.status === "ready")
+    .map((entry) => entry.label)
+}
+
+function getMissingDatasetLabels(
+  dataset: IdealLandmarks3DInferenceDataset,
+): SelectableRepresentativeFrameLabel[] {
+  return INFERENCE_DATASET_LABELS.filter(
+    (label) =>
+      !dataset.entries.some(
+        (entry) => entry.label === label && entry.status === "ready",
+      ),
+  )
+}
+
+function getReadyDatasetEntry(
+  dataset: IdealLandmarks3DInferenceDataset,
+  label: SelectableRepresentativeFrameLabel,
+): RepresentativeFrameDatasetEntry | null {
+  return (
+    dataset.entries.find(
+      (entry) => entry.label === label && entry.status === "ready",
+    ) ?? null
+  )
+}
+
+function isFiniteLandmark(landmark: FaceLandmark | undefined): landmark is FaceLandmark {
+  return (
+    landmark !== undefined &&
+    Number.isFinite(landmark.x) &&
+    Number.isFinite(landmark.y) &&
+    Number.isFinite(landmark.z)
+  )
+}
+
+function averageNumbers(values: number[]): number {
+  return values.length === 0
+    ? 0
+    : values.reduce((sum, value) => sum + value, 0) / values.length
+}
+
+function inferCandidateZ(
+  index: number,
+  frontLandmark: FaceLandmark,
+  entriesByLabel: Partial<
+    Record<SelectableRepresentativeFrameLabel, RepresentativeFrameDatasetEntry>
+  >,
+): number {
+  const leftLandmark = entriesByLabel.left?.landmarks[index]
+  const rightLandmark = entriesByLabel.right?.landmarks[index]
+  const upLandmark = entriesByLabel.up?.landmarks[index]
+  const downLandmark = entriesByLabel.down?.landmarks[index]
+  const yawDeltas: number[] = []
+  const pitchDeltas: number[] = []
+
+  if (isFiniteLandmark(leftLandmark)) {
+    yawDeltas.push(frontLandmark.x - leftLandmark.x)
+  }
+
+  if (isFiniteLandmark(rightLandmark)) {
+    yawDeltas.push(rightLandmark.x - frontLandmark.x)
+  }
+
+  if (isFiniteLandmark(upLandmark)) {
+    pitchDeltas.push(frontLandmark.y - upLandmark.y)
+  }
+
+  if (isFiniteLandmark(downLandmark)) {
+    pitchDeltas.push(downLandmark.y - frontLandmark.y)
+  }
+
+  const z =
+    averageNumbers(yawDeltas) * 0.7 +
+    averageNumbers(pitchDeltas) * 0.45 +
+    frontLandmark.z * 0.1
+
+  return Number(clamp(z, -0.25, 0.25).toFixed(4))
+}
+
+function inferCandidateConfidence(
+  index: number,
+  entriesByLabel: Partial<
+    Record<SelectableRepresentativeFrameLabel, RepresentativeFrameDatasetEntry>
+  >,
+): number {
+  const supportingLabels: SelectableRepresentativeFrameLabel[] = [
+    "left",
+    "right",
+    "up",
+    "down",
+  ]
+  const supportCount = supportingLabels.filter((label) =>
+    isFiniteLandmark(entriesByLabel[label]?.landmarks[index]),
+  ).length
+  const hasYawPair =
+    isFiniteLandmark(entriesByLabel.left?.landmarks[index]) &&
+    isFiniteLandmark(entriesByLabel.right?.landmarks[index])
+  const hasPitchPair =
+    isFiniteLandmark(entriesByLabel.up?.landmarks[index]) &&
+    isFiniteLandmark(entriesByLabel.down?.landmarks[index])
+  const pairBonus = (hasYawPair ? 0.04 : 0) + (hasPitchPair ? 0.03 : 0)
+
+  const confidence = clamp(0.38 + supportCount * 0.12 + pairBonus, 0.35, 0.9)
+
+  return Number(confidence.toFixed(4))
+}
+
+function buildIdealLandmarks3DCandidateResult(
+  dataset: IdealLandmarks3DInferenceDataset,
+): IdealLandmarks3DCandidateResult {
+  const readyLabels = getReadyDatasetLabels(dataset)
+  const missingLabels = getMissingDatasetLabels(dataset)
+  const frontEntry = getReadyDatasetEntry(dataset, "front")
+
+  if (!frontEntry) {
+    return {
+      ...createInitialIdealLandmarks3DCandidateResult(),
+      status: "insufficient_data",
+      readyLabels,
+      missingLabels,
+      message:
+        "正面フレームが未選択、または解析済み 478 landmarks を参照できないため、3D候補を生成できません。",
+    }
+  }
+
+  const entriesByLabel = Object.fromEntries(
+    dataset.entries
+      .filter((entry) => entry.status === "ready")
+      .map((entry) => [entry.label, entry]),
+  ) as Partial<
+    Record<SelectableRepresentativeFrameLabel, RepresentativeFrameDatasetEntry>
+  >
+  const landmarks = frontEntry.landmarks.map((frontLandmark, index) => {
+    const confidence = inferCandidateConfidence(index, entriesByLabel)
+
+    return {
+      index,
+      x: Number(frontLandmark.x.toFixed(4)),
+      y: Number(frontLandmark.y.toFixed(4)),
+      z: inferCandidateZ(index, frontLandmark, entriesByLabel),
+      confidence,
+      source: "inferred_v1" as const,
+    }
+  })
+  const confidenceValues = landmarks.map((landmark) => landmark.confidence)
+  const averageConfidence =
+    confidenceValues.length === 0 ? 0 : averageNumbers(confidenceValues)
+
+  return {
+    status: "generated",
+    requiredLabels: [...INFERENCE_DATASET_LABELS],
+    readyLabels,
+    missingLabels,
+    landmarkCount: landmarks.length,
+    landmarks,
+    landmarksPreview: landmarks.slice(0, IDEAL_LANDMARKS_3D_PREVIEW_COUNT),
+    summary: {
+      generatedCount: landmarks.length,
+      averageConfidence: Number(averageConfidence.toFixed(4)),
+      minConfidence:
+        confidenceValues.length === 0
+          ? 0
+          : Number(Math.min(...confidenceValues).toFixed(4)),
+      maxConfidence:
+        confidenceValues.length === 0
+          ? 0
+          : Number(Math.max(...confidenceValues).toFixed(4)),
+    },
+    message:
+      "front の 2D 478 landmarks を x / y の基準にし、左右 / 上下フレームとの差分から z を簡易推定した候補です。",
+  }
+}
+
+function toIdealLandmarks3DCandidatePreview(
+  result: IdealLandmarks3DCandidateResult,
+): unknown {
+  return {
+    status: result.status,
+    landmarkCount: result.landmarkCount,
+    readyLabels: result.readyLabels,
+    missingLabels: result.missingLabels,
+    summary: result.summary,
+    landmarksPreview: result.landmarksPreview,
+  }
+}
+
 function getAllRepresentativeCandidates(
   candidates: RepresentativeFrameCandidates,
 ): RepresentativeFrameCandidate[] {
@@ -1120,6 +1369,7 @@ function selectRepresentativeFrame(
   label: ManualRepresentativeFrameLabel,
   candidate: RepresentativeFrameCandidate,
 ): void {
+  resetIdealLandmarks3DCandidateResult()
   removeFrameFromSelectedRepresentativeFrames(candidate.frameIndex)
 
   const selectedFrame = buildSelectedRepresentativeFrame(label, candidate)
@@ -1139,6 +1389,8 @@ function clearSelectedRepresentativeFrame(
   label: ManualRepresentativeFrameLabel,
   frameIndex?: number,
 ): void {
+  resetIdealLandmarks3DCandidateResult()
+
   if (label === "excluded") {
     selectedRepresentativeFrames.excluded =
       selectedRepresentativeFrames.excluded.filter(
@@ -1196,6 +1448,7 @@ function renderRepresentativeFrameCandidatesPanel(): string {
       ${renderSelectedRepresentativeFramesPanel()}
       ${renderReadinessPanel()}
       ${renderInferenceDatasetPanel()}
+      ${renderIdealLandmarks3DCandidatePanel()}
       <div class="candidate-category-stack">
         ${categories
           .map((category) =>
@@ -1470,6 +1723,92 @@ function renderLandmarkPreview(
   `
 }
 
+function formatLabelList(labels: SelectableRepresentativeFrameLabel[]): string {
+  return labels.length === 0 ? "なし" : labels.join(", ")
+}
+
+function renderIdealLandmarks3DCandidatePanel(): string {
+  const dataset = getIdealLandmarks3DInferenceDataset()
+  const frontReady = Boolean(getReadyDatasetEntry(dataset, "front"))
+  const missingLabels = getMissingDatasetLabels(dataset)
+  const result = idealLandmarks3DCandidateResult
+  const disabled = !frontReady
+  const statusMessage = frontReady
+    ? "front を基準に 3D 478点候補を生成できます。生成結果は候補データであり、保存 / export はまだ行いません。"
+    : "正面フレームが未選択のため、3D候補を生成できません。"
+  const resultMessage = result.message ?? statusMessage
+
+  return `
+    <div class="ideal-3d-candidate-panel">
+      <div class="ideal-3d-candidate-heading">
+        <div>
+          <h3>3D 478点候補</h3>
+          <p>${escapeHtml(statusMessage)}</p>
+        </div>
+        <button
+          class="candidate-generate-button"
+          type="button"
+          data-generate-ideal-landmarks-3d-candidate="true"
+          ${disabled ? "disabled" : ""}
+        >
+          3D候補を生成
+        </button>
+      </div>
+      <dl class="candidate-summary-list">
+        <div>
+          <dt>状態</dt>
+          <dd>${result.status}</dd>
+        </div>
+        <div>
+          <dt>landmarks</dt>
+          <dd>${result.landmarkCount}</dd>
+        </div>
+        <div>
+          <dt>ready labels</dt>
+          <dd>${escapeHtml(formatLabelList(getReadyDatasetLabels(dataset)))}</dd>
+        </div>
+        <div>
+          <dt>missing labels</dt>
+          <dd>${escapeHtml(formatLabelList(missingLabels))}</dd>
+        </div>
+        <div>
+          <dt>average confidence</dt>
+          <dd>${formatNumber(result.summary.averageConfidence)}</dd>
+        </div>
+        <div>
+          <dt>min / max confidence</dt>
+          <dd>${formatNumber(result.summary.minConfidence)} / ${formatNumber(result.summary.maxConfidence)}</dd>
+        </div>
+      </dl>
+      <p class="candidate-result-note">${escapeHtml(resultMessage)}</p>
+      ${renderIdealLandmarks3DCandidatePreview(result.landmarksPreview)}
+    </div>
+  `
+}
+
+function renderIdealLandmarks3DCandidatePreview(
+  landmarksPreview: IdealLandmark3DCandidate[],
+): string {
+  if (landmarksPreview.length === 0) {
+    return `<p class="landmark-preview-empty">3D landmark preview: なし</p>`
+  }
+
+  return `
+    <div class="ideal-3d-preview">
+      <span>先頭 ${landmarksPreview.length} 点 preview</span>
+      <ol>
+        ${landmarksPreview
+          .map(
+            (landmark) => `
+              <li>#${landmark.index}: x ${landmark.x} / y ${landmark.y} / z ${landmark.z} / confidence ${landmark.confidence}</li>
+            `,
+          )
+          .join("")}
+      </ol>
+    </div>
+  `
+}
+
 function renderAnalysisPanel(): string {
   const summary = getDetailedScanSummary()
   const displayFrameCount = videoSource?.extractedFrames.length ?? 0
@@ -1645,6 +1984,9 @@ function buildAuthoringDebugPreview(): unknown {
     idealLandmarks3DInferenceDataset: toInferenceDatasetPreview(
       idealLandmarks3DInferenceDataset,
     ),
+    idealLandmarks3DCandidate: toIdealLandmarks3DCandidatePreview(
+      idealLandmarks3DCandidateResult,
+    ),
     videoSource: videoSource
       ? {
           fileName: videoSource.fileName,
@@ -1786,12 +2128,26 @@ function attachRepresentativeFrameSelectionHandler(): void {
     })
 }
 
+function attachIdealLandmarks3DCandidateHandler(): void {
+  document
+    .querySelector<HTMLButtonElement>(
+      "[data-generate-ideal-landmarks-3d-candidate]",
+    )
+    ?.addEventListener("click", () => {
+      const dataset = getIdealLandmarks3DInferenceDataset()
+      idealLandmarks3DCandidateResult =
+        buildIdealLandmarks3DCandidateResult(dataset)
+      render()
+    })
+}
+
 async function analyzeExtractedFrames(): Promise<void> {
   if (!videoSource || !videoSource.objectUrl) {
     return
   }
 
   selectedRepresentativeFrames = createEmptySelectedRepresentativeFrames()
+  resetIdealLandmarks3DCandidateResult()
   representativeCandidateCategoryOpenState =
     createDefaultRepresentativeCandidateCategoryOpenState()
   updateVideoSource({
@@ -2193,6 +2549,7 @@ function clamp(value: number, min: number, max: number): number {
 
 async function handleVideoFileSelection(file: File): Promise<void> {
   selectedRepresentativeFrames = createEmptySelectedRepresentativeFrames()
+  resetIdealLandmarks3DCandidateResult()
   representativeCandidateCategoryOpenState =
     createDefaultRepresentativeCandidateCategoryOpenState()
 
@@ -2433,7 +2790,7 @@ function render(): void {
           <p class="eyebrow">BAE AR</p>
           <h1>IdealFace Authoring Tool</h1>
         </div>
-        <span>Step 2-F</span>
+        <span>Step 2-G</span>
       </header>
 
       <section class="summary" aria-label="IdealFace metadata">
@@ -2524,6 +2881,7 @@ function render(): void {
   attachAnalysisHandler()
   attachRepresentativeCandidateCategoryToggleHandler()
   attachRepresentativeFrameSelectionHandler()
+  attachIdealLandmarks3DCandidateHandler()
   attachDebugFrameListHandler()
 }
 
@@ -2656,7 +3014,8 @@ style.textContent = `
   .debug-toggle-button,
   .candidate-category-toggle-button,
   .candidate-label-button,
-  .selected-clear-button {
+  .selected-clear-button,
+  .candidate-generate-button {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -2676,11 +3035,17 @@ style.textContent = `
   .debug-toggle-button,
   .candidate-category-toggle-button,
   .candidate-label-button,
-  .selected-clear-button {
+  .selected-clear-button,
+  .candidate-generate-button {
     font-family: inherit;
   }
 
   .analysis-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+  }
+
+  .candidate-generate-button:disabled {
     cursor: not-allowed;
     opacity: 0.55;
   }
@@ -2690,7 +3055,8 @@ style.textContent = `
   .debug-toggle-button:focus-visible,
   .candidate-category-toggle-button:focus-visible,
   .candidate-label-button:focus-visible,
-  .selected-clear-button:focus-visible {
+  .selected-clear-button:focus-visible,
+  .candidate-generate-button:focus-visible {
     outline: 3px solid #9fc8bd;
     outline-offset: 2px;
   }
@@ -2865,6 +3231,50 @@ style.textContent = `
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
     gap: 10px;
+  }
+
+  .ideal-3d-candidate-panel {
+    display: grid;
+    gap: 10px;
+    margin-bottom: 16px;
+    border: 1px solid #ccd8d3;
+    border-radius: 8px;
+    background: #ffffff;
+    padding: 14px;
+  }
+
+  .ideal-3d-candidate-heading {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .ideal-3d-candidate-heading p,
+  .candidate-result-note {
+    margin: 5px 0 0;
+    color: #5d675f;
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  .candidate-summary-list {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .ideal-3d-preview {
+    display: grid;
+    gap: 4px;
+    color: #5d675f;
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .ideal-3d-preview ol {
+    display: grid;
+    gap: 3px;
+    margin: 0;
+    padding-left: 18px;
   }
 
   .dataset-entry-card {
@@ -3276,9 +3686,14 @@ style.textContent = `
     }
 
     .panel-heading,
-    .debug-panel-heading {
+    .debug-panel-heading,
+    .ideal-3d-candidate-heading {
       align-items: flex-start;
       flex-direction: column;
+    }
+
+    .candidate-summary-list {
+      grid-template-columns: 1fr;
     }
   }
 `

@@ -76,11 +76,11 @@ MP4 動画を入力
 
 初期段階では、長時間動画、高解像度すぎる動画、HEVC / H.265、MOV、WebM、複数画像入力は非推奨または未対応です。これらは将来対応を検討する余地を残します。
 
-確定した代表フレーム群から、まず 3D 推測用データセットを作成します。この dataset は front / left / right / up / down の代表フレームに対応する 2D 478 landmarks と FacePose を持つ入力データであり、excluded は含めません。dataset はまだ 3D の `idealLandmarks3D` 478点そのものではありません。将来的には、この dataset から `idealLandmarks3D` 478点候補を自動推測します。この結果は完成データではなく候補データとして扱い、Authoring Tool 上で 3D点群を確認し、必要な箇所を手動で微調整します。手動補正後の `idealLandmarks3D` 478点を IdealFace asset として保存 / export します。
+確定した代表フレーム群から、まず 3D 推測用データセットを作成します。この dataset は front / left / right / up / down の代表フレームに対応する 2D 478 landmarks と FacePose を持つ入力データであり、excluded は含めません。dataset はまだ 3D の `idealLandmarks3D` 478点そのものではありません。Step 2-G v1 では、この dataset から `idealLandmarks3D` 478点候補を自動推測します。この結果は完成データではなく候補データとして扱います。将来的には Authoring Tool 上で 3D点群を確認し、必要な箇所を手動で微調整します。手動補正後の `idealLandmarks3D` 478点を IdealFace asset として保存 / export します。
 
 この方針は完全自動生成ではなく、自動推測 + 手動補正です。Engine Runtime は動画 / 複数画像から `idealLandmarks3D` を作成せず、Authoring Tool で作成済みの IdealFace asset を読み込んで使うだけです。
 
-現時点では、MP4 動画入力とフレーム抽出は IdealFace Authoring Tool Step 2-A、抽出フレームの MediaPipe 解析は Step 2-B、yaw / pitch / roll による代表フレーム候補の自動抽出、各カテゴリ上位複数件の候補一覧 / JSON preview への概要表示は Step 2-C、代表フレーム候補から正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定する UI と、候補カテゴリを必要なものだけ開く Step 2-D UI整理、確定済み代表フレームから 3D推測用データセットを作成して readiness summary、dataset 一覧、JSON preview の `idealLandmarks3DInferenceDataset` 概要を確認する Step 2-E、候補抽出用に動画全体を詳細スキャンして `scanSummary` を表示する Step 2-F は実装済みです。確定済み代表フレーム一覧と3D推測用データセットには正面 / 左向き / 右向き / 上向き / 下向きだけを表示し、excluded は dataset に含めません。候補以外の詳細スキャンフレームは UI に大量表示せず、候補サムネイルはトリムせず全体表示します。3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力は未実装です。
+現時点では、MP4 動画入力とフレーム抽出は IdealFace Authoring Tool Step 2-A、抽出フレームの MediaPipe 解析は Step 2-B、yaw / pitch / roll による代表フレーム候補の自動抽出、各カテゴリ上位複数件の候補一覧 / JSON preview への概要表示は Step 2-C、代表フレーム候補から正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定する UI と、候補カテゴリを必要なものだけ開く Step 2-D UI整理、確定済み代表フレームから 3D推測用データセットを作成して readiness summary、dataset 一覧、JSON preview の `idealLandmarks3DInferenceDataset` 概要を確認する Step 2-E、候補抽出用に動画全体を詳細スキャンして `scanSummary` を表示する Step 2-F、3D推測用データセットから `idealLandmarks3D` 478点候補を自動推測する Step 2-G v1 は実装済みです。確定済み代表フレーム一覧と3D推測用データセットには正面 / 左向き / 右向き / 上向き / 下向きだけを表示し、excluded は dataset に含めません。候補以外の詳細スキャンフレームは UI に大量表示せず、候補サムネイルはトリムせず全体表示します。3D点群 preview、手動微調整、保存 / export、複数画像入力は未実装です。
 
 ## Shape Processing の考え方
 
@@ -141,7 +141,7 @@ Step 2-F 改良では、代表フレーム候補抽出用の詳細スキャン�
 
 候補条件は緩めており、yaw 候補では pitch が多少ずれていても、pitch 候補では yaw が多少ずれていても候補として拾います。除外した候補は候補 UI から外し、`selectedRepresentativeFrames.excluded` として状態 / JSON preview には残せますが、3D推測用 dataset には含めません。
 
-3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力は引き続き未実装です。詳細スキャンや候補振り分け処理は IdealFace Authoring Tool の責務であり、Runtime には入れません。
+3D 478点候補の自動推測 v1 は Step 2-G で追加済みです。3D点群 preview、手動微調整、保存 / export、複数画像入力は引き続き未実装です。詳細スキャンや候補振り分け、3D候補生成処理は IdealFace Authoring Tool の責務であり、Runtime には入れません。
 
 ## Runtime と Authoring の分離
 
@@ -177,7 +177,7 @@ Beauty Studio では、開発確認用として overlay や簡易調整 UI を�
 - サムネイル一覧での frame index / timestamp / 状態「未解析」の表示
 - JSON preview での動画情報と抽出フレーム情報の表示
 
-初期対応は MP4 動画のみです。複数画像入力は未実装 / 将来対応です。Step 2-A 時点では MediaPipe による 2D 478 landmarks 取得と FacePose 取得は未実装でしたが、Step 2-B で抽出済みフレームの解析まで追加済みです。Step 2-C で代表フレーム候補抽出、Step 2-D で手動ラベル確定 UI、Step 2-E で3D推測用データセット作成まで追加済みです。3D 478点推測、3D点群 preview、手動微調整、保存 / export はまだ未実装です。
+初期対応は MP4 動画のみです。複数画像入力は未実装 / 将来対応です。Step 2-A 時点では MediaPipe による 2D 478 landmarks 取得と FacePose 取得は未実装でしたが、Step 2-B で抽出済みフレームの解析まで追加済みです。Step 2-C で代表フレーム候補抽出、Step 2-D で手動ラベル確定 UI、Step 2-E で3D推測用データセット作成、Step 2-F で候補抽出用の詳細スキャン、Step 2-G で3D 478点候補の自動推測 v1 まで追加済みです。3D点群 preview、手動微調整、保存 / export はまだ未実装です。
 
 動画入力やフレーム抽出処理は IdealFace Authoring Tool の責務です。Runtime には動画入力やフレーム抽出処理を入れません。
 
@@ -193,7 +193,7 @@ Beauty Studio では、開発確認用として overlay や簡易調整 UI を�
 - 解析結果 summary での解析済み数、顔検出あり / なし、解析エラー数、yaw / pitch / roll 範囲表示
 - JSON preview での解析概要と `landmarkPreview` 表示
 
-JSON preview には 478 landmarks 全文は出しません。代表フレーム候補抽出は Step 2-C、手動ラベル確定 UI は Step 2-D、3D推測用データセット概要表示は Step 2-E、候補抽出用の詳細スキャンと `scanSummary` 表示は Step 2-F で追加済みです。3D 478点推測、3D点群 preview、手動微調整、保存 / export はまだ未実装です。
+JSON preview には 478 landmarks 全文は出しません。代表フレーム候補抽出は Step 2-C、手動ラベル確定 UI は Step 2-D、3D推測用データセット概要表示は Step 2-E、候補抽出用の詳細スキャンと `scanSummary` 表示は Step 2-F、3D候補生成 summary と `idealLandmarks3DCandidate` 概要表示は Step 2-G で追加済みです。3D点群 preview、手動微調整、保存 / export はまだ未実装です。
 
 MediaPipe 解析は Authoring Tool の抽出フレームに対する処理です。Runtime には動画入力、フレーム抽出、Authoring 用フレーム解析処理を入れません。
 
@@ -214,7 +214,7 @@ MediaPipe 解析は Authoring Tool の抽出フレームに対する処理です
 
 将来的に解析対象フレームが増えても、ユーザーには代表フレーム候補を中心に見せ、抽出フレーム一覧は debug / 確認用として折りたたみます。
 
-候補 1 件だけで確定せず、候補を複数比較して手動ラベル確定 UI へ進む方針です。Step 2-D で手動ラベル確定 UI、Step 2-E で確定済み代表フレームからの3D推測用データセット作成まで追加済みです。3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力はまだ未実装です。代表フレーム抽出処理と Authoring 用 UI、dataset 作成処理は IdealFace Authoring Tool の責務であり、Runtime には入れません。
+候補 1 件だけで確定せず、候補を複数比較して手動ラベル確定 UI へ進む方針です。Step 2-D で手動ラベル確定 UI、Step 2-E で確定済み代表フレームからの3D推測用データセット作成、Step 2-F で候補抽出用の詳細スキャン、Step 2-G で3D 478点候補の自動推測 v1 まで追加済みです。3D点群 preview、手動微調整、保存 / export、複数画像入力はまだ未実装です。代表フレーム抽出処理と Authoring 用 UI、dataset 作成処理、3D候補生成処理は IdealFace Authoring Tool の責務であり、Runtime には入れません。
 
 ## IdealFace Authoring Tool Step 2-D
 
@@ -253,7 +253,7 @@ Step 2-D では、3D 478点候補の自動推測、3D点群 preview、手動微�
 
 Step 2-E の dataset は、3D の `idealLandmarks3D` 478点候補を推測するための入力データセットです。まだ `idealLandmarks3D` 478点そのものではありません。
 
-Step 2-E では、3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力はまだ実装しません。dataset 作成処理は IdealFace Authoring Tool の責務であり、Runtime や Beauty Studio には入れません。Step 2-F でも 3D推測以降は実装せず、候補抽出用の詳細スキャンに範囲を絞っています。
+Step 2-E では、3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力はまだ実装しません。dataset 作成処理は IdealFace Authoring Tool の責務であり、Runtime や Beauty Studio には入れません。Step 2-F でも 3D推測以降は実装せず、候補抽出用の詳細スキャンに範囲を絞っています。Step 2-G で dataset からの 3D 478点候補生成 v1 を追加済みですが、3D点群 preview、手動微調整、保存 / export はまだ実装していません。
 
 ## IdealFace Authoring Tool Step 2-F
 
@@ -268,7 +268,7 @@ Step 2-E では、3D 478点候補の自動推測、3D点群 preview、手動微�
 - 詳細スキャン summary と JSON preview の `scanSummary` を表示する
 - 候補カード、確定済み代表フレーム、dataset entry のサムネイルを `contain` 相当で表示し、画像全体が見えるようにする
 
-Step 2-F では、3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力はまだ実装しません。詳細スキャン処理は IdealFace Authoring Tool の責務であり、Runtime や Beauty Studio には入れません。
+Step 2-G では、front が ready の場合に 3D 478点候補を生成します。v1 は厳密な 3D reconstruction ではなく、front の 2D 478 landmarks を x / y の基準にし、left / right / up / down との差分から z を簡易推定する仮の候補生成です。不足している代表フレームは confidence を下げる要素として扱います。生成結果は完成済み IdealFace asset ではなく候補データであり、JSON preview には `idealLandmarks3DCandidate` の概要と先頭 5 点程度の preview だけを表示します。3D点群 preview、手動微調整、保存 / export、複数画像入力はまだ実装しません。詳細スキャン処理と 3D候補生成は IdealFace Authoring Tool の責務であり、Runtime や Beauty Studio には入れません。
 
 ## IdealFace / Projection / Shape Processing 中核仕様
 
