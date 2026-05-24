@@ -2,7 +2,6 @@ import {
   NATURAL_IDEAL_FACE_PRESET,
   type FaceLandmark,
   type FacePose,
-  type IdealFacePoint3D,
 } from "@bae-ar/engine"
 import {
   FaceLandmarker,
@@ -40,7 +39,6 @@ const DIRECTIONAL_POSE_LIMIT = {
 }
 const YAW_CANDIDATE_MIN_ABS = 6
 const PITCH_CANDIDATE_MIN_ABS = 5
-const MAX_CANDIDATES_PER_CATEGORY = 30
 const INFERENCE_DATASET_LABELS: SelectableRepresentativeFrameLabel[] = [
   "front",
   "left",
@@ -78,25 +76,12 @@ const DEFAULT_POINT_CLOUD_CAMERA: PointCloudPreviewCamera = {
   panY: 0,
 }
 
-type RepresentativeFrameCandidateKey =
-  | "front"
-  | "yawPositive"
-  | "yawNegative"
-  | "pitchPositive"
-  | "pitchNegative"
-
-type ManualRepresentativeFrameLabel =
+type SelectableRepresentativeFrameLabel =
   | "front"
   | "left"
   | "right"
   | "up"
   | "down"
-  | "excluded"
-
-type SelectableRepresentativeFrameLabel = Exclude<
-  ManualRepresentativeFrameLabel,
-  "excluded"
->
 
 type FrameAnalysisStatus =
   | "pending"
@@ -128,51 +113,6 @@ interface LandmarkPreviewPoint {
   x: number
   y: number
   z: number
-}
-
-interface RepresentativeFrameCandidate {
-  key: RepresentativeFrameCandidateKey
-  frameIndex: number
-  timestamp: number
-  score: number
-  detected: boolean
-  landmarksCount: number
-  status: FrameAnalysisStatus
-  pose: FacePose
-  yawAbs: number
-  pitchAbs: number
-  rollAbs: number
-  thumbnailUrl: string
-  landmarkPreview: LandmarkPreviewPoint[]
-}
-
-type RepresentativeFrameCandidates = Record<
-  RepresentativeFrameCandidateKey,
-  RepresentativeFrameCandidate[]
->
-
-type RepresentativeCandidateCategoryOpenState = Record<
-  RepresentativeFrameCandidateKey,
-  boolean
->
-
-interface SelectedRepresentativeFrame {
-  label: ManualRepresentativeFrameLabel
-  frameIndex: number
-  timestamp: number
-  pose: FacePose
-  score: number
-  landmarksCount: number
-  status: "selected" | "excluded"
-  thumbnailUrl: string
-  landmarkPreview: LandmarkPreviewPoint[]
-}
-
-type SelectedRepresentativeFrames = Record<
-  SelectableRepresentativeFrameLabel,
-  SelectedRepresentativeFrame | null
-> & {
-  excluded: SelectedRepresentativeFrame[]
 }
 
 type InferenceDatasetEntryStatus = "ready" | "missing" | "invalid"
@@ -389,14 +329,10 @@ interface PointCloudPreviewSummary {
 interface DetailedScanSummary {
   scanIntervalSec: number
   maxScanFrames: number
-  maxCandidatesPerCategory: number
   scannedFrameCount: number
   analyzedFrameCount: number
   detectedFrameCount: number
   candidateSourceFrameCount: number
-  candidateCounts: Record<RepresentativeFrameCandidateKey, number>
-  candidateCategoryCount: number
-  excludedCandidateCount: number
 }
 
 interface VideoSourceState {
@@ -412,18 +348,11 @@ interface VideoSourceState {
   error: string | null
   scanSummary: DetailedScanSummary
   detailedScanFrames: ExtractedVideoFrame[]
-  representativeFrameCandidates: RepresentativeFrameCandidates
-  representativeCandidateFrames: ExtractedVideoFrame[]
 }
 
 let videoSource: VideoSourceState | null = null
 let faceLandmarker: FaceLandmarker | null = null
 let faceLandmarkerInitialization: Promise<FaceLandmarker> | null = null
-let isDebugFrameListOpen = false
-let representativeCandidateCategoryOpenState =
-  createDefaultRepresentativeCandidateCategoryOpenState()
-let selectedRepresentativeFrames: SelectedRepresentativeFrames =
-  createEmptySelectedRepresentativeFrames()
 let idealLandmarks3DFrameSelection: IdealLandmarks3DFrameSelection =
   createEmptyIdealLandmarks3DFrameSelection()
 let idealLandmarks3DCandidateResult: IdealLandmarks3DCandidateResult =
@@ -484,115 +413,8 @@ function formatFrameAnalysisStatus(status: FrameAnalysisStatus): string {
   return labels[status]
 }
 
-function formatManualRepresentativeFrameLabel(
-  label: ManualRepresentativeFrameLabel,
-): string {
-  const labels: Record<ManualRepresentativeFrameLabel, string> = {
-    front: "正面",
-    left: "左向き",
-    right: "右向き",
-    up: "上向き",
-    down: "下向き",
-    excluded: "除外",
-  }
-
-  return labels[label]
-}
-
-function formatInferenceDatasetEntryStatus(
-  status: InferenceDatasetEntryStatus,
-): string {
-  const labels: Record<InferenceDatasetEntryStatus, string> = {
-    ready: "準備済み",
-    missing: "未選択",
-    invalid: "無効",
-  }
-
-  return labels[status]
-}
-
 function formatScore(value: number): string {
   return value.toFixed(2)
-}
-
-function getPreviewBounds(points: IdealFacePoint3D[]): {
-  minX: number
-  maxX: number
-  minY: number
-  maxY: number
-} {
-  const xs = points.map((point) => point.x)
-  const ys = points.map((point) => point.y)
-  const padding = 0.16
-
-  return {
-    minX: Math.min(...xs) - padding,
-    maxX: Math.max(...xs) + padding,
-    minY: Math.min(...ys) - padding,
-    maxY: Math.max(...ys) + padding,
-  }
-}
-
-function mapPointToPreview(
-  point: IdealFacePoint3D,
-  bounds: ReturnType<typeof getPreviewBounds>,
-): { x: number; y: number } {
-  const width = bounds.maxX - bounds.minX
-  const height = bounds.maxY - bounds.minY
-
-  return {
-    x: ((point.x - bounds.minX) / width) * 100,
-    y: 100 - ((point.y - bounds.minY) / height) * 100,
-  }
-}
-
-function renderPreview(points: IdealFacePoint3D[]): string {
-  const bounds = getPreviewBounds(points)
-  const axisOrigin = mapPointToPreview(
-    { id: "origin", x: 0, y: 0, z: 0 },
-    bounds,
-  )
-  const pointMarkup = points
-    .map((point) => {
-      const previewPoint = mapPointToPreview(point, bounds)
-      const label = point.semantic ?? point.id
-
-      return `
-        <g class="preview-point">
-          <circle cx="${previewPoint.x}" cy="${previewPoint.y}" r="1.7">
-            <title>${escapeHtml(point.id)}</title>
-          </circle>
-          <text x="${previewPoint.x + 2.5}" y="${previewPoint.y - 2.5}">
-            ${escapeHtml(label)}
-          </text>
-        </g>
-      `
-    })
-    .join("")
-
-  return `
-    <svg class="preview" viewBox="0 0 100 100" role="img" aria-label="natural_v1 controlPoints preview">
-      <line class="axis" x1="4" y1="${axisOrigin.y}" x2="96" y2="${axisOrigin.y}" />
-      <line class="axis" x1="${axisOrigin.x}" y1="4" x2="${axisOrigin.x}" y2="96" />
-      ${pointMarkup}
-    </svg>
-  `
-}
-
-function renderControlPointRows(points: IdealFacePoint3D[]): string {
-  return points
-    .map(
-      (point) => `
-        <tr>
-          <td>${escapeHtml(point.id)}</td>
-          <td>${escapeHtml(point.semantic ?? "")}</td>
-          <td>${formatNumber(point.x)}</td>
-          <td>${formatNumber(point.y)}</td>
-          <td>${formatNumber(point.z)}</td>
-        </tr>
-      `,
-    )
-    .join("")
 }
 
 function renderVideoMetadata(): string {
@@ -600,7 +422,6 @@ function renderVideoMetadata(): string {
   const duration = videoSource?.duration ?? null
   const videoWidth = videoSource?.videoWidth ?? null
   const videoHeight = videoSource?.videoHeight ?? null
-  const frameCount = videoSource?.extractedFrames.length ?? 0
 
   return `
     <dl>
@@ -615,10 +436,6 @@ function renderVideoMetadata(): string {
       <div>
         <dt>動画サイズ</dt>
         <dd>${formatPixels(videoWidth, videoHeight)}</dd>
-      </div>
-      <div>
-        <dt>抽出フレーム数</dt>
-        <dd>${frameCount}</dd>
       </div>
     </dl>
   `
@@ -713,107 +530,7 @@ function getDetailedScanSummary(): DetailedScanSummary {
     return createEmptyDetailedScanSummary()
   }
 
-  const candidates = getRepresentativeFrameCandidates()
-
-  return {
-    ...videoSource.scanSummary,
-    candidateCounts: getCandidateCounts(candidates),
-    candidateCategoryCount: getCandidateCategoryCount(candidates),
-    excludedCandidateCount: selectedRepresentativeFrames.excluded.length,
-  }
-}
-
-function getCandidateCounts(
-  candidates: RepresentativeFrameCandidates,
-): Record<RepresentativeFrameCandidateKey, number> {
-  return {
-    front: candidates.front.length,
-    yawPositive: candidates.yawPositive.length,
-    yawNegative: candidates.yawNegative.length,
-    pitchPositive: candidates.pitchPositive.length,
-    pitchNegative: candidates.pitchNegative.length,
-  }
-}
-
-function getCandidateCategoryCount(
-  candidates: RepresentativeFrameCandidates,
-): number {
-  return Object.values(candidates).filter((category) => category.length > 0)
-    .length
-}
-
-function getRepresentativeFrameCandidates(): RepresentativeFrameCandidates {
-  const candidates =
-    videoSource?.representativeFrameCandidates ??
-    createEmptyRepresentativeFrameCandidates()
-  const excludedFrameIndexes = getExcludedCandidateFrameIndexes()
-
-  if (excludedFrameIndexes.size === 0) {
-    return candidates
-  }
-
-  return {
-    front: filterExcludedCandidates(candidates.front, excludedFrameIndexes),
-    yawPositive: filterExcludedCandidates(
-      candidates.yawPositive,
-      excludedFrameIndexes,
-    ),
-    yawNegative: filterExcludedCandidates(
-      candidates.yawNegative,
-      excludedFrameIndexes,
-    ),
-    pitchPositive: filterExcludedCandidates(
-      candidates.pitchPositive,
-      excludedFrameIndexes,
-    ),
-    pitchNegative: filterExcludedCandidates(
-      candidates.pitchNegative,
-      excludedFrameIndexes,
-    ),
-  }
-}
-
-function getExcludedCandidateFrameIndexes(): Set<number> {
-  return new Set(
-    selectedRepresentativeFrames.excluded.map((frame) => frame.frameIndex),
-  )
-}
-
-function filterExcludedCandidates(
-  candidates: RepresentativeFrameCandidate[],
-  excludedFrameIndexes: Set<number>,
-): RepresentativeFrameCandidate[] {
-  return candidates.filter(
-    (candidate) => !excludedFrameIndexes.has(candidate.frameIndex),
-  )
-}
-
-function buildRepresentativeFrameCandidatesFromFrames(
-  frames: ExtractedVideoFrame[],
-): RepresentativeFrameCandidates {
-  return {
-    front: collectCategoryCandidates(frames, "front", scoreFrontCandidate),
-    yawPositive: collectCategoryCandidates(
-      frames,
-      "yawPositive",
-      scoreYawPositiveCandidate,
-    ),
-    yawNegative: collectCategoryCandidates(
-      frames,
-      "yawNegative",
-      scoreYawNegativeCandidate,
-    ),
-    pitchPositive: collectCategoryCandidates(
-      frames,
-      "pitchPositive",
-      scorePitchPositiveCandidate,
-    ),
-    pitchNegative: collectCategoryCandidates(
-      frames,
-      "pitchNegative",
-      scorePitchNegativeCandidate,
-    ),
-  }
+  return videoSource.scanSummary
 }
 
 function getCandidateSourceFramesFromFrames(
@@ -831,30 +548,14 @@ function getCandidateSourceFramesFromFrames(
   })
 }
 
-function createEmptyRepresentativeFrameCandidates(): RepresentativeFrameCandidates {
-  return {
-    front: [],
-    yawPositive: [],
-    yawNegative: [],
-    pitchPositive: [],
-    pitchNegative: [],
-  }
-}
-
 function createEmptyDetailedScanSummary(): DetailedScanSummary {
   return {
     scanIntervalSec: DETAILED_SCAN_INTERVAL_SEC,
     maxScanFrames: MAX_DETAILED_SCAN_FRAME_COUNT,
-    maxCandidatesPerCategory: MAX_CANDIDATES_PER_CATEGORY,
     scannedFrameCount: 0,
     analyzedFrameCount: 0,
     detectedFrameCount: 0,
     candidateSourceFrameCount: 0,
-    candidateCounts: getCandidateCounts(
-      createEmptyRepresentativeFrameCandidates(),
-    ),
-    candidateCategoryCount: 0,
-    excludedCandidateCount: 0,
   }
 }
 
@@ -865,61 +566,6 @@ function hasCompletePose(pose: FacePose | undefined): pose is FacePose {
     Number.isFinite(pose.yaw) &&
     Number.isFinite(pose.roll)
   )
-}
-
-function collectCategoryCandidates(
-  frames: ExtractedVideoFrame[],
-  key: RepresentativeFrameCandidateKey,
-  scoreCandidate: (pose: FacePose) => number | null,
-): RepresentativeFrameCandidate[] {
-  const scoredCandidates = frames
-    .map((frame) => {
-      const pose = frame.analysis?.pose
-
-      if (!pose) {
-        return null
-      }
-
-      const score = scoreCandidate(pose)
-
-      if (score === null) {
-        return null
-      }
-
-      return buildRepresentativeFrameCandidate(frame, key, score)
-    })
-    .filter(
-      (candidate): candidate is RepresentativeFrameCandidate =>
-        candidate !== null,
-    )
-    .sort((a, b) => b.score - a.score || a.frameIndex - b.frameIndex)
-    .slice(0, MAX_CANDIDATES_PER_CATEGORY)
-
-  return scoredCandidates
-}
-
-function buildRepresentativeFrameCandidate(
-  frame: ExtractedVideoFrame,
-  key: RepresentativeFrameCandidateKey,
-  score: number,
-): RepresentativeFrameCandidate {
-  const pose = frame.analysis?.pose ?? { ...EMPTY_FACE_POSE }
-
-  return {
-    key,
-    frameIndex: frame.index,
-    timestamp: frame.timestamp,
-    score: Number(clamp(score, 0, 1).toFixed(4)),
-    detected: frame.analysis?.detected ?? false,
-    landmarksCount: frame.analysis?.landmarks.length ?? 0,
-    status: frame.status,
-    pose,
-    yawAbs: Math.abs(pose.yaw),
-    pitchAbs: Math.abs(pose.pitch),
-    rollAbs: Math.abs(pose.roll),
-    thumbnailUrl: frame.thumbnailUrl,
-    landmarkPreview: buildLandmarkPreview(frame.analysis?.landmarks ?? []),
-  }
 }
 
 function scoreFrontCandidate(pose: FacePose): number | null {
@@ -1035,46 +681,6 @@ function scoreDirectionalCandidate(
   return primaryScore * 0.7 + secondaryScore * 0.18 + rollScore * 0.12
 }
 
-function toRepresentativeCandidatePreview(
-  candidate: RepresentativeFrameCandidate,
-): unknown {
-  return {
-    frameIndex: candidate.frameIndex,
-    timestamp: Number(candidate.timestamp.toFixed(3)),
-    score: candidate.score,
-    pose: {
-      pitch: candidate.pose.pitch,
-      yaw: candidate.pose.yaw,
-      roll: candidate.pose.roll,
-    },
-    landmarksCount: candidate.landmarksCount,
-    status: candidate.status,
-  }
-}
-
-function toRepresentativeCandidatesPreview(
-  candidates: RepresentativeFrameCandidates,
-): unknown {
-  return {
-    front: candidates.front.map(toRepresentativeCandidatePreview),
-    yawPositive: candidates.yawPositive.map(toRepresentativeCandidatePreview),
-    yawNegative: candidates.yawNegative.map(toRepresentativeCandidatePreview),
-    pitchPositive: candidates.pitchPositive.map(toRepresentativeCandidatePreview),
-    pitchNegative: candidates.pitchNegative.map(toRepresentativeCandidatePreview),
-  }
-}
-
-function createEmptySelectedRepresentativeFrames(): SelectedRepresentativeFrames {
-  return {
-    front: null,
-    left: null,
-    right: null,
-    up: null,
-    down: null,
-    excluded: [],
-  }
-}
-
 function createEmptyIdealLandmarks3DFrameSelection(): IdealLandmarks3DFrameSelection {
   return {
     frontReferenceFrameIds: [],
@@ -1082,63 +688,9 @@ function createEmptyIdealLandmarks3DFrameSelection(): IdealLandmarks3DFrameSelec
   }
 }
 
-function createDefaultRepresentativeCandidateCategoryOpenState(): RepresentativeCandidateCategoryOpenState {
-  return {
-    front: true,
-    yawPositive: false,
-    yawNegative: false,
-    pitchPositive: false,
-    pitchNegative: false,
-  }
-}
-
-function toSelectedRepresentativeFramePreview(
-  frame: SelectedRepresentativeFrame | null,
-): unknown {
-  if (!frame) {
-    return null
-  }
-
-  return {
-    label: frame.label,
-    frameIndex: frame.frameIndex,
-    timestamp: Number(frame.timestamp.toFixed(3)),
-    pose: {
-      pitch: frame.pose.pitch,
-      yaw: frame.pose.yaw,
-      roll: frame.pose.roll,
-    },
-    score: frame.score,
-    landmarksCount: frame.landmarksCount,
-    status: frame.status,
-    landmarkPreview: frame.landmarkPreview,
-  }
-}
-
-function toSelectedRepresentativeFramesPreview(): unknown {
-  return {
-    front: toSelectedRepresentativeFramePreview(
-      selectedRepresentativeFrames.front,
-    ),
-    left: toSelectedRepresentativeFramePreview(
-      selectedRepresentativeFrames.left,
-    ),
-    right: toSelectedRepresentativeFramePreview(
-      selectedRepresentativeFrames.right,
-    ),
-    up: toSelectedRepresentativeFramePreview(selectedRepresentativeFrames.up),
-    down: toSelectedRepresentativeFramePreview(
-      selectedRepresentativeFrames.down,
-    ),
-    excluded: selectedRepresentativeFrames.excluded.map((frame) =>
-      toSelectedRepresentativeFramePreview(frame),
-    ),
-  }
-}
-
 function buildLandmarkPreview(
   landmarks: FaceLandmark[],
-): RepresentativeFrameDatasetEntry["landmarkPreview"] {
+): LandmarkPreviewPoint[] {
   return landmarks
     .slice(0, INFERENCE_DATASET_LANDMARK_PREVIEW_COUNT)
     .map((landmark, index) => ({
@@ -1147,134 +699,6 @@ function buildLandmarkPreview(
       y: Number(landmark.y.toFixed(4)),
       z: Number(landmark.z.toFixed(4)),
     }))
-}
-
-function findExtractedVideoFrame(frameIndex: number): ExtractedVideoFrame | null {
-  return (
-    videoSource?.representativeCandidateFrames.find(
-      (frame) => frame.index === frameIndex,
-    ) ??
-    videoSource?.extractedFrames.find((frame) => frame.index === frameIndex) ??
-    null
-  )
-}
-
-function buildMissingDatasetEntry(
-  label: SelectableRepresentativeFrameLabel,
-): RepresentativeFrameDatasetEntry {
-  return {
-    label,
-    frameIndex: null,
-    timestamp: null,
-    pose: null,
-    landmarksCount: 0,
-    landmarkPreview: [],
-    status: "missing",
-    landmarks: [],
-    thumbnailUrl: null,
-  }
-}
-
-function buildInvalidDatasetEntry(
-  label: SelectableRepresentativeFrameLabel,
-  selectedFrame: SelectedRepresentativeFrame,
-): RepresentativeFrameDatasetEntry {
-  return {
-    label,
-    frameIndex: selectedFrame.frameIndex,
-    timestamp: selectedFrame.timestamp,
-    pose: selectedFrame.pose,
-    landmarksCount: selectedFrame.landmarksCount,
-    landmarkPreview: [],
-    status: "invalid",
-    landmarks: [],
-    thumbnailUrl: selectedFrame.thumbnailUrl,
-  }
-}
-
-function buildReadyDatasetEntry(
-  label: SelectableRepresentativeFrameLabel,
-  selectedFrame: SelectedRepresentativeFrame,
-  extractedFrame: ExtractedVideoFrame,
-): RepresentativeFrameDatasetEntry {
-  const analysis = extractedFrame.analysis
-
-  if (
-    !analysis ||
-    analysis.detected !== true ||
-    analysis.landmarks.length !== REQUIRED_LANDMARK_COUNT ||
-    !hasCompletePose(analysis.pose)
-  ) {
-    return buildInvalidDatasetEntry(label, selectedFrame)
-  }
-
-  return {
-    label,
-    frameIndex: selectedFrame.frameIndex,
-    timestamp: selectedFrame.timestamp,
-    pose: analysis.pose,
-    landmarksCount: analysis.landmarks.length,
-    landmarkPreview: buildLandmarkPreview(analysis.landmarks),
-    status: "ready",
-    landmarks: analysis.landmarks,
-    thumbnailUrl: selectedFrame.thumbnailUrl,
-  }
-}
-
-function getIdealLandmarks3DInferenceDataset(): IdealLandmarks3DInferenceDataset {
-  const entries = INFERENCE_DATASET_LABELS.map((label) => {
-    const selectedFrame = selectedRepresentativeFrames[label]
-
-    if (!selectedFrame) {
-      return buildMissingDatasetEntry(label)
-    }
-
-    const extractedFrame = findExtractedVideoFrame(selectedFrame.frameIndex)
-
-    if (!extractedFrame) {
-      return buildInvalidDatasetEntry(label, selectedFrame)
-    }
-
-    return buildReadyDatasetEntry(label, selectedFrame, extractedFrame)
-  })
-  const readyCount = entries.filter((entry) => entry.status === "ready").length
-
-  return {
-    readyCount,
-    requiredCount: INFERENCE_DATASET_LABELS.length,
-    entries,
-  }
-}
-
-function toInferenceDatasetEntryPreview(
-  entry: RepresentativeFrameDatasetEntry,
-): unknown {
-  return {
-    label: entry.label,
-    frameIndex: entry.frameIndex,
-    timestamp:
-      entry.timestamp === null ? null : Number(entry.timestamp.toFixed(3)),
-    status: entry.status,
-    pose: entry.pose
-      ? {
-          pitch: entry.pose.pitch,
-          yaw: entry.pose.yaw,
-          roll: entry.pose.roll,
-        }
-      : null,
-    landmarksCount: entry.landmarksCount,
-    landmarkPreview: entry.landmarkPreview,
-  }
-}
-
-function toInferenceDatasetPreview(
-  dataset: IdealLandmarks3DInferenceDataset,
-): unknown {
-  return {
-    readyCount: dataset.readyCount,
-    requiredCount: dataset.requiredCount,
-    entries: dataset.entries.map(toInferenceDatasetEntryPreview),
-  }
 }
 
 function createInitialIdealLandmarks3DCandidateResult(): IdealLandmarks3DCandidateResult {
@@ -1507,7 +931,7 @@ function buildIdealLandmarks3DCandidateResult(
       frontReferenceFrameCount: 1,
       observationFrameCount: readyLabels.filter((label) => label !== "front")
         .length,
-      excludedFrameCount: selectedRepresentativeFrames.excluded.length,
+      excludedFrameCount: 0,
     }),
     message:
       "front の 2D 478 landmarks を x / y の基準にし、左右 / 上下フレームとの差分から z を簡易推定した候補です。",
@@ -1707,18 +1131,6 @@ function getConfidenceOpacity(confidence: number): string {
   return (0.22 + clamp(confidence, 0, 1) * 0.68).toFixed(3)
 }
 
-function getAllRepresentativeCandidates(
-  candidates: RepresentativeFrameCandidates,
-): RepresentativeFrameCandidate[] {
-  return [
-    ...candidates.front,
-    ...candidates.yawPositive,
-    ...candidates.yawNegative,
-    ...candidates.pitchPositive,
-    ...candidates.pitchNegative,
-  ]
-}
-
 function getFrameId(frameIndex: number): string {
   return String(frameIndex)
 }
@@ -1747,6 +1159,64 @@ function isFrameFrontReferenceForPoseAware(frameIndex: number): boolean {
   )
 }
 
+function addPoseAwareFrontReferenceFrame(frameIndex: number): void {
+  const frameId = getFrameId(frameIndex)
+
+  idealLandmarks3DFrameSelection = {
+    frontReferenceFrameIds: addUniqueId(
+      idealLandmarks3DFrameSelection.frontReferenceFrameIds,
+      frameId,
+    ),
+    excludedFrameIds: removeId(
+      idealLandmarks3DFrameSelection.excludedFrameIds,
+      frameId,
+    ),
+  }
+}
+
+function removePoseAwareFrontReferenceFrame(frameIndex: number): void {
+  const frameId = getFrameId(frameIndex)
+
+  idealLandmarks3DFrameSelection = {
+    ...idealLandmarks3DFrameSelection,
+    frontReferenceFrameIds: removeId(
+      idealLandmarks3DFrameSelection.frontReferenceFrameIds,
+      frameId,
+    ),
+  }
+}
+
+function addPoseAwareExcludedFrame(frameIndex: number): void {
+  const frameId = getFrameId(frameIndex)
+
+  idealLandmarks3DFrameSelection = {
+    frontReferenceFrameIds: removeId(
+      idealLandmarks3DFrameSelection.frontReferenceFrameIds,
+      frameId,
+    ),
+    excludedFrameIds: addUniqueId(
+      idealLandmarks3DFrameSelection.excludedFrameIds,
+      frameId,
+    ),
+  }
+}
+
+function excludePoseAwareFrame(frameIndex: number): void {
+  addPoseAwareExcludedFrame(frameIndex)
+}
+
+function removePoseAwareExcludedFrame(frameIndex: number): void {
+  const frameId = getFrameId(frameIndex)
+
+  idealLandmarks3DFrameSelection = {
+    ...idealLandmarks3DFrameSelection,
+    excludedFrameIds: removeId(
+      idealLandmarks3DFrameSelection.excludedFrameIds,
+      frameId,
+    ),
+  }
+}
+
 function getDetailedScanFrames(): ExtractedVideoFrame[] {
   return videoSource?.detailedScanFrames ?? []
 }
@@ -1760,9 +1230,6 @@ function findPoseAwareFrameById(frameId: string): ExtractedVideoFrame | null {
 
   return (
     getDetailedScanFrames().find((frame) => frame.index === frameIndex) ??
-    videoSource?.representativeCandidateFrames.find(
-      (frame) => frame.index === frameIndex,
-    ) ??
     videoSource?.extractedFrames.find((frame) => frame.index === frameIndex) ??
     null
   )
@@ -1780,18 +1247,28 @@ function isUsableObservationSourceFrame(frame: ExtractedVideoFrame): boolean {
 }
 
 function getPoseAwareCandidateScore(frameIndex: number): number | null {
-  const candidates =
-    videoSource?.representativeFrameCandidates ??
-    createEmptyRepresentativeFrameCandidates()
-  const matchingCandidates = getAllRepresentativeCandidates(candidates).filter(
-    (candidate) => candidate.frameIndex === frameIndex,
+  const frame = getDetailedScanFrames().find(
+    (scanFrame) => scanFrame.index === frameIndex,
   )
+  const pose = frame?.analysis?.pose
 
-  if (matchingCandidates.length === 0) {
+  if (!pose || !hasCompletePose(pose)) {
     return null
   }
 
-  return Math.max(...matchingCandidates.map((candidate) => candidate.score))
+  const scores = [
+    scoreFrontCandidate(pose),
+    scoreYawPositiveCandidate(pose),
+    scoreYawNegativeCandidate(pose),
+    scorePitchPositiveCandidate(pose),
+    scorePitchNegativeCandidate(pose),
+  ].filter((score): score is number => score !== null)
+
+  if (scores.length === 0) {
+    return null
+  }
+
+  return Number(Math.max(...scores).toFixed(4))
 }
 
 function buildPoseAwareObservationFrame(
@@ -2585,146 +2062,6 @@ function toPoseAwareCandidatePreview(): unknown {
   }
 }
 
-function findRepresentativeCandidate(
-  candidateKey: RepresentativeFrameCandidateKey,
-  frameIndex: number,
-): RepresentativeFrameCandidate | null {
-  const candidates = getRepresentativeFrameCandidates()
-
-  return (
-    getAllRepresentativeCandidates(candidates).find(
-      (candidate) =>
-        candidate.key === candidateKey && candidate.frameIndex === frameIndex,
-    ) ?? null
-  )
-}
-
-function buildSelectedRepresentativeFrame(
-  label: ManualRepresentativeFrameLabel,
-  candidate: RepresentativeFrameCandidate,
-): SelectedRepresentativeFrame {
-  return {
-    label,
-    frameIndex: candidate.frameIndex,
-    timestamp: candidate.timestamp,
-    pose: candidate.pose,
-    score: candidate.score,
-    landmarksCount: candidate.landmarksCount,
-    status: label === "excluded" ? "excluded" : "selected",
-    thumbnailUrl: candidate.thumbnailUrl,
-    landmarkPreview: candidate.landmarkPreview,
-  }
-}
-
-function removeFrameFromSelectedRepresentativeFrames(frameIndex: number): void {
-  const selectableLabels: SelectableRepresentativeFrameLabel[] = [
-    "front",
-    "left",
-    "right",
-    "up",
-    "down",
-  ]
-
-  for (const label of selectableLabels) {
-    if (selectedRepresentativeFrames[label]?.frameIndex === frameIndex) {
-      selectedRepresentativeFrames[label] = null
-    }
-  }
-
-  selectedRepresentativeFrames.excluded =
-    selectedRepresentativeFrames.excluded.filter(
-      (frame) => frame.frameIndex !== frameIndex,
-    )
-}
-
-function addPoseAwareExcludedFrame(frameIndex: number): void {
-  resetIdealLandmarks3DCandidateResult()
-  idealLandmarks3DFrameSelection = {
-    ...idealLandmarks3DFrameSelection,
-    excludedFrameIds: addUniqueId(
-      idealLandmarks3DFrameSelection.excludedFrameIds,
-      getFrameId(frameIndex),
-    ),
-  }
-}
-
-function removePoseAwareExcludedFrame(frameIndex: number): void {
-  resetIdealLandmarks3DCandidateResult()
-  idealLandmarks3DFrameSelection = {
-    ...idealLandmarks3DFrameSelection,
-    excludedFrameIds: removeId(
-      idealLandmarks3DFrameSelection.excludedFrameIds,
-      getFrameId(frameIndex),
-    ),
-  }
-}
-
-function addPoseAwareFrontReferenceFrame(frameIndex: number): void {
-  const frameId = getFrameId(frameIndex)
-
-  resetIdealLandmarks3DCandidateResult()
-  idealLandmarks3DFrameSelection = {
-    ...idealLandmarks3DFrameSelection,
-    frontReferenceFrameIds: addUniqueId(
-      idealLandmarks3DFrameSelection.frontReferenceFrameIds,
-      frameId,
-    ),
-  }
-}
-
-function removePoseAwareFrontReferenceFrame(frameIndex: number): void {
-  resetIdealLandmarks3DCandidateResult()
-  idealLandmarks3DFrameSelection = {
-    ...idealLandmarks3DFrameSelection,
-    frontReferenceFrameIds: removeId(
-      idealLandmarks3DFrameSelection.frontReferenceFrameIds,
-      getFrameId(frameIndex),
-    ),
-  }
-}
-
-function excludePoseAwareFrame(frameIndex: number): void {
-  removePoseAwareFrontReferenceFrame(frameIndex)
-  addPoseAwareExcludedFrame(frameIndex)
-}
-
-function selectRepresentativeFrame(
-  label: ManualRepresentativeFrameLabel,
-  candidate: RepresentativeFrameCandidate,
-): void {
-  resetIdealLandmarks3DCandidateResult()
-  removeFrameFromSelectedRepresentativeFrames(candidate.frameIndex)
-
-  const selectedFrame = buildSelectedRepresentativeFrame(label, candidate)
-
-  if (label === "excluded") {
-    selectedRepresentativeFrames.excluded = [
-      ...selectedRepresentativeFrames.excluded,
-      selectedFrame,
-    ].sort((a, b) => a.frameIndex - b.frameIndex)
-    return
-  }
-
-  selectedRepresentativeFrames[label] = selectedFrame
-}
-
-function clearSelectedRepresentativeFrame(
-  label: ManualRepresentativeFrameLabel,
-  frameIndex?: number,
-): void {
-  resetIdealLandmarks3DCandidateResult()
-
-  if (label === "excluded") {
-    selectedRepresentativeFrames.excluded =
-      selectedRepresentativeFrames.excluded.filter(
-        (frame) => frame.frameIndex !== frameIndex,
-      )
-    return
-  }
-
-  selectedRepresentativeFrames[label] = null
-}
-
 function formatPoseAwareStatus(status: PoseAwareInferenceStatus): string {
   const labels: Record<PoseAwareInferenceStatus, string> = {
     missing_front_reference: "missing_front_reference",
@@ -3113,400 +2450,6 @@ function renderPoseAwareFrameActionButton(
   `
 }
 
-function renderRepresentativeFrameCandidatesPanel(): string {
-  const candidates = getRepresentativeFrameCandidates()
-  const categories: Array<{
-    key: RepresentativeFrameCandidateKey
-    title: string
-    candidates: RepresentativeFrameCandidate[]
-  }> = [
-    {
-      key: "front",
-      title: "正面候補",
-      candidates: candidates.front,
-    },
-    {
-      key: "yawPositive",
-      title: "yaw 正方向候補",
-      candidates: candidates.yawPositive,
-    },
-    {
-      key: "yawNegative",
-      title: "yaw 負方向候補",
-      candidates: candidates.yawNegative,
-    },
-    {
-      key: "pitchPositive",
-      title: "pitch 正方向候補",
-      candidates: candidates.pitchPositive,
-    },
-    {
-      key: "pitchNegative",
-      title: "pitch 負方向候補",
-      candidates: candidates.pitchNegative,
-    },
-  ]
-
-  return `
-    <section class="representative-panel" aria-label="代表フレーム候補">
-      <div class="panel-heading">
-        <div>
-          <h2>代表フレーム候補</h2>
-          <p>詳細スキャン済みフレームの yaw / pitch / roll から候補を自動抽出します。</p>
-        </div>
-      </div>
-      <p class="candidate-note">左右・上下の最終ラベルはユーザーが手動で確定します。Step 2-F では候補抽出用に動画全体を 0.1 秒間隔で詳細スキャンし、候補カテゴリごとに複数候補を保持します。手動微調整、保存 / export はまだ行いません。</p>
-      ${renderPoseAwareMultiFramePanel()}
-      ${renderSelectedRepresentativeFramesPanel()}
-      ${renderReadinessPanel()}
-      ${renderInferenceDatasetPanel()}
-      ${renderIdealLandmarks3DCandidatePanel()}
-      ${renderIdealLandmarks3DPointCloudPreviewPanel()}
-      <div class="candidate-category-stack">
-        ${categories
-          .map((category) =>
-            renderRepresentativeCandidateCategory(
-              category.key,
-              category.title,
-              category.candidates,
-            ),
-          )
-          .join("")}
-      </div>
-    </section>
-  `
-}
-
-function renderRepresentativeCandidateCategory(
-  key: RepresentativeFrameCandidateKey,
-  title: string,
-  candidates: RepresentativeFrameCandidate[],
-): string {
-  const isOpen = representativeCandidateCategoryOpenState[key]
-  const toggleLabel = isOpen ? "閉じる" : "開く"
-  const countText = `${candidates.length}件`
-
-  if (candidates.length === 0) {
-    return `
-      <article class="candidate-card candidate-card-empty" data-candidate-category="${key}">
-        <div class="candidate-category-toggle-row">
-          <div>
-            <h3>${escapeHtml(title)}（${countText}）</h3>
-            <p>該当する解析済みフレームがありません。</p>
-          </div>
-          <button
-            class="candidate-category-toggle-button"
-            type="button"
-            aria-expanded="${isOpen}"
-            data-candidate-category-key="${key}"
-          >
-            ${toggleLabel}
-          </button>
-        </div>
-      </article>
-    `
-  }
-
-  return `
-    <article class="candidate-card" data-candidate-category="${key}">
-      <div class="candidate-category-toggle-row">
-        <div>
-          <h3>${escapeHtml(title)}（${countText}）</h3>
-          <span>候補 ${candidates.length} 件</span>
-        </div>
-        <button
-          class="candidate-category-toggle-button"
-          type="button"
-          aria-expanded="${isOpen}"
-          data-candidate-category-key="${key}"
-        >
-          ${toggleLabel}
-        </button>
-      </div>
-      ${
-        isOpen
-          ? `<div class="candidate-list">
-              ${candidates.map((candidate) => renderRepresentativeCandidateItem(title, candidate)).join("")}
-            </div>`
-          : `<p class="candidate-collapsed-text">この候補カテゴリは閉じています。</p>`
-      }
-    </article>
-  `
-}
-
-function renderRepresentativeCandidateItem(
-  title: string,
-  candidate: RepresentativeFrameCandidate,
-): string {
-  return `
-    <div class="candidate-item">
-      <img src="${escapeHtml(candidate.thumbnailUrl)}" alt="${escapeHtml(title)} Frame ${String(candidate.frameIndex).padStart(3, "0")}" />
-      <div class="candidate-item-body">
-        <strong>score: ${formatScore(candidate.score)}</strong>
-        <span>frame index: ${candidate.frameIndex}</span>
-        <span>timestamp: ${candidate.timestamp.toFixed(1)}s</span>
-        <span>yaw: ${formatNumber(candidate.pose.yaw)} / pitch: ${formatNumber(candidate.pose.pitch)} / roll: ${formatNumber(candidate.pose.roll)}</span>
-        <span>landmarks 数: ${candidate.landmarksCount}</span>
-        <span>解析状態: ${formatFrameAnalysisStatus(candidate.status)}</span>
-        <div class="candidate-action-group" aria-label="手動ラベル確定">
-          <span>この候補を:</span>
-          ${renderCandidateSelectionButton(candidate, "front")}
-          ${renderCandidateSelectionButton(candidate, "left")}
-          ${renderCandidateSelectionButton(candidate, "right")}
-          ${renderCandidateSelectionButton(candidate, "up")}
-          ${renderCandidateSelectionButton(candidate, "down")}
-          ${renderCandidateSelectionButton(candidate, "excluded")}
-        </div>
-      </div>
-    </div>
-  `
-}
-
-function renderCandidateSelectionButton(
-  candidate: RepresentativeFrameCandidate,
-  label: ManualRepresentativeFrameLabel,
-): string {
-  const buttonLabel =
-    label === "excluded"
-      ? "除外"
-      : `${formatManualRepresentativeFrameLabel(label)}にする`
-
-  return `
-    <button
-      class="candidate-label-button"
-      type="button"
-      data-selection-label="${label}"
-      data-candidate-key="${candidate.key}"
-      data-frame-index="${candidate.frameIndex}"
-    >
-      ${buttonLabel}
-    </button>
-  `
-}
-
-function renderSelectedRepresentativeFramesPanel(): string {
-  return `
-    <div class="selected-representative-panel">
-      <h3>確定済み代表フレーム</h3>
-      <div class="selected-frame-grid">
-        ${renderSingleSelectedRepresentativeFrame("front")}
-        ${renderSingleSelectedRepresentativeFrame("left")}
-        ${renderSingleSelectedRepresentativeFrame("right")}
-        ${renderSingleSelectedRepresentativeFrame("up")}
-        ${renderSingleSelectedRepresentativeFrame("down")}
-      </div>
-    </div>
-  `
-}
-
-function renderSingleSelectedRepresentativeFrame(
-  label: SelectableRepresentativeFrameLabel,
-): string {
-  const selectedFrame = selectedRepresentativeFrames[label]
-  const labelText = formatManualRepresentativeFrameLabel(label)
-
-  if (!selectedFrame) {
-    return `
-      <article class="selected-frame-card selected-frame-empty">
-        <h4>${labelText}</h4>
-        <p>未選択</p>
-      </article>
-    `
-  }
-
-  return renderSelectedRepresentativeFrameCard(selectedFrame, labelText)
-}
-
-function renderSelectedRepresentativeFrameCard(
-  frame: SelectedRepresentativeFrame,
-  title: string,
-): string {
-  return `
-    <article class="selected-frame-card selected-frame-detail">
-      <img src="${escapeHtml(frame.thumbnailUrl)}" alt="${escapeHtml(title)} Frame ${String(frame.frameIndex).padStart(3, "0")}" />
-      <div>
-        <h4>${escapeHtml(title)}</h4>
-        <strong>Frame ${String(frame.frameIndex).padStart(3, "0")} / ${frame.timestamp.toFixed(1)}s</strong>
-        <span>yaw: ${formatNumber(frame.pose.yaw)} / pitch: ${formatNumber(frame.pose.pitch)} / roll: ${formatNumber(frame.pose.roll)}</span>
-        <span>score: ${formatScore(frame.score)}</span>
-        <span>landmarks 数: ${frame.landmarksCount}</span>
-        <button
-          class="selected-clear-button"
-          type="button"
-          data-clear-label="${frame.label}"
-          data-frame-index="${frame.frameIndex}"
-        >
-          解除
-        </button>
-      </div>
-    </article>
-  `
-}
-
-function renderReadinessPanel(): string {
-  const dataset = getIdealLandmarks3DInferenceDataset()
-
-  return `
-    <div class="readiness-panel">
-      <h3>3D推測用データセット</h3>
-      <dl class="readiness-list">
-        ${dataset.entries
-          .map(
-            (entry) => `
-              <div>
-                <dt>${formatManualRepresentativeFrameLabel(entry.label)}</dt>
-                <dd>${formatInferenceDatasetEntryStatus(entry.status)}</dd>
-              </div>
-            `,
-          )
-          .join("")}
-      </dl>
-      <p class="dataset-ready-count">準備済み: ${dataset.readyCount} / ${dataset.requiredCount}</p>
-      <p class="dataset-note">準備済みデータセットから Step 2-G v1 の旧簡易候補を生成できます。Step 2-I-C の pose-aware 候補は Step 2-I カード内で生成します。</p>
-    </div>
-  `
-}
-
-function renderInferenceDatasetPanel(): string {
-  const dataset = getIdealLandmarks3DInferenceDataset()
-
-  return `
-    <div class="inference-dataset-panel">
-      <h3>推測に使う代表フレーム</h3>
-      <div class="dataset-entry-grid">
-        ${dataset.entries.map(renderInferenceDatasetEntry).join("")}
-      </div>
-    </div>
-  `
-}
-
-function renderInferenceDatasetEntry(
-  entry: RepresentativeFrameDatasetEntry,
-): string {
-  const labelText = formatManualRepresentativeFrameLabel(entry.label)
-  const frameIndexText =
-    entry.frameIndex === null
-      ? "なし"
-      : String(entry.frameIndex).padStart(3, "0")
-  const timestampText =
-    entry.timestamp === null ? "なし" : `${entry.timestamp.toFixed(1)}s`
-  const poseText = entry.pose
-    ? `pitch: ${formatNumber(entry.pose.pitch)} / yaw: ${formatNumber(entry.pose.yaw)} / roll: ${formatNumber(entry.pose.roll)}`
-    : "pose: なし"
-  const thumbnailMarkup = entry.thumbnailUrl
-    ? `<img src="${escapeHtml(entry.thumbnailUrl)}" alt="${escapeHtml(labelText)} Frame ${frameIndexText}" />`
-    : `<div class="dataset-thumbnail-empty">未選択</div>`
-
-  return `
-    <article class="dataset-entry-card dataset-entry-${entry.status}">
-      ${thumbnailMarkup}
-      <div class="dataset-entry-body">
-        <h4>${escapeHtml(labelText)}</h4>
-        <strong>status: ${formatInferenceDatasetEntryStatus(entry.status)}</strong>
-        <span>frame index: ${frameIndexText}</span>
-        <span>timestamp: ${timestampText}</span>
-        <span>${poseText}</span>
-        <span>landmarks 数: ${entry.landmarksCount}</span>
-        ${renderLandmarkPreview(entry.landmarkPreview)}
-      </div>
-    </article>
-  `
-}
-
-function renderLandmarkPreview(
-  landmarkPreview: RepresentativeFrameDatasetEntry["landmarkPreview"],
-): string {
-  if (landmarkPreview.length === 0) {
-    return `<p class="landmark-preview-empty">landmark preview: なし</p>`
-  }
-
-  return `
-    <div class="landmark-preview">
-      <span>landmark preview</span>
-      <ol>
-        ${landmarkPreview
-          .map(
-            (landmark) => `
-              <li>#${landmark.index}: x ${landmark.x} / y ${landmark.y} / z ${landmark.z}</li>
-            `,
-          )
-          .join("")}
-      </ol>
-    </div>
-  `
-}
-
-function formatLabelList(labels: SelectableRepresentativeFrameLabel[]): string {
-  return labels.length === 0 ? "なし" : labels.join(", ")
-}
-
-function renderIdealLandmarks3DCandidatePanel(): string {
-  const dataset = getIdealLandmarks3DInferenceDataset()
-  const frontReady = Boolean(getReadyDatasetEntry(dataset, "front"))
-  const missingLabels = getMissingDatasetLabels(dataset)
-  const result = idealLandmarks3DCandidateResult
-  const disabled = !frontReady
-  const statusMessage = frontReady
-    ? "front を基準に 3D 478点候補を生成できます。生成結果は候補データであり、保存 / export はまだ行いません。"
-    : "正面フレームが未選択のため、3D候補を生成できません。"
-  const resultMessage = result.message ?? statusMessage
-
-  return `
-    <div class="ideal-3d-candidate-panel">
-      <div class="ideal-3d-candidate-heading">
-        <div>
-          <h3>3D 478点候補</h3>
-          <p>${escapeHtml(statusMessage)}</p>
-        </div>
-        <button
-          class="candidate-generate-button"
-          type="button"
-          data-generate-ideal-landmarks-3d-candidate="true"
-          ${disabled ? "disabled" : ""}
-        >
-          3D候補を生成
-        </button>
-      </div>
-      <dl class="candidate-summary-list">
-        <div>
-          <dt>状態</dt>
-          <dd>${result.status}</dd>
-        </div>
-        <div>
-          <dt>landmarks</dt>
-          <dd>${result.landmarkCount}</dd>
-        </div>
-        <div>
-          <dt>generation method</dt>
-          <dd>${result.generationMethod ?? "none"}</dd>
-        </div>
-        <div>
-          <dt>ready labels</dt>
-          <dd>${escapeHtml(formatLabelList(getReadyDatasetLabels(dataset)))}</dd>
-        </div>
-        <div>
-          <dt>missing labels</dt>
-          <dd>${escapeHtml(formatLabelList(missingLabels))}</dd>
-        </div>
-        <div>
-          <dt>average confidence</dt>
-          <dd>${formatNumber(result.summary.averageConfidence)}</dd>
-        </div>
-        <div>
-          <dt>min / max confidence</dt>
-          <dd>${formatNumber(result.summary.minConfidence)} / ${formatNumber(result.summary.maxConfidence)}</dd>
-        </div>
-        <div>
-          <dt>z min / max</dt>
-          <dd>${formatNumber(result.summary.zMin)} / ${formatNumber(result.summary.zMax)}</dd>
-        </div>
-      </dl>
-      <p class="candidate-result-note">${escapeHtml(resultMessage)}</p>
-      ${renderIdealLandmarks3DCandidatePreview(result.landmarksPreview)}
-    </div>
-  `
-}
-
 function renderIdealLandmarks3DCandidatePreview(
   landmarksPreview: IdealLandmark3DCandidate[],
 ): string {
@@ -3762,7 +2705,6 @@ function drawPointCloudPreviewGuide(
 
 function renderAnalysisPanel(): string {
   const summary = getDetailedScanSummary()
-  const displayFrameCount = videoSource?.extractedFrames.length ?? 0
   const hasVideo = Boolean(videoSource?.objectUrl && !videoSource.error)
   const isAnalyzing = videoSource?.isAnalyzing ?? false
   const isExtracting = videoSource?.isExtracting ?? false
@@ -3799,10 +2741,6 @@ function renderAnalysisPanel(): string {
           <dd>${summary.maxScanFrames}</dd>
         </div>
         <div>
-          <dt>表示用抽出フレーム数</dt>
-          <dd>${displayFrameCount}</dd>
-        </div>
-        <div>
           <dt>解析対象フレーム数</dt>
           <dd>${summary.scannedFrameCount}</dd>
         </div>
@@ -3818,91 +2756,8 @@ function renderAnalysisPanel(): string {
           <dt>候補抽出対象</dt>
           <dd>${summary.candidateSourceFrameCount}</dd>
         </div>
-        <div>
-          <dt>候補カテゴリ</dt>
-          <dd>${summary.candidateCategoryCount}</dd>
-        </div>
-        <div>
-          <dt>front 候補</dt>
-          <dd>${summary.candidateCounts.front}</dd>
-        </div>
-        <div>
-          <dt>yawPositive 候補</dt>
-          <dd>${summary.candidateCounts.yawPositive}</dd>
-        </div>
-        <div>
-          <dt>yawNegative 候補</dt>
-          <dd>${summary.candidateCounts.yawNegative}</dd>
-        </div>
-        <div>
-          <dt>pitchPositive 候補</dt>
-          <dd>${summary.candidateCounts.pitchPositive}</dd>
-        </div>
-        <div>
-          <dt>pitchNegative 候補</dt>
-          <dd>${summary.candidateCounts.pitchNegative}</dd>
-        </div>
-        <div>
-          <dt>除外候補</dt>
-          <dd>${summary.excludedCandidateCount}</dd>
-        </div>
       </dl>
-      <p class="candidate-note">候補以外の詳細スキャンフレームは表示しません。</p>
-    </section>
-  `
-}
-
-function renderFrameThumbnails(): string {
-  const frames = videoSource?.extractedFrames ?? []
-
-  if (frames.length === 0) {
-    return `
-      <div class="frame-empty">
-        <p>抽出済みフレームはまだありません。</p>
-      </div>
-    `
-  }
-
-  return `
-    <div class="frame-grid">
-      ${frames
-        .map(
-          (frame) => `
-            <article class="frame-card">
-              <img src="${escapeHtml(frame.thumbnailUrl)}" alt="Frame ${String(frame.index).padStart(3, "0")} / ${frame.timestamp.toFixed(1)}s" />
-              <div>
-                <strong>Frame ${String(frame.index).padStart(3, "0")} / ${frame.timestamp.toFixed(1)}s</strong>
-                <span>解析状態: ${formatFrameAnalysisStatus(frame.status)}</span>
-                <span>landmarks 数: ${frame.analysis?.landmarks.length ?? 0}</span>
-                <span>pose pitch / yaw / roll: ${formatOptionalNumber(frame.analysis?.pose.pitch)} / ${formatOptionalNumber(frame.analysis?.pose.yaw)} / ${formatOptionalNumber(frame.analysis?.pose.roll)}</span>
-                ${frame.analysis?.errorMessage ? `<span>error: ${escapeHtml(frame.analysis.errorMessage)}</span>` : ""}
-                <span>抽出時間: ${frame.extractionTimeMs.toFixed(1)}ms</span>
-              </div>
-            </article>
-          `,
-        )
-        .join("")}
-    </div>
-  `
-}
-
-function renderDebugFrameListPanel(): string {
-  return `
-    <section class="frames-panel frames-panel-debug" aria-label="抽出フレーム一覧 debug">
-      <div class="debug-panel-heading">
-        <div>
-          <h2>表示用抽出フレーム一覧（debug）</h2>
-          <p>最大20件程度の表示確認用フレームです。詳細スキャン全件は表示しません。</p>
-        </div>
-        <button id="toggle-debug-frames-button" class="debug-toggle-button" type="button" aria-expanded="${isDebugFrameListOpen}">
-          ${isDebugFrameListOpen ? "表示用フレームを隠す" : "表示用フレームを表示"}
-        </button>
-      </div>
-      ${
-        isDebugFrameListOpen
-          ? renderFrameThumbnails()
-          : `<p class="debug-collapsed-text">表示用抽出フレーム一覧は閉じています。候補以外の詳細スキャンフレームは表示しません。</p>`
-      }
+      <p class="candidate-note">詳細スキャン済みの有効フレームは Step 2-I の正面基準候補 / 推定に使うフレーム / 除外フレームとして扱います。</p>
     </section>
   `
 }
@@ -3911,14 +2766,10 @@ function toScanSummaryPreview(scanSummary: DetailedScanSummary): unknown {
   return {
     scanIntervalSec: scanSummary.scanIntervalSec,
     maxScanFrames: scanSummary.maxScanFrames,
-    maxCandidatesPerCategory: scanSummary.maxCandidatesPerCategory,
     scannedFrameCount: scanSummary.scannedFrameCount,
     analyzedFrameCount: scanSummary.analyzedFrameCount,
     detectedFrameCount: scanSummary.detectedFrameCount,
     candidateSourceFrameCount: scanSummary.candidateSourceFrameCount,
-    candidateCounts: scanSummary.candidateCounts,
-    candidateCategoryCount: scanSummary.candidateCategoryCount,
-    excludedCandidateCount: scanSummary.excludedCandidateCount,
   }
 }
 
@@ -3966,39 +2817,6 @@ function toNaturalV1ReferencePreview(): unknown {
         z: point.z,
       })),
     },
-  }
-}
-
-function toLegacyStep2Gv1Preview(
-  representativeFrameCandidates: RepresentativeFrameCandidates,
-  idealLandmarks3DInferenceDataset: IdealLandmarks3DInferenceDataset,
-): unknown {
-  const result = idealLandmarks3DCandidateResult
-  const isCurrentStep2Gv1Candidate =
-    result.generationMethod === "step_2_g_v1"
-
-  return {
-    role: "legacy_regression_check",
-    generationMethod: "step_2_g_v1",
-    selectedRepresentativeFrames: toSelectedRepresentativeFramesPreview(),
-    idealLandmarks3DInferenceDataset: toInferenceDatasetPreview(
-      idealLandmarks3DInferenceDataset,
-    ),
-    representativeFrameCandidates: toRepresentativeCandidatesPreview(
-      representativeFrameCandidates,
-    ),
-    candidate: isCurrentStep2Gv1Candidate
-      ? {
-          status: result.status,
-          generationMethod: result.generationMethod,
-          landmarkCount: result.landmarkCount,
-          sameAsCurrentCandidate: true,
-        }
-      : {
-          status: "not_current",
-          generationMethod: "step_2_g_v1",
-          sameAsCurrentCandidate: false,
-        },
   }
 }
 
@@ -4054,9 +2872,6 @@ function toVideoSourceDebugPreview(
 function buildAuthoringDebugPreview(): unknown {
   const analysisSummary = getAnalysisSummary()
   const scanSummary = getDetailedScanSummary()
-  const representativeFrameCandidates = getRepresentativeFrameCandidates()
-  const idealLandmarks3DInferenceDataset =
-    getIdealLandmarks3DInferenceDataset()
   const poseAwareFrameSelection = getPoseAwareMultiFrameSummary()
   const poseAwareDataset = getPoseAwareInferenceDataset()
   const currentCandidate = idealLandmarks3DCandidateResult
@@ -4073,12 +2888,6 @@ function buildAuthoringDebugPreview(): unknown {
       candidate: toPoseAwareCandidatePreview(),
     },
     currentCandidate: toCurrentCandidatePreview(currentCandidate),
-    legacy: {
-      step2Gv1: toLegacyStep2Gv1Preview(
-        representativeFrameCandidates,
-        idealLandmarks3DInferenceDataset,
-      ),
-    },
     reference: {
       naturalV1: toNaturalV1ReferencePreview(),
     },
@@ -4109,79 +2918,6 @@ function attachAnalysisHandler(): void {
     .querySelector<HTMLButtonElement>("#analyze-frames-button")
     ?.addEventListener("click", async () => {
       await analyzeExtractedFrames()
-    })
-}
-
-function attachDebugFrameListHandler(): void {
-  document
-    .querySelector<HTMLButtonElement>("#toggle-debug-frames-button")
-    ?.addEventListener("click", () => {
-      isDebugFrameListOpen = !isDebugFrameListOpen
-      render()
-    })
-}
-
-function attachRepresentativeCandidateCategoryToggleHandler(): void {
-  document
-    .querySelectorAll<HTMLButtonElement>("[data-candidate-category-key]")
-    .forEach((button) => {
-      button.addEventListener("click", () => {
-        const key = button.dataset
-          .candidateCategoryKey as RepresentativeFrameCandidateKey
-
-        if (!key) {
-          return
-        }
-
-        representativeCandidateCategoryOpenState = {
-          ...representativeCandidateCategoryOpenState,
-          [key]: !representativeCandidateCategoryOpenState[key],
-        }
-        render()
-      })
-    })
-}
-
-function attachRepresentativeFrameSelectionHandler(): void {
-  document
-    .querySelectorAll<HTMLButtonElement>("[data-selection-label]")
-    .forEach((button) => {
-      button.addEventListener("click", () => {
-        const label = button.dataset
-          .selectionLabel as ManualRepresentativeFrameLabel
-        const candidateKey = button.dataset
-          .candidateKey as RepresentativeFrameCandidateKey
-        const frameIndex = Number(button.dataset.frameIndex)
-
-        if (!label || !candidateKey || !Number.isFinite(frameIndex)) {
-          return
-        }
-
-        const candidate = findRepresentativeCandidate(candidateKey, frameIndex)
-
-        if (!candidate) {
-          return
-        }
-
-        selectRepresentativeFrame(label, candidate)
-        render()
-      })
-    })
-
-  document
-    .querySelectorAll<HTMLButtonElement>("[data-clear-label]")
-    .forEach((button) => {
-      button.addEventListener("click", () => {
-        const label = button.dataset.clearLabel as ManualRepresentativeFrameLabel
-        const frameIndex = Number(button.dataset.frameIndex)
-
-        if (!label) {
-          return
-        }
-
-        clearSelectedRepresentativeFrame(label, frameIndex)
-        render()
-      })
     })
 }
 
@@ -4224,17 +2960,6 @@ function attachPoseAwareFrameSelectionHandler(): void {
 }
 
 function attachIdealLandmarks3DCandidateHandler(): void {
-  document
-    .querySelector<HTMLButtonElement>(
-      "[data-generate-ideal-landmarks-3d-candidate]",
-    )
-    ?.addEventListener("click", () => {
-      const dataset = getIdealLandmarks3DInferenceDataset()
-      idealLandmarks3DCandidateResult =
-        buildIdealLandmarks3DCandidateResult(dataset)
-      render()
-    })
-
   document
     .querySelector<HTMLButtonElement>(
       "[data-generate-pose-aware-ideal-landmarks-3d-candidate]",
@@ -4376,24 +3101,19 @@ async function analyzeExtractedFrames(): Promise<void> {
     return
   }
 
-  selectedRepresentativeFrames = createEmptySelectedRepresentativeFrames()
   idealLandmarks3DFrameSelection = createEmptyIdealLandmarks3DFrameSelection()
   resetIdealLandmarks3DCandidateResult()
-  representativeCandidateCategoryOpenState =
-    createDefaultRepresentativeCandidateCategoryOpenState()
   updateVideoSource({
     isAnalyzing: true,
     analysisError: null,
     scanSummary: createEmptyDetailedScanSummary(),
     detailedScanFrames: [],
-    representativeFrameCandidates: createEmptyRepresentativeFrameCandidates(),
-    representativeCandidateFrames: [],
   })
   render()
 
   try {
     const landmarker = await getFaceLandmarker()
-    const scanResult = await scanVideoForRepresentativeCandidates(
+    const scanResult = await scanVideoForPoseAwareFrames(
       extractionVideo,
       landmarker,
     )
@@ -4401,8 +3121,6 @@ async function analyzeExtractedFrames(): Promise<void> {
     updateVideoSource({
       scanSummary: scanResult.scanSummary,
       detailedScanFrames: scanResult.detailedScanFrames,
-      representativeFrameCandidates: scanResult.representativeFrameCandidates,
-      representativeCandidateFrames: scanResult.representativeCandidateFrames,
     })
   } catch (error) {
     updateVideoSource({
@@ -4422,11 +3140,9 @@ async function analyzeExtractedFrames(): Promise<void> {
 interface DetailedScanResult {
   scanSummary: DetailedScanSummary
   detailedScanFrames: ExtractedVideoFrame[]
-  representativeFrameCandidates: RepresentativeFrameCandidates
-  representativeCandidateFrames: ExtractedVideoFrame[]
 }
 
-async function scanVideoForRepresentativeCandidates(
+async function scanVideoForPoseAwareFrames(
   video: HTMLVideoElement,
   landmarker: FaceLandmarker,
 ): Promise<DetailedScanResult> {
@@ -4494,18 +3210,12 @@ async function scanVideoForRepresentativeCandidates(
       scanSummary: {
         scanIntervalSec: scanPlan.intervalSec,
         maxScanFrames: MAX_DETAILED_SCAN_FRAME_COUNT,
-        maxCandidatesPerCategory: MAX_CANDIDATES_PER_CATEGORY,
         scannedFrameCount: scanPlan.timestamps.length,
         analyzedFrameCount: scannedFrames.length,
         detectedFrameCount,
         candidateSourceFrameCount: getCandidateSourceFramesFromFrames(
           scannedFrames,
         ).length,
-        candidateCounts: getCandidateCounts(
-          createEmptyRepresentativeFrameCandidates(),
-        ),
-        candidateCategoryCount: 0,
-        excludedCandidateCount: selectedRepresentativeFrames.excluded.length,
       },
     })
     render()
@@ -4513,32 +3223,18 @@ async function scanVideoForRepresentativeCandidates(
 
   const candidateSourceFrames =
     getCandidateSourceFramesFromFrames(scannedFrames)
-  const representativeFrameCandidates =
-    buildRepresentativeFrameCandidatesFromFrames(candidateSourceFrames)
-  const representativeCandidateFrames = pickRepresentativeCandidateFrames(
-    candidateSourceFrames,
-    representativeFrameCandidates,
-  )
   const scanSummary: DetailedScanSummary = {
     scanIntervalSec: scanPlan.intervalSec,
     maxScanFrames: MAX_DETAILED_SCAN_FRAME_COUNT,
-    maxCandidatesPerCategory: MAX_CANDIDATES_PER_CATEGORY,
     scannedFrameCount: scanPlan.timestamps.length,
     analyzedFrameCount: scannedFrames.length,
     detectedFrameCount,
     candidateSourceFrameCount: candidateSourceFrames.length,
-    candidateCounts: getCandidateCounts(representativeFrameCandidates),
-    candidateCategoryCount: getCandidateCategoryCount(
-      representativeFrameCandidates,
-    ),
-    excludedCandidateCount: selectedRepresentativeFrames.excluded.length,
   }
 
   return {
     scanSummary,
     detailedScanFrames: scannedFrames,
-    representativeFrameCandidates,
-    representativeCandidateFrames,
   }
 }
 
@@ -4591,19 +3287,6 @@ function analyzeScannedCanvasFrame(
       },
     }
   }
-}
-
-function pickRepresentativeCandidateFrames(
-  sourceFrames: ExtractedVideoFrame[],
-  candidates: RepresentativeFrameCandidates,
-): ExtractedVideoFrame[] {
-  const candidateFrameIndexes = new Set(
-    getAllRepresentativeCandidates(candidates).map(
-      (candidate) => candidate.frameIndex,
-    ),
-  )
-
-  return sourceFrames.filter((frame) => candidateFrameIndexes.has(frame.index))
 }
 
 async function getFaceLandmarker(): Promise<FaceLandmarker> {
@@ -4764,11 +3447,8 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 async function handleVideoFileSelection(file: File): Promise<void> {
-  selectedRepresentativeFrames = createEmptySelectedRepresentativeFrames()
   idealLandmarks3DFrameSelection = createEmptyIdealLandmarks3DFrameSelection()
   resetIdealLandmarks3DCandidateResult()
-  representativeCandidateCategoryOpenState =
-    createDefaultRepresentativeCandidateCategoryOpenState()
 
   if (file.type !== "video/mp4" && !file.name.toLowerCase().endsWith(".mp4")) {
     replaceVideoSource({
@@ -4784,8 +3464,6 @@ async function handleVideoFileSelection(file: File): Promise<void> {
       error: "初期対応は MP4 動画のみです。",
       scanSummary: createEmptyDetailedScanSummary(),
       detailedScanFrames: [],
-      representativeFrameCandidates: createEmptyRepresentativeFrameCandidates(),
-      representativeCandidateFrames: [],
     })
     render()
     return
@@ -4806,10 +3484,7 @@ async function handleVideoFileSelection(file: File): Promise<void> {
     error: null,
     scanSummary: createEmptyDetailedScanSummary(),
     detailedScanFrames: [],
-    representativeFrameCandidates: createEmptyRepresentativeFrameCandidates(),
-    representativeCandidateFrames: [],
   })
-  isDebugFrameListOpen = false
   render()
 
   try {
@@ -5009,7 +3684,7 @@ function render(): void {
           <p class="eyebrow">BAE AR</p>
           <h1>IdealFace Authoring Tool</h1>
         </div>
-        <span>Step 2-I-B</span>
+        <span>Step 2-I-C</span>
       </header>
 
       <section class="summary" aria-label="IdealFace metadata">
@@ -5029,10 +3704,6 @@ function render(): void {
           <div>
             <dt>coordinateSpace</dt>
             <dd>${escapeHtml(idealFace.model.coordinateSpace)}</dd>
-          </div>
-          <div>
-            <dt>control point count</dt>
-            <dd>${idealFace.model.controlPoints.length}</dd>
           </div>
         </dl>
       </section>
@@ -5058,36 +3729,9 @@ function render(): void {
 
       ${renderAnalysisPanel()}
 
-      ${renderRepresentativeFrameCandidatesPanel()}
+      ${renderPoseAwareMultiFramePanel()}
 
-      ${renderDebugFrameListPanel()}
-
-      <section class="workspace">
-        <div class="preview-panel">
-          <h2>2D preview</h2>
-          ${renderPreview(idealFace.model.controlPoints)}
-        </div>
-
-        <div class="table-panel">
-          <h2>controlPoints</h2>
-          <div class="table-scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>id</th>
-                  <th>label</th>
-                  <th>x</th>
-                  <th>y</th>
-                  <th>z</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${renderControlPointRows(idealFace.model.controlPoints)}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </section>
+      ${renderIdealLandmarks3DPointCloudPreviewPanel()}
 
       <section class="json-panel">
         <h2>JSON preview</h2>
@@ -5098,11 +3742,8 @@ function render(): void {
 
   attachVideoInputHandler()
   attachAnalysisHandler()
-  attachRepresentativeCandidateCategoryToggleHandler()
-  attachRepresentativeFrameSelectionHandler()
   attachPoseAwareFrameSelectionHandler()
   attachIdealLandmarks3DCandidateHandler()
-  attachDebugFrameListHandler()
 }
 
 const style = document.createElement("style")
