@@ -73,7 +73,7 @@ tools/ideal-face-authoring
 - IdealFace Authoring Tool Step 2-F: 候補抽出用に動画全体を詳細スキャンし、代表フレーム候補中心の UI と `scanSummary` 表示、サムネイル全体表示を追加
 - IdealFace Authoring Tool Step 2-G: 3D推測用データセットから `idealLandmarks3D` 478点候補を自動推測する v1 を追加。front の 2D landmarks を x / y の基準にし、left / right / up / down との差分から z を簡易推定し、不足ラベルは confidence に反映します。結果は候補 summary と先頭 5 点 preview、JSON preview の `idealLandmarks3DCandidate` 概要で確認します
 - IdealFace Authoring Tool Step 2-H: 生成済みの `idealLandmarks3D` 478点候補を 1 つの interactive 3D point cloud preview として表示し、ドラッグによる視点回転、ホイール zoom、Shift + ドラッグ pan、正面 / 横 / 上の camera preset、x / y / z 範囲、confidence summary を確認できます。preview camera の操作のみで、候補データ自体は変更しません
-- IdealFace Authoring Tool Step 2-I-A: pose-aware multi-frame inference の UI / state 基盤として、正面基準候補、推定に使うフレーム、除外フレームの 3 分類表示、`frontReferenceFrameIds` / `excludedFrameIds`、派生 `usableObservationFrames` summary、JSON preview の `poseAwareMultiFrameInference` 概要を追加。Step 2-I 用操作は Step 2-I カード内に閉じ、旧ポーズ別候補 UI には混ぜません
+- IdealFace Authoring Tool Step 2-I-A: pose-aware multi-frame inference の UI / state 基盤として、正面基準候補、推定に使うフレーム、除外フレームの 3 分類表示、`frontReferenceFrameIds` / `excludedFrameIds`、派生 `usableObservationFrames` summary、JSON preview の `poseAwareMultiFrameInference` 概要を追加。Step 2-I 用操作は Step 2-I カード内に閉じ、旧ポーズ別候補 UI には混ぜません。画面上の 3 分類は排他的に表示します
 
 未実装 / 将来予定:
 

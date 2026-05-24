@@ -1704,7 +1704,13 @@ function getPoseAwareFrontReferenceFrames(): PoseAwareObservationFrame[] {
 }
 
 function getActivePoseAwareFrontReferenceFrames(): PoseAwareObservationFrame[] {
-  return getPoseAwareFrontReferenceFrames().filter((frame) => !frame.excluded)
+  return getUsableObservationFrames()
+    .filter((frame) => isFrameFrontReferenceForPoseAware(frame.frameIndex))
+    .map((frame) => ({
+      ...frame,
+      role: "front_reference" as const,
+    }))
+    .sort((a, b) => a.frameIndex - b.frameIndex)
 }
 
 function getUsableObservationFrames(): PoseAwareObservationFrame[] {
@@ -1718,6 +1724,12 @@ function getUsableObservationFrames(): PoseAwareObservationFrame[] {
     .filter(
       (frame): frame is PoseAwareObservationFrame => frame !== null,
     )
+}
+
+function getVisibleUsableObservationFrames(): PoseAwareObservationFrame[] {
+  return getUsableObservationFrames().filter(
+    (frame) => !isFrameFrontReferenceForPoseAware(frame.frameIndex),
+  )
 }
 
 function getPoseAwareExcludedFrames(): PoseAwareObservationFrame[] {
@@ -1743,17 +1755,17 @@ function getPoseRangeFromPoseAwareFrames(
 function getPoseAwareMultiFrameSummary(): PoseAwareMultiFrameSummary {
   const frontReferenceFrames = getActivePoseAwareFrontReferenceFrames()
   const selectedFrontReferenceFrames = getPoseAwareFrontReferenceFrames()
-  const usableObservationFrames = getUsableObservationFrames()
+  const visibleUsableObservationFrames = getVisibleUsableObservationFrames()
   const yawRange = getPoseRangeFromPoseAwareFrames(
-    usableObservationFrames,
+    visibleUsableObservationFrames,
     "yaw",
   )
   const pitchRange = getPoseRangeFromPoseAwareFrames(
-    usableObservationFrames,
+    visibleUsableObservationFrames,
     "pitch",
   )
   const rollRange = getPoseRangeFromPoseAwareFrames(
-    usableObservationFrames,
+    visibleUsableObservationFrames,
     "roll",
   )
   const warnings: string[] = []
@@ -1762,7 +1774,9 @@ function getPoseAwareMultiFrameSummary(): PoseAwareMultiFrameSummary {
     warnings.push("正面基準候補を1件以上選んでください。")
   }
 
-  if (usableObservationFrames.length < POSE_AWARE_MIN_OBSERVATION_FRAME_COUNT) {
+  if (
+    visibleUsableObservationFrames.length < POSE_AWARE_MIN_OBSERVATION_FRAME_COUNT
+  ) {
     warnings.push(
       "推定に使うフレームが少ないため、3D候補が不安定になる可能性があります。",
     )
@@ -1791,7 +1805,7 @@ function getPoseAwareMultiFrameSummary(): PoseAwareMultiFrameSummary {
     status,
     frontReferenceFrameCount: frontReferenceFrames.length,
     selectedFrontReferenceFrameCount: selectedFrontReferenceFrames.length,
-    usableObservationFrameCount: usableObservationFrames.length,
+    usableObservationFrameCount: visibleUsableObservationFrames.length,
     excludedFrameCount: idealLandmarks3DFrameSelection.excludedFrameIds.length,
     poseRange: {
       yaw: yawRange,
@@ -1821,6 +1835,7 @@ function toPoseAwareMultiFrameInferencePreview(): unknown {
     },
     frontReferenceFrameIds: summary.frontReferenceFrameIds,
     excludedFrameIds: summary.excludedFrameIds,
+    displayMode: "exclusiveGroups",
     warnings: summary.warnings,
   }
 }
@@ -1977,8 +1992,8 @@ function formatPoseAwareScore(score: number | null): string {
 
 function renderPoseAwareMultiFramePanel(): string {
   const summary = getPoseAwareMultiFrameSummary()
-  const frontReferenceFrames = getPoseAwareFrontReferenceFrames()
-  const usableObservationFrames = getUsableObservationFrames()
+  const frontReferenceFrames = getActivePoseAwareFrontReferenceFrames()
+  const visibleUsableObservationFrames = getVisibleUsableObservationFrames()
   const excludedFrames = getPoseAwareExcludedFrames()
 
   return `
@@ -2000,7 +2015,7 @@ function renderPoseAwareMultiFramePanel(): string {
         )}
         ${renderPoseAwareFrameGroup(
           "推定に使うフレーム",
-          usableObservationFrames,
+          visibleUsableObservationFrames,
           "除外されていない解析成功フレームです。全件から正面基準への追加や除外を操作できます。",
           "推定に使える解析成功フレームはまだありません。",
           "observation",
