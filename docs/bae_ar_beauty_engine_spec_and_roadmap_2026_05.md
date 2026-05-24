@@ -955,6 +955,8 @@ Step 2-G の制限:
 - 3D点群 preview は Step 2-H で実装済み。preview は確認用表示であり、視点回転、zoom、pan、y 軸反転、z 表示倍率調整は preview camera / view transform の操作として扱う。手動微調整、保存 / export はまだ実装しない
 - 複数画像入力はまだ実装しない
 
+Step 2-G v1 は実装済みの簡易推定として残します。次に実装予定の Step 2-I では、5ポーズ固定の代表フレーム方式から、正面基準候補、推定に使うフレーム、除外フレームに整理した pose-aware multi-frame inference dataset へ進む方針です。
+
 3D候補生成処理は IdealFace Authoring Tool の責務です。Engine Runtime には 3D推測処理や Authoring UI を入れません。Beauty Studio にも Authoring 用タブは追加しません。
 
 ## 18-H. IdealFace Authoring Tool Step 2-H
@@ -982,6 +984,172 @@ Step 2-H の制限:
 - JSON preview には 478点全文や canvas data URL を出さず、`idealLandmarks3DCandidate` の概要と先頭 5 点程度の preview に留める
 
 3D点群 preview は IdealFace Authoring Tool の責務です。Engine Runtime に 3D点群 preview や Authoring UI を追加しません。Beauty Studio にも Authoring 用タブは追加しません。
+
+## 18-I. IdealFace Authoring Tool Step 2-I
+
+状態: 未実装 / 次に実装予定の確定仕様
+
+Step 2-I の目的:
+
+- Step 2-G v1 の `front / left / right / up / down` 代表フレーム方式を、現在実装済みの簡易推定として残す
+- 5ポーズ固定指定ではなく、各フレームの `FacePose` を使って連続的に判断する pose-aware multi-frame inference へ進める
+- フレーム解析結果欄を「正面基準候補」「推定に使うフレーム」「除外フレーム」の 3 分類に整理する
+- `idealLandmarks3D` 478点候補の x / y 基準は、複数の正面基準候補から作る
+- 除外されていない解析成功フレームを observation として使い、yaw / pitch / roll などの pose 角度に応じて 3D 推定への寄与を重み付けする
+
+Step 2-I の UI 表示名:
+
+```text
+正面基準候補
+推定に使うフレーム
+除外フレーム
+```
+
+内部説明名:
+
+```text
+frontReferenceFrames
+usableObservationFrames
+excludedFrames
+```
+
+各分類の意味:
+
+```text
+正面基準候補
+  idealLandmarks3D の x / y 基準を作るための front reference frames。
+  ユーザーが複数選択できる。
+
+推定に使うフレーム
+  3D 推定に使う observation frames。
+  除外されておらず、解析成功し、landmarks 478点と FacePose があるフレームを基本的に含める。
+  yaw / pitch / roll などの pose 角度に応じて、3D 推定への寄与を重み付けする。
+
+除外フレーム
+  ブレ、表情崩れ、口開き、顔切れ、検出崩れ、極端な roll などにより、3D 推定に使わないフレーム。
+```
+
+Step 2-I の操作フロー:
+
+```text
+1. 正面基準候補を複数選ぶ
+2. 使いたくないフレームを除外する
+3. 除外されていない解析成功フレームを pose 角度に応じて使い、3D候補を作成する
+```
+
+Step 2-I の重要方針:
+
+- `left / right / up / down` をユーザーが必ず手動指定する方式にはしない
+- `left / right / up / down` は、将来的には手動ラベルではなく、`FacePose` の yaw / pitch から自動的に推定寄与を判断する
+- `front` だけは x / y 基準として重要なので、ユーザーが複数選択できるようにする
+- 除外フレームはポーズに関係なく指定できる
+- 除外されていない有効フレームは、pose angle に応じて observation として利用する
+
+現行 Step 2-G v1 との関係:
+
+```text
+現在実装済み:
+
+front / left / right / up / down の代表フレーム
+  -> 3D推測用 dataset
+  -> idealLandmarks3D 478点候補
+
+Step 2-I 以降の方針:
+
+frontReferenceFrames
+usableObservationFrames
+excludedFrames
+  -> pose-aware multi-frame inference dataset
+  -> idealLandmarks3D 478点候補
+```
+
+Step 2-I の推定ロジック方針:
+
+- 複数の `frontReferenceFrames` から x / y の基準を作る
+- `usableObservationFrames` は、除外されていない解析成功フレームを使う
+- yaw / pitch / roll を見る
+- yaw が大きいフレームは左右方向の奥行き推定に寄与しやすい
+- pitch が大きいフレームは上下方向の奥行き推定に寄与しやすい
+- roll が大きすぎるフレームや score が低いフレームは重みを下げる
+
+Dataset の将来形:
+
+```ts
+type IdealLandmarks3DFrameSelection = {
+  frontReferenceFrameIds: string[]
+  excludedFrameIds: string[]
+}
+```
+
+`usableObservationFrames` は、基本的には state として直接持たず、以下の条件から派生します。
+
+```text
+解析成功している
+landmarks が 478 点ある
+FacePose がある
+excludedFrameIds に含まれていない
+```
+
+概念としての observation frame:
+
+```ts
+type IdealLandmarks3DObservationFrame = {
+  frameId: string
+  timestamp: number
+  landmarks2D: FaceLandmark[]
+  pose: {
+    yaw: number
+    pitch: number
+    roll: number
+  }
+  score?: number
+  weight: number
+  role: "front_reference" | "observation"
+}
+```
+
+Step 2-I では、上記の型は仕様方針であり、今回の docs 更新では実装しません。
+
+3D候補生成前の summary 方針:
+
+```text
+正面基準候補: 3件
+推定に使うフレーム: 86件
+除外フレーム: 5件
+
+yaw range: -22.4° 〜 21.8°
+pitch range: -13.2° 〜 14.1°
+roll max: 4.6°
+
+状態:
+  ready
+```
+
+警告例:
+
+```text
+正面基準候補がありません
+  -> 正面基準候補を1件以上選んでください
+
+yaw / pitch の角度幅が不足しています
+  -> 奥行き推定の confidence が低くなる可能性があります
+
+除外フレームが多すぎます
+  -> 推定に使うフレームが少ないため、3D候補が不安定になる可能性があります
+```
+
+Step 2-I v1 で引き続き行わないこと:
+
+- 厳密な 3D reconstruction
+- 三角測量
+- bundle adjustment
+- カメラ内部パラメータ推定
+- 本格 3D editor
+- 手動微調整
+- 保存 / export
+- Runtime への組み込み
+
+Step 2-I の処理と UI は IdealFace Authoring Tool の責務です。Engine Runtime に 3D推定用の authoring 処理や UI を追加しません。Beauty Studio にも Authoring 用タブは追加しません。
 
 ## 19. IdealFace / Projection / Shape Processing 中核仕様
 

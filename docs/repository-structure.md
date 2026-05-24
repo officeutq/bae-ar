@@ -120,9 +120,13 @@ IdealFace Authoring Tool では、MP4 動画から各フレームの 2D 478 land
 
 Step 2-A では、MP4 動画入力、metadata 表示、一定間隔でのフレーム抽出、サムネイル一覧表示、JSON preview への抽出フレーム情報表示までを実装済みです。Step 2-B では、抽出済みフレームの MediaPipe 解析、2D 478 landmarks と `FacePose` の取得、解析結果 summary と JSON preview への概要表示までを実装済みです。Step 2-C では、yaw / pitch / roll による代表フレーム候補の自動抽出、各カテゴリ上位複数件の候補一覧表示、JSON preview への候補概要表示までを実装済みです。Step 2-D では、候補カードから正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定し、候補カテゴリを必要なものだけ開くトグル表示、確定済み代表フレーム一覧、3D推測準備状況、JSON preview の `selectedRepresentativeFrames` を確認できるようにしました。Step 2-E では、確定済み代表フレームから front / left / right / up / down の 3D推測用データセットを作成し、readiness summary、dataset 一覧、JSON preview の `idealLandmarks3DInferenceDataset` 概要を確認できるようにしました。Step 2-F では、候補抽出用の詳細スキャン、詳細スキャン summary、JSON preview の `scanSummary`、サムネイル全体表示を追加しました。Step 2-G では、3D推測用データセットから `idealLandmarks3D` 478点候補を自動推測する v1 と、生成結果 summary、先頭 5 点 preview、JSON preview の `idealLandmarks3DCandidate` 概要を追加しました。Step 2-H では、生成済み 3D 478点候補の interactive 3D点群 preview、正面 / 横 / 上の camera preset、x / y / z 範囲、confidence summary を追加しました。preview は確認用表示であり、視点回転、zoom、pan は preview camera の操作として扱い、候補データ自体は変更しません。確定済み代表フレーム一覧と3D推測用データセットには、正面 / 左向き / 右向き / 上向き / 下向きだけを表示します。
 
+Step 2-I は次に実装予定の未実装仕様です。Step 2-G v1 は現在実装済みの簡易推定として残し、Step 2-I では 5ポーズ固定の代表フレーム方式から、正面基準候補、推定に使うフレーム、除外フレームに整理した pose-aware multi-frame inference dataset へ移行する方針です。
+
 MP4 動画から表示用フレームを一定間隔で抽出し、候補抽出用には動画全体を 0.1 秒間隔、最大スキャン数の上限付きで詳細スキャンします。詳細スキャン済みフレームのうち、顔検出あり、landmarks 数 478、pose pitch / yaw / roll 取得済みのフレームから正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を各カテゴリに複数件保持します。全スキャンフレーム一覧は UI に表示せず、代表フレーム候補を中心に表示します。Step 2-D では、候補カテゴリを必要なものだけ開いて比較し、ユーザーが正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定します。Step 2-E では、確定済み代表フレームから 3D推測用データセットを作成します。除外は代表フレームではないため確定済み代表フレーム一覧には表示せず、3D推測用データセットにも含めません。dataset は 2D 478 landmarks と FacePose を持つ入力データであり、まだ `idealLandmarks3D` 478点そのものではありません。Step 2-G v1 では、この dataset から `idealLandmarks3D` 478点候補を自動推測します。front の 2D landmarks を x / y の基準にし、left / right / up / down との差分から z を簡易推定します。不足ラベルは confidence を下げる要素として扱います。候補に採用されたフレームは手動確定と dataset 作成に使えるよう保持し、候補以外の詳細スキャンフレームは一覧表示しません。サムネイルはトリムせず画像全体を表示します。
 
 自動推測した 3D点群は候補データとして扱い、Authoring Tool 上で確認できます。必要箇所の手動微調整と IdealFace asset としての保存 / export はまだ未実装です。
+
+Step 2-I 以降の UI 表示名は「正面基準候補」「推定に使うフレーム」「除外フレーム」とします。内部説明では `frontReferenceFrames`、`usableObservationFrames`、`excludedFrames` を使ってよいものとします。選択状態としては `frontReferenceFrameIds` と `excludedFrameIds` を持ち、`usableObservationFrames` は解析成功、landmarks 478点、`FacePose` あり、除外されていないことから派生する方針です。`left / right / up / down` をユーザーが必ず手動指定する方式にはせず、yaw / pitch / roll と score に応じて observation の重みを決めます。
 
 推奨する MP4 動画は、H.264 / AVC codec、5〜15秒程度、30fps程度、720p程度から開始できるものです。顔が大きく写り、正面、左向き、右向き、上向き、下向きをゆっくり含み、手ブレが少なく、明るい場所で撮影され、口は閉じ気味、表情はできるだけ neutral なものを想定します。長時間動画、高解像度すぎる動画、HEVC / H.265、MOV、WebM、複数画像入力は初期段階では非推奨または未対応です。
 
@@ -160,6 +164,8 @@ Step 2-F 改良として、`tools/ideal-face-authoring` の詳細スキャンは
 候補条件は緩め、pitch / yaw の片方に多少のズレがあっても候補として拾います。除外した候補は UI 候補一覧から外しますが、`selectedRepresentativeFrames.excluded` として状態 / JSON preview に残せます。除外候補は確定済み代表フレーム一覧、3D推測準備状況、`idealLandmarks3DInferenceDataset` には含めません。
 
 3D点群 preview は Step 2-H で追加済みです。preview は確認用表示であり、視点回転、zoom、pan、y 軸反転、z 表示倍率調整はいずれも preview camera / view transform の操作として扱い、`idealLandmarks3D` 候補データ自体は変更しません。手動微調整、保存 / export、複数画像入力はまだ未実装です。詳細スキャンや候補振り分け、3D候補生成処理、3D点群 preview は IdealFace Authoring Tool 配下に置き、`packages/engine/src` や `apps/studio/src` へ入れません。
+
+Step 2-I では、正面基準候補を複数選び、使いたくないフレームを除外し、除外されていない解析成功フレームを pose 角度に応じて 3D 推定へ利用します。3D候補生成前には、正面基準候補数、推定に使うフレーム数、除外フレーム数、yaw / pitch / roll の範囲、状態、警告を summary として表示する方針です。最初の Step 2-I v1 では、厳密な 3D reconstruction、三角測量、bundle adjustment、カメラ内部パラメータ推定、本格 3D editor、手動微調整、保存 / export、Runtime への組み込みは行いません。
 
 ## 配布方針
 

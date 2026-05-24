@@ -97,9 +97,15 @@ IdealFace Authoring Tool は、将来的に動画または複数画像を入力�
 
 Step 2-A では、MP4 動画入力と一定間隔でのフレーム抽出、サムネイル一覧表示までを実装済みです。Step 2-B では、抽出済みフレームに MediaPipe Face Landmarker 解析を実行し、2D 478 landmarks と FacePose を取得できるようにしました。Step 2-C では、解析済みフレームの yaw / pitch / roll から代表フレーム候補を自動抽出し、各カテゴリ上位複数件の候補一覧と JSON preview に候補概要を表示できるようにしました。Step 2-D では、候補カードから正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定し、候補カテゴリを必要なものだけ開くトグル表示、確定済み代表フレーム一覧、3D推測準備状況、JSON preview の `selectedRepresentativeFrames` を確認できるようにしました。Step 2-E では、確定済み代表フレームから front / left / right / up / down の 3D推測用データセットを作成し、readiness summary、dataset 一覧、JSON preview の `idealLandmarks3DInferenceDataset` 概要を確認できるようにしました。Step 2-F では、表示用抽出とは別に候補抽出用の詳細スキャンを追加し、詳細スキャン summary と JSON preview の `scanSummary` を確認できるようにしました。Step 2-G では、3D推測用データセットから `idealLandmarks3D` 478点候補を自動推測する v1 を追加し、生成結果 summary と先頭 5 点程度の preview、JSON preview の `idealLandmarks3DCandidate` 概要を確認できるようにしました。Step 2-H では、生成済みの 3D 478点候補を 1 つの canvas で確認する interactive 3D点群 preview と、正面 / 横 / 上の camera preset、x / y / z 範囲、confidence summary を追加しました。preview は確認用表示であり、視点回転、zoom、pan は preview camera の操作として扱い、候補データ自体は変更しません。確定済み代表フレーム一覧と3D推測用データセットには、正面 / 左向き / 右向き / 上向き / 下向きだけを表示します。
 
+次に実装予定の Step 2-I は未実装の確定仕様です。Step 2-G v1 は、front の 2D landmarks を x / y 基準にし、left / right / up / down との差分から z を簡易推定する現在実装済みの方式として残します。Step 2-I では、5ポーズ固定の代表フレーム方式から、正面基準候補、推定に使うフレーム、除外フレームに整理した pose-aware multi-frame inference dataset へ進めます。
+
 Step 2-F 以降の代表フレーム候補抽出では、表示用の最大20件程度の抽出フレームだけではなく、動画全体を 0.1 秒間隔、最大スキャン数の上限付きで詳細スキャンします。顔検出あり、landmarks 数 478、pose pitch / yaw / roll 取得済みの詳細スキャンフレームだけを候補評価に使います。正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補は上位少数件だけに絞らず、条件に合うものをカテゴリごとに保持・表示します。左右・上下の最終ラベルは手動確定 UI で扱います。全スキャンフレーム一覧は UI に表示せず、候補に採用されたフレームだけを手動確定と dataset 作成に使えるよう保持します。サムネイルはトリムせず、画像全体が見えるように表示します。
 
 候補 1 件だけでは確定せず、カテゴリ内の複数候補を比較して手動確定します。Step 2-D ではユーザーが Authoring Tool 上で正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定します。Step 2-E では、除外を dataset に含めず、front / left / right / up / down の各ラベルについて未選択を `missing`、対応する解析済みフレームがない状態を `invalid`、2D 478 landmarks と FacePose が揃う状態を `ready` として扱います。この dataset は 3D の `idealLandmarks3D` 478点候補を推測するための入力であり、まだ `idealLandmarks3D` 478点そのものではありません。Step 2-G v1 では、front が ready であることを最重要条件とし、front の 2D 478 landmarks を x / y の基準にします。z は left / right / up / down の代表フレームとの差分から簡易推定します。左右 / 上下の代表フレームが不足している場合でも front があれば候補を生成しますが、不足ラベルは confidence に反映します。この生成結果は完成済み IdealFace asset ではなく候補データです。Step 2-H では、この候補を debug / 確認用の interactive 3D点群 preview として表示します。1 つの canvas 上で preview camera を操作し、ドラッグで視点回転、ホイールで zoom、Shift + ドラッグで pan できます。正面 / 横 / 上は camera preset です。これは表示専用であり、`idealLandmarks3D` 候補データや JSON preview の数値は変更しません。手動微調整、保存 / export はまだ未実装です。
+
+Step 2-I のフレーム解析結果欄は、「正面基準候補」「推定に使うフレーム」「除外フレーム」の 3 分類にします。正面基準候補は `frontReferenceFrames` として、`idealLandmarks3D` の x / y 基準を作るために複数選択できる front reference frames です。推定に使うフレームは `usableObservationFrames` として、除外されておらず、解析成功し、landmarks 478点と `FacePose` があるフレームから派生します。除外フレームは `excludedFrames` として、ブレ、表情崩れ、口開き、顔切れ、検出崩れ、極端な roll などにより 3D 推定に使わないフレームです。
+
+Step 2-I 以降では、`left / right / up / down` をユーザーが必ず手動指定する方式にはしません。yaw が大きいフレームは左右方向の奥行き推定に、pitch が大きいフレームは上下方向の奥行き推定に寄与しやすいものとして、`FacePose` の yaw / pitch / roll と score に応じて observation の重みを決める方針です。roll が大きすぎるフレームや score が低いフレームは重みを下げます。最初の Step 2-I v1 では、厳密な 3D reconstruction、三角測量、bundle adjustment、カメラ内部パラメータ推定、本格 3D editor、手動微調整、保存 / export、Runtime への組み込みは行いません。
 
 推奨する MP4 動画は、H.264 / AVC codec、5〜15秒程度、30fps程度、720p程度から開始できるものです。顔が大きく写り、正面、左向き、右向き、上向き、下向きをゆっくり含み、手ブレが少なく、明るい場所で撮影されていることを推奨します。口は閉じ気味、表情はできるだけ neutral とします。
 
@@ -107,7 +113,7 @@ Step 2-F 以降の代表フレーム候補抽出では、表示用の最大20件
 
 Engine Runtime は動画入力、フレーム抽出、代表フレーム抽出、手動ラベル確定、3D推測用 dataset 作成、`idealLandmarks3D` 候補生成、`idealLandmarks3D` 作成を行いません。Runtime は完成済みの IdealFace asset を読み込み、`idealLandmarks3D` 478点を現在 `FacePose` へ投影して projected ideal 2D landmarks 478点を生成します。
 
-この段階では、3D点群推測の詳細アルゴリズムは定義しません。
+Step 2-I v1 では、3D点群推測の詳細アルゴリズムを厳密な reconstruction として定義しません。3D候補生成前には、正面基準候補数、推定に使うフレーム数、除外フレーム数、yaw / pitch / roll の範囲、状態、警告を summary として表示する方針です。
 
 ## Layer Mask Authoring Tool の責務
 

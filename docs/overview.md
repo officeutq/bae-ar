@@ -79,6 +79,10 @@ MP4 動画を入力
 
 確定した代表フレーム群から、まず 3D 推測用データセットを作成します。この dataset は front / left / right / up / down の代表フレームに対応する 2D 478 landmarks と FacePose を持つ入力データであり、excluded は含めません。dataset はまだ 3D の `idealLandmarks3D` 478点そのものではありません。Step 2-G v1 では、この dataset から `idealLandmarks3D` 478点候補を自動推測します。この結果は完成データではなく候補データとして扱います。Step 2-H では Authoring Tool 上で 3D点群を確認できます。手動微調整、IdealFace asset としての保存 / export はまだ未実装です。
 
+次に実装予定の Step 2-I では、Step 2-G v1 の 5ポーズ固定の代表フレーム方式から、pose-aware multi-frame inference dataset へ進めます。フレーム解析結果欄は「正面基準候補」「推定に使うフレーム」「除外フレーム」の 3 分類に整理します。正面基準候補は `idealLandmarks3D` の x / y 基準を作るために複数選択できる front reference frames です。推定に使うフレームは、除外されておらず、解析成功し、landmarks 478点と `FacePose` がある observation frames を基本とし、yaw / pitch / roll に応じて 3D 推定への寄与を重み付けします。除外フレームは、ブレ、表情崩れ、口開き、顔切れ、検出崩れ、極端な roll などにより推定に使わないフレームです。
+
+Step 2-I の操作フローは、正面基準候補を複数選び、使いたくないフレームを除外し、除外されていない解析成功フレームを pose 角度に応じて observation として利用する流れです。`left / right / up / down` をユーザーが必ず手動指定する方式にはせず、将来的には `FacePose` の yaw / pitch から推定寄与を自動判断します。内部説明では `frontReferenceFrames`、`usableObservationFrames`、`excludedFrames` を使ってよいものとします。Step 2-I は未実装であり、厳密な 3D reconstruction、三角測量、bundle adjustment、カメラ内部パラメータ推定、手動微調整、保存 / export、Runtime 組み込みは行いません。
+
 この方針は完全自動生成ではなく、自動推測 + 手動補正です。Engine Runtime は動画 / 複数画像から `idealLandmarks3D` を作成せず、Authoring Tool で作成済みの IdealFace asset を読み込んで使うだけです。
 
 現時点では、MP4 動画入力とフレーム抽出は IdealFace Authoring Tool Step 2-A、抽出フレームの MediaPipe 解析は Step 2-B、yaw / pitch / roll による代表フレーム候補の自動抽出、各カテゴリ上位複数件の候補一覧 / JSON preview への概要表示は Step 2-C、代表フレーム候補から正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定する UI と、候補カテゴリを必要なものだけ開く Step 2-D UI整理、確定済み代表フレームから 3D推測用データセットを作成して readiness summary、dataset 一覧、JSON preview の `idealLandmarks3DInferenceDataset` 概要を確認する Step 2-E、候補抽出用に動画全体を詳細スキャンして `scanSummary` を表示する Step 2-F、3D推測用データセットから `idealLandmarks3D` 478点候補を自動推測する Step 2-G v1、生成済み候補を 1 つの canvas で確認する interactive 3D点群 preview の Step 2-H は実装済みです。Step 2-H preview は確認用表示であり、ドラッグによる視点回転、ホイール zoom、Shift + ドラッグ pan、正面 / 横 / 上の camera preset は preview camera の操作として扱います。`idealLandmarks3D` 候補データ自体は変更しません。確定済み代表フレーム一覧と3D推測用データセットには正面 / 左向き / 右向き / 上向き / 下向きだけを表示し、excluded は dataset に含めません。候補以外の詳細スキャンフレームは UI に大量表示せず、候補サムネイルはトリムせず全体表示します。手動微調整、保存 / export、複数画像入力は未実装です。
@@ -143,6 +147,8 @@ Step 2-F 改良では、代表フレーム候補抽出用の詳細スキャン�
 候補条件は緩めており、yaw 候補では pitch が多少ずれていても、pitch 候補では yaw が多少ずれていても候補として拾います。除外した候補は候補 UI から外し、`selectedRepresentativeFrames.excluded` として状態 / JSON preview には残せますが、3D推測用 dataset には含めません。
 
 3D 478点候補の自動推測 v1 は Step 2-G で追加済みです。Step 2-H では 3D点群 preview を追加済みです。手動微調整、保存 / export、複数画像入力は引き続き未実装です。詳細スキャンや候補振り分け、3D候補生成処理、3D点群 preview は IdealFace Authoring Tool の責務であり、Runtime には入れません。
+
+Step 2-G v1 は、front / left / right / up / down の代表フレームに依存する現在実装済みの簡易推定として残します。Step 2-I 以降は、正面基準候補、推定に使うフレーム、除外フレームに整理し、除外されていない解析成功フレームを yaw / pitch / roll の角度に応じて連続的に使う pose-aware multi-frame inference へ移行する方針です。
 
 ## Runtime と Authoring の分離
 
@@ -276,6 +282,20 @@ Step 2-G では、front が ready の場合に 3D 478点候補を生成します
 Step 2-H では、生成された `idealLandmarks3D` 478点候補を Authoring Tool 上で interactive 3D点群 preview として表示します。preview は debug / 確認用であり、本格 3D editor ではありません。1 つの canvas 上で preview camera を操作し、ドラッグで視点回転、ホイールで zoom、Shift + ドラッグで pan、ダブルクリックまたは reset button で初期視点へ戻せます。正面 / 横 / 上は固定ビューではなく、同じ viewport の camera preset です。表示上は y を反転して顔の上方向が画面上側に見えるようにし、z 表示倍率調整は preview 専用の view transform として扱います。これらは preview camera の操作であり、`idealLandmarks3D` 候補データ自体や JSON preview の値は変更しません。点群は表示範囲内に収まるよう center / scale を調整し、低 confidence の点は薄く表示します。
 
 preview の近くには landmark count、視点、x / y / z の min / max、average confidence、min / max confidence を表示します。JSON preview は引き続き `idealLandmarks3DCandidate` の概要と先頭 5 点程度の preview に留め、478点全文や canvas data URL は出しません。手動微調整、保存 / export、複数画像入力はまだ実装しません。3D点群 preview は IdealFace Authoring Tool の責務であり、Runtime や Beauty Studio には入れません。
+
+## IdealFace Authoring Tool Step 2-I
+
+Step 2-I は次に実装予定の未実装仕様です。Step 2-G v1 の `front / left / right / up / down` 代表フレーム方式を置き換えるのではなく、現行 v1 を残したうえで、pose-aware multi-frame inference dataset へ進む方針を定義します。
+
+Step 2-I の UI 表示名:
+
+```text
+正面基準候補
+推定に使うフレーム
+除外フレーム
+```
+
+dataset の将来形では、選択状態として `frontReferenceFrameIds` と `excludedFrameIds` を持つ方針です。`usableObservationFrames` は state として直接持たず、解析成功していること、landmarks が 478 点あること、`FacePose` があること、`excludedFrameIds` に含まれていないことから派生します。3D候補生成前には、正面基準候補数、推定に使うフレーム数、除外フレーム数、yaw / pitch / roll の範囲、状態、警告を summary として表示する方針です。
 
 ## IdealFace / Projection / Shape Processing 中核仕様
 
