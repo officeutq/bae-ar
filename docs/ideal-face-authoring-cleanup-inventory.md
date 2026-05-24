@@ -173,6 +173,15 @@
 | Step 2-I-C | active | `poseAwareInferenceDataset` | `idealLandmarks3DCandidateResult` with `generationMethod: "pose_aware_weighted_z_v1"` | 今後詰める主導線 |
 | Step 2-H preview | active preview | `idealLandmarks3DCandidateResult` | canvas point cloud | どちらの candidate でも最後に生成された結果を表示する |
 
+## Cleanup Applied
+
+- `formatPoseRange()` / `getCandidateSourceFrames()` / `updateExtractedFrame()` は未使用 helper として削除済み。
+- JSON preview は `activeSummary` / `poseAware` / `currentCandidate` / `legacy` / `reference` / `debug` の目的別構造へ整理済み。
+- 現在 Step 2-H preview に表示される candidate は `currentCandidate` に一本化し、`generationMethod` を必ず含める。
+- 旧 `idealLandmarks3DCandidate` / `poseAwareIdealLandmarks3DCandidate` の重複表示は削除済み。
+- Step 2-G v1 は `legacy.step2Gv1` に整理し、Step 2-I-C の pose-aware data は `poseAware` 配下に整理済み。
+- `natural_v1` / 6 controlPoints は `reference.naturalV1` に整理し、表示用の粗い抽出 frame と video metadata は `debug.videoSource` に整理済み。
+
 ## Next Refactor Plan
 
 1. active workflow を `Step 2-I` として画面上位へ独立させ、詳細スキャン、front reference、observation、excluded、pose-aware dataset、pose-aware candidate、Step 2-H preview を一連の導線にする。
