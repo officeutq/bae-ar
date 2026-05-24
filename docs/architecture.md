@@ -305,16 +305,18 @@ LayerMask は FaceLandmarks から生成する 2D mask です。
 
 Step 1 では Runtime の公開 API から `natural_v1` を読み込み、metadata、`coordinateSpace`、controlPoints 一覧、2D preview、JSON preview を表示するだけに留めています。Studio へのタブ追加、Engine Runtime への UI 追加、Runtime への編集処理追加は行いません。
 
-Step 1 時点の未実装範囲:
+Step 1 時点では未実装で、現在は後続 Step で実装済みになった範囲:
 
-- controlPoints のドラッグ編集
 - MediaPipe によるフレームごとの 2D 478 landmarks 取得
 - FacePose 取得
 - yaw / pitch / roll による代表フレーム候補の自動抽出
 - 手動ラベル確定 UI
 - 3D 478点候補の自動推測
 - 3D点群 preview
-- 手動微調整
+
+現在も未実装の範囲:
+
+- 本格 3D editor / 手動微調整
 - 保存 / export
 - 複数画像入力
 
@@ -333,15 +335,20 @@ Step 2-A では、`tools/ideal-face-authoring` に MP4 動画入力とフレー�
 - サムネイル一覧での frame index / timestamp / 状態「未解析」の表示
 - JSON preview での動画情報と抽出フレーム情報の表示
 
-Step 2-A 時点の未実装範囲:
+Step 2-A 時点では未実装で、現在は後続 Step で実装済みになった範囲:
 
-- 複数画像入力
 - MediaPipe によるフレームごとの 2D 478 landmarks 取得
 - FacePose 取得
 - 代表フレーム候補の自動抽出
 - 手動ラベル確定 UI
 - 3D 478点候補の自動推測
 - 3D点群 preview
+
+現在も未実装の範囲:
+
+- 手動微調整
+- 保存 / export
+- 複数画像入力
 - 手動微調整
 - 保存 / export
 
@@ -359,11 +366,14 @@ Step 2-B では、`tools/ideal-face-authoring` に抽出済みフレームの Me
 - 解析結果 summary での解析済み数、顔検出あり / なし、解析エラー数、yaw / pitch / roll 範囲表示
 - JSON preview での解析概要と先頭 5 点までの `landmarkPreview` 表示
 
-Step 2-B の未実装範囲:
+Step 2-B 時点では未実装で、現在は後続 Step で実装済みになった範囲:
 
 - 手動ラベル確定 UI
 - 3D 478点候補の自動推測
 - 3D点群 preview
+
+現在も未実装の範囲:
+
 - 手動微調整
 - 保存 / export
 - 複数画像入力
@@ -385,11 +395,14 @@ Step 2-C では、`tools/ideal-face-authoring` に解析済みフレームから
 - JSON preview に `representativeFrameCandidates` としてカテゴリごとの候補配列を表示する
 - JSON preview には 478 landmarks 全文やサムネイル data URL 全文を出さない
 
-Step 2-C の未実装範囲:
+Step 2-C 時点では未実装で、現在は後続 Step で実装済みになった範囲:
 
 - 手動ラベル確定 UI
 - 3D 478点候補の自動推測
 - 3D点群 preview
+
+現在も未実装の範囲:
+
 - 手動微調整
 - 保存 / export
 - 複数画像入力
@@ -415,10 +428,13 @@ Step 2-D の実装範囲:
 - `representativeFrameCandidates` は引き続き JSON preview に表示する
 - JSON preview に 478 landmarks 全文やサムネイル data URL 全文を出さない
 
-Step 2-D の未実装範囲:
+Step 2-D 時点では未実装で、現在は後続 Step で実装済みになった範囲:
 
 - 3D 478点候補の自動推測
 - 3D点群 preview
+
+現在も未実装の範囲:
+
 - 手動微調整
 - 保存 / export
 - 複数画像入力
@@ -439,10 +455,13 @@ Step 2-E の実装範囲:
 
 Step 2-E の dataset は 3D の `idealLandmarks3D` 478点候補を推測するための入力データセットです。まだ `idealLandmarks3D` 478点そのものではありません。
 
-Step 2-E の未実装範囲:
+Step 2-E 時点では未実装で、現在は後続 Step で実装済みになった範囲:
 
 - 3D 478点候補の自動推測
 - 3D点群 preview
+
+現在も未実装の範囲:
+
 - 手動微調整
 - 保存 / export
 - 複数画像入力
@@ -461,10 +480,13 @@ Step 2-F の実装範囲:
 - 詳細スキャン summary と JSON preview の `scanSummary` を表示する
 - 候補カード、確定済み代表フレーム、dataset entry のサムネイルをトリムせず全体表示する
 
-Step 2-F の未実装範囲:
+Step 2-F 時点では未実装で、現在は後続 Step で実装済みになった範囲:
 
 - 3D 478点候補の自動推測
 - 3D点群 preview
+
+現在も未実装の範囲:
+
 - 手動微調整
 - 保存 / export
 - 複数画像入力

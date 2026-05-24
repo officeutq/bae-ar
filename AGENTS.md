@@ -51,7 +51,7 @@ docs
   設計・仕様ドキュメント
 
 tools/ideal-face-authoring
-  将来予定。IdealFace Authoring Tool
+  IdealFace Authoring Tool。Step 2-H まで実装済み
 
 tools/layer-mask-authoring
   将来予定。Layer Mask Authoring Tool
