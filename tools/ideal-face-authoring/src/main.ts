@@ -2,7 +2,6 @@ import {
   NATURAL_IDEAL_FACE_PRESET,
   type FaceLandmark,
   type FacePose,
-  type IdealFacePoint3D,
 } from "@bae-ar/engine"
 import {
   FaceLandmarker,
@@ -354,7 +353,6 @@ interface VideoSourceState {
 let videoSource: VideoSourceState | null = null
 let faceLandmarker: FaceLandmarker | null = null
 let faceLandmarkerInitialization: Promise<FaceLandmarker> | null = null
-let isDebugFrameListOpen = false
 let idealLandmarks3DFrameSelection: IdealLandmarks3DFrameSelection =
   createEmptyIdealLandmarks3DFrameSelection()
 let idealLandmarks3DCandidateResult: IdealLandmarks3DCandidateResult =
@@ -419,92 +417,11 @@ function formatScore(value: number): string {
   return value.toFixed(2)
 }
 
-function getPreviewBounds(points: IdealFacePoint3D[]): {
-  minX: number
-  maxX: number
-  minY: number
-  maxY: number
-} {
-  const xs = points.map((point) => point.x)
-  const ys = points.map((point) => point.y)
-  const padding = 0.16
-
-  return {
-    minX: Math.min(...xs) - padding,
-    maxX: Math.max(...xs) + padding,
-    minY: Math.min(...ys) - padding,
-    maxY: Math.max(...ys) + padding,
-  }
-}
-
-function mapPointToPreview(
-  point: IdealFacePoint3D,
-  bounds: ReturnType<typeof getPreviewBounds>,
-): { x: number; y: number } {
-  const width = bounds.maxX - bounds.minX
-  const height = bounds.maxY - bounds.minY
-
-  return {
-    x: ((point.x - bounds.minX) / width) * 100,
-    y: 100 - ((point.y - bounds.minY) / height) * 100,
-  }
-}
-
-function renderPreview(points: IdealFacePoint3D[]): string {
-  const bounds = getPreviewBounds(points)
-  const axisOrigin = mapPointToPreview(
-    { id: "origin", x: 0, y: 0, z: 0 },
-    bounds,
-  )
-  const pointMarkup = points
-    .map((point) => {
-      const previewPoint = mapPointToPreview(point, bounds)
-      const label = point.semantic ?? point.id
-
-      return `
-        <g class="preview-point">
-          <circle cx="${previewPoint.x}" cy="${previewPoint.y}" r="1.7">
-            <title>${escapeHtml(point.id)}</title>
-          </circle>
-          <text x="${previewPoint.x + 2.5}" y="${previewPoint.y - 2.5}">
-            ${escapeHtml(label)}
-          </text>
-        </g>
-      `
-    })
-    .join("")
-
-  return `
-    <svg class="preview" viewBox="0 0 100 100" role="img" aria-label="natural_v1 controlPoints preview">
-      <line class="axis" x1="4" y1="${axisOrigin.y}" x2="96" y2="${axisOrigin.y}" />
-      <line class="axis" x1="${axisOrigin.x}" y1="4" x2="${axisOrigin.x}" y2="96" />
-      ${pointMarkup}
-    </svg>
-  `
-}
-
-function renderControlPointRows(points: IdealFacePoint3D[]): string {
-  return points
-    .map(
-      (point) => `
-        <tr>
-          <td>${escapeHtml(point.id)}</td>
-          <td>${escapeHtml(point.semantic ?? "")}</td>
-          <td>${formatNumber(point.x)}</td>
-          <td>${formatNumber(point.y)}</td>
-          <td>${formatNumber(point.z)}</td>
-        </tr>
-      `,
-    )
-    .join("")
-}
-
 function renderVideoMetadata(): string {
   const fileName = videoSource?.fileName ?? "未選択"
   const duration = videoSource?.duration ?? null
   const videoWidth = videoSource?.videoWidth ?? null
   const videoHeight = videoSource?.videoHeight ?? null
-  const frameCount = videoSource?.extractedFrames.length ?? 0
 
   return `
     <dl>
@@ -519,10 +436,6 @@ function renderVideoMetadata(): string {
       <div>
         <dt>動画サイズ</dt>
         <dd>${formatPixels(videoWidth, videoHeight)}</dd>
-      </div>
-      <div>
-        <dt>抽出フレーム数</dt>
-        <dd>${frameCount}</dd>
       </div>
     </dl>
   `
@@ -2734,7 +2647,6 @@ function drawPointCloudPreviewGuide(
 
 function renderAnalysisPanel(): string {
   const summary = getDetailedScanSummary()
-  const displayFrameCount = videoSource?.extractedFrames.length ?? 0
   const hasVideo = Boolean(videoSource?.objectUrl && !videoSource.error)
   const isAnalyzing = videoSource?.isAnalyzing ?? false
   const isExtracting = videoSource?.isExtracting ?? false
@@ -2771,10 +2683,6 @@ function renderAnalysisPanel(): string {
           <dd>${summary.maxScanFrames}</dd>
         </div>
         <div>
-          <dt>表示用抽出フレーム数</dt>
-          <dd>${displayFrameCount}</dd>
-        </div>
-        <div>
           <dt>解析対象フレーム数</dt>
           <dd>${summary.scannedFrameCount}</dd>
         </div>
@@ -2792,61 +2700,6 @@ function renderAnalysisPanel(): string {
         </div>
       </dl>
       <p class="candidate-note">詳細スキャン済みの有効フレームは Step 2-I の正面基準候補 / 推定に使うフレーム / 除外フレームとして扱います。</p>
-    </section>
-  `
-}
-
-function renderFrameThumbnails(): string {
-  const frames = videoSource?.extractedFrames ?? []
-
-  if (frames.length === 0) {
-    return `
-      <div class="frame-empty">
-        <p>抽出済みフレームはまだありません。</p>
-      </div>
-    `
-  }
-
-  return `
-    <div class="frame-grid">
-      ${frames
-        .map(
-          (frame) => `
-            <article class="frame-card">
-              <img src="${escapeHtml(frame.thumbnailUrl)}" alt="Frame ${String(frame.index).padStart(3, "0")} / ${frame.timestamp.toFixed(1)}s" />
-              <div>
-                <strong>Frame ${String(frame.index).padStart(3, "0")} / ${frame.timestamp.toFixed(1)}s</strong>
-                <span>解析状態: ${formatFrameAnalysisStatus(frame.status)}</span>
-                <span>landmarks 数: ${frame.analysis?.landmarks.length ?? 0}</span>
-                <span>pose pitch / yaw / roll: ${formatOptionalNumber(frame.analysis?.pose.pitch)} / ${formatOptionalNumber(frame.analysis?.pose.yaw)} / ${formatOptionalNumber(frame.analysis?.pose.roll)}</span>
-                ${frame.analysis?.errorMessage ? `<span>error: ${escapeHtml(frame.analysis.errorMessage)}</span>` : ""}
-                <span>抽出時間: ${frame.extractionTimeMs.toFixed(1)}ms</span>
-              </div>
-            </article>
-          `,
-        )
-        .join("")}
-    </div>
-  `
-}
-
-function renderDebugFrameListPanel(): string {
-  return `
-    <section class="frames-panel frames-panel-debug" aria-label="抽出フレーム一覧 debug">
-      <div class="debug-panel-heading">
-        <div>
-          <h2>表示用抽出フレーム一覧（debug）</h2>
-          <p>最大20件程度の表示確認用フレームです。詳細スキャン全件は表示しません。</p>
-        </div>
-        <button id="toggle-debug-frames-button" class="debug-toggle-button" type="button" aria-expanded="${isDebugFrameListOpen}">
-          ${isDebugFrameListOpen ? "表示用フレームを隠す" : "表示用フレームを表示"}
-        </button>
-      </div>
-      ${
-        isDebugFrameListOpen
-          ? renderFrameThumbnails()
-          : `<p class="debug-collapsed-text">表示用抽出フレーム一覧は閉じています。候補以外の詳細スキャンフレームは表示しません。</p>`
-      }
     </section>
   `
 }
@@ -3007,15 +2860,6 @@ function attachAnalysisHandler(): void {
     .querySelector<HTMLButtonElement>("#analyze-frames-button")
     ?.addEventListener("click", async () => {
       await analyzeExtractedFrames()
-    })
-}
-
-function attachDebugFrameListHandler(): void {
-  document
-    .querySelector<HTMLButtonElement>("#toggle-debug-frames-button")
-    ?.addEventListener("click", () => {
-      isDebugFrameListOpen = !isDebugFrameListOpen
-      render()
     })
 }
 
@@ -3583,7 +3427,6 @@ async function handleVideoFileSelection(file: File): Promise<void> {
     scanSummary: createEmptyDetailedScanSummary(),
     detailedScanFrames: [],
   })
-  isDebugFrameListOpen = false
   render()
 
   try {
@@ -3804,10 +3647,6 @@ function render(): void {
             <dt>coordinateSpace</dt>
             <dd>${escapeHtml(idealFace.model.coordinateSpace)}</dd>
           </div>
-          <div>
-            <dt>control point count</dt>
-            <dd>${idealFace.model.controlPoints.length}</dd>
-          </div>
         </dl>
       </section>
 
@@ -3836,35 +3675,6 @@ function render(): void {
 
       ${renderIdealLandmarks3DPointCloudPreviewPanel()}
 
-      ${renderDebugFrameListPanel()}
-
-      <section class="workspace">
-        <div class="preview-panel">
-          <h2>2D preview</h2>
-          ${renderPreview(idealFace.model.controlPoints)}
-        </div>
-
-        <div class="table-panel">
-          <h2>controlPoints</h2>
-          <div class="table-scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>id</th>
-                  <th>label</th>
-                  <th>x</th>
-                  <th>y</th>
-                  <th>z</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${renderControlPointRows(idealFace.model.controlPoints)}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-
       <section class="json-panel">
         <h2>JSON preview</h2>
         <pre>${escapeHtml(JSON.stringify(buildAuthoringDebugPreview(), null, 2))}</pre>
@@ -3876,7 +3686,6 @@ function render(): void {
   attachAnalysisHandler()
   attachPoseAwareFrameSelectionHandler()
   attachIdealLandmarks3DCandidateHandler()
-  attachDebugFrameListHandler()
 }
 
 const style = document.createElement("style")
