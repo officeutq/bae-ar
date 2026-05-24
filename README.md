@@ -14,6 +14,15 @@ The old Step 2-G v1 generation helper path has been removed from the current cod
 
 Downloaded `ideal_face_asset_v1` JSON keeps `schemaVersion` and `coordinateSpace` unchanged, while `idealLandmarks3D` x/y/z values now come from the normalized coordinate space. The UI and in-app JSON preview still report video aspect ratio, raw image-normalized bounds, same-unit bounds, current candidate bounds, and aspect ratio debug. Runtime Projection keeps rotate + translate + uniform scale alignment only.
 
+## IdealFace Projection coordinate policy
+
+- `idealLandmarks3D` is stored in same-unit coordinate space.
+- Runtime Projection rotates and aligns IdealFace in same-unit space.
+- Studio overlay and future Shape Warp use image-normalized / pixel coordinates.
+- Projection result should separate same-unit projected landmarks from image-normalized projected landmarks.
+- Runtime must not non-uniformly scale IdealFace to match the current face aspect ratio.
+- Authoring Tool owns same-unit asset generation, video aspect correction, pose-aware generation, and future manual adjustment. Runtime owns loading finished IdealFace assets, projection, and conversion for overlay / difference / warp, but does not include authoring generation logic.
+
 ## Engine ideal_face_asset_v1 loading foundation
 
 `packages/engine` now exposes TypeScript types, validation helpers, a JSON parse helper, and a conversion helper for Authoring Tool export JSON with `schemaVersion: "ideal_face_asset_v1"`.

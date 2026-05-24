@@ -61,15 +61,21 @@ shape processing は current 478 landmarks と IdealFace 由来の ideal 478 lan
 
 IdealFace は BAE AR 独自の canonical face / お面データです。MediaPipe canonical face model そのものではありません。MediaPipe の topology や landmark index は参考にする可能性がありますが、MediaPipe は検出側の基準、BAE AR IdealFace は補正・比較側の基準として分けて扱います。
 
+Projection / Shape Processing の実装では座標系を 3 種類に分けます。IdealFace asset / `idealLandmarks3D` は same-unit coordinate として扱い、Projection 内部、`FacePose` rotation、uniform alignment に使います。MediaPipe current landmarks、Studio overlay、current-vs-ideal difference、`CorrectionPlan` 入力は image-normalized coordinate として扱います。最終的な描画や画像変形は pixel coordinate で行います。
+
+same-unit の projected ideal landmarks を、そのまま `x * canvasWidth` / `y * canvasHeight` で描画しません。Projection result は、Projection / alignment / debug 用の same-unit projected landmarks と、overlay / difference / Shape Warp 入力用の image-normalized projected landmarks を分けて持つ方針です。
+
 ```text
 現在顔から MediaPipe 478 landmarks を取得
   -> FacePose を推定
-  -> IdealFace 3D model を現在姿勢へ投影
-  -> ideal 2D landmarks 478 点を生成
-  -> current 478 landmarks と ideal 478 landmarks の差分を取る
+  -> IdealFace 3D model を same-unit coordinate で現在姿勢へ投影
+  -> projected ideal 478 landmarks を image-normalized coordinate へ変換
+  -> current image-normalized landmarks と projected ideal image-normalized landmarks の差分を取る
   -> CorrectionPlan を生成
   -> 顔全体として自然に少し warp
 ```
+
+current 478 landmarks は MediaPipe 由来の image-normalized 座標です。projected ideal 478 landmarks は、IdealFace same-unit landmarks を `FacePose` へ投影し、alignment 後に image-normalized 座標へ変換したものです。差分は `deltaX = projectedIdealImageX - currentX`、`deltaY = projectedIdealImageY - currentY` として計算します。
 
 やらないこと:
 
@@ -82,7 +88,7 @@ IdealFace は BAE AR 独自の canonical face / お面データです。MediaPip
 
 CorrectionPlan は姿勢補正を担当しません。姿勢への対応は IdealFace Projection の責務です。
 
-CorrectionPlan は Projection 後の current 2D landmarks と ideal 2D landmarks の差分を受け取り、実際に warp へ渡す安全な補正量を決めます。
+CorrectionPlan は Projection 後の current image-normalized landmarks と projected ideal image-normalized landmarks の差分を受け取り、実際に warp へ渡す安全な補正量を決めます。
 
 扱うもの:
 
@@ -97,6 +103,8 @@ CorrectionPlan は Projection 後の current 2D landmarks と ideal 2D landmarks
 - FacePose の推定
 - IdealFace の現在姿勢への投影
 - 個別パーツ加工命令
+
+CorrectionPlan は same-unit projection 後、image-normalized に変換された current-vs-ideal 差分を受け取ります。CorrectionPlan は `FacePose` の推定や IdealFace projection を担当しません。
 
 ## Color Processing / Layer System の開発方針
 
@@ -140,6 +148,8 @@ Engine Runtime で行わないこと:
 - LayerMaskSpec の作成
 - mask の手作業編集
 - Studio / Authoring 用 UI
+
+Runtime Projection alignment では x/y 別 scale を行いません。IdealFace の縦横比を現在顔に合わせて歪めず、縦横比や形状そのものの調整は将来の IdealFace Authoring Tool manual adjustment UI で扱います。Authoring Tool は `video_aspect_same_unit_v1` による video aspect 補正、pose-aware generation、manual adjustment、same-unit `idealLandmarks3D` 生成を担当します。Runtime は完成済み IdealFace asset の読み込み、same-unit projection、overlay / difference / warp 用の image-normalized / pixel 座標変換を担当し、Authoring generation logic は持ちません。
 
 Beauty Studio では、開発確認用として overlay や簡易調整 UI を持ってよいです。ただし、本番配布対象には含めません。
 

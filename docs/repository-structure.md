@@ -52,7 +52,7 @@ tools/
    └─ Layer Mask Authoring Tool
 ```
 
-`tools/ideal-face-authoring` は Step 2-I-C まで実装済みです。`tools/layer-mask-authoring` は将来予定です。
+`tools/ideal-face-authoring` は Step 2-I-A/B/C と Step 2-H まで実装済みです。`tools/layer-mask-authoring` は将来予定です。
 
 ## `packages/engine`
 
@@ -85,6 +85,8 @@ Engine Runtime として使う Beauty Engine SDK を置く場所です。
 - renderer
 
 Engine Runtime は UI を持ちません。debug 用 UI、一時的な検証 UI、Authoring Tool の編集処理はここに入れません。
+
+Projection / Shape Warp へ向けた座標系方針として、Engine Runtime は完成済み IdealFace asset の `idealLandmarks3D` を same-unit coordinate として読み込み、`FacePose` に合わせて same-unit 空間で回転と face center / uniform scale alignment を行います。Runtime Projection alignment では x/y 別 scale を行わず、IdealFace の縦横比を現在顔に合わせて歪めません。Studio overlay / current-vs-ideal difference / Shape Warp 入力へ渡す前に、projected ideal landmarks は image-normalized coordinate へ変換します。最終的な描画や画像変形では pixel coordinate を使います。
 
 ## `apps/studio`
 
@@ -149,6 +151,8 @@ debug
 `currentCandidate` は Step 2-H preview に表示される現在の candidate です。`generationMethod` は `pose_aware_weighted_z_v1` で、478 landmarks 全文は出さず、summary と先頭数点 preview に留めます。`natural_v1` の 6 controlPoints は reference / projection debug 用であり、IdealFace 本体は `idealLandmarks3D` 478点です。
 
 Authoring Tool の生成・編集処理は Engine Runtime / Beauty Studio に混ぜません。
+
+`tools/ideal-face-authoring` は `video_aspect_same_unit_v1` による video aspect 補正、pose-aware generation、将来の manual adjustment UI を担当し、`idealLandmarks3D` を same-unit coordinate として生成します。Runtime / Beauty Studio は Authoring generation logic を持ちません。
 
 ## `tools/layer-mask-authoring`
 
