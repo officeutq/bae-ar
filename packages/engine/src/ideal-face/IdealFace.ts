@@ -13,9 +13,18 @@ export interface IdealFacePoint3D {
   semantic?: string
 }
 
+export interface IdealFaceLandmark3D {
+  index: number
+  x: number
+  y: number
+  z: number
+  confidence: number
+}
+
 export interface IdealFaceModel3D {
-  coordinateSpace: "normalized_canonical_face_v1"
+  coordinateSpace: "normalized_canonical_face_v1" | "bae_ar_ideal_landmarks3d_v1"
   controlPoints: IdealFacePoint3D[]
+  idealLandmarks3D?: IdealFaceLandmark3D[]
 }
 
 export interface IdealFaceLandmarkTopology {
