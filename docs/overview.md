@@ -83,6 +83,10 @@ Step 2-I-A では、Step 2-G v1 の 5ポーズ固定の代表フレーム方式�
 
 Step 2-I の操作フローは、正面基準候補を複数選び、使いたくないフレームを除外し、除外されていない解析成功フレームを pose 角度に応じて observation として利用する流れです。`left / right / up / down` をユーザーが必ず手動指定する方式にはせず、将来的には `FacePose` の yaw / pitch から推定寄与を自動判断します。内部説明では `frontReferenceFrames`、`usableObservationFrames`、`excludedFrames` を使ってよいものとします。Step 2-I-A 時点では `frontReferenceFrameIds` / `excludedFrameIds` と派生 `usableObservationFrames` summary、JSON preview 概要までを実装済みです。pose-aware 3D候補生成ロジック、厳密な 3D reconstruction、三角測量、bundle adjustment、カメラ内部パラメータ推定、手動微調整、保存 / export、Runtime 組み込みは行いません。
 
+次に実装予定の Step 2-I-B では、正面基準候補と推定に使うフレームから pose-aware multi-frame inference dataset を作成します。この dataset は `frontReferenceFrames`、`observationFrames`、`excludedFrameCount`、poseCoverage を持つ方針です。`observationFrames` は `left / right / up / down` の固定分類を持たず、frameId、timestamp、2D landmarks、FacePose yaw / pitch / roll、score、weight を持つ連続値の pose observation として扱います。
+
+その次の Step 2-I-C では、Step 2-I-B の dataset を使って pose-aware weighted z inference v1 を追加します。複数の frontReferenceFrames から base x / y を作り、observationFrames の yaw / pitch / roll / score / weight から z hint を作ります。yaw も pitch も大きいフレームは、left か up のどちらかへ分類せず、mixed pose observation として yaw 成分と pitch 成分の両方を持つ観測として利用します。roll が大きすぎるフレームや score が低いフレームは weight を下げる、または除外候補とします。
+
 この方針は完全自動生成ではなく、自動推測 + 手動補正です。Engine Runtime は動画 / 複数画像から `idealLandmarks3D` を作成せず、Authoring Tool で作成済みの IdealFace asset を読み込んで使うだけです。
 
 現時点では、MP4 動画入力とフレーム抽出は IdealFace Authoring Tool Step 2-A、抽出フレームの MediaPipe 解析は Step 2-B、yaw / pitch / roll による代表フレーム候補の自動抽出、各カテゴリ上位複数件の候補一覧 / JSON preview への概要表示は Step 2-C、代表フレーム候補から正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定する UI と、候補カテゴリを必要なものだけ開く Step 2-D UI整理、確定済み代表フレームから 3D推測用データセットを作成して readiness summary、dataset 一覧、JSON preview の `idealLandmarks3DInferenceDataset` 概要を確認する Step 2-E、候補抽出用に動画全体を詳細スキャンして `scanSummary` を表示する Step 2-F、3D推測用データセットから `idealLandmarks3D` 478点候補を自動推測する Step 2-G v1、生成済み候補を 1 つの canvas で確認する interactive 3D点群 preview の Step 2-H は実装済みです。Step 2-H preview は確認用表示であり、ドラッグによる視点回転、ホイール zoom、Shift + ドラッグ pan、正面 / 横 / 上の camera preset は preview camera の操作として扱います。`idealLandmarks3D` 候補データ自体は変更しません。確定済み代表フレーム一覧と3D推測用データセットには正面 / 左向き / 右向き / 上向き / 下向きだけを表示し、excluded は dataset に含めません。候補以外の詳細スキャンフレームは UI に大量表示せず、候補サムネイルはトリムせず全体表示します。手動微調整、保存 / export、複数画像入力は未実装です。
@@ -148,7 +152,7 @@ Step 2-F 改良では、代表フレーム候補抽出用の詳細スキャン�
 
 3D 478点候補の自動推測 v1 は Step 2-G で追加済みです。Step 2-H では 3D点群 preview を追加済みです。手動微調整、保存 / export、複数画像入力は引き続き未実装です。詳細スキャンや候補振り分け、3D候補生成処理、3D点群 preview は IdealFace Authoring Tool の責務であり、Runtime には入れません。
 
-Step 2-G v1 は、front / left / right / up / down の代表フレームに依存する現在実装済みの簡易推定として残します。Step 2-I 以降は、正面基準候補、推定に使うフレーム、除外フレームに整理し、除外されていない解析成功フレームを yaw / pitch / roll の角度に応じて連続的に使う pose-aware multi-frame inference へ移行する方針です。
+Step 2-G v1 は、front / left / right / up / down の代表フレームに依存する現在実装済みの簡易推定として残します。Step 2-I 以降は、正面基準候補、推定に使うフレーム、除外フレームに整理し、除外されていない解析成功フレームを yaw / pitch / roll の角度に応じて連続的に使う pose-aware multi-frame inference へ移行する方針です。旧 Step 2-F / Step 2-G v1 用の候補 UI は代表フレーム候補中心に表示し、Step 2-I 用 UI では除外判断のため推定に使うフレームを全件操作可能にします。
 
 ## Runtime と Authoring の分離
 
@@ -296,6 +300,10 @@ Step 2-I の UI 表示名:
 ```
 
 Step 2-I-A では、選択状態として `frontReferenceFrameIds` と `excludedFrameIds` を持ちます。`usableObservationFrames` は state として直接持たず、解析成功していること、landmarks が 478 点あること、`FacePose` があること、`excludedFrameIds` に含まれていないことから派生します。3D候補生成前の summary として、正面基準候補数、推定に使うフレーム数、除外フレーム数、yaw / pitch / roll の範囲、状態、警告を表示します。JSON preview には `poseAwareMultiFrameInference` の概要を出しますが、478 landmarks 全文やサムネイル data URL 全文は出しません。
+
+Step 2-I-B は未実装の次ステップです。正面基準候補から base x / y 用の `frontReferenceFrames` を作り、推定に使うフレームから `observationFrames` を作ります。`observationFrames` は固定分類ではなく pose vector として保持し、yaw も pitch も大きいフレームは mixed pose observation として扱います。Step 2-I-B では dataset 作成までに留め、`idealLandmarks3D` 新生成ロジック、pose-aware weighted z inference、Step 2-G v1 の置き換えは行いません。
+
+Step 2-I-C も未実装です。Step 2-I-B の dataset を使い、yaw / pitch / roll / score / weight に基づく pose-aware weighted z inference v1 で `idealLandmarks3D` 478点候補を生成する方針です。ただし厳密な 3D reconstruction、三角測量、bundle adjustment、カメラ内部パラメータ推定、本格 3D editor、手動微調整、保存 / export、Runtime への組み込みは行いません。
 
 ## IdealFace / Projection / Shape Processing 中核仕様
 

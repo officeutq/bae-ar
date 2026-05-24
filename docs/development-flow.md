@@ -149,7 +149,7 @@ IdealFace Authoring Tool は、BAE AR 独自の IdealFace asset を作成する�
 
 初期段階では入力形式を広げず、MP4 動画からのフレーム抽出、代表フレーム候補の自動抽出、ユーザーによるラベル確定の流れを優先して作ります。Step 2-A では、MP4 動画入力と一定間隔でのフレーム抽出、サムネイル一覧表示までを実装済みです。Step 2-B では、抽出済みフレームの MediaPipe 解析、2D 478 landmarks と FacePose の取得、解析結果 summary 表示までを実装済みです。Step 2-C では、yaw / pitch / roll による代表フレーム候補の自動抽出、各カテゴリ上位複数件の候補一覧表示、JSON preview への候補概要表示、代表フレーム候補中心の UI 整理までを実装済みです。Step 2-D では、候補カードから正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定し、候補カテゴリを必要なものだけ開くトグル表示、確定済み代表フレーム一覧、3D推測準備状況、JSON preview の `selectedRepresentativeFrames` を確認できるようにしました。Step 2-E では、確定済み代表フレームから front / left / right / up / down の 3D推測用データセットを作成し、readiness summary、dataset 一覧、JSON preview の `idealLandmarks3DInferenceDataset` 概要を確認できるようにしました。Step 2-F では、候補抽出用に動画全体を詳細スキャンし、詳細スキャン summary、JSON preview の `scanSummary`、トリムしないサムネイル表示を追加しました。Step 2-G では、3D推測用データセットから `idealLandmarks3D` 478点候補を自動推測する v1 を追加しました。Step 2-H では、生成済み候補を 1 つの canvas で表示する interactive 3D点群 preview を追加しました。ドラッグによる視点回転、ホイール zoom、Shift + ドラッグ pan、正面 / 横 / 上の camera preset は preview camera の操作であり、`idealLandmarks3D` 候補データ自体や JSON preview の数値は変更しません。確定済み代表フレーム一覧と3D推測用データセットには、正面 / 左向き / 右向き / 上向き / 下向きだけを表示します。
 
-Step 2-I-A では UI / state 基盤を実装済みです。Step 2-G は現在実装済みの v1 として残し、Step 2-I では 5ポーズ固定の代表フレーム方式から、正面基準候補、推定に使うフレーム、除外フレームに整理した pose-aware multi-frame inference dataset へ進む方針です。pose-aware 3D候補生成ロジックはまだ実装しません。
+Step 2-I-A では UI / state 基盤を実装済みです。Step 2-G は現在実装済みの v1 として残し、Step 2-I では 5ポーズ固定の代表フレーム方式から、正面基準候補、推定に使うフレーム、除外フレームに整理した pose-aware multi-frame inference dataset へ進む方針です。Step 2-I 用操作は Step 2-I カード内に閉じ、旧ポーズ別候補 UI には混ぜません。画面上の 3 分類は排他的に表示します。pose-aware 3D候補生成ロジックはまだ実装しません。
 
 想定する流れ:
 
@@ -162,8 +162,8 @@ MP4 動画を入力
   -> 候補を複数比較する
   -> 人間が正面 / 左向き / 右向き / 上向き / 下向き / 除外を確定
   -> 確定済み代表フレームから 3D 推測用データセットを作成
-  -> 次ステップ: 正面基準候補、推定に使うフレーム、除外フレームから pose-aware multi-frame inference dataset を作成
-  -> 確定した代表フレーム群から 3D の idealLandmarks3D 478点候補を自動推測
+  -> Step 2-I-B: 正面基準候補、推定に使うフレーム、除外フレームから pose-aware multi-frame inference dataset を作成
+  -> Step 2-I-C: yaw / pitch / roll / weight に基づく pose-aware weighted z inference v1 で idealLandmarks3D 478点候補を生成
   -> Authoring Tool 上で 3D点群 preview として確認
   -> 将来、手動微調整
   -> 将来、IdealFace asset として保存 / export
@@ -179,7 +179,11 @@ Step 2-F では候補 1 件だけで確定せず、正面候補、yaw 正方向�
 
 Step 2-I-A では、フレーム解析結果欄を「正面基準候補」「推定に使うフレーム」「除外フレーム」に整理します。正面基準候補は `frontReferenceFrames` として複数選択でき、`idealLandmarks3D` の x / y 基準を作ります。推定に使うフレームは `usableObservationFrames` として、解析成功、landmarks 478点、`FacePose` あり、`excludedFrameIds` に含まれないことから派生させます。除外フレームは pose に関係なく指定でき、ブレ、表情崩れ、口開き、顔切れ、検出崩れ、極端な roll などを 3D 推定から外します。
 
-Step 2-I 以降は、`left / right / up / down` をユーザーが必ず手動指定する方式にはしません。除外されていない有効フレームを observation として使い、yaw / pitch / roll と score に応じて重み付けします。3D候補生成前には、正面基準候補数、推定に使うフレーム数、除外フレーム数、yaw / pitch / roll の範囲、状態、警告を summary として表示する方針です。最初の Step 2-I v1 では、厳密な 3D reconstruction、三角測量、bundle adjustment、カメラ内部パラメータ推定、本格 3D editor、手動微調整、保存 / export、Runtime への組み込みは行いません。
+Step 2-I 以降は、`left / right / up / down` をユーザーが必ず手動指定する方式にはしません。除外されていない有効フレームを observation として使い、yaw / pitch / roll と score に応じて重み付けします。yaw も pitch も大きいフレームは、left か up のどちらかに分類するのではなく、mixed pose observation として yaw 成分と pitch 成分の両方を利用します。3D候補生成前には、正面基準候補数、推定に使うフレーム数、除外フレーム数、yaw / pitch / roll の範囲、状態、警告を summary として表示する方針です。
+
+Step 2-I-B は未実装の次ステップで、pose-aware multi-frame inference dataset 作成に範囲を絞ります。`frontReferenceFrames` は複数の正面基準候補から base x / y を作るために使い、`observationFrames` は除外されていない解析成功フレームから作ります。observation は frameId、timestamp、2D landmarks、FacePose yaw / pitch / roll、score、weight を持ち、`left / right / up / down` 固定分類は持ちません。Step 2-I-B では `idealLandmarks3D` 新生成ロジック、Step 2-G v1 の置き換え、pose-aware weighted z inference はまだ実装しません。
+
+Step 2-I-C はその次の未実装ステップで、Step 2-I-B の dataset を使って pose-aware weighted z inference v1 を追加します。複数の frontReferenceFrames から base x / y を作り、observationFrames の yaw / pitch / roll / score / weight から landmark ごとの z hint を weighted average します。confidence は観測数、pose coverage、weight、ばらつき、不足情報から決める方針です。厳密な 3D reconstruction、三角測量、bundle adjustment、カメラ内部パラメータ推定、本格 3D editor、手動微調整、保存 / export、Runtime への組み込みは行いません。
 
 Step 2-C 時点では未実装で、現在は後続 Step で実装済みになったもの:
 

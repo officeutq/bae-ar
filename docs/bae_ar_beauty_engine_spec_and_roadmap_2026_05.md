@@ -957,7 +957,7 @@ Step 2-G の制限:
 - 3D点群 preview は Step 2-H で実装済み。preview は確認用表示であり、視点回転、zoom、pan、y 軸反転、z 表示倍率調整は preview camera / view transform の操作として扱う。手動微調整、保存 / export はまだ実装しない
 - 複数画像入力はまだ実装しない
 
-Step 2-G v1 は実装済みの簡易推定として残します。Step 2-I-A では、5ポーズ固定の代表フレーム方式から pose-aware multi-frame inference dataset へ進むための UI / state 基盤を追加済みです。次に実装する Step 2-I の 3D候補生成ロジックでは、正面基準候補、推定に使うフレーム、除外フレームに整理した observation を使う方針です。
+Step 2-G v1 は実装済みの簡易推定として残します。Step 2-I-A では、5ポーズ固定の代表フレーム方式から pose-aware multi-frame inference dataset へ進むための UI / state 基盤を追加済みです。次に実装する Step 2-I-B では、正面基準候補、推定に使うフレーム、除外フレームから pose-aware dataset を作成します。その次の Step 2-I-C では、yaw / pitch / roll / weight を使う pose-aware weighted z inference v1 へ進む方針です。
 
 3D候補生成処理は IdealFace Authoring Tool の責務です。Engine Runtime には 3D推測処理や Authoring UI を入れません。Beauty Studio にも Authoring 用タブは追加しません。
 
@@ -989,12 +989,14 @@ Step 2-H の制限:
 
 ## 18-I. IdealFace Authoring Tool Step 2-I
 
-状態: Step 2-I-A UI / state 基盤は実装済み。pose-aware 3D候補生成ロジックは未実装 / 次に実装予定
+状態: Step 2-I-A UI / state 基盤は実装済み。Step 2-I-B dataset 作成、Step 2-I-C pose-aware weighted z inference v1 は未実装 / 次に実装予定
 
 Step 2-I の目的:
 
 - Step 2-G v1 の `front / left / right / up / down` 代表フレーム方式を、現在実装済みの簡易推定として残す
 - Step 2-I-A として、フレーム選択用の UI / state 基盤を先に追加する
+- Step 2-I-B として、`left / right / up / down` 固定分類を持たない pose-aware multi-frame inference dataset を作成する
+- Step 2-I-C として、この dataset から pose-aware weighted z inference v1 で `idealLandmarks3D` 478点候補を生成する
 - 5ポーズ固定指定ではなく、各フレームの `FacePose` を使って連続的に判断する pose-aware multi-frame inference へ進める
 - フレーム解析結果欄を「正面基準候補」「推定に使うフレーム」「除外フレーム」の 3 分類に整理する
 - `idealLandmarks3D` 478点候補の x / y 基準は、複数の正面基準候補から作る
@@ -1044,9 +1046,11 @@ Step 2-I の重要方針:
 
 - `left / right / up / down` をユーザーが必ず手動指定する方式にはしない
 - `left / right / up / down` は、将来的には手動ラベルではなく、`FacePose` の yaw / pitch から自動的に推定寄与を判断する
+- `left / right / up / down` を主構造として使わず、各フレームの FacePose yaw / pitch / roll を連続値として扱う
 - `front` だけは x / y 基準として重要なので、ユーザーが複数選択できるようにする
 - 除外フレームはポーズに関係なく指定できる
 - 除外されていない有効フレームは、pose angle に応じて observation として利用する
+- yaw も pitch も大きいフレームは、left か up のどちらかに分類するのではなく、mixed pose observation として利用する
 
 現行 Step 2-G v1 との関係:
 
@@ -1073,6 +1077,7 @@ Step 2-I の推定ロジック方針:
 - yaw / pitch / roll を見る
 - yaw が大きいフレームは左右方向の奥行き推定に寄与しやすい
 - pitch が大きいフレームは上下方向の奥行き推定に寄与しやすい
+- yaw も pitch も大きいフレームは、yaw 成分と pitch 成分の両方を持つ observation として扱う
 - roll が大きすぎるフレームや score が低いフレームは重みを下げる
 
 Dataset の将来形:
@@ -1111,9 +1116,150 @@ type IdealLandmarks3DObservationFrame = {
 }
 ```
 
-Step 2-I-A では、`frontReferenceFrameIds` と `excludedFrameIds` の選択状態、派生 `usableObservationFrames` summary、JSON preview の `poseAwareMultiFrameInference` 概要を実装済みです。pose-aware 3D候補生成ロジックへの接続はまだ行いません。
+Step 2-I-A では、`frontReferenceFrameIds` と `excludedFrameIds` の選択状態、派生 `usableObservationFrames` summary、JSON preview の `poseAwareMultiFrameInference` 概要を実装済みです。Step 2-I 用操作は Step 2-I カード内に閉じ、旧ポーズ別候補 UI には混ぜません。画面上の 3 分類は排他的に表示します。pose-aware dataset 作成と pose-aware 3D候補生成ロジックへの接続はまだ行いません。
 
-3D候補生成前の summary 方針:
+## 18-I-B. IdealFace Authoring Tool Step 2-I-B
+
+状態: 未実装 / 次に実装予定
+
+Step 2-I-B の目的:
+
+- Step 2-I-A の `frontReferenceFrameIds` / `excludedFrameIds` と派生 `usableObservationFrames` から、pose-aware multi-frame inference dataset を作成する
+- `left / right / up / down` 固定分類を dataset の主構造にしない
+- 各 frame を frameId、timestamp、2D landmarks、FacePose yaw / pitch / roll、score、weight を持つ observation として扱う
+- yaw も pitch も大きい frame を mixed pose observation として扱う
+
+Step 2-I-B で作る dataset の方針:
+
+```text
+frontReferenceFrames:
+  正面基準候補から作る
+  idealLandmarks3D の x / y 基準を作るために使う
+  複数フレームを平均して base x / y を作る方針
+
+observationFrames:
+  推定に使うフレームから作る
+  除外されていない解析成功フレーム
+  landmarks 478点と FacePose があるフレーム
+  left / right / up / down 固定分類は持たない
+  yaw / pitch / roll / score / weight を持つ
+
+excludedFrames:
+  除外フレーム
+  3D推定には使わない
+```
+
+Dataset の概念例:
+
+```ts
+type PoseAwareInferenceDataset = {
+  status: "missing_front_reference" | "warning" | "ready"
+  frontReferenceFrames: PoseAwareFrame[]
+  observationFrames: PoseAwareFrame[]
+  excludedFrameCount: number
+  poseCoverage: {
+    yaw: {
+      min: number
+      max: number
+      range: number
+      status: "insufficient" | "ok"
+    }
+    pitch: {
+      min: number
+      max: number
+      range: number
+      status: "insufficient" | "ok"
+    }
+    roll: {
+      min: number
+      max: number
+      range: number
+    }
+    mixedPoseFrameCount: number
+  }
+}
+
+type PoseAwareFrame = {
+  frameId: string
+  timestamp: number
+  role: "front_reference" | "observation"
+  pose: {
+    yaw: number
+    pitch: number
+    roll: number
+  }
+  poseStrength: number
+  weight: number
+  score?: number
+  landmarkCount: number
+}
+```
+
+Step 2-I-B でまだ実装しないもの:
+
+- `idealLandmarks3D` 新生成ロジック
+- Step 2-G v1 の置き換え
+- pose-aware weighted z inference
+- 手動微調整
+- 保存 / export
+- Runtime 組み込み
+
+## 18-I-C. IdealFace Authoring Tool Step 2-I-C
+
+状態: 未実装 / Step 2-I-B の次に実装予定
+
+Step 2-I-C の目的:
+
+- Step 2-I-B の dataset を使って `idealLandmarks3D` 478点候補を生成する
+- 厳密な 3D reconstruction ではなく、pose-aware weighted z inference v1 として扱う
+
+Step 2-I-C で行うこと:
+
+```text
+1. 複数の frontReferenceFrames から base x / y を作る
+2. observationFrames を使って z hint を作る
+3. 各 observation frame の yaw / pitch / roll / score から weight を決める
+4. yaw / pitch を連続値として扱う
+5. yaw も pitch も大きい frame は mixed pose observation として使う
+6. landmark ごとの z hint を weighted average する
+7. confidence を、観測数、pose coverage、weight、ばらつき、不足情報から決める
+```
+
+Step 2-I-C でやらないこと:
+
+- 厳密な 3D reconstruction
+- 三角測量
+- bundle adjustment
+- カメラ内部パラメータ推定
+- 本格 3D editor
+- 手動微調整
+- 保存 / export
+- Runtime への組み込み
+
+Step 2-G v1 との関係:
+
+```text
+Step 2-G v1:
+  実装済みの旧簡易推定方式
+  front / left / right / up / down の代表フレーム
+    -> idealLandmarks3DInferenceDataset
+    -> front の x / y を基準にする
+    -> left / right / up / down の差分から z を簡易推定
+
+Step 2-I-A:
+  実装済みの UI / state 基盤
+
+Step 2-I-B:
+  未実装の pose-aware dataset 作成
+  frontReferenceFrames / observationFrames / excludedFrames
+    -> pose-aware multi-frame inference dataset
+
+Step 2-I-C:
+  未実装の pose-aware weighted z inference v1
+  yaw / pitch / roll / weight を使って z hint を推定
+```
+
+Step 2-I-A の 3D候補生成前 summary 方針:
 
 ```text
 正面基準候補: 3件

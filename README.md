@@ -77,7 +77,8 @@ tools/ideal-face-authoring
 
 未実装 / 将来予定:
 
-- IdealFace Authoring Tool Step 2-I の pose-aware 3D候補生成ロジック
+- IdealFace Authoring Tool Step 2-I-B: `left / right / up / down` 固定分類を持たない pose-aware multi-frame inference dataset 作成
+- IdealFace Authoring Tool Step 2-I-C: yaw / pitch / roll と weight に基づく pose-aware weighted z inference v1
 - IdealFace Authoring Tool の手動微調整
 - IdealFace asset の保存 / export
 - 複数画像入力
@@ -170,6 +171,10 @@ Step 2-I のフレーム解析結果欄は、以下の 3 分類に整理しま�
 ```
 
 内部説明では `frontReferenceFrames`、`usableObservationFrames`、`excludedFrames` という名前を使ってよいものとします。操作フローは、正面基準候補を複数選び、使いたくないフレームを除外し、除外されていない解析成功フレームを pose 角度に応じて observation として利用する流れです。`left / right / up / down` をユーザーが必ず手動指定する方式にはせず、将来的には FacePose の yaw / pitch から自動的に推定寄与を判断します。
+
+次に実装予定の Step 2-I-B では、正面基準候補と推定に使うフレームから、`left / right / up / down` 固定分類を持たない pose-aware multi-frame inference dataset を作成します。各 observation frame は frameId、timestamp、2D landmarks、FacePose yaw / pitch / roll、score、weight を持つ連続値の pose observation として扱います。yaw も pitch も大きいフレームは、left か up のどちらかへ押し込まず、mixed pose observation として利用します。
+
+その次の Step 2-I-C では、Step 2-I-B の dataset を使って pose-aware weighted z inference v1 を追加します。複数の frontReferenceFrames から base x / y を作り、observationFrames の yaw / pitch / roll / score / weight から landmark ごとの z hint を weighted average します。ただし、厳密な 3D reconstruction、三角測量、bundle adjustment、カメラ内部パラメータ推定、Runtime 組み込みは引き続き行いません。
 
 ## ドキュメント
 
@@ -321,8 +326,8 @@ MP4 動画を入力
   -> yaw / pitch / roll から代表フレーム候補を自動抽出
   -> 人間が正面 / 左向き / 右向き / 上向き / 下向き / 除外を確定
   -> 確定済み代表フレームから 3D推測用データセットを作成
-  -> 将来 Step 2-I: 正面基準候補、推定に使うフレーム、除外フレームから pose-aware multi-frame inference dataset を作成
-  -> 確定した代表フレーム群から 3D の idealLandmarks3D 478点候補を自動推測
+  -> 将来 Step 2-I-B: 正面基準候補、推定に使うフレーム、除外フレームから pose-aware multi-frame inference dataset を作成
+  -> 将来 Step 2-I-C: yaw / pitch / roll / weight に基づく z hint で idealLandmarks3D 478点候補を生成
   -> Authoring Tool 上で確認・微調整
   -> IdealFace asset として保存 / export
 ```
