@@ -319,6 +319,44 @@ y min / max: ${formatNumber(summary.yMin)} / ${formatNumber(summary.yMax)}
 z min / max: ${formatNumber(summary.zMin)} / ${formatNumber(summary.zMax)}`
   }
 
+  function formatProjectionAlignment(
+    alignment: IdealLandmarks3DProjectionResult["alignment"],
+  ): string {
+    if (!alignment) {
+      return `alignment: none
+理由: alignment 情報がありません`
+    }
+
+    return `alignment: ${alignment.mode}
+scale: ${formatNullableNumber(alignment.scale)}
+translateX: ${formatNumber(alignment.translateX)}
+translateY: ${formatNumber(alignment.translateY)}
+currentCenter: ${formatProjectionPoint(alignment.currentCenter)}
+projectedCenter: ${formatProjectionPoint(alignment.projectedCenter)}
+currentSize: ${formatNullableNumber(alignment.currentSize)}
+projectedSize: ${formatNullableNumber(alignment.projectedSize)}${
+      alignment.mode === "none"
+        ? `
+理由: ${alignment.reason ?? "current face center / size が取得できません"}`
+        : ""
+    }`
+  }
+
+  function formatProjectionPoint(
+    point:
+      | {
+          x: number
+          y: number
+        }
+      | undefined,
+  ): string {
+    if (!point) {
+      return "なし"
+    }
+
+    return `${formatNumber(point.x)} / ${formatNumber(point.y)}`
+  }
+
   function formatIdealLandmarks3DProjectionPreview(
     projection: IdealLandmarks3DProjectionResult,
     frame: FaceFrame | undefined,
@@ -329,6 +367,7 @@ status: ${projection.status}
 landmarks: ${projection.landmarkCount}
 idealFace: ${projection.sourceIdealFaceName ?? "なし"} (${projection.sourceIdealFaceId ?? "なし"})
 pose: ${frame ? `yaw ${formatNumber(frame.pose.yaw)} / pitch ${formatNumber(frame.pose.pitch)} / roll ${formatNumber(frame.pose.roll)}` : "なし"}
+${formatProjectionAlignment(projection.alignment)}
 ${formatProjectionSummary(projection.summary)}
 
 idealLandmarks3D 478点 Projection は未実行です。
@@ -340,6 +379,7 @@ status: ${projection.status}
 landmarks: ${projection.landmarkCount}
 idealFace: ${projection.sourceIdealFaceName ?? "なし"} (${projection.sourceIdealFaceId ?? "なし"})
 pose: ${frame ? `yaw ${formatNumber(frame.pose.yaw)} / pitch ${formatNumber(frame.pose.pitch)} / roll ${formatNumber(frame.pose.roll)}` : "なし"}
+${formatProjectionAlignment(projection.alignment)}
 ${formatProjectionSummary(projection.summary)}`
   }
 
@@ -846,6 +886,7 @@ Landmarks: ${frame?.landmarks.length ?? 0}
 顔姿勢: yaw ${frame ? formatNumber(frame.pose.yaw) : "なし"} / pitch ${frame ? formatNumber(frame.pose.pitch) : "なし"} / roll ${frame ? formatNumber(frame.pose.roll) : "なし"}
 IdealFace: ${idealFace.metadata.name} (${idealFace.metadata.id}) / ${idealFace.metadata.version} / controlPoints ${idealFace.model.controlPoints.length} 点 / idealLandmarks3D ${idealFace.model.idealLandmarks3D?.length ?? 0} 点
 IdealFace 478 Projection: ${idealLandmarks3DProjection.status} / ${idealLandmarks3DProjection.landmarkCount} 点
+Alignment: ${idealLandmarks3DProjection.alignment?.mode ?? "none"} / scale ${formatNullableNumber(idealLandmarks3DProjection.alignment?.scale)}
 Projection: ${idealFaceProjection.status} / ${idealFaceProjection.points.length} 点
 差分: ${projectionDifference.status} / 平均 ${formatNullableNumber(projectionDifference.averageDistance)} / 最大 ${formatNullableNumber(projectionDifference.maxDistance)}
 利用可能IdealFace: ${availableIdealFaces.length}
