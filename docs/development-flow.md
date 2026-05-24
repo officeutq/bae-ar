@@ -147,7 +147,7 @@ Beauty Studio では、開発確認用として overlay や簡易調整 UI を�
 
 IdealFace Authoring Tool は、BAE AR 独自の IdealFace asset を作成するための領域です。IdealFace の本体である `idealLandmarks3D` 478点は、Authoring Tool 側でオフラインに作成する方針です。現在は MP4 動画入力から Step 2-H まで実装済みで、複数画像入力は将来対応とします。
 
-初期段階では入力形式を広げず、MP4 動画からのフレーム抽出、代表フレーム候補の自動抽出、ユーザーによるラベル確定の流れを優先して作ります。Step 2-A では、MP4 動画入力と一定間隔でのフレーム抽出、サムネイル一覧表示までを実装済みです。Step 2-B では、抽出済みフレームの MediaPipe 解析、2D 478 landmarks と FacePose の取得、解析結果 summary 表示までを実装済みです。Step 2-C では、yaw / pitch / roll による代表フレーム候補の自動抽出、各カテゴリ上位複数件の候補一覧表示、JSON preview への候補概要表示、代表フレーム候補中心の UI 整理までを実装済みです。Step 2-D では、候補カードから正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定し、候補カテゴリを必要なものだけ開くトグル表示、確定済み代表フレーム一覧、3D推測準備状況、JSON preview の `selectedRepresentativeFrames` を確認できるようにしました。Step 2-E では、確定済み代表フレームから front / left / right / up / down の 3D推測用データセットを作成し、readiness summary、dataset 一覧、JSON preview の `idealLandmarks3DInferenceDataset` 概要を確認できるようにしました。Step 2-F では、候補抽出用に動画全体を詳細スキャンし、詳細スキャン summary、JSON preview の `scanSummary`、トリムしないサムネイル表示を追加しました。Step 2-G では、3D推測用データセットから `idealLandmarks3D` 478点候補を自動推測する v1 を追加しました。Step 2-H では、生成済み候補を正面 / 横 / 上 / 奥行き確認で表示する 3D点群 preview を追加しました。preview は確認用表示であり、見やすさのために y 軸反転や z 表示倍率調整を行う場合がありますが、`idealLandmarks3D` 候補データ自体や JSON preview の数値は変更しません。確定済み代表フレーム一覧と3D推測用データセットには、正面 / 左向き / 右向き / 上向き / 下向きだけを表示します。
+初期段階では入力形式を広げず、MP4 動画からのフレーム抽出、代表フレーム候補の自動抽出、ユーザーによるラベル確定の流れを優先して作ります。Step 2-A では、MP4 動画入力と一定間隔でのフレーム抽出、サムネイル一覧表示までを実装済みです。Step 2-B では、抽出済みフレームの MediaPipe 解析、2D 478 landmarks と FacePose の取得、解析結果 summary 表示までを実装済みです。Step 2-C では、yaw / pitch / roll による代表フレーム候補の自動抽出、各カテゴリ上位複数件の候補一覧表示、JSON preview への候補概要表示、代表フレーム候補中心の UI 整理までを実装済みです。Step 2-D では、候補カードから正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定し、候補カテゴリを必要なものだけ開くトグル表示、確定済み代表フレーム一覧、3D推測準備状況、JSON preview の `selectedRepresentativeFrames` を確認できるようにしました。Step 2-E では、確定済み代表フレームから front / left / right / up / down の 3D推測用データセットを作成し、readiness summary、dataset 一覧、JSON preview の `idealLandmarks3DInferenceDataset` 概要を確認できるようにしました。Step 2-F では、候補抽出用に動画全体を詳細スキャンし、詳細スキャン summary、JSON preview の `scanSummary`、トリムしないサムネイル表示を追加しました。Step 2-G では、3D推測用データセットから `idealLandmarks3D` 478点候補を自動推測する v1 を追加しました。Step 2-H では、生成済み候補を 1 つの canvas で表示する interactive 3D点群 preview を追加しました。ドラッグによる視点回転、ホイール zoom、Shift + ドラッグ pan、正面 / 横 / 上の camera preset は preview camera の操作であり、`idealLandmarks3D` 候補データ自体や JSON preview の数値は変更しません。確定済み代表フレーム一覧と3D推測用データセットには、正面 / 左向き / 右向き / 上向き / 下向きだけを表示します。
 
 想定する流れ:
 
@@ -354,13 +354,13 @@ IdealFace Authoring Tool を変更した場合は、Runtime と Authoring の責
 - Step 2-G の JSON preview は `idealLandmarks3DCandidate` の概要と先頭 5 点程度の preview に留め、478点全文やサムネイル data URL 全文を出さない
 - Step 2-H では 3D候補未生成時に未生成メッセージが表示される
 - Step 2-H では 3D候補生成後に 3D 478点候補を点群として preview 表示できる
-- Step 2-H では正面 / 横 / 上 / 奥行き確認の表示を切り替えられる
-- Step 2-H の preview は確認用表示として y 軸反転や z 表示倍率調整を行う場合がある
-- Step 2-H の preview 表示補正で `idealLandmarks3D` 候補データ自体や JSON preview の値を変更しない
+- Step 2-H では正面 / 横 / 上 の preset button が同じ canvas の preview camera を変更する
+- Step 2-H ではドラッグで視点回転、ホイールで zoom、Shift + ドラッグで pan、ダブルクリックまたは reset button で初期視点へ戻れる
+- Step 2-H の preview camera 操作や表示補正で `idealLandmarks3D` 候補データ自体や JSON preview の値を変更しない
 - Step 2-H では点群が preview 範囲内に収まる
 - Step 2-H では landmark count、x / y / z の min / max、average / min / max confidence が表示される
 - Step 2-H の JSON preview は `idealLandmarks3DCandidate` の概要と先頭 5 点程度の preview に留め、478点全文や canvas data URL を出さない
-- 3D点群 preview は debug / 確認用であり、表示上の y 軸反転や z 表示倍率調整を行う場合がある。`idealLandmarks3D` 候補データ自体は変更せず、本格 3D editor、手動微調整、保存 / export、複数画像入力を Step 2-H に含めていない
+- 3D点群 preview は debug / 確認用であり、preview camera 操作、y 軸反転、z 表示倍率調整は表示専用として扱う。`idealLandmarks3D` 候補データ自体は変更せず、本格 3D editor、手動微調整、保存 / export、複数画像入力を Step 2-H に含めていない
 - Engine Runtime に動画入力、フレーム抽出、Authoring 用フレーム解析、代表フレーム抽出、手動ラベル確定、dataset 作成処理を追加していない
 
 PR 本文には IdealFace Authoring Tool の手動確認事項を記載します。
@@ -377,7 +377,7 @@ Step 2-F 改良では、詳細スキャン間隔を `0.1` 秒にし、最大ス�
 - 除外した候補は候補 UI 一覧から外れ、`selectedRepresentativeFrames.excluded` には残る
 - 除外候補は確定済み代表フレーム一覧、3D推測準備状況、`idealLandmarks3DInferenceDataset` に含まれない
 - JSON preview の `representativeFrameCandidates` に `rank`、478 landmarks 全文、サムネイル data URL 全文が出ない
-- 3D点群 preview は Step 2-H で確認用として扱い、見やすさのために y 軸反転や z 表示倍率調整を行う場合があります。ただし、これは preview 表示専用であり、`idealLandmarks3D` 候補データ自体や JSON preview の値は変更しません。手動微調整、保存 / export、複数画像入力は Step 2-F / Step 2-G / Step 2-H に含めません。
+- 3D点群 preview は Step 2-H で確認用として扱い、視点回転、zoom、pan は preview camera の操作として実装します。y 軸反転や z 表示倍率調整も preview 表示専用であり、`idealLandmarks3D` 候補データ自体や JSON preview の値は変更しません。手動微調整、保存 / export、複数画像入力は Step 2-F / Step 2-G / Step 2-H に含めません。
 - Engine Runtime と Beauty Studio に詳細スキャンや候補振り分け処理を追加しない
 
 ## IdealFace Authoring Tool Step 2-G の確認
@@ -398,16 +398,17 @@ Step 2-G では、`idealLandmarks3DInferenceDataset` から `idealLandmarks3D` 4
 
 ## IdealFace Authoring Tool Step 2-H の確認
 
-Step 2-H では、生成済みの `idealLandmarks3D` 478点候補を Authoring Tool 上の debug / 確認用 preview として表示します。本格 3D editor ではなく、点群が顔らしい形になっているかを目視確認するための簡易表示です。preview 表示上は、画像座標系の y を画面上で上方向に見せるための y 軸反転や、奥行きを判別しやすくする z 表示倍率調整を行う場合があります。生成済み 3D 候補データ自体や JSON preview の値は変更しません。
+Step 2-H では、生成済みの `idealLandmarks3D` 478点候補を Authoring Tool 上の debug / 確認用 preview として表示します。本格 3D editor ではなく、点群が顔らしい形になっているかを目視確認するための interactive 3D point cloud preview です。1 つの canvas 上で preview camera を操作し、生成済み 3D 候補データ自体や JSON preview の値は変更しません。
 
 確認観点:
 
 - 3D候補未生成時に「3D 478点候補がまだ生成されていません。」の案内が表示される
 - 3D候補生成後に 478点候補が点群として表示される
-- 正面 x / y、横 z / y、上 / 奥行き確認 x / z の表示を切り替えられる
+- ドラッグで視点回転、ホイールで zoom、Shift + ドラッグで pan できる
+- 正面 / 横 / 上の preset button が同じ canvas の preview camera を変更する
 - 点群が preview 範囲内に収まる
 - confidence が低い点が薄く表示される
-- landmark count、表示方向、x / y / z の min / max、average / min / max confidence が表示される
+- landmark count、視点、x / y / z の min / max、average / min / max confidence が表示される
 - JSON preview に 478点全文や canvas data URL を出さない
 - 手動微調整、保存 / export、複数画像入力はまだ実装しない
 - Engine Runtime と Beauty Studio に 3D点群 preview や Authoring 用 UI を追加しない
