@@ -105,11 +105,13 @@ Step 2-F 以降の代表フレーム候補抽出では、表示用の最大20件
 
 Step 2-I-A のフレーム解析結果欄は、「正面基準候補」「推定に使うフレーム」「除外フレーム」の 3 分類にします。正面基準候補は `frontReferenceFrames` として、`idealLandmarks3D` の x / y 基準を作るために複数選択できる front reference frames です。推定に使うフレームは `usableObservationFrames` として、除外されておらず、解析成功し、landmarks 478点と `FacePose` があるフレームから派生します。除外フレームは `excludedFrames` として、ブレ、表情崩れ、口開き、顔切れ、検出崩れ、極端な roll などにより 3D 推定に使わないフレームです。Step 2-I 用操作は Step 2-I カード内に閉じ、旧ポーズ別候補 UI には混ぜません。推定に使うフレームは summary だけで終わらせず、全件に対して正面基準追加や除外を操作できるようにします。画面上の分類は排他的にし、正面基準候補に追加したフレームは推定に使うフレーム一覧から外します。
 
-Step 2-I 以降では、`left / right / up / down` をユーザーが必ず手動指定する方式にはしません。yaw が大きいフレームは左右方向の奥行き推定に、pitch が大きいフレームは上下方向の奥行き推定に寄与しやすいものとして、`FacePose` の yaw / pitch / roll と score に応じて observation の重みを決める方針です。roll が大きすぎるフレームや score が低いフレームは重みを下げます。最初の Step 2-I v1 では、厳密な 3D reconstruction、三角測量、bundle adjustment、カメラ内部パラメータ推定、本格 3D editor、手動微調整、保存 / export、Runtime への組み込みは行いません。
+Step 2-I 以降では、`left / right / up / down` をユーザーが必ず手動指定する方式にはしません。yaw が大きいフレームは左右方向の奥行き推定に、pitch が大きいフレームは上下方向の奥行き推定に寄与しやすいものとして、`FacePose` の yaw / pitch / roll と score に応じて observation の重みを決める方針です。Step 2-I-C では observationFrame の 2D landmarks を顔中心基準で roll 角だけ逆回転補正してから z hint 推定に使います。ただし、roll が大きいフレームは検出安定性が下がる可能性があるため、補正後も weight を下げます。極端な roll、ブレ、表情崩れ、検出崩れがあるフレームは除外候補にします。最初の Step 2-I v1 では、厳密な 3D reconstruction、三角測量、bundle adjustment、カメラ内部パラメータ推定、本格 3D editor、手動微調整、保存 / export、Runtime への組み込みは行いません。
 
 Step 2-I-B は実装済みです。`frontReferenceFrames` は正面基準候補から作り、`observationFrames` は除外されていない解析成功フレームから作ります。各 frame は 2D landmarks、FacePose yaw / pitch / roll、score、poseStrength、weight を持つ observation として扱い、`left / right / up / down` は dataset の主構造にしません。現時点では dataset 作成と確認用 summary / JSON preview までで、`idealLandmarks3D` 新生成ロジックには接続しません。
 
-Step 2-I-C は Step 2-I-B の dataset を使う pose-aware weighted z inference v1 として予定します。yaw / pitch は連続値として扱い、yaw も pitch も大きいフレームは単一カテゴリに押し込まず mixed pose observation として利用します。yaw 成分は左右方向の奥行き推定に、pitch 成分は上下方向の奥行き推定に寄与し、roll が大きすぎる、score が低い、表情崩れやブレがある observation は weight を下げる、または除外対象とします。
+Step 2-I-C は Step 2-I-B の dataset を使う pose-aware weighted z inference v1 として予定します。処理順は、複数の frontReferenceFrames から base x / y を作り、observationFrames を取得し、各 observationFrame の 2D landmarks を顔中心基準で roll 角だけ逆回転補正し、roll 補正済み landmarks と base x / y を比較し、yaw / pitch を連続値として landmark ごとの z hint を作る流れです。yaw も pitch も大きいフレームは単一カテゴリに押し込まず mixed pose observation として利用します。yaw 成分は左右方向の奥行き推定に、pitch 成分は上下方向の奥行き推定に寄与します。roll が大きい frame は補正後に推定へ利用しますが、検出が不安定なものは weight を下げる、または除外対象とします。
+
+roll 補正でできることは、顔が画面内で斜めに写っていることによる 2D landmarks の回転成分を取り除き、首をかしげたことで目・鼻・口・顎が斜めにずれて見える影響を軽減することです。roll 補正では、yaw による片側の隠れ、pitch による鼻・顎・額の見え方の変化、表情変化、口開き、手ブレ、MediaPipe の検出崩れは補正できません。そのため、roll 補正後も weight と除外判断は必要です。
 
 推奨する MP4 動画は、H.264 / AVC codec、5〜15秒程度、30fps程度、720p程度から開始できるものです。顔が大きく写り、正面、左向き、右向き、上向き、下向きをゆっくり含み、手ブレが少なく、明るい場所で撮影されていることを推奨します。口は閉じ気味、表情はできるだけ neutral とします。
 
