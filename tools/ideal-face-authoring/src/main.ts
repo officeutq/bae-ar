@@ -51,7 +51,7 @@ const INFERENCE_DATASET_LABELS: SelectableRepresentativeFrameLabel[] = [
 const INFERENCE_DATASET_LANDMARK_PREVIEW_COUNT = 5
 const IDEAL_LANDMARKS_3D_PREVIEW_COUNT = 5
 const POINT_CLOUD_PREVIEW_PADDING = 24
-const POINT_CLOUD_DEPTH_DISPLAY_SCALE = 2.4
+const POINT_CLOUD_DEPTH_DISPLAY_SCALE = 1.0
 const POINT_CLOUD_MIN_ZOOM = 0.3
 const POINT_CLOUD_MAX_ZOOM = 5
 const POINT_CLOUD_ROTATION_SENSITIVITY = 0.01
@@ -3759,7 +3759,7 @@ function drawPointCloudPreviewGuide(
   context.fillStyle = "#5d675f"
   context.font = "700 12px system-ui, -apple-system, BlinkMacSystemFont, sans-serif"
   context.fillText(
-    `z preview x${POINT_CLOUD_DEPTH_DISPLAY_SCALE}`,
+    `z preview x${POINT_CLOUD_DEPTH_DISPLAY_SCALE.toFixed(1)}`,
     POINT_CLOUD_PREVIEW_PADDING,
     height - POINT_CLOUD_PREVIEW_PADDING,
   )
