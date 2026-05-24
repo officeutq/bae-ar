@@ -207,6 +207,12 @@ interface PointCloudDragState {
   mode: PointCloudDragMode
 }
 
+interface PointCloudPreviewPoint {
+  x: number
+  y: number
+  z: number
+}
+
 interface IdealLandmark3DCandidate {
   index: number
   x: number
@@ -1437,13 +1443,42 @@ function formatPointCloudCamera(camera: PointCloudPreviewCamera): string {
   )}° / zoom ${formatNumber(camera.zoom)}x`
 }
 
-function rotatePointForPointCloudPreview(
+function getPointCloudPreviewDataCenter(
+  landmarks: IdealLandmark3DCandidate[],
+): PointCloudPreviewPoint {
+  if (landmarks.length === 0) {
+    return {
+      x: 0,
+      y: 0,
+      z: 0,
+    }
+  }
+
+  return {
+    x: averageNumbers(landmarks.map((landmark) => landmark.x)),
+    y: averageNumbers(landmarks.map((landmark) => landmark.y)),
+    z: averageNumbers(landmarks.map((landmark) => landmark.z)),
+  }
+}
+
+function toPointCloudPreviewLocalPoint(
   point: IdealLandmark3DCandidate,
+  center: PointCloudPreviewPoint,
+): PointCloudPreviewPoint {
+  return {
+    x: point.x - center.x,
+    y: -(point.y - center.y),
+    z: (point.z - center.z) * POINT_CLOUD_DEPTH_DISPLAY_SCALE,
+  }
+}
+
+function rotatePointForPointCloudPreview(
+  point: PointCloudPreviewPoint,
   camera: PointCloudPreviewCamera,
-): { x: number; y: number; z: number } {
+): PointCloudPreviewPoint {
   const sourceX = point.x
   const sourceY = point.y
-  const sourceZ = point.z * POINT_CLOUD_DEPTH_DISPLAY_SCALE
+  const sourceZ = point.z
   const cosYaw = Math.cos(camera.yaw)
   const sinYaw = Math.sin(camera.yaw)
   const yawX = sourceX * cosYaw + sourceZ * sinYaw
@@ -1459,7 +1494,7 @@ function rotatePointForPointCloudPreview(
 }
 
 function getRotatedPointCloudBounds(
-  rotatedPoints: { x: number; y: number; z: number }[],
+  rotatedPoints: PointCloudPreviewPoint[],
 ): {
   centerX: number
   centerY: number
@@ -2161,8 +2196,12 @@ function drawPointCloudPreviewCanvas(): void {
   context.fillRect(0, 0, width, height)
   drawPointCloudPreviewGuide(context, width, height)
 
+  const previewCenter = getPointCloudPreviewDataCenter(result.landmarks)
   const rotatedPoints = result.landmarks.map((landmark) =>
-    rotatePointForPointCloudPreview(landmark, pointCloudPreviewCamera),
+    rotatePointForPointCloudPreview(
+      toPointCloudPreviewLocalPoint(landmark, previewCenter),
+      pointCloudPreviewCamera,
+    ),
   )
   const bounds = getRotatedPointCloudBounds(rotatedPoints)
   const drawableSize =
