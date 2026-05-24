@@ -14,6 +14,12 @@ The old Step 2-G v1 generation helper path has been removed from the current cod
 
 This is only the Runtime loading foundation. Full 478-point projection, Studio file import UI, and Authoring Tool generation logic are not included in Engine Runtime.
 
+## Studio ideal_face_asset_v1 import
+
+`apps/studio` can select an `ideal_face_asset_v1` JSON file exported by the Authoring Tool, validate it through the Engine helper, convert it to an `IdealFace`, and apply it with `BeautyEngine.setIdealFace()`.
+
+This only verifies asset import and Engine reflection. Full 478-point Projection, Studio overlay for projected ideal landmarks, and Authoring Tool generation logic are still not included.
+
 BAE AR は、リアルタイム顔加工・AR 表現を行う Beauty Engine Runtime と、その開発・検証・調整を行う Beauty Studio、将来の authoring tool 群を含むプロジェクトです。
 
 目的は、単なるフィルターではなく、本番サービスに組み込める自然で破綻しにくい Beauty Engine を育てることです。

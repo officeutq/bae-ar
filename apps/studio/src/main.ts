@@ -1,4 +1,9 @@
-import { BeautyEngine } from "@bae-ar/engine"
+import {
+  BeautyEngine,
+  MediaPipeFaceDetector,
+  idealFaceAssetV1ToIdealFace,
+  parseIdealFaceAssetV1Json,
+} from "@bae-ar/engine"
 import type {
   BeautyEngineState,
   FaceFrame,
@@ -8,7 +13,6 @@ import type {
   IdealFaceProjectionResult,
   ProjectionDifference,
 } from "@bae-ar/engine"
-import { MediaPipeFaceDetector } from "@bae-ar/engine"
 import type { CameraServiceState } from "./services/CameraService"
 import { CameraService } from "./services/CameraService"
 
@@ -36,6 +40,33 @@ type DebugSection =
   | "loopTiming"
   | "fullDebugText"
 
+type IdealFaceAssetImportState =
+  | {
+      status: "idle"
+    }
+  | {
+      status: "loading"
+      fileName: string
+    }
+  | {
+      status: "success"
+      fileName: string
+      assetId: string
+      assetName: string
+      version: string
+      schemaVersion: string
+      generationMethod: string
+      landmarkTopology: string
+      coordinateSpace: string
+      landmarkCount: number
+      createdAt: string
+    }
+  | {
+      status: "error"
+      fileName: string
+      errors: string[]
+    }
+
 async function bootstrap(): Promise<void> {
   const engine = new BeautyEngine()
   const camera = new CameraService()
@@ -48,6 +79,9 @@ async function bootstrap(): Promise<void> {
   let previousFrameTimestamp: number | undefined
   let faceFrameFps: number | undefined
   let copyStatus = ""
+  let idealFaceAssetImportState: IdealFaceAssetImportState = {
+    status: "idle",
+  }
   const openDebugSections: Record<DebugSection, boolean> = {
     faceFrame: false,
     faceGeometry: false,
@@ -64,6 +98,8 @@ async function bootstrap(): Promise<void> {
   if (!app) {
     throw new Error("Studio app root was not found")
   }
+
+  const appRoot = app
 
   function formatEngineState(state: BeautyEngineState): string {
     const labels: Record<BeautyEngineState, string> = {
@@ -187,10 +223,83 @@ eyeDistance: ${formatNullableNumber(geometry?.eyeDistance)}`
 preset id: ${idealFace.metadata.id}
 version: ${idealFace.metadata.version}
 point数: ${idealFace.model.controlPoints.length}
+idealLandmarks3D: ${idealFace.model.idealLandmarks3D?.length ?? 0}
 座標系: ${idealFace.model.coordinateSpace}
 MediaPipe landmarks: ${idealFace.landmarkTopology.mediapipeLandmarkCount}
 ideal 478 landmarks生成: ${idealFace.landmarkTopology.canGenerateIdealLandmarks ? "可能" : "未実装"}
 Projection: ${idealFace.landmarkTopology.projectionStatus}`
+  }
+
+  function formatIdealFaceAssetImportState(
+    state: IdealFaceAssetImportState,
+  ): string {
+    if (state.status === "idle") {
+      return `読み込み状態: 未選択
+idealLandmarks3D 478点の Projection 完全対応は次ステップです。
+現在は asset の読み込みと Engine への反映のみ確認します。`
+    }
+
+    if (state.status === "loading") {
+      return `読み込み状態: 読み込み中
+ファイル名: ${state.fileName}`
+    }
+
+    if (state.status === "error") {
+      return `読み込み状態: 失敗
+ファイル名: ${state.fileName}
+エラー:
+${state.errors.map((error) => `- ${error}`).join("\n")}
+
+idealLandmarks3D 478点の Projection 完全対応は次ステップです。
+現在は asset の読み込みと Engine への反映のみ確認します。`
+    }
+
+    return `読み込み状態: success
+ファイル名: ${state.fileName}
+id: ${state.assetId}
+name: ${state.assetName}
+version: ${state.version}
+schemaVersion: ${state.schemaVersion}
+generationMethod: ${state.generationMethod}
+landmarkTopology: ${state.landmarkTopology}
+coordinateSpace: ${state.coordinateSpace}
+idealLandmarks3D count: ${state.landmarkCount}
+createdAt: ${state.createdAt}
+
+idealLandmarks3D 478点の Projection 完全対応は次ステップです。
+現在は asset の読み込みと Engine への反映のみ確認します。`
+  }
+
+  function translateIdealFaceAssetError(error: string): string {
+    if (error.includes("json parse error")) {
+      return `JSON の解析に失敗しました: ${error}`
+    }
+
+    if (error.includes("schemaVersion")) {
+      return "schemaVersion が ideal_face_asset_v1 ではありません"
+    }
+
+    if (error.includes("model.idealLandmarks3D must contain")) {
+      return "idealLandmarks3D は 478 点必要です"
+    }
+
+    if (error.includes("duplicates index")) {
+      return `landmark index が重複しています: ${error}`
+    }
+
+    if (error.includes("missing index")) {
+      return `landmark index が欠落しています: ${error}`
+    }
+
+    if (error.includes(".confidence")) {
+      return `confidence が 0〜1 の範囲外です: ${error}`
+    }
+
+    if (error.includes("finite number")) {
+      return `x / y / z / index / confidence は有限の number である必要があります: ${error}`
+    }
+
+    return `検証エラー: ${error}`
   }
 
   function formatIdealFaceProjectionPreview(
@@ -254,6 +363,7 @@ ${pointPreview}`
     availableIdealFaces: IdealFace[],
     mediaPipeDebug: DetectorDebugInfo | null,
     faceFrameLoopDebug: ReturnType<BeautyEngine["getFaceFrameLoopDebugInfo"]>,
+    importState: IdealFaceAssetImportState,
   ): string {
     const videoDebug = faceFrameLoopDebug.video
 
@@ -296,6 +406,9 @@ Pose:
 ${formatPosePreview(frame)}
 
 ${formatIdealFacePreview(idealFace)}
+
+IdealFace JSON import:
+${formatIdealFaceAssetImportState(importState)}
 
 ${formatIdealFaceProjectionPreview(idealFaceProjection)}
 
@@ -513,6 +626,82 @@ Camera:
       })
   }
 
+  async function importIdealFaceAssetFile(file: File): Promise<void> {
+    idealFaceAssetImportState = {
+      status: "loading",
+      fileName: file.name,
+    }
+    render()
+    appendCameraPreview()
+
+    try {
+      const jsonText = await file.text()
+      const result = parseIdealFaceAssetV1Json(jsonText)
+
+      if (!result.ok) {
+        idealFaceAssetImportState = {
+          status: "error",
+          fileName: file.name,
+          errors: result.errors.map(translateIdealFaceAssetError),
+        }
+        render()
+        appendCameraPreview()
+        return
+      }
+
+      const idealFace = idealFaceAssetV1ToIdealFace(result.asset)
+
+      engine.setIdealFace(idealFace)
+      idealFaceAssetImportState = {
+        status: "success",
+        fileName: file.name,
+        assetId: result.asset.id,
+        assetName: result.asset.name,
+        version: result.asset.version,
+        schemaVersion: result.asset.schemaVersion,
+        generationMethod: result.asset.source.generationMethod,
+        landmarkTopology: result.asset.model.landmarkTopology,
+        coordinateSpace: result.asset.model.coordinateSpace,
+        landmarkCount: result.asset.model.idealLandmarks3D.length,
+        createdAt: result.asset.createdAt,
+      }
+    } catch (error) {
+      idealFaceAssetImportState = {
+        status: "error",
+        fileName: file.name,
+        errors: [
+          `ファイルの読み込みに失敗しました: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        ],
+      }
+    }
+
+    render()
+    appendCameraPreview()
+  }
+
+  function attachIdealFaceAssetImportHandler(): void {
+    const input = document.querySelector<HTMLInputElement>(
+      "#ideal-face-asset-json-input",
+    )
+
+    input?.addEventListener("change", () => {
+      const file = input.files?.[0]
+
+      if (!file) {
+        idealFaceAssetImportState = {
+          status: "idle",
+        }
+        render()
+        appendCameraPreview()
+        return
+      }
+
+      void importIdealFaceAssetFile(file)
+    })
+  }
+
   function detailsOpenAttribute(section: DebugSection): string {
     return openDebugSections[section] ? " open" : ""
   }
@@ -553,6 +742,7 @@ Camera:
       availableIdealFaces,
       mediaPipeDebug,
       faceFrameLoopDebug,
+      idealFaceAssetImportState,
     )
 
     if (lastEngineState !== currentState) {
@@ -560,7 +750,7 @@ Camera:
       lastEngineState = currentState
     }
 
-    app.innerHTML = `
+    appRoot.innerHTML = `
       <section>
         <header>
           <h2>Debug summary</h2>
@@ -593,7 +783,7 @@ Camera: ${formatCameraState(camera.getState())}
 Detection: ${formatDetection(frame)}
 Landmarks: ${frame?.landmarks.length ?? 0}
 顔姿勢: yaw ${frame ? formatNumber(frame.pose.yaw) : "なし"} / pitch ${frame ? formatNumber(frame.pose.pitch) : "なし"} / roll ${frame ? formatNumber(frame.pose.roll) : "なし"}
-IdealFace: ${idealFace.metadata.name} (${idealFace.metadata.id}) / ${idealFace.metadata.version} / ${idealFace.model.controlPoints.length} 点
+IdealFace: ${idealFace.metadata.name} (${idealFace.metadata.id}) / ${idealFace.metadata.version} / controlPoints ${idealFace.model.controlPoints.length} 点 / idealLandmarks3D ${idealFace.model.idealLandmarks3D?.length ?? 0} 点
 Projection: ${idealFaceProjection.status} / ${idealFaceProjection.points.length} 点
 差分: ${projectionDifference.status} / 平均 ${formatNullableNumber(projectionDifference.averageDistance)} / 最大 ${formatNullableNumber(projectionDifference.maxDistance)}
 利用可能IdealFace: ${availableIdealFaces.length}
@@ -602,6 +792,16 @@ Loop: ${faceFrameLoopDebug.running ? "実行中" : "停止中"}
 Detect: ${faceFrameLoopDebug.detectCallCount}/${mediaPipeDebug?.detectSuccessCount ?? 0}</pre>
         <h2>プレビュー</h2>
         <div id="camera-preview" class="preview-container">${camera.getVideo() ? "" : "利用できません"}</div>
+        <section>
+          <h2>IdealFace JSON 読み込み</h2>
+          <label>
+            ファイルを選択
+            <input id="ideal-face-asset-json-input" type="file" accept="application/json,.json" />
+          </label>
+          <p>Authoring Tool で export した ideal_face_asset_v1 JSON を読み込みます。</p>
+          <p>idealLandmarks3D 478点の Projection 完全対応は次ステップです。現在は asset の読み込みと Engine への反映のみ確認します。</p>
+          <pre>${escapeHtml(formatIdealFaceAssetImportState(idealFaceAssetImportState))}</pre>
+        </section>
         <details data-debug-section="faceFrame"${detailsOpenAttribute("faceFrame")}>
           <summary>FaceFrame Debug</summary>
           <pre>${escapeHtml(`Frame timestamp: ${frame?.timestamp ?? "なし"}
@@ -672,6 +872,7 @@ Video srcObject: ${faceFrameLoopDebug.video?.hasSrcObject ? "あり" : "なし"}
     `
 
     attachCopyDebugHandler(debugText)
+    attachIdealFaceAssetImportHandler()
     attachDebugDetailsHandlers()
   }
 
