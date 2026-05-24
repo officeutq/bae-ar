@@ -81,7 +81,7 @@ MP4 動画を入力
 
 この方針は完全自動生成ではなく、自動推測 + 手動補正です。Engine Runtime は動画 / 複数画像から `idealLandmarks3D` を作成せず、Authoring Tool で作成済みの IdealFace asset を読み込んで使うだけです。
 
-現時点では、MP4 動画入力とフレーム抽出は IdealFace Authoring Tool Step 2-A、抽出フレームの MediaPipe 解析は Step 2-B、yaw / pitch / roll による代表フレーム候補の自動抽出、各カテゴリ上位複数件の候補一覧 / JSON preview への概要表示は Step 2-C、代表フレーム候補から正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定する UI と、候補カテゴリを必要なものだけ開く Step 2-D UI整理、確定済み代表フレームから 3D推測用データセットを作成して readiness summary、dataset 一覧、JSON preview の `idealLandmarks3DInferenceDataset` 概要を確認する Step 2-E、候補抽出用に動画全体を詳細スキャンして `scanSummary` を表示する Step 2-F、3D推測用データセットから `idealLandmarks3D` 478点候補を自動推測する Step 2-G v1、生成済み候補を正面 / 横 / 上 / 奥行き確認で確認する 3D点群 preview の Step 2-H は実装済みです。Step 2-H preview は確認用表示であり、見やすさのために y 軸反転や z 表示倍率調整を行う場合がありますが、`idealLandmarks3D` 候補データ自体は変更しません。確定済み代表フレーム一覧と3D推測用データセットには正面 / 左向き / 右向き / 上向き / 下向きだけを表示し、excluded は dataset に含めません。候補以外の詳細スキャンフレームは UI に大量表示せず、候補サムネイルはトリムせず全体表示します。手動微調整、保存 / export、複数画像入力は未実装です。
+現時点では、MP4 動画入力とフレーム抽出は IdealFace Authoring Tool Step 2-A、抽出フレームの MediaPipe 解析は Step 2-B、yaw / pitch / roll による代表フレーム候補の自動抽出、各カテゴリ上位複数件の候補一覧 / JSON preview への概要表示は Step 2-C、代表フレーム候補から正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定する UI と、候補カテゴリを必要なものだけ開く Step 2-D UI整理、確定済み代表フレームから 3D推測用データセットを作成して readiness summary、dataset 一覧、JSON preview の `idealLandmarks3DInferenceDataset` 概要を確認する Step 2-E、候補抽出用に動画全体を詳細スキャンして `scanSummary` を表示する Step 2-F、3D推測用データセットから `idealLandmarks3D` 478点候補を自動推測する Step 2-G v1、生成済み候補を 1 つの canvas で確認する interactive 3D点群 preview の Step 2-H は実装済みです。Step 2-H preview は確認用表示であり、ドラッグによる視点回転、ホイール zoom、Shift + ドラッグ pan、正面 / 横 / 上の camera preset は preview camera の操作として扱います。`idealLandmarks3D` 候補データ自体は変更しません。確定済み代表フレーム一覧と3D推測用データセットには正面 / 左向き / 右向き / 上向き / 下向きだけを表示し、excluded は dataset に含めません。候補以外の詳細スキャンフレームは UI に大量表示せず、候補サムネイルはトリムせず全体表示します。手動微調整、保存 / export、複数画像入力は未実装です。
 
 ## Shape Processing の考え方
 
@@ -273,9 +273,9 @@ Step 2-G では、front が ready の場合に 3D 478点候補を生成します
 
 ## IdealFace Authoring Tool Step 2-H
 
-Step 2-H では、生成された `idealLandmarks3D` 478点候補を Authoring Tool 上で簡易点群 preview として表示します。preview は debug / 確認用であり、本格 3D editor ではありません。正面表示は x / y、横方向確認は z / y、上 / 奥行き確認は x / z で切り替えられます。画像座標系の y が下方向に増えることを考慮し、preview 表示上は正面 / 横で y 軸を反転します。上 / 奥行き確認では、判別しやすさのために preview 用の z 表示倍率を調整します。これらは表示専用の変換であり、`idealLandmarks3D` 候補データ自体や JSON preview の値は変更しません。点群は表示範囲内に収まるよう center / scale を調整し、低 confidence の点は薄く表示します。
+Step 2-H では、生成された `idealLandmarks3D` 478点候補を Authoring Tool 上で interactive 3D点群 preview として表示します。preview は debug / 確認用であり、本格 3D editor ではありません。1 つの canvas 上で preview camera を操作し、ドラッグで視点回転、ホイールで zoom、Shift + ドラッグで pan、ダブルクリックまたは reset button で初期視点へ戻せます。正面 / 横 / 上は固定ビューではなく、同じ viewport の camera preset です。表示上は y を反転して顔の上方向が画面上側に見えるようにし、z 表示倍率調整は preview 専用の view transform として扱います。これらは preview camera の操作であり、`idealLandmarks3D` 候補データ自体や JSON preview の値は変更しません。点群は表示範囲内に収まるよう center / scale を調整し、低 confidence の点は薄く表示します。
 
-preview の近くには landmark count、表示方向、x / y / z の min / max、average confidence、min / max confidence を表示します。JSON preview は引き続き `idealLandmarks3DCandidate` の概要と先頭 5 点程度の preview に留め、478点全文や canvas data URL は出しません。手動微調整、保存 / export、複数画像入力はまだ実装しません。3D点群 preview は IdealFace Authoring Tool の責務であり、Runtime や Beauty Studio には入れません。
+preview の近くには landmark count、視点、x / y / z の min / max、average confidence、min / max confidence を表示します。JSON preview は引き続き `idealLandmarks3DCandidate` の概要と先頭 5 点程度の preview に留め、478点全文や canvas data URL は出しません。手動微調整、保存 / export、複数画像入力はまだ実装しません。3D点群 preview は IdealFace Authoring Tool の責務であり、Runtime や Beauty Studio には入れません。
 
 ## IdealFace / Projection / Shape Processing 中核仕様
 

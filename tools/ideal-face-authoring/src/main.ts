@@ -50,8 +50,20 @@ const INFERENCE_DATASET_LABELS: SelectableRepresentativeFrameLabel[] = [
 ]
 const INFERENCE_DATASET_LANDMARK_PREVIEW_COUNT = 5
 const IDEAL_LANDMARKS_3D_PREVIEW_COUNT = 5
-const POINT_CLOUD_PREVIEW_PADDING = 7
-const POINT_CLOUD_TOP_DEPTH_DISPLAY_SCALE = 2.4
+const POINT_CLOUD_PREVIEW_PADDING = 24
+const POINT_CLOUD_DEPTH_DISPLAY_SCALE = 2.4
+const POINT_CLOUD_MIN_ZOOM = 0.3
+const POINT_CLOUD_MAX_ZOOM = 5
+const POINT_CLOUD_ROTATION_SENSITIVITY = 0.01
+const POINT_CLOUD_ZOOM_SENSITIVITY = 0.001
+const POINT_CLOUD_MAX_PITCH = (Math.PI * 89) / 180
+const DEFAULT_POINT_CLOUD_CAMERA: PointCloudPreviewCamera = {
+  yaw: 0,
+  pitch: 0,
+  zoom: 1,
+  panX: 0,
+  panY: 0,
+}
 
 type RepresentativeFrameCandidateKey =
   | "front"
@@ -176,7 +188,24 @@ type IdealLandmarks3DCandidateStatus =
   | "insufficient_data"
   | "error"
 
-type PointCloudPreviewDirection = "front" | "side" | "top"
+type PointCloudPreviewPreset = "front" | "side" | "top" | "reset"
+
+type PointCloudDragMode = "rotate" | "pan"
+
+type PointCloudPreviewCamera = {
+  yaw: number
+  pitch: number
+  zoom: number
+  panX: number
+  panY: number
+}
+
+interface PointCloudDragState {
+  pointerId: number
+  lastX: number
+  lastY: number
+  mode: PointCloudDragMode
+}
 
 interface IdealLandmark3DCandidate {
   index: number
@@ -258,7 +287,10 @@ let selectedRepresentativeFrames: SelectedRepresentativeFrames =
   createEmptySelectedRepresentativeFrames()
 let idealLandmarks3DCandidateResult: IdealLandmarks3DCandidateResult =
   createInitialIdealLandmarks3DCandidateResult()
-let pointCloudPreviewDirection: PointCloudPreviewDirection = "front"
+let pointCloudPreviewCamera: PointCloudPreviewCamera = {
+  ...DEFAULT_POINT_CLOUD_CAMERA,
+}
+let pointCloudDragState: PointCloudDragState | null = null
 const extractionVideo = document.createElement("video")
 const analysisCanvas = document.createElement("canvas")
 const thumbnailCanvas = document.createElement("canvas")
@@ -1129,6 +1161,7 @@ function createInitialIdealLandmarks3DCandidateResult(): IdealLandmarks3DCandida
 function resetIdealLandmarks3DCandidateResult(): void {
   idealLandmarks3DCandidateResult =
     createInitialIdealLandmarks3DCandidateResult()
+  pointCloudPreviewCamera = createPointCloudPreviewCamera()
 }
 
 function getReadyDatasetLabels(
@@ -1360,133 +1393,97 @@ function getPointCloudPreviewSummary(
   }
 }
 
-function formatPointCloudPreviewDirection(
-  direction: PointCloudPreviewDirection,
-): string {
-  const labels: Record<PointCloudPreviewDirection, string> = {
-    front: "正面",
-    side: "横",
-    top: "上 / 奥行き確認",
+function createPointCloudPreviewCamera(
+  overrides: Partial<PointCloudPreviewCamera> = {},
+): PointCloudPreviewCamera {
+  return {
+    ...DEFAULT_POINT_CLOUD_CAMERA,
+    ...overrides,
   }
-
-  return labels[direction]
 }
 
-function getPointCloudPreviewAxes(
-  direction: PointCloudPreviewDirection,
-): {
-  horizontal: "x" | "y" | "z"
-  vertical: "x" | "y" | "z"
-} {
-  if (direction === "side") {
-    return {
-      horizontal: "z",
-      vertical: "y",
-    }
+function getPointCloudPreviewPresetCamera(
+  preset: PointCloudPreviewPreset,
+): PointCloudPreviewCamera {
+  if (preset === "side") {
+    return createPointCloudPreviewCamera({
+      yaw: Math.PI / 2,
+    })
   }
 
-  if (direction === "top") {
-    return {
-      horizontal: "x",
-      vertical: "z",
-    }
+  if (preset === "top") {
+    return createPointCloudPreviewCamera({
+      pitch: -POINT_CLOUD_MAX_PITCH,
+    })
   }
+
+  return createPointCloudPreviewCamera()
+}
+
+function formatPointCloudPreviewPreset(preset: PointCloudPreviewPreset): string {
+  const labels: Record<PointCloudPreviewPreset, string> = {
+    front: "正面に戻す",
+    side: "横から見る",
+    top: "上から見る",
+    reset: "リセット",
+  }
+
+  return labels[preset]
+}
+
+function formatPointCloudCamera(camera: PointCloudPreviewCamera): string {
+  return `yaw ${formatNumber(camera.yaw * RAD_TO_DEG)}° / pitch ${formatNumber(
+    camera.pitch * RAD_TO_DEG,
+  )}° / zoom ${formatNumber(camera.zoom)}x`
+}
+
+function rotatePointForPointCloudPreview(
+  point: IdealLandmark3DCandidate,
+  camera: PointCloudPreviewCamera,
+): { x: number; y: number; z: number } {
+  const sourceX = point.x
+  const sourceY = point.y
+  const sourceZ = point.z * POINT_CLOUD_DEPTH_DISPLAY_SCALE
+  const cosYaw = Math.cos(camera.yaw)
+  const sinYaw = Math.sin(camera.yaw)
+  const yawX = sourceX * cosYaw + sourceZ * sinYaw
+  const yawZ = -sourceX * sinYaw + sourceZ * cosYaw
+  const cosPitch = Math.cos(camera.pitch)
+  const sinPitch = Math.sin(camera.pitch)
 
   return {
-    horizontal: "x",
-    vertical: "y",
+    x: yawX,
+    y: sourceY * cosPitch - yawZ * sinPitch,
+    z: sourceY * sinPitch + yawZ * cosPitch,
   }
 }
 
-function getPointCloudProjectedBounds(
-  landmarks: IdealLandmark3DCandidate[],
-  direction: PointCloudPreviewDirection,
+function getRotatedPointCloudBounds(
+  rotatedPoints: { x: number; y: number; z: number }[],
 ): {
-  centerHorizontal: number
-  centerVertical: number
+  centerX: number
+  centerY: number
   scale: number
 } {
-  const axes = getPointCloudPreviewAxes(direction)
-  const horizontalRange = getNumberRange(
-    landmarks.map((landmark) =>
-      getPointCloudPreviewDisplayValue(landmark, axes.horizontal, direction),
-    ),
-  )
-  const verticalRange = getNumberRange(
-    landmarks.map((landmark) =>
-      getPointCloudPreviewDisplayValue(landmark, axes.vertical, direction),
-    ),
-  )
+  const xRange = getNumberRange(rotatedPoints.map((point) => point.x))
+  const yRange = getNumberRange(rotatedPoints.map((point) => point.y))
 
-  if (!horizontalRange || !verticalRange) {
+  if (!xRange || !yRange) {
     return {
-      centerHorizontal: 0,
-      centerVertical: 0,
+      centerX: 0,
+      centerY: 0,
       scale: 1,
     }
   }
 
-  const horizontalSpan = Math.max(
-    horizontalRange.max - horizontalRange.min,
-    0.001,
-  )
-  const verticalSpan = Math.max(verticalRange.max - verticalRange.min, 0.001)
-  const drawableSize = 100 - POINT_CLOUD_PREVIEW_PADDING * 2
+  const horizontalSpan = Math.max(xRange.max - xRange.min, 0.001)
+  const verticalSpan = Math.max(yRange.max - yRange.min, 0.001)
 
   return {
-    centerHorizontal: (horizontalRange.min + horizontalRange.max) / 2,
-    centerVertical: (verticalRange.min + verticalRange.max) / 2,
-    scale: drawableSize / Math.max(horizontalSpan, verticalSpan),
+    centerX: (xRange.min + xRange.max) / 2,
+    centerY: (yRange.min + yRange.max) / 2,
+    scale: 1 / Math.max(horizontalSpan, verticalSpan),
   }
-}
-
-function mapLandmarkToPointCloudPreview(
-  landmark: IdealLandmark3DCandidate,
-  direction: PointCloudPreviewDirection,
-  bounds: ReturnType<typeof getPointCloudProjectedBounds>,
-): { x: number; y: number } {
-  const axes = getPointCloudPreviewAxes(direction)
-  const horizontalValue = getPointCloudPreviewDisplayValue(
-    landmark,
-    axes.horizontal,
-    direction,
-  )
-  const verticalValue = getPointCloudPreviewDisplayValue(
-    landmark,
-    axes.vertical,
-    direction,
-  )
-  const verticalOffset = (verticalValue - bounds.centerVertical) * bounds.scale
-
-  return {
-    x: 50 + (horizontalValue - bounds.centerHorizontal) * bounds.scale,
-    y: direction === "top" ? 50 - verticalOffset : 50 + verticalOffset,
-  }
-}
-
-function getPointCloudPreviewDisplayValue(
-  landmark: IdealLandmark3DCandidate,
-  axis: "x" | "y" | "z",
-  direction: PointCloudPreviewDirection,
-): number {
-  const value = landmark[axis]
-
-  if (direction === "top" && axis === "z") {
-    return value * POINT_CLOUD_TOP_DEPTH_DISPLAY_SCALE
-  }
-
-  return value
-}
-
-function formatPointCloudPreviewAxisLabel(
-  axis: "x" | "y" | "z",
-  direction: PointCloudPreviewDirection,
-): string {
-  if (direction === "top" && axis === "z") {
-    return `z x${POINT_CLOUD_TOP_DEPTH_DISPLAY_SCALE}`
-  }
-
-  return axis
 }
 
 function getConfidenceOpacity(confidence: number): string {
@@ -2002,21 +1999,37 @@ function renderIdealLandmarks3DCandidatePreview(
   `
 }
 
-function renderPointCloudDirectionButton(
-  direction: PointCloudPreviewDirection,
+function renderPointCloudPresetButton(
+  preset: PointCloudPreviewPreset,
 ): string {
-  const isActive = pointCloudPreviewDirection === direction
+  const isActive = isPointCloudPresetActive(preset)
 
   return `
     <button
-      class="point-cloud-direction-button${isActive ? " point-cloud-direction-button-active" : ""}"
+      class="point-cloud-preset-button${isActive ? " point-cloud-preset-button-active" : ""}"
       type="button"
-      data-point-cloud-direction="${direction}"
+      data-point-cloud-preset="${preset}"
       aria-pressed="${isActive ? "true" : "false"}"
     >
-      ${formatPointCloudPreviewDirection(direction)}
+      ${formatPointCloudPreviewPreset(preset)}
     </button>
   `
+}
+
+function isPointCloudPresetActive(preset: PointCloudPreviewPreset): boolean {
+  if (preset === "reset") {
+    return false
+  }
+
+  const presetCamera = getPointCloudPreviewPresetCamera(preset)
+
+  return (
+    Math.abs(pointCloudPreviewCamera.yaw - presetCamera.yaw) < 0.0001 &&
+    Math.abs(pointCloudPreviewCamera.pitch - presetCamera.pitch) < 0.0001 &&
+    pointCloudPreviewCamera.zoom === 1 &&
+    pointCloudPreviewCamera.panX === 0 &&
+    pointCloudPreviewCamera.panY === 0
+  )
 }
 
 function renderIdealLandmarks3DPointCloudPreviewPanel(): string {
@@ -2032,22 +2045,20 @@ function renderIdealLandmarks3DPointCloudPreviewPanel(): string {
       <div class="panel-heading">
         <div>
           <h2>3D点群 preview</h2>
-          <p>生成された idealLandmarks3D 候補を簡易表示します。</p>
+          <p>生成された idealLandmarks3D 候補を 1 つの viewport で確認します。</p>
         </div>
       </div>
-      <div class="point-cloud-controls" aria-label="表示方向">
-        <span>表示方向:</span>
-        ${renderPointCloudDirectionButton("front")}
-        ${renderPointCloudDirectionButton("side")}
-        ${renderPointCloudDirectionButton("top")}
+      <div class="point-cloud-controls" aria-label="preview camera">
+        <span>視点 preset:</span>
+        ${renderPointCloudPresetButton("front")}
+        ${renderPointCloudPresetButton("side")}
+        ${renderPointCloudPresetButton("top")}
+        ${renderPointCloudPresetButton("reset")}
       </div>
-      <p class="point-cloud-preview-note">この preview は確認用表示です。表示上、y 軸や z の見え方を調整しています。生成済み 3D 候補データ自体は変更していません。</p>
+      <p class="point-cloud-preview-note">この preview は確認用表示です。マウス操作で視点を変更できますが、生成済み 3D 候補データ自体は変更していません。</p>
       ${
         hasGeneratedLandmarks
-          ? renderIdealLandmarks3DPointCloudSvg(
-              result.landmarks,
-              pointCloudPreviewDirection,
-            )
+          ? renderIdealLandmarks3DPointCloudCanvas()
           : `<div class="point-cloud-empty">
               <p>3D 478点候補がまだ生成されていません。<br />先に「3D候補を生成」を実行してください。</p>
             </div>`
@@ -2058,8 +2069,8 @@ function renderIdealLandmarks3DPointCloudPreviewPanel(): string {
           <dd>${summary.landmarkCount}</dd>
         </div>
         <div>
-          <dt>表示方向</dt>
-          <dd>${formatPointCloudPreviewDirection(pointCloudPreviewDirection)}</dd>
+          <dt>視点</dt>
+          <dd data-point-cloud-camera-label>${formatPointCloudCamera(pointCloudPreviewCamera)}</dd>
         </div>
         <div>
           <dt>x min / max</dt>
@@ -2086,46 +2097,128 @@ function renderIdealLandmarks3DPointCloudPreviewPanel(): string {
   `
 }
 
-function renderIdealLandmarks3DPointCloudSvg(
-  landmarks: IdealLandmark3DCandidate[],
-  direction: PointCloudPreviewDirection,
-): string {
-  const axes = getPointCloudPreviewAxes(direction)
-  const bounds = getPointCloudProjectedBounds(landmarks, direction)
-  const points = landmarks
-    .map((landmark) => {
-      const point = mapLandmarkToPointCloudPreview(landmark, direction, bounds)
-
-      return `
-        <circle
-          cx="${formatNumber(point.x)}"
-          cy="${formatNumber(point.y)}"
-          r="0.72"
-          opacity="${getConfidenceOpacity(landmark.confidence)}"
-        >
-          <title>#${landmark.index}: x ${landmark.x} / y ${landmark.y} / z ${landmark.z} / confidence ${landmark.confidence}</title>
-        </circle>
-      `
-    })
-    .join("")
-
+function renderIdealLandmarks3DPointCloudCanvas(): string {
   return `
-    <svg
+    <canvas
       class="point-cloud-preview"
-      viewBox="0 0 100 100"
-      role="img"
-      aria-label="3D 478点候補 ${formatPointCloudPreviewDirection(direction)} 表示"
-    >
-      <rect x="0" y="0" width="100" height="100" rx="1.5" />
-      <line class="point-cloud-axis" x1="${POINT_CLOUD_PREVIEW_PADDING}" y1="50" x2="${100 - POINT_CLOUD_PREVIEW_PADDING}" y2="50" />
-      <line class="point-cloud-axis" x1="50" y1="${POINT_CLOUD_PREVIEW_PADDING}" x2="50" y2="${100 - POINT_CLOUD_PREVIEW_PADDING}" />
-      <text class="point-cloud-axis-label" x="${100 - POINT_CLOUD_PREVIEW_PADDING}" y="48">${formatPointCloudPreviewAxisLabel(axes.horizontal, direction)}</text>
-      <text class="point-cloud-axis-label" x="52" y="${POINT_CLOUD_PREVIEW_PADDING + 4}">${formatPointCloudPreviewAxisLabel(axes.vertical, direction)}</text>
-      <g class="point-cloud-points">
-        ${points}
-      </g>
-    </svg>
+      data-point-cloud-canvas="true"
+      aria-label="3D 478点候補 interactive preview"
+    ></canvas>
   `
+}
+
+function updatePointCloudCameraLabel(): void {
+  const label = document.querySelector<HTMLElement>(
+    "[data-point-cloud-camera-label]",
+  )
+
+  if (label) {
+    label.textContent = formatPointCloudCamera(pointCloudPreviewCamera)
+  }
+
+  document
+    .querySelectorAll<HTMLButtonElement>("[data-point-cloud-preset]")
+    .forEach((button) => {
+      const preset = button.dataset.pointCloudPreset
+      const isActive =
+        isPointCloudPreviewPreset(preset) && isPointCloudPresetActive(preset)
+
+      button.classList.toggle("point-cloud-preset-button-active", isActive)
+      button.setAttribute("aria-pressed", isActive ? "true" : "false")
+    })
+}
+
+function drawPointCloudPreviewCanvas(): void {
+  const canvas = document.querySelector<HTMLCanvasElement>(
+    "[data-point-cloud-canvas]",
+  )
+  const result = idealLandmarks3DCandidateResult
+
+  if (
+    !canvas ||
+    result.status !== "generated" ||
+    result.landmarks.length === 0
+  ) {
+    return
+  }
+
+  const context = canvas.getContext("2d")
+
+  if (!context) {
+    return
+  }
+
+  const rect = canvas.getBoundingClientRect()
+  const width = Math.max(1, rect.width)
+  const height = Math.max(1, rect.height)
+  const devicePixelRatio = window.devicePixelRatio || 1
+
+  canvas.width = Math.round(width * devicePixelRatio)
+  canvas.height = Math.round(height * devicePixelRatio)
+  context.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0)
+  context.clearRect(0, 0, width, height)
+  context.fillStyle = "#ffffff"
+  context.fillRect(0, 0, width, height)
+  drawPointCloudPreviewGuide(context, width, height)
+
+  const rotatedPoints = result.landmarks.map((landmark) =>
+    rotatePointForPointCloudPreview(landmark, pointCloudPreviewCamera),
+  )
+  const bounds = getRotatedPointCloudBounds(rotatedPoints)
+  const drawableSize =
+    Math.min(width, height) - POINT_CLOUD_PREVIEW_PADDING * 2
+  const scale = drawableSize * bounds.scale * pointCloudPreviewCamera.zoom
+  const centerX = width / 2 + pointCloudPreviewCamera.panX
+  const centerY = height / 2 + pointCloudPreviewCamera.panY
+  const pointsToDraw = result.landmarks
+    .map((landmark, index) => {
+      const rotated = rotatedPoints[index]
+
+      return {
+        landmark,
+        depth: rotated.z,
+        x: centerX + (rotated.x - bounds.centerX) * scale,
+        y: centerY - (rotated.y - bounds.centerY) * scale,
+      }
+    })
+    .sort((a, b) => a.depth - b.depth)
+
+  for (const point of pointsToDraw) {
+    context.beginPath()
+    context.arc(point.x, point.y, 2.3, 0, Math.PI * 2)
+    context.fillStyle = `rgba(217, 79, 69, ${getConfidenceOpacity(
+      point.landmark.confidence,
+    )})`
+    context.fill()
+  }
+
+  updatePointCloudCameraLabel()
+}
+
+function drawPointCloudPreviewGuide(
+  context: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+): void {
+  const centerX = width / 2 + pointCloudPreviewCamera.panX
+  const centerY = height / 2 + pointCloudPreviewCamera.panY
+
+  context.strokeStyle = "#d9e4df"
+  context.lineWidth = 1
+  context.beginPath()
+  context.moveTo(POINT_CLOUD_PREVIEW_PADDING, centerY)
+  context.lineTo(width - POINT_CLOUD_PREVIEW_PADDING, centerY)
+  context.moveTo(centerX, POINT_CLOUD_PREVIEW_PADDING)
+  context.lineTo(centerX, height - POINT_CLOUD_PREVIEW_PADDING)
+  context.stroke()
+
+  context.fillStyle = "#5d675f"
+  context.font = "700 12px system-ui, -apple-system, BlinkMacSystemFont, sans-serif"
+  context.fillText(
+    `z preview x${POINT_CLOUD_DEPTH_DISPLAY_SCALE}`,
+    POINT_CLOUD_PREVIEW_PADDING,
+    height - POINT_CLOUD_PREVIEW_PADDING,
+  )
 }
 
 function renderAnalysisPanel(): string {
@@ -2460,25 +2553,126 @@ function attachIdealLandmarks3DCandidateHandler(): void {
     })
 
   document
-    .querySelectorAll<HTMLButtonElement>("[data-point-cloud-direction]")
+    .querySelectorAll<HTMLButtonElement>("[data-point-cloud-preset]")
     .forEach((button) => {
       button.addEventListener("click", () => {
-        const direction = button.dataset.pointCloudDirection
+        const preset = button.dataset.pointCloudPreset
 
-        if (!isPointCloudPreviewDirection(direction)) {
+        if (!isPointCloudPreviewPreset(preset)) {
           return
         }
 
-        pointCloudPreviewDirection = direction
+        pointCloudPreviewCamera = getPointCloudPreviewPresetCamera(preset)
         render()
       })
     })
+
+  attachPointCloudCanvasInteractionHandler()
+  drawPointCloudPreviewCanvas()
 }
 
-function isPointCloudPreviewDirection(
+function attachPointCloudCanvasInteractionHandler(): void {
+  const canvas = document.querySelector<HTMLCanvasElement>(
+    "[data-point-cloud-canvas]",
+  )
+
+  if (!canvas) {
+    return
+  }
+
+  canvas.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) {
+      return
+    }
+
+    pointCloudDragState = {
+      pointerId: event.pointerId,
+      lastX: event.clientX,
+      lastY: event.clientY,
+      mode: event.shiftKey ? "pan" : "rotate",
+    }
+    canvas.setPointerCapture(event.pointerId)
+  })
+
+  canvas.addEventListener("pointermove", (event) => {
+    if (!pointCloudDragState || pointCloudDragState.pointerId !== event.pointerId) {
+      return
+    }
+
+    const dx = event.clientX - pointCloudDragState.lastX
+    const dy = event.clientY - pointCloudDragState.lastY
+
+    pointCloudDragState = {
+      ...pointCloudDragState,
+      lastX: event.clientX,
+      lastY: event.clientY,
+    }
+
+    if (pointCloudDragState.mode === "pan") {
+      pointCloudPreviewCamera = {
+        ...pointCloudPreviewCamera,
+        panX: pointCloudPreviewCamera.panX + dx,
+        panY: pointCloudPreviewCamera.panY + dy,
+      }
+    } else {
+      pointCloudPreviewCamera = {
+        ...pointCloudPreviewCamera,
+        yaw: pointCloudPreviewCamera.yaw + dx * POINT_CLOUD_ROTATION_SENSITIVITY,
+        pitch: clamp(
+          pointCloudPreviewCamera.pitch + dy * POINT_CLOUD_ROTATION_SENSITIVITY,
+          -POINT_CLOUD_MAX_PITCH,
+          POINT_CLOUD_MAX_PITCH,
+        ),
+      }
+    }
+
+    drawPointCloudPreviewCanvas()
+  })
+
+  canvas.addEventListener("pointerup", (event) => {
+    if (pointCloudDragState?.pointerId === event.pointerId) {
+      pointCloudDragState = null
+      canvas.releasePointerCapture(event.pointerId)
+    }
+  })
+
+  canvas.addEventListener("pointercancel", () => {
+    pointCloudDragState = null
+  })
+
+  canvas.addEventListener(
+    "wheel",
+    (event) => {
+      event.preventDefault()
+      pointCloudPreviewCamera = {
+        ...pointCloudPreviewCamera,
+        zoom: clamp(
+          pointCloudPreviewCamera.zoom *
+            Math.exp(-event.deltaY * POINT_CLOUD_ZOOM_SENSITIVITY),
+          POINT_CLOUD_MIN_ZOOM,
+          POINT_CLOUD_MAX_ZOOM,
+        ),
+      }
+      drawPointCloudPreviewCanvas()
+    },
+    { passive: false },
+  )
+
+  canvas.addEventListener("dblclick", () => {
+    pointCloudPreviewCamera = createPointCloudPreviewCamera()
+    drawPointCloudPreviewCanvas()
+  })
+}
+
+function isPointCloudPreviewPreset(
   value: string | undefined,
-): value is PointCloudPreviewDirection {
-  return value === "front" || value === "side" || value === "top"
+): value is PointCloudPreviewPreset {
+  return (
+    value === "front" ||
+    value === "side" ||
+    value === "top" ||
+    value === "reset"
+  )
 }
 
 async function analyzeExtractedFrames(): Promise<void> {
@@ -3356,7 +3550,7 @@ style.textContent = `
   .candidate-label-button,
   .selected-clear-button,
   .candidate-generate-button,
-  .point-cloud-direction-button {
+  .point-cloud-preset-button {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -3381,7 +3575,7 @@ style.textContent = `
     font-family: inherit;
   }
 
-  .point-cloud-direction-button {
+  .point-cloud-preset-button {
     font-family: inherit;
   }
 
@@ -3402,7 +3596,7 @@ style.textContent = `
   .candidate-label-button:focus-visible,
   .selected-clear-button:focus-visible,
   .candidate-generate-button:focus-visible,
-  .point-cloud-direction-button:focus-visible {
+  .point-cloud-preset-button:focus-visible {
     outline: 3px solid #9fc8bd;
     outline-offset: 2px;
   }
@@ -3651,7 +3845,7 @@ style.textContent = `
     line-height: 1.5;
   }
 
-  .point-cloud-direction-button {
+  .point-cloud-preset-button {
     min-height: 34px;
     border: 1px solid #b7c7c2;
     background: #edf4f1;
@@ -3660,7 +3854,7 @@ style.textContent = `
     font-size: 13px;
   }
 
-  .point-cloud-direction-button-active {
+  .point-cloud-preset-button-active {
     border-color: #27594c;
     background: #27594c;
     color: #ffffff;
@@ -3678,25 +3872,8 @@ style.textContent = `
     display: block;
     height: min(56vw, 520px);
     min-height: 280px;
-  }
-
-  .point-cloud-preview rect {
-    fill: #ffffff;
-  }
-
-  .point-cloud-axis {
-    stroke: #b7c7c2;
-    stroke-width: 0.35;
-  }
-
-  .point-cloud-axis-label {
-    fill: #5d675f;
-    font-size: 3.2px;
-    font-weight: 800;
-  }
-
-  .point-cloud-points circle {
-    fill: #d94f45;
+    cursor: grab;
+    touch-action: none;
   }
 
   .point-cloud-empty {
