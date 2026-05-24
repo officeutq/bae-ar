@@ -131,7 +131,7 @@ Beauty Studio:
 - Projection Difference Debug v1 は FaceGeometry 代表点と projected IdealFace controlPoints の差分確認用です。
 - `FaceGeometry` は landmarks から代表点やサイズを計算する補助解析です。
 - 実際の shape warp、color processing、rendering はまだありません。
-- IdealFace Authoring Tool は Step 2-H まで実装済みです。
+- IdealFace Authoring Tool は Step 2-I-A まで実装済みです。
 
 ## 4. 現在の処理パイプライン
 
@@ -674,7 +674,7 @@ Studio は Engine の private field、内部状態、内部実装へ直接アク
 
 ### Milestone 10: IdealFace Authoring Tool
 
-状態: 一部実装済み / Step 2-H まで完了
+状態: 一部実装済み / Step 2-I-A まで完了
 
 目的:
 
@@ -690,6 +690,8 @@ Studio は Engine の private field、内部状態、内部実装へ直接アク
 - Step 2-E として確定済み代表フレームから front / left / right / up / down の 3D推測用データセットを作成し、readiness summary、dataset 一覧、JSON preview の `idealLandmarks3DInferenceDataset` 概要を確認できる。
 - Step 2-F として候補抽出用の詳細スキャン、詳細スキャン summary、JSON preview の `scanSummary`、`candidateCounts`、`excludedCandidateCount`、トリムしないサムネイル表示を確認できる。
 - Step 2-G として 3D推測用データセットから `idealLandmarks3D` 478点候補を生成し、summary、先頭 5 点程度の preview、JSON preview の `idealLandmarks3DCandidate` 概要を確認できる。
+- Step 2-H として生成済み候補を interactive 3D point cloud preview で確認できる。
+- Step 2-I-A として pose-aware multi-frame inference へ進むための UI / state 基盤を持ち、正面基準候補、推定に使うフレーム、除外フレームの 3 分類表示、`frontReferenceFrameIds` / `excludedFrameIds`、派生 `usableObservationFrames` summary、JSON preview の `poseAwareMultiFrameInference` 概要を確認できる。
 - 現段階の `natural_v1` の controlPoints は投影検証用の暫定データであり、IdealFace 本体ではない。
 - IdealFace 本体は `idealLandmarks3D` 478 点を中核に持つ asset として扱う。
 - 2D 動画 / 複数画像からのオフライン生成を Runtime と分離して扱える。
@@ -955,7 +957,7 @@ Step 2-G の制限:
 - 3D点群 preview は Step 2-H で実装済み。preview は確認用表示であり、視点回転、zoom、pan、y 軸反転、z 表示倍率調整は preview camera / view transform の操作として扱う。手動微調整、保存 / export はまだ実装しない
 - 複数画像入力はまだ実装しない
 
-Step 2-G v1 は実装済みの簡易推定として残します。次に実装予定の Step 2-I では、5ポーズ固定の代表フレーム方式から、正面基準候補、推定に使うフレーム、除外フレームに整理した pose-aware multi-frame inference dataset へ進む方針です。
+Step 2-G v1 は実装済みの簡易推定として残します。Step 2-I-A では、5ポーズ固定の代表フレーム方式から pose-aware multi-frame inference dataset へ進むための UI / state 基盤を追加済みです。次に実装する Step 2-I の 3D候補生成ロジックでは、正面基準候補、推定に使うフレーム、除外フレームに整理した observation を使う方針です。
 
 3D候補生成処理は IdealFace Authoring Tool の責務です。Engine Runtime には 3D推測処理や Authoring UI を入れません。Beauty Studio にも Authoring 用タブは追加しません。
 
@@ -987,11 +989,12 @@ Step 2-H の制限:
 
 ## 18-I. IdealFace Authoring Tool Step 2-I
 
-状態: 未実装 / 次に実装予定の確定仕様
+状態: Step 2-I-A UI / state 基盤は実装済み。pose-aware 3D候補生成ロジックは未実装 / 次に実装予定
 
 Step 2-I の目的:
 
 - Step 2-G v1 の `front / left / right / up / down` 代表フレーム方式を、現在実装済みの簡易推定として残す
+- Step 2-I-A として、フレーム選択用の UI / state 基盤を先に追加する
 - 5ポーズ固定指定ではなく、各フレームの `FacePose` を使って連続的に判断する pose-aware multi-frame inference へ進める
 - フレーム解析結果欄を「正面基準候補」「推定に使うフレーム」「除外フレーム」の 3 分類に整理する
 - `idealLandmarks3D` 478点候補の x / y 基準は、複数の正面基準候補から作る
@@ -1108,7 +1111,7 @@ type IdealLandmarks3DObservationFrame = {
 }
 ```
 
-Step 2-I では、上記の型は仕様方針であり、今回の docs 更新では実装しません。
+Step 2-I-A では、`frontReferenceFrameIds` と `excludedFrameIds` の選択状態、派生 `usableObservationFrames` summary、JSON preview の `poseAwareMultiFrameInference` 概要を実装済みです。pose-aware 3D候補生成ロジックへの接続はまだ行いません。
 
 3D候補生成前の summary 方針:
 
