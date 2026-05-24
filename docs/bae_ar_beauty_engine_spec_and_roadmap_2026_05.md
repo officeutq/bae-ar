@@ -957,7 +957,7 @@ Step 2-G の制限:
 - 3D点群 preview は Step 2-H で実装済み。preview は確認用表示であり、視点回転、zoom、pan、y 軸反転、z 表示倍率調整は preview camera / view transform の操作として扱う。手動微調整、保存 / export はまだ実装しない
 - 複数画像入力はまだ実装しない
 
-Step 2-G v1 は実装済みの簡易推定として残します。Step 2-I-A では、5ポーズ固定の代表フレーム方式から pose-aware multi-frame inference dataset へ進むための UI / state 基盤を追加済みです。Step 2-I-B では、正面基準候補、推定に使うフレーム、除外フレームから pose-aware dataset を作成済みです。次の Step 2-I-C では、yaw / pitch / roll / weight を使う pose-aware weighted z inference v1 へ進む方針です。
+Step 2-G v1 は実装済みの簡易推定として残します。Step 2-I-A では、5ポーズ固定の代表フレーム方式から pose-aware multi-frame inference dataset へ進むための UI / state 基盤を追加済みです。Step 2-I-B では、正面基準候補、推定に使うフレーム、除外フレームから pose-aware dataset を作成済みです。次の Step 2-I-C では、observation landmarks を roll 補正してから yaw / pitch / roll / weight を使う pose-aware weighted z inference v1 へ進む方針です。
 
 3D候補生成処理は IdealFace Authoring Tool の責務です。Engine Runtime には 3D推測処理や Authoring UI を入れません。Beauty Studio にも Authoring 用タブは追加しません。
 
@@ -996,7 +996,7 @@ Step 2-I の目的:
 - Step 2-G v1 の `front / left / right / up / down` 代表フレーム方式を、現在実装済みの簡易推定として残す
 - Step 2-I-A として、フレーム選択用の UI / state 基盤を先に追加する
 - Step 2-I-B として、`left / right / up / down` 固定分類を持たない pose-aware multi-frame inference dataset を作成する
-- Step 2-I-C として、この dataset から pose-aware weighted z inference v1 で `idealLandmarks3D` 478点候補を生成する
+- Step 2-I-C として、この dataset の observation landmarks を roll 補正し、pose-aware weighted z inference v1 で `idealLandmarks3D` 478点候補を生成する
 - 5ポーズ固定指定ではなく、各フレームの `FacePose` を使って連続的に判断する pose-aware multi-frame inference へ進める
 - フレーム解析結果欄を「正面基準候補」「推定に使うフレーム」「除外フレーム」の 3 分類に整理する
 - `idealLandmarks3D` 478点候補の x / y 基準は、複数の正面基準候補から作る
@@ -1078,7 +1078,9 @@ Step 2-I の推定ロジック方針:
 - yaw が大きいフレームは左右方向の奥行き推定に寄与しやすい
 - pitch が大きいフレームは上下方向の奥行き推定に寄与しやすい
 - yaw も pitch も大きいフレームは、yaw 成分と pitch 成分の両方を持つ observation として扱う
-- roll が大きすぎるフレームや score が低いフレームは重みを下げる
+- Step 2-I-C では observation landmarks を roll 角で逆回転補正してから z hint 推定に使う
+- roll が大きいフレームは補正後に利用しつつ、検出安定性が下がる可能性を weight で下げる
+- 極端な roll、ブレ、表情崩れ、検出崩れがあるフレームは除外候補にする
 
 Dataset の将来形:
 
@@ -1217,13 +1219,48 @@ Step 2-I-C で行うこと:
 
 ```text
 1. 複数の frontReferenceFrames から base x / y を作る
-2. observationFrames を使って z hint を作る
-3. 各 observation frame の yaw / pitch / roll / score から weight を決める
-4. yaw / pitch を連続値として扱う
-5. yaw も pitch も大きい frame は mixed pose observation として使う
-6. landmark ごとの z hint を weighted average する
-7. confidence を、観測数、pose coverage、weight、ばらつき、不足情報から決める
+2. observationFrames を取得する
+3. 各 observationFrame の 2D landmarks を、顔中心を基準に roll 角で逆回転補正する
+4. roll 補正済み landmarks と base x / y を比較する
+5. yaw / pitch を連続値として扱い、landmark ごとの z hint を作る
+6. yaw も pitch も大きい frame は mixed pose observation として使う
+7. roll が大きい frame、score が低い frame、検出が不安定な frame は weight を下げる
+8. landmark ごとの z hint を weighted average する
+9. confidence を、観測数、pose coverage、weight、ばらつき、不足情報から決める
 ```
+
+Step 2-I-C の roll 補正:
+
+```text
+observation frame の 2D landmarks
+  -> 顔中心を基準にする
+  -> roll 角だけ逆回転する
+  -> roll 補正済み landmarks として扱う
+  -> frontReferenceFrames 由来の base x / y と比較する
+  -> yaw / pitch に応じて z hint を作る
+```
+
+`roll` は顔の画面平面上の傾きです。`yaw` は左右を向く角度、`pitch` は上下を向く角度、`roll` は首をかしげる / 顔が画面内で回転する角度として扱います。roll が大きいフレームをそのまま z 推定に使うと、顔が傾いているだけの 2D 位置変化を、奥行きや形状差として誤解する可能性があります。そのため Step 2-I-C では、z hint 推定前に roll を逆回転補正します。
+
+roll 補正でできること:
+
+```text
+顔が画面内で斜めに写っていることによる 2D landmarks の回転成分を取り除く
+首をかしげたことで、目・鼻・口・顎が画面上で斜めにずれて見える影響を軽減する
+```
+
+roll 補正でできないこと:
+
+```text
+yaw による片側の隠れ
+pitch による鼻・顎・額の見え方の変化
+表情変化
+口開き
+手ブレ
+MediaPipe の検出崩れ
+```
+
+したがって、roll が大きい frame は除外前提ではなく、roll 補正後に推定へ利用します。ただし、roll が大きい frame は検出安定性が下がる可能性があるため、補正後も weight を下げます。極端な roll、ブレ、表情崩れ、検出崩れがある場合は除外候補にします。
 
 Step 2-I-C でやらないこと:
 
@@ -1256,7 +1293,7 @@ Step 2-I-B:
 
 Step 2-I-C:
   未実装の pose-aware weighted z inference v1
-  yaw / pitch / roll / weight を使って z hint を推定
+  observation landmarks を roll 補正してから yaw / pitch / roll / weight を使って z hint を推定
 ```
 
 Step 2-I-A の 3D候補生成前 summary 方針:
@@ -1285,6 +1322,9 @@ yaw / pitch の角度幅が不足しています
 
 除外フレームが多すぎます
   -> 推定に使うフレームが少ないため、3D候補が不安定になる可能性があります
+
+roll が大きい observation frame があります
+  -> Step 2-I-C では roll 補正後に推定へ利用しますが、検出が不安定なものは除外してください
 ```
 
 Step 2-I v1 で引き続き行わないこと:

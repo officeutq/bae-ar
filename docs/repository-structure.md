@@ -128,7 +128,9 @@ MP4 動画から表示用フレームを一定間隔で抽出し、候補抽出�
 
 Step 2-I-A 以降の UI 表示名は「正面基準候補」「推定に使うフレーム」「除外フレーム」とします。内部説明では `frontReferenceFrames`、`usableObservationFrames`、`excludedFrames` を使ってよいものとします。選択状態としては `frontReferenceFrameIds` と `excludedFrameIds` を持ち、`usableObservationFrames` は解析成功、landmarks 478点、`FacePose` あり、除外されていないことから派生します。Step 2-I 用操作は Step 2-I カード内に閉じ、旧ポーズ別候補 UI には混ぜません。画面上の 3 分類は排他的に表示します。
 
-Step 2-I-B 以降では、`left / right / up / down` をユーザーが必ず手動指定する方式にはせず、各フレームを frameId、timestamp、2D landmarks、FacePose yaw / pitch / roll、score、poseStrength、weight を持つ pose observation として扱います。yaw も pitch も大きいフレームは単一カテゴリに押し込まず、mixed pose observation として利用します。Step 2-I-B では `frontReferenceFrames`、`observationFrames`、`excludedFrameCount`、poseCoverage を持つ dataset 作成までを実装済みです。Step 2-I-C では、その dataset から yaw / pitch / roll / weight に基づいて z hint を推定し、`idealLandmarks3D` 478点候補を生成する pose-aware weighted z inference v1 へ進みます。
+Step 2-I-B 以降では、`left / right / up / down` をユーザーが必ず手動指定する方式にはせず、各フレームを frameId、timestamp、2D landmarks、FacePose yaw / pitch / roll、score、poseStrength、weight を持つ pose observation として扱います。yaw も pitch も大きいフレームは単一カテゴリに押し込まず、mixed pose observation として利用します。Step 2-I-B では `frontReferenceFrames`、`observationFrames`、`excludedFrameCount`、poseCoverage を持つ dataset 作成までを実装済みです。Step 2-I-C では、その dataset から pose-aware weighted z inference v1 へ進みます。まず observation landmarks を顔中心基準で roll 角だけ逆回転補正し、roll 補正済み landmarks と frontReferenceFrames 由来の base x / y を比較して、yaw / pitch / roll / weight に基づく z hint を推定します。
+
+roll 補正は、顔が画面内で斜めに写っていることによる 2D landmarks の回転成分を取り除く前処理です。首をかしげたことで目・鼻・口・顎が画面上で斜めにずれて見える影響は軽減できますが、yaw による片側の隠れ、pitch による鼻・顎・額の見え方の変化、表情変化、口開き、手ブレ、MediaPipe の検出崩れは補正できません。roll が大きい observation frame は除外前提ではなく、roll 補正後に推定へ利用しつつ weight を下げます。極端な roll、ブレ、表情崩れ、検出崩れがある frame は除外候補にします。
 
 推奨する MP4 動画は、H.264 / AVC codec、5〜15秒程度、30fps程度、720p程度から開始できるものです。顔が大きく写り、正面、左向き、右向き、上向き、下向きをゆっくり含み、手ブレが少なく、明るい場所で撮影され、口は閉じ気味、表情はできるだけ neutral なものを想定します。長時間動画、高解像度すぎる動画、HEVC / H.265、MOV、WebM、複数画像入力は初期段階では非推奨または未対応です。
 

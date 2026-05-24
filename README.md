@@ -78,7 +78,7 @@ tools/ideal-face-authoring
 
 未実装 / 将来予定:
 
-- IdealFace Authoring Tool Step 2-I-C: yaw / pitch / roll と weight に基づく pose-aware weighted z inference v1
+- IdealFace Authoring Tool Step 2-I-C: observation landmarks を roll 補正してから yaw / pitch / roll と weight に基づく pose-aware weighted z inference v1
 - IdealFace Authoring Tool の手動微調整
 - IdealFace asset の保存 / export
 - 複数画像入力
@@ -174,7 +174,9 @@ Step 2-I のフレーム解析結果欄は、以下の 3 分類に整理しま�
 
 Step 2-I-B では、正面基準候補と推定に使うフレームから、`left / right / up / down` 固定分類を持たない pose-aware multi-frame inference dataset を作成します。各 observation frame は frameId、timestamp、2D landmarks、FacePose yaw / pitch / roll、score、weight を持つ連続値の pose observation として扱います。yaw も pitch も大きいフレームは、left か up のどちらかへ押し込まず、mixed pose observation として扱います。現時点では dataset 作成と確認用 summary / JSON preview までで、`idealLandmarks3D` 新生成ロジックには接続しません。
 
-その次の Step 2-I-C では、Step 2-I-B の dataset を使って pose-aware weighted z inference v1 を追加します。複数の frontReferenceFrames から base x / y を作り、observationFrames の yaw / pitch / roll / score / weight から landmark ごとの z hint を weighted average します。ただし、厳密な 3D reconstruction、三角測量、bundle adjustment、カメラ内部パラメータ推定、Runtime 組み込みは引き続き行いません。
+その次の Step 2-I-C では、Step 2-I-B の dataset を使って pose-aware weighted z inference v1 を追加します。複数の frontReferenceFrames から base x / y を作り、observationFrames の 2D landmarks を顔中心基準で roll 角だけ逆回転補正してから base x / y と比較します。そのうえで yaw / pitch を連続値として扱い、landmark ごとの z hint を weighted average します。yaw も pitch も大きい frame は mixed pose observation として扱います。roll が大きい frame は除外前提ではなく、roll 補正後に利用しつつ、検出安定性が下がる可能性を weight で下げます。極端な roll、ブレ、表情崩れ、検出崩れがある frame は除外候補にします。ただし、厳密な 3D reconstruction、三角測量、bundle adjustment、カメラ内部パラメータ推定、Runtime 組み込みは引き続き行いません。
+
+Step 2-I-C の roll 補正は、顔が画面内で斜めに写っていることによる 2D landmarks の回転成分を取り除き、首をかしげたことで目・鼻・口・顎が画面上で斜めにずれて見える影響を軽減するための前処理です。一方で、yaw による片側の隠れ、pitch による鼻・顎・額の見え方の変化、表情変化、口開き、手ブレ、MediaPipe の検出崩れは補正できません。そのため、roll 補正後も weight と除外判断は必要です。Step 2-I-B / 2-I-C の warning は、「roll が大きい observation frame があります。roll 補正後に推定へ利用しますが、検出が不安定なものは除外してください。」という意味に寄せます。
 
 ## ドキュメント
 
@@ -327,7 +329,7 @@ MP4 動画を入力
   -> 人間が正面 / 左向き / 右向き / 上向き / 下向き / 除外を確定
   -> 確定済み代表フレームから 3D推測用データセットを作成
   -> Step 2-I-B: 正面基準候補、推定に使うフレーム、除外フレームから pose-aware multi-frame inference dataset を作成
-  -> 将来 Step 2-I-C: yaw / pitch / roll / weight に基づく z hint で idealLandmarks3D 478点候補を生成
+  -> 将来 Step 2-I-C: observation landmarks を roll 補正し、yaw / pitch / roll / weight に基づく z hint で idealLandmarks3D 478点候補を生成
   -> Authoring Tool 上で確認・微調整
   -> IdealFace asset として保存 / export
 ```

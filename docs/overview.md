@@ -85,7 +85,9 @@ Step 2-I の操作フローは、正面基準候補を複数選び、使いた�
 
 Step 2-I-B では、正面基準候補と推定に使うフレームから pose-aware multi-frame inference dataset を作成します。この dataset は `frontReferenceFrames`、`observationFrames`、`excludedFrameCount`、poseCoverage を持ちます。`observationFrames` は `left / right / up / down` の固定分類を持たず、frameId、timestamp、2D landmarks、FacePose yaw / pitch / roll、score、poseStrength、weight を持つ連続値の pose observation として扱います。
 
-その次の Step 2-I-C では、Step 2-I-B の dataset を使って pose-aware weighted z inference v1 を追加します。複数の frontReferenceFrames から base x / y を作り、observationFrames の yaw / pitch / roll / score / weight から z hint を作ります。yaw も pitch も大きいフレームは、left か up のどちらかへ分類せず、mixed pose observation として yaw 成分と pitch 成分の両方を持つ観測として利用します。roll が大きすぎるフレームや score が低いフレームは weight を下げる、または除外候補とします。
+その次の Step 2-I-C では、Step 2-I-B の dataset を使って pose-aware weighted z inference v1 を追加します。複数の frontReferenceFrames から base x / y を作り、observationFrames の 2D landmarks を顔中心基準で roll 角だけ逆回転補正してから base x / y と比較します。そのうえで yaw / pitch を連続値として扱い、z hint を作ります。yaw も pitch も大きいフレームは、left か up のどちらかへ分類せず、mixed pose observation として yaw 成分と pitch 成分の両方を持つ観測として利用します。roll が大きいフレームは除外前提ではなく、roll 補正後に利用しつつ、検出安定性が下がる可能性を weight で下げます。極端な roll、ブレ、表情崩れ、検出崩れがあるフレームは除外候補とします。
+
+Step 2-I-C の roll 補正でできることは、顔が画面内で斜めに写っていることによる 2D landmarks の回転成分を取り除き、首をかしげたことで目・鼻・口・顎が斜めにずれて見える影響を軽減することです。roll 補正では、yaw による片側の隠れ、pitch による鼻・顎・額の見え方の変化、表情変化、口開き、手ブレ、MediaPipe の検出崩れは補正できません。そのため、roll 補正後も weight と除外判断は必要です。Step 2-I-B / 2-I-C の warning は、roll が大きい frame を使えないものとして扱うのではなく、roll 補正後に推定へ利用しつつ、検出が不安定なものは除外する意味に寄せます。
 
 この方針は完全自動生成ではなく、自動推測 + 手動補正です。Engine Runtime は動画 / 複数画像から `idealLandmarks3D` を作成せず、Authoring Tool で作成済みの IdealFace asset を読み込んで使うだけです。
 
@@ -303,7 +305,7 @@ Step 2-I-A では、選択状態として `frontReferenceFrameIds` と `excluded
 
 Step 2-I-B は実装済みです。正面基準候補から base x / y 用の `frontReferenceFrames` を作り、推定に使うフレームから `observationFrames` を作ります。`observationFrames` は固定分類ではなく pose vector として保持し、yaw も pitch も大きいフレームは mixed pose observation として扱います。Step 2-I-B では dataset 作成までに留め、`idealLandmarks3D` 新生成ロジック、pose-aware weighted z inference、Step 2-G v1 の置き換えは行いません。
 
-Step 2-I-C も未実装です。Step 2-I-B の dataset を使い、yaw / pitch / roll / score / weight に基づく pose-aware weighted z inference v1 で `idealLandmarks3D` 478点候補を生成する方針です。ただし厳密な 3D reconstruction、三角測量、bundle adjustment、カメラ内部パラメータ推定、本格 3D editor、手動微調整、保存 / export、Runtime への組み込みは行いません。
+Step 2-I-C も未実装です。Step 2-I-B の dataset を使い、observationFrame の 2D landmarks を roll 角で逆回転補正してから、yaw / pitch / roll / score / weight に基づく pose-aware weighted z inference v1 で `idealLandmarks3D` 478点候補を生成する方針です。ただし厳密な 3D reconstruction、三角測量、bundle adjustment、カメラ内部パラメータ推定、本格 3D editor、手動微調整、保存 / export、Runtime への組み込みは行いません。
 
 ## IdealFace / Projection / Shape Processing 中核仕様
 
