@@ -19,7 +19,7 @@
 ## Classification Rule
 
 - active: 今後の主導線として使うもの。
-- legacy: 過去方式として残すが、今後の主導線ではないもの。新機能を追加しない。
+- legacy: 過去方式で、今後の主導線ではないもの。新機能を追加せず、旧5ポーズ方式は段階的削除対象として扱う。
 - debug: 確認用、reference 用として残すが、ユーザー操作の中心にしないもの。新機能を追加しない。
 - remove candidate: 実コード上の未参照、または表示上の重複や混乱が大きいもの。削除は次PRで再確認してから行う。
 
@@ -45,10 +45,10 @@
 | Area | Item | Reason | Notes |
 |---|---|---|---|
 | Step 2-C to 2-F UI | `representativeFrameCandidates` の front / yawPositive / yawNegative / pitchPositive / pitchNegative 候補 UI | 旧 5 ポーズ代表フレーム方式の入口 | Step 2-I は別 UI を持つ。旧 UI には Step 2-I 操作を追加しない |
-| Step 2-D state | `selectedRepresentativeFrames` | front / left / right / up / down / excluded を手動確定する旧 state | Step 2-G v1 と regression check 用として残す可能性 |
+| Step 2-D state | `selectedRepresentativeFrames` | front / left / right / up / down / excluded を手動確定する旧 state | 今後の cleanup で削除対象。必要な場合は Git 履歴を参照する |
 | Step 2-E dataset | `idealLandmarks3DInferenceDataset` | 旧 5 ポーズ方式の 3D 推定用 dataset | 2D 478 landmarks と FacePose を持つ入力 dataset であり、完成した `idealLandmarks3D` ではない |
 | Step 2-G v1 generation | `buildIdealLandmarks3DCandidateResult()` / `inferCandidateZ()` / `inferCandidateConfidence()` | 旧簡易推定方式 | `generationMethod: "step_2_g_v1"`。active の Step 2-I-C とは別方式 |
-| Step 2-G v1 UI | `renderIdealLandmarks3DCandidatePanel()` | 旧 5 ポーズ dataset から candidate を生成する UI | すぐ削除せず、旧方式参照 / regression check 用として隔離候補 |
+| Step 2-G v1 UI | `renderIdealLandmarks3DCandidatePanel()` | 旧 5 ポーズ dataset から candidate を生成する UI | 今後の cleanup で UI / state / JSON preview とあわせて削除対象 |
 | Step 2-D handlers | `selectRepresentativeFrame()` / `clearSelectedRepresentativeFrame()` / `attachRepresentativeFrameSelectionHandler()` | 旧手動ラベル確定操作 | 新機能追加対象外 |
 | Candidate category open state | `representativeCandidateCategoryOpenState` | 旧候補 UI の折りたたみ state | legacy section へ移す候補 |
 
@@ -87,7 +87,7 @@
 | Selected representative frames panel | Step 2-D | legacy | 旧 5 ポーズ手動確定 | legacy section へ移す候補 |
 | Readiness panel | Step 2-E | legacy | 旧 5 ポーズ dataset readiness | legacy section へ移す候補 |
 | Inference dataset panel | Step 2-E | legacy | 旧 5 ポーズ dataset entry 確認 | legacy section へ移す候補 |
-| Step 2-G v1 candidate panel | Step 2-G | legacy | 旧簡易 3D candidate 生成 | regression check 用に隔離候補 |
+| Step 2-G v1 candidate panel | Step 2-G | legacy / remove planned | 旧簡易 3D candidate 生成 | 今後の cleanup で削除対象 |
 | Step 2-H point cloud preview | Step 2-H | active preview | 最後に生成された candidate を点群表示 | `generationMethod` を目立たせる候補 |
 | Representative candidate category cards | Step 2-C/D/F | legacy | front / yaw / pitch 候補と旧ラベル選択 | Step 2-I 操作を追加しない |
 | Debug extracted frame list | Step 2-A/B | debug | 表示用抽出フレーム一覧 | 折りたたみ維持。active workflow から距離を置く |
@@ -169,7 +169,7 @@
 
 | Generation | Classification | Input | Output | Notes |
 |---|---|---|---|---|
-| Step 2-G v1 | legacy | `idealLandmarks3DInferenceDataset` の front / left / right / up / down | `idealLandmarks3DCandidateResult` with `generationMethod: "step_2_g_v1"` | 旧簡易推定 / regression check 用として残す |
+| Step 2-G v1 | legacy / remove planned | `idealLandmarks3DInferenceDataset` の front / left / right / up / down | `idealLandmarks3DCandidateResult` with `generationMethod: "step_2_g_v1"` | Git 履歴から参照できるため、今後の cleanup で削除する |
 | Step 2-I-C | active | `poseAwareInferenceDataset` | `idealLandmarks3DCandidateResult` with `generationMethod: "pose_aware_weighted_z_v1"` | 今後詰める主導線 |
 | Step 2-H preview | active preview | `idealLandmarks3DCandidateResult` | canvas point cloud | どちらの candidate でも最後に生成された結果を表示する |
 
@@ -182,12 +182,29 @@
 - Step 2-G v1 は `legacy.step2Gv1` に整理し、Step 2-I-C の pose-aware data は `poseAware` 配下に整理済み。
 - `natural_v1` / 6 controlPoints は `reference.naturalV1` に整理し、表示用の粗い抽出 frame と video metadata は `debug.videoSource` に整理済み。
 
+## Legacy Five-Pose Removal Policy
+
+旧 Step 2-C〜2-G v1 の front / left / right / up / down 5ポーズ方式は、今後の主導線ではありません。今後の IdealFace Authoring Tool の active workflow は、詳細スキャン、Step 2-I-A の正面基準候補 / 推定に使うフレーム / 除外フレーム、Step 2-I-B の pose-aware inference dataset、Step 2-I-C の `pose_aware_weighted_z_v1`、Step 2-H の `currentCandidate` 3D点群 preview です。
+
+Step 2-G v1 は旧5ポーズ方式の legacy 実装であり、Git 履歴から参照できるため、現在コード上に regression check 用として残し続けません。今後の cleanup で UI / state / dataset / helper / JSON preview / generation logic から段階的に削除します。legacy / debug と分類した UI や helper には今後の新機能を追加せず、confidence debug、手動微調整 UI、保存 / export は Step 2-I 系の active workflow 側に追加します。
+
+削除対象は、旧5ポーズ候補 UI、確定済み代表フレーム UI、3D推測用データセット UI、推測に使う代表フレーム UI、`selectedRepresentativeFrames`、`idealLandmarks3DInferenceDataset`、Step 2-G v1 candidate generation、`generationMethod: "step_2_g_v1"`、`legacy.step2Gv1` JSON preview です。
+
+旧 `representativeFrameCandidates` を削除する前に、Step 2-I 側の score 表示 / weight 計算が必要とする score を `detailedScanFrames` または pose-aware frame 側に移します。
+
+## Legacy Five-Pose Removal Plan
+
+1. PR 1: docs 方針整理。旧5ポーズ方式を「残す」ではなく「削除対象」として整理し、Step 2-I-C を active workflow として明記する。実装コードは変更しない。
+2. PR 2: 旧5ポーズ UI / state / JSON preview を削除する。削除候補は旧5ポーズ候補 UI、確定済み代表フレーム UI、3D推測用データセット UI、推測に使う代表フレーム UI、`selectedRepresentativeFrames`、`idealLandmarks3DInferenceDataset`、`legacy.step2Gv1` JSON preview。Step 2-I 側で score 参照が必要な場合は、先に `detailedScanFrames` / pose-aware frame 側へ移す。
+3. PR 3: Step 2-G v1 生成ロジックを削除する。削除候補は `buildIdealLandmarks3DCandidateResult()`、`inferCandidateZ()`、`inferCandidateConfidence()`、`generationMethod: "step_2_g_v1"`、Step 2-G v1 生成ボタン / summary。削除後の 3D候補生成は Step 2-I-C の `pose_aware_weighted_z_v1` に一本化する。
+4. PR 4: debug / reference UI を整理する。対象は `natural_v1` / 6 controlPoints 表示、表示用の粗いフレーム抽出、video metadata / debug frame list、JSON preview の reference / debug section。これは旧5ポーズ方式削除とは別ステップで扱う。
+
 ## Next Refactor Plan
 
 1. active workflow を `Step 2-I` として画面上位へ独立させ、詳細スキャン、front reference、observation、excluded、pose-aware dataset、pose-aware candidate、Step 2-H preview を一連の導線にする。
-2. Step 2-C to 2-G v1 を legacy section へ折りたたみ、旧 5 ポーズ方式 / regression check 用であることを見出しと JSON に明記する。
+2. Step 2-C to 2-G v1 の legacy UI / state / JSON preview を段階的に削除する。
 3. Step 1 の `natural_v1` / 6 controlPoints と Step 2-A 表示用抽出フレーム一覧を debug / reference section へ移す。
 4. JSON preview を Active summary、Pose-aware dataset、Generated candidate、Legacy debug、Step 1 reference に分ける。今回は実装しない。
-5. `generationMethod` を Step 2-H preview と candidate summary でより目立たせ、Step 2-G v1 と Step 2-I-C の混同を避ける。
+5. `generationMethod` を Step 2-H preview と candidate summary でより目立たせ、Step 2-G v1 削除までの間は Step 2-I-C との混同を避ける。
 6. remove candidate の `formatPoseRange()`、`getCandidateSourceFrames()`、`updateExtractedFrame()` は次PRで `rg` と型チェック後に削除可否を判断する。
 7. 以後の新機能は Step 2-I active workflow に追加し、legacy / debug UI や helper には追加しない。

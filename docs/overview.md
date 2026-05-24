@@ -79,7 +79,17 @@ MP4 動画を入力
 
 確定した代表フレーム群から、まず 3D 推測用データセットを作成します。この dataset は front / left / right / up / down の代表フレームに対応する 2D 478 landmarks と FacePose を持つ入力データであり、excluded は含めません。dataset はまだ 3D の `idealLandmarks3D` 478点そのものではありません。Step 2-G v1 では、この dataset から `idealLandmarks3D` 478点候補を自動推測します。この結果は完成データではなく候補データとして扱います。Step 2-H では Authoring Tool 上で 3D点群を確認できます。手動微調整、IdealFace asset としての保存 / export はまだ未実装です。
 
-Step 2-I-A では、Step 2-G v1 の 5ポーズ固定の代表フレーム方式から pose-aware multi-frame inference dataset へ進むための UI / state 基盤を追加済みです。フレーム解析結果欄は「正面基準候補」「推定に使うフレーム」「除外フレーム」の 3 分類に整理します。正面基準候補は `idealLandmarks3D` の x / y 基準を作るために複数選択できる front reference frames です。推定に使うフレームは、除外されておらず、解析成功し、landmarks 478点と `FacePose` がある observation frames を基本とし、yaw / pitch / roll に応じて 3D 推定への寄与を重み付けします。除外フレームは、ブレ、表情崩れ、口開き、顔切れ、検出崩れ、極端な roll などにより推定に使わないフレームです。Step 2-I 用操作は Step 2-I カード内に閉じ、旧ポーズ別候補 UI は Step 2-G v1 用として残します。推定に使うフレームは、除外判断のため全件操作可能にします。画面上の 3 分類は排他的に表示し、正面基準候補に追加したフレームは推定に使うフレーム一覧から外します。
+Step 2-I-A では、Step 2-G v1 の 5ポーズ固定の代表フレーム方式から pose-aware multi-frame inference dataset へ進むための UI / state 基盤を追加済みです。フレーム解析結果欄は「正面基準候補」「推定に使うフレーム」「除外フレーム」の 3 分類に整理します。正面基準候補は `idealLandmarks3D` の x / y 基準を作るために複数選択できる front reference frames です。推定に使うフレームは、除外されておらず、解析成功し、landmarks 478点と `FacePose` がある observation frames を基本とし、yaw / pitch / roll に応じて 3D 推定への寄与を重み付けします。除外フレームは、ブレ、表情崩れ、口開き、顔切れ、検出崩れ、極端な roll などにより推定に使わないフレームです。Step 2-I 用操作は Step 2-I カード内に閉じ、旧ポーズ別候補 UI には新機能を追加しません。推定に使うフレームは、除外判断のため全件操作可能にします。画面上の 3 分類は排他的に表示し、正面基準候補に追加したフレームは推定に使うフレーム一覧から外します。
+
+## IdealFace Authoring Tool の active workflow と旧5ポーズ方式削除方針
+
+今後の IdealFace Authoring Tool の主導線は、Step 2-I-C の pose-aware weighted z inference v1 です。MP4 入力から詳細スキャンを行い、Step 2-I-A で正面基準候補 / 推定に使うフレーム / 除外フレームを整理し、Step 2-I-B で pose-aware inference dataset を作成し、Step 2-I-C で `pose_aware_weighted_z_v1` の 3D候補を生成し、Step 2-H の `currentCandidate` 3D点群 preview で確認します。
+
+旧 Step 2-C〜2-G v1 の front / left / right / up / down 5ポーズ方式は legacy 実装です。Git 履歴から参照できるため、現在コード上に regression check 用として残し続けず、今後の cleanup で UI / state / dataset / helper / JSON preview / generation logic から段階的に削除します。confidence debug、手動微調整 UI、保存 / export は Step 2-I 系の active workflow 側に追加します。
+
+削除対象は、旧5ポーズ候補 UI、確定済み代表フレーム UI、3D推測用データセット UI、推測に使う代表フレーム UI、`selectedRepresentativeFrames`、`idealLandmarks3DInferenceDataset`、Step 2-G v1 candidate generation、`generationMethod: "step_2_g_v1"`、`legacy.step2Gv1` JSON preview です。旧 `representativeFrameCandidates` を削除する前に、Step 2-I 側の score 表示 / weight 計算が必要とする score を `detailedScanFrames` または pose-aware frame 側に移します。
+
+legacy / debug と分類した UI や helper には、今後の新機能を追加しません。新機能は active workflow 側に追加します。旧ポーズ別候補 UI や Step 1 / Step 2-A debug 表示には Step 2-I 以降の操作を追加しません。
 
 Step 2-I の操作フローは、正面基準候補を複数選び、使いたくないフレームを除外し、除外されていない解析成功フレームを pose 角度に応じて observation として利用する流れです。`left / right / up / down` をユーザーが必ず手動指定する方式にはせず、将来的には `FacePose` の yaw / pitch から推定寄与を自動判断します。内部説明では `frontReferenceFrames`、`usableObservationFrames`、`excludedFrames` を使ってよいものとします。Step 2-I-A では `frontReferenceFrameIds` / `excludedFrameIds` と派生 `usableObservationFrames` summary、JSON preview 概要までを実装済みです。Step 2-I-B では pose-aware multi-frame inference dataset summary と JSON preview の `poseAwareInferenceDataset` 概要を実装済みです。pose-aware 3D候補生成ロジック、厳密な 3D reconstruction、三角測量、bundle adjustment、カメラ内部パラメータ推定、手動微調整、保存 / export、Runtime 組み込みは行いません。
 
@@ -154,7 +164,7 @@ Step 2-F 改良では、代表フレーム候補抽出用の詳細スキャン�
 
 3D 478点候補の自動推測 v1 は Step 2-G で追加済みです。Step 2-H では 3D点群 preview を追加済みです。手動微調整、保存 / export、複数画像入力は引き続き未実装です。詳細スキャンや候補振り分け、3D候補生成処理、3D点群 preview は IdealFace Authoring Tool の責務であり、Runtime には入れません。
 
-Step 2-G v1 は、front / left / right / up / down の代表フレームに依存する現在実装済みの簡易推定として残します。Step 2-I 以降は、正面基準候補、推定に使うフレーム、除外フレームに整理し、除外されていない解析成功フレームを yaw / pitch / roll の角度に応じて連続的に使う pose-aware multi-frame inference へ移行する方針です。旧 Step 2-F / Step 2-G v1 用の候補 UI は代表フレーム候補中心に表示し、Step 2-I 用 UI では除外判断のため推定に使うフレームを全件操作可能にします。
+Step 2-G v1 は、front / left / right / up / down の代表フレームに依存する旧5ポーズ方式の legacy 実装です。Step 2-I 以降は、正面基準候補、推定に使うフレーム、除外フレームに整理し、除外されていない解析成功フレームを yaw / pitch / roll の角度に応じて連続的に使う pose-aware multi-frame inference を active workflow とします。旧 Step 2-F / Step 2-G v1 用の候補 UI は今後の cleanup で削除対象とし、Step 2-I 用 UI では除外判断のため推定に使うフレームを全件操作可能にします。
 
 ## Runtime と Authoring の分離
 
@@ -291,7 +301,7 @@ preview の近くには landmark count、視点、x / y / z の min / max、aver
 
 ## IdealFace Authoring Tool Step 2-I
 
-Step 2-I-A は実装済みの UI / state 基盤です。Step 2-G v1 の `front / left / right / up / down` 代表フレーム方式を置き換えるのではなく、現行 v1 を残したうえで、pose-aware multi-frame inference dataset へ進むための準備として扱います。
+Step 2-I-A は実装済みの UI / state 基盤です。Step 2-G v1 の `front / left / right / up / down` 代表フレーム方式は旧5ポーズ方式の legacy 実装として扱い、今後の cleanup で削除します。Step 2-I-A は pose-aware multi-frame inference dataset へ進むための準備として扱います。
 
 Step 2-I の UI 表示名:
 
@@ -303,7 +313,7 @@ Step 2-I の UI 表示名:
 
 Step 2-I-A では、選択状態として `frontReferenceFrameIds` と `excludedFrameIds` を持ちます。`usableObservationFrames` は state として直接持たず、解析成功していること、landmarks が 478 点あること、`FacePose` があること、`excludedFrameIds` に含まれていないことから派生します。3D候補生成前の summary として、正面基準候補数、推定に使うフレーム数、除外フレーム数、yaw / pitch / roll の範囲、状態、警告を表示します。JSON preview には `poseAwareMultiFrameInference` の概要を出しますが、478 landmarks 全文やサムネイル data URL 全文は出しません。
 
-Step 2-I-B は実装済みです。正面基準候補から base x / y 用の `frontReferenceFrames` を作り、推定に使うフレームから `observationFrames` を作ります。`observationFrames` は固定分類ではなく pose vector として保持し、yaw も pitch も大きいフレームは mixed pose observation として扱います。Step 2-I-B では dataset 作成までに留め、`idealLandmarks3D` 新生成ロジック、pose-aware weighted z inference、Step 2-G v1 の置き換えは行いません。
+Step 2-I-B は実装済みです。正面基準候補から base x / y 用の `frontReferenceFrames` を作り、推定に使うフレームから `observationFrames` を作ります。`observationFrames` は固定分類ではなく pose vector として保持し、yaw も pitch も大きいフレームは mixed pose observation として扱います。Step 2-I-B は dataset 作成までに留め、3D候補生成は Step 2-I-C の `pose_aware_weighted_z_v1` を active workflow として扱います。
 
 Step 2-I-C では、Step 2-I-B の dataset を使い、observationFrame の 2D landmarks を roll 角で逆回転補正してから、yaw / pitch / score / weight に基づく pose-aware weighted z inference v1 で `idealLandmarks3D` 478点候補を生成します。ただし厳密な 3D reconstruction、三角測量、bundle adjustment、カメラ内部パラメータ推定、本格 3D editor、手動微調整、保存 / export、Runtime への組み込みは行いません。
 

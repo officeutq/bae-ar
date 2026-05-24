@@ -957,7 +957,9 @@ Step 2-G の制限:
 - 3D点群 preview は Step 2-H で実装済み。preview は確認用表示であり、視点回転、zoom、pan、y 軸反転、z 表示倍率調整は preview camera / view transform の操作として扱う。手動微調整、保存 / export はまだ実装しない
 - 複数画像入力はまだ実装しない
 
-Step 2-G v1 は実装済みの簡易推定として残します。Step 2-I-A では、5ポーズ固定の代表フレーム方式から pose-aware multi-frame inference dataset へ進むための UI / state 基盤を追加済みです。Step 2-I-B では、正面基準候補、推定に使うフレーム、除外フレームから pose-aware dataset を作成済みです。次の Step 2-I-C では、observation landmarks を roll 補正してから yaw / pitch / roll / weight を使う pose-aware weighted z inference v1 へ進む方針です。
+Step 2-G v1 は旧5ポーズ方式の legacy 実装です。旧方式は Git 履歴から参照できるため、現在コード上に regression check 用として残し続けず、今後の cleanup で UI / state / helper / JSON preview / generation logic から段階的に削除します。Step 2-I-A では、5ポーズ固定の代表フレーム方式から pose-aware multi-frame inference dataset へ進むための UI / state 基盤を追加済みです。Step 2-I-B では、正面基準候補、推定に使うフレーム、除外フレームから pose-aware dataset を作成済みです。Step 2-I-C では、observation landmarks を roll 補正してから yaw / pitch / roll / weight を使う pose-aware weighted z inference v1 を active workflow として扱います。
+
+削除対象は、旧5ポーズ候補 UI、確定済み代表フレーム UI、3D推測用データセット UI、推測に使う代表フレーム UI、`selectedRepresentativeFrames`、`idealLandmarks3DInferenceDataset`、Step 2-G v1 candidate generation、`generationMethod: "step_2_g_v1"`、`legacy.step2Gv1` JSON preview です。旧 `representativeFrameCandidates` を削除する前に、Step 2-I 側の score 表示 / weight 計算が必要とする score を `detailedScanFrames` または pose-aware frame 側に移します。legacy / debug と分類した UI や helper には今後の新機能を追加せず、confidence debug、手動微調整 UI、保存 / export は Step 2-I 系の active workflow 側に追加します。
 
 3D候補生成処理は IdealFace Authoring Tool の責務です。Engine Runtime には 3D推測処理や Authoring UI を入れません。Beauty Studio にも Authoring 用タブは追加しません。
 
@@ -993,7 +995,7 @@ Step 2-H の制限:
 
 Step 2-I の目的:
 
-- Step 2-G v1 の `front / left / right / up / down` 代表フレーム方式を、現在実装済みの簡易推定として残す
+- Step 2-G v1 の `front / left / right / up / down` 代表フレーム方式を legacy 実装として扱い、今後の cleanup で段階的に削除する
 - Step 2-I-A として、フレーム選択用の UI / state 基盤を先に追加する
 - Step 2-I-B として、`left / right / up / down` 固定分類を持たない pose-aware multi-frame inference dataset を作成する
 - Step 2-I-C として、この dataset の observation landmarks を roll 補正し、pose-aware weighted z inference v1 で `idealLandmarks3D` 478点候補を生成する
@@ -1200,7 +1202,7 @@ type PoseAwareFrame = {
 Step 2-I-B で実装しないもの:
 
 - `idealLandmarks3D` 新生成ロジック
-- Step 2-G v1 の置き換え
+- Step 2-G v1 の削除
 - pose-aware weighted z inference
 - 手動微調整
 - 保存 / export
