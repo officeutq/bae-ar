@@ -20,6 +20,12 @@ This is only the Runtime loading foundation. Full 478-point projection, Studio f
 
 This only verifies asset import and Engine reflection. Full 478-point Projection, Studio overlay for projected ideal landmarks, and Authoring Tool generation logic are still not included.
 
+## idealLandmarks3D Projection v1
+
+`packages/engine` now exposes a Runtime Projection v1 helper for loaded IdealFace assets with 478 `idealLandmarks3D` points. It rotates the ideal 3D landmarks by the current `FacePose` and returns projected ideal 2D landmarks plus x / y / z range summary.
+
+`apps/studio` can show the 478-point Projection status, landmark count, and x / y / z ranges in debug output, and draws the projected ideal landmarks as small overlay points when available. Current-vs-ideal difference, `CorrectionPlan`, and Shape Warp are still not implemented.
+
 BAE AR は、リアルタイム顔加工・AR 表現を行う Beauty Engine Runtime と、その開発・検証・調整を行う Beauty Studio、将来の authoring tool 群を含むプロジェクトです。
 
 目的は、単なるフィルターではなく、本番サービスに組み込める自然で破綻しにくい Beauty Engine を育てることです。

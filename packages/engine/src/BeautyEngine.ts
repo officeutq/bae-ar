@@ -11,6 +11,7 @@ import {
 import type { FaceFrame } from "./face/FaceFrame"
 import type {
   IdealFace,
+  IdealLandmarks3DProjectionResult,
   IdealFacePreset,
   IdealFaceProjectionResult,
   ProjectionDifference,
@@ -19,6 +20,7 @@ import {
   calculateProjectionDifference,
   DEFAULT_IDEAL_FACE_PRESETS,
   projectIdealFaceControlPoints,
+  projectIdealLandmarks3D,
 } from "./ideal-face"
 
 type FaceFrameListener = (frame: FaceFrame) => void
@@ -160,6 +162,18 @@ export class BeautyEngine {
     return calculateProjectionDifference(
       this.currentFaceGeometry,
       this.getIdealFaceProjection(),
+    )
+  }
+
+  getIdealLandmarks3DProjection(): IdealLandmarks3DProjectionResult {
+    return this.projectIdealLandmarks3D()
+  }
+
+  projectIdealLandmarks3D(): IdealLandmarks3DProjectionResult {
+    return projectIdealLandmarks3D(
+      this.idealFace,
+      this.currentFaceFrame?.pose,
+      this.currentFaceFrame?.detected ?? false,
     )
   }
 

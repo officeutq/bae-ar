@@ -10,6 +10,7 @@ import type {
   FaceGeometry,
   FaceGeometryPoint,
   IdealFace,
+  IdealLandmarks3DProjectionResult,
   IdealFaceProjectionResult,
   ProjectionDifference,
 } from "@bae-ar/engine"
@@ -34,6 +35,7 @@ type DebugSection =
   | "faceFrame"
   | "faceGeometry"
   | "idealFace"
+  | "idealLandmarks3DProjection"
   | "idealFaceProjection"
   | "idealFaceProjectionDifference"
   | "mediaPipe"
@@ -86,6 +88,7 @@ async function bootstrap(): Promise<void> {
     faceFrame: false,
     faceGeometry: false,
     idealFace: false,
+    idealLandmarks3DProjection: false,
     idealFaceProjection: false,
     idealFaceProjectionDifference: false,
     mediaPipe: false,
@@ -302,6 +305,44 @@ idealLandmarks3D 478点の Projection 完全対応は次ステップです。
     return `検証エラー: ${error}`
   }
 
+  function formatProjectionSummary(
+    summary: IdealLandmarks3DProjectionResult["summary"],
+  ): string {
+    if (!summary) {
+      return `x min / max: なし
+y min / max: なし
+z min / max: なし`
+    }
+
+    return `x min / max: ${formatNumber(summary.xMin)} / ${formatNumber(summary.xMax)}
+y min / max: ${formatNumber(summary.yMin)} / ${formatNumber(summary.yMax)}
+z min / max: ${formatNumber(summary.zMin)} / ${formatNumber(summary.zMax)}`
+  }
+
+  function formatIdealLandmarks3DProjectionPreview(
+    projection: IdealLandmarks3DProjectionResult,
+    frame: FaceFrame | undefined,
+  ): string {
+    if (projection.status !== "projected") {
+      return `IdealFace 478 Projection
+status: ${projection.status}
+landmarks: ${projection.landmarkCount}
+idealFace: ${projection.sourceIdealFaceName ?? "なし"} (${projection.sourceIdealFaceId ?? "なし"})
+pose: ${frame ? `yaw ${formatNumber(frame.pose.yaw)} / pitch ${formatNumber(frame.pose.pitch)} / roll ${formatNumber(frame.pose.roll)}` : "なし"}
+${formatProjectionSummary(projection.summary)}
+
+idealLandmarks3D 478点 Projection は未実行です。
+IdealFace asset JSON を読み込み、顔検出後に確認できます。`
+    }
+
+    return `IdealFace 478 Projection
+status: ${projection.status}
+landmarks: ${projection.landmarkCount}
+idealFace: ${projection.sourceIdealFaceName ?? "なし"} (${projection.sourceIdealFaceId ?? "なし"})
+pose: ${frame ? `yaw ${formatNumber(frame.pose.yaw)} / pitch ${formatNumber(frame.pose.pitch)} / roll ${formatNumber(frame.pose.roll)}` : "なし"}
+${formatProjectionSummary(projection.summary)}`
+  }
+
   function formatIdealFaceProjectionPreview(
     projection: IdealFaceProjectionResult,
   ): string {
@@ -358,6 +399,7 @@ ${pointPreview}`
     frame: FaceFrame | undefined,
     geometry: FaceGeometry | undefined,
     idealFace: IdealFace,
+    idealLandmarks3DProjection: IdealLandmarks3DProjectionResult,
     idealFaceProjection: IdealFaceProjectionResult,
     projectionDifference: ProjectionDifference,
     availableIdealFaces: IdealFace[],
@@ -410,6 +452,8 @@ ${formatIdealFacePreview(idealFace)}
 IdealFace JSON import:
 ${formatIdealFaceAssetImportState(importState)}
 
+${formatIdealLandmarks3DProjectionPreview(idealLandmarks3DProjection, frame)}
+
 ${formatIdealFaceProjectionPreview(idealFaceProjection)}
 
 ${formatProjectionDifferencePreview(projectionDifference)}
@@ -459,6 +503,7 @@ Camera:
       drawLandmarkOverlay(
         latestFaceFrame,
         engine.getFaceGeometry(),
+        engine.getIdealLandmarks3DProjection(),
         engine.getIdealFaceProjection(),
         engine.getIdealFaceProjectionDifference(),
       )
@@ -490,6 +535,7 @@ Camera:
   function drawLandmarkOverlay(
     frame: FaceFrame | undefined,
     geometry: FaceGeometry | undefined,
+    idealLandmarks3DProjection: IdealLandmarks3DProjectionResult,
     idealFaceProjection: IdealFaceProjectionResult,
     projectionDifference: ProjectionDifference,
   ): void {
@@ -522,6 +568,19 @@ Camera:
       context.arc(x, y, 1.5, 0, Math.PI * 2)
       context.fill()
     })
+
+    if (idealLandmarks3DProjection.status === "projected") {
+      context.fillStyle = "#c084fc"
+
+      idealLandmarks3DProjection.landmarks.forEach((landmark) => {
+        const x = landmark.x * overlayCanvas.width
+        const y = landmark.y * overlayCanvas.height
+
+        context.beginPath()
+        context.arc(x, y, 1.2, 0, Math.PI * 2)
+        context.fill()
+      })
+    }
 
     context.fillStyle = "#ff3f81"
 
@@ -730,6 +789,7 @@ Camera:
     const frame = engine.getFaceFrame() ?? latestFaceFrame
     const geometry = engine.getFaceGeometry()
     const idealFace = engine.getIdealFace()
+    const idealLandmarks3DProjection = engine.getIdealLandmarks3DProjection()
     const idealFaceProjection = engine.getIdealFaceProjection()
     const projectionDifference = engine.getIdealFaceProjectionDifference()
     const availableIdealFaces = engine.getAvailableIdealFaces()
@@ -737,6 +797,7 @@ Camera:
       frame,
       geometry,
       idealFace,
+      idealLandmarks3DProjection,
       idealFaceProjection,
       projectionDifference,
       availableIdealFaces,
@@ -784,6 +845,7 @@ Detection: ${formatDetection(frame)}
 Landmarks: ${frame?.landmarks.length ?? 0}
 顔姿勢: yaw ${frame ? formatNumber(frame.pose.yaw) : "なし"} / pitch ${frame ? formatNumber(frame.pose.pitch) : "なし"} / roll ${frame ? formatNumber(frame.pose.roll) : "なし"}
 IdealFace: ${idealFace.metadata.name} (${idealFace.metadata.id}) / ${idealFace.metadata.version} / controlPoints ${idealFace.model.controlPoints.length} 点 / idealLandmarks3D ${idealFace.model.idealLandmarks3D?.length ?? 0} 点
+IdealFace 478 Projection: ${idealLandmarks3DProjection.status} / ${idealLandmarks3DProjection.landmarkCount} 点
 Projection: ${idealFaceProjection.status} / ${idealFaceProjection.points.length} 点
 差分: ${projectionDifference.status} / 平均 ${formatNullableNumber(projectionDifference.averageDistance)} / 最大 ${formatNullableNumber(projectionDifference.maxDistance)}
 利用可能IdealFace: ${availableIdealFaces.length}
@@ -825,6 +887,10 @@ ${formatPosePreview(frame)}`)}</pre>
         <details data-debug-section="idealFace"${detailsOpenAttribute("idealFace")}>
           <summary>IdealFace 確認</summary>
           <pre>${escapeHtml(formatIdealFacePreview(idealFace))}</pre>
+        </details>
+        <details data-debug-section="idealLandmarks3DProjection"${detailsOpenAttribute("idealLandmarks3DProjection")}>
+          <summary>IdealFace 478 Projection 確認</summary>
+          <pre>${escapeHtml(formatIdealLandmarks3DProjectionPreview(idealLandmarks3DProjection, frame))}</pre>
         </details>
         <details data-debug-section="idealFaceProjection"${detailsOpenAttribute("idealFaceProjection")}>
           <summary>IdealFace Projection 確認</summary>
