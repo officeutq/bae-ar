@@ -187,6 +187,36 @@ interface PoseAwareBasePoint {
   y: number
 }
 
+interface LandmarkBoundsSummary {
+  pointCount: number
+  xMin: number
+  xMax: number
+  yMin: number
+  yMax: number
+  zMin?: number
+  zMax?: number
+  width: number
+  height: number
+  zRange?: number
+  aspectRatio: number | null
+}
+
+interface VideoAspectSummary {
+  width: number | null
+  height: number | null
+  aspectRatio: number | null
+}
+
+interface CoordinateAspectComparison {
+  videoAspectRatio: number | null
+  rawCandidateAspectRatio: number | null
+  candidateAspectRatioIfConvertedToVideoPixels: number | null
+  candidateAspectRatioIfXScaledByVideoAspect: number | null
+  candidateAspectRatioIfYScaledByInverseVideoAspect: number | null
+  candidateAspectRatioIfXScaledByInverseVideoAspect: number | null
+  candidateAspectRatioIfYScaledByVideoAspect: number | null
+}
+
 interface PoseAwareCorrectedLandmark2D {
   index: number
   x: number
@@ -339,6 +369,9 @@ interface PointCloudPreviewSummary {
   xRange: NumberRange | null
   yRange: NumberRange | null
   zRange: NumberRange | null
+  width: number
+  height: number
+  aspectRatio: number | null
   averageConfidence: number
   minConfidence: number
   maxConfidence: number
@@ -440,6 +473,7 @@ function renderVideoMetadata(): string {
   const duration = videoSource?.duration ?? null
   const videoWidth = videoSource?.videoWidth ?? null
   const videoHeight = videoSource?.videoHeight ?? null
+  const videoAspect = getVideoAspectSummary().aspectRatio
 
   return `
     <dl>
@@ -454,6 +488,10 @@ function renderVideoMetadata(): string {
       <div>
         <dt>動画サイズ</dt>
         <dd>${formatPixels(videoWidth, videoHeight)}</dd>
+      </div>
+      <div>
+        <dt>video aspect ratio</dt>
+        <dd>${formatOptionalNumber(videoAspect)}</dd>
       </div>
     </dl>
   `
@@ -764,6 +802,96 @@ function averageNumbers(values: number[]): number {
     : values.reduce((sum, value) => sum + value, 0) / values.length
 }
 
+function roundDebugNumber(value: number): number {
+  return Number(value.toFixed(4))
+}
+
+function buildLandmarkBoundsSummary(
+  points: Array<{ x: number; y: number; z?: number }>,
+): LandmarkBoundsSummary | null {
+  const finitePoints = points.filter(
+    (point) => Number.isFinite(point.x) && Number.isFinite(point.y),
+  )
+
+  if (finitePoints.length === 0) {
+    return null
+  }
+
+  const xValues = finitePoints.map((point) => point.x)
+  const yValues = finitePoints.map((point) => point.y)
+  const zValues = finitePoints
+    .map((point) => point.z)
+    .filter((value): value is number => Number.isFinite(value))
+  const xMin = Math.min(...xValues)
+  const xMax = Math.max(...xValues)
+  const yMin = Math.min(...yValues)
+  const yMax = Math.max(...yValues)
+  const width = xMax - xMin
+  const height = yMax - yMin
+  const summary: LandmarkBoundsSummary = {
+    pointCount: finitePoints.length,
+    xMin: roundDebugNumber(xMin),
+    xMax: roundDebugNumber(xMax),
+    yMin: roundDebugNumber(yMin),
+    yMax: roundDebugNumber(yMax),
+    width: roundDebugNumber(width),
+    height: roundDebugNumber(height),
+    aspectRatio:
+      height > 0 ? roundDebugNumber(width / height) : null,
+  }
+
+  if (zValues.length > 0) {
+    const zMin = Math.min(...zValues)
+    const zMax = Math.max(...zValues)
+
+    summary.zMin = roundDebugNumber(zMin)
+    summary.zMax = roundDebugNumber(zMax)
+    summary.zRange = roundDebugNumber(zMax - zMin)
+  }
+
+  return summary
+}
+
+function getVideoAspectSummary(): VideoAspectSummary {
+  const width = videoSource?.videoWidth ?? null
+  const height = videoSource?.videoHeight ?? null
+
+  return {
+    width,
+    height,
+    aspectRatio:
+      width !== null && height !== null && height > 0
+        ? roundDebugNumber(width / height)
+        : null,
+  }
+}
+
+function buildCoordinateAspectComparison(
+  candidateBounds: LandmarkBoundsSummary | null,
+): CoordinateAspectComparison {
+  const videoAspect = getVideoAspectSummary().aspectRatio
+  const rawAspect = candidateBounds?.aspectRatio ?? null
+  const sameUnitVideoPixelAspect =
+    rawAspect !== null && videoAspect !== null
+      ? roundDebugNumber(rawAspect * videoAspect)
+      : null
+  const inverseVideoAspect =
+    rawAspect !== null && videoAspect !== null && videoAspect > 0
+      ? roundDebugNumber(rawAspect / videoAspect)
+      : null
+
+  return {
+    videoAspectRatio: videoAspect,
+    rawCandidateAspectRatio: rawAspect,
+    candidateAspectRatioIfConvertedToVideoPixels: sameUnitVideoPixelAspect,
+    candidateAspectRatioIfXScaledByVideoAspect: sameUnitVideoPixelAspect,
+    candidateAspectRatioIfYScaledByInverseVideoAspect:
+      sameUnitVideoPixelAspect,
+    candidateAspectRatioIfXScaledByInverseVideoAspect: inverseVideoAspect,
+    candidateAspectRatioIfYScaledByVideoAspect: inverseVideoAspect,
+  }
+}
+
 function buildIdealLandmarks3DCandidateSummary(
   landmarks: IdealLandmark3DCandidate[],
   counts: {
@@ -826,6 +954,54 @@ function toCurrentCandidatePreview(
     },
     export: exportSummary,
     preview: result.landmarksPreview,
+  }
+}
+
+function toCoordinateDebugPreview(
+  poseAwareDataset: PoseAwareInferenceDataset,
+  currentCandidate: IdealLandmarks3DCandidateResult,
+): unknown {
+  const frontReferenceBasePoints = buildPoseAwareBasePoints(
+    poseAwareDataset.frontReferenceFrames,
+  )
+  const frontReferenceBaseBounds = buildLandmarkBoundsSummary(
+    frontReferenceBasePoints ?? [],
+  )
+  const candidateBounds = buildLandmarkBoundsSummary(currentCandidate.landmarks)
+  const aspectComparison = buildCoordinateAspectComparison(candidateBounds)
+
+  return {
+    video: getVideoAspectSummary(),
+    frontReferenceBase: {
+      frameCount: poseAwareDataset.frontReferenceFrames.length,
+      bounds: frontReferenceBaseBounds,
+    },
+    currentCandidate: {
+      status: currentCandidate.status,
+      generationMethod: currentCandidate.generationMethod,
+      landmarkCount: currentCandidate.landmarkCount,
+      bounds: candidateBounds,
+    },
+    aspectComparison,
+    previewDisplay: {
+      centeredBeforeRotation: true,
+      yAxisInvertedForCanvas: true,
+      zDisplayScale: POINT_CLOUD_DEPTH_DISPLAY_SCALE,
+      autoFitToCanvas: true,
+      note:
+        "Point cloud preview display transforms do not mutate candidate data.",
+    },
+    export: {
+      schemaVersion: IDEAL_FACE_ASSET_SCHEMA_VERSION,
+      coordinateSpace: IDEAL_FACE_ASSET_COORDINATE_SPACE,
+      downloadJsonIncludesCoordinateDebug: false,
+      idealLandmarks3DValuesChangedByDebug: false,
+    },
+    notes: [
+      "frontReference base x/y are built from roll-corrected MediaPipe image-normalized landmarks.",
+      "pose_aware_weighted_z_v1 currently copies base x/y into idealLandmarks3D without applying video aspect correction.",
+      "Export keeps idealLandmarks3D values and coordinateSpace unchanged in this investigation PR.",
+    ],
   }
 }
 
@@ -992,16 +1168,94 @@ function formatNumberRange(range: NumberRange | null): string {
     : "なし"
 }
 
+function formatNullableDebugNumber(value: number | null | undefined): string {
+  return value === null || value === undefined ? "none" : formatNumber(value)
+}
+
+function renderBoundsSummaryRows(
+  bounds: LandmarkBoundsSummary | null,
+): string {
+  return `
+    <div>
+      <dt>point count</dt>
+      <dd>${bounds?.pointCount ?? 0}</dd>
+    </div>
+    <div>
+      <dt>x min / max</dt>
+      <dd>${formatNullableDebugNumber(bounds?.xMin)} / ${formatNullableDebugNumber(bounds?.xMax)}</dd>
+    </div>
+    <div>
+      <dt>y min / max</dt>
+      <dd>${formatNullableDebugNumber(bounds?.yMin)} / ${formatNullableDebugNumber(bounds?.yMax)}</dd>
+    </div>
+    <div>
+      <dt>z min / max</dt>
+      <dd>${formatNullableDebugNumber(bounds?.zMin)} / ${formatNullableDebugNumber(bounds?.zMax)}</dd>
+    </div>
+    <div>
+      <dt>width / height</dt>
+      <dd>${formatNullableDebugNumber(bounds?.width)} / ${formatNullableDebugNumber(bounds?.height)}</dd>
+    </div>
+    <div>
+      <dt>z range</dt>
+      <dd>${formatNullableDebugNumber(bounds?.zRange)}</dd>
+    </div>
+    <div>
+      <dt>aspect ratio</dt>
+      <dd>${formatNullableDebugNumber(bounds?.aspectRatio)}</dd>
+    </div>
+  `
+}
+
+function renderCoordinateAspectComparisonRows(
+  comparison: CoordinateAspectComparison,
+): string {
+  return `
+    <div>
+      <dt>video aspect ratio</dt>
+      <dd>${formatNullableDebugNumber(comparison.videoAspectRatio)}</dd>
+    </div>
+    <div>
+      <dt>raw candidate aspect</dt>
+      <dd>${formatNullableDebugNumber(comparison.rawCandidateAspectRatio)}</dd>
+    </div>
+    <div>
+      <dt>candidate aspect if converted to video pixels</dt>
+      <dd>${formatNullableDebugNumber(comparison.candidateAspectRatioIfConvertedToVideoPixels)}</dd>
+    </div>
+    <div>
+      <dt>candidate aspect if x scaled by video aspect</dt>
+      <dd>${formatNullableDebugNumber(comparison.candidateAspectRatioIfXScaledByVideoAspect)}</dd>
+    </div>
+    <div>
+      <dt>candidate aspect if y scaled by inverse video aspect</dt>
+      <dd>${formatNullableDebugNumber(comparison.candidateAspectRatioIfYScaledByInverseVideoAspect)}</dd>
+    </div>
+    <div>
+      <dt>candidate aspect if x scaled by inverse video aspect</dt>
+      <dd>${formatNullableDebugNumber(comparison.candidateAspectRatioIfXScaledByInverseVideoAspect)}</dd>
+    </div>
+    <div>
+      <dt>candidate aspect if y scaled by video aspect</dt>
+      <dd>${formatNullableDebugNumber(comparison.candidateAspectRatioIfYScaledByVideoAspect)}</dd>
+    </div>
+  `
+}
+
 function getPointCloudPreviewSummary(
   landmarks: IdealLandmark3DCandidate[],
 ): PointCloudPreviewSummary {
   const confidenceValues = landmarks.map((landmark) => landmark.confidence)
+  const bounds = buildLandmarkBoundsSummary(landmarks)
 
   return {
     landmarkCount: landmarks.length,
     xRange: getNumberRange(landmarks.map((landmark) => landmark.x)),
     yRange: getNumberRange(landmarks.map((landmark) => landmark.y)),
     zRange: getNumberRange(landmarks.map((landmark) => landmark.z)),
+    width: bounds?.width ?? 0,
+    height: bounds?.height ?? 0,
+    aspectRatio: bounds?.aspectRatio ?? null,
     averageConfidence: Number(averageNumbers(confidenceValues).toFixed(4)),
     minConfidence:
       confidenceValues.length === 0
@@ -2250,6 +2504,16 @@ function renderPoseAwareIdealLandmarks3DCandidatePanel(
 function renderGeneratedPoseAwareCandidateSummary(
   result: IdealLandmarks3DCandidateResult,
 ): string {
+  const dataset = getPoseAwareInferenceDataset()
+  const frontReferenceBasePoints = buildPoseAwareBasePoints(
+    dataset.frontReferenceFrames,
+  )
+  const frontReferenceBaseBounds = buildLandmarkBoundsSummary(
+    frontReferenceBasePoints ?? [],
+  )
+  const candidateBounds = buildLandmarkBoundsSummary(result.landmarks)
+  const aspectComparison = buildCoordinateAspectComparison(candidateBounds)
+
   return `
     <dl class="pose-aware-summary-list">
       <div>
@@ -2293,6 +2557,24 @@ function renderGeneratedPoseAwareCandidateSummary(
         <dd>${result.summary.lowConfidenceLandmarkCount}</dd>
       </div>
     </dl>
+    <div class="coordinate-debug-block">
+      <h5>front reference base bounds</h5>
+      <dl class="pose-aware-summary-list">
+        <div>
+          <dt>frame count</dt>
+          <dd>${dataset.frontReferenceFrames.length}</dd>
+        </div>
+        ${renderBoundsSummaryRows(frontReferenceBaseBounds)}
+      </dl>
+      <h5>candidate bounds</h5>
+      <dl class="pose-aware-summary-list">
+        ${renderBoundsSummaryRows(candidateBounds)}
+      </dl>
+      <h5>coordinate aspect debug</h5>
+      <dl class="pose-aware-summary-list">
+        ${renderCoordinateAspectComparisonRows(aspectComparison)}
+      </dl>
+    </div>
     <p class="candidate-result-note">${escapeHtml(result.message ?? "")}</p>
     ${renderIdealLandmarks3DCandidatePreview(result.landmarksPreview)}
   `
@@ -2302,6 +2584,7 @@ function renderIdealFaceAssetExportPanel(
   result: IdealLandmarks3DCandidateResult,
 ): string {
   const exportSummary = buildIdealFaceAssetExportSummary(result, new Date())
+  const candidateBounds = buildLandmarkBoundsSummary(result.landmarks)
   const disabled = !exportSummary.canExport
 
   return `
@@ -2337,6 +2620,18 @@ function renderIdealFaceAssetExportPanel(
         <div>
           <dt>landmarkCount</dt>
           <dd>${exportSummary.landmarkCount}</dd>
+        </div>
+        <div>
+          <dt>coordinateSpace</dt>
+          <dd>${IDEAL_FACE_ASSET_COORDINATE_SPACE}</dd>
+        </div>
+        <div>
+          <dt>export candidate width / height</dt>
+          <dd>${formatNullableDebugNumber(candidateBounds?.width)} / ${formatNullableDebugNumber(candidateBounds?.height)}</dd>
+        </div>
+        <div>
+          <dt>export candidate aspect ratio</dt>
+          <dd>${formatNullableDebugNumber(candidateBounds?.aspectRatio)}</dd>
         </div>
         <div>
           <dt>fileName</dt>
@@ -2617,6 +2912,14 @@ function renderIdealLandmarks3DPointCloudPreviewPanel(): string {
         <div>
           <dt>z min / max</dt>
           <dd>${formatNumberRange(summary.zRange)}</dd>
+        </div>
+        <div>
+          <dt>width / height</dt>
+          <dd>${formatNumber(summary.width)} / ${formatNumber(summary.height)}</dd>
+        </div>
+        <div>
+          <dt>aspect ratio</dt>
+          <dd>${formatNullableDebugNumber(summary.aspectRatio)}</dd>
         </div>
         <div>
           <dt>average confidence</dt>
@@ -2944,6 +3247,10 @@ function buildAuthoringDebugPreview(): unknown {
       candidate: toPoseAwareCandidatePreview(),
     },
     currentCandidate: toCurrentCandidatePreview(currentCandidate),
+    coordinateDebug: toCoordinateDebugPreview(
+      poseAwareDataset,
+      currentCandidate,
+    ),
     reference: {
       naturalV1: toNaturalV1ReferencePreview(),
     },
