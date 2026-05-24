@@ -555,3 +555,8 @@ projected ideal 478 landmarks
 ```
 
 `CorrectionPlan` は姿勢補正を担当しません。Projection 後の ideal 2D landmarks は、すでに現在姿勢を反映している前提で補正量の決定へ渡されます。
+
+
+## IdealFace Authoring Tool Current Generation Path
+
+Step 2-G v1 five-pose candidate generation has been removed from the current code. The active 3D candidate generation path is Step 2-I-C `pose_aware_weighted_z_v1`, and the JSON preview remains centered on `activeSummary`, `poseAware`, `currentCandidate`, `reference`, and `debug`. Runtime and Beauty Studio do not include authoring generation logic.

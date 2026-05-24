@@ -409,3 +409,8 @@ Step 2-H の制限:
 - JSON preview には 478点全文や canvas data URL を出さず、`idealLandmarks3DCandidate` の概要と先頭 5 点程度の preview に留める
 
 3D点群 preview は IdealFace Authoring Tool の責務です。Engine Runtime に 3D点群 preview や Authoring UI を入れません。Beauty Studio にも Authoring 用タブは追加しません。
+
+
+## IdealFace Authoring Tool Current Generation Path
+
+`tools/ideal-face-authoring` now keeps 3D candidate generation on Step 2-I-C `pose_aware_weighted_z_v1`. The old Step 2-G v1 five-pose generation helper path has been removed from current code and remains available only through Git history.

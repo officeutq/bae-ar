@@ -48,16 +48,16 @@ debug
 
 Step 2-I score lookup is no longer tied to old representative candidate UI / JSON data. Score is derived from `detailedScanFrames` and pose-aware frame data so the active workflow can continue without `representativeFrameCandidates`.
 
-## Remaining Follow-Up
+## Generation Helper Removal
 
-The old Step 2-G v1 generation helper path is intentionally left for a later cleanup PR:
+The old Step 2-G v1 generation helper path has been removed from the current code:
 
 - `buildIdealLandmarks3DCandidateResult()`
 - `inferCandidateZ()`
 - `inferCandidateConfidence()`
 - `generationMethod: "step_2_g_v1"`
 
-After that follow-up, 3D candidate generation should be fully centered on `pose_aware_weighted_z_v1`.
+3D candidate generation is now centered on Step 2-I-C `pose_aware_weighted_z_v1`. The old five-pose path is available from Git history when needed.
 
 ## Rule
 

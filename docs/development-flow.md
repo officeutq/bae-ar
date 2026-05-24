@@ -423,3 +423,8 @@ Step 2-H では、生成済みの `idealLandmarks3D` 478点候補を Authoring T
 - JSON preview に 478点全文や canvas data URL を出さない
 - 手動微調整、保存 / export、複数画像入力はまだ実装しない
 - Engine Runtime と Beauty Studio に 3D点群 preview や Authoring 用 UI を追加しない
+
+
+## IdealFace Authoring Tool Cleanup Status
+
+The old Step 2-G v1 five-pose generation helper path has been removed. New IdealFace Authoring Tool feature work should target Step 2-I-A/B/C: frame selection, pose-aware inference dataset, and `pose_aware_weighted_z_v1` candidate generation. Legacy/debug paths should not receive new feature work.

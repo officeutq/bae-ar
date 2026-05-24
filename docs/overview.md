@@ -339,3 +339,8 @@ Shape Processing
 ```
 
 `CorrectionPlan` は姿勢補正を担当しません。Projection 後の ideal 2D landmarks は、すでに現在姿勢を反映しているものとして扱います。
+
+
+## IdealFace Authoring Tool Current Generation Path
+
+Step 2-G v1 five-pose candidate generation has been removed from the current code. The active 3D candidate generation path is Step 2-I-C `pose_aware_weighted_z_v1`, followed by Step 2-H `currentCandidate` point cloud preview. The old five-pose path is available from Git history when needed. Future confidence debug, manual adjustment, save, and export work should be added to the Step 2-I active workflow.

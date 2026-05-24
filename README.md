@@ -6,7 +6,7 @@ Current active authoring flow is MP4 input -> detailed scan -> Step 2-I-A frame 
 
 The old Step 2-C to 2-G v1 five-pose UI/state/JSON preview has been removed from the current tool surface. `selectedRepresentativeFrames`, `idealLandmarks3DInferenceDataset`, `representativeFrameCandidates`, and `legacy.step2Gv1` are no longer exposed in the UI or JSON preview. The JSON preview is organized around `activeSummary`, `poseAware`, `currentCandidate`, `reference`, and `debug`.
 
-The old Step 2-G v1 generation helper path (`buildIdealLandmarks3DCandidateResult()`, `inferCandidateZ()`, `inferCandidateConfidence()`, and `generationMethod: "step_2_g_v1"`) remains as a follow-up cleanup target until it can be deleted separately. New features such as confidence debug, manual adjustment, save, and export should be added only to the Step 2-I active workflow, not to legacy/debug paths.
+The old Step 2-G v1 generation helper path has been removed from the current code. 3D candidate generation is now centered on Step 2-I-C `pose_aware_weighted_z_v1`; the old five-pose path can be referenced from Git history when needed. New features such as confidence debug, manual adjustment, save, and export should be added only to the Step 2-I active workflow, not to legacy/debug paths.
 
 BAE AR は、リアルタイム顔加工・AR 表現を行う Beauty Engine Runtime と、その開発・検証・調整を行う Beauty Studio、将来の authoring tool 群を含むプロジェクトです。
 
