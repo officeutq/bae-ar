@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Step 2-I-C まで積み上がった IdealFace Authoring Tool の active / reference / debug / removed legacy を、現在のコード状態に合わせて整理します。
+Step 2-I-A/B/C と Step 2-H まで積み上がった IdealFace Authoring Tool の active / reference / debug / removed legacy を、現在のコード状態に合わせて整理します。
 
 ## Current Active Workflow
 
@@ -29,6 +29,8 @@ MP4 input
 | Step 2-I-B | `poseAwareInferenceDataset` | pose-aware multi-frame inference の入力 dataset | detailed scan frames 由来の observation を使う |
 | Step 2-I-C | `pose_aware_weighted_z_v1` | 現在唯一の 3D candidate generation path | roll 補正、yaw / pitch / weight による z hint を使う |
 | Step 2-H | `currentCandidate` point cloud preview | 現在生成された candidate の確認表示 | preview camera は表示専用で candidate data を変更しない |
+
+`pose_aware_weighted_z_v1` が生成する `idealLandmarks3D` は same-unit coordinate として扱います。`video_aspect_same_unit_v1` による video aspect 補正、pose-aware generation、将来の manual adjustment UI は Authoring Tool の責務です。Runtime / Studio は完成済み asset を読み込み、Projection 後に overlay / difference / warp 用の image-normalized / pixel 座標へ変換します。Authoring generation logic は Runtime / Studio に混ぜません。
 
 ## Reference / Debug
 

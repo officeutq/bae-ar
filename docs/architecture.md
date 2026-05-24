@@ -26,7 +26,7 @@ BAE AR
    └─ 将来予定。LayerMaskSpec を作成する authoring tool
 ```
 
-現在 `tools/ideal-face-authoring` は Step 2-I-C まで実装済みです。`tools/layer-mask-authoring` は将来予定です。
+現在 `tools/ideal-face-authoring` は Step 2-I-A/B/C と Step 2-H まで実装済みです。`tools/layer-mask-authoring` は将来予定です。
 
 ## Engine Runtime の責務
 
@@ -93,7 +93,7 @@ IdealFace Authoring Tool の処理はリアルタイム Engine Runtime には含
 
 ### idealLandmarks3D 478点の作成方針
 
-IdealFace の本体である `idealLandmarks3D` 478点は、IdealFace Authoring Tool 側で作成します。現在の active workflow は Step 2-I-A/B/C です。
+IdealFace の本体である `idealLandmarks3D` 478点は、IdealFace Authoring Tool 側で作成します。現在の active workflow は Step 2-I-A/B/C と Step 2-H です。
 
 Current active workflow:
 
@@ -127,6 +127,8 @@ Removed legacy workflow:
 - `generationMethod: "step_2_g_v1"`
 
 Engine Runtime は動画入力、詳細スキャン、pose-aware dataset 作成、candidate generation、手動調整 UI、保存 / export を持ちません。Runtime は完成済み IdealFace asset を読み込み、`idealLandmarks3D` 478点を現在 `FacePose` へ投影して使います。
+
+Authoring Tool は `idealLandmarks3D` を same-unit coordinate として生成します。`video_aspect_same_unit_v1` による video aspect 補正、pose-aware generation、将来の manual adjustment UI は Authoring Tool の責務です。Runtime は完成済み IdealFace asset を読み込み、same-unit の `idealLandmarks3D` を `FacePose` へ投影し、overlay / difference / warp 用に image-normalized / pixel 座標へ変換します。Authoring generation logic は Runtime に含めません。
 
 legacy / debug と分類した UI や helper には、今後の新機能を追加しません。confidence debug、手動微調整 UI、保存 / export は Step 2-I active workflow 側に追加します。
 
@@ -234,15 +236,58 @@ Projection Difference Debug v1 は、`faceCenter` / `leftEyeCenter` / `rightEyeC
 
 現在は Perspective camera、face surface、mesh、renderer、ideal 478 landmarks 生成、CorrectionPlan、Shape Warp は未実装です。将来の完全版では、Projection 後の ideal 2D landmarks はすでに現在姿勢を反映します。
 
+### IdealFace Projection の座標系方針
+
+Projection / Shape Processing では座標系を以下の 3 種類に分けます。
+
+```text
+same-unit coordinate
+  - IdealFace asset / idealLandmarks3D の基準座標
+  - x/y が同じ距離単位になるように Authoring Tool で正規化する
+  - 3D projection / FacePose rotation / uniform alignment の内部計算で使う
+  - そのまま canvasWidth / canvasHeight を掛けて描画してはいけない
+
+image-normalized coordinate
+  - MediaPipe current landmarks と同じ座標系
+  - x は画像幅基準、y は画像高さ基準
+  - Studio overlay、current-vs-ideal difference、CorrectionPlan 入力で使う
+  - projected ideal landmarks は、Shape Warp 前にこの座標系へ変換する
+
+pixel coordinate
+  - 実際の canvas / video frame 上の pixel 座標
+  - 最終的な描画や画像変形で使う
+```
+
+Projection 内部は same-unit coordinate を使います。Studio overlay / current-vs-ideal difference は image-normalized coordinate を使い、Image warp は pixel coordinate を使います。same-unit の projected ideal landmarks を、そのまま `x * canvasWidth` / `y * canvasHeight` で描画しません。
+
+IdealFace の本体である `idealLandmarks3D` は same-unit coordinate として扱います。Runtime Projection は `idealLandmarks3D` を `FacePose` に合わせて回転し、same-unit 空間上で face center / uniform scale alignment します。Runtime Projection alignment では x/y 別 scale を行わず、IdealFace の縦横比を現在顔に合わせて歪めません。縦横比や形状そのものの調整は、将来の IdealFace Authoring Tool manual adjustment UI で扱います。
+
+将来の Projection result は、Projection / alignment / debug 用の same-unit projected landmarks と、Studio overlay / current landmarks 比較 / Shape Warp 入力用の image-normalized projected landmarks を分けて持つ方針です。命名は実装時に調整できますが、役割は分離します。
+
+```ts
+type IdealLandmarks3DProjectionResult = {
+  status: "not_available" | "missing_face_pose" | "projected"
+
+  sameUnitLandmarks: ProjectedIdealLandmarkSameUnit[]
+  imageLandmarks: ProjectedIdealLandmarkImageNormalized[]
+
+  landmarkCount: number
+  alignment: unknown
+  summary: unknown
+}
+```
+
 ## CorrectionPlan
 
 CorrectionPlan は姿勢補正を担当しません。姿勢への対応は IdealFace Projection の責務です。
 
 CorrectionPlan の責務:
 
-- current 2D landmarks と ideal 2D landmarks の差分を受け取る
+- current image-normalized landmarks と projected ideal image-normalized landmarks の差分を受け取る
 - 実際に warp へ渡す安全な補正量を決める
 - 補正強度、移動量上限、滑らかさ、過補正防止、信頼度などを扱う
+
+CorrectionPlan は same-unit projection 後、image-normalized に変換された current-vs-ideal 差分を受け取ります。CorrectionPlan は `FacePose` の推定や IdealFace projection を担当しません。
 
 CorrectionPlan は個別パーツ加工命令セットにはしません。
 
@@ -251,12 +296,14 @@ CorrectionPlan は個別パーツ加工命令セットにはしません。
 ```text
 現在顔から MediaPipe 478 landmarks を取得
   -> FacePose を推定
-  -> IdealFace 3D model を現在姿勢へ投影
-  -> ideal 2D landmarks 478 点を生成
-  -> current 478 landmarks と ideal 478 landmarks の差分を取る
+  -> IdealFace 3D model を same-unit coordinate で現在姿勢へ投影
+  -> projected ideal 478 landmarks を image-normalized coordinate へ変換
+  -> current image-normalized landmarks と projected ideal image-normalized landmarks の差分を取る
   -> CorrectionPlan を生成
   -> 顔全体として自然に少し warp
 ```
+
+current 478 landmarks は MediaPipe 由来の image-normalized 座標です。projected ideal 478 landmarks は、IdealFace same-unit landmarks を `FacePose` へ投影し、alignment 後に image-normalized 座標へ変換したものです。差分は `deltaX = projectedIdealImageX - currentX`、`deltaY = projectedIdealImageY - currentY` として計算し、この差分を `CorrectionPlan` に渡します。
 
 顎だけ、目だけ、鼻だけなどの個別パーツ加工を独立機能として増やす方向にはしません。
 

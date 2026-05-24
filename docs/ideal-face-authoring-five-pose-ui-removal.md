@@ -59,6 +59,8 @@ The old Step 2-G v1 generation helper path has been removed from the current cod
 
 3D candidate generation is now centered on Step 2-I-C `pose_aware_weighted_z_v1`. The old five-pose path is available from Git history when needed.
 
+`pose_aware_weighted_z_v1` outputs `idealLandmarks3D` as same-unit coordinate data. Runtime / Studio must not reintroduce authoring generation logic; they load finished assets, project same-unit landmarks, and convert projected landmarks to image-normalized / pixel coordinates for overlay, difference, and future Shape Warp.
+
 ## Rule
 
 Legacy / debug paths must not receive new feature work. Future IdealFace Authoring Tool feature work should be added to the Step 2-I active workflow.
