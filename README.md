@@ -19,9 +19,11 @@ Downloaded `ideal_face_asset_v1` JSON keeps `schemaVersion` and `coordinateSpace
 - `idealLandmarks3D` is stored in same-unit coordinate space.
 - Runtime Projection rotates and aligns IdealFace in same-unit space.
 - Studio overlay and future Shape Warp use image-normalized / pixel coordinates.
-- Projection result should separate same-unit projected landmarks from image-normalized projected landmarks.
+- Projection result separates same-unit projected landmarks from image-normalized projected landmarks as `sameUnitLandmarks` and `imageLandmarks`.
+- Studio overlay draws `imageLandmarks`; it does not draw same-unit landmarks directly with `canvasWidth` / `canvasHeight`.
 - Runtime must not non-uniformly scale IdealFace to match the current face aspect ratio.
 - Authoring Tool owns same-unit asset generation, video aspect correction, pose-aware generation, and future manual adjustment. Runtime owns loading finished IdealFace assets, projection, and conversion for overlay / difference / warp, but does not include authoring generation logic.
+- Current-vs-ideal difference, `CorrectionPlan`, and Shape Warp remain unimplemented for the 478-point path.
 
 ## Engine ideal_face_asset_v1 loading foundation
 

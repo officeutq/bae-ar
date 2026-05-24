@@ -254,8 +254,7 @@ Projection: ${idealFace.landmarkTopology.projectionStatus}`
   ): string {
     if (state.status === "idle") {
       return `読み込み状態: 未選択
-idealLandmarks3D 478点の Projection 完全対応は次ステップです。
-現在は asset の読み込みと Engine への反映のみ確認します。`
+ideal_face_asset_v1 JSON を読み込むと、顔検出後に IdealFace 478 Projection を確認できます。`
     }
 
     if (state.status === "loading") {
@@ -269,8 +268,7 @@ idealLandmarks3D 478点の Projection 完全対応は次ステップです。
 エラー:
 ${state.errors.map((error) => `- ${error}`).join("\n")}
 
-idealLandmarks3D 478点の Projection 完全対応は次ステップです。
-現在は asset の読み込みと Engine への反映のみ確認します。`
+ideal_face_asset_v1 JSON を読み込むと、顔検出後に IdealFace 478 Projection を確認できます。`
     }
 
     return `読み込み状態: success
@@ -285,8 +283,7 @@ coordinateSpace: ${state.coordinateSpace}
 idealLandmarks3D count: ${state.landmarkCount}
 createdAt: ${state.createdAt}
 
-idealLandmarks3D 478点の Projection 完全対応は次ステップです。
-現在は asset の読み込みと Engine への反映のみ確認します。`
+same-unit / image-normalized 座標の Projection debug は、顔検出後に確認できます。`
   }
 
   function translateIdealFaceAssetError(error: string): string {
@@ -340,32 +337,49 @@ z min / max: ${formatNumber(summary.zMin)} / ${formatNumber(summary.zMax)}`
     overlayPixelBounds: OverlayProjectedIdealPixelBoundsSummary | undefined,
   ): string {
     const debug = projection.debug
+    const coordinate = debug?.coordinate
 
     return `Bounds / Aspect Ratio:
 asset: ${formatLandmarkBounds(debug?.assetBounds)}
 rotated: ${formatLandmarkBounds(debug?.rotatedBounds)}
-aligned: ${formatLandmarkBounds(debug?.alignedBounds)}
+aligned same-unit: ${formatLandmarkBounds(debug?.alignedBounds)}
+image-normalized: ${formatLandmarkBounds(debug?.imageBounds)}
 current: ${formatLandmarkBounds(debug?.currentBounds)}
 overlay px: ${formatOverlayPixelBounds(overlayPixelBounds)}
-aspect asset / rotated / aligned / current / currentMinusAligned: ${formatNullableNumber(debug?.aspectRatio.asset)} / ${formatNullableNumber(debug?.aspectRatio.rotated)} / ${formatNullableNumber(debug?.aspectRatio.aligned)} / ${formatNullableNumber(debug?.aspectRatio.current)} / ${formatNullableNumber(debug?.aspectRatio.currentMinusAligned)}`
+aspect asset / rotated / aligned / image / current / currentMinusAligned / currentMinusImage: ${formatNullableNumber(debug?.aspectRatio.asset)} / ${formatNullableNumber(debug?.aspectRatio.rotated)} / ${formatNullableNumber(debug?.aspectRatio.aligned)} / ${formatNullableNumber(debug?.aspectRatio.image)} / ${formatNullableNumber(debug?.aspectRatio.current)} / ${formatNullableNumber(debug?.aspectRatio.currentMinusAligned)} / ${formatNullableNumber(debug?.aspectRatio.currentMinusImage)}
+
+Coordinate spaces:
+same-unit: ${formatLandmarkBounds(coordinate?.sameUnitBounds)}
+image-normalized: ${formatLandmarkBounds(coordinate?.imageBounds)}
+current: ${formatLandmarkBounds(coordinate?.currentBounds)}
+video aspect: ${formatNullableNumber(coordinate?.videoAspectRatio)}
+conversion: ${coordinate?.conversionMode ?? "なし"}
+fallback: ${coordinate ? String(coordinate.fallbackUsed) : "なし"}${coordinate?.reason ? `
+reason: ${coordinate.reason}` : ""}`
   }
 
   function formatLandmarkBounds(
-    bounds:
-      | NonNullable<
-          IdealLandmarks3DProjectionResult["debug"]
-        >["assetBounds"]
-      | NonNullable<
-          IdealLandmarks3DProjectionResult["debug"]
-        >["currentBounds"]
-      | undefined,
+    bounds: {
+      xMin: number
+      xMax: number
+      yMin: number
+      yMax: number
+      width: number
+      height: number
+      aspectRatio: number | null
+      zMin?: number
+      zMax?: number
+      zRange?: number
+    } | undefined,
   ): string {
     if (!bounds) {
       return "なし"
     }
 
     const zText =
-      "zMin" in bounds
+      bounds.zMin !== undefined &&
+      bounds.zMax !== undefined &&
+      bounds.zRange !== undefined
         ? ` / z ${formatNumber(bounds.zMin)}..${formatNumber(bounds.zMax)} / zRange ${formatNumber(bounds.zRange)}`
         : ""
 
@@ -439,6 +453,8 @@ aspectRatioDifference: ${formatNullableNumber(alignment.aspectRatioDifference)}$
       return `IdealFace 478 Projection
 status: ${projection.status}
 landmarks: ${projection.landmarkCount}
+sameUnitLandmarks: ${projection.sameUnitLandmarks.length}
+imageLandmarks: ${projection.imageLandmarks.length}
 idealFace: ${projection.sourceIdealFaceName ?? "なし"} (${projection.sourceIdealFaceId ?? "なし"})
 pose: ${frame ? `yaw ${formatNumber(frame.pose.yaw)} / pitch ${formatNumber(frame.pose.pitch)} / roll ${formatNumber(frame.pose.roll)}` : "なし"}
 ${formatProjectionAlignment(projection.alignment)}
@@ -452,6 +468,8 @@ IdealFace asset JSON を読み込み、顔検出後に確認できます。`
     return `IdealFace 478 Projection
 status: ${projection.status}
 landmarks: ${projection.landmarkCount}
+sameUnitLandmarks: ${projection.sameUnitLandmarks.length}
+imageLandmarks: ${projection.imageLandmarks.length}
 idealFace: ${projection.sourceIdealFaceName ?? "なし"} (${projection.sourceIdealFaceId ?? "なし"})
 pose: ${frame ? `yaw ${formatNumber(frame.pose.yaw)} / pitch ${formatNumber(frame.pose.pitch)} / roll ${formatNumber(frame.pose.roll)}` : "なし"}
 ${formatProjectionAlignment(projection.alignment)}
@@ -648,21 +666,21 @@ Camera:
   ): OverlayProjectedIdealPixelBoundsSummary | undefined {
     if (
       projection.status !== "projected" ||
-      projection.landmarks.length === 0 ||
+      projection.imageLandmarks.length === 0 ||
       overlayCanvas.width === 0 ||
       overlayCanvas.height === 0
     ) {
       return undefined
     }
 
-    const first = projection.landmarks[0]
+    const first = projection.imageLandmarks[0]
     const initialBounds = {
       xMinPx: first.x * overlayCanvas.width,
       xMaxPx: first.x * overlayCanvas.width,
       yMinPx: first.y * overlayCanvas.height,
       yMaxPx: first.y * overlayCanvas.height,
     }
-    const bounds = projection.landmarks.reduce((currentBounds, landmark) => {
+    const bounds = projection.imageLandmarks.reduce((currentBounds, landmark) => {
       const x = landmark.x * overlayCanvas.width
       const y = landmark.y * overlayCanvas.height
 
@@ -739,7 +757,7 @@ Camera:
     if (idealLandmarks3DProjection.status === "projected") {
       context.fillStyle = "#c084fc"
 
-      idealLandmarks3DProjection.landmarks.forEach((landmark) => {
+      idealLandmarks3DProjection.imageLandmarks.forEach((landmark) => {
         const x = landmark.x * overlayCanvas.width
         const y = landmark.y * overlayCanvas.height
 
@@ -1017,7 +1035,8 @@ Landmarks: ${frame?.landmarks.length ?? 0}
 IdealFace: ${idealFace.metadata.name} (${idealFace.metadata.id}) / ${idealFace.metadata.version} / controlPoints ${idealFace.model.controlPoints.length} 点 / idealLandmarks3D ${idealFace.model.idealLandmarks3D?.length ?? 0} 点
 IdealFace 478 Projection: ${idealLandmarks3DProjection.status} / ${idealLandmarks3DProjection.landmarkCount} 点
 Alignment: ${idealLandmarks3DProjection.alignment?.mode ?? "none"} / scale basis ${idealLandmarks3DProjection.alignment?.scaleBasis?.mode ?? "none"} / scale ${formatNullableNumber(idealLandmarks3DProjection.alignment?.scale)} / limiting axis ${idealLandmarks3DProjection.alignment?.scaleBasis?.limitingAxis ?? "none"} / aspectDiff ${formatNullableNumber(idealLandmarks3DProjection.alignment?.aspectRatioDifference)}
-Aspect debug: asset ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectRatio.asset)} / rotated ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectRatio.rotated)} / aligned ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectRatio.aligned)} / current ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectRatio.current)} / overlay ${formatNullableNumber(overlayProjectedIdealPixelBounds?.aspectRatioPx)}
+Aspect debug: asset ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectRatio.asset)} / rotated ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectRatio.rotated)} / aligned ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectRatio.aligned)} / image ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectRatio.image)} / current ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectRatio.current)} / overlay ${formatNullableNumber(overlayProjectedIdealPixelBounds?.aspectRatioPx)}
+Coordinate conversion: ${idealLandmarks3DProjection.debug?.coordinate?.conversionMode ?? "なし"} / videoAspect ${formatNullableNumber(idealLandmarks3DProjection.debug?.coordinate?.videoAspectRatio)} / fallback ${idealLandmarks3DProjection.debug?.coordinate ? String(idealLandmarks3DProjection.debug.coordinate.fallbackUsed) : "なし"}
 Projection: ${idealFaceProjection.status} / ${idealFaceProjection.points.length} 点
 差分: ${projectionDifference.status} / 平均 ${formatNullableNumber(projectionDifference.averageDistance)} / 最大 ${formatNullableNumber(projectionDifference.maxDistance)}
 利用可能IdealFace: ${availableIdealFaces.length}
@@ -1033,7 +1052,7 @@ Detect: ${faceFrameLoopDebug.detectCallCount}/${mediaPipeDebug?.detectSuccessCou
             <input id="ideal-face-asset-json-input" type="file" accept="application/json,.json" />
           </label>
           <p>Authoring Tool で export した ideal_face_asset_v1 JSON を読み込みます。</p>
-          <p>idealLandmarks3D 478点の Projection 完全対応は次ステップです。現在は asset の読み込みと Engine への反映のみ確認します。</p>
+          <p>顔検出後に IdealFace 478 Projection と same-unit / image-normalized 座標 debug を確認できます。</p>
           <pre>${escapeHtml(formatIdealFaceAssetImportState(idealFaceAssetImportState))}</pre>
         </section>
         <details data-debug-section="faceFrame"${detailsOpenAttribute("faceFrame")}>

@@ -423,7 +423,7 @@ IdealFace の本体である `idealLandmarks3D` は same-unit coordinate とし�
 
 Studio overlay に描画する projected ideal 478 landmarks は image-normalized coordinate として扱います。same-unit の projected ideal landmarks を、そのまま `x * canvasWidth` / `y * canvasHeight` で描画しません。overlay / current-vs-ideal difference / `CorrectionPlan` へ渡す前に、same-unit から image-normalized へ変換します。
 
-Projection result は、Projection / alignment / debug 用の same-unit projected landmarks と、Studio overlay / current landmarks 比較 / Shape Warp 入力用の image-normalized projected landmarks を分けて持つ方針です。命名は将来の実装時に調整してよいですが、役割は明確に分離します。
+Projection result は、Projection / alignment / debug 用の same-unit projected landmarks と、Studio overlay / current landmarks 比較 / Shape Warp 入力用の image-normalized projected landmarks を分けて持ちます。`sameUnitLandmarks` は same-unit coordinate、`imageLandmarks` は MediaPipe current landmarks と同じ image-normalized coordinate です。既存互換用の `landmarks` が残る場合も、Studio overlay では `imageLandmarks` を使います。
 
 ```ts
 type IdealLandmarks3DProjectionResult = {
@@ -442,6 +442,8 @@ type IdealLandmarks3DProjectionResult = {
 ```
 
 Runtime Projection alignment では x/y 別 scale を行いません。IdealFace の縦横比を現在顔に合わせて歪めません。縦横比や形状そのものの調整は、将来の IdealFace Authoring Tool manual adjustment UI で扱います。
+
+Studio overlay は `imageLandmarks` を `x * canvasWidth` / `y * canvasHeight` で描画します。same-unit landmarks をそのまま canvas pixel に変換しません。current 478 landmarks との差分比較、`CorrectionPlan`、Shape Warp はまだ実装しません。
 
 ## 9. Shape Processing
 

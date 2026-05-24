@@ -76,7 +76,7 @@ pixel coordinate
 
 `idealLandmarks3D` は same-unit coordinate として扱い、Runtime Projection は same-unit 空間で回転と face center / uniform scale alignment を行います。Runtime では x/y 別 scale を行わず、IdealFace の縦横比を現在顔に合わせて歪めません。same-unit の projected ideal landmarks を、そのまま `x * canvasWidth` / `y * canvasHeight` で描画してはいけません。
 
-Studio overlay、current-vs-ideal difference、CorrectionPlan へ渡す projected ideal landmarks は image-normalized coordinate として扱います。将来の Projection result は、Projection / alignment / debug 用の `sameUnitLandmarks` と、overlay / difference / Shape Warp 入力用の `imageLandmarks` を分けて持つ方針です。Image warp では、必要に応じて image-normalized coordinate から pixel coordinate へ変換します。
+Studio overlay、current-vs-ideal difference、CorrectionPlan へ渡す projected ideal landmarks は image-normalized coordinate として扱います。Projection result は、Projection / alignment / debug 用の `sameUnitLandmarks` と、overlay / difference / Shape Warp 入力用の `imageLandmarks` を分けて持ちます。Studio overlay は `imageLandmarks` を使い、same-unit landmarks をそのまま canvas pixel に変換しません。Image warp では、必要に応じて image-normalized coordinate から pixel coordinate へ変換します。
 
 ## IdealFace Authoring Tool における idealLandmarks3D 作成方針
 
