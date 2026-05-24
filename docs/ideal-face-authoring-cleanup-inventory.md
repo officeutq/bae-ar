@@ -208,3 +208,13 @@ Step 2-G v1 は旧5ポーズ方式の legacy 実装であり、Git 履歴から�
 5. `generationMethod` を Step 2-H preview と candidate summary でより目立たせ、Step 2-G v1 削除までの間は Step 2-I-C との混同を避ける。
 6. remove candidate の `formatPoseRange()`、`getCandidateSourceFrames()`、`updateExtractedFrame()` は次PRで `rg` と型チェック後に削除可否を判断する。
 7. 以後の新機能は Step 2-I active workflow に追加し、legacy / debug UI や helper には追加しない。
+
+
+## Cleanup Applied: Step 2-G v1 Generation Helper Removal
+
+- Step 2-G v1 generation helpers have been removed from `tools/ideal-face-authoring/src/main.ts`.
+- Removed helpers: `buildIdealLandmarks3DCandidateResult()`, `inferCandidateZ()`, and `inferCandidateConfidence()`.
+- Removed `generationMethod: "step_2_g_v1"` from the current candidate generation method union.
+- Removed Step 2-G v1-only `readyLabels` / `missingLabels` / `requiredLabels` candidate fields from the active candidate result.
+- 3D candidate generation is now centered on Step 2-I-C `pose_aware_weighted_z_v1`.
+- The next feature work should move to confidence debug, manual adjustment, save, and export on the Step 2-I active workflow.

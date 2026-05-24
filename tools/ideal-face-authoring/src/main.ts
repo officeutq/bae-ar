@@ -39,13 +39,6 @@ const DIRECTIONAL_POSE_LIMIT = {
 }
 const YAW_CANDIDATE_MIN_ABS = 6
 const PITCH_CANDIDATE_MIN_ABS = 5
-const INFERENCE_DATASET_LABELS: SelectableRepresentativeFrameLabel[] = [
-  "front",
-  "left",
-  "right",
-  "up",
-  "down",
-]
 const INFERENCE_DATASET_LANDMARK_PREVIEW_COUNT = 5
 const IDEAL_LANDMARKS_3D_PREVIEW_COUNT = 5
 const POINT_CLOUD_PREVIEW_PADDING = 24
@@ -75,13 +68,6 @@ const DEFAULT_POINT_CLOUD_CAMERA: PointCloudPreviewCamera = {
   panX: 0,
   panY: 0,
 }
-
-type SelectableRepresentativeFrameLabel =
-  | "front"
-  | "left"
-  | "right"
-  | "up"
-  | "down"
 
 type FrameAnalysisStatus =
   | "pending"
@@ -113,26 +99,6 @@ interface LandmarkPreviewPoint {
   x: number
   y: number
   z: number
-}
-
-type InferenceDatasetEntryStatus = "ready" | "missing" | "invalid"
-
-interface RepresentativeFrameDatasetEntry {
-  label: SelectableRepresentativeFrameLabel
-  frameIndex: number | null
-  timestamp: number | null
-  pose: FacePose | null
-  landmarksCount: number
-  landmarkPreview: LandmarkPreviewPoint[]
-  status: InferenceDatasetEntryStatus
-  landmarks: FaceLandmark[]
-  thumbnailUrl: string | null
-}
-
-interface IdealLandmarks3DInferenceDataset {
-  readyCount: number
-  requiredCount: number
-  entries: RepresentativeFrameDatasetEntry[]
 }
 
 interface IdealLandmarks3DFrameSelection {
@@ -248,9 +214,7 @@ type IdealLandmarks3DCandidateStatus =
   | "insufficient_data"
   | "error"
 
-type IdealLandmarks3DGenerationMethod =
-  | "step_2_g_v1"
-  | "pose_aware_weighted_z_v1"
+type IdealLandmarks3DGenerationMethod = "pose_aware_weighted_z_v1"
 
 type PointCloudPreviewPreset = "front" | "side" | "top" | "reset"
 
@@ -283,15 +247,12 @@ interface IdealLandmark3DCandidate {
   y: number
   z: number
   confidence: number
-  source: "inferred_v1" | "pose_aware_weighted_z_v1"
+  source: "pose_aware_weighted_z_v1"
 }
 
 interface IdealLandmarks3DCandidateResult {
   status: IdealLandmarks3DCandidateStatus
   generationMethod: IdealLandmarks3DGenerationMethod | null
-  requiredLabels: SelectableRepresentativeFrameLabel[]
-  readyLabels: SelectableRepresentativeFrameLabel[]
-  missingLabels: SelectableRepresentativeFrameLabel[]
   landmarkCount: number
   landmarks: IdealLandmark3DCandidate[]
   landmarksPreview: IdealLandmark3DCandidate[]
@@ -705,9 +666,6 @@ function createInitialIdealLandmarks3DCandidateResult(): IdealLandmarks3DCandida
   return {
     status: "not_ready",
     generationMethod: null,
-    requiredLabels: [...INFERENCE_DATASET_LABELS],
-    readyLabels: [],
-    missingLabels: [...INFERENCE_DATASET_LABELS],
     landmarkCount: 0,
     landmarks: [],
     landmarksPreview: [],
@@ -734,36 +692,6 @@ function resetIdealLandmarks3DCandidateResult(): void {
   pointCloudPreviewCamera = createPointCloudPreviewCamera()
 }
 
-function getReadyDatasetLabels(
-  dataset: IdealLandmarks3DInferenceDataset,
-): SelectableRepresentativeFrameLabel[] {
-  return dataset.entries
-    .filter((entry) => entry.status === "ready")
-    .map((entry) => entry.label)
-}
-
-function getMissingDatasetLabels(
-  dataset: IdealLandmarks3DInferenceDataset,
-): SelectableRepresentativeFrameLabel[] {
-  return INFERENCE_DATASET_LABELS.filter(
-    (label) =>
-      !dataset.entries.some(
-        (entry) => entry.label === label && entry.status === "ready",
-      ),
-  )
-}
-
-function getReadyDatasetEntry(
-  dataset: IdealLandmarks3DInferenceDataset,
-  label: SelectableRepresentativeFrameLabel,
-): RepresentativeFrameDatasetEntry | null {
-  return (
-    dataset.entries.find(
-      (entry) => entry.label === label && entry.status === "ready",
-    ) ?? null
-  )
-}
-
 function isFiniteLandmark(landmark: FaceLandmark | undefined): landmark is FaceLandmark {
   return (
     landmark !== undefined &&
@@ -777,72 +705,6 @@ function averageNumbers(values: number[]): number {
   return values.length === 0
     ? 0
     : values.reduce((sum, value) => sum + value, 0) / values.length
-}
-
-function inferCandidateZ(
-  index: number,
-  frontLandmark: FaceLandmark,
-  entriesByLabel: Partial<
-    Record<SelectableRepresentativeFrameLabel, RepresentativeFrameDatasetEntry>
-  >,
-): number {
-  const leftLandmark = entriesByLabel.left?.landmarks[index]
-  const rightLandmark = entriesByLabel.right?.landmarks[index]
-  const upLandmark = entriesByLabel.up?.landmarks[index]
-  const downLandmark = entriesByLabel.down?.landmarks[index]
-  const yawDeltas: number[] = []
-  const pitchDeltas: number[] = []
-
-  if (isFiniteLandmark(leftLandmark)) {
-    yawDeltas.push(frontLandmark.x - leftLandmark.x)
-  }
-
-  if (isFiniteLandmark(rightLandmark)) {
-    yawDeltas.push(rightLandmark.x - frontLandmark.x)
-  }
-
-  if (isFiniteLandmark(upLandmark)) {
-    pitchDeltas.push(frontLandmark.y - upLandmark.y)
-  }
-
-  if (isFiniteLandmark(downLandmark)) {
-    pitchDeltas.push(downLandmark.y - frontLandmark.y)
-  }
-
-  const z =
-    averageNumbers(yawDeltas) * 0.7 +
-    averageNumbers(pitchDeltas) * 0.45 +
-    frontLandmark.z * 0.1
-
-  return Number(clamp(z, -0.25, 0.25).toFixed(4))
-}
-
-function inferCandidateConfidence(
-  index: number,
-  entriesByLabel: Partial<
-    Record<SelectableRepresentativeFrameLabel, RepresentativeFrameDatasetEntry>
-  >,
-): number {
-  const supportingLabels: SelectableRepresentativeFrameLabel[] = [
-    "left",
-    "right",
-    "up",
-    "down",
-  ]
-  const supportCount = supportingLabels.filter((label) =>
-    isFiniteLandmark(entriesByLabel[label]?.landmarks[index]),
-  ).length
-  const hasYawPair =
-    isFiniteLandmark(entriesByLabel.left?.landmarks[index]) &&
-    isFiniteLandmark(entriesByLabel.right?.landmarks[index])
-  const hasPitchPair =
-    isFiniteLandmark(entriesByLabel.up?.landmarks[index]) &&
-    isFiniteLandmark(entriesByLabel.down?.landmarks[index])
-  const pairBonus = (hasYawPair ? 0.04 : 0) + (hasPitchPair ? 0.03 : 0)
-
-  const confidence = clamp(0.38 + supportCount * 0.12 + pairBonus, 0.35, 0.9)
-
-  return Number(confidence.toFixed(4))
 }
 
 function buildIdealLandmarks3DCandidateSummary(
@@ -881,63 +743,6 @@ function buildIdealLandmarks3DCandidateSummary(
   }
 }
 
-function buildIdealLandmarks3DCandidateResult(
-  dataset: IdealLandmarks3DInferenceDataset,
-): IdealLandmarks3DCandidateResult {
-  const readyLabels = getReadyDatasetLabels(dataset)
-  const missingLabels = getMissingDatasetLabels(dataset)
-  const frontEntry = getReadyDatasetEntry(dataset, "front")
-
-  if (!frontEntry) {
-    return {
-      ...createInitialIdealLandmarks3DCandidateResult(),
-      status: "insufficient_data",
-      readyLabels,
-      missingLabels,
-      message:
-        "正面フレームが未選択、または解析済み 478 landmarks を参照できないため、3D候補を生成できません。",
-    }
-  }
-
-  const entriesByLabel = Object.fromEntries(
-    dataset.entries
-      .filter((entry) => entry.status === "ready")
-      .map((entry) => [entry.label, entry]),
-  ) as Partial<
-    Record<SelectableRepresentativeFrameLabel, RepresentativeFrameDatasetEntry>
-  >
-  const landmarks = frontEntry.landmarks.map((frontLandmark, index) => {
-    const confidence = inferCandidateConfidence(index, entriesByLabel)
-
-    return {
-      index,
-      x: Number(frontLandmark.x.toFixed(4)),
-      y: Number(frontLandmark.y.toFixed(4)),
-      z: inferCandidateZ(index, frontLandmark, entriesByLabel),
-      confidence,
-      source: "inferred_v1" as const,
-    }
-  })
-  return {
-    status: "generated",
-    generationMethod: "step_2_g_v1",
-    requiredLabels: [...INFERENCE_DATASET_LABELS],
-    readyLabels,
-    missingLabels,
-    landmarkCount: landmarks.length,
-    landmarks,
-    landmarksPreview: landmarks.slice(0, IDEAL_LANDMARKS_3D_PREVIEW_COUNT),
-    summary: buildIdealLandmarks3DCandidateSummary(landmarks, {
-      frontReferenceFrameCount: 1,
-      observationFrameCount: readyLabels.filter((label) => label !== "front")
-        .length,
-      excludedFrameCount: 0,
-    }),
-    message:
-      "front の 2D 478 landmarks を x / y の基準にし、左右 / 上下フレームとの差分から z を簡易推定した候補です。",
-  }
-}
-
 function toCurrentCandidatePreview(
   result: IdealLandmarks3DCandidateResult,
 ): unknown {
@@ -945,8 +750,6 @@ function toCurrentCandidatePreview(
     status: result.status,
     generationMethod: result.generationMethod,
     landmarkCount: result.landmarkCount,
-    readyLabels: result.readyLabels,
-    missingLabels: result.missingLabels,
     frontReferenceFrameCount: result.summary.frontReferenceFrameCount,
     observationFrameCount: result.summary.observationFrameCount,
     excludedFrameCount: result.summary.excludedFrameCount,
@@ -2022,9 +1825,6 @@ function buildPoseAwareIdealLandmarks3DCandidateResult(
   return {
     status: "generated",
     generationMethod: "pose_aware_weighted_z_v1",
-    requiredLabels: [],
-    readyLabels: [],
-    missingLabels: [],
     landmarkCount: landmarks.length,
     landmarks,
     landmarksPreview: landmarks.slice(0, IDEAL_LANDMARKS_3D_PREVIEW_COUNT),
