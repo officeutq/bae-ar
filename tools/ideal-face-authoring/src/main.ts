@@ -708,10 +708,6 @@ function getPoseRange(
   }
 }
 
-function formatPoseRange(range: { min: number; max: number } | null): string {
-  return range ? `${formatNumber(range.min)} / ${formatNumber(range.max)}` : "なし"
-}
-
 function getDetailedScanSummary(): DetailedScanSummary {
   if (!videoSource) {
     return createEmptyDetailedScanSummary()
@@ -818,12 +814,6 @@ function buildRepresentativeFrameCandidatesFromFrames(
       scorePitchNegativeCandidate,
     ),
   }
-}
-
-function getCandidateSourceFrames(): ExtractedVideoFrame[] {
-  return getCandidateSourceFramesFromFrames(
-    videoSource?.representativeCandidateFrames ?? [],
-  )
 }
 
 function getCandidateSourceFramesFromFrames(
@@ -1524,7 +1514,7 @@ function buildIdealLandmarks3DCandidateResult(
   }
 }
 
-function toIdealLandmarks3DCandidatePreview(
+function toCurrentCandidatePreview(
   result: IdealLandmarks3DCandidateResult,
 ): unknown {
   return {
@@ -1533,8 +1523,22 @@ function toIdealLandmarks3DCandidatePreview(
     landmarkCount: result.landmarkCount,
     readyLabels: result.readyLabels,
     missingLabels: result.missingLabels,
-    summary: result.summary,
-    landmarksPreview: result.landmarksPreview,
+    frontReferenceFrameCount: result.summary.frontReferenceFrameCount,
+    observationFrameCount: result.summary.observationFrameCount,
+    excludedFrameCount: result.summary.excludedFrameCount,
+    z: {
+      min: result.summary.zMin,
+      max: result.summary.zMax,
+      average: result.summary.zAverage,
+    },
+    confidence: {
+      average: result.summary.averageConfidence,
+      min: result.summary.minConfidence,
+      max: result.summary.maxConfidence,
+      lowConfidenceLandmarkCount:
+        result.summary.lowConfidenceLandmarkCount,
+    },
+    preview: result.landmarksPreview,
   }
 }
 
@@ -2557,13 +2561,16 @@ function buildPoseAwareIdealLandmarks3DCandidateResult(
   }
 }
 
-function toPoseAwareIdealLandmarks3DCandidatePreview(): unknown {
+function toPoseAwareCandidatePreview(): unknown {
   const result = idealLandmarks3DCandidateResult
+  const isCurrentPoseAwareCandidate =
+    result.generationMethod === "pose_aware_weighted_z_v1"
 
-  if (result.generationMethod !== "pose_aware_weighted_z_v1") {
+  if (!isCurrentPoseAwareCandidate) {
     return {
       status: "not_generated",
       generationMethod: "pose_aware_weighted_z_v1",
+      sameAsCurrentCandidate: false,
     }
   }
 
@@ -2574,19 +2581,7 @@ function toPoseAwareIdealLandmarks3DCandidatePreview(): unknown {
     frontReferenceFrameCount: result.summary.frontReferenceFrameCount,
     observationFrameCount: result.summary.observationFrameCount,
     excludedFrameCount: result.summary.excludedFrameCount,
-    confidence: {
-      average: result.summary.averageConfidence,
-      min: result.summary.minConfidence,
-      max: result.summary.maxConfidence,
-      lowConfidenceLandmarkCount:
-        result.summary.lowConfidenceLandmarkCount,
-    },
-    z: {
-      min: result.summary.zMin,
-      max: result.summary.zMax,
-      average: result.summary.zAverage,
-    },
-    preview: result.landmarksPreview,
+    sameAsCurrentCandidate: true,
   }
 }
 
@@ -3912,84 +3907,185 @@ function renderDebugFrameListPanel(): string {
   `
 }
 
+function toScanSummaryPreview(scanSummary: DetailedScanSummary): unknown {
+  return {
+    scanIntervalSec: scanSummary.scanIntervalSec,
+    maxScanFrames: scanSummary.maxScanFrames,
+    maxCandidatesPerCategory: scanSummary.maxCandidatesPerCategory,
+    scannedFrameCount: scanSummary.scannedFrameCount,
+    analyzedFrameCount: scanSummary.analyzedFrameCount,
+    detectedFrameCount: scanSummary.detectedFrameCount,
+    candidateSourceFrameCount: scanSummary.candidateSourceFrameCount,
+    candidateCounts: scanSummary.candidateCounts,
+    candidateCategoryCount: scanSummary.candidateCategoryCount,
+    excludedCandidateCount: scanSummary.excludedCandidateCount,
+  }
+}
+
+function toActiveSummaryPreview(
+  poseAwareFrameSelection: PoseAwareMultiFrameSummary,
+  poseAwareDataset: PoseAwareInferenceDataset,
+  currentCandidate: IdealLandmarks3DCandidateResult,
+): unknown {
+  return {
+    activeWorkflow: "step_2_i_pose_aware",
+    currentCandidateGenerationMethod: currentCandidate.generationMethod,
+    hasDetailedScanFrames: getDetailedScanFrames().length > 0,
+    hasPoseAwareDataset:
+      poseAwareDataset.frontReferenceFrames.length > 0 ||
+      poseAwareDataset.observationFrames.length > 0,
+    hasGeneratedCandidate: currentCandidate.status === "generated",
+    currentCandidateLandmarkCount: currentCandidate.landmarkCount,
+    poseAwareStatus: poseAwareDataset.status,
+    frontReferenceFrameCount:
+      poseAwareFrameSelection.frontReferenceFrameCount,
+    usableObservationFrameCount:
+      poseAwareFrameSelection.usableObservationFrameCount,
+    excludedFrameCount: poseAwareFrameSelection.excludedFrameCount,
+  }
+}
+
+function toNaturalV1ReferencePreview(): unknown {
+  return {
+    metadata: {
+      id: idealFace.metadata.id,
+      name: idealFace.metadata.name,
+      version: idealFace.metadata.version,
+    },
+    model: {
+      coordinateSpace: idealFace.model.coordinateSpace,
+      controlPointCount: idealFace.model.controlPoints.length,
+      role: "reference_projection_debug",
+      note:
+        "6 controlPoints are reference data. The IdealFace body is idealLandmarks3D 478 points.",
+      controlPoints: idealFace.model.controlPoints.map((point) => ({
+        id: point.id,
+        semantic: point.semantic ?? null,
+        x: point.x,
+        y: point.y,
+        z: point.z,
+      })),
+    },
+  }
+}
+
+function toLegacyStep2Gv1Preview(
+  representativeFrameCandidates: RepresentativeFrameCandidates,
+  idealLandmarks3DInferenceDataset: IdealLandmarks3DInferenceDataset,
+): unknown {
+  const result = idealLandmarks3DCandidateResult
+  const isCurrentStep2Gv1Candidate =
+    result.generationMethod === "step_2_g_v1"
+
+  return {
+    role: "legacy_regression_check",
+    generationMethod: "step_2_g_v1",
+    selectedRepresentativeFrames: toSelectedRepresentativeFramesPreview(),
+    idealLandmarks3DInferenceDataset: toInferenceDatasetPreview(
+      idealLandmarks3DInferenceDataset,
+    ),
+    representativeFrameCandidates: toRepresentativeCandidatesPreview(
+      representativeFrameCandidates,
+    ),
+    candidate: isCurrentStep2Gv1Candidate
+      ? {
+          status: result.status,
+          generationMethod: result.generationMethod,
+          landmarkCount: result.landmarkCount,
+          sameAsCurrentCandidate: true,
+        }
+      : {
+          status: "not_current",
+          generationMethod: "step_2_g_v1",
+          sameAsCurrentCandidate: false,
+        },
+  }
+}
+
+function toVideoSourceDebugPreview(
+  analysisSummary: AnalysisSummary,
+): unknown {
+  if (!videoSource) {
+    return null
+  }
+
+  return {
+    fileName: videoSource.fileName,
+    duration: videoSource.duration,
+    videoWidth: videoSource.videoWidth,
+    videoHeight: videoSource.videoHeight,
+    extractedFrameCount: videoSource.extractedFrames.length,
+    analyzedFrameCount: analysisSummary.analyzedFrameCount,
+    detectedFrameCount: analysisSummary.detectedFrameCount,
+    failedFrameCount: analysisSummary.failedFrameCount,
+    noFaceFrameCount: analysisSummary.noFaceFrameCount,
+    poseRange: {
+      pitch: analysisSummary.pitchRange,
+      yaw: analysisSummary.yawRange,
+      roll: analysisSummary.rollRange,
+    },
+    frames: videoSource.extractedFrames.map((frame) => ({
+      frameIndex: frame.index,
+      timestamp: frame.timestamp,
+      status: frame.status,
+      detected: frame.analysis?.detected ?? false,
+      landmarksCount: frame.analysis?.landmarks.length ?? 0,
+      posePreview: frame.analysis
+        ? {
+            pitch: frame.analysis.pose.pitch,
+            yaw: frame.analysis.pose.yaw,
+            roll: frame.analysis.pose.roll,
+          }
+        : null,
+      landmarkPreview:
+        frame.analysis?.landmarks.slice(0, 5).map((landmark) => ({
+          x: Number(landmark.x.toFixed(4)),
+          y: Number(landmark.y.toFixed(4)),
+          z: Number(landmark.z.toFixed(4)),
+        })) ?? [],
+      errorMessage: frame.analysis?.errorMessage ?? null,
+      extractionTimeMs: Number(frame.extractionTimeMs.toFixed(1)),
+      thumbnail: "omitted",
+      analysisImage: "omitted",
+    })),
+  }
+}
+
 function buildAuthoringDebugPreview(): unknown {
   const analysisSummary = getAnalysisSummary()
   const scanSummary = getDetailedScanSummary()
   const representativeFrameCandidates = getRepresentativeFrameCandidates()
   const idealLandmarks3DInferenceDataset =
     getIdealLandmarks3DInferenceDataset()
+  const poseAwareFrameSelection = getPoseAwareMultiFrameSummary()
+  const poseAwareDataset = getPoseAwareInferenceDataset()
+  const currentCandidate = idealLandmarks3DCandidateResult
 
   return {
-    idealFace,
-    scanSummary: {
-      scanIntervalSec: scanSummary.scanIntervalSec,
-      maxScanFrames: scanSummary.maxScanFrames,
-      maxCandidatesPerCategory: scanSummary.maxCandidatesPerCategory,
-      scannedFrameCount: scanSummary.scannedFrameCount,
-      analyzedFrameCount: scanSummary.analyzedFrameCount,
-      detectedFrameCount: scanSummary.detectedFrameCount,
-      candidateSourceFrameCount: scanSummary.candidateSourceFrameCount,
-      candidateCounts: scanSummary.candidateCounts,
-      candidateCategoryCount: scanSummary.candidateCategoryCount,
-      excludedCandidateCount: scanSummary.excludedCandidateCount,
+    activeSummary: toActiveSummaryPreview(
+      poseAwareFrameSelection,
+      poseAwareDataset,
+      currentCandidate,
+    ),
+    poseAware: {
+      frameSelection: toPoseAwareMultiFrameInferencePreview(),
+      inferenceDataset: toPoseAwareInferenceDatasetPreview(),
+      candidate: toPoseAwareCandidatePreview(),
     },
-    representativeFrameCandidates: toRepresentativeCandidatesPreview(
-      representativeFrameCandidates,
-    ),
-    selectedRepresentativeFrames: toSelectedRepresentativeFramesPreview(),
-    poseAwareMultiFrameInference:
-      toPoseAwareMultiFrameInferencePreview(),
-    poseAwareInferenceDataset: toPoseAwareInferenceDatasetPreview(),
-    idealLandmarks3DInferenceDataset: toInferenceDatasetPreview(
-      idealLandmarks3DInferenceDataset,
-    ),
-    idealLandmarks3DCandidate: toIdealLandmarks3DCandidatePreview(
-      idealLandmarks3DCandidateResult,
-    ),
-    poseAwareIdealLandmarks3DCandidate:
-      toPoseAwareIdealLandmarks3DCandidatePreview(),
-    videoSource: videoSource
-      ? {
-          fileName: videoSource.fileName,
-          duration: videoSource.duration,
-          videoWidth: videoSource.videoWidth,
-          videoHeight: videoSource.videoHeight,
-          extractedFrameCount: videoSource.extractedFrames.length,
-          analyzedFrameCount: analysisSummary.analyzedFrameCount,
-          detectedFrameCount: analysisSummary.detectedFrameCount,
-          failedFrameCount: analysisSummary.failedFrameCount,
-          noFaceFrameCount: analysisSummary.noFaceFrameCount,
-          poseRange: {
-            pitch: analysisSummary.pitchRange,
-            yaw: analysisSummary.yawRange,
-            roll: analysisSummary.rollRange,
-          },
-          frames: videoSource.extractedFrames.map((frame) => ({
-            frameIndex: frame.index,
-            timestamp: frame.timestamp,
-            status: frame.status,
-            detected: frame.analysis?.detected ?? false,
-            landmarksCount: frame.analysis?.landmarks.length ?? 0,
-            posePreview: frame.analysis
-              ? {
-                  pitch: frame.analysis.pose.pitch,
-                  yaw: frame.analysis.pose.yaw,
-                  roll: frame.analysis.pose.roll,
-                }
-              : null,
-            landmarkPreview:
-              frame.analysis?.landmarks.slice(0, 5).map((landmark) => ({
-                x: Number(landmark.x.toFixed(4)),
-                y: Number(landmark.y.toFixed(4)),
-                z: Number(landmark.z.toFixed(4)),
-              })) ?? [],
-            errorMessage: frame.analysis?.errorMessage ?? null,
-            extractionTimeMs: Number(frame.extractionTimeMs.toFixed(1)),
-            thumbnail: "omitted",
-            analysisImage: "omitted",
-          })),
-        }
-      : null,
+    currentCandidate: toCurrentCandidatePreview(currentCandidate),
+    legacy: {
+      step2Gv1: toLegacyStep2Gv1Preview(
+        representativeFrameCandidates,
+        idealLandmarks3DInferenceDataset,
+      ),
+    },
+    reference: {
+      naturalV1: toNaturalV1ReferencePreview(),
+    },
+    debug: {
+      videoSource: toVideoSourceDebugPreview(analysisSummary),
+      scanSummary: toScanSummaryPreview(scanSummary),
+    },
   }
 }
 
@@ -4508,26 +4604,6 @@ function pickRepresentativeCandidateFrames(
   )
 
   return sourceFrames.filter((frame) => candidateFrameIndexes.has(frame.index))
-}
-
-function updateExtractedFrame(
-  frameIndex: number,
-  nextFrameState: Partial<ExtractedVideoFrame>,
-): void {
-  if (!videoSource) {
-    return
-  }
-
-  updateVideoSource({
-    extractedFrames: videoSource.extractedFrames.map((frame) =>
-      frame.index === frameIndex
-        ? {
-            ...frame,
-            ...nextFrameState,
-          }
-        : frame,
-    ),
-  })
 }
 
 async function getFaceLandmarker(): Promise<FaceLandmarker> {
