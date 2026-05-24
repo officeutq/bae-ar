@@ -51,7 +51,7 @@ export interface IdealLandmarks3DProjectionSummary {
 
 export type IdealLandmarks3DProjectionAlignmentMode =
   | "none"
-  | "face_center_and_scale"
+  | "face_center_and_uniform_scale"
 
 export interface IdealLandmarks3DProjectionPoint2D {
   x: number
@@ -67,6 +67,9 @@ export interface IdealLandmarks3DProjectionAlignment {
   projectedCenter?: IdealLandmarks3DProjectionPoint2D
   currentSize?: number
   projectedSize?: number
+  currentAspectRatio?: number | null
+  projectedAspectRatio?: number | null
+  aspectRatioDifference?: number | null
   reason?: string
 }
 
@@ -98,6 +101,19 @@ interface RotatablePoint3D {
   x: number
   y: number
   z: number
+}
+
+interface PointBounds2D {
+  minX: number
+  maxX: number
+  minY: number
+  maxY: number
+}
+
+interface AlignmentMetrics {
+  center?: IdealLandmarks3DProjectionPoint2D
+  size?: number
+  aspectRatio?: number
 }
 
 export function projectIdealFaceControlPoints(
@@ -224,6 +240,10 @@ function alignProjectedIdealLandmarks(
 } {
   const currentMetrics = getCurrentFaceAlignmentMetrics(options)
   const projectedMetrics = getProjectedIdealAlignmentMetrics(landmarks)
+  const aspectRatioDifference = getAspectRatioDifference(
+    currentMetrics.aspectRatio,
+    projectedMetrics.aspectRatio,
+  )
 
   if (!currentMetrics.center || !currentMetrics.size) {
     return {
@@ -234,6 +254,9 @@ function alignProjectedIdealLandmarks(
         currentSize: currentMetrics.size,
         projectedCenter: projectedMetrics.center,
         projectedSize: projectedMetrics.size,
+        currentAspectRatio: currentMetrics.aspectRatio ?? null,
+        projectedAspectRatio: projectedMetrics.aspectRatio ?? null,
+        aspectRatioDifference,
       },
     }
   }
@@ -247,6 +270,9 @@ function alignProjectedIdealLandmarks(
         currentSize: currentMetrics.size,
         projectedCenter: projectedMetrics.center,
         projectedSize: projectedMetrics.size,
+        currentAspectRatio: currentMetrics.aspectRatio ?? null,
+        projectedAspectRatio: projectedMetrics.aspectRatio ?? null,
+        aspectRatioDifference,
       },
     }
   }
@@ -263,7 +289,7 @@ function alignProjectedIdealLandmarks(
       z: landmark.z * scale,
     })),
     alignment: {
-      mode: "face_center_and_scale",
+      mode: "face_center_and_uniform_scale",
       scale,
       translateX,
       translateY,
@@ -271,19 +297,23 @@ function alignProjectedIdealLandmarks(
       projectedCenter: projectedMetrics.center,
       currentSize: currentMetrics.size,
       projectedSize: projectedMetrics.size,
+      currentAspectRatio: currentMetrics.aspectRatio ?? null,
+      projectedAspectRatio: projectedMetrics.aspectRatio ?? null,
+      aspectRatioDifference,
     },
   }
 }
 
 function getCurrentFaceAlignmentMetrics(
   options: ProjectIdealLandmarks3DOptions,
-): {
-  center?: IdealLandmarks3DProjectionPoint2D
-  size?: number
-} {
+): AlignmentMetrics {
   const bounds = options.currentLandmarks
     ? calculatePointBounds(options.currentLandmarks)
     : null
+  const geometryAspectRatio = getAspectRatio(
+    options.faceGeometry?.faceWidth,
+    options.faceGeometry?.faceHeight,
+  )
   const center =
     toPoint2D(options.faceGeometry?.faceCenter) ??
     getAveragePoint(options.currentLandmarks) ??
@@ -296,20 +326,19 @@ function getCurrentFaceAlignmentMetrics(
   return {
     center,
     size,
+    aspectRatio: geometryAspectRatio ?? getBoundsAspectRatio(bounds),
   }
 }
 
 function getProjectedIdealAlignmentMetrics(
   landmarks: ProjectedIdealLandmark2D[],
-): {
-  center?: IdealLandmarks3DProjectionPoint2D
-  size?: number
-} {
+): AlignmentMetrics {
   const bounds = calculatePointBounds(landmarks)
 
   return {
     center: getBoundsCenter(bounds),
     size: getBoundsSize(bounds),
+    aspectRatio: getBoundsAspectRatio(bounds),
   }
 }
 
@@ -341,14 +370,7 @@ function toPoint2D(
 
 function calculatePointBounds(
   points: Array<{ x: number; y: number }>,
-):
-  | {
-      minX: number
-      maxX: number
-      minY: number
-      maxY: number
-    }
-  | null {
+): PointBounds2D | null {
   const first = points[0]
 
   if (!first) {
@@ -396,6 +418,37 @@ function getBoundsSize(
   )
 }
 
+function getBoundsAspectRatio(
+  bounds: ReturnType<typeof calculatePointBounds>,
+): number | undefined {
+  if (!bounds) {
+    return undefined
+  }
+
+  return getAspectRatio(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY)
+}
+
+function getAspectRatio(
+  width: number | null | undefined,
+  height: number | null | undefined,
+): number | undefined {
+  const positiveWidth = getPositiveNumber(width)
+  const positiveHeight = getPositiveNumber(height)
+
+  return positiveWidth && positiveHeight
+    ? positiveWidth / positiveHeight
+    : undefined
+}
+
+function getAspectRatioDifference(
+  currentAspectRatio: number | undefined,
+  projectedAspectRatio: number | undefined,
+): number | null {
+  return currentAspectRatio !== undefined && projectedAspectRatio !== undefined
+    ? currentAspectRatio - projectedAspectRatio
+    : null
+}
+
 function getPositiveNumber(value: number | null | undefined): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value > 0
     ? value
@@ -408,6 +461,9 @@ function createNoAlignment(reason: string): IdealLandmarks3DProjectionAlignment 
     scale: null,
     translateX: 0,
     translateY: 0,
+    currentAspectRatio: null,
+    projectedAspectRatio: null,
+    aspectRatioDifference: null,
     reason,
   }
 }
