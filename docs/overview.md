@@ -18,13 +18,13 @@ BAE AR
 │  └─ Engine を開発・検証・調整する開発ツール
 │
 ├─ IdealFace Authoring Tool
-│  └─ 理想 3D 顔プリセットを作成する authoring tool。Step 2-I-A まで実装済み
+│  └─ 理想 3D 顔プリセットを作成する authoring tool。Step 2-I-B まで実装済み
 │
 └─ Layer Mask Authoring Tool
    └─ 色加工用 LayerMaskSpec を作成する将来ツール
 ```
 
-現在の実装は `packages/engine`、`apps/studio`、`tools/ideal-face-authoring` が中心です。`tools/ideal-face-authoring` は Step 2-I-A まで実装済みで、`tools/layer-mask-authoring` は将来予定です。
+現在の実装は `packages/engine`、`apps/studio`、`tools/ideal-face-authoring` が中心です。`tools/ideal-face-authoring` は Step 2-I-B まで実装済みで、`tools/layer-mask-authoring` は将来予定です。
 
 ## 現在の到達点
 
@@ -81,9 +81,9 @@ MP4 動画を入力
 
 Step 2-I-A では、Step 2-G v1 の 5ポーズ固定の代表フレーム方式から pose-aware multi-frame inference dataset へ進むための UI / state 基盤を追加済みです。フレーム解析結果欄は「正面基準候補」「推定に使うフレーム」「除外フレーム」の 3 分類に整理します。正面基準候補は `idealLandmarks3D` の x / y 基準を作るために複数選択できる front reference frames です。推定に使うフレームは、除外されておらず、解析成功し、landmarks 478点と `FacePose` がある observation frames を基本とし、yaw / pitch / roll に応じて 3D 推定への寄与を重み付けします。除外フレームは、ブレ、表情崩れ、口開き、顔切れ、検出崩れ、極端な roll などにより推定に使わないフレームです。Step 2-I 用操作は Step 2-I カード内に閉じ、旧ポーズ別候補 UI は Step 2-G v1 用として残します。推定に使うフレームは、除外判断のため全件操作可能にします。画面上の 3 分類は排他的に表示し、正面基準候補に追加したフレームは推定に使うフレーム一覧から外します。
 
-Step 2-I の操作フローは、正面基準候補を複数選び、使いたくないフレームを除外し、除外されていない解析成功フレームを pose 角度に応じて observation として利用する流れです。`left / right / up / down` をユーザーが必ず手動指定する方式にはせず、将来的には `FacePose` の yaw / pitch から推定寄与を自動判断します。内部説明では `frontReferenceFrames`、`usableObservationFrames`、`excludedFrames` を使ってよいものとします。Step 2-I-A 時点では `frontReferenceFrameIds` / `excludedFrameIds` と派生 `usableObservationFrames` summary、JSON preview 概要までを実装済みです。pose-aware 3D候補生成ロジック、厳密な 3D reconstruction、三角測量、bundle adjustment、カメラ内部パラメータ推定、手動微調整、保存 / export、Runtime 組み込みは行いません。
+Step 2-I の操作フローは、正面基準候補を複数選び、使いたくないフレームを除外し、除外されていない解析成功フレームを pose 角度に応じて observation として利用する流れです。`left / right / up / down` をユーザーが必ず手動指定する方式にはせず、将来的には `FacePose` の yaw / pitch から推定寄与を自動判断します。内部説明では `frontReferenceFrames`、`usableObservationFrames`、`excludedFrames` を使ってよいものとします。Step 2-I-A では `frontReferenceFrameIds` / `excludedFrameIds` と派生 `usableObservationFrames` summary、JSON preview 概要までを実装済みです。Step 2-I-B では pose-aware multi-frame inference dataset summary と JSON preview の `poseAwareInferenceDataset` 概要を実装済みです。pose-aware 3D候補生成ロジック、厳密な 3D reconstruction、三角測量、bundle adjustment、カメラ内部パラメータ推定、手動微調整、保存 / export、Runtime 組み込みは行いません。
 
-次に実装予定の Step 2-I-B では、正面基準候補と推定に使うフレームから pose-aware multi-frame inference dataset を作成します。この dataset は `frontReferenceFrames`、`observationFrames`、`excludedFrameCount`、poseCoverage を持つ方針です。`observationFrames` は `left / right / up / down` の固定分類を持たず、frameId、timestamp、2D landmarks、FacePose yaw / pitch / roll、score、weight を持つ連続値の pose observation として扱います。
+Step 2-I-B では、正面基準候補と推定に使うフレームから pose-aware multi-frame inference dataset を作成します。この dataset は `frontReferenceFrames`、`observationFrames`、`excludedFrameCount`、poseCoverage を持ちます。`observationFrames` は `left / right / up / down` の固定分類を持たず、frameId、timestamp、2D landmarks、FacePose yaw / pitch / roll、score、poseStrength、weight を持つ連続値の pose observation として扱います。
 
 その次の Step 2-I-C では、Step 2-I-B の dataset を使って pose-aware weighted z inference v1 を追加します。複数の frontReferenceFrames から base x / y を作り、observationFrames の yaw / pitch / roll / score / weight から z hint を作ります。yaw も pitch も大きいフレームは、left か up のどちらかへ分類せず、mixed pose observation として yaw 成分と pitch 成分の両方を持つ観測として利用します。roll が大きすぎるフレームや score が低いフレームは weight を下げる、または除外候補とします。
 
@@ -301,7 +301,7 @@ Step 2-I の UI 表示名:
 
 Step 2-I-A では、選択状態として `frontReferenceFrameIds` と `excludedFrameIds` を持ちます。`usableObservationFrames` は state として直接持たず、解析成功していること、landmarks が 478 点あること、`FacePose` があること、`excludedFrameIds` に含まれていないことから派生します。3D候補生成前の summary として、正面基準候補数、推定に使うフレーム数、除外フレーム数、yaw / pitch / roll の範囲、状態、警告を表示します。JSON preview には `poseAwareMultiFrameInference` の概要を出しますが、478 landmarks 全文やサムネイル data URL 全文は出しません。
 
-Step 2-I-B は未実装の次ステップです。正面基準候補から base x / y 用の `frontReferenceFrames` を作り、推定に使うフレームから `observationFrames` を作ります。`observationFrames` は固定分類ではなく pose vector として保持し、yaw も pitch も大きいフレームは mixed pose observation として扱います。Step 2-I-B では dataset 作成までに留め、`idealLandmarks3D` 新生成ロジック、pose-aware weighted z inference、Step 2-G v1 の置き換えは行いません。
+Step 2-I-B は実装済みです。正面基準候補から base x / y 用の `frontReferenceFrames` を作り、推定に使うフレームから `observationFrames` を作ります。`observationFrames` は固定分類ではなく pose vector として保持し、yaw も pitch も大きいフレームは mixed pose observation として扱います。Step 2-I-B では dataset 作成までに留め、`idealLandmarks3D` 新生成ロジック、pose-aware weighted z inference、Step 2-G v1 の置き換えは行いません。
 
 Step 2-I-C も未実装です。Step 2-I-B の dataset を使い、yaw / pitch / roll / score / weight に基づく pose-aware weighted z inference v1 で `idealLandmarks3D` 478点候補を生成する方針です。ただし厳密な 3D reconstruction、三角測量、bundle adjustment、カメラ内部パラメータ推定、本格 3D editor、手動微調整、保存 / export、Runtime への組み込みは行いません。
 

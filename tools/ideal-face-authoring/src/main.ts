@@ -59,6 +59,14 @@ const POINT_CLOUD_ZOOM_SENSITIVITY = 0.001
 const POINT_CLOUD_MAX_PITCH = (Math.PI * 89) / 180
 const POSE_AWARE_MIN_OBSERVATION_FRAME_COUNT = 5
 const POSE_AWARE_MIN_YAW_OR_PITCH_RANGE = 10
+const POSE_AWARE_YAW_COVERAGE_OK_RANGE = 15
+const POSE_AWARE_PITCH_COVERAGE_OK_RANGE = 10
+const POSE_AWARE_WEIGHT_POSE_STRENGTH_NORMALIZER = 20
+const POSE_AWARE_WEIGHT_ROLL_PENALTY_DEG = 20
+const POSE_AWARE_MIN_SCORE_WEIGHT = 0.2
+const POSE_AWARE_ROLL_WARNING_ABS_DEG = 15
+const MIXED_POSE_MIN_ABS_DEG = 8
+const POSE_AWARE_DATASET_FRAME_PREVIEW_COUNT = 3
 const DEFAULT_POINT_CLOUD_CAMERA: PointCloudPreviewCamera = {
   yaw: 0,
   pitch: 0,
@@ -189,10 +197,12 @@ interface IdealLandmarks3DFrameSelection {
   excludedFrameIds: string[]
 }
 
-type PoseAwareInferenceStatus =
+type PoseAwareInferenceDatasetStatus =
   | "missing_front_reference"
   | "warning"
   | "ready"
+
+type PoseAwareInferenceStatus = PoseAwareInferenceDatasetStatus
 
 interface PoseAwareObservationFrame {
   frameId: string
@@ -204,6 +214,54 @@ interface PoseAwareObservationFrame {
   thumbnailUrl: string
   role: "front_reference" | "observation"
   excluded: boolean
+}
+
+type PoseAwareCoverageStatus = "insufficient" | "ok"
+
+interface PoseAwarePoseCoverageAxis {
+  min: number | null
+  max: number | null
+  range: number
+  status: PoseAwareCoverageStatus
+}
+
+interface PoseAwarePoseCoverageRollAxis {
+  min: number | null
+  max: number | null
+  range: number
+}
+
+interface PoseAwarePoseCoverage {
+  yaw: PoseAwarePoseCoverageAxis
+  pitch: PoseAwarePoseCoverageAxis
+  roll: PoseAwarePoseCoverageRollAxis
+  mixedPoseFrameCount: number
+}
+
+interface PoseAwareInferenceFrame {
+  frameId: string
+  timestamp: number
+  role: "front_reference" | "observation"
+  pose: {
+    yaw: number
+    pitch: number
+    roll: number
+  }
+  poseStrength: number
+  weight: number
+  score?: number
+  landmarkCount: number
+  landmarkPreview: LandmarkPreviewPoint[]
+  landmarks: FaceLandmark[]
+}
+
+interface PoseAwareInferenceDataset {
+  status: PoseAwareInferenceDatasetStatus
+  frontReferenceFrames: PoseAwareInferenceFrame[]
+  observationFrames: PoseAwareInferenceFrame[]
+  excludedFrameCount: number
+  poseCoverage: PoseAwarePoseCoverage
+  warnings: string[]
 }
 
 interface PoseAwareMultiFrameSummary {
@@ -1752,6 +1810,202 @@ function getPoseRangeFromPoseAwareFrames(
   return getNumberRange(frames.map((frame) => frame.pose[key]))
 }
 
+function calculatePoseAwarePoseStrength(pose: FacePose): number {
+  return Number(
+    Math.sqrt(pose.yaw * pose.yaw + pose.pitch * pose.pitch).toFixed(4),
+  )
+}
+
+function calculatePoseAwareFrameWeight(
+  pose: FacePose,
+  score: number | null,
+): number {
+  const poseStrength = calculatePoseAwarePoseStrength(pose)
+  const poseWeight = clamp(
+    poseStrength / POSE_AWARE_WEIGHT_POSE_STRENGTH_NORMALIZER,
+    0,
+    1,
+  )
+  const rollPenalty = clamp(
+    1 - Math.abs(pose.roll) / POSE_AWARE_WEIGHT_ROLL_PENALTY_DEG,
+    0.2,
+    1,
+  )
+  const scoreWeight =
+    score !== null ? clamp(score, POSE_AWARE_MIN_SCORE_WEIGHT, 1) : 1
+
+  return Number((poseWeight * rollPenalty * scoreWeight).toFixed(4))
+}
+
+function buildPoseAwareInferenceFrame(
+  frame: ExtractedVideoFrame,
+  role: PoseAwareInferenceFrame["role"],
+): PoseAwareInferenceFrame | null {
+  const analysis = frame.analysis
+
+  if (!isUsableObservationSourceFrame(frame) || !analysis) {
+    return null
+  }
+
+  const score = getPoseAwareCandidateScore(frame.index)
+
+  return {
+    frameId: getFrameIdFromFrame(frame),
+    timestamp: frame.timestamp,
+    role,
+    pose: {
+      yaw: analysis.pose.yaw,
+      pitch: analysis.pose.pitch,
+      roll: analysis.pose.roll,
+    },
+    poseStrength: calculatePoseAwarePoseStrength(analysis.pose),
+    weight: calculatePoseAwareFrameWeight(analysis.pose, score),
+    score: score ?? undefined,
+    landmarkCount: analysis.landmarks.length,
+    landmarkPreview: buildLandmarkPreview(analysis.landmarks),
+    landmarks: analysis.landmarks,
+  }
+}
+
+function getPoseAwareDatasetFrontReferenceFrames(): PoseAwareInferenceFrame[] {
+  return idealLandmarks3DFrameSelection.frontReferenceFrameIds
+    .map((frameId) => {
+      if (idealLandmarks3DFrameSelection.excludedFrameIds.includes(frameId)) {
+        return null
+      }
+
+      const frame = findPoseAwareFrameById(frameId)
+
+      return frame
+        ? buildPoseAwareInferenceFrame(frame, "front_reference")
+        : null
+    })
+    .filter(
+      (frame): frame is PoseAwareInferenceFrame =>
+        frame !== null && frame.landmarkCount === REQUIRED_LANDMARK_COUNT,
+    )
+    .sort((a, b) => Number(a.frameId) - Number(b.frameId))
+}
+
+function getPoseAwareDatasetObservationFrames(): PoseAwareInferenceFrame[] {
+  return getDetailedScanFrames()
+    .filter(
+      (frame) =>
+        isUsableObservationSourceFrame(frame) &&
+        !isFrameExcludedForPoseAware(frame.index) &&
+        !isFrameFrontReferenceForPoseAware(frame.index),
+    )
+    .map((frame) => buildPoseAwareInferenceFrame(frame, "observation"))
+    .filter(
+      (frame): frame is PoseAwareInferenceFrame =>
+        frame !== null && frame.landmarkCount === REQUIRED_LANDMARK_COUNT,
+    )
+}
+
+function buildPoseAwareCoverageAxis(
+  values: number[],
+  okRange: number,
+): PoseAwarePoseCoverageAxis {
+  const range = getNumberRange(values)
+  const width = range ? Number((range.max - range.min).toFixed(4)) : 0
+
+  return {
+    min: range ? Number(range.min.toFixed(4)) : null,
+    max: range ? Number(range.max.toFixed(4)) : null,
+    range: width,
+    status: width >= okRange ? "ok" : "insufficient",
+  }
+}
+
+function buildPoseAwareRollCoverageAxis(
+  values: number[],
+): PoseAwarePoseCoverageRollAxis {
+  const range = getNumberRange(values)
+
+  return {
+    min: range ? Number(range.min.toFixed(4)) : null,
+    max: range ? Number(range.max.toFixed(4)) : null,
+    range: range ? Number((range.max - range.min).toFixed(4)) : 0,
+  }
+}
+
+function buildPoseAwarePoseCoverage(
+  observationFrames: PoseAwareInferenceFrame[],
+): PoseAwarePoseCoverage {
+  return {
+    yaw: buildPoseAwareCoverageAxis(
+      observationFrames.map((frame) => frame.pose.yaw),
+      POSE_AWARE_YAW_COVERAGE_OK_RANGE,
+    ),
+    pitch: buildPoseAwareCoverageAxis(
+      observationFrames.map((frame) => frame.pose.pitch),
+      POSE_AWARE_PITCH_COVERAGE_OK_RANGE,
+    ),
+    roll: buildPoseAwareRollCoverageAxis(
+      observationFrames.map((frame) => frame.pose.roll),
+    ),
+    mixedPoseFrameCount: observationFrames.filter(
+      (frame) =>
+        Math.abs(frame.pose.yaw) >= MIXED_POSE_MIN_ABS_DEG &&
+        Math.abs(frame.pose.pitch) >= MIXED_POSE_MIN_ABS_DEG,
+    ).length,
+  }
+}
+
+function getPoseAwareInferenceDataset(): PoseAwareInferenceDataset {
+  const frontReferenceFrames = getPoseAwareDatasetFrontReferenceFrames()
+  const observationFrames = getPoseAwareDatasetObservationFrames()
+  const poseCoverage = buildPoseAwarePoseCoverage(observationFrames)
+  const warnings: string[] = []
+
+  if (frontReferenceFrames.length === 0) {
+    warnings.push("正面基準候補を1件以上選んでください。")
+  }
+
+  if (observationFrames.length < POSE_AWARE_MIN_OBSERVATION_FRAME_COUNT) {
+    warnings.push(
+      "推定に使うフレームが少ないため、3D候補が不安定になる可能性があります。",
+    )
+  }
+
+  if (
+    poseCoverage.yaw.status === "insufficient" &&
+    poseCoverage.pitch.status === "insufficient"
+  ) {
+    warnings.push(
+      "yaw / pitch の角度幅が不足しているため、奥行き推定の confidence が低くなる可能性があります。",
+    )
+  }
+
+  if (
+    observationFrames.some(
+      (frame) => Math.abs(frame.pose.roll) >= POSE_AWARE_ROLL_WARNING_ABS_DEG,
+    )
+  ) {
+    warnings.push(
+      "roll が大きいフレームが含まれています。必要に応じて除外してください。",
+    )
+  }
+
+  const status: PoseAwareInferenceDatasetStatus =
+    frontReferenceFrames.length === 0
+      ? "missing_front_reference"
+      : observationFrames.length >= POSE_AWARE_MIN_OBSERVATION_FRAME_COUNT &&
+          (poseCoverage.yaw.status === "ok" ||
+            poseCoverage.pitch.status === "ok")
+        ? "ready"
+        : "warning"
+
+  return {
+    status,
+    frontReferenceFrames,
+    observationFrames,
+    excludedFrameCount: idealLandmarks3DFrameSelection.excludedFrameIds.length,
+    poseCoverage,
+    warnings,
+  }
+}
+
 function getPoseAwareMultiFrameSummary(): PoseAwareMultiFrameSummary {
   const frontReferenceFrames = getActivePoseAwareFrontReferenceFrames()
   const selectedFrontReferenceFrames = getPoseAwareFrontReferenceFrames()
@@ -1837,6 +2091,62 @@ function toPoseAwareMultiFrameInferencePreview(): unknown {
     excludedFrameIds: summary.excludedFrameIds,
     displayMode: "exclusiveGroups",
     warnings: summary.warnings,
+  }
+}
+
+function toPoseAwareInferenceFramePreview(
+  frame: PoseAwareInferenceFrame,
+): unknown {
+  return {
+    frameId: frame.frameId,
+    timestamp: Number(frame.timestamp.toFixed(3)),
+    role: frame.role,
+    pose: frame.pose,
+    poseStrength: frame.poseStrength,
+    weight: frame.weight,
+    score: frame.score ?? null,
+    landmarkCount: frame.landmarkCount,
+    landmarkPreview: frame.landmarkPreview,
+  }
+}
+
+function getPoseAwareDatasetWeightSummary(
+  frames: PoseAwareInferenceFrame[],
+): { average: number; min: number; max: number } {
+  const weights = frames.map((frame) => frame.weight)
+
+  if (weights.length === 0) {
+    return {
+      average: 0,
+      min: 0,
+      max: 0,
+    }
+  }
+
+  return {
+    average: Number(averageNumbers(weights).toFixed(4)),
+    min: Number(Math.min(...weights).toFixed(4)),
+    max: Number(Math.max(...weights).toFixed(4)),
+  }
+}
+
+function toPoseAwareInferenceDatasetPreview(): unknown {
+  const dataset = getPoseAwareInferenceDataset()
+
+  return {
+    status: dataset.status,
+    frontReferenceFrameCount: dataset.frontReferenceFrames.length,
+    observationFrameCount: dataset.observationFrames.length,
+    excludedFrameCount: dataset.excludedFrameCount,
+    poseCoverage: dataset.poseCoverage,
+    weight: getPoseAwareDatasetWeightSummary(dataset.observationFrames),
+    frontReferenceFramePreview: dataset.frontReferenceFrames
+      .slice(0, POSE_AWARE_DATASET_FRAME_PREVIEW_COUNT)
+      .map(toPoseAwareInferenceFramePreview),
+    observationFramePreview: dataset.observationFrames
+      .slice(0, POSE_AWARE_DATASET_FRAME_PREVIEW_COUNT)
+      .map(toPoseAwareInferenceFramePreview),
+    warnings: dataset.warnings,
   }
 }
 
@@ -1992,6 +2302,7 @@ function formatPoseAwareScore(score: number | null): string {
 
 function renderPoseAwareMultiFramePanel(): string {
   const summary = getPoseAwareMultiFrameSummary()
+  const dataset = getPoseAwareInferenceDataset()
   const frontReferenceFrames = getActivePoseAwareFrontReferenceFrames()
   const visibleUsableObservationFrames = getVisibleUsableObservationFrames()
   const excludedFrames = getPoseAwareExcludedFrames()
@@ -2005,6 +2316,7 @@ function renderPoseAwareMultiFramePanel(): string {
         </div>
       </div>
       ${renderPoseAwareSummary(summary)}
+      ${renderPoseAwareInferenceDatasetSummary(dataset)}
       <div class="pose-aware-columns">
         ${renderPoseAwareFrameGroup(
           "正面基準候補",
@@ -2028,6 +2340,85 @@ function renderPoseAwareMultiFramePanel(): string {
           "excluded",
         )}
       </div>
+    </div>
+  `
+}
+
+function formatPoseAwareCoverageStatus(status: PoseAwareCoverageStatus): string {
+  return status
+}
+
+function formatNullableDegree(value: number | null): string {
+  return value === null ? "なし" : `${formatNumber(value)}°`
+}
+
+function renderPoseAwareCoverageAxis(
+  label: string,
+  axis: PoseAwarePoseCoverageAxis,
+): string {
+  return `
+    <li>
+      ${label} range: ${formatNullableDegree(axis.min)} 〜 ${formatNullableDegree(axis.max)} / range ${formatNumber(axis.range)}° / ${formatPoseAwareCoverageStatus(axis.status)}
+    </li>
+  `
+}
+
+function renderPoseAwareRollCoverageAxis(
+  axis: PoseAwarePoseCoverageRollAxis,
+): string {
+  return `
+    <li>
+      roll range: ${formatNullableDegree(axis.min)} 〜 ${formatNullableDegree(axis.max)} / range ${formatNumber(axis.range)}°
+    </li>
+  `
+}
+
+function renderPoseAwareInferenceDatasetSummary(
+  dataset: PoseAwareInferenceDataset,
+): string {
+  return `
+    <div class="pose-aware-dataset-summary">
+      <h4>Step 2-I-B: pose-aware dataset</h4>
+      <dl class="pose-aware-summary-list">
+        <div>
+          <dt>状態</dt>
+          <dd>${formatPoseAwareStatus(dataset.status)}</dd>
+        </div>
+        <div>
+          <dt>正面基準 frames</dt>
+          <dd>${dataset.frontReferenceFrames.length}件</dd>
+        </div>
+        <div>
+          <dt>observation frames</dt>
+          <dd>${dataset.observationFrames.length}件</dd>
+        </div>
+        <div>
+          <dt>除外 frames</dt>
+          <dd>${dataset.excludedFrameCount}件</dd>
+        </div>
+      </dl>
+      <div class="pose-aware-coverage">
+        <strong>pose coverage</strong>
+        <ul>
+          ${renderPoseAwareCoverageAxis("yaw", dataset.poseCoverage.yaw)}
+          ${renderPoseAwareCoverageAxis("pitch", dataset.poseCoverage.pitch)}
+          ${renderPoseAwareRollCoverageAxis(dataset.poseCoverage.roll)}
+          <li>mixed pose frames: ${dataset.poseCoverage.mixedPoseFrameCount}件</li>
+        </ul>
+      </div>
+      <div class="pose-aware-coverage">
+        <strong>warnings</strong>
+        ${
+          dataset.warnings.length === 0
+            ? `<p class="pose-aware-ready-text">なし</p>`
+            : `<ul class="pose-aware-warning-list">
+                ${dataset.warnings
+                  .map((warning) => `<li>${escapeHtml(warning)}</li>`)
+                  .join("")}
+              </ul>`
+        }
+      </div>
+      <p class="pose-aware-dataset-note">この dataset は次の Step 2-I-C の入力確認用です。現時点では Step 2-G v1 の 3D候補生成ロジックは変更していません。</p>
     </div>
   `
 }
@@ -3000,6 +3391,7 @@ function buildAuthoringDebugPreview(): unknown {
     selectedRepresentativeFrames: toSelectedRepresentativeFramesPreview(),
     poseAwareMultiFrameInference:
       toPoseAwareMultiFrameInferencePreview(),
+    poseAwareInferenceDataset: toPoseAwareInferenceDatasetPreview(),
     idealLandmarks3DInferenceDataset: toInferenceDatasetPreview(
       idealLandmarks3DInferenceDataset,
     ),
@@ -3978,7 +4370,7 @@ function render(): void {
           <p class="eyebrow">BAE AR</p>
           <h1>IdealFace Authoring Tool</h1>
         </div>
-        <span>Step 2-I-A</span>
+        <span>Step 2-I-B</span>
       </header>
 
       <section class="summary" aria-label="IdealFace metadata">
@@ -4341,6 +4733,7 @@ style.textContent = `
 
   .pose-aware-heading p,
   .pose-aware-frame-group p,
+  .pose-aware-dataset-note,
   .pose-aware-ready-text,
   .pose-aware-empty {
     margin: 4px 0 0;
@@ -4357,6 +4750,39 @@ style.textContent = `
 
   .pose-aware-summary-list {
     grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  }
+
+  .pose-aware-dataset-summary {
+    display: grid;
+    gap: 10px;
+    border: 1px solid #dce6e1;
+    border-radius: 8px;
+    background: #fbfdfc;
+    padding: 12px;
+  }
+
+  .pose-aware-dataset-summary h4,
+  .pose-aware-coverage strong {
+    margin: 0;
+    color: #17201b;
+    font-size: 14px;
+    line-height: 1.25;
+  }
+
+  .pose-aware-coverage {
+    display: grid;
+    gap: 6px;
+  }
+
+  .pose-aware-coverage ul {
+    display: grid;
+    gap: 4px;
+    margin: 0;
+    padding-left: 18px;
+    color: #5d675f;
+    font-size: 13px;
+    font-weight: 800;
+    line-height: 1.45;
   }
 
   .pose-aware-warning-list {

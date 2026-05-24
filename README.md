@@ -21,7 +21,7 @@ Beauty Studio
 
 IdealFace Authoring Tool
   理想 3D 顔プリセットを作成する authoring tool
-  Step 2-I-A まで実装済み
+  Step 2-I-B まで実装済み
   リアルタイム Engine Runtime には含めない
 
 Layer Mask Authoring Tool
@@ -42,7 +42,7 @@ docs
   設計・仕様・ロードマップ
 
 tools/ideal-face-authoring
-  IdealFace Authoring Tool。Step 2-I-A まで実装済み
+  IdealFace Authoring Tool。Step 2-I-B まで実装済み
 ```
 
 ## 現在の実装状況
@@ -74,10 +74,10 @@ tools/ideal-face-authoring
 - IdealFace Authoring Tool Step 2-G: 3D推測用データセットから `idealLandmarks3D` 478点候補を自動推測する v1 を追加。front の 2D landmarks を x / y の基準にし、left / right / up / down との差分から z を簡易推定し、不足ラベルは confidence に反映します。結果は候補 summary と先頭 5 点 preview、JSON preview の `idealLandmarks3DCandidate` 概要で確認します
 - IdealFace Authoring Tool Step 2-H: 生成済みの `idealLandmarks3D` 478点候補を 1 つの interactive 3D point cloud preview として表示し、ドラッグによる視点回転、ホイール zoom、Shift + ドラッグ pan、正面 / 横 / 上の camera preset、x / y / z 範囲、confidence summary を確認できます。preview camera の操作のみで、候補データ自体は変更しません
 - IdealFace Authoring Tool Step 2-I-A: pose-aware multi-frame inference の UI / state 基盤として、正面基準候補、推定に使うフレーム、除外フレームの 3 分類表示、`frontReferenceFrameIds` / `excludedFrameIds`、派生 `usableObservationFrames` summary、JSON preview の `poseAwareMultiFrameInference` 概要を追加。Step 2-I 用操作は Step 2-I カード内に閉じ、旧ポーズ別候補 UI には混ぜません。画面上の 3 分類は排他的に表示します
+- IdealFace Authoring Tool Step 2-I-B: `frontReferenceFrameIds` / `excludedFrameIds` / 推定に使うフレームから、`left / right / up / down` 固定分類を持たない pose-aware multi-frame inference dataset を作成。`frontReferenceFrames` / `observationFrames` / `excludedFrameCount`、yaw / pitch / roll coverage、poseStrength、weight、mixed pose count、warnings を summary と JSON preview の `poseAwareInferenceDataset` 概要で確認します
 
 未実装 / 将来予定:
 
-- IdealFace Authoring Tool Step 2-I-B: `left / right / up / down` 固定分類を持たない pose-aware multi-frame inference dataset 作成
 - IdealFace Authoring Tool Step 2-I-C: yaw / pitch / roll と weight に基づく pose-aware weighted z inference v1
 - IdealFace Authoring Tool の手動微調整
 - IdealFace asset の保存 / export
@@ -152,7 +152,7 @@ Step 2-G では、`idealLandmarks3DInferenceDataset` の ready entry を使い�
 
 Step 2-H では、生成された `idealLandmarks3D` 478点候補を Authoring Tool 上の interactive 3D point cloud preview として表示します。preview は debug / 確認用であり、本格 3D editor ではありません。1 つの canvas 上で preview camera を操作し、ドラッグで視点回転、ホイールで zoom、Shift + ドラッグで pan できます。正面 / 横 / 上は固定ビューではなく同じ viewport の camera preset として扱います。表示上は y を反転して顔の上方向が画面上側に見えるようにし、奥行き確認のための z 表示倍率調整は preview 専用の変換として扱います。これらは preview camera / view transform の操作であり、生成済みの `idealLandmarks3D` 候補データや JSON preview の数値は変更しません。近くに landmark count、視点、x / y / z の min / max、average / min / max confidence を表示します。低 confidence の点は薄く表示します。JSON preview は引き続き `idealLandmarks3DCandidate` の概要と先頭 5 点程度の preview に留め、478点全文や canvas data URL は出しません。手動微調整、保存 / export、複数画像入力はまだ実装しません。詳細スキャン、候補振り分け、手動ラベル確定、dataset 作成、3D候補生成、3D点群 preview は IdealFace Authoring Tool の責務であり、Engine Runtime には入れません。
 
-Step 2-I-A では、5ポーズ固定の代表フレーム方式から pose-aware multi-frame inference へ進むための UI / state 基盤を追加しました。Step 2-G v1 は実装済みの簡易推定として残し、Step 2-I の pose-aware 3D候補生成ロジックは未実装のままです。
+Step 2-I-A では、5ポーズ固定の代表フレーム方式から pose-aware multi-frame inference へ進むための UI / state 基盤を追加しました。Step 2-I-B では、正面基準候補と推定に使うフレームから、`left / right / up / down` 固定分類を持たない pose-aware multi-frame inference dataset を作成します。Step 2-G v1 は実装済みの簡易推定として残し、Step 2-I-C の pose-aware 3D候補生成ロジックは未実装のままです。
 
 Step 2-I のフレーム解析結果欄は、以下の 3 分類に整理します。
 
@@ -172,7 +172,7 @@ Step 2-I のフレーム解析結果欄は、以下の 3 分類に整理しま�
 
 内部説明では `frontReferenceFrames`、`usableObservationFrames`、`excludedFrames` という名前を使ってよいものとします。操作フローは、正面基準候補を複数選び、使いたくないフレームを除外し、除外されていない解析成功フレームを pose 角度に応じて observation として利用する流れです。`left / right / up / down` をユーザーが必ず手動指定する方式にはせず、将来的には FacePose の yaw / pitch から自動的に推定寄与を判断します。
 
-次に実装予定の Step 2-I-B では、正面基準候補と推定に使うフレームから、`left / right / up / down` 固定分類を持たない pose-aware multi-frame inference dataset を作成します。各 observation frame は frameId、timestamp、2D landmarks、FacePose yaw / pitch / roll、score、weight を持つ連続値の pose observation として扱います。yaw も pitch も大きいフレームは、left か up のどちらかへ押し込まず、mixed pose observation として利用します。
+Step 2-I-B では、正面基準候補と推定に使うフレームから、`left / right / up / down` 固定分類を持たない pose-aware multi-frame inference dataset を作成します。各 observation frame は frameId、timestamp、2D landmarks、FacePose yaw / pitch / roll、score、weight を持つ連続値の pose observation として扱います。yaw も pitch も大きいフレームは、left か up のどちらかへ押し込まず、mixed pose observation として扱います。現時点では dataset 作成と確認用 summary / JSON preview までで、`idealLandmarks3D` 新生成ロジックには接続しません。
 
 その次の Step 2-I-C では、Step 2-I-B の dataset を使って pose-aware weighted z inference v1 を追加します。複数の frontReferenceFrames から base x / y を作り、observationFrames の yaw / pitch / roll / score / weight から landmark ごとの z hint を weighted average します。ただし、厳密な 3D reconstruction、三角測量、bundle adjustment、カメラ内部パラメータ推定、Runtime 組み込みは引き続き行いません。
 
@@ -326,7 +326,7 @@ MP4 動画を入力
   -> yaw / pitch / roll から代表フレーム候補を自動抽出
   -> 人間が正面 / 左向き / 右向き / 上向き / 下向き / 除外を確定
   -> 確定済み代表フレームから 3D推測用データセットを作成
-  -> 将来 Step 2-I-B: 正面基準候補、推定に使うフレーム、除外フレームから pose-aware multi-frame inference dataset を作成
+  -> Step 2-I-B: 正面基準候補、推定に使うフレーム、除外フレームから pose-aware multi-frame inference dataset を作成
   -> 将来 Step 2-I-C: yaw / pitch / roll / weight に基づく z hint で idealLandmarks3D 478点候補を生成
   -> Authoring Tool 上で確認・微調整
   -> IdealFace asset として保存 / export
@@ -350,4 +350,4 @@ MP4 動画を入力
 
 この処理は完全自動生成ではなく、自動推測 + 手動補正として扱います。動画入力やフレーム抽出は IdealFace Authoring Tool の責務です。Engine Runtime は `idealLandmarks3D` を作成せず、完成済みの IdealFace asset を読み込んで、現在 `FacePose` へ投影して使います。
 
-現時点では、MP4 動画入力とフレーム抽出は Step 2-A、抽出フレームの MediaPipe 解析は Step 2-B、yaw / pitch / roll による代表フレーム候補の自動抽出、各カテゴリ上位複数件の候補一覧 / JSON preview への概要表示、代表フレーム候補を主表示にした Step 2-C UI 整理、代表フレーム候補から正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定する Step 2-D UI、候補カテゴリを必要なものだけ開くトグル表示、確定済み代表フレーム一覧、Step 2-E として確定済み代表フレームから front / left / right / up / down の3D推測用データセットを作成し、readiness summary、dataset 一覧、JSON preview の概要で確認する表示、Step 2-F として候補抽出用の詳細スキャン、詳細スキャン summary、JSON preview の `scanSummary`、トリムしないサムネイル表示、Step 2-G として `idealLandmarks3D` 478点候補の自動推測 v1、summary、先頭 5 点 preview、JSON preview の `idealLandmarks3DCandidate` 概要表示、Step 2-H として interactive 3D点群 preview、正面 / 横 / 上の camera preset、x / y / z 範囲、confidence summary、Step 2-I-A として `frontReferenceFrameIds` / `excludedFrameIds`、派生 `usableObservationFrames` summary、JSON preview の `poseAwareMultiFrameInference` 概要は実装済みです。dataset は 2D 478 landmarks と FacePose を持つ代表フレーム群であり、生成結果は完成済み IdealFace asset ではなく候補データです。Step 2-I の pose-aware 3D候補生成ロジック、手動微調整、保存 / export、複数画像入力、厳密な 3D reconstruction、三角測量、bundle adjustment、カメラ内部パラメータ推定、Runtime 組み込みは未実装です。
+現時点では、MP4 動画入力とフレーム抽出は Step 2-A、抽出フレームの MediaPipe 解析は Step 2-B、yaw / pitch / roll による代表フレーム候補の自動抽出、各カテゴリ上位複数件の候補一覧 / JSON preview への概要表示、代表フレーム候補を主表示にした Step 2-C UI 整理、代表フレーム候補から正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定する Step 2-D UI、候補カテゴリを必要なものだけ開くトグル表示、確定済み代表フレーム一覧、Step 2-E として確定済み代表フレームから front / left / right / up / down の3D推測用データセットを作成し、readiness summary、dataset 一覧、JSON preview の概要で確認する表示、Step 2-F として候補抽出用の詳細スキャン、詳細スキャン summary、JSON preview の `scanSummary`、トリムしないサムネイル表示、Step 2-G として `idealLandmarks3D` 478点候補の自動推測 v1、summary、先頭 5 点 preview、JSON preview の `idealLandmarks3DCandidate` 概要表示、Step 2-H として interactive 3D点群 preview、正面 / 横 / 上の camera preset、x / y / z 範囲、confidence summary、Step 2-I-A として `frontReferenceFrameIds` / `excludedFrameIds`、派生 `usableObservationFrames` summary、JSON preview の `poseAwareMultiFrameInference` 概要、Step 2-I-B として pose-aware multi-frame inference dataset summary と JSON preview の `poseAwareInferenceDataset` 概要は実装済みです。dataset は 2D 478 landmarks と FacePose を持つ代表フレーム群であり、生成結果は完成済み IdealFace asset ではなく候補データです。Step 2-I-C の pose-aware 3D候補生成ロジック、手動微調整、保存 / export、複数画像入力、厳密な 3D reconstruction、三角測量、bundle adjustment、カメラ内部パラメータ推定、Runtime 組み込みは未実装です。

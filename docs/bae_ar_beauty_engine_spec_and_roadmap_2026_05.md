@@ -131,7 +131,7 @@ Beauty Studio:
 - Projection Difference Debug v1 は FaceGeometry 代表点と projected IdealFace controlPoints の差分確認用です。
 - `FaceGeometry` は landmarks から代表点やサイズを計算する補助解析です。
 - 実際の shape warp、color processing、rendering はまだありません。
-- IdealFace Authoring Tool は Step 2-I-A まで実装済みです。
+- IdealFace Authoring Tool は Step 2-I-B まで実装済みです。
 
 ## 4. 現在の処理パイプライン
 
@@ -674,7 +674,7 @@ Studio は Engine の private field、内部状態、内部実装へ直接アク
 
 ### Milestone 10: IdealFace Authoring Tool
 
-状態: 一部実装済み / Step 2-I-A まで完了
+状態: 一部実装済み / Step 2-I-B まで完了
 
 目的:
 
@@ -957,7 +957,7 @@ Step 2-G の制限:
 - 3D点群 preview は Step 2-H で実装済み。preview は確認用表示であり、視点回転、zoom、pan、y 軸反転、z 表示倍率調整は preview camera / view transform の操作として扱う。手動微調整、保存 / export はまだ実装しない
 - 複数画像入力はまだ実装しない
 
-Step 2-G v1 は実装済みの簡易推定として残します。Step 2-I-A では、5ポーズ固定の代表フレーム方式から pose-aware multi-frame inference dataset へ進むための UI / state 基盤を追加済みです。次に実装する Step 2-I-B では、正面基準候補、推定に使うフレーム、除外フレームから pose-aware dataset を作成します。その次の Step 2-I-C では、yaw / pitch / roll / weight を使う pose-aware weighted z inference v1 へ進む方針です。
+Step 2-G v1 は実装済みの簡易推定として残します。Step 2-I-A では、5ポーズ固定の代表フレーム方式から pose-aware multi-frame inference dataset へ進むための UI / state 基盤を追加済みです。Step 2-I-B では、正面基準候補、推定に使うフレーム、除外フレームから pose-aware dataset を作成済みです。次の Step 2-I-C では、yaw / pitch / roll / weight を使う pose-aware weighted z inference v1 へ進む方針です。
 
 3D候補生成処理は IdealFace Authoring Tool の責務です。Engine Runtime には 3D推測処理や Authoring UI を入れません。Beauty Studio にも Authoring 用タブは追加しません。
 
@@ -989,7 +989,7 @@ Step 2-H の制限:
 
 ## 18-I. IdealFace Authoring Tool Step 2-I
 
-状態: Step 2-I-A UI / state 基盤は実装済み。Step 2-I-B dataset 作成、Step 2-I-C pose-aware weighted z inference v1 は未実装 / 次に実装予定
+状態: Step 2-I-A UI / state 基盤、Step 2-I-B dataset 作成は実装済み。Step 2-I-C pose-aware weighted z inference v1 は未実装 / 次に実装予定
 
 Step 2-I の目的:
 
@@ -1116,11 +1116,11 @@ type IdealLandmarks3DObservationFrame = {
 }
 ```
 
-Step 2-I-A では、`frontReferenceFrameIds` と `excludedFrameIds` の選択状態、派生 `usableObservationFrames` summary、JSON preview の `poseAwareMultiFrameInference` 概要を実装済みです。Step 2-I 用操作は Step 2-I カード内に閉じ、旧ポーズ別候補 UI には混ぜません。画面上の 3 分類は排他的に表示します。pose-aware dataset 作成と pose-aware 3D候補生成ロジックへの接続はまだ行いません。
+Step 2-I-A では、`frontReferenceFrameIds` と `excludedFrameIds` の選択状態、派生 `usableObservationFrames` summary、JSON preview の `poseAwareMultiFrameInference` 概要を実装済みです。Step 2-I-B では、`frontReferenceFrames` / `observationFrames` / `excludedFrameCount` / poseCoverage を持つ pose-aware dataset と JSON preview の `poseAwareInferenceDataset` 概要を実装済みです。Step 2-I 用操作は Step 2-I カード内に閉じ、旧ポーズ別候補 UI には混ぜません。画面上の 3 分類は排他的に表示します。pose-aware 3D候補生成ロジックへの接続はまだ行いません。
 
 ## 18-I-B. IdealFace Authoring Tool Step 2-I-B
 
-状態: 未実装 / 次に実装予定
+状態: 実装済み / dataset 作成まで
 
 Step 2-I-B の目的:
 
@@ -1195,7 +1195,7 @@ type PoseAwareFrame = {
 }
 ```
 
-Step 2-I-B でまだ実装しないもの:
+Step 2-I-B で実装しないもの:
 
 - `idealLandmarks3D` 新生成ロジック
 - Step 2-G v1 の置き換え
@@ -1250,7 +1250,7 @@ Step 2-I-A:
   実装済みの UI / state 基盤
 
 Step 2-I-B:
-  未実装の pose-aware dataset 作成
+  実装済みの pose-aware dataset 作成
   frontReferenceFrames / observationFrames / excludedFrames
     -> pose-aware multi-frame inference dataset
 
