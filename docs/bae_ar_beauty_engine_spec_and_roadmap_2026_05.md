@@ -131,7 +131,7 @@ Beauty Studio:
 - Projection Difference Debug v1 は FaceGeometry 代表点と projected IdealFace controlPoints の差分確認用です。
 - `FaceGeometry` は landmarks から代表点やサイズを計算する補助解析です。
 - 実際の shape warp、color processing、rendering はまだありません。
-- IdealFace Authoring Tool は Step 2-I-B まで実装済みです。
+- IdealFace Authoring Tool は Step 2-I-C まで実装済みです。
 
 ## 4. 現在の処理パイプライン
 
@@ -674,7 +674,7 @@ Studio は Engine の private field、内部状態、内部実装へ直接アク
 
 ### Milestone 10: IdealFace Authoring Tool
 
-状態: 一部実装済み / Step 2-I-B まで完了
+状態: 一部実装済み / Step 2-I-C まで完了
 
 目的:
 
@@ -989,7 +989,7 @@ Step 2-H の制限:
 
 ## 18-I. IdealFace Authoring Tool Step 2-I
 
-状態: Step 2-I-A UI / state 基盤、Step 2-I-B dataset 作成は実装済み。Step 2-I-C pose-aware weighted z inference v1 は未実装 / 次に実装予定
+状態: Step 2-I-A UI / state 基盤、Step 2-I-B dataset 作成、Step 2-I-C pose-aware weighted z inference v1 は実装済み
 
 Step 2-I の目的:
 
@@ -1208,7 +1208,7 @@ Step 2-I-B で実装しないもの:
 
 ## 18-I-C. IdealFace Authoring Tool Step 2-I-C
 
-状態: 未実装 / Step 2-I-B の次に実装予定
+状態: 実装済み / Step 2-I-C
 
 Step 2-I-C の目的:
 
@@ -1292,8 +1292,8 @@ Step 2-I-B:
     -> pose-aware multi-frame inference dataset
 
 Step 2-I-C:
-  未実装の pose-aware weighted z inference v1
-  observation landmarks を roll 補正してから yaw / pitch / roll / weight を使って z hint を推定
+  実装済みの pose-aware weighted z inference v1
+  observation landmarks を roll 補正してから yaw / pitch / weight を使って z hint を推定
 ```
 
 Step 2-I-A の 3D候補生成前 summary 方針:
