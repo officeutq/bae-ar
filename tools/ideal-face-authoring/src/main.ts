@@ -59,7 +59,6 @@ const POINT_CLOUD_ZOOM_SENSITIVITY = 0.001
 const POINT_CLOUD_MAX_PITCH = (Math.PI * 89) / 180
 const POSE_AWARE_MIN_OBSERVATION_FRAME_COUNT = 5
 const POSE_AWARE_MIN_YAW_OR_PITCH_RANGE = 10
-const POSE_AWARE_FRAME_PREVIEW_LIMIT = 12
 const DEFAULT_POINT_CLOUD_CAMERA: PointCloudPreviewCamera = {
   yaw: 0,
   pitch: 0,
@@ -1898,27 +1897,30 @@ function removePoseAwareExcludedFrame(frameIndex: number): void {
   }
 }
 
-function togglePoseAwareFrontReferenceFrame(frameIndex: number): void {
+function addPoseAwareFrontReferenceFrame(frameIndex: number): void {
   const frameId = getFrameId(frameIndex)
-  const frontReferenceFrameIds = isFrameFrontReferenceForPoseAware(frameIndex)
-    ? removeId(idealLandmarks3DFrameSelection.frontReferenceFrameIds, frameId)
-    : addUniqueId(
-        idealLandmarks3DFrameSelection.frontReferenceFrameIds,
-        frameId,
-      )
 
   idealLandmarks3DFrameSelection = {
     ...idealLandmarks3DFrameSelection,
-    frontReferenceFrameIds,
+    frontReferenceFrameIds: addUniqueId(
+      idealLandmarks3DFrameSelection.frontReferenceFrameIds,
+      frameId,
+    ),
   }
 }
 
-function togglePoseAwareExcludedFrame(frameIndex: number): void {
-  if (isFrameExcludedForPoseAware(frameIndex)) {
-    removePoseAwareExcludedFrame(frameIndex)
-    return
+function removePoseAwareFrontReferenceFrame(frameIndex: number): void {
+  idealLandmarks3DFrameSelection = {
+    ...idealLandmarks3DFrameSelection,
+    frontReferenceFrameIds: removeId(
+      idealLandmarks3DFrameSelection.frontReferenceFrameIds,
+      getFrameId(frameIndex),
+    ),
   }
+}
 
+function excludePoseAwareFrame(frameIndex: number): void {
+  removePoseAwareFrontReferenceFrame(frameIndex)
   addPoseAwareExcludedFrame(frameIndex)
 }
 
@@ -1932,7 +1934,6 @@ function selectRepresentativeFrame(
   const selectedFrame = buildSelectedRepresentativeFrame(label, candidate)
 
   if (label === "excluded") {
-    addPoseAwareExcludedFrame(candidate.frameIndex)
     selectedRepresentativeFrames.excluded = [
       ...selectedRepresentativeFrames.excluded,
       selectedFrame,
@@ -1950,9 +1951,6 @@ function clearSelectedRepresentativeFrame(
   resetIdealLandmarks3DCandidateResult()
 
   if (label === "excluded") {
-    if (frameIndex !== undefined) {
-      removePoseAwareExcludedFrame(frameIndex)
-    }
     selectedRepresentativeFrames.excluded =
       selectedRepresentativeFrames.excluded.filter(
         (frame) => frame.frameIndex !== frameIndex,
@@ -1988,7 +1986,7 @@ function renderPoseAwareMultiFramePanel(): string {
       <div class="pose-aware-heading">
         <div>
           <h3>Step 2-I: pose-aware multi-frame inference 準備</h3>
-          <p>正面基準候補と除外フレームを選び、除外されていない解析成功フレームを確認します。3D候補生成ロジックはまだ Step 2-G v1 のままです。</p>
+          <p>正面基準候補は自動では選択されません。推定に使うフレームの中から、正面に近く、ブレや表情崩れの少ないフレームを「正面基準に追加」してください。使いたくないフレームは「除外」してください。3D候補生成ロジックはまだ Step 2-G v1 のままです。</p>
         </div>
       </div>
       ${renderPoseAwareSummary(summary)}
@@ -1998,18 +1996,21 @@ function renderPoseAwareMultiFramePanel(): string {
           frontReferenceFrames,
           "正面基準候補は複数選択できます。除外されたものは使用対象から外れます。",
           "正面基準候補はまだ選択されていません。",
+          "front_reference",
         )}
         ${renderPoseAwareFrameGroup(
           "推定に使うフレーム",
           usableObservationFrames,
-          "除外されていない解析成功フレームです。今回は summary / 確認用の表示に留めます。",
+          "除外されていない解析成功フレームです。全件から正面基準への追加や除外を操作できます。",
           "推定に使える解析成功フレームはまだありません。",
+          "observation",
         )}
         ${renderPoseAwareFrameGroup(
           "除外フレーム",
           excludedFrames,
           "3D 推定に使わないフレームです。pose に関係なく除外できます。",
           "除外フレームはありません。",
+          "excluded",
         )}
       </div>
     </div>
@@ -2069,10 +2070,8 @@ function renderPoseAwareFrameGroup(
   frames: PoseAwareObservationFrame[],
   note: string,
   emptyText: string,
+  groupRole: "front_reference" | "observation" | "excluded",
 ): string {
-  const visibleFrames = frames.slice(0, POSE_AWARE_FRAME_PREVIEW_LIMIT)
-  const hiddenCount = Math.max(frames.length - visibleFrames.length, 0)
-
   return `
     <article class="pose-aware-frame-group">
       <h4>${escapeHtml(title)}（${frames.length}件）</h4>
@@ -2081,19 +2080,19 @@ function renderPoseAwareFrameGroup(
         frames.length === 0
           ? `<p class="pose-aware-empty">${escapeHtml(emptyText)}</p>`
           : `<div class="pose-aware-frame-list">
-              ${visibleFrames.map(renderPoseAwareFrameItem).join("")}
-            </div>
-            ${
-              hiddenCount > 0
-                ? `<p class="pose-aware-more">ほか ${hiddenCount} 件は summary のみ表示しています。</p>`
-                : ""
-            }`
+              ${frames
+                .map((frame) => renderPoseAwareFrameItem(frame, groupRole))
+                .join("")}
+            </div>`
       }
     </article>
   `
 }
 
-function renderPoseAwareFrameItem(frame: PoseAwareObservationFrame): string {
+function renderPoseAwareFrameItem(
+  frame: PoseAwareObservationFrame,
+  groupRole: "front_reference" | "observation" | "excluded",
+): string {
   return `
     <div class="pose-aware-frame-item${frame.excluded ? " pose-aware-frame-item-excluded" : ""}">
       <img src="${escapeHtml(frame.thumbnailUrl)}" alt="Frame ${String(frame.frameIndex).padStart(3, "0")} / ${frame.timestamp.toFixed(1)}s" />
@@ -2103,17 +2102,77 @@ function renderPoseAwareFrameItem(frame: PoseAwareObservationFrame): string {
         <span>score: ${formatPoseAwareScore(frame.score)}</span>
         <span>landmarks 数: ${frame.landmarksCount}</span>
         <span>role: ${frame.role}</span>
+        ${isFrameFrontReferenceForPoseAware(frame.frameIndex) ? "<span>正面基準に追加済み</span>" : ""}
         ${frame.excluded ? "<span>Step 2-I 除外中</span>" : ""}
-        <button
-          class="candidate-label-button pose-aware-inline-action"
-          type="button"
-          data-pose-aware-action="excluded"
-          data-frame-index="${frame.frameIndex}"
-        >
-          ${frame.excluded ? "除外解除" : "除外"}
-        </button>
+        ${renderPoseAwareFrameActions(frame, groupRole)}
       </div>
     </div>
+  `
+}
+
+function renderPoseAwareFrameActions(
+  frame: PoseAwareObservationFrame,
+  groupRole: "front_reference" | "observation" | "excluded",
+): string {
+  if (groupRole === "excluded") {
+    return `
+      <div class="pose-aware-frame-actions">
+        ${renderPoseAwareFrameActionButton(frame, "excluded_remove", "除外解除")}
+      </div>
+    `
+  }
+
+  if (groupRole === "front_reference") {
+    return `
+      <div class="pose-aware-frame-actions">
+        ${renderPoseAwareFrameActionButton(
+          frame,
+          "front_reference_remove",
+          "正面基準から外す",
+        )}
+        ${renderPoseAwareFrameActionButton(frame, "excluded_add", "除外")}
+      </div>
+    `
+  }
+
+  const frontReferenceAction = isFrameFrontReferenceForPoseAware(frame.frameIndex)
+    ? renderPoseAwareFrameActionButton(
+        frame,
+        "front_reference_remove",
+        "正面基準から外す",
+      )
+    : renderPoseAwareFrameActionButton(
+        frame,
+        "front_reference_add",
+        "正面基準に追加",
+      )
+
+  return `
+    <div class="pose-aware-frame-actions">
+      ${frontReferenceAction}
+      ${renderPoseAwareFrameActionButton(frame, "excluded_add", "除外")}
+    </div>
+  `
+}
+
+function renderPoseAwareFrameActionButton(
+  frame: PoseAwareObservationFrame,
+  action:
+    | "front_reference_add"
+    | "front_reference_remove"
+    | "excluded_add"
+    | "excluded_remove",
+  label: string,
+): string {
+  return `
+    <button
+      class="candidate-label-button pose-aware-inline-action"
+      type="button"
+      data-pose-aware-action="${action}"
+      data-frame-index="${frame.frameIndex}"
+    >
+      ${label}
+    </button>
   `
 }
 
@@ -2261,11 +2320,6 @@ function renderRepresentativeCandidateItem(
           ${renderCandidateSelectionButton(candidate, "down")}
           ${renderCandidateSelectionButton(candidate, "excluded")}
         </div>
-        <div class="candidate-action-group candidate-action-group-pose-aware" aria-label="Step 2-I frame selection">
-          <span>Step 2-I:</span>
-          ${renderPoseAwareCandidateActionButton(candidate, "front_reference")}
-          ${renderPoseAwareCandidateActionButton(candidate, "excluded")}
-        </div>
       </div>
     </div>
   `
@@ -2286,35 +2340,6 @@ function renderCandidateSelectionButton(
       type="button"
       data-selection-label="${label}"
       data-candidate-key="${candidate.key}"
-      data-frame-index="${candidate.frameIndex}"
-    >
-      ${buttonLabel}
-    </button>
-  `
-}
-
-function renderPoseAwareCandidateActionButton(
-  candidate: RepresentativeFrameCandidate,
-  action: "front_reference" | "excluded",
-): string {
-  const isSelected =
-    action === "front_reference"
-      ? isFrameFrontReferenceForPoseAware(candidate.frameIndex)
-      : isFrameExcludedForPoseAware(candidate.frameIndex)
-  const buttonLabel =
-    action === "front_reference"
-      ? isSelected
-        ? "正面基準から外す"
-        : "正面基準に追加"
-      : isSelected
-        ? "除外解除"
-        : "除外"
-
-  return `
-    <button
-      class="candidate-label-button pose-aware-action-button${isSelected ? " pose-aware-action-button-active" : ""}"
-      type="button"
-      data-pose-aware-action="${action}"
       data-frame-index="${candidate.frameIndex}"
     >
       ${buttonLabel}
@@ -3119,14 +3144,26 @@ function attachPoseAwareFrameSelectionHandler(): void {
           return
         }
 
-        if (action === "front_reference") {
-          togglePoseAwareFrontReferenceFrame(frameIndex)
+        if (action === "front_reference_add") {
+          addPoseAwareFrontReferenceFrame(frameIndex)
           render()
           return
         }
 
-        if (action === "excluded") {
-          togglePoseAwareExcludedFrame(frameIndex)
+        if (action === "front_reference_remove") {
+          removePoseAwareFrontReferenceFrame(frameIndex)
+          render()
+          return
+        }
+
+        if (action === "excluded_add") {
+          excludePoseAwareFrame(frameIndex)
+          render()
+          return
+        }
+
+        if (action === "excluded_remove") {
+          removePoseAwareExcludedFrame(frameIndex)
           render()
         }
       })
@@ -4290,7 +4327,6 @@ style.textContent = `
   .pose-aware-heading p,
   .pose-aware-frame-group p,
   .pose-aware-ready-text,
-  .pose-aware-more,
   .pose-aware-empty {
     margin: 4px 0 0;
     color: #5d675f;
@@ -4403,6 +4439,13 @@ style.textContent = `
     color: #5d675f;
     font-size: 11px;
     font-weight: 700;
+  }
+
+  .pose-aware-frame-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 4px;
   }
 
   .pose-aware-inline-action {
@@ -4836,17 +4879,6 @@ style.textContent = `
     border: 1px solid #b7c7c2;
     padding: 5px 8px;
     font-size: 12px;
-  }
-
-  .candidate-action-group-pose-aware {
-    border-top: 1px solid #dde6e2;
-    margin-top: 4px;
-  }
-
-  .pose-aware-action-button-active {
-    border-color: #27594c;
-    background: #27594c;
-    color: #ffffff;
   }
 
   .frames-panel-debug {
