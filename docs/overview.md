@@ -18,13 +18,13 @@ BAE AR
 │  └─ Engine を開発・検証・調整する開発ツール
 │
 ├─ IdealFace Authoring Tool
-│  └─ 理想 3D 顔プリセットを作成する authoring tool。Step 2-H まで実装済み
+│  └─ 理想 3D 顔プリセットを作成する authoring tool。Step 2-I-A まで実装済み
 │
 └─ Layer Mask Authoring Tool
    └─ 色加工用 LayerMaskSpec を作成する将来ツール
 ```
 
-現在の実装は `packages/engine`、`apps/studio`、`tools/ideal-face-authoring` が中心です。`tools/ideal-face-authoring` は Step 2-H まで実装済みで、`tools/layer-mask-authoring` は将来予定です。
+現在の実装は `packages/engine`、`apps/studio`、`tools/ideal-face-authoring` が中心です。`tools/ideal-face-authoring` は Step 2-I-A まで実装済みで、`tools/layer-mask-authoring` は将来予定です。
 
 ## 現在の到達点
 
@@ -79,9 +79,9 @@ MP4 動画を入力
 
 確定した代表フレーム群から、まず 3D 推測用データセットを作成します。この dataset は front / left / right / up / down の代表フレームに対応する 2D 478 landmarks と FacePose を持つ入力データであり、excluded は含めません。dataset はまだ 3D の `idealLandmarks3D` 478点そのものではありません。Step 2-G v1 では、この dataset から `idealLandmarks3D` 478点候補を自動推測します。この結果は完成データではなく候補データとして扱います。Step 2-H では Authoring Tool 上で 3D点群を確認できます。手動微調整、IdealFace asset としての保存 / export はまだ未実装です。
 
-次に実装予定の Step 2-I では、Step 2-G v1 の 5ポーズ固定の代表フレーム方式から、pose-aware multi-frame inference dataset へ進めます。フレーム解析結果欄は「正面基準候補」「推定に使うフレーム」「除外フレーム」の 3 分類に整理します。正面基準候補は `idealLandmarks3D` の x / y 基準を作るために複数選択できる front reference frames です。推定に使うフレームは、除外されておらず、解析成功し、landmarks 478点と `FacePose` がある observation frames を基本とし、yaw / pitch / roll に応じて 3D 推定への寄与を重み付けします。除外フレームは、ブレ、表情崩れ、口開き、顔切れ、検出崩れ、極端な roll などにより推定に使わないフレームです。
+Step 2-I-A では、Step 2-G v1 の 5ポーズ固定の代表フレーム方式から pose-aware multi-frame inference dataset へ進むための UI / state 基盤を追加済みです。フレーム解析結果欄は「正面基準候補」「推定に使うフレーム」「除外フレーム」の 3 分類に整理します。正面基準候補は `idealLandmarks3D` の x / y 基準を作るために複数選択できる front reference frames です。推定に使うフレームは、除外されておらず、解析成功し、landmarks 478点と `FacePose` がある observation frames を基本とし、yaw / pitch / roll に応じて 3D 推定への寄与を重み付けします。除外フレームは、ブレ、表情崩れ、口開き、顔切れ、検出崩れ、極端な roll などにより推定に使わないフレームです。
 
-Step 2-I の操作フローは、正面基準候補を複数選び、使いたくないフレームを除外し、除外されていない解析成功フレームを pose 角度に応じて observation として利用する流れです。`left / right / up / down` をユーザーが必ず手動指定する方式にはせず、将来的には `FacePose` の yaw / pitch から推定寄与を自動判断します。内部説明では `frontReferenceFrames`、`usableObservationFrames`、`excludedFrames` を使ってよいものとします。Step 2-I は未実装であり、厳密な 3D reconstruction、三角測量、bundle adjustment、カメラ内部パラメータ推定、手動微調整、保存 / export、Runtime 組み込みは行いません。
+Step 2-I の操作フローは、正面基準候補を複数選び、使いたくないフレームを除外し、除外されていない解析成功フレームを pose 角度に応じて observation として利用する流れです。`left / right / up / down` をユーザーが必ず手動指定する方式にはせず、将来的には `FacePose` の yaw / pitch から推定寄与を自動判断します。内部説明では `frontReferenceFrames`、`usableObservationFrames`、`excludedFrames` を使ってよいものとします。Step 2-I-A 時点では `frontReferenceFrameIds` / `excludedFrameIds` と派生 `usableObservationFrames` summary、JSON preview 概要までを実装済みです。pose-aware 3D候補生成ロジック、厳密な 3D reconstruction、三角測量、bundle adjustment、カメラ内部パラメータ推定、手動微調整、保存 / export、Runtime 組み込みは行いません。
 
 この方針は完全自動生成ではなく、自動推測 + 手動補正です。Engine Runtime は動画 / 複数画像から `idealLandmarks3D` を作成せず、Authoring Tool で作成済みの IdealFace asset を読み込んで使うだけです。
 
@@ -169,7 +169,7 @@ Beauty Studio では、開発確認用として overlay や簡易調整 UI を�
 
 `tools/ideal-face-authoring` は BAE AR 独自の IdealFace asset を作るための独立ツールです。Step 1 では `natural_v1` の metadata、controlPoints 一覧、2D preview、JSON preview を表示します。
 
-Step 2-H 現在では、MP4 動画入力、MediaPipe 解析、代表フレーム候補抽出、手動ラベル確定、3D推測用 dataset 作成、`idealLandmarks3D` 478点候補生成、3D点群 preview まで実装済みです。本格 3D editor、手動微調整、保存 / export、複数画像入力は未実装です。このツールは MediaPipe canonical face model そのものを作るツールではなく、Authoring Tool の編集処理を Engine Runtime に混ぜません。
+Step 2-I-A 現在では、MP4 動画入力、MediaPipe 解析、代表フレーム候補抽出、手動ラベル確定、3D推測用 dataset 作成、`idealLandmarks3D` 478点候補生成、3D点群 preview、pose-aware multi-frame inference 用の UI / state 基盤まで実装済みです。本格 3D editor、pose-aware 3D候補生成ロジック、手動微調整、保存 / export、複数画像入力は未実装です。このツールは MediaPipe canonical face model そのものを作るツールではなく、Authoring Tool の編集処理を Engine Runtime に混ぜません。
 
 ## IdealFace Authoring Tool Step 2-A
 
@@ -285,7 +285,7 @@ preview の近くには landmark count、視点、x / y / z の min / max、aver
 
 ## IdealFace Authoring Tool Step 2-I
 
-Step 2-I は次に実装予定の未実装仕様です。Step 2-G v1 の `front / left / right / up / down` 代表フレーム方式を置き換えるのではなく、現行 v1 を残したうえで、pose-aware multi-frame inference dataset へ進む方針を定義します。
+Step 2-I-A は実装済みの UI / state 基盤です。Step 2-G v1 の `front / left / right / up / down` 代表フレーム方式を置き換えるのではなく、現行 v1 を残したうえで、pose-aware multi-frame inference dataset へ進むための準備として扱います。
 
 Step 2-I の UI 表示名:
 
@@ -295,7 +295,7 @@ Step 2-I の UI 表示名:
 除外フレーム
 ```
 
-dataset の将来形では、選択状態として `frontReferenceFrameIds` と `excludedFrameIds` を持つ方針です。`usableObservationFrames` は state として直接持たず、解析成功していること、landmarks が 478 点あること、`FacePose` があること、`excludedFrameIds` に含まれていないことから派生します。3D候補生成前には、正面基準候補数、推定に使うフレーム数、除外フレーム数、yaw / pitch / roll の範囲、状態、警告を summary として表示する方針です。
+Step 2-I-A では、選択状態として `frontReferenceFrameIds` と `excludedFrameIds` を持ちます。`usableObservationFrames` は state として直接持たず、解析成功していること、landmarks が 478 点あること、`FacePose` があること、`excludedFrameIds` に含まれていないことから派生します。3D候補生成前の summary として、正面基準候補数、推定に使うフレーム数、除外フレーム数、yaw / pitch / roll の範囲、状態、警告を表示します。JSON preview には `poseAwareMultiFrameInference` の概要を出しますが、478 landmarks 全文やサムネイル data URL 全文は出しません。
 
 ## IdealFace / Projection / Shape Processing 中核仕様
 

@@ -57,6 +57,9 @@ const POINT_CLOUD_MAX_ZOOM = 5
 const POINT_CLOUD_ROTATION_SENSITIVITY = 0.01
 const POINT_CLOUD_ZOOM_SENSITIVITY = 0.001
 const POINT_CLOUD_MAX_PITCH = (Math.PI * 89) / 180
+const POSE_AWARE_MIN_OBSERVATION_FRAME_COUNT = 5
+const POSE_AWARE_MIN_YAW_OR_PITCH_RANGE = 10
+const POSE_AWARE_FRAME_PREVIEW_LIMIT = 12
 const DEFAULT_POINT_CLOUD_CAMERA: PointCloudPreviewCamera = {
   yaw: 0,
   pitch: 0,
@@ -182,6 +185,44 @@ interface IdealLandmarks3DInferenceDataset {
   entries: RepresentativeFrameDatasetEntry[]
 }
 
+interface IdealLandmarks3DFrameSelection {
+  frontReferenceFrameIds: string[]
+  excludedFrameIds: string[]
+}
+
+type PoseAwareInferenceStatus =
+  | "missing_front_reference"
+  | "warning"
+  | "ready"
+
+interface PoseAwareObservationFrame {
+  frameId: string
+  frameIndex: number
+  timestamp: number
+  landmarksCount: number
+  pose: FacePose
+  score: number | null
+  thumbnailUrl: string
+  role: "front_reference" | "observation"
+  excluded: boolean
+}
+
+interface PoseAwareMultiFrameSummary {
+  status: PoseAwareInferenceStatus
+  frontReferenceFrameCount: number
+  selectedFrontReferenceFrameCount: number
+  usableObservationFrameCount: number
+  excludedFrameCount: number
+  poseRange: {
+    yaw: NumberRange | null
+    pitch: NumberRange | null
+    roll: NumberRange | null
+  }
+  warnings: string[]
+  frontReferenceFrameIds: string[]
+  excludedFrameIds: string[]
+}
+
 type IdealLandmarks3DCandidateStatus =
   | "not_ready"
   | "generated"
@@ -279,6 +320,7 @@ interface VideoSourceState {
   analysisError: string | null
   error: string | null
   scanSummary: DetailedScanSummary
+  detailedScanFrames: ExtractedVideoFrame[]
   representativeFrameCandidates: RepresentativeFrameCandidates
   representativeCandidateFrames: ExtractedVideoFrame[]
 }
@@ -291,6 +333,8 @@ let representativeCandidateCategoryOpenState =
   createDefaultRepresentativeCandidateCategoryOpenState()
 let selectedRepresentativeFrames: SelectedRepresentativeFrames =
   createEmptySelectedRepresentativeFrames()
+let idealLandmarks3DFrameSelection: IdealLandmarks3DFrameSelection =
+  createEmptyIdealLandmarks3DFrameSelection()
 let idealLandmarks3DCandidateResult: IdealLandmarks3DCandidateResult =
   createInitialIdealLandmarks3DCandidateResult()
 let pointCloudPreviewCamera: PointCloudPreviewCamera = {
@@ -950,6 +994,13 @@ function createEmptySelectedRepresentativeFrames(): SelectedRepresentativeFrames
   }
 }
 
+function createEmptyIdealLandmarks3DFrameSelection(): IdealLandmarks3DFrameSelection {
+  return {
+    frontReferenceFrameIds: [],
+    excludedFrameIds: [],
+  }
+}
+
 function createDefaultRepresentativeCandidateCategoryOpenState(): RepresentativeCandidateCategoryOpenState {
   return {
     front: true,
@@ -1537,6 +1588,244 @@ function getAllRepresentativeCandidates(
   ]
 }
 
+function getFrameId(frameIndex: number): string {
+  return String(frameIndex)
+}
+
+function getFrameIdFromFrame(frame: ExtractedVideoFrame): string {
+  return getFrameId(frame.index)
+}
+
+function addUniqueId(ids: string[], id: string): string[] {
+  return ids.includes(id) ? ids : [...ids, id]
+}
+
+function removeId(ids: string[], id: string): string[] {
+  return ids.filter((value) => value !== id)
+}
+
+function isFrameExcludedForPoseAware(frameIndex: number): boolean {
+  return idealLandmarks3DFrameSelection.excludedFrameIds.includes(
+    getFrameId(frameIndex),
+  )
+}
+
+function isFrameFrontReferenceForPoseAware(frameIndex: number): boolean {
+  return idealLandmarks3DFrameSelection.frontReferenceFrameIds.includes(
+    getFrameId(frameIndex),
+  )
+}
+
+function getDetailedScanFrames(): ExtractedVideoFrame[] {
+  return videoSource?.detailedScanFrames ?? []
+}
+
+function findPoseAwareFrameById(frameId: string): ExtractedVideoFrame | null {
+  const frameIndex = Number(frameId)
+
+  if (!Number.isFinite(frameIndex)) {
+    return null
+  }
+
+  return (
+    getDetailedScanFrames().find((frame) => frame.index === frameIndex) ??
+    videoSource?.representativeCandidateFrames.find(
+      (frame) => frame.index === frameIndex,
+    ) ??
+    videoSource?.extractedFrames.find((frame) => frame.index === frameIndex) ??
+    null
+  )
+}
+
+function isUsableObservationSourceFrame(frame: ExtractedVideoFrame): boolean {
+  const analysis = frame.analysis
+
+  return (
+    frame.status === "analyzed" &&
+    analysis?.detected === true &&
+    analysis.landmarks.length === REQUIRED_LANDMARK_COUNT &&
+    hasCompletePose(analysis.pose)
+  )
+}
+
+function getPoseAwareCandidateScore(frameIndex: number): number | null {
+  const candidates =
+    videoSource?.representativeFrameCandidates ??
+    createEmptyRepresentativeFrameCandidates()
+  const matchingCandidates = getAllRepresentativeCandidates(candidates).filter(
+    (candidate) => candidate.frameIndex === frameIndex,
+  )
+
+  if (matchingCandidates.length === 0) {
+    return null
+  }
+
+  return Math.max(...matchingCandidates.map((candidate) => candidate.score))
+}
+
+function buildPoseAwareObservationFrame(
+  frame: ExtractedVideoFrame,
+  role: PoseAwareObservationFrame["role"],
+): PoseAwareObservationFrame | null {
+  const analysis = frame.analysis
+
+  if (!analysis || !hasCompletePose(analysis.pose)) {
+    return null
+  }
+
+  return {
+    frameId: getFrameIdFromFrame(frame),
+    frameIndex: frame.index,
+    timestamp: frame.timestamp,
+    landmarksCount: analysis.landmarks.length,
+    pose: analysis.pose,
+    score: getPoseAwareCandidateScore(frame.index),
+    thumbnailUrl: frame.thumbnailUrl,
+    role,
+    excluded: isFrameExcludedForPoseAware(frame.index),
+  }
+}
+
+function getPoseAwareFrontReferenceFrames(): PoseAwareObservationFrame[] {
+  return idealLandmarks3DFrameSelection.frontReferenceFrameIds
+    .map((frameId) => {
+      const frame = findPoseAwareFrameById(frameId)
+
+      return frame
+        ? buildPoseAwareObservationFrame(frame, "front_reference")
+        : null
+    })
+    .filter(
+      (frame): frame is PoseAwareObservationFrame =>
+        frame !== null &&
+        frame.landmarksCount === REQUIRED_LANDMARK_COUNT &&
+        hasCompletePose(frame.pose),
+    )
+    .sort((a, b) => a.frameIndex - b.frameIndex)
+}
+
+function getActivePoseAwareFrontReferenceFrames(): PoseAwareObservationFrame[] {
+  return getPoseAwareFrontReferenceFrames().filter((frame) => !frame.excluded)
+}
+
+function getUsableObservationFrames(): PoseAwareObservationFrame[] {
+  return getDetailedScanFrames()
+    .filter(
+      (frame) =>
+        isUsableObservationSourceFrame(frame) &&
+        !isFrameExcludedForPoseAware(frame.index),
+    )
+    .map((frame) => buildPoseAwareObservationFrame(frame, "observation"))
+    .filter(
+      (frame): frame is PoseAwareObservationFrame => frame !== null,
+    )
+}
+
+function getPoseAwareExcludedFrames(): PoseAwareObservationFrame[] {
+  return idealLandmarks3DFrameSelection.excludedFrameIds
+    .map((frameId) => {
+      const frame = findPoseAwareFrameById(frameId)
+
+      return frame ? buildPoseAwareObservationFrame(frame, "observation") : null
+    })
+    .filter(
+      (frame): frame is PoseAwareObservationFrame => frame !== null,
+    )
+    .sort((a, b) => a.frameIndex - b.frameIndex)
+}
+
+function getPoseRangeFromPoseAwareFrames(
+  frames: PoseAwareObservationFrame[],
+  key: keyof FacePose,
+): NumberRange | null {
+  return getNumberRange(frames.map((frame) => frame.pose[key]))
+}
+
+function getPoseAwareMultiFrameSummary(): PoseAwareMultiFrameSummary {
+  const frontReferenceFrames = getActivePoseAwareFrontReferenceFrames()
+  const selectedFrontReferenceFrames = getPoseAwareFrontReferenceFrames()
+  const usableObservationFrames = getUsableObservationFrames()
+  const yawRange = getPoseRangeFromPoseAwareFrames(
+    usableObservationFrames,
+    "yaw",
+  )
+  const pitchRange = getPoseRangeFromPoseAwareFrames(
+    usableObservationFrames,
+    "pitch",
+  )
+  const rollRange = getPoseRangeFromPoseAwareFrames(
+    usableObservationFrames,
+    "roll",
+  )
+  const warnings: string[] = []
+
+  if (frontReferenceFrames.length === 0) {
+    warnings.push("正面基準候補を1件以上選んでください。")
+  }
+
+  if (usableObservationFrames.length < POSE_AWARE_MIN_OBSERVATION_FRAME_COUNT) {
+    warnings.push(
+      "推定に使うフレームが少ないため、3D候補が不安定になる可能性があります。",
+    )
+  }
+
+  const yawWidth = yawRange ? yawRange.max - yawRange.min : 0
+  const pitchWidth = pitchRange ? pitchRange.max - pitchRange.min : 0
+
+  if (
+    yawWidth < POSE_AWARE_MIN_YAW_OR_PITCH_RANGE &&
+    pitchWidth < POSE_AWARE_MIN_YAW_OR_PITCH_RANGE
+  ) {
+    warnings.push(
+      "yaw / pitch の角度幅が不足しているため、奥行き推定の confidence が低くなる可能性があります。",
+    )
+  }
+
+  const status: PoseAwareInferenceStatus =
+    frontReferenceFrames.length === 0
+      ? "missing_front_reference"
+      : warnings.length > 0
+        ? "warning"
+        : "ready"
+
+  return {
+    status,
+    frontReferenceFrameCount: frontReferenceFrames.length,
+    selectedFrontReferenceFrameCount: selectedFrontReferenceFrames.length,
+    usableObservationFrameCount: usableObservationFrames.length,
+    excludedFrameCount: idealLandmarks3DFrameSelection.excludedFrameIds.length,
+    poseRange: {
+      yaw: yawRange,
+      pitch: pitchRange,
+      roll: rollRange,
+    },
+    warnings,
+    frontReferenceFrameIds: [
+      ...idealLandmarks3DFrameSelection.frontReferenceFrameIds,
+    ],
+    excludedFrameIds: [...idealLandmarks3DFrameSelection.excludedFrameIds],
+  }
+}
+
+function toPoseAwareMultiFrameInferencePreview(): unknown {
+  const summary = getPoseAwareMultiFrameSummary()
+
+  return {
+    status: summary.status,
+    frontReferenceFrameCount: summary.frontReferenceFrameCount,
+    usableObservationFrameCount: summary.usableObservationFrameCount,
+    excludedFrameCount: summary.excludedFrameCount,
+    poseRange: {
+      yaw: summary.poseRange.yaw,
+      pitch: summary.poseRange.pitch,
+      roll: summary.poseRange.roll,
+    },
+    frontReferenceFrameIds: summary.frontReferenceFrameIds,
+    excludedFrameIds: summary.excludedFrameIds,
+    warnings: summary.warnings,
+  }
+}
+
 function findRepresentativeCandidate(
   candidateKey: RepresentativeFrameCandidateKey,
   frameIndex: number,
@@ -1589,6 +1878,50 @@ function removeFrameFromSelectedRepresentativeFrames(frameIndex: number): void {
     )
 }
 
+function addPoseAwareExcludedFrame(frameIndex: number): void {
+  idealLandmarks3DFrameSelection = {
+    ...idealLandmarks3DFrameSelection,
+    excludedFrameIds: addUniqueId(
+      idealLandmarks3DFrameSelection.excludedFrameIds,
+      getFrameId(frameIndex),
+    ),
+  }
+}
+
+function removePoseAwareExcludedFrame(frameIndex: number): void {
+  idealLandmarks3DFrameSelection = {
+    ...idealLandmarks3DFrameSelection,
+    excludedFrameIds: removeId(
+      idealLandmarks3DFrameSelection.excludedFrameIds,
+      getFrameId(frameIndex),
+    ),
+  }
+}
+
+function togglePoseAwareFrontReferenceFrame(frameIndex: number): void {
+  const frameId = getFrameId(frameIndex)
+  const frontReferenceFrameIds = isFrameFrontReferenceForPoseAware(frameIndex)
+    ? removeId(idealLandmarks3DFrameSelection.frontReferenceFrameIds, frameId)
+    : addUniqueId(
+        idealLandmarks3DFrameSelection.frontReferenceFrameIds,
+        frameId,
+      )
+
+  idealLandmarks3DFrameSelection = {
+    ...idealLandmarks3DFrameSelection,
+    frontReferenceFrameIds,
+  }
+}
+
+function togglePoseAwareExcludedFrame(frameIndex: number): void {
+  if (isFrameExcludedForPoseAware(frameIndex)) {
+    removePoseAwareExcludedFrame(frameIndex)
+    return
+  }
+
+  addPoseAwareExcludedFrame(frameIndex)
+}
+
 function selectRepresentativeFrame(
   label: ManualRepresentativeFrameLabel,
   candidate: RepresentativeFrameCandidate,
@@ -1599,6 +1932,7 @@ function selectRepresentativeFrame(
   const selectedFrame = buildSelectedRepresentativeFrame(label, candidate)
 
   if (label === "excluded") {
+    addPoseAwareExcludedFrame(candidate.frameIndex)
     selectedRepresentativeFrames.excluded = [
       ...selectedRepresentativeFrames.excluded,
       selectedFrame,
@@ -1616,6 +1950,9 @@ function clearSelectedRepresentativeFrame(
   resetIdealLandmarks3DCandidateResult()
 
   if (label === "excluded") {
+    if (frameIndex !== undefined) {
+      removePoseAwareExcludedFrame(frameIndex)
+    }
     selectedRepresentativeFrames.excluded =
       selectedRepresentativeFrames.excluded.filter(
         (frame) => frame.frameIndex !== frameIndex,
@@ -1624,6 +1961,160 @@ function clearSelectedRepresentativeFrame(
   }
 
   selectedRepresentativeFrames[label] = null
+}
+
+function formatPoseAwareStatus(status: PoseAwareInferenceStatus): string {
+  const labels: Record<PoseAwareInferenceStatus, string> = {
+    missing_front_reference: "missing_front_reference",
+    warning: "warning",
+    ready: "ready",
+  }
+
+  return labels[status]
+}
+
+function formatPoseAwareScore(score: number | null): string {
+  return score === null ? "なし" : formatScore(score)
+}
+
+function renderPoseAwareMultiFramePanel(): string {
+  const summary = getPoseAwareMultiFrameSummary()
+  const frontReferenceFrames = getPoseAwareFrontReferenceFrames()
+  const usableObservationFrames = getUsableObservationFrames()
+  const excludedFrames = getPoseAwareExcludedFrames()
+
+  return `
+    <div class="pose-aware-panel" aria-label="Step 2-I pose-aware multi-frame inference 準備">
+      <div class="pose-aware-heading">
+        <div>
+          <h3>Step 2-I: pose-aware multi-frame inference 準備</h3>
+          <p>正面基準候補と除外フレームを選び、除外されていない解析成功フレームを確認します。3D候補生成ロジックはまだ Step 2-G v1 のままです。</p>
+        </div>
+      </div>
+      ${renderPoseAwareSummary(summary)}
+      <div class="pose-aware-columns">
+        ${renderPoseAwareFrameGroup(
+          "正面基準候補",
+          frontReferenceFrames,
+          "正面基準候補は複数選択できます。除外されたものは使用対象から外れます。",
+          "正面基準候補はまだ選択されていません。",
+        )}
+        ${renderPoseAwareFrameGroup(
+          "推定に使うフレーム",
+          usableObservationFrames,
+          "除外されていない解析成功フレームです。今回は summary / 確認用の表示に留めます。",
+          "推定に使える解析成功フレームはまだありません。",
+        )}
+        ${renderPoseAwareFrameGroup(
+          "除外フレーム",
+          excludedFrames,
+          "3D 推定に使わないフレームです。pose に関係なく除外できます。",
+          "除外フレームはありません。",
+        )}
+      </div>
+    </div>
+  `
+}
+
+function renderPoseAwareSummary(
+  summary: PoseAwareMultiFrameSummary,
+): string {
+  return `
+    <div class="pose-aware-summary">
+      <dl class="pose-aware-summary-list">
+        <div>
+          <dt>正面基準候補</dt>
+          <dd>${summary.frontReferenceFrameCount}件</dd>
+        </div>
+        <div>
+          <dt>推定に使うフレーム</dt>
+          <dd>${summary.usableObservationFrameCount}件</dd>
+        </div>
+        <div>
+          <dt>除外フレーム</dt>
+          <dd>${summary.excludedFrameCount}件</dd>
+        </div>
+        <div>
+          <dt>yaw range</dt>
+          <dd>${formatNumberRange(summary.poseRange.yaw)}</dd>
+        </div>
+        <div>
+          <dt>pitch range</dt>
+          <dd>${formatNumberRange(summary.poseRange.pitch)}</dd>
+        </div>
+        <div>
+          <dt>roll range</dt>
+          <dd>${formatNumberRange(summary.poseRange.roll)}</dd>
+        </div>
+        <div>
+          <dt>状態</dt>
+          <dd>${formatPoseAwareStatus(summary.status)}</dd>
+        </div>
+      </dl>
+      ${
+        summary.warnings.length > 0
+          ? `<ul class="pose-aware-warning-list">
+              ${summary.warnings
+                .map((warning) => `<li>${escapeHtml(warning)}</li>`)
+                .join("")}
+            </ul>`
+          : `<p class="pose-aware-ready-text">Step 2-I の UI / state 基盤は ready です。</p>`
+      }
+    </div>
+  `
+}
+
+function renderPoseAwareFrameGroup(
+  title: string,
+  frames: PoseAwareObservationFrame[],
+  note: string,
+  emptyText: string,
+): string {
+  const visibleFrames = frames.slice(0, POSE_AWARE_FRAME_PREVIEW_LIMIT)
+  const hiddenCount = Math.max(frames.length - visibleFrames.length, 0)
+
+  return `
+    <article class="pose-aware-frame-group">
+      <h4>${escapeHtml(title)}（${frames.length}件）</h4>
+      <p>${escapeHtml(note)}</p>
+      ${
+        frames.length === 0
+          ? `<p class="pose-aware-empty">${escapeHtml(emptyText)}</p>`
+          : `<div class="pose-aware-frame-list">
+              ${visibleFrames.map(renderPoseAwareFrameItem).join("")}
+            </div>
+            ${
+              hiddenCount > 0
+                ? `<p class="pose-aware-more">ほか ${hiddenCount} 件は summary のみ表示しています。</p>`
+                : ""
+            }`
+      }
+    </article>
+  `
+}
+
+function renderPoseAwareFrameItem(frame: PoseAwareObservationFrame): string {
+  return `
+    <div class="pose-aware-frame-item${frame.excluded ? " pose-aware-frame-item-excluded" : ""}">
+      <img src="${escapeHtml(frame.thumbnailUrl)}" alt="Frame ${String(frame.frameIndex).padStart(3, "0")} / ${frame.timestamp.toFixed(1)}s" />
+      <div>
+        <strong>Frame ${String(frame.frameIndex).padStart(3, "0")} / ${frame.timestamp.toFixed(1)}s</strong>
+        <span>yaw: ${formatNumber(frame.pose.yaw)} / pitch: ${formatNumber(frame.pose.pitch)} / roll: ${formatNumber(frame.pose.roll)}</span>
+        <span>score: ${formatPoseAwareScore(frame.score)}</span>
+        <span>landmarks 数: ${frame.landmarksCount}</span>
+        <span>role: ${frame.role}</span>
+        ${frame.excluded ? "<span>Step 2-I 除外中</span>" : ""}
+        <button
+          class="candidate-label-button pose-aware-inline-action"
+          type="button"
+          data-pose-aware-action="excluded"
+          data-frame-index="${frame.frameIndex}"
+        >
+          ${frame.excluded ? "除外解除" : "除外"}
+        </button>
+      </div>
+    </div>
+  `
 }
 
 function renderRepresentativeFrameCandidatesPanel(): string {
@@ -1669,6 +2160,7 @@ function renderRepresentativeFrameCandidatesPanel(): string {
         </div>
       </div>
       <p class="candidate-note">左右・上下の最終ラベルはユーザーが手動で確定します。Step 2-F では候補抽出用に動画全体を 0.1 秒間隔で詳細スキャンし、候補カテゴリごとに複数候補を保持します。3D推測、3D点群 preview、手動微調整、保存 / export はまだ行いません。</p>
+      ${renderPoseAwareMultiFramePanel()}
       ${renderSelectedRepresentativeFramesPanel()}
       ${renderReadinessPanel()}
       ${renderInferenceDatasetPanel()}
@@ -1769,6 +2261,11 @@ function renderRepresentativeCandidateItem(
           ${renderCandidateSelectionButton(candidate, "down")}
           ${renderCandidateSelectionButton(candidate, "excluded")}
         </div>
+        <div class="candidate-action-group candidate-action-group-pose-aware" aria-label="Step 2-I frame selection">
+          <span>Step 2-I:</span>
+          ${renderPoseAwareCandidateActionButton(candidate, "front_reference")}
+          ${renderPoseAwareCandidateActionButton(candidate, "excluded")}
+        </div>
       </div>
     </div>
   `
@@ -1789,6 +2286,35 @@ function renderCandidateSelectionButton(
       type="button"
       data-selection-label="${label}"
       data-candidate-key="${candidate.key}"
+      data-frame-index="${candidate.frameIndex}"
+    >
+      ${buttonLabel}
+    </button>
+  `
+}
+
+function renderPoseAwareCandidateActionButton(
+  candidate: RepresentativeFrameCandidate,
+  action: "front_reference" | "excluded",
+): string {
+  const isSelected =
+    action === "front_reference"
+      ? isFrameFrontReferenceForPoseAware(candidate.frameIndex)
+      : isFrameExcludedForPoseAware(candidate.frameIndex)
+  const buttonLabel =
+    action === "front_reference"
+      ? isSelected
+        ? "正面基準から外す"
+        : "正面基準に追加"
+      : isSelected
+        ? "除外解除"
+        : "除外"
+
+  return `
+    <button
+      class="candidate-label-button pose-aware-action-button${isSelected ? " pose-aware-action-button-active" : ""}"
+      type="button"
+      data-pose-aware-action="${action}"
       data-frame-index="${candidate.frameIndex}"
     >
       ${buttonLabel}
@@ -2432,6 +2958,8 @@ function buildAuthoringDebugPreview(): unknown {
       representativeFrameCandidates,
     ),
     selectedRepresentativeFrames: toSelectedRepresentativeFramesPreview(),
+    poseAwareMultiFrameInference:
+      toPoseAwareMultiFrameInferencePreview(),
     idealLandmarks3DInferenceDataset: toInferenceDatasetPreview(
       idealLandmarks3DInferenceDataset,
     ),
@@ -2579,6 +3107,32 @@ function attachRepresentativeFrameSelectionHandler(): void {
     })
 }
 
+function attachPoseAwareFrameSelectionHandler(): void {
+  document
+    .querySelectorAll<HTMLButtonElement>("[data-pose-aware-action]")
+    .forEach((button) => {
+      button.addEventListener("click", () => {
+        const action = button.dataset.poseAwareAction
+        const frameIndex = Number(button.dataset.frameIndex)
+
+        if (!Number.isFinite(frameIndex)) {
+          return
+        }
+
+        if (action === "front_reference") {
+          togglePoseAwareFrontReferenceFrame(frameIndex)
+          render()
+          return
+        }
+
+        if (action === "excluded") {
+          togglePoseAwareExcludedFrame(frameIndex)
+          render()
+        }
+      })
+    })
+}
+
 function attachIdealLandmarks3DCandidateHandler(): void {
   document
     .querySelector<HTMLButtonElement>(
@@ -2720,6 +3274,7 @@ async function analyzeExtractedFrames(): Promise<void> {
   }
 
   selectedRepresentativeFrames = createEmptySelectedRepresentativeFrames()
+  idealLandmarks3DFrameSelection = createEmptyIdealLandmarks3DFrameSelection()
   resetIdealLandmarks3DCandidateResult()
   representativeCandidateCategoryOpenState =
     createDefaultRepresentativeCandidateCategoryOpenState()
@@ -2727,6 +3282,7 @@ async function analyzeExtractedFrames(): Promise<void> {
     isAnalyzing: true,
     analysisError: null,
     scanSummary: createEmptyDetailedScanSummary(),
+    detailedScanFrames: [],
     representativeFrameCandidates: createEmptyRepresentativeFrameCandidates(),
     representativeCandidateFrames: [],
   })
@@ -2741,6 +3297,7 @@ async function analyzeExtractedFrames(): Promise<void> {
 
     updateVideoSource({
       scanSummary: scanResult.scanSummary,
+      detailedScanFrames: scanResult.detailedScanFrames,
       representativeFrameCandidates: scanResult.representativeFrameCandidates,
       representativeCandidateFrames: scanResult.representativeCandidateFrames,
     })
@@ -2761,6 +3318,7 @@ async function analyzeExtractedFrames(): Promise<void> {
 
 interface DetailedScanResult {
   scanSummary: DetailedScanSummary
+  detailedScanFrames: ExtractedVideoFrame[]
   representativeFrameCandidates: RepresentativeFrameCandidates
   representativeCandidateFrames: ExtractedVideoFrame[]
 }
@@ -2829,6 +3387,7 @@ async function scanVideoForRepresentativeCandidates(
     }
 
     updateVideoSource({
+      detailedScanFrames: [...scannedFrames],
       scanSummary: {
         scanIntervalSec: scanPlan.intervalSec,
         maxScanFrames: MAX_DETAILED_SCAN_FRAME_COUNT,
@@ -2874,6 +3433,7 @@ async function scanVideoForRepresentativeCandidates(
 
   return {
     scanSummary,
+    detailedScanFrames: scannedFrames,
     representativeFrameCandidates,
     representativeCandidateFrames,
   }
@@ -3122,6 +3682,7 @@ function clamp(value: number, min: number, max: number): number {
 
 async function handleVideoFileSelection(file: File): Promise<void> {
   selectedRepresentativeFrames = createEmptySelectedRepresentativeFrames()
+  idealLandmarks3DFrameSelection = createEmptyIdealLandmarks3DFrameSelection()
   resetIdealLandmarks3DCandidateResult()
   representativeCandidateCategoryOpenState =
     createDefaultRepresentativeCandidateCategoryOpenState()
@@ -3139,6 +3700,7 @@ async function handleVideoFileSelection(file: File): Promise<void> {
       analysisError: null,
       error: "初期対応は MP4 動画のみです。",
       scanSummary: createEmptyDetailedScanSummary(),
+      detailedScanFrames: [],
       representativeFrameCandidates: createEmptyRepresentativeFrameCandidates(),
       representativeCandidateFrames: [],
     })
@@ -3160,6 +3722,7 @@ async function handleVideoFileSelection(file: File): Promise<void> {
     analysisError: null,
     error: null,
     scanSummary: createEmptyDetailedScanSummary(),
+    detailedScanFrames: [],
     representativeFrameCandidates: createEmptyRepresentativeFrameCandidates(),
     representativeCandidateFrames: [],
   })
@@ -3363,7 +3926,7 @@ function render(): void {
           <p class="eyebrow">BAE AR</p>
           <h1>IdealFace Authoring Tool</h1>
         </div>
-        <span>Step 2-H</span>
+        <span>Step 2-I-A</span>
       </header>
 
       <section class="summary" aria-label="IdealFace metadata">
@@ -3454,6 +4017,7 @@ function render(): void {
   attachAnalysisHandler()
   attachRepresentativeCandidateCategoryToggleHandler()
   attachRepresentativeFrameSelectionHandler()
+  attachPoseAwareFrameSelectionHandler()
   attachIdealLandmarks3DCandidateHandler()
   attachDebugFrameListHandler()
 }
@@ -3708,9 +4272,145 @@ style.textContent = `
   }
 
   .selected-representative-panel,
+  .pose-aware-panel,
   .readiness-panel,
   .inference-dataset-panel {
     margin-bottom: 14px;
+  }
+
+  .pose-aware-panel {
+    display: grid;
+    gap: 12px;
+    border: 1px solid #ccd8d3;
+    border-radius: 8px;
+    background: #ffffff;
+    padding: 14px;
+  }
+
+  .pose-aware-heading p,
+  .pose-aware-frame-group p,
+  .pose-aware-ready-text,
+  .pose-aware-more,
+  .pose-aware-empty {
+    margin: 4px 0 0;
+    color: #5d675f;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.45;
+  }
+
+  .pose-aware-summary {
+    display: grid;
+    gap: 8px;
+  }
+
+  .pose-aware-summary-list {
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  }
+
+  .pose-aware-warning-list {
+    display: grid;
+    gap: 4px;
+    margin: 0;
+    border: 1px solid #d8b46d;
+    border-radius: 8px;
+    background: #fff8e8;
+    padding: 10px 12px 10px 28px;
+    color: #654c14;
+    font-size: 13px;
+    font-weight: 800;
+  }
+
+  .pose-aware-ready-text {
+    border: 1px solid #9fc8bd;
+    border-radius: 8px;
+    background: #edf8f4;
+    padding: 10px 12px;
+    color: #27594c;
+  }
+
+  .pose-aware-columns {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .pose-aware-frame-group {
+    min-width: 0;
+    border: 1px solid #dde6e2;
+    border-radius: 8px;
+    background: #fbfdfc;
+    padding: 12px;
+  }
+
+  .pose-aware-frame-group h4 {
+    margin: 0;
+    color: #17201b;
+    font-size: 14px;
+    line-height: 1.25;
+  }
+
+  .pose-aware-frame-list {
+    display: grid;
+    gap: 8px;
+    margin-top: 10px;
+  }
+
+  .pose-aware-frame-item {
+    display: grid;
+    grid-template-columns: 84px minmax(0, 1fr);
+    gap: 8px;
+    border: 1px solid #dde6e2;
+    border-radius: 7px;
+    background: #ffffff;
+    padding: 8px;
+  }
+
+  .pose-aware-frame-item-excluded {
+    border-color: #d69a94;
+    background: #fff7f6;
+  }
+
+  .pose-aware-frame-item img {
+    display: block;
+    width: 84px;
+    aspect-ratio: 16 / 9;
+    border-radius: 5px;
+    object-fit: contain;
+    background: #1f2824;
+  }
+
+  .pose-aware-frame-item div {
+    display: grid;
+    min-width: 0;
+    gap: 3px;
+    align-content: start;
+  }
+
+  .pose-aware-frame-item strong,
+  .pose-aware-frame-item span {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    line-height: 1.35;
+  }
+
+  .pose-aware-frame-item strong {
+    color: #25342e;
+    font-size: 12px;
+  }
+
+  .pose-aware-frame-item span {
+    color: #5d675f;
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .pose-aware-inline-action {
+    min-height: 28px;
+    justify-self: start;
+    margin-top: 3px;
+    padding: 4px 8px;
+    font-size: 11px;
   }
 
   .selected-frame-grid {
@@ -4138,6 +4838,17 @@ style.textContent = `
     font-size: 12px;
   }
 
+  .candidate-action-group-pose-aware {
+    border-top: 1px solid #dde6e2;
+    margin-top: 4px;
+  }
+
+  .pose-aware-action-button-active {
+    border-color: #27594c;
+    background: #27594c;
+    color: #ffffff;
+  }
+
   .frames-panel-debug {
     border-top: 1px solid #ccd8d3;
     padding-top: 16px;
@@ -4169,12 +4880,14 @@ style.textContent = `
 
   @media (max-width: 520px) {
     .candidate-item,
-    .dataset-entry-card {
+    .dataset-entry-card,
+    .pose-aware-frame-item {
       grid-template-columns: 1fr;
     }
 
     .candidate-item img,
     .dataset-entry-card img,
+    .pose-aware-frame-item img,
     .dataset-thumbnail-empty {
       width: 100%;
     }
@@ -4351,6 +5064,10 @@ style.textContent = `
     }
 
     .candidate-summary-list {
+      grid-template-columns: 1fr;
+    }
+
+    .pose-aware-columns {
       grid-template-columns: 1fr;
     }
   }
