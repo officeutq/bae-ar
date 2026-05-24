@@ -41,6 +41,14 @@ const YAW_CANDIDATE_MIN_ABS = 6
 const PITCH_CANDIDATE_MIN_ABS = 5
 const INFERENCE_DATASET_LANDMARK_PREVIEW_COUNT = 5
 const IDEAL_LANDMARKS_3D_PREVIEW_COUNT = 5
+const IDEAL_FACE_ASSET_SCHEMA_VERSION = "ideal_face_asset_v1"
+const IDEAL_FACE_ASSET_NAME = "Custom IdealFace"
+const IDEAL_FACE_ASSET_VERSION = "0.1.0"
+const IDEAL_FACE_ASSET_TOOL = "ideal-face-authoring"
+const IDEAL_FACE_ASSET_LANDMARK_TOPOLOGY =
+  "mediapipe_face_landmarker_478"
+const IDEAL_FACE_ASSET_COORDINATE_SPACE =
+  "bae_ar_ideal_landmarks3d_v1"
 const POINT_CLOUD_PREVIEW_PADDING = 24
 const POINT_CLOUD_DEPTH_DISPLAY_SCALE = 1.0
 const POINT_CLOUD_MIN_ZOOM = 0.3
@@ -270,6 +278,55 @@ interface IdealLandmarks3DCandidateResult {
     excludedFrameCount: number
   }
   message: string | null
+}
+
+interface IdealFaceAssetV1 {
+  schemaVersion: typeof IDEAL_FACE_ASSET_SCHEMA_VERSION
+  id: string
+  name: typeof IDEAL_FACE_ASSET_NAME
+  version: typeof IDEAL_FACE_ASSET_VERSION
+  createdAt: string
+  source: {
+    tool: typeof IDEAL_FACE_ASSET_TOOL
+    generationMethod: IdealLandmarks3DGenerationMethod
+  }
+  model: {
+    landmarkTopology: typeof IDEAL_FACE_ASSET_LANDMARK_TOPOLOGY
+    coordinateSpace: typeof IDEAL_FACE_ASSET_COORDINATE_SPACE
+    idealLandmarks3D: Array<{
+      index: number
+      x: number
+      y: number
+      z: number
+      confidence: number
+    }>
+  }
+  metadata: {
+    frontReferenceFrameCount: number
+    observationFrameCount: number
+    excludedFrameCount: number
+    z: {
+      min: number
+      max: number
+      average: number
+    }
+    confidence: {
+      average: number
+      min: number
+      max: number
+      lowConfidenceLandmarkCount: number
+    }
+  }
+}
+
+interface IdealFaceAssetExportSummary {
+  schemaVersion: typeof IDEAL_FACE_ASSET_SCHEMA_VERSION
+  generationMethod: IdealLandmarks3DGenerationMethod
+  landmarkCount: number
+  canExport: boolean
+  fileName: string
+  includedLandmarkCount: number
+  disabledReason: string | null
 }
 
 interface NumberRange {
@@ -746,6 +803,8 @@ function buildIdealLandmarks3DCandidateSummary(
 function toCurrentCandidatePreview(
   result: IdealLandmarks3DCandidateResult,
 ): unknown {
+  const exportSummary = buildIdealFaceAssetExportSummary(result, new Date())
+
   return {
     status: result.status,
     generationMethod: result.generationMethod,
@@ -765,8 +824,155 @@ function toCurrentCandidatePreview(
       lowConfidenceLandmarkCount:
         result.summary.lowConfidenceLandmarkCount,
     },
+    export: exportSummary,
     preview: result.landmarksPreview,
   }
+}
+
+function isExportableIdealFaceCandidate(
+  result: IdealLandmarks3DCandidateResult,
+): result is IdealLandmarks3DCandidateResult & {
+  generationMethod: IdealLandmarks3DGenerationMethod
+} {
+  return (
+    result.status === "generated" &&
+    result.generationMethod === "pose_aware_weighted_z_v1" &&
+    result.landmarkCount === REQUIRED_LANDMARK_COUNT &&
+    result.landmarks.length === REQUIRED_LANDMARK_COUNT
+  )
+}
+
+function getIdealFaceAssetExportDisabledReason(
+  result: IdealLandmarks3DCandidateResult,
+): string | null {
+  if (isExportableIdealFaceCandidate(result)) {
+    return null
+  }
+
+  if (
+    result.status !== "generated" ||
+    result.generationMethod !== "pose_aware_weighted_z_v1"
+  ) {
+    return "先に pose-aware 3D候補を生成してください。"
+  }
+
+  return `IdealFace JSON export には ${REQUIRED_LANDMARK_COUNT} landmarks が必要です。`
+}
+
+function formatIdealFaceAssetDatePart(value: number): string {
+  return value.toString().padStart(2, "0")
+}
+
+function buildIdealFaceAssetId(date: Date): string {
+  return [
+    "custom_ideal_face",
+    date.getFullYear(),
+    formatIdealFaceAssetDatePart(date.getMonth() + 1),
+    formatIdealFaceAssetDatePart(date.getDate()),
+    [
+      formatIdealFaceAssetDatePart(date.getHours()),
+      formatIdealFaceAssetDatePart(date.getMinutes()),
+      formatIdealFaceAssetDatePart(date.getSeconds()),
+    ].join(""),
+  ].join("_")
+}
+
+function buildIdealFaceAssetFileName(date: Date): string {
+  return `${buildIdealFaceAssetId(date)}.json`
+}
+
+function roundIdealFaceAssetNumber(value: number): number {
+  return Number(value.toFixed(6))
+}
+
+function buildIdealFaceAssetExportSummary(
+  result: IdealLandmarks3DCandidateResult,
+  date: Date,
+): IdealFaceAssetExportSummary {
+  return {
+    schemaVersion: IDEAL_FACE_ASSET_SCHEMA_VERSION,
+    generationMethod: "pose_aware_weighted_z_v1",
+    landmarkCount: result.landmarkCount,
+    canExport: isExportableIdealFaceCandidate(result),
+    fileName: buildIdealFaceAssetFileName(date),
+    includedLandmarkCount: isExportableIdealFaceCandidate(result)
+      ? result.landmarks.length
+      : 0,
+    disabledReason: getIdealFaceAssetExportDisabledReason(result),
+  }
+}
+
+function buildIdealFaceAssetV1(
+  result: IdealLandmarks3DCandidateResult,
+  createdAtDate: Date,
+): IdealFaceAssetV1 {
+  if (!isExportableIdealFaceCandidate(result)) {
+    throw new Error("Exportable IdealFace candidate was not found")
+  }
+
+  return {
+    schemaVersion: IDEAL_FACE_ASSET_SCHEMA_VERSION,
+    id: buildIdealFaceAssetId(createdAtDate),
+    name: IDEAL_FACE_ASSET_NAME,
+    version: IDEAL_FACE_ASSET_VERSION,
+    createdAt: createdAtDate.toISOString(),
+    source: {
+      tool: IDEAL_FACE_ASSET_TOOL,
+      generationMethod: result.generationMethod,
+    },
+    model: {
+      landmarkTopology: IDEAL_FACE_ASSET_LANDMARK_TOPOLOGY,
+      coordinateSpace: IDEAL_FACE_ASSET_COORDINATE_SPACE,
+      idealLandmarks3D: result.landmarks.map((landmark) => ({
+        index: landmark.index,
+        x: roundIdealFaceAssetNumber(landmark.x),
+        y: roundIdealFaceAssetNumber(landmark.y),
+        z: roundIdealFaceAssetNumber(landmark.z),
+        confidence: roundIdealFaceAssetNumber(landmark.confidence),
+      })),
+    },
+    metadata: {
+      frontReferenceFrameCount: result.summary.frontReferenceFrameCount,
+      observationFrameCount: result.summary.observationFrameCount,
+      excludedFrameCount: result.summary.excludedFrameCount,
+      z: {
+        min: result.summary.zMin,
+        max: result.summary.zMax,
+        average: result.summary.zAverage,
+      },
+      confidence: {
+        average: result.summary.averageConfidence,
+        min: result.summary.minConfidence,
+        max: result.summary.maxConfidence,
+        lowConfidenceLandmarkCount:
+          result.summary.lowConfidenceLandmarkCount,
+      },
+    },
+  }
+}
+
+function downloadIdealFaceAssetJson(): void {
+  const result = idealLandmarks3DCandidateResult
+
+  if (!isExportableIdealFaceCandidate(result)) {
+    return
+  }
+
+  const createdAtDate = new Date()
+  const asset = buildIdealFaceAssetV1(result, createdAtDate)
+  const fileName = buildIdealFaceAssetFileName(createdAtDate)
+  const blob = new Blob([JSON.stringify(asset, null, 2)], {
+    type: "application/json",
+  })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement("a")
+
+  link.href = url
+  link.download = fileName
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
 }
 
 function getNumberRange(values: number[]): NumberRange | null {
@@ -2036,6 +2242,7 @@ function renderPoseAwareIdealLandmarks3DCandidatePanel(
           ? renderGeneratedPoseAwareCandidateSummary(result)
           : `<p class="pose-aware-dataset-note">pose-aware 3D候補はまだ生成されていません。<br />先に Step 2-I-B dataset を ready にし、生成を実行してください。</p>`
       }
+      ${renderIdealFaceAssetExportPanel(result)}
     </div>
   `
 }
@@ -2088,6 +2295,55 @@ function renderGeneratedPoseAwareCandidateSummary(
     </dl>
     <p class="candidate-result-note">${escapeHtml(result.message ?? "")}</p>
     ${renderIdealLandmarks3DCandidatePreview(result.landmarksPreview)}
+  `
+}
+
+function renderIdealFaceAssetExportPanel(
+  result: IdealLandmarks3DCandidateResult,
+): string {
+  const exportSummary = buildIdealFaceAssetExportSummary(result, new Date())
+  const disabled = !exportSummary.canExport
+
+  return `
+    <div class="ideal-face-export-panel">
+      <div class="ideal-face-export-heading">
+        <div>
+          <h5>IdealFace JSON export</h5>
+          <p>download JSON には idealLandmarks3D ${REQUIRED_LANDMARK_COUNT}点全文を含め、JSON preview には export summary のみを表示します。</p>
+        </div>
+        <button
+          class="ideal-face-export-button"
+          type="button"
+          data-download-ideal-face-asset-json="true"
+          ${disabled ? "disabled" : ""}
+        >
+          IdealFace JSON をダウンロード
+        </button>
+      </div>
+      ${
+        exportSummary.disabledReason
+          ? `<p class="pose-aware-warning-text">${escapeHtml(exportSummary.disabledReason)}</p>`
+          : ""
+      }
+      <dl class="pose-aware-summary-list ideal-face-export-summary-list">
+        <div>
+          <dt>schemaVersion</dt>
+          <dd>${exportSummary.schemaVersion}</dd>
+        </div>
+        <div>
+          <dt>generationMethod</dt>
+          <dd>${exportSummary.generationMethod}</dd>
+        </div>
+        <div>
+          <dt>landmarkCount</dt>
+          <dd>${exportSummary.landmarkCount}</dd>
+        </div>
+        <div>
+          <dt>fileName</dt>
+          <dd>${escapeHtml(exportSummary.fileName)}</dd>
+        </div>
+      </dl>
+    </div>
   `
 }
 
@@ -2771,6 +3027,14 @@ function attachIdealLandmarks3DCandidateHandler(): void {
         buildPoseAwareIdealLandmarks3DCandidateResult(dataset)
       pointCloudPreviewCamera = createPointCloudPreviewCamera()
       render()
+    })
+
+  document
+    .querySelector<HTMLButtonElement>(
+      "[data-download-ideal-face-asset-json]",
+    )
+    ?.addEventListener("click", () => {
+      downloadIdealFaceAssetJson()
     })
 
   document
@@ -3677,6 +3941,7 @@ style.textContent = `
   .candidate-label-button,
   .selected-clear-button,
   .candidate-generate-button,
+  .ideal-face-export-button,
   .point-cloud-preset-button {
     display: inline-flex;
     align-items: center;
@@ -3698,7 +3963,8 @@ style.textContent = `
   .candidate-category-toggle-button,
   .candidate-label-button,
   .selected-clear-button,
-  .candidate-generate-button {
+  .candidate-generate-button,
+  .ideal-face-export-button {
     font-family: inherit;
   }
 
@@ -3711,7 +3977,8 @@ style.textContent = `
     opacity: 0.55;
   }
 
-  .candidate-generate-button:disabled {
+  .candidate-generate-button:disabled,
+  .ideal-face-export-button:disabled {
     cursor: not-allowed;
     opacity: 0.55;
   }
@@ -3723,6 +3990,7 @@ style.textContent = `
   .candidate-label-button:focus-visible,
   .selected-clear-button:focus-visible,
   .candidate-generate-button:focus-visible,
+  .ideal-face-export-button:focus-visible,
   .point-cloud-preset-button:focus-visible {
     outline: 3px solid #9fc8bd;
     outline-offset: 2px;
@@ -4101,8 +4369,41 @@ style.textContent = `
     font-weight: 700;
   }
 
+  .ideal-face-export-panel {
+    display: grid;
+    gap: 10px;
+    border: 1px solid #ccd8d3;
+    border-radius: 8px;
+    background: #edf4f1;
+    padding: 12px;
+  }
+
+  .ideal-face-export-heading {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .ideal-face-export-heading h5 {
+    margin: 0;
+    color: #25342e;
+    font-size: 14px;
+  }
+
+  .ideal-face-export-heading p {
+    margin: 5px 0 0;
+    color: #5d675f;
+    font-size: 13px;
+    font-weight: 700;
+  }
+
   .candidate-summary-list {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .ideal-face-export-summary-list {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
   .ideal-3d-preview {
@@ -4611,7 +4912,8 @@ style.textContent = `
 
     .panel-heading,
     .debug-panel-heading,
-    .ideal-3d-candidate-heading {
+    .ideal-3d-candidate-heading,
+    .ideal-face-export-heading {
       align-items: flex-start;
       flex-direction: column;
     }
