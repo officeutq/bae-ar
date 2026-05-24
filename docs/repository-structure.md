@@ -86,7 +86,7 @@ Engine Runtime として使う Beauty Engine SDK を置く場所です。
 
 Engine Runtime は UI を持ちません。debug 用 UI、一時的な検証 UI、Authoring Tool の編集処理はここに入れません。
 
-Projection / Shape Warp へ向けた座標系方針として、Engine Runtime は完成済み IdealFace asset の `idealLandmarks3D` を same-unit coordinate として読み込み、`FacePose` に合わせて same-unit 空間で回転と face center / uniform scale alignment を行います。Runtime Projection alignment では x/y 別 scale を行わず、IdealFace の縦横比を現在顔に合わせて歪めません。Studio overlay / current-vs-ideal difference / Shape Warp 入力へ渡す前に、projected ideal landmarks は image-normalized coordinate へ変換します。最終的な描画や画像変形では pixel coordinate を使います。
+Projection / Shape Warp へ向けた座標系方針として、Engine Runtime は完成済み IdealFace asset の `idealLandmarks3D` を same-unit coordinate として読み込み、`FacePose` に合わせて same-unit 空間で回転と face center / uniform scale alignment を行います。Runtime Projection alignment では x/y 別 scale を行わず、IdealFace の縦横比を現在顔に合わせて歪めません。Projection result は `sameUnitLandmarks` と `imageLandmarks` を分けて持ち、Studio overlay / current-vs-ideal difference / Shape Warp 入力へ渡す座標は image-normalized coordinate に変換します。Studio overlay は `imageLandmarks` を使います。最終的な描画や画像変形では pixel coordinate を使います。
 
 ## `apps/studio`
 

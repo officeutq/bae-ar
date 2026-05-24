@@ -63,7 +63,7 @@ IdealFace は BAE AR 独自の canonical face / お面データです。MediaPip
 
 Projection / Shape Processing の実装では座標系を 3 種類に分けます。IdealFace asset / `idealLandmarks3D` は same-unit coordinate として扱い、Projection 内部、`FacePose` rotation、uniform alignment に使います。MediaPipe current landmarks、Studio overlay、current-vs-ideal difference、`CorrectionPlan` 入力は image-normalized coordinate として扱います。最終的な描画や画像変形は pixel coordinate で行います。
 
-same-unit の projected ideal landmarks を、そのまま `x * canvasWidth` / `y * canvasHeight` で描画しません。Projection result は、Projection / alignment / debug 用の same-unit projected landmarks と、overlay / difference / Shape Warp 入力用の image-normalized projected landmarks を分けて持つ方針です。
+same-unit の projected ideal landmarks を、そのまま `x * canvasWidth` / `y * canvasHeight` で描画しません。Projection result は、Projection / alignment / debug 用の `sameUnitLandmarks` と、overlay / difference / Shape Warp 入力用の `imageLandmarks` を分けて持ちます。Studio overlay は `imageLandmarks` を使います。
 
 ```text
 現在顔から MediaPipe 478 landmarks を取得
@@ -76,6 +76,8 @@ same-unit の projected ideal landmarks を、そのまま `x * canvasWidth` / `
 ```
 
 current 478 landmarks は MediaPipe 由来の image-normalized 座標です。projected ideal 478 landmarks は、IdealFace same-unit landmarks を `FacePose` へ投影し、alignment 後に image-normalized 座標へ変換したものです。差分は `deltaX = projectedIdealImageX - currentX`、`deltaY = projectedIdealImageY - currentY` として計算します。
+
+現時点では、478点の current-vs-ideal difference、`CorrectionPlan`、Shape Warp は未実装です。
 
 やらないこと:
 

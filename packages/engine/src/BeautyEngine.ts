@@ -170,6 +170,8 @@ export class BeautyEngine {
   }
 
   projectIdealLandmarks3D(): IdealLandmarks3DProjectionResult {
+    const inputSize = this.getInputProjectionSize()
+
     return projectIdealLandmarks3D(
       this.idealFace,
       this.currentFaceFrame?.pose,
@@ -177,6 +179,8 @@ export class BeautyEngine {
         detected: this.currentFaceFrame?.detected ?? false,
         currentLandmarks: this.currentFaceFrame?.landmarks,
         faceGeometry: this.currentFaceGeometry,
+        videoWidth: inputSize?.width,
+        videoHeight: inputSize?.height,
       },
     )
   }
@@ -314,6 +318,31 @@ export class BeautyEngine {
       currentTime: this.input.currentTime,
       hasSrcObject: Boolean(this.input.srcObject),
     }
+  }
+
+  private getInputProjectionSize(): { width: number; height: number } | undefined {
+    if (this.input instanceof HTMLVideoElement) {
+      return {
+        width: this.input.videoWidth,
+        height: this.input.videoHeight,
+      }
+    }
+
+    if (this.input instanceof HTMLCanvasElement) {
+      return {
+        width: this.input.width,
+        height: this.input.height,
+      }
+    }
+
+    if (this.input instanceof HTMLImageElement) {
+      return {
+        width: this.input.naturalWidth || this.input.width,
+        height: this.input.naturalHeight || this.input.height,
+      }
+    }
+
+    return undefined
   }
 
   private stopFaceFrameLoop(): void {

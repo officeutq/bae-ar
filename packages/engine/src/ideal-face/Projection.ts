@@ -27,13 +27,24 @@ export interface IdealFaceProjectionResult {
   points: ProjectedIdealPoint[]
 }
 
-export interface ProjectedIdealLandmark2D {
+export interface ProjectedIdealLandmarkSameUnit {
   index: number
   x: number
   y: number
   z: number
   confidence: number
 }
+
+export interface ProjectedIdealLandmarkImageNormalized {
+  index: number
+  x: number
+  y: number
+  z: number
+  confidence: number
+}
+
+/** @deprecated Use sameUnitLandmarks or imageLandmarks explicitly. */
+export type ProjectedIdealLandmark2D = ProjectedIdealLandmarkImageNormalized
 
 export type IdealLandmarks3DProjectionStatus =
   | "not_available"
@@ -69,15 +80,32 @@ export interface IdealLandmarks3DProjectionAspectRatioDebug {
   asset?: number | null
   rotated?: number | null
   aligned?: number | null
+  image?: number | null
   current?: number | null
   currentMinusAligned?: number | null
+  currentMinusImage?: number | null
+}
+
+export type ProjectionCoordinateConversionMode =
+  "same_unit_to_image_normalized_v1"
+
+export interface ProjectionCoordinateDebug {
+  sameUnitBounds?: Landmark3DBoundsSummary
+  imageBounds?: Landmark3DBoundsSummary
+  currentBounds?: Landmark2DBoundsSummary
+  videoAspectRatio: number | null
+  conversionMode: ProjectionCoordinateConversionMode
+  fallbackUsed: boolean
+  reason?: string
 }
 
 export interface IdealLandmarks3DProjectionDebug {
   assetBounds?: Landmark3DBoundsSummary
   rotatedBounds?: Landmark3DBoundsSummary
   alignedBounds?: Landmark3DBoundsSummary
+  imageBounds?: Landmark3DBoundsSummary
   currentBounds?: Landmark2DBoundsSummary
+  coordinate?: ProjectionCoordinateDebug
   aspectRatio: IdealLandmarks3DProjectionAspectRatioDebug
 }
 
@@ -120,6 +148,9 @@ export interface IdealLandmarks3DProjectionAlignment {
 
 export interface IdealLandmarks3DProjectionResult {
   status: IdealLandmarks3DProjectionStatus
+  sameUnitLandmarks: ProjectedIdealLandmarkSameUnit[]
+  imageLandmarks: ProjectedIdealLandmarkImageNormalized[]
+  /** @deprecated Use sameUnitLandmarks or imageLandmarks explicitly. */
   landmarks: ProjectedIdealLandmark2D[]
   landmarkCount: number
   sourceIdealFaceId?: string
@@ -133,13 +164,15 @@ export interface ProjectIdealLandmarks3DOptions {
   detected?: boolean
   currentLandmarks?: FaceLandmark[]
   faceGeometry?: FaceGeometry
+  videoWidth?: number
+  videoHeight?: number
 }
 
 const DEG_TO_RAD = Math.PI / 180
 const IDEAL_LANDMARKS_3D_COUNT = 478
 const IDEAL_LANDMARKS_3D_CENTER = {
-  x: 0.5,
-  y: 0.5,
+  x: 0,
+  y: 0,
   z: 0,
 }
 
@@ -160,6 +193,18 @@ interface AlignmentMetrics {
   center?: IdealLandmarks3DProjectionPoint2D
   bounds?: Landmark2DBoundsSummary
   aspectRatio?: number
+}
+
+interface CurrentFaceProjectionMetrics {
+  image: AlignmentMetrics
+  sameUnit: AlignmentMetrics
+}
+
+interface VideoAspectRatioResult {
+  value: number
+  debugValue: number | null
+  fallbackUsed: boolean
+  reason?: string
 }
 
 export function projectIdealFaceControlPoints(
@@ -231,6 +276,8 @@ export function projectIdealLandmarks3D(
     return {
       ...baseResult,
       status: "not_available",
+      sameUnitLandmarks: [],
+      imageLandmarks: [],
       landmarks: [],
       landmarkCount: idealLandmarks3D?.length ?? 0,
       alignment: createNoAlignment("idealLandmarks3D 478 points are not available"),
@@ -245,6 +292,8 @@ export function projectIdealLandmarks3D(
     return {
       ...baseResult,
       status: "missing_face_pose",
+      sameUnitLandmarks: [],
+      imageLandmarks: [],
       landmarks: [],
       landmarkCount: idealLandmarks3D.length,
       alignment: createNoAlignment("current face pose is missing"),
@@ -258,23 +307,54 @@ export function projectIdealLandmarks3D(
   const rotatedLandmarks = idealLandmarks3D.map((landmark) =>
     projectIdealLandmark3D(landmark, facePose),
   )
+  const videoAspectRatio = getVideoAspectRatio(options)
+  const currentMetrics = getCurrentFaceProjectionMetrics(
+    options,
+    videoAspectRatio.value,
+  )
   const alignmentResult = alignProjectedIdealLandmarks(
     rotatedLandmarks,
-    options,
+    currentMetrics,
   )
+  const imageConversionResult = convertSameUnitLandmarksToImageNormalized(
+    alignmentResult.sameUnitLandmarks,
+    currentMetrics.image.center,
+    videoAspectRatio,
+  )
+  const imageLandmarks = imageConversionResult.landmarks
+  const sameUnitBounds = summarizeLandmark3DBounds(
+    alignmentResult.sameUnitLandmarks,
+  )
+  const imageBounds = summarizeLandmark3DBounds(imageLandmarks)
+  const currentBounds = summarizeLandmark2DBounds(options.currentLandmarks)
 
   return {
     ...baseResult,
     status: "projected",
-    landmarks: alignmentResult.landmarks,
-    landmarkCount: alignmentResult.landmarks.length,
-    summary: summarizeProjectedIdealLandmarks(alignmentResult.landmarks),
+    sameUnitLandmarks: alignmentResult.sameUnitLandmarks,
+    imageLandmarks,
+    landmarks: imageLandmarks,
+    landmarkCount: imageLandmarks.length,
+    summary: summarizeProjectedIdealLandmarks(imageLandmarks),
     alignment: alignmentResult.alignment,
     debug: createProjectionDebug({
       assetBounds: summarizeLandmark3DBounds(idealLandmarks3D),
       rotatedBounds: summarizeLandmark3DBounds(rotatedLandmarks),
-      alignedBounds: summarizeLandmark3DBounds(alignmentResult.landmarks),
-      currentBounds: summarizeLandmark2DBounds(options.currentLandmarks),
+      alignedBounds: sameUnitBounds,
+      imageBounds,
+      currentBounds,
+      coordinate: {
+        sameUnitBounds,
+        imageBounds,
+        currentBounds,
+        videoAspectRatio: videoAspectRatio.debugValue,
+        conversionMode: "same_unit_to_image_normalized_v1",
+        fallbackUsed:
+          videoAspectRatio.fallbackUsed || imageConversionResult.fallbackUsed,
+        reason: [videoAspectRatio.reason, imageConversionResult.reason]
+          .filter((reason): reason is string => Boolean(reason))
+          .join("; ") || undefined,
+      },
     }),
   }
 }
@@ -292,13 +372,13 @@ function normalizeProjectIdealLandmarks3DOptions(
 }
 
 function alignProjectedIdealLandmarks(
-  landmarks: ProjectedIdealLandmark2D[],
-  options: ProjectIdealLandmarks3DOptions,
+  landmarks: ProjectedIdealLandmarkSameUnit[],
+  currentFaceMetrics: CurrentFaceProjectionMetrics,
 ): {
-  landmarks: ProjectedIdealLandmark2D[]
+  sameUnitLandmarks: ProjectedIdealLandmarkSameUnit[]
   alignment: IdealLandmarks3DProjectionAlignment
 } {
-  const currentMetrics = getCurrentFaceAlignmentMetrics(options)
+  const currentMetrics = currentFaceMetrics.sameUnit
   const projectedMetrics = getProjectedIdealAlignmentMetrics(landmarks)
   const aspectRatioDifference = getAspectRatioDifference(
     currentMetrics.aspectRatio,
@@ -307,7 +387,7 @@ function alignProjectedIdealLandmarks(
 
   if (!currentMetrics.center || !currentMetrics.bounds) {
     return {
-      landmarks,
+      sameUnitLandmarks: landmarks,
       alignment: {
         ...createNoAlignment("current face bounds are unavailable"),
         currentCenter: currentMetrics.center,
@@ -321,7 +401,7 @@ function alignProjectedIdealLandmarks(
 
   if (!projectedMetrics.center || !projectedMetrics.bounds) {
     return {
-      landmarks,
+      sameUnitLandmarks: landmarks,
       alignment: {
         ...createNoAlignment("projected ideal bounds are unavailable"),
         currentCenter: currentMetrics.center,
@@ -351,7 +431,7 @@ function alignProjectedIdealLandmarks(
   const translateY = currentMetrics.center.y - projectedMetrics.center.y * scale
 
   return {
-    landmarks: landmarks.map((landmark) => ({
+    sameUnitLandmarks: landmarks.map((landmark) => ({
       ...landmark,
       x: (landmark.x - projectedCenter.x) * scale + currentCenter.x,
       y: (landmark.y - projectedCenter.y) * scale + currentCenter.y,
@@ -384,27 +464,54 @@ function alignProjectedIdealLandmarks(
   }
 }
 
-function getCurrentFaceAlignmentMetrics(
+function getCurrentFaceProjectionMetrics(
   options: ProjectIdealLandmarks3DOptions,
-): AlignmentMetrics {
+  videoAspectRatio: number,
+): CurrentFaceProjectionMetrics {
   const bounds = options.currentLandmarks
     ? calculatePointBounds(options.currentLandmarks)
     : null
-  const center =
+  const imageCenter =
     getBoundsCenter(bounds) ??
     getAveragePoint(options.currentLandmarks) ??
     toPoint2D(options.faceGeometry?.faceCenter)
   const boundsSummary = bounds ? createLandmark2DBoundsSummary(bounds) : undefined
-
-  return {
-    center,
+  const imageMetrics = {
+    center: imageCenter,
     bounds: isUsableBoundsSummary(boundsSummary) ? boundsSummary : undefined,
     aspectRatio: boundsSummary?.aspectRatio ?? undefined,
+  }
+  const currentSameUnitLandmarks =
+    options.currentLandmarks && imageCenter
+      ? options.currentLandmarks.map((landmark) =>
+          imageNormalizedPointToSameUnit(landmark, imageCenter, videoAspectRatio),
+        )
+      : undefined
+  const sameUnitBounds = currentSameUnitLandmarks
+    ? calculatePointBounds(currentSameUnitLandmarks)
+    : null
+  const sameUnitBoundsSummary = sameUnitBounds
+    ? createLandmark2DBoundsSummary(sameUnitBounds)
+    : undefined
+  const sameUnitCenter =
+    getBoundsCenter(sameUnitBounds) ??
+    getAveragePoint(currentSameUnitLandmarks) ??
+    (imageCenter ? { x: 0, y: 0 } : undefined)
+
+  return {
+    image: imageMetrics,
+    sameUnit: {
+      center: sameUnitCenter,
+      bounds: isUsableBoundsSummary(sameUnitBoundsSummary)
+        ? sameUnitBoundsSummary
+        : undefined,
+      aspectRatio: sameUnitBoundsSummary?.aspectRatio ?? undefined,
+    },
   }
 }
 
 function getProjectedIdealAlignmentMetrics(
-  landmarks: ProjectedIdealLandmark2D[],
+  landmarks: ProjectedIdealLandmarkSameUnit[],
 ): AlignmentMetrics {
   const bounds = calculatePointBounds(landmarks)
   const boundsSummary = bounds ? createLandmark2DBoundsSummary(bounds) : undefined
@@ -413,6 +520,41 @@ function getProjectedIdealAlignmentMetrics(
     center: getBoundsCenter(bounds),
     bounds: isUsableBoundsSummary(boundsSummary) ? boundsSummary : undefined,
     aspectRatio: boundsSummary?.aspectRatio ?? undefined,
+  }
+}
+
+function imageNormalizedPointToSameUnit(
+  point: { x: number; y: number },
+  center: IdealLandmarks3DProjectionPoint2D,
+  videoAspectRatio: number,
+): IdealLandmarks3DProjectionPoint2D {
+  return {
+    x: (point.x - center.x) * videoAspectRatio,
+    y: point.y - center.y,
+  }
+}
+
+function convertSameUnitLandmarksToImageNormalized(
+  landmarks: ProjectedIdealLandmarkSameUnit[],
+  currentImageCenter: IdealLandmarks3DProjectionPoint2D | undefined,
+  videoAspectRatio: VideoAspectRatioResult,
+): {
+  landmarks: ProjectedIdealLandmarkImageNormalized[]
+  fallbackUsed: boolean
+  reason?: string
+} {
+  const imageCenter = currentImageCenter ?? { x: 0.5, y: 0.5 }
+
+  return {
+    landmarks: landmarks.map((landmark) => ({
+      ...landmark,
+      x: imageCenter.x + landmark.x / videoAspectRatio.value,
+      y: imageCenter.y + landmark.y,
+    })),
+    fallbackUsed: !currentImageCenter,
+    reason: currentImageCenter
+      ? undefined
+      : "current face image-normalized center is unavailable; used 0.5 / 0.5",
   }
 }
 
@@ -511,21 +653,48 @@ function getAspectRatioDifference(
     : null
 }
 
+function getVideoAspectRatio(
+  options: ProjectIdealLandmarks3DOptions,
+): VideoAspectRatioResult {
+  const positiveWidth = getPositiveNumber(options.videoWidth)
+  const positiveHeight = getPositiveNumber(options.videoHeight)
+
+  if (positiveWidth && positiveHeight) {
+    return {
+      value: positiveWidth / positiveHeight,
+      debugValue: positiveWidth / positiveHeight,
+      fallbackUsed: false,
+    }
+  }
+
+  return {
+    value: 1,
+    debugValue: null,
+    fallbackUsed: true,
+    reason: "runtime video size is unavailable; used video aspect ratio 1",
+  }
+}
+
 function createProjectionDebug(input: {
   assetBounds?: Landmark3DBoundsSummary
   rotatedBounds?: Landmark3DBoundsSummary
   alignedBounds?: Landmark3DBoundsSummary
+  imageBounds?: Landmark3DBoundsSummary
   currentBounds?: Landmark2DBoundsSummary
+  coordinate?: ProjectionCoordinateDebug
 }): IdealLandmarks3DProjectionDebug {
   return {
     assetBounds: input.assetBounds,
     rotatedBounds: input.rotatedBounds,
     alignedBounds: input.alignedBounds,
+    imageBounds: input.imageBounds,
     currentBounds: input.currentBounds,
+    coordinate: input.coordinate,
     aspectRatio: {
       asset: input.assetBounds?.aspectRatio ?? null,
       rotated: input.rotatedBounds?.aspectRatio ?? null,
       aligned: input.alignedBounds?.aspectRatio ?? null,
+      image: input.imageBounds?.aspectRatio ?? null,
       current: input.currentBounds?.aspectRatio ?? null,
       currentMinusAligned:
         input.currentBounds?.aspectRatio !== null &&
@@ -533,6 +702,13 @@ function createProjectionDebug(input: {
         input.alignedBounds?.aspectRatio !== null &&
         input.alignedBounds?.aspectRatio !== undefined
           ? input.currentBounds.aspectRatio - input.alignedBounds.aspectRatio
+          : null,
+      currentMinusImage:
+        input.currentBounds?.aspectRatio !== null &&
+        input.currentBounds?.aspectRatio !== undefined &&
+        input.imageBounds?.aspectRatio !== null &&
+        input.imageBounds?.aspectRatio !== undefined
+          ? input.currentBounds.aspectRatio - input.imageBounds.aspectRatio
           : null,
     },
   }
@@ -626,7 +802,7 @@ function createNoAlignment(reason: string): IdealLandmarks3DProjectionAlignment 
 function projectIdealLandmark3D(
   landmark: IdealFaceLandmark3D,
   pose: FacePose,
-): ProjectedIdealLandmark2D {
+): ProjectedIdealLandmarkSameUnit {
   const centered = {
     x: landmark.x - IDEAL_LANDMARKS_3D_CENTER.x,
     y: landmark.y - IDEAL_LANDMARKS_3D_CENTER.y,
@@ -644,7 +820,7 @@ function projectIdealLandmark3D(
 }
 
 function summarizeProjectedIdealLandmarks(
-  landmarks: ProjectedIdealLandmark2D[],
+  landmarks: Array<{ x: number; y: number; z: number }>,
 ): IdealLandmarks3DProjectionSummary {
   return landmarks.reduce<IdealLandmarks3DProjectionSummary>(
     (summary, landmark) => ({
