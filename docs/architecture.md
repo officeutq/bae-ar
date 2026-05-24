@@ -26,7 +26,7 @@ BAE AR
    └─ 将来予定。LayerMaskSpec を作成する authoring tool
 ```
 
-現在 `tools/ideal-face-authoring` は Step 2-I-B まで実装済みです。`tools/layer-mask-authoring` は将来予定です。
+現在 `tools/ideal-face-authoring` は Step 2-I-C まで実装済みです。`tools/layer-mask-authoring` は将来予定です。
 
 ## Engine Runtime の責務
 
@@ -119,7 +119,7 @@ roll 補正でできることは、顔が画面内で斜めに写っているこ
 
 Engine Runtime は動画入力、フレーム抽出、代表フレーム抽出、手動ラベル確定、3D推測用 dataset 作成、`idealLandmarks3D` 候補生成、`idealLandmarks3D` 作成を行いません。Runtime は完成済みの IdealFace asset を読み込み、`idealLandmarks3D` 478点を現在 `FacePose` へ投影して projected ideal 2D landmarks 478点を生成します。
 
-Step 2-I-A では、`frontReferenceFrameIds` / `excludedFrameIds` と派生 `usableObservationFrames` summary、JSON preview の `poseAwareMultiFrameInference` 概要までを追加済みです。Step 2-I-B では、`poseAwareInferenceDataset` 概要を追加済みです。Step 2-I 用操作は Step 2-I カード内に閉じ、旧ポーズ別候補 UI には混ぜません。画面上の 3 分類は排他的に表示します。pose-aware 3D候補生成ロジックはまだ実装せず、Step 2-G v1 の候補生成と Step 2-H preview は従来どおりです。
+Step 2-I-A では、`frontReferenceFrameIds` / `excludedFrameIds` と派生 `usableObservationFrames` summary、JSON preview の `poseAwareMultiFrameInference` 概要までを追加済みです。Step 2-I-B では、`poseAwareInferenceDataset` 概要を追加済みです。Step 2-I-C では、observation landmarks を roll 補正してから yaw / pitch / weight に基づく z hint を推定する pose-aware weighted z inference v1 を追加済みです。Step 2-I 用操作は Step 2-I カード内に閉じ、旧ポーズ別候補 UI には混ぜません。画面上の 3 分類は排他的に表示します。Step 2-G v1 の候補生成と Step 2-H preview は従来どおり残します。
 
 旧 Step 2-F / Step 2-G v1 用の候補 UI は、代表フレーム候補中心に表示します。一方、Step 2-I 用 UI は除外判断のため、推定に使うフレームを全件操作可能にします。いずれも IdealFace Authoring Tool の責務であり、`packages/engine/src` や `apps/studio/src` には authoring 用処理や UI を入れません。
 
@@ -212,7 +212,7 @@ v1 の制限事項:
 
 - 3D model は Projection の土台確認用の最小 control point 群
 - ideal 478 landmarks の生成は未実装
-- IdealFace Authoring Tool は Step 2-I-B まで実装済み
+- IdealFace Authoring Tool は Step 2-I-C まで実装済み
 - IdealFace Projection v1 は controlPoints のみ部分実装
 - Projection Difference Debug v1 は代表点ベースの差分確認のみ実装
 

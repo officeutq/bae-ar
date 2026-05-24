@@ -18,13 +18,13 @@ BAE AR
 │  └─ Engine を開発・検証・調整する開発ツール
 │
 ├─ IdealFace Authoring Tool
-│  └─ 理想 3D 顔プリセットを作成する authoring tool。Step 2-I-B まで実装済み
+│  └─ 理想 3D 顔プリセットを作成する authoring tool。Step 2-I-C まで実装済み
 │
 └─ Layer Mask Authoring Tool
    └─ 色加工用 LayerMaskSpec を作成する将来ツール
 ```
 
-現在の実装は `packages/engine`、`apps/studio`、`tools/ideal-face-authoring` が中心です。`tools/ideal-face-authoring` は Step 2-I-B まで実装済みで、`tools/layer-mask-authoring` は将来予定です。
+現在の実装は `packages/engine`、`apps/studio`、`tools/ideal-face-authoring` が中心です。`tools/ideal-face-authoring` は Step 2-I-C まで実装済みで、`tools/layer-mask-authoring` は将来予定です。
 
 ## 現在の到達点
 
@@ -175,7 +175,7 @@ Beauty Studio では、開発確認用として overlay や簡易調整 UI を�
 
 `tools/ideal-face-authoring` は BAE AR 独自の IdealFace asset を作るための独立ツールです。Step 1 では `natural_v1` の metadata、controlPoints 一覧、2D preview、JSON preview を表示します。
 
-Step 2-I-A 現在では、MP4 動画入力、MediaPipe 解析、代表フレーム候補抽出、手動ラベル確定、3D推測用 dataset 作成、`idealLandmarks3D` 478点候補生成、3D点群 preview、pose-aware multi-frame inference 用の UI / state 基盤まで実装済みです。本格 3D editor、pose-aware 3D候補生成ロジック、手動微調整、保存 / export、複数画像入力は未実装です。このツールは MediaPipe canonical face model そのものを作るツールではなく、Authoring Tool の編集処理を Engine Runtime に混ぜません。
+Step 2-I-C 現在では、MP4 動画入力、MediaPipe 解析、代表フレーム候補抽出、手動ラベル確定、3D推測用 dataset 作成、`idealLandmarks3D` 478点候補生成、3D点群 preview、pose-aware multi-frame inference 用の UI / state 基盤、pose-aware weighted z inference v1 まで実装済みです。本格 3D editor、手動微調整、保存 / export、複数画像入力は未実装です。このツールは MediaPipe canonical face model そのものを作るツールではなく、Authoring Tool の編集処理を Engine Runtime に混ぜません。
 
 ## IdealFace Authoring Tool Step 2-A
 
@@ -305,7 +305,7 @@ Step 2-I-A では、選択状態として `frontReferenceFrameIds` と `excluded
 
 Step 2-I-B は実装済みです。正面基準候補から base x / y 用の `frontReferenceFrames` を作り、推定に使うフレームから `observationFrames` を作ります。`observationFrames` は固定分類ではなく pose vector として保持し、yaw も pitch も大きいフレームは mixed pose observation として扱います。Step 2-I-B では dataset 作成までに留め、`idealLandmarks3D` 新生成ロジック、pose-aware weighted z inference、Step 2-G v1 の置き換えは行いません。
 
-Step 2-I-C も未実装です。Step 2-I-B の dataset を使い、observationFrame の 2D landmarks を roll 角で逆回転補正してから、yaw / pitch / roll / score / weight に基づく pose-aware weighted z inference v1 で `idealLandmarks3D` 478点候補を生成する方針です。ただし厳密な 3D reconstruction、三角測量、bundle adjustment、カメラ内部パラメータ推定、本格 3D editor、手動微調整、保存 / export、Runtime への組み込みは行いません。
+Step 2-I-C では、Step 2-I-B の dataset を使い、observationFrame の 2D landmarks を roll 角で逆回転補正してから、yaw / pitch / score / weight に基づく pose-aware weighted z inference v1 で `idealLandmarks3D` 478点候補を生成します。ただし厳密な 3D reconstruction、三角測量、bundle adjustment、カメラ内部パラメータ推定、本格 3D editor、手動微調整、保存 / export、Runtime への組み込みは行いません。
 
 ## IdealFace / Projection / Shape Processing 中核仕様
 

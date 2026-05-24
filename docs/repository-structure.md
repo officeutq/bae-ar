@@ -52,7 +52,7 @@ tools/
    └─ Layer Mask Authoring Tool
 ```
 
-`tools/ideal-face-authoring` は Step 2-I-B まで実装済みです。`tools/layer-mask-authoring` は将来予定です。
+`tools/ideal-face-authoring` は Step 2-I-C まで実装済みです。`tools/layer-mask-authoring` は将来予定です。
 
 ## `packages/engine`
 
@@ -103,7 +103,7 @@ Studio は配布対象ではありません。Studio は Engine Runtime の公�
 
 ## `tools/ideal-face-authoring`
 
-IdealFace Authoring Tool。Step 2-I-B まで実装済みです。
+IdealFace Authoring Tool。Step 2-I-C まで実装済みです。
 
 責務:
 
@@ -120,7 +120,7 @@ IdealFace Authoring Tool では、MP4 動画から各フレームの 2D 478 land
 
 Step 2-A では、MP4 動画入力、metadata 表示、一定間隔でのフレーム抽出、サムネイル一覧表示、JSON preview への抽出フレーム情報表示までを実装済みです。Step 2-B では、抽出済みフレームの MediaPipe 解析、2D 478 landmarks と `FacePose` の取得、解析結果 summary と JSON preview への概要表示までを実装済みです。Step 2-C では、yaw / pitch / roll による代表フレーム候補の自動抽出、各カテゴリ上位複数件の候補一覧表示、JSON preview への候補概要表示までを実装済みです。Step 2-D では、候補カードから正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定し、候補カテゴリを必要なものだけ開くトグル表示、確定済み代表フレーム一覧、3D推測準備状況、JSON preview の `selectedRepresentativeFrames` を確認できるようにしました。Step 2-E では、確定済み代表フレームから front / left / right / up / down の 3D推測用データセットを作成し、readiness summary、dataset 一覧、JSON preview の `idealLandmarks3DInferenceDataset` 概要を確認できるようにしました。Step 2-F では、候補抽出用の詳細スキャン、詳細スキャン summary、JSON preview の `scanSummary`、サムネイル全体表示を追加しました。Step 2-G では、3D推測用データセットから `idealLandmarks3D` 478点候補を自動推測する v1 と、生成結果 summary、先頭 5 点 preview、JSON preview の `idealLandmarks3DCandidate` 概要を追加しました。Step 2-H では、生成済み 3D 478点候補の interactive 3D点群 preview、正面 / 横 / 上の camera preset、x / y / z 範囲、confidence summary を追加しました。Step 2-I-A では、pose-aware multi-frame inference へ進むための UI / state 基盤として、正面基準候補、推定に使うフレーム、除外フレームの 3 分類表示、`frontReferenceFrameIds` / `excludedFrameIds`、派生 `usableObservationFrames` summary、JSON preview の `poseAwareMultiFrameInference` 概要を追加しました。Step 2-I-B では、`frontReferenceFrames` / `observationFrames` / `excludedFrameCount` / poseCoverage を持つ pose-aware dataset と JSON preview の `poseAwareInferenceDataset` 概要を追加しました。preview は確認用表示であり、視点回転、zoom、pan は preview camera の操作として扱い、候補データ自体は変更しません。確定済み代表フレーム一覧と3D推測用データセットには、正面 / 左向き / 右向き / 上向き / 下向きだけを表示します。
 
-Step 2-I-A は実装済みの UI / state 基盤です。Step 2-I-B の pose-aware dataset 作成も実装済みです。Step 2-G v1 は現在実装済みの簡易推定として残し、Step 2-I-C の pose-aware weighted z inference v1 はまだ未実装です。
+Step 2-I-A は実装済みの UI / state 基盤です。Step 2-I-B の pose-aware dataset 作成も実装済みです。Step 2-I-C では pose-aware weighted z inference v1 を追加しました。Step 2-G v1 は現在実装済みの旧簡易推定として残し、Runtime / Studio / Authoring Tool の分離を維持しています。
 
 MP4 動画から表示用フレームを一定間隔で抽出し、候補抽出用には動画全体を 0.1 秒間隔、最大スキャン数の上限付きで詳細スキャンします。詳細スキャン済みフレームのうち、顔検出あり、landmarks 数 478、pose pitch / yaw / roll 取得済みのフレームから正面候補、yaw 正方向候補、yaw 負方向候補、pitch 正方向候補、pitch 負方向候補を各カテゴリに複数件保持します。全スキャンフレーム一覧は UI に表示せず、代表フレーム候補を中心に表示します。Step 2-D では、候補カテゴリを必要なものだけ開いて比較し、ユーザーが正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定します。Step 2-E では、確定済み代表フレームから 3D推測用データセットを作成します。除外は代表フレームではないため確定済み代表フレーム一覧には表示せず、3D推測用データセットにも含めません。dataset は 2D 478 landmarks と FacePose を持つ入力データであり、まだ `idealLandmarks3D` 478点そのものではありません。Step 2-G v1 では、この dataset から `idealLandmarks3D` 478点候補を自動推測します。front の 2D landmarks を x / y の基準にし、left / right / up / down との差分から z を簡易推定します。不足ラベルは confidence を下げる要素として扱います。候補に採用されたフレームは手動確定と dataset 作成に使えるよう保持し、候補以外の詳細スキャンフレームは一覧表示しません。サムネイルはトリムせず画像全体を表示します。
 

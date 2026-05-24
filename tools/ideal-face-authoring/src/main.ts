@@ -67,6 +67,9 @@ const POSE_AWARE_MIN_SCORE_WEIGHT = 0.2
 const POSE_AWARE_ROLL_WARNING_ABS_DEG = 15
 const MIXED_POSE_MIN_ABS_DEG = 8
 const POSE_AWARE_DATASET_FRAME_PREVIEW_COUNT = 3
+const POSE_AWARE_Z_MIN_COMPONENT_DEG = 5
+const POSE_AWARE_Z_HINT_CLAMP = 0.35
+const POSE_AWARE_LOW_CONFIDENCE_THRESHOLD = 0.45
 const DEFAULT_POINT_CLOUD_CAMERA: PointCloudPreviewCamera = {
   yaw: 0,
   pitch: 0,
@@ -264,6 +267,25 @@ interface PoseAwareInferenceDataset {
   warnings: string[]
 }
 
+interface PoseAwareBasePoint {
+  index: number
+  x: number
+  y: number
+}
+
+interface PoseAwareCorrectedLandmark2D {
+  index: number
+  x: number
+  y: number
+}
+
+interface PoseAwareZHint {
+  value: number
+  weight: number
+  source: "yaw" | "pitch"
+  frameId: string
+}
+
 interface PoseAwareMultiFrameSummary {
   status: PoseAwareInferenceStatus
   frontReferenceFrameCount: number
@@ -285,6 +307,10 @@ type IdealLandmarks3DCandidateStatus =
   | "generated"
   | "insufficient_data"
   | "error"
+
+type IdealLandmarks3DGenerationMethod =
+  | "step_2_g_v1"
+  | "pose_aware_weighted_z_v1"
 
 type PointCloudPreviewPreset = "front" | "side" | "top" | "reset"
 
@@ -317,11 +343,12 @@ interface IdealLandmark3DCandidate {
   y: number
   z: number
   confidence: number
-  source: "inferred_v1"
+  source: "inferred_v1" | "pose_aware_weighted_z_v1"
 }
 
 interface IdealLandmarks3DCandidateResult {
   status: IdealLandmarks3DCandidateStatus
+  generationMethod: IdealLandmarks3DGenerationMethod | null
   requiredLabels: SelectableRepresentativeFrameLabel[]
   readyLabels: SelectableRepresentativeFrameLabel[]
   missingLabels: SelectableRepresentativeFrameLabel[]
@@ -333,6 +360,13 @@ interface IdealLandmarks3DCandidateResult {
     averageConfidence: number
     minConfidence: number
     maxConfidence: number
+    zMin: number
+    zMax: number
+    zAverage: number
+    lowConfidenceLandmarkCount: number
+    frontReferenceFrameCount: number
+    observationFrameCount: number
+    excludedFrameCount: number
   }
   message: string | null
 }
@@ -1256,6 +1290,7 @@ function toInferenceDatasetPreview(
 function createInitialIdealLandmarks3DCandidateResult(): IdealLandmarks3DCandidateResult {
   return {
     status: "not_ready",
+    generationMethod: null,
     requiredLabels: [...INFERENCE_DATASET_LABELS],
     readyLabels: [],
     missingLabels: [...INFERENCE_DATASET_LABELS],
@@ -1267,6 +1302,13 @@ function createInitialIdealLandmarks3DCandidateResult(): IdealLandmarks3DCandida
       averageConfidence: 0,
       minConfidence: 0,
       maxConfidence: 0,
+      zMin: 0,
+      zMax: 0,
+      zAverage: 0,
+      lowConfidenceLandmarkCount: 0,
+      frontReferenceFrameCount: 0,
+      observationFrameCount: 0,
+      excludedFrameCount: 0,
     },
     message: null,
   }
@@ -1389,6 +1431,42 @@ function inferCandidateConfidence(
   return Number(confidence.toFixed(4))
 }
 
+function buildIdealLandmarks3DCandidateSummary(
+  landmarks: IdealLandmark3DCandidate[],
+  counts: {
+    frontReferenceFrameCount: number
+    observationFrameCount: number
+    excludedFrameCount: number
+  },
+): IdealLandmarks3DCandidateResult["summary"] {
+  const confidenceValues = landmarks.map((landmark) => landmark.confidence)
+  const zValues = landmarks.map((landmark) => landmark.z)
+
+  return {
+    generatedCount: landmarks.length,
+    averageConfidence: Number(averageNumbers(confidenceValues).toFixed(4)),
+    minConfidence:
+      confidenceValues.length === 0
+        ? 0
+        : Number(Math.min(...confidenceValues).toFixed(4)),
+    maxConfidence:
+      confidenceValues.length === 0
+        ? 0
+        : Number(Math.max(...confidenceValues).toFixed(4)),
+    zMin:
+      zValues.length === 0 ? 0 : Number(Math.min(...zValues).toFixed(4)),
+    zMax:
+      zValues.length === 0 ? 0 : Number(Math.max(...zValues).toFixed(4)),
+    zAverage: Number(averageNumbers(zValues).toFixed(4)),
+    lowConfidenceLandmarkCount: confidenceValues.filter(
+      (confidence) => confidence < POSE_AWARE_LOW_CONFIDENCE_THRESHOLD,
+    ).length,
+    frontReferenceFrameCount: counts.frontReferenceFrameCount,
+    observationFrameCount: counts.observationFrameCount,
+    excludedFrameCount: counts.excludedFrameCount,
+  }
+}
+
 function buildIdealLandmarks3DCandidateResult(
   dataset: IdealLandmarks3DInferenceDataset,
 ): IdealLandmarks3DCandidateResult {
@@ -1426,30 +1504,21 @@ function buildIdealLandmarks3DCandidateResult(
       source: "inferred_v1" as const,
     }
   })
-  const confidenceValues = landmarks.map((landmark) => landmark.confidence)
-  const averageConfidence =
-    confidenceValues.length === 0 ? 0 : averageNumbers(confidenceValues)
-
   return {
     status: "generated",
+    generationMethod: "step_2_g_v1",
     requiredLabels: [...INFERENCE_DATASET_LABELS],
     readyLabels,
     missingLabels,
     landmarkCount: landmarks.length,
     landmarks,
     landmarksPreview: landmarks.slice(0, IDEAL_LANDMARKS_3D_PREVIEW_COUNT),
-    summary: {
-      generatedCount: landmarks.length,
-      averageConfidence: Number(averageConfidence.toFixed(4)),
-      minConfidence:
-        confidenceValues.length === 0
-          ? 0
-          : Number(Math.min(...confidenceValues).toFixed(4)),
-      maxConfidence:
-        confidenceValues.length === 0
-          ? 0
-          : Number(Math.max(...confidenceValues).toFixed(4)),
-    },
+    summary: buildIdealLandmarks3DCandidateSummary(landmarks, {
+      frontReferenceFrameCount: 1,
+      observationFrameCount: readyLabels.filter((label) => label !== "front")
+        .length,
+      excludedFrameCount: selectedRepresentativeFrames.excluded.length,
+    }),
     message:
       "front の 2D 478 landmarks を x / y の基準にし、左右 / 上下フレームとの差分から z を簡易推定した候補です。",
   }
@@ -1460,6 +1529,7 @@ function toIdealLandmarks3DCandidatePreview(
 ): unknown {
   return {
     status: result.status,
+    generationMethod: result.generationMethod,
     landmarkCount: result.landmarkCount,
     readyLabels: result.readyLabels,
     missingLabels: result.missingLabels,
@@ -2150,6 +2220,376 @@ function toPoseAwareInferenceDatasetPreview(): unknown {
   }
 }
 
+function degreesToRadians(degrees: number): number {
+  return degrees / RAD_TO_DEG
+}
+
+function rotatePoint2D(
+  point: { x: number; y: number },
+  center: { x: number; y: number },
+  angleRad: number,
+): { x: number; y: number } {
+  const dx = point.x - center.x
+  const dy = point.y - center.y
+  const cos = Math.cos(angleRad)
+  const sin = Math.sin(angleRad)
+
+  return {
+    x: center.x + dx * cos - dy * sin,
+    y: center.y + dx * sin + dy * cos,
+  }
+}
+
+function getFaceCenter2D(
+  landmarks: FaceLandmark[],
+): { x: number; y: number } | null {
+  const finiteLandmarks = landmarks.filter(isFiniteLandmark)
+
+  if (finiteLandmarks.length === 0) {
+    return null
+  }
+
+  return {
+    x: averageNumbers(finiteLandmarks.map((landmark) => landmark.x)),
+    y: averageNumbers(finiteLandmarks.map((landmark) => landmark.y)),
+  }
+}
+
+function getRollCorrectedLandmarks2D(
+  frame: PoseAwareInferenceFrame,
+): PoseAwareCorrectedLandmark2D[] | null {
+  const center = getFaceCenter2D(frame.landmarks)
+
+  if (!center || frame.landmarks.length !== REQUIRED_LANDMARK_COUNT) {
+    return null
+  }
+
+  const rollCorrectionRad = degreesToRadians(-frame.pose.roll)
+
+  return frame.landmarks.map((landmark, index) => {
+    const rotated = rotatePoint2D(landmark, center, rollCorrectionRad)
+
+    return {
+      index,
+      x: rotated.x,
+      y: rotated.y,
+    }
+  })
+}
+
+function buildPoseAwareBasePoints(
+  frontReferenceFrames: PoseAwareInferenceFrame[],
+): PoseAwareBasePoint[] | null {
+  const correctedFrames = frontReferenceFrames
+    .map(getRollCorrectedLandmarks2D)
+    .filter(
+      (landmarks): landmarks is PoseAwareCorrectedLandmark2D[] =>
+        landmarks !== null && landmarks.length === REQUIRED_LANDMARK_COUNT,
+    )
+
+  if (correctedFrames.length === 0) {
+    return null
+  }
+
+  return Array.from({ length: REQUIRED_LANDMARK_COUNT }, (_, index) => {
+    const points = correctedFrames
+      .map((landmarks) => landmarks[index])
+      .filter((point): point is PoseAwareCorrectedLandmark2D =>
+        Boolean(point) &&
+        Number.isFinite(point.x) &&
+        Number.isFinite(point.y),
+      )
+
+    return {
+      index,
+      x: Number(averageNumbers(points.map((point) => point.x)).toFixed(4)),
+      y: Number(averageNumbers(points.map((point) => point.y)).toFixed(4)),
+    }
+  })
+}
+
+function createPoseAwareZHint(
+  value: number,
+  weight: number,
+  source: PoseAwareZHint["source"],
+  frameId: string,
+): PoseAwareZHint | null {
+  if (!Number.isFinite(value) || !Number.isFinite(weight) || weight <= 0) {
+    return null
+  }
+
+  return {
+    value: clamp(value, -POSE_AWARE_Z_HINT_CLAMP, POSE_AWARE_Z_HINT_CLAMP),
+    weight,
+    source,
+    frameId,
+  }
+}
+
+function collectPoseAwareZHintsForFrame(
+  frame: PoseAwareInferenceFrame,
+  basePoints: PoseAwareBasePoint[],
+): PoseAwareZHint[][] {
+  const hintsByLandmark = Array.from(
+    { length: REQUIRED_LANDMARK_COUNT },
+    () => [] as PoseAwareZHint[],
+  )
+  const correctedLandmarks = getRollCorrectedLandmarks2D(frame)
+
+  if (!correctedLandmarks) {
+    return hintsByLandmark
+  }
+
+  const yawRad = degreesToRadians(frame.pose.yaw)
+  const pitchRad = degreesToRadians(frame.pose.pitch)
+  const yawSin = Math.sin(yawRad)
+  const pitchSin = Math.sin(pitchRad)
+  const useYaw = Math.abs(frame.pose.yaw) >= POSE_AWARE_Z_MIN_COMPONENT_DEG
+  const usePitch =
+    Math.abs(frame.pose.pitch) >= POSE_AWARE_Z_MIN_COMPONENT_DEG
+  const yawWeight = frame.weight * Math.abs(yawSin)
+  const pitchWeight = frame.weight * Math.abs(pitchSin)
+
+  correctedLandmarks.forEach((landmark, index) => {
+    const basePoint = basePoints[index]
+
+    if (!basePoint) {
+      return
+    }
+
+    const dx = landmark.x - basePoint.x
+    const dy = landmark.y - basePoint.y
+
+    if (useYaw && Math.abs(yawSin) > 0.0001) {
+      const hint = createPoseAwareZHint(
+        dx / yawSin,
+        yawWeight,
+        "yaw",
+        frame.frameId,
+      )
+
+      if (hint) {
+        hintsByLandmark[index].push(hint)
+      }
+    }
+
+    if (usePitch && Math.abs(pitchSin) > 0.0001) {
+      const hint = createPoseAwareZHint(
+        -dy / pitchSin,
+        pitchWeight,
+        "pitch",
+        frame.frameId,
+      )
+
+      if (hint) {
+        hintsByLandmark[index].push(hint)
+      }
+    }
+  })
+
+  return hintsByLandmark
+}
+
+function mergePoseAwareZHints(
+  observationFrames: PoseAwareInferenceFrame[],
+  basePoints: PoseAwareBasePoint[],
+): PoseAwareZHint[][] {
+  const mergedHints = Array.from(
+    { length: REQUIRED_LANDMARK_COUNT },
+    () => [] as PoseAwareZHint[],
+  )
+
+  observationFrames.forEach((frame) => {
+    const frameHints = collectPoseAwareZHintsForFrame(frame, basePoints)
+
+    frameHints.forEach((hints, index) => {
+      mergedHints[index].push(...hints)
+    })
+  })
+
+  return mergedHints
+}
+
+function getWeightedAverageZ(hints: PoseAwareZHint[]): number {
+  const weightTotal = hints.reduce((sum, hint) => sum + hint.weight, 0)
+
+  if (weightTotal <= 0) {
+    return 0
+  }
+
+  return (
+    hints.reduce((sum, hint) => sum + hint.value * hint.weight, 0) /
+    weightTotal
+  )
+}
+
+function getWeightedZVariance(hints: PoseAwareZHint[], average: number): number {
+  const weightTotal = hints.reduce((sum, hint) => sum + hint.weight, 0)
+
+  if (weightTotal <= 0) {
+    return 0
+  }
+
+  return (
+    hints.reduce(
+      (sum, hint) => sum + (hint.value - average) ** 2 * hint.weight,
+      0,
+    ) / weightTotal
+  )
+}
+
+function inferPoseAwareLandmarkConfidence(
+  hints: PoseAwareZHint[],
+  dataset: PoseAwareInferenceDataset,
+  inferredZ: number,
+): number {
+  if (hints.length === 0) {
+    return 0.18
+  }
+
+  const totalWeight = hints.reduce((sum, hint) => sum + hint.weight, 0)
+  const variance = getWeightedZVariance(hints, inferredZ)
+  const supportScore = clamp(hints.length / 12, 0, 1)
+  const weightScore = clamp(totalWeight / 1.2, 0, 1)
+  const coverageScore =
+    (dataset.poseCoverage.yaw.status === "ok" ? 0.5 : 0) +
+    (dataset.poseCoverage.pitch.status === "ok" ? 0.5 : 0)
+  const varianceScore = 1 - clamp(Math.sqrt(variance) / 0.12, 0, 1)
+  const frontReferenceScore = clamp(
+    dataset.frontReferenceFrames.length / 3,
+    0,
+    1,
+  )
+  const observationScore = clamp(dataset.observationFrames.length / 20, 0, 1)
+
+  return Number(
+    clamp(
+      supportScore * 0.24 +
+        weightScore * 0.22 +
+        coverageScore * 0.18 +
+        varianceScore * 0.2 +
+        frontReferenceScore * 0.08 +
+        observationScore * 0.08,
+      0,
+      1,
+    ).toFixed(4),
+  )
+}
+
+function centerPoseAwareZValues(
+  landmarks: IdealLandmark3DCandidate[],
+): IdealLandmark3DCandidate[] {
+  const zAverage = averageNumbers(landmarks.map((landmark) => landmark.z))
+
+  return landmarks.map((landmark) => ({
+    ...landmark,
+    z: Number(
+      clamp(
+        landmark.z - zAverage,
+        -POSE_AWARE_Z_HINT_CLAMP,
+        POSE_AWARE_Z_HINT_CLAMP,
+      ).toFixed(4),
+    ),
+  }))
+}
+
+function buildPoseAwareIdealLandmarks3DCandidateResult(
+  dataset: PoseAwareInferenceDataset,
+): IdealLandmarks3DCandidateResult {
+  if (dataset.status === "missing_front_reference") {
+    return {
+      ...createInitialIdealLandmarks3DCandidateResult(),
+      status: "insufficient_data",
+      generationMethod: "pose_aware_weighted_z_v1",
+      message:
+        "正面基準候補がないため、pose-aware 3D候補を生成できません。",
+    }
+  }
+
+  const basePoints = buildPoseAwareBasePoints(dataset.frontReferenceFrames)
+
+  if (!basePoints || basePoints.length !== REQUIRED_LANDMARK_COUNT) {
+    return {
+      ...createInitialIdealLandmarks3DCandidateResult(),
+      status: "insufficient_data",
+      generationMethod: "pose_aware_weighted_z_v1",
+      message:
+        "正面基準候補の 478 landmarks を参照できないため、pose-aware 3D候補を生成できません。",
+    }
+  }
+
+  const hintsByLandmark = mergePoseAwareZHints(
+    dataset.observationFrames,
+    basePoints,
+  )
+  const uncenteredLandmarks = basePoints.map((basePoint, index) => {
+    const hints = hintsByLandmark[index] ?? []
+    const z = getWeightedAverageZ(hints)
+    const confidence = inferPoseAwareLandmarkConfidence(hints, dataset, z)
+
+    return {
+      index,
+      x: basePoint.x,
+      y: basePoint.y,
+      z: Number(z.toFixed(4)),
+      confidence,
+      source: "pose_aware_weighted_z_v1" as const,
+    }
+  })
+  const landmarks = centerPoseAwareZValues(uncenteredLandmarks)
+
+  return {
+    status: "generated",
+    generationMethod: "pose_aware_weighted_z_v1",
+    requiredLabels: [],
+    readyLabels: [],
+    missingLabels: [],
+    landmarkCount: landmarks.length,
+    landmarks,
+    landmarksPreview: landmarks.slice(0, IDEAL_LANDMARKS_3D_PREVIEW_COUNT),
+    summary: buildIdealLandmarks3DCandidateSummary(landmarks, {
+      frontReferenceFrameCount: dataset.frontReferenceFrames.length,
+      observationFrameCount: dataset.observationFrames.length,
+      excludedFrameCount: dataset.excludedFrameCount,
+    }),
+    message:
+      "Step 2-I-B dataset から、roll 補正済み observation の yaw / pitch z hint を weighted average して生成した pose-aware 3D候補です。",
+  }
+}
+
+function toPoseAwareIdealLandmarks3DCandidatePreview(): unknown {
+  const result = idealLandmarks3DCandidateResult
+
+  if (result.generationMethod !== "pose_aware_weighted_z_v1") {
+    return {
+      status: "not_generated",
+      generationMethod: "pose_aware_weighted_z_v1",
+    }
+  }
+
+  return {
+    status: result.status,
+    generationMethod: result.generationMethod,
+    landmarkCount: result.landmarkCount,
+    frontReferenceFrameCount: result.summary.frontReferenceFrameCount,
+    observationFrameCount: result.summary.observationFrameCount,
+    excludedFrameCount: result.summary.excludedFrameCount,
+    confidence: {
+      average: result.summary.averageConfidence,
+      min: result.summary.minConfidence,
+      max: result.summary.maxConfidence,
+      lowConfidenceLandmarkCount:
+        result.summary.lowConfidenceLandmarkCount,
+    },
+    z: {
+      min: result.summary.zMin,
+      max: result.summary.zMax,
+      average: result.summary.zAverage,
+    },
+    preview: result.landmarksPreview,
+  }
+}
+
 function findRepresentativeCandidate(
   candidateKey: RepresentativeFrameCandidateKey,
   frameIndex: number,
@@ -2203,6 +2643,7 @@ function removeFrameFromSelectedRepresentativeFrames(frameIndex: number): void {
 }
 
 function addPoseAwareExcludedFrame(frameIndex: number): void {
+  resetIdealLandmarks3DCandidateResult()
   idealLandmarks3DFrameSelection = {
     ...idealLandmarks3DFrameSelection,
     excludedFrameIds: addUniqueId(
@@ -2213,6 +2654,7 @@ function addPoseAwareExcludedFrame(frameIndex: number): void {
 }
 
 function removePoseAwareExcludedFrame(frameIndex: number): void {
+  resetIdealLandmarks3DCandidateResult()
   idealLandmarks3DFrameSelection = {
     ...idealLandmarks3DFrameSelection,
     excludedFrameIds: removeId(
@@ -2225,6 +2667,7 @@ function removePoseAwareExcludedFrame(frameIndex: number): void {
 function addPoseAwareFrontReferenceFrame(frameIndex: number): void {
   const frameId = getFrameId(frameIndex)
 
+  resetIdealLandmarks3DCandidateResult()
   idealLandmarks3DFrameSelection = {
     ...idealLandmarks3DFrameSelection,
     frontReferenceFrameIds: addUniqueId(
@@ -2235,6 +2678,7 @@ function addPoseAwareFrontReferenceFrame(frameIndex: number): void {
 }
 
 function removePoseAwareFrontReferenceFrame(frameIndex: number): void {
+  resetIdealLandmarks3DCandidateResult()
   idealLandmarks3DFrameSelection = {
     ...idealLandmarks3DFrameSelection,
     frontReferenceFrameIds: removeId(
@@ -2312,11 +2756,12 @@ function renderPoseAwareMultiFramePanel(): string {
       <div class="pose-aware-heading">
         <div>
           <h3>Step 2-I: pose-aware multi-frame inference 準備</h3>
-          <p>正面基準候補は自動では選択されません。推定に使うフレームの中から、正面に近く、ブレや表情崩れの少ないフレームを「正面基準に追加」してください。使いたくないフレームは「除外」してください。3D候補生成ロジックはまだ Step 2-G v1 のままです。</p>
+          <p>正面基準候補は自動では選択されません。推定に使うフレームの中から、正面に近く、ブレや表情崩れの少ないフレームを「正面基準に追加」してください。使いたくないフレームは「除外」してください。Step 2-I-C では、この dataset から pose-aware 3D候補を生成できます。</p>
         </div>
       </div>
       ${renderPoseAwareSummary(summary)}
       ${renderPoseAwareInferenceDatasetSummary(dataset)}
+      ${renderPoseAwareIdealLandmarks3DCandidatePanel(dataset)}
       <div class="pose-aware-columns">
         ${renderPoseAwareFrameGroup(
           "正面基準候補",
@@ -2418,8 +2863,99 @@ function renderPoseAwareInferenceDatasetSummary(
               </ul>`
         }
       </div>
-      <p class="pose-aware-dataset-note">この dataset は次の Step 2-I-C の入力確認用です。現時点では Step 2-G v1 の 3D候補生成ロジックは変更していません。</p>
+      <p class="pose-aware-dataset-note">この dataset は Step 2-I-C の入力です。Step 2-G v1 の旧簡易推定は別方式として残しています。</p>
     </div>
+  `
+}
+
+function renderPoseAwareIdealLandmarks3DCandidatePanel(
+  dataset: PoseAwareInferenceDataset,
+): string {
+  const result = idealLandmarks3DCandidateResult
+  const isPoseAwareCandidate =
+    result.generationMethod === "pose_aware_weighted_z_v1"
+  const disabled = dataset.status === "missing_front_reference"
+  const disabledMessage =
+    "正面基準候補がないため、pose-aware 3D候補を生成できません。"
+
+  return `
+    <div class="pose-aware-candidate-summary">
+      <div class="pose-aware-candidate-heading">
+        <div>
+          <h4>Step 2-I-C: pose-aware 3D候補</h4>
+          <p>Step 2-I-B dataset を使い、roll 補正後の yaw / pitch z hint から 478点候補を生成します。</p>
+        </div>
+        <button
+          class="candidate-generate-button"
+          type="button"
+          data-generate-pose-aware-ideal-landmarks-3d-candidate="true"
+          ${disabled ? "disabled" : ""}
+        >
+          pose-aware 3D候補を生成
+        </button>
+      </div>
+      ${
+        disabled
+          ? `<p class="pose-aware-warning-text">${disabledMessage}</p>`
+          : ""
+      }
+      ${
+        isPoseAwareCandidate
+          ? renderGeneratedPoseAwareCandidateSummary(result)
+          : `<p class="pose-aware-dataset-note">pose-aware 3D候補はまだ生成されていません。<br />先に Step 2-I-B dataset を ready にし、生成を実行してください。</p>`
+      }
+    </div>
+  `
+}
+
+function renderGeneratedPoseAwareCandidateSummary(
+  result: IdealLandmarks3DCandidateResult,
+): string {
+  return `
+    <dl class="pose-aware-summary-list">
+      <div>
+        <dt>状態</dt>
+        <dd>${result.status}</dd>
+      </div>
+      <div>
+        <dt>生成方式</dt>
+          <dd>${result.generationMethod ?? "none"}</dd>
+      </div>
+      <div>
+        <dt>landmarks</dt>
+        <dd>${result.landmarkCount}</dd>
+      </div>
+      <div>
+        <dt>front reference frames</dt>
+        <dd>${result.summary.frontReferenceFrameCount}</dd>
+      </div>
+      <div>
+        <dt>observation frames</dt>
+        <dd>${result.summary.observationFrameCount}</dd>
+      </div>
+      <div>
+        <dt>excluded frames</dt>
+        <dd>${result.summary.excludedFrameCount}</dd>
+      </div>
+      <div>
+        <dt>z range</dt>
+        <dd>${formatNumber(result.summary.zMin)} 〜 ${formatNumber(result.summary.zMax)}</dd>
+      </div>
+      <div>
+        <dt>average confidence</dt>
+        <dd>${formatNumber(result.summary.averageConfidence)}</dd>
+      </div>
+      <div>
+        <dt>min / max confidence</dt>
+        <dd>${formatNumber(result.summary.minConfidence)} / ${formatNumber(result.summary.maxConfidence)}</dd>
+      </div>
+      <div>
+        <dt>low confidence landmarks</dt>
+        <dd>${result.summary.lowConfidenceLandmarkCount}</dd>
+      </div>
+    </dl>
+    <p class="candidate-result-note">${escapeHtml(result.message ?? "")}</p>
+    ${renderIdealLandmarks3DCandidatePreview(result.landmarksPreview)}
   `
 }
 
@@ -2624,7 +3160,7 @@ function renderRepresentativeFrameCandidatesPanel(): string {
           <p>詳細スキャン済みフレームの yaw / pitch / roll から候補を自動抽出します。</p>
         </div>
       </div>
-      <p class="candidate-note">左右・上下の最終ラベルはユーザーが手動で確定します。Step 2-F では候補抽出用に動画全体を 0.1 秒間隔で詳細スキャンし、候補カテゴリごとに複数候補を保持します。3D推測、3D点群 preview、手動微調整、保存 / export はまだ行いません。</p>
+      <p class="candidate-note">左右・上下の最終ラベルはユーザーが手動で確定します。Step 2-F では候補抽出用に動画全体を 0.1 秒間隔で詳細スキャンし、候補カテゴリごとに複数候補を保持します。手動微調整、保存 / export はまだ行いません。</p>
       ${renderPoseAwareMultiFramePanel()}
       ${renderSelectedRepresentativeFramesPanel()}
       ${renderReadinessPanel()}
@@ -2831,7 +3367,7 @@ function renderReadinessPanel(): string {
           .join("")}
       </dl>
       <p class="dataset-ready-count">準備済み: ${dataset.readyCount} / ${dataset.requiredCount}</p>
-      <p class="dataset-note">3D推測は未実装です。次のステップで、準備済みデータセットから idealLandmarks3D 478点候補を推測します。</p>
+      <p class="dataset-note">準備済みデータセットから Step 2-G v1 の旧簡易候補を生成できます。Step 2-I-C の pose-aware 候補は Step 2-I カード内で生成します。</p>
     </div>
   `
 }
@@ -2946,6 +3482,10 @@ function renderIdealLandmarks3DCandidatePanel(): string {
           <dd>${result.landmarkCount}</dd>
         </div>
         <div>
+          <dt>generation method</dt>
+          <dd>${result.generationMethod ?? "none"}</dd>
+        </div>
+        <div>
           <dt>ready labels</dt>
           <dd>${escapeHtml(formatLabelList(getReadyDatasetLabels(dataset)))}</dd>
         </div>
@@ -2960,6 +3500,10 @@ function renderIdealLandmarks3DCandidatePanel(): string {
         <div>
           <dt>min / max confidence</dt>
           <dd>${formatNumber(result.summary.minConfidence)} / ${formatNumber(result.summary.maxConfidence)}</dd>
+        </div>
+        <div>
+          <dt>z min / max</dt>
+          <dd>${formatNumber(result.summary.zMin)} / ${formatNumber(result.summary.zMax)}</dd>
         </div>
       </dl>
       <p class="candidate-result-note">${escapeHtml(resultMessage)}</p>
@@ -3059,6 +3603,10 @@ function renderIdealLandmarks3DPointCloudPreviewPanel(): string {
         <div>
           <dt>landmark count</dt>
           <dd>${summary.landmarkCount}</dd>
+        </div>
+        <div>
+          <dt>generation method</dt>
+          <dd>${result.generationMethod ?? "none"}</dd>
         </div>
         <div>
           <dt>視点</dt>
@@ -3398,6 +3946,8 @@ function buildAuthoringDebugPreview(): unknown {
     idealLandmarks3DCandidate: toIdealLandmarks3DCandidatePreview(
       idealLandmarks3DCandidateResult,
     ),
+    poseAwareIdealLandmarks3DCandidate:
+      toPoseAwareIdealLandmarks3DCandidatePreview(),
     videoSource: videoSource
       ? {
           fileName: videoSource.fileName,
@@ -3586,6 +4136,19 @@ function attachIdealLandmarks3DCandidateHandler(): void {
       const dataset = getIdealLandmarks3DInferenceDataset()
       idealLandmarks3DCandidateResult =
         buildIdealLandmarks3DCandidateResult(dataset)
+      render()
+    })
+
+  document
+    .querySelector<HTMLButtonElement>(
+      "[data-generate-pose-aware-ideal-landmarks-3d-candidate]",
+    )
+    ?.addEventListener("click", () => {
+      const dataset = getPoseAwareInferenceDataset()
+
+      idealLandmarks3DCandidateResult =
+        buildPoseAwareIdealLandmarks3DCandidateResult(dataset)
+      pointCloudPreviewCamera = createPointCloudPreviewCamera()
       render()
     })
 
