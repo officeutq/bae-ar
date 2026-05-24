@@ -49,6 +49,7 @@ const IDEAL_FACE_ASSET_LANDMARK_TOPOLOGY =
   "mediapipe_face_landmarker_478"
 const IDEAL_FACE_ASSET_COORDINATE_SPACE =
   "bae_ar_ideal_landmarks3d_v1"
+const COORDINATE_NORMALIZATION_MODE = "video_aspect_same_unit_v1"
 const POINT_CLOUD_PREVIEW_PADDING = 24
 const POINT_CLOUD_DEPTH_DISPLAY_SCALE = 1.0
 const POINT_CLOUD_MIN_ZOOM = 0.3
@@ -187,6 +188,11 @@ interface PoseAwareBasePoint {
   y: number
 }
 
+interface Point2D {
+  x: number
+  y: number
+}
+
 interface LandmarkBoundsSummary {
   pointCount: number
   xMin: number
@@ -207,14 +213,23 @@ interface VideoAspectSummary {
   aspectRatio: number | null
 }
 
+interface CoordinateNormalizationSummary {
+  mode: typeof COORDINATE_NORMALIZATION_MODE
+  xScale: number
+  yScale: number
+  videoAspectRatio: number | null
+  fallbackUsed: boolean
+  appliedBeforeRollCorrection: true
+  appliedBeforeZInference: true
+}
+
 interface CoordinateAspectComparison {
   videoAspectRatio: number | null
-  rawCandidateAspectRatio: number | null
-  candidateAspectRatioIfConvertedToVideoPixels: number | null
-  candidateAspectRatioIfXScaledByVideoAspect: number | null
-  candidateAspectRatioIfYScaledByInverseVideoAspect: number | null
-  candidateAspectRatioIfXScaledByInverseVideoAspect: number | null
-  candidateAspectRatioIfYScaledByVideoAspect: number | null
+  rawImageNormalizedFrontReferenceBaseAspectRatio: number | null
+  rawRollCorrectedFrontReferenceBaseAspectRatio: number | null
+  sameUnitFrontReferenceBaseAspectRatio: number | null
+  sameUnitCandidateAspectRatio: number | null
+  estimatedLegacyCandidateAspectRatioBeforeNormalization: number | null
 }
 
 interface PoseAwareCorrectedLandmark2D {
@@ -866,29 +881,49 @@ function getVideoAspectSummary(): VideoAspectSummary {
   }
 }
 
+function getVideoAspectRatioForNormalization(): number {
+  const width = videoSource?.videoWidth ?? null
+  const height = videoSource?.videoHeight ?? null
+
+  return width !== null && height !== null && height > 0 ? width / height : 1
+}
+
+function getCoordinateNormalizationSummary(): CoordinateNormalizationSummary {
+  const videoAspect = getVideoAspectSummary().aspectRatio
+  const xScale = getVideoAspectRatioForNormalization()
+
+  return {
+    mode: COORDINATE_NORMALIZATION_MODE,
+    xScale: roundDebugNumber(xScale),
+    yScale: 1,
+    videoAspectRatio: videoAspect,
+    fallbackUsed: videoAspect === null,
+    appliedBeforeRollCorrection: true,
+    appliedBeforeZInference: true,
+  }
+}
+
 function buildCoordinateAspectComparison(
+  rawImageNormalizedFrontReferenceBaseBounds: LandmarkBoundsSummary | null,
+  rawRollCorrectedFrontReferenceBaseBounds: LandmarkBoundsSummary | null,
+  sameUnitFrontReferenceBaseBounds: LandmarkBoundsSummary | null,
   candidateBounds: LandmarkBoundsSummary | null,
 ): CoordinateAspectComparison {
   const videoAspect = getVideoAspectSummary().aspectRatio
-  const rawAspect = candidateBounds?.aspectRatio ?? null
-  const sameUnitVideoPixelAspect =
-    rawAspect !== null && videoAspect !== null
-      ? roundDebugNumber(rawAspect * videoAspect)
-      : null
-  const inverseVideoAspect =
-    rawAspect !== null && videoAspect !== null && videoAspect > 0
-      ? roundDebugNumber(rawAspect / videoAspect)
-      : null
 
   return {
     videoAspectRatio: videoAspect,
-    rawCandidateAspectRatio: rawAspect,
-    candidateAspectRatioIfConvertedToVideoPixels: sameUnitVideoPixelAspect,
-    candidateAspectRatioIfXScaledByVideoAspect: sameUnitVideoPixelAspect,
-    candidateAspectRatioIfYScaledByInverseVideoAspect:
-      sameUnitVideoPixelAspect,
-    candidateAspectRatioIfXScaledByInverseVideoAspect: inverseVideoAspect,
-    candidateAspectRatioIfYScaledByVideoAspect: inverseVideoAspect,
+    rawImageNormalizedFrontReferenceBaseAspectRatio:
+      rawImageNormalizedFrontReferenceBaseBounds?.aspectRatio ?? null,
+    rawRollCorrectedFrontReferenceBaseAspectRatio:
+      rawRollCorrectedFrontReferenceBaseBounds?.aspectRatio ?? null,
+    sameUnitFrontReferenceBaseAspectRatio:
+      sameUnitFrontReferenceBaseBounds?.aspectRatio ?? null,
+    sameUnitCandidateAspectRatio: candidateBounds?.aspectRatio ?? null,
+    estimatedLegacyCandidateAspectRatioBeforeNormalization:
+      rawRollCorrectedFrontReferenceBaseBounds?.aspectRatio ??
+      rawImageNormalizedFrontReferenceBaseBounds?.aspectRatio ??
+      null,
   }
 }
 
@@ -957,24 +992,56 @@ function toCurrentCandidatePreview(
   }
 }
 
+function buildFrontReferenceCoordinateDebug(
+  frontReferenceFrames: PoseAwareInferenceFrame[],
+): {
+  rawImageNormalizedBaseBounds: LandmarkBoundsSummary | null
+  rawRollCorrectedImageNormalizedBaseBounds: LandmarkBoundsSummary | null
+  sameUnitBaseBounds: LandmarkBoundsSummary | null
+} {
+  const rawImageNormalizedBasePoints = buildRawImageNormalizedBasePoints(
+    frontReferenceFrames,
+  )
+  const rawRollCorrectedImageNormalizedBasePoints =
+    buildRawRollCorrectedImageNormalizedBasePoints(frontReferenceFrames)
+  const sameUnitBasePoints = buildPoseAwareBasePoints(frontReferenceFrames)
+
+  return {
+    rawImageNormalizedBaseBounds: buildLandmarkBoundsSummary(
+      rawImageNormalizedBasePoints ?? [],
+    ),
+    rawRollCorrectedImageNormalizedBaseBounds: buildLandmarkBoundsSummary(
+      rawRollCorrectedImageNormalizedBasePoints ?? [],
+    ),
+    sameUnitBaseBounds: buildLandmarkBoundsSummary(sameUnitBasePoints ?? []),
+  }
+}
+
 function toCoordinateDebugPreview(
   poseAwareDataset: PoseAwareInferenceDataset,
   currentCandidate: IdealLandmarks3DCandidateResult,
 ): unknown {
-  const frontReferenceBasePoints = buildPoseAwareBasePoints(
+  const frontReferenceDebug = buildFrontReferenceCoordinateDebug(
     poseAwareDataset.frontReferenceFrames,
   )
-  const frontReferenceBaseBounds = buildLandmarkBoundsSummary(
-    frontReferenceBasePoints ?? [],
-  )
   const candidateBounds = buildLandmarkBoundsSummary(currentCandidate.landmarks)
-  const aspectComparison = buildCoordinateAspectComparison(candidateBounds)
+  const aspectComparison = buildCoordinateAspectComparison(
+    frontReferenceDebug.rawImageNormalizedBaseBounds,
+    frontReferenceDebug.rawRollCorrectedImageNormalizedBaseBounds,
+    frontReferenceDebug.sameUnitBaseBounds,
+    candidateBounds,
+  )
 
   return {
     video: getVideoAspectSummary(),
+    normalization: getCoordinateNormalizationSummary(),
     frontReferenceBase: {
       frameCount: poseAwareDataset.frontReferenceFrames.length,
-      bounds: frontReferenceBaseBounds,
+      rawImageNormalizedBounds:
+        frontReferenceDebug.rawImageNormalizedBaseBounds,
+      rawRollCorrectedImageNormalizedBounds:
+        frontReferenceDebug.rawRollCorrectedImageNormalizedBaseBounds,
+      sameUnitBounds: frontReferenceDebug.sameUnitBaseBounds,
     },
     currentCandidate: {
       status: currentCandidate.status,
@@ -995,12 +1062,12 @@ function toCoordinateDebugPreview(
       schemaVersion: IDEAL_FACE_ASSET_SCHEMA_VERSION,
       coordinateSpace: IDEAL_FACE_ASSET_COORDINATE_SPACE,
       downloadJsonIncludesCoordinateDebug: false,
-      idealLandmarks3DValuesChangedByDebug: false,
+      idealLandmarks3DValuesUseSameUnitNormalization: true,
     },
     notes: [
-      "frontReference base x/y are built from roll-corrected MediaPipe image-normalized landmarks.",
-      "pose_aware_weighted_z_v1 currently copies base x/y into idealLandmarks3D without applying video aspect correction.",
-      "Export keeps idealLandmarks3D values and coordinateSpace unchanged in this investigation PR.",
+      "MediaPipe image-normalized x/y are converted to video-aspect same-unit coordinates before roll correction.",
+      "frontReference base x/y, observation dx/dy, and yaw/pitch z hints use the same normalized coordinate space.",
+      "Export keeps schemaVersion and coordinateSpace unchanged while idealLandmarks3D values use same-unit normalization.",
     ],
   }
 }
@@ -1216,28 +1283,55 @@ function renderCoordinateAspectComparisonRows(
       <dd>${formatNullableDebugNumber(comparison.videoAspectRatio)}</dd>
     </div>
     <div>
-      <dt>raw candidate aspect</dt>
-      <dd>${formatNullableDebugNumber(comparison.rawCandidateAspectRatio)}</dd>
+      <dt>raw image-normalized base aspect</dt>
+      <dd>${formatNullableDebugNumber(comparison.rawImageNormalizedFrontReferenceBaseAspectRatio)}</dd>
     </div>
     <div>
-      <dt>candidate aspect if converted to video pixels</dt>
-      <dd>${formatNullableDebugNumber(comparison.candidateAspectRatioIfConvertedToVideoPixels)}</dd>
+      <dt>raw roll-corrected base aspect</dt>
+      <dd>${formatNullableDebugNumber(comparison.rawRollCorrectedFrontReferenceBaseAspectRatio)}</dd>
     </div>
     <div>
-      <dt>candidate aspect if x scaled by video aspect</dt>
-      <dd>${formatNullableDebugNumber(comparison.candidateAspectRatioIfXScaledByVideoAspect)}</dd>
+      <dt>same-unit base aspect</dt>
+      <dd>${formatNullableDebugNumber(comparison.sameUnitFrontReferenceBaseAspectRatio)}</dd>
     </div>
     <div>
-      <dt>candidate aspect if y scaled by inverse video aspect</dt>
-      <dd>${formatNullableDebugNumber(comparison.candidateAspectRatioIfYScaledByInverseVideoAspect)}</dd>
+      <dt>same-unit candidate aspect</dt>
+      <dd>${formatNullableDebugNumber(comparison.sameUnitCandidateAspectRatio)}</dd>
     </div>
     <div>
-      <dt>candidate aspect if x scaled by inverse video aspect</dt>
-      <dd>${formatNullableDebugNumber(comparison.candidateAspectRatioIfXScaledByInverseVideoAspect)}</dd>
+      <dt>estimated legacy candidate aspect</dt>
+      <dd>${formatNullableDebugNumber(comparison.estimatedLegacyCandidateAspectRatioBeforeNormalization)}</dd>
+    </div>
+  `
+}
+
+function renderCoordinateNormalizationSummaryRows(
+  normalization: CoordinateNormalizationSummary,
+): string {
+  return `
+    <div>
+      <dt>mode</dt>
+      <dd>${normalization.mode}</dd>
     </div>
     <div>
-      <dt>candidate aspect if y scaled by video aspect</dt>
-      <dd>${formatNullableDebugNumber(comparison.candidateAspectRatioIfYScaledByVideoAspect)}</dd>
+      <dt>video aspect</dt>
+      <dd>${formatNullableDebugNumber(normalization.videoAspectRatio)}</dd>
+    </div>
+    <div>
+      <dt>x scale / y scale</dt>
+      <dd>${formatNumber(normalization.xScale)} / ${formatNumber(normalization.yScale)}</dd>
+    </div>
+    <div>
+      <dt>fallback used</dt>
+      <dd>${normalization.fallbackUsed ? "yes" : "no"}</dd>
+    </div>
+    <div>
+      <dt>applied before roll correction</dt>
+      <dd>${normalization.appliedBeforeRollCorrection ? "yes" : "no"}</dd>
+    </div>
+    <div>
+      <dt>applied before z inference</dt>
+      <dd>${normalization.appliedBeforeZInference ? "yes" : "no"}</dd>
     </div>
   `
 }
@@ -1984,6 +2078,17 @@ function rotatePoint2D(
   }
 }
 
+function toSameUnitPoint(
+  point: Point2D,
+  center: Point2D,
+  videoAspectRatio: number,
+): Point2D {
+  return {
+    x: (point.x - center.x) * videoAspectRatio,
+    y: point.y - center.y,
+  }
+}
+
 function getFaceCenter2D(
   landmarks: FaceLandmark[],
 ): { x: number; y: number } | null {
@@ -1999,7 +2104,21 @@ function getFaceCenter2D(
   }
 }
 
-function getRollCorrectedLandmarks2D(
+function getImageNormalizedLandmarks2D(
+  frame: PoseAwareInferenceFrame,
+): PoseAwareCorrectedLandmark2D[] | null {
+  if (frame.landmarks.length !== REQUIRED_LANDMARK_COUNT) {
+    return null
+  }
+
+  return frame.landmarks.map((landmark, index) => ({
+    index,
+    x: landmark.x,
+    y: landmark.y,
+  }))
+}
+
+function getImageNormalizedRollCorrectedLandmarks2D(
   frame: PoseAwareInferenceFrame,
 ): PoseAwareCorrectedLandmark2D[] | null {
   const center = getFaceCenter2D(frame.landmarks)
@@ -2021,11 +2140,46 @@ function getRollCorrectedLandmarks2D(
   })
 }
 
-function buildPoseAwareBasePoints(
+function getRollCorrectedLandmarks2D(
+  frame: PoseAwareInferenceFrame,
+): PoseAwareCorrectedLandmark2D[] | null {
+  const center = getFaceCenter2D(frame.landmarks)
+
+  if (!center || frame.landmarks.length !== REQUIRED_LANDMARK_COUNT) {
+    return null
+  }
+
+  const videoAspectRatio = getVideoAspectRatioForNormalization()
+  const rollCorrectionRad = degreesToRadians(-frame.pose.roll)
+
+  return frame.landmarks.map((landmark, index) => {
+    const sameUnitPoint = toSameUnitPoint(
+      landmark,
+      center,
+      videoAspectRatio,
+    )
+    const rotated = rotatePoint2D(
+      sameUnitPoint,
+      { x: 0, y: 0 },
+      rollCorrectionRad,
+    )
+
+    return {
+      index,
+      x: rotated.x,
+      y: rotated.y,
+    }
+  })
+}
+
+function buildPoseAwareBasePointsFromFrames(
   frontReferenceFrames: PoseAwareInferenceFrame[],
+  getLandmarks: (
+    frame: PoseAwareInferenceFrame,
+  ) => PoseAwareCorrectedLandmark2D[] | null,
 ): PoseAwareBasePoint[] | null {
   const correctedFrames = frontReferenceFrames
-    .map(getRollCorrectedLandmarks2D)
+    .map(getLandmarks)
     .filter(
       (landmarks): landmarks is PoseAwareCorrectedLandmark2D[] =>
         landmarks !== null && landmarks.length === REQUIRED_LANDMARK_COUNT,
@@ -2050,6 +2204,33 @@ function buildPoseAwareBasePoints(
       y: Number(averageNumbers(points.map((point) => point.y)).toFixed(4)),
     }
   })
+}
+
+function buildRawImageNormalizedBasePoints(
+  frontReferenceFrames: PoseAwareInferenceFrame[],
+): PoseAwareBasePoint[] | null {
+  return buildPoseAwareBasePointsFromFrames(
+    frontReferenceFrames,
+    getImageNormalizedLandmarks2D,
+  )
+}
+
+function buildRawRollCorrectedImageNormalizedBasePoints(
+  frontReferenceFrames: PoseAwareInferenceFrame[],
+): PoseAwareBasePoint[] | null {
+  return buildPoseAwareBasePointsFromFrames(
+    frontReferenceFrames,
+    getImageNormalizedRollCorrectedLandmarks2D,
+  )
+}
+
+function buildPoseAwareBasePoints(
+  frontReferenceFrames: PoseAwareInferenceFrame[],
+): PoseAwareBasePoint[] | null {
+  return buildPoseAwareBasePointsFromFrames(
+    frontReferenceFrames,
+    getRollCorrectedLandmarks2D,
+  )
 }
 
 function createPoseAwareZHint(
@@ -2505,14 +2686,17 @@ function renderGeneratedPoseAwareCandidateSummary(
   result: IdealLandmarks3DCandidateResult,
 ): string {
   const dataset = getPoseAwareInferenceDataset()
-  const frontReferenceBasePoints = buildPoseAwareBasePoints(
+  const frontReferenceDebug = buildFrontReferenceCoordinateDebug(
     dataset.frontReferenceFrames,
   )
-  const frontReferenceBaseBounds = buildLandmarkBoundsSummary(
-    frontReferenceBasePoints ?? [],
-  )
   const candidateBounds = buildLandmarkBoundsSummary(result.landmarks)
-  const aspectComparison = buildCoordinateAspectComparison(candidateBounds)
+  const aspectComparison = buildCoordinateAspectComparison(
+    frontReferenceDebug.rawImageNormalizedBaseBounds,
+    frontReferenceDebug.rawRollCorrectedImageNormalizedBaseBounds,
+    frontReferenceDebug.sameUnitBaseBounds,
+    candidateBounds,
+  )
+  const normalization = getCoordinateNormalizationSummary()
 
   return `
     <dl class="pose-aware-summary-list">
@@ -2558,13 +2742,33 @@ function renderGeneratedPoseAwareCandidateSummary(
       </div>
     </dl>
     <div class="coordinate-debug-block">
-      <h5>front reference base bounds</h5>
+      <h5>coordinate normalization</h5>
+      <dl class="pose-aware-summary-list">
+        ${renderCoordinateNormalizationSummaryRows(normalization)}
+      </dl>
+      <h5>front reference raw image-normalized bounds</h5>
       <dl class="pose-aware-summary-list">
         <div>
           <dt>frame count</dt>
           <dd>${dataset.frontReferenceFrames.length}</dd>
         </div>
-        ${renderBoundsSummaryRows(frontReferenceBaseBounds)}
+        ${renderBoundsSummaryRows(frontReferenceDebug.rawImageNormalizedBaseBounds)}
+      </dl>
+      <h5>front reference raw roll-corrected bounds</h5>
+      <dl class="pose-aware-summary-list">
+        <div>
+          <dt>frame count</dt>
+          <dd>${dataset.frontReferenceFrames.length}</dd>
+        </div>
+        ${renderBoundsSummaryRows(frontReferenceDebug.rawRollCorrectedImageNormalizedBaseBounds)}
+      </dl>
+      <h5>front reference same-unit base bounds</h5>
+      <dl class="pose-aware-summary-list">
+        <div>
+          <dt>frame count</dt>
+          <dd>${dataset.frontReferenceFrames.length}</dd>
+        </div>
+        ${renderBoundsSummaryRows(frontReferenceDebug.sameUnitBaseBounds)}
       </dl>
       <h5>candidate bounds</h5>
       <dl class="pose-aware-summary-list">
@@ -2864,6 +3068,7 @@ function renderIdealLandmarks3DPointCloudPreviewPanel(): string {
   const summary = getPointCloudPreviewSummary(
     hasGeneratedLandmarks ? result.landmarks : [],
   )
+  const normalization = getCoordinateNormalizationSummary()
 
   return `
     <section class="point-cloud-preview-panel" aria-label="3D点群 preview">
@@ -2896,6 +3101,14 @@ function renderIdealLandmarks3DPointCloudPreviewPanel(): string {
         <div>
           <dt>generation method</dt>
           <dd>${result.generationMethod ?? "none"}</dd>
+        </div>
+        <div>
+          <dt>normalization mode</dt>
+          <dd>${normalization.mode}</dd>
+        </div>
+        <div>
+          <dt>normalization x / y scale</dt>
+          <dd>${formatNumber(normalization.xScale)} / ${formatNumber(normalization.yScale)}</dd>
         </div>
         <div>
           <dt>視点</dt>
