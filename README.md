@@ -75,7 +75,17 @@ tools/ideal-face-authoring
 - IdealFace Authoring Tool Step 2-H: 生成済みの `idealLandmarks3D` 478点候補を 1 つの interactive 3D point cloud preview として表示し、ドラッグによる視点回転、ホイール zoom、Shift + ドラッグ pan、正面 / 横 / 上の camera preset、x / y / z 範囲、confidence summary を確認できます。preview camera の操作のみで、候補データ自体は変更しません
 - IdealFace Authoring Tool Step 2-I-A: pose-aware multi-frame inference の UI / state 基盤として、正面基準候補、推定に使うフレーム、除外フレームの 3 分類表示、`frontReferenceFrameIds` / `excludedFrameIds`、派生 `usableObservationFrames` summary、JSON preview の `poseAwareMultiFrameInference` 概要を追加。Step 2-I 用操作は Step 2-I カード内に閉じ、旧ポーズ別候補 UI には混ぜません。画面上の 3 分類は排他的に表示します
 - IdealFace Authoring Tool Step 2-I-B: `frontReferenceFrameIds` / `excludedFrameIds` / 推定に使うフレームから、`left / right / up / down` 固定分類を持たない pose-aware multi-frame inference dataset を作成。`frontReferenceFrames` / `observationFrames` / `excludedFrameCount`、yaw / pitch / roll coverage、poseStrength、weight、mixed pose count、warnings を summary と JSON preview の `poseAwareInferenceDataset` 概要で確認します
-- IdealFace Authoring Tool Step 2-I-C: Step 2-I-B の dataset から pose-aware weighted z inference v1 を実装。frontReferenceFrames から base x / y を作成し、observation landmarks を roll 補正してから yaw / pitch / weight に基づく z hint を推定し、weighted average で `idealLandmarks3D` 478点候補を生成します。Step 2-G v1 は旧簡易推定として残し、厳密な reconstruction / bundle adjustment / camera intrinsics 推定は行いません
+- IdealFace Authoring Tool Step 2-I-C: Step 2-I-B の dataset から pose-aware weighted z inference v1 を実装。frontReferenceFrames から base x / y を作成し、observation landmarks を roll 補正してから yaw / pitch / weight に基づく z hint を推定し、weighted average で `idealLandmarks3D` 478点候補を生成します。今後の active workflow は Step 2-I-C とし、Step 2-G v1 は旧5ポーズ方式の legacy 実装として段階的に削除します
+
+## IdealFace Authoring Tool 旧5ポーズ方式の削除方針
+
+IdealFace Authoring Tool の今後の主導線は、MP4 入力、詳細スキャン、Step 2-I-A の正面基準候補 / 推定に使うフレーム / 除外フレーム、Step 2-I-B の pose-aware inference dataset、Step 2-I-C の `pose_aware_weighted_z_v1`、Step 2-H の `currentCandidate` 3D点群 preview です。confidence debug、手動微調整 UI、保存 / export はこの active workflow 側に追加します。
+
+旧 Step 2-C〜2-G v1 の front / left / right / up / down 5ポーズ方式は、今後の主導線ではありません。Step 2-G v1 は旧5ポーズ方式の legacy 実装であり、現在コード上に regression check 用として残し続けず、今後の cleanup で UI / state / helper / JSON preview / generation logic から段階的に削除します。旧方式が必要な場合は Git 履歴を参照します。
+
+削除対象は、旧5ポーズ候補 UI、確定済み代表フレーム UI、3D推測用データセット UI、推測に使う代表フレーム UI、`selectedRepresentativeFrames`、`idealLandmarks3DInferenceDataset`、Step 2-G v1 candidate generation、`generationMethod: "step_2_g_v1"`、`legacy.step2Gv1` JSON preview です。旧 `representativeFrameCandidates` を削除する前に、Step 2-I 側の score 表示 / weight 計算が必要とする score を `detailedScanFrames` または pose-aware frame 側に移します。
+
+legacy / debug と分類した UI や helper には、今後の新機能を追加しません。新機能は active workflow 側に追加します。特に、旧ポーズ別候補 UI や Step 1 / Step 2-A debug 表示には Step 2-I 以降の操作を追加しません。
 
 未実装 / 将来予定:
 
@@ -152,7 +162,7 @@ Step 2-G では、`idealLandmarks3DInferenceDataset` の ready entry を使い�
 
 Step 2-H では、生成された `idealLandmarks3D` 478点候補を Authoring Tool 上の interactive 3D point cloud preview として表示します。preview は debug / 確認用であり、本格 3D editor ではありません。1 つの canvas 上で preview camera を操作し、ドラッグで視点回転、ホイールで zoom、Shift + ドラッグで pan できます。正面 / 横 / 上は固定ビューではなく同じ viewport の camera preset として扱います。表示上は y を反転して顔の上方向が画面上側に見えるようにし、奥行き確認のための z 表示倍率調整は preview 専用の変換として扱います。これらは preview camera / view transform の操作であり、生成済みの `idealLandmarks3D` 候補データや JSON preview の数値は変更しません。近くに landmark count、視点、x / y / z の min / max、average / min / max confidence を表示します。低 confidence の点は薄く表示します。JSON preview は引き続き `idealLandmarks3DCandidate` の概要と先頭 5 点程度の preview に留め、478点全文や canvas data URL は出しません。手動微調整、保存 / export、複数画像入力はまだ実装しません。詳細スキャン、候補振り分け、手動ラベル確定、dataset 作成、3D候補生成、3D点群 preview は IdealFace Authoring Tool の責務であり、Engine Runtime には入れません。
 
-Step 2-I-A では、5ポーズ固定の代表フレーム方式から pose-aware multi-frame inference へ進むための UI / state 基盤を追加しました。Step 2-I-B では、正面基準候補と推定に使うフレームから、`left / right / up / down` 固定分類を持たない pose-aware multi-frame inference dataset を作成します。Step 2-I-C では、その dataset を使って pose-aware weighted z inference v1 の 3D候補生成を追加しました。Step 2-G v1 は実装済みの旧簡易推定として残しています。
+Step 2-I-A では、5ポーズ固定の代表フレーム方式から pose-aware multi-frame inference へ進むための UI / state 基盤を追加しました。Step 2-I-B では、正面基準候補と推定に使うフレームから、`left / right / up / down` 固定分類を持たない pose-aware multi-frame inference dataset を作成します。Step 2-I-C では、その dataset を使って pose-aware weighted z inference v1 の 3D候補生成を追加しました。今後の主導線は Step 2-I-C であり、Step 2-G v1 は旧5ポーズ方式の削除対象として扱います。
 
 Step 2-I のフレーム解析結果欄は、以下の 3 分類に整理します。
 
