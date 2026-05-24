@@ -391,13 +391,20 @@ aspect asset / rotated / aligned / current / currentMinusAligned: ${formatNullab
     }
 
     return `alignment: ${alignment.mode}
+scale basis: ${alignment.scaleBasis?.mode ?? "none"}
 scale: ${formatNullableNumber(alignment.scale)}
+chosenScale: ${formatNullableNumber(alignment.scaleBasis?.chosenScale)}
+limiting axis: ${alignment.scaleBasis?.limitingAxis ?? "none"}
 translateX: ${formatNumber(alignment.translateX)}
 translateY: ${formatNumber(alignment.translateY)}
 currentCenter: ${formatProjectionPoint(alignment.currentCenter)}
 projectedCenter: ${formatProjectionPoint(alignment.projectedCenter)}
 currentSize: ${formatNullableNumber(alignment.currentSize)}
 projectedSize: ${formatNullableNumber(alignment.projectedSize)}
+current width / height: ${formatNullableNumber(alignment.scaleBasis?.currentWidth)} / ${formatNullableNumber(alignment.scaleBasis?.currentHeight)}
+projected width / height: ${formatNullableNumber(alignment.scaleBasis?.projectedWidth)} / ${formatNullableNumber(alignment.scaleBasis?.projectedHeight)}
+width ratio: ${formatNullableNumber(alignment.scaleBasis?.widthRatio)}
+height ratio: ${formatNullableNumber(alignment.scaleBasis?.heightRatio)}
 currentAspectRatio: ${formatNullableNumber(alignment.currentAspectRatio)}
 projectedAspectRatio: ${formatNullableNumber(alignment.projectedAspectRatio)}
 aspectRatioDifference: ${formatNullableNumber(alignment.aspectRatioDifference)}${
@@ -1009,7 +1016,7 @@ Landmarks: ${frame?.landmarks.length ?? 0}
 顔姿勢: yaw ${frame ? formatNumber(frame.pose.yaw) : "なし"} / pitch ${frame ? formatNumber(frame.pose.pitch) : "なし"} / roll ${frame ? formatNumber(frame.pose.roll) : "なし"}
 IdealFace: ${idealFace.metadata.name} (${idealFace.metadata.id}) / ${idealFace.metadata.version} / controlPoints ${idealFace.model.controlPoints.length} 点 / idealLandmarks3D ${idealFace.model.idealLandmarks3D?.length ?? 0} 点
 IdealFace 478 Projection: ${idealLandmarks3DProjection.status} / ${idealLandmarks3DProjection.landmarkCount} 点
-Alignment: ${idealLandmarks3DProjection.alignment?.mode ?? "none"} / scale ${formatNullableNumber(idealLandmarks3DProjection.alignment?.scale)} / aspectDiff ${formatNullableNumber(idealLandmarks3DProjection.alignment?.aspectRatioDifference)}
+Alignment: ${idealLandmarks3DProjection.alignment?.mode ?? "none"} / scale basis ${idealLandmarks3DProjection.alignment?.scaleBasis?.mode ?? "none"} / scale ${formatNullableNumber(idealLandmarks3DProjection.alignment?.scale)} / limiting axis ${idealLandmarks3DProjection.alignment?.scaleBasis?.limitingAxis ?? "none"} / aspectDiff ${formatNullableNumber(idealLandmarks3DProjection.alignment?.aspectRatioDifference)}
 Aspect debug: asset ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectRatio.asset)} / rotated ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectRatio.rotated)} / aligned ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectRatio.aligned)} / current ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectRatio.current)} / overlay ${formatNullableNumber(overlayProjectedIdealPixelBounds?.aspectRatioPx)}
 Projection: ${idealFaceProjection.status} / ${idealFaceProjection.points.length} 点
 差分: ${projectionDifference.status} / 平均 ${formatNullableNumber(projectionDifference.averageDistance)} / 最大 ${formatNullableNumber(projectionDifference.maxDistance)}
