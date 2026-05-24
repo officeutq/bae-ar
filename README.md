@@ -8,6 +8,12 @@ The old Step 2-C to 2-G v1 five-pose UI/state/JSON preview has been removed from
 
 The old Step 2-G v1 generation helper path has been removed from the current code. 3D candidate generation is now centered on Step 2-I-C `pose_aware_weighted_z_v1`; the old five-pose path can be referenced from Git history when needed. IdealFace JSON export v1 downloads the generated `currentCandidate` as `ideal_face_asset_v1` with the full 478 `idealLandmarks3D` points while keeping the in-app JSON preview limited to summary and preview data. New features such as confidence debug, manual adjustment, save, and import should be added only to the Step 2-I active workflow, not to legacy/debug paths.
 
+## IdealFace Authoring Tool coordinate debug
+
+`tools/ideal-face-authoring` now shows investigation-only coordinate debug for Step 2-I-C `pose_aware_weighted_z_v1`. The UI and in-app JSON preview report source video aspect ratio, front reference base bounds, current candidate bounds, aspect ratio, and comparison values for possible image-normalized to same-unit conversion checks.
+
+This debug does not change downloaded `ideal_face_asset_v1` JSON. `schemaVersion`, `coordinateSpace`, and `idealLandmarks3D` values remain unchanged. Runtime Projection also keeps rotate + translate + uniform scale alignment only; any coordinate correction decision should be made in a later Authoring Tool PR after reviewing these debug values.
+
 ## Engine ideal_face_asset_v1 loading foundation
 
 `packages/engine` now exposes TypeScript types, validation helpers, a JSON parse helper, and a conversion helper for Authoring Tool export JSON with `schemaVersion: "ideal_face_asset_v1"`.
