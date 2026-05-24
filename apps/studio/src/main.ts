@@ -334,7 +334,10 @@ translateY: ${formatNumber(alignment.translateY)}
 currentCenter: ${formatProjectionPoint(alignment.currentCenter)}
 projectedCenter: ${formatProjectionPoint(alignment.projectedCenter)}
 currentSize: ${formatNullableNumber(alignment.currentSize)}
-projectedSize: ${formatNullableNumber(alignment.projectedSize)}${
+projectedSize: ${formatNullableNumber(alignment.projectedSize)}
+currentAspectRatio: ${formatNullableNumber(alignment.currentAspectRatio)}
+projectedAspectRatio: ${formatNullableNumber(alignment.projectedAspectRatio)}
+aspectRatioDifference: ${formatNullableNumber(alignment.aspectRatioDifference)}${
       alignment.mode === "none"
         ? `
 理由: ${alignment.reason ?? "current face center / size が取得できません"}`
@@ -886,7 +889,7 @@ Landmarks: ${frame?.landmarks.length ?? 0}
 顔姿勢: yaw ${frame ? formatNumber(frame.pose.yaw) : "なし"} / pitch ${frame ? formatNumber(frame.pose.pitch) : "なし"} / roll ${frame ? formatNumber(frame.pose.roll) : "なし"}
 IdealFace: ${idealFace.metadata.name} (${idealFace.metadata.id}) / ${idealFace.metadata.version} / controlPoints ${idealFace.model.controlPoints.length} 点 / idealLandmarks3D ${idealFace.model.idealLandmarks3D?.length ?? 0} 点
 IdealFace 478 Projection: ${idealLandmarks3DProjection.status} / ${idealLandmarks3DProjection.landmarkCount} 点
-Alignment: ${idealLandmarks3DProjection.alignment?.mode ?? "none"} / scale ${formatNullableNumber(idealLandmarks3DProjection.alignment?.scale)}
+Alignment: ${idealLandmarks3DProjection.alignment?.mode ?? "none"} / scale ${formatNullableNumber(idealLandmarks3DProjection.alignment?.scale)} / aspectDiff ${formatNullableNumber(idealLandmarks3DProjection.alignment?.aspectRatioDifference)}
 Projection: ${idealFaceProjection.status} / ${idealFaceProjection.points.length} 点
 差分: ${projectionDifference.status} / 平均 ${formatNullableNumber(projectionDifference.averageDistance)} / 最大 ${formatNullableNumber(projectionDifference.maxDistance)}
 利用可能IdealFace: ${availableIdealFaces.length}

@@ -26,7 +26,7 @@ This only verifies asset import and Engine reflection. Full 478-point Projection
 
 `apps/studio` can show the 478-point Projection status, landmark count, and x / y / z ranges in debug output, and draws the projected ideal landmarks as small overlay points when available. Current-vs-ideal difference, `CorrectionPlan`, and Shape Warp are still not implemented.
 
-`idealLandmarks3D` Projection v1 also applies a face center / size alignment when current face geometry or landmarks are available. The aligned result includes alignment mode, scale, translation, current / projected centers, and current / projected sizes for Studio debug and Copy Debug.
+`idealLandmarks3D` Projection v1 also applies a face center / uniform scale alignment when current face geometry or landmarks are available. The aligned result includes alignment mode, scale, translation, current / projected centers, current / projected sizes, and aspect ratio debug values for Studio debug and Copy Debug. The v1 alignment keeps the IdealFace aspect ratio intact; it does not scale x / y separately or reshape the asset to match the current face.
 
 BAE AR は、リアルタイム顔加工・AR 表現を行う Beauty Engine Runtime と、その開発・検証・調整を行う Beauty Studio、将来の authoring tool 群を含むプロジェクトです。
 
