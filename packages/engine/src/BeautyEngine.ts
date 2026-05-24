@@ -173,7 +173,11 @@ export class BeautyEngine {
     return projectIdealLandmarks3D(
       this.idealFace,
       this.currentFaceFrame?.pose,
-      this.currentFaceFrame?.detected ?? false,
+      {
+        detected: this.currentFaceFrame?.detected ?? false,
+        currentLandmarks: this.currentFaceFrame?.landmarks,
+        faceGeometry: this.currentFaceGeometry,
+      },
     )
   }
 

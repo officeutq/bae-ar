@@ -1,5 +1,5 @@
 import type { FaceGeometry } from "../face/FaceGeometry"
-import type { FacePose } from "../face/FaceFrame"
+import type { FaceLandmark, FacePose } from "../face/FaceFrame"
 import type {
   IdealFace,
   IdealFaceLandmark3D,
@@ -49,6 +49,27 @@ export interface IdealLandmarks3DProjectionSummary {
   zMax: number
 }
 
+export type IdealLandmarks3DProjectionAlignmentMode =
+  | "none"
+  | "face_center_and_scale"
+
+export interface IdealLandmarks3DProjectionPoint2D {
+  x: number
+  y: number
+}
+
+export interface IdealLandmarks3DProjectionAlignment {
+  mode: IdealLandmarks3DProjectionAlignmentMode
+  scale: number | null
+  translateX: number
+  translateY: number
+  currentCenter?: IdealLandmarks3DProjectionPoint2D
+  projectedCenter?: IdealLandmarks3DProjectionPoint2D
+  currentSize?: number
+  projectedSize?: number
+  reason?: string
+}
+
 export interface IdealLandmarks3DProjectionResult {
   status: IdealLandmarks3DProjectionStatus
   landmarks: ProjectedIdealLandmark2D[]
@@ -56,6 +77,13 @@ export interface IdealLandmarks3DProjectionResult {
   sourceIdealFaceId?: string
   sourceIdealFaceName?: string
   summary?: IdealLandmarks3DProjectionSummary
+  alignment?: IdealLandmarks3DProjectionAlignment
+}
+
+export interface ProjectIdealLandmarks3DOptions {
+  detected?: boolean
+  currentLandmarks?: FaceLandmark[]
+  faceGeometry?: FaceGeometry
 }
 
 const DEG_TO_RAD = Math.PI / 180
@@ -128,8 +156,9 @@ export function projectIdealFaceControlPoints(
 export function projectIdealLandmarks3D(
   idealFace: IdealFace,
   facePose: FacePose | null | undefined,
-  detected = true,
+  optionsOrDetected: ProjectIdealLandmarks3DOptions | boolean = {},
 ): IdealLandmarks3DProjectionResult {
+  const options = normalizeProjectIdealLandmarks3DOptions(optionsOrDetected)
   const baseResult = {
     sourceIdealFaceId: idealFace.metadata.id,
     sourceIdealFaceName: idealFace.metadata.name,
@@ -142,28 +171,244 @@ export function projectIdealLandmarks3D(
       status: "not_available",
       landmarks: [],
       landmarkCount: idealLandmarks3D?.length ?? 0,
+      alignment: createNoAlignment("idealLandmarks3D 478 points are not available"),
     }
   }
 
-  if (!facePose || !detected) {
+  if (!facePose || options.detected === false) {
     return {
       ...baseResult,
       status: "missing_face_pose",
       landmarks: [],
       landmarkCount: idealLandmarks3D.length,
+      alignment: createNoAlignment("current face pose is missing"),
     }
   }
 
-  const landmarks = idealLandmarks3D.map((landmark) =>
+  const rotatedLandmarks = idealLandmarks3D.map((landmark) =>
     projectIdealLandmark3D(landmark, facePose),
+  )
+  const alignmentResult = alignProjectedIdealLandmarks(
+    rotatedLandmarks,
+    options,
   )
 
   return {
     ...baseResult,
     status: "projected",
-    landmarks,
-    landmarkCount: landmarks.length,
-    summary: summarizeProjectedIdealLandmarks(landmarks),
+    landmarks: alignmentResult.landmarks,
+    landmarkCount: alignmentResult.landmarks.length,
+    summary: summarizeProjectedIdealLandmarks(alignmentResult.landmarks),
+    alignment: alignmentResult.alignment,
+  }
+}
+
+function normalizeProjectIdealLandmarks3DOptions(
+  optionsOrDetected: ProjectIdealLandmarks3DOptions | boolean,
+): ProjectIdealLandmarks3DOptions {
+  if (typeof optionsOrDetected === "boolean") {
+    return {
+      detected: optionsOrDetected,
+    }
+  }
+
+  return optionsOrDetected
+}
+
+function alignProjectedIdealLandmarks(
+  landmarks: ProjectedIdealLandmark2D[],
+  options: ProjectIdealLandmarks3DOptions,
+): {
+  landmarks: ProjectedIdealLandmark2D[]
+  alignment: IdealLandmarks3DProjectionAlignment
+} {
+  const currentMetrics = getCurrentFaceAlignmentMetrics(options)
+  const projectedMetrics = getProjectedIdealAlignmentMetrics(landmarks)
+
+  if (!currentMetrics.center || !currentMetrics.size) {
+    return {
+      landmarks,
+      alignment: {
+        ...createNoAlignment("current face center / size is unavailable"),
+        currentCenter: currentMetrics.center,
+        currentSize: currentMetrics.size,
+        projectedCenter: projectedMetrics.center,
+        projectedSize: projectedMetrics.size,
+      },
+    }
+  }
+
+  if (!projectedMetrics.center || !projectedMetrics.size) {
+    return {
+      landmarks,
+      alignment: {
+        ...createNoAlignment("projected ideal center / size is unavailable"),
+        currentCenter: currentMetrics.center,
+        currentSize: currentMetrics.size,
+        projectedCenter: projectedMetrics.center,
+        projectedSize: projectedMetrics.size,
+      },
+    }
+  }
+
+  const scale = currentMetrics.size / projectedMetrics.size
+  const translateX = currentMetrics.center.x - projectedMetrics.center.x * scale
+  const translateY = currentMetrics.center.y - projectedMetrics.center.y * scale
+
+  return {
+    landmarks: landmarks.map((landmark) => ({
+      ...landmark,
+      x: landmark.x * scale + translateX,
+      y: landmark.y * scale + translateY,
+      z: landmark.z * scale,
+    })),
+    alignment: {
+      mode: "face_center_and_scale",
+      scale,
+      translateX,
+      translateY,
+      currentCenter: currentMetrics.center,
+      projectedCenter: projectedMetrics.center,
+      currentSize: currentMetrics.size,
+      projectedSize: projectedMetrics.size,
+    },
+  }
+}
+
+function getCurrentFaceAlignmentMetrics(
+  options: ProjectIdealLandmarks3DOptions,
+): {
+  center?: IdealLandmarks3DProjectionPoint2D
+  size?: number
+} {
+  const bounds = options.currentLandmarks
+    ? calculatePointBounds(options.currentLandmarks)
+    : null
+  const center =
+    toPoint2D(options.faceGeometry?.faceCenter) ??
+    getAveragePoint(options.currentLandmarks) ??
+    getBoundsCenter(bounds)
+  const size =
+    getPositiveNumber(options.faceGeometry?.faceWidth) ??
+    getPositiveNumber(options.faceGeometry?.eyeDistance) ??
+    getBoundsSize(bounds)
+
+  return {
+    center,
+    size,
+  }
+}
+
+function getProjectedIdealAlignmentMetrics(
+  landmarks: ProjectedIdealLandmark2D[],
+): {
+  center?: IdealLandmarks3DProjectionPoint2D
+  size?: number
+} {
+  const bounds = calculatePointBounds(landmarks)
+
+  return {
+    center: getBoundsCenter(bounds),
+    size: getBoundsSize(bounds),
+  }
+}
+
+function getAveragePoint(
+  points: Array<{ x: number; y: number }> | undefined,
+): IdealLandmarks3DProjectionPoint2D | undefined {
+  if (!points || points.length === 0) {
+    return undefined
+  }
+
+  return {
+    x: points.reduce((sum, point) => sum + point.x, 0) / points.length,
+    y: points.reduce((sum, point) => sum + point.y, 0) / points.length,
+  }
+}
+
+function toPoint2D(
+  point: { x: number; y: number } | null | undefined,
+): IdealLandmarks3DProjectionPoint2D | undefined {
+  if (!point) {
+    return undefined
+  }
+
+  return {
+    x: point.x,
+    y: point.y,
+  }
+}
+
+function calculatePointBounds(
+  points: Array<{ x: number; y: number }>,
+):
+  | {
+      minX: number
+      maxX: number
+      minY: number
+      maxY: number
+    }
+  | null {
+  const first = points[0]
+
+  if (!first) {
+    return null
+  }
+
+  return points.reduce(
+    (bounds, point) => ({
+      minX: Math.min(bounds.minX, point.x),
+      maxX: Math.max(bounds.maxX, point.x),
+      minY: Math.min(bounds.minY, point.y),
+      maxY: Math.max(bounds.maxY, point.y),
+    }),
+    {
+      minX: first.x,
+      maxX: first.x,
+      minY: first.y,
+      maxY: first.y,
+    },
+  )
+}
+
+function getBoundsCenter(
+  bounds: ReturnType<typeof calculatePointBounds>,
+): IdealLandmarks3DProjectionPoint2D | undefined {
+  if (!bounds) {
+    return undefined
+  }
+
+  return {
+    x: (bounds.minX + bounds.maxX) / 2,
+    y: (bounds.minY + bounds.maxY) / 2,
+  }
+}
+
+function getBoundsSize(
+  bounds: ReturnType<typeof calculatePointBounds>,
+): number | undefined {
+  if (!bounds) {
+    return undefined
+  }
+
+  return getPositiveNumber(
+    Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY),
+  )
+}
+
+function getPositiveNumber(value: number | null | undefined): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? value
+    : undefined
+}
+
+function createNoAlignment(reason: string): IdealLandmarks3DProjectionAlignment {
+  return {
+    mode: "none",
+    scale: null,
+    translateX: 0,
+    translateY: 0,
+    reason,
   }
 }
 
