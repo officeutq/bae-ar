@@ -1159,6 +1159,64 @@ function isFrameFrontReferenceForPoseAware(frameIndex: number): boolean {
   )
 }
 
+function addPoseAwareFrontReferenceFrame(frameIndex: number): void {
+  const frameId = getFrameId(frameIndex)
+
+  idealLandmarks3DFrameSelection = {
+    frontReferenceFrameIds: addUniqueId(
+      idealLandmarks3DFrameSelection.frontReferenceFrameIds,
+      frameId,
+    ),
+    excludedFrameIds: removeId(
+      idealLandmarks3DFrameSelection.excludedFrameIds,
+      frameId,
+    ),
+  }
+}
+
+function removePoseAwareFrontReferenceFrame(frameIndex: number): void {
+  const frameId = getFrameId(frameIndex)
+
+  idealLandmarks3DFrameSelection = {
+    ...idealLandmarks3DFrameSelection,
+    frontReferenceFrameIds: removeId(
+      idealLandmarks3DFrameSelection.frontReferenceFrameIds,
+      frameId,
+    ),
+  }
+}
+
+function addPoseAwareExcludedFrame(frameIndex: number): void {
+  const frameId = getFrameId(frameIndex)
+
+  idealLandmarks3DFrameSelection = {
+    frontReferenceFrameIds: removeId(
+      idealLandmarks3DFrameSelection.frontReferenceFrameIds,
+      frameId,
+    ),
+    excludedFrameIds: addUniqueId(
+      idealLandmarks3DFrameSelection.excludedFrameIds,
+      frameId,
+    ),
+  }
+}
+
+function excludePoseAwareFrame(frameIndex: number): void {
+  addPoseAwareExcludedFrame(frameIndex)
+}
+
+function removePoseAwareExcludedFrame(frameIndex: number): void {
+  const frameId = getFrameId(frameIndex)
+
+  idealLandmarks3DFrameSelection = {
+    ...idealLandmarks3DFrameSelection,
+    excludedFrameIds: removeId(
+      idealLandmarks3DFrameSelection.excludedFrameIds,
+      frameId,
+    ),
+  }
+}
+
 function getDetailedScanFrames(): ExtractedVideoFrame[] {
   return videoSource?.detailedScanFrames ?? []
 }
