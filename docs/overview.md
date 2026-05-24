@@ -18,17 +18,17 @@ BAE AR
 │  └─ Engine を開発・検証・調整する開発ツール
 │
 ├─ IdealFace Authoring Tool
-│  └─ 理想 3D 顔プリセットを作成する将来ツール
+│  └─ 理想 3D 顔プリセットを作成する authoring tool。Step 2-H まで実装済み
 │
 └─ Layer Mask Authoring Tool
    └─ 色加工用 LayerMaskSpec を作成する将来ツール
 ```
 
-現在の実装は `packages/engine` と `apps/studio` が中心です。Authoring Tool は将来予定です。
+現在の実装は `packages/engine`、`apps/studio`、`tools/ideal-face-authoring` が中心です。`tools/ideal-face-authoring` は Step 2-H まで実装済みで、`tools/layer-mask-authoring` は将来予定です。
 
 ## 現在の到達点
 
-現在の実装は、カメラ映像を `HTMLVideoElement` として取得し、`BeautyEngine.setInput()` に渡し、MediaPipe Face Landmarker を使って `FaceFrame` を更新する段階です。
+現在の Runtime / Studio 実装は、カメラ映像を `HTMLVideoElement` として取得し、`BeautyEngine.setInput()` に渡し、MediaPipe Face Landmarker を使って `FaceFrame` を更新する段階です。FacePose の実推定、IdealFace v1、Natural v1 最小プリセット、IdealFace 公開 API、IdealFace Projection v1 の controlPoints 投影、Projection Difference Debug v1、Studio overlay / debug / Copy Debug 関連は実装済みです。
 
 Studio では、Engine の公開 API から取得できる `FaceFrame` / `FaceGeometry` / debug 情報を表示し、landmarks と補助 geometry point を overlay で確認できます。
 
@@ -56,7 +56,7 @@ Engine Runtime では、IdealFace の `idealLandmarks3D` 478点を現在顔の `
 
 ## IdealFace Authoring Tool における idealLandmarks3D 作成方針
 
-IdealFace Authoring Tool では、将来的に動画または複数画像を入力として受け取り、MediaPipe Face Landmarker で各フレームの 2D 478 landmarks と `FacePose` を取得します。初期実装では入力形式を広げすぎず、まずは MP4 動画入力のみを対象にします。複数画像入力は将来対応とし、初期段階では代表フレーム抽出とラベル確定の流れを安定して作ることを優先します。
+IdealFace Authoring Tool では、MP4 動画を入力として受け取り、MediaPipe Face Landmarker で各フレームの 2D 478 landmarks と `FacePose` を取得できます。入力形式は広げすぎず、まずは MP4 動画入力のみを対象にします。複数画像入力は将来対応とし、代表フレーム抽出とラベル確定の流れを安定して作ることを優先します。
 
 初期実装の流れ:
 
@@ -68,15 +68,16 @@ MP4 動画を入力
   -> ユーザーが正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定
   -> 確定済み代表フレームから 3D 推測用データセットを作成
   -> 確定した代表フレーム群から 3D の idealLandmarks3D 478点候補を自動推測
-  -> Authoring Tool 上で確認・微調整
-  -> IdealFace asset として保存 / export
+  -> 3D点群 preview で確認
+  -> 将来: Authoring Tool 上で手動微調整
+  -> 将来: IdealFace asset として保存 / export
 ```
 
 推奨する MP4 動画は、H.264 / AVC codec、5〜15秒程度、30fps程度、720p程度から開始できるものです。顔が大きく写り、正面、左向き、右向き、上向き、下向きをゆっくり含み、手ブレが少なく、明るい場所で撮影された動画を想定します。口は閉じ気味、表情はできるだけ neutral にします。
 
 初期段階では、長時間動画、高解像度すぎる動画、HEVC / H.265、MOV、WebM、複数画像入力は非推奨または未対応です。これらは将来対応を検討する余地を残します。
 
-確定した代表フレーム群から、まず 3D 推測用データセットを作成します。この dataset は front / left / right / up / down の代表フレームに対応する 2D 478 landmarks と FacePose を持つ入力データであり、excluded は含めません。dataset はまだ 3D の `idealLandmarks3D` 478点そのものではありません。Step 2-G v1 では、この dataset から `idealLandmarks3D` 478点候補を自動推測します。この結果は完成データではなく候補データとして扱います。将来的には Authoring Tool 上で 3D点群を確認し、必要な箇所を手動で微調整します。手動補正後の `idealLandmarks3D` 478点を IdealFace asset として保存 / export します。
+確定した代表フレーム群から、まず 3D 推測用データセットを作成します。この dataset は front / left / right / up / down の代表フレームに対応する 2D 478 landmarks と FacePose を持つ入力データであり、excluded は含めません。dataset はまだ 3D の `idealLandmarks3D` 478点そのものではありません。Step 2-G v1 では、この dataset から `idealLandmarks3D` 478点候補を自動推測します。この結果は完成データではなく候補データとして扱います。Step 2-H では Authoring Tool 上で 3D点群を確認できます。手動微調整、IdealFace asset としての保存 / export はまだ未実装です。
 
 この方針は完全自動生成ではなく、自動推測 + 手動補正です。Engine Runtime は動画 / 複数画像から `idealLandmarks3D` を作成せず、Authoring Tool で作成済みの IdealFace asset を読み込んで使うだけです。
 
@@ -162,7 +163,7 @@ Beauty Studio では、開発確認用として overlay や簡易調整 UI を�
 
 `tools/ideal-face-authoring` は BAE AR 独自の IdealFace asset を作るための独立ツールです。Step 1 では `natural_v1` の metadata、controlPoints 一覧、2D preview、JSON preview を表示します。
 
-ドラッグ編集、保存、ideal 478 landmarks 生成、canonical face mesh editor、手動ラベル確定、3D 478点推測、手動微調整、複数画像入力は未実装です。このツールは MediaPipe canonical face model そのものを作るツールではなく、Authoring Tool の編集処理を Engine Runtime に混ぜません。
+Step 2-H 現在では、MP4 動画入力、MediaPipe 解析、代表フレーム候補抽出、手動ラベル確定、3D推測用 dataset 作成、`idealLandmarks3D` 478点候補生成、3D点群 preview まで実装済みです。本格 3D editor、手動微調整、保存 / export、複数画像入力は未実装です。このツールは MediaPipe canonical face model そのものを作るツールではなく、Authoring Tool の編集処理を Engine Runtime に混ぜません。
 
 ## IdealFace Authoring Tool Step 2-A
 
@@ -177,7 +178,7 @@ Beauty Studio では、開発確認用として overlay や簡易調整 UI を�
 - サムネイル一覧での frame index / timestamp / 状態「未解析」の表示
 - JSON preview での動画情報と抽出フレーム情報の表示
 
-初期対応は MP4 動画のみです。複数画像入力は未実装 / 将来対応です。Step 2-A 時点では MediaPipe による 2D 478 landmarks 取得と FacePose 取得は未実装でしたが、Step 2-B で抽出済みフレームの解析まで追加済みです。Step 2-C で代表フレーム候補抽出、Step 2-D で手動ラベル確定 UI、Step 2-E で3D推測用データセット作成、Step 2-F で候補抽出用の詳細スキャン、Step 2-G で3D 478点候補の自動推測 v1、Step 2-H で3D点群 preview まで追加済みです。手動微調整、保存 / export はまだ未実装です。
+初期対応は MP4 動画のみです。複数画像入力は未実装 / 将来対応です。Step 2-B で MediaPipe による 2D 478 landmarks 取得と FacePose 取得、Step 2-C で代表フレーム候補抽出、Step 2-D で手動ラベル確定 UI、Step 2-E で3D推測用データセット作成、Step 2-F で候補抽出用の詳細スキャン、Step 2-G で3D 478点候補の自動推測 v1、Step 2-H で3D点群 preview まで追加済みです。手動微調整、保存 / export はまだ未実装です。
 
 動画入力やフレーム抽出処理は IdealFace Authoring Tool の責務です。Runtime には動画入力やフレーム抽出処理を入れません。
 

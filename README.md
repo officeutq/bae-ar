@@ -20,7 +20,8 @@ Beauty Studio
   Engine 内部実装へ直接依存しない
 
 IdealFace Authoring Tool
-  理想 3D 顔プリセットを作成する将来ツール
+  理想 3D 顔プリセットを作成する authoring tool
+  Step 2-H まで実装済み
   リアルタイム Engine Runtime には含めない
 
 Layer Mask Authoring Tool
@@ -28,7 +29,7 @@ Layer Mask Authoring Tool
   リアルタイム Engine Runtime には含めない
 ```
 
-現在のリポジトリでは、実装済み領域は主に `packages/engine` と `apps/studio` です。
+現在のリポジトリでは、`packages/engine`、`apps/studio`、`tools/ideal-face-authoring` が実装済み領域です。
 
 ```text
 packages/engine
@@ -39,6 +40,9 @@ apps/studio
 
 docs
   設計・仕様・ロードマップ
+
+tools/ideal-face-authoring
+  IdealFace Authoring Tool。Step 2-H まで実装済み
 ```
 
 ## 現在の実装状況
@@ -53,6 +57,14 @@ docs
 - `FaceFrame` の更新: `detected` / `timestamp` / `landmarks` / `blendshapes` / `pose`
 - `FaceGeometry` の補助解析
 - Studio 側のカメラ入力、debug 表示、landmark / geometry overlay
+- FacePose の実推定
+- IdealFace v1 型定義
+- Natural v1 最小プリセット
+- IdealFace 公開 API
+- IdealFace Projection v1 の controlPoints 投影
+- Projection Difference Debug v1
+- Studio overlay / debug / Copy Debug 関連
+- IdealFace Authoring Tool Step 1: `natural_v1` metadata / controlPoints / 2D preview / JSON preview
 - IdealFace Authoring Tool Step 2-A: MP4 動画入力、metadata 表示、フレーム抽出、サムネイル一覧表示
 - IdealFace Authoring Tool Step 2-B: 抽出フレームの MediaPipe 解析、2D 478 landmarks / FacePose 取得、解析 summary 表示
 - IdealFace Authoring Tool Step 2-C: yaw / pitch / roll による代表フレーム候補の自動抽出、各カテゴリ上位複数件の候補一覧表示、代表フレーム候補中心の UI 整理、JSON preview への候補概要表示
@@ -60,21 +72,27 @@ docs
 - IdealFace Authoring Tool Step 2-E: 確定済み代表フレームから front / left / right / up / down の 3D推測用データセットを作成し、readiness summary、dataset 一覧、JSON preview の `idealLandmarks3DInferenceDataset` で概要を確認する表示
 - IdealFace Authoring Tool Step 2-F: 候補抽出用に動画全体を詳細スキャンし、代表フレーム候補中心の UI と `scanSummary` 表示、サムネイル全体表示を追加
 - IdealFace Authoring Tool Step 2-G: 3D推測用データセットから `idealLandmarks3D` 478点候補を自動推測する v1 を追加。front の 2D landmarks を x / y の基準にし、left / right / up / down との差分から z を簡易推定し、不足ラベルは confidence に反映します。結果は候補 summary と先頭 5 点 preview、JSON preview の `idealLandmarks3DCandidate` 概要で確認します
-- IdealFace Authoring Tool Step 2-H: 生成済みの `idealLandmarks3D` 478点候補を 3D点群 preview として簡易表示し、正面 / 横 / 上方向の切り替え、x / y / z 範囲、confidence summary を確認できます。preview は確認用表示であり、見やすさのために y 軸反転や z 表示倍率調整を行う場合がありますが、候補データ自体は変更しません
+- IdealFace Authoring Tool Step 2-H: 生成済みの `idealLandmarks3D` 478点候補を 3D点群 preview として簡易表示し、正面 / 横 / 上 / 奥行き確認の切り替え、x / y / z 範囲、confidence summary を確認できます。preview は確認用表示であり、見やすさのために y 軸反転や z 表示倍率調整を行う場合がありますが、候補データ自体は変更しません
 
 未実装 / 将来予定:
 
-- FacePose の実推定
-- IdealFace
-- IdealFace Projection
+- IdealFace Authoring Tool の手動微調整
+- IdealFace asset の保存 / export
+- 複数画像入力
+- 本格 3D editor
+- 厳密な 3D reconstruction、三角測量、bundle adjustment、カメラ内部パラメータ推定
+- Runtime 側の idealLandmarks3D 478点読み込み / 投影の完全対応
+- current 478 landmarks と projected ideal 478 landmarks の本比較
 - CorrectionPlan
 - Shape Warp
 - Color Processing
 - Layer System
 - LayerMaskSpec
-- IdealFace Authoring Tool の手動微調整、保存 / export
 - Layer Mask Authoring Tool
 - Butterflyve integration
+- 本番向け package build / test / lint script
+
+IdealFace Projection v1 は controlPoints 投影の部分実装です。`natural_v1` の 6点 controlPoints は投影検証用の暫定データであり、IdealFace 本体である `idealLandmarks3D` 478点ではありません。
 
 ## 現在の処理パイプライン
 
@@ -145,15 +163,16 @@ Step 2-H では、生成された `idealLandmarks3D` 478点候補を Authoring T
 
 Step 1 では Engine Runtime の公開 API から `natural_v1` を読み込み、metadata、`coordinateSpace`、controlPoints 一覧、2D preview、JSON preview を表示します。
 
-未実装:
+Step 1 時点では未実装で、現在は後続 Step で実装済みになった範囲:
 
-- controlPoints のドラッグ編集
-- 保存 / export
-- ideal 478 landmarks 生成
-- canonical face mesh editor
 - 手動ラベル確定 UI
+- 3D 478点候補の自動推測
 - 3D点群 preview
-- 手動微調整
+
+現在も未実装の範囲:
+
+- 本格 3D editor / 手動微調整
+- 保存 / export
 - 複数画像入力
 
 IdealFace Authoring Tool は MediaPipe canonical face model そのものを作るツールではありません。BAE AR 独自の IdealFace asset を作る作業場として扱い、編集処理や UI を Engine Runtime に混ぜません。
@@ -172,7 +191,7 @@ Step 2-A でできること:
 - 各フレームに frame index / timestamp / 状態「未解析」を表示する
 - JSON preview に動画情報と抽出フレーム情報を表示する
 
-初期対応は MP4 動画のみです。複数画像入力は未実装で、将来対応とします。Step 2-A 時点では MediaPipe による 2D 478 landmarks 取得と FacePose 取得は未実装でしたが、Step 2-B で抽出済みフレームの解析まで追加済みです。Step 2-C で代表フレーム候補抽出、Step 2-D で手動ラベル確定 UI、Step 2-E で3D推測用データセット作成、Step 2-F で候補抽出用の詳細スキャン、Step 2-G で3D 478点候補の自動推測 v1、Step 2-H で3D点群 preview まで追加済みです。手動微調整、保存 / export はまだ未実装です。
+初期対応は MP4 動画のみです。複数画像入力は未実装で、将来対応とします。Step 2-B で MediaPipe による 2D 478 landmarks 取得と FacePose 取得、Step 2-C で代表フレーム候補抽出、Step 2-D で手動ラベル確定 UI、Step 2-E で3D推測用データセット作成、Step 2-F で候補抽出用の詳細スキャン、Step 2-G で3D 478点候補の自動推測 v1、Step 2-H で3D点群 preview まで追加済みです。手動微調整、保存 / export はまだ未実装です。
 
 動画入力とフレーム抽出は IdealFace Authoring Tool の責務です。Engine Runtime には動画入力処理やフレーム抽出処理を入れません。
 
@@ -230,7 +249,7 @@ Step 2-D でできること:
 - `representativeFrameCandidates` は引き続き JSON preview に表示する
 - JSON preview には 478 landmarks 全文やサムネイル data URL 全文を出さない
 
-Step 2-D では、3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力はまだ実装しません。手動ラベル確定 UI は IdealFace Authoring Tool の責務であり、Engine Runtime や Beauty Studio には追加しません。
+Step 2-G / Step 2-H では、3D 478点候補の自動推測と 3D点群 preview まで実装済みです。手動微調整、保存 / export、複数画像入力はまだ実装しません。手動ラベル確定 UI は IdealFace Authoring Tool の責務であり、Engine Runtime や Beauty Studio には追加しません。
 
 ## IdealFace Authoring Tool Step 2-E
 
@@ -248,7 +267,7 @@ Step 2-E でできること:
 
 Step 2-E の dataset は、3D の `idealLandmarks3D` 478点候補を推測するための入力データセットです。各 entry は代表フレームに対応する 2D 478 landmarks と FacePose を内部状態として参照しますが、まだ `idealLandmarks3D` 478点そのものではありません。
 
-Step 2-E では、3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力はまだ実装しません。dataset 作成処理は IdealFace Authoring Tool の責務であり、Engine Runtime や Beauty Studio には追加しません。Step 2-F でも 3D推測以降は実装せず、候補抽出用の詳細スキャンに範囲を絞っています。
+Step 2-G / Step 2-H では、3D 478点候補の自動推測と 3D点群 preview まで実装済みです。手動微調整、保存 / export、複数画像入力はまだ実装しません。dataset 作成処理は IdealFace Authoring Tool の責務であり、Engine Runtime や Beauty Studio には追加しません。
 
 ## IdealFace Authoring Tool Step 2-F
 
@@ -264,7 +283,7 @@ Step 2-F でできること:
 - 詳細スキャン summary と JSON preview の `scanSummary` を表示する
 - 候補カード、確定済み代表フレーム、dataset entry のサムネイルはトリムせず、画像全体が見えるように表示する
 
-Step 2-F では、3D 478点候補の自動推測、3D点群 preview、手動微調整、保存 / export、複数画像入力はまだ実装しません。詳細スキャン、代表フレーム候補抽出、手動ラベル確定、dataset 作成は IdealFace Authoring Tool の責務であり、Engine Runtime や Beauty Studio には追加しません。
+Step 2-G / Step 2-H では、3D 478点候補の自動推測と 3D点群 preview まで実装済みです。手動微調整、保存 / export、複数画像入力はまだ実装しません。詳細スキャン、代表フレーム候補抽出、手動ラベル確定、dataset 作成は IdealFace Authoring Tool の責務であり、Engine Runtime や Beauty Studio には追加しません。
 
 ## IdealFace Authoring Tool の idealLandmarks3D 作成方針
 
@@ -303,4 +322,4 @@ MP4 動画を入力
 
 この処理は完全自動生成ではなく、自動推測 + 手動補正として扱います。動画入力やフレーム抽出は IdealFace Authoring Tool の責務です。Engine Runtime は `idealLandmarks3D` を作成せず、完成済みの IdealFace asset を読み込んで、現在 `FacePose` へ投影して使います。
 
-現時点では、MP4 動画入力とフレーム抽出は Step 2-A、抽出フレームの MediaPipe 解析は Step 2-B、yaw / pitch / roll による代表フレーム候補の自動抽出、各カテゴリ上位複数件の候補一覧 / JSON preview への概要表示、代表フレーム候補を主表示にした Step 2-C UI 整理、代表フレーム候補から正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定する Step 2-D UI、候補カテゴリを必要なものだけ開くトグル表示、確定済み代表フレーム一覧、Step 2-E として確定済み代表フレームから front / left / right / up / down の3D推測用データセットを作成し、readiness summary、dataset 一覧、JSON preview の概要で確認する表示、Step 2-F として候補抽出用の詳細スキャン、詳細スキャン summary、JSON preview の `scanSummary`、トリムしないサムネイル表示、Step 2-G として `idealLandmarks3D` 478点候補の自動推測 v1、summary、先頭 5 点 preview、JSON preview の `idealLandmarks3DCandidate` 概要表示、Step 2-H として3D点群 preview、正面 / 横 / 上方向切り替え、x / y / z 範囲、confidence summary は実装済みです。dataset は 2D 478 landmarks と FacePose を持つ代表フレーム群であり、生成結果は完成済み IdealFace asset ではなく候補データです。手動微調整、保存 / export、複数画像入力は未実装です。
+現時点では、MP4 動画入力とフレーム抽出は Step 2-A、抽出フレームの MediaPipe 解析は Step 2-B、yaw / pitch / roll による代表フレーム候補の自動抽出、各カテゴリ上位複数件の候補一覧 / JSON preview への概要表示、代表フレーム候補を主表示にした Step 2-C UI 整理、代表フレーム候補から正面 / 左向き / 右向き / 上向き / 下向き / 除外を手動確定する Step 2-D UI、候補カテゴリを必要なものだけ開くトグル表示、確定済み代表フレーム一覧、Step 2-E として確定済み代表フレームから front / left / right / up / down の3D推測用データセットを作成し、readiness summary、dataset 一覧、JSON preview の概要で確認する表示、Step 2-F として候補抽出用の詳細スキャン、詳細スキャン summary、JSON preview の `scanSummary`、トリムしないサムネイル表示、Step 2-G として `idealLandmarks3D` 478点候補の自動推測 v1、summary、先頭 5 点 preview、JSON preview の `idealLandmarks3DCandidate` 概要表示、Step 2-H として3D点群 preview、正面 / 横 / 上 / 奥行き確認切り替え、x / y / z 範囲、confidence summary は実装済みです。dataset は 2D 478 landmarks と FacePose を持つ代表フレーム群であり、生成結果は完成済み IdealFace asset ではなく候補データです。手動微調整、保存 / export、複数画像入力は未実装です。
