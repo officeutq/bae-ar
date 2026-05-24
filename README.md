@@ -28,6 +28,8 @@ This only verifies asset import and Engine reflection. Full 478-point Projection
 
 `idealLandmarks3D` Projection v1 also applies a face center / uniform scale alignment when current face geometry or landmarks are available. The aligned result includes alignment mode, scale, translation, current / projected centers, current / projected sizes, and aspect ratio debug values for Studio debug and Copy Debug. The v1 alignment keeps the IdealFace aspect ratio intact; it does not scale x / y separately or reshape the asset to match the current face.
 
+Projection debug also reports bounds and aspect ratios for the source asset, rotated projection, aligned projection, current landmarks, and Studio overlay pixel positions. These values are investigation-only: runtime alignment remains rotate + translate + uniform scale, while any future shape adjustment belongs in IdealFace Authoring Tool manual adjustment rather than runtime non-uniform scaling.
+
 BAE AR は、リアルタイム顔加工・AR 表現を行う Beauty Engine Runtime と、その開発・検証・調整を行う Beauty Studio、将来の authoring tool 群を含むプロジェクトです。
 
 目的は、単なるフィルターではなく、本番サービスに組み込める自然で破綻しにくい Beauty Engine を育てることです。

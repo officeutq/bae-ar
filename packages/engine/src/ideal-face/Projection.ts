@@ -49,6 +49,38 @@ export interface IdealLandmarks3DProjectionSummary {
   zMax: number
 }
 
+export interface Landmark2DBoundsSummary {
+  xMin: number
+  xMax: number
+  yMin: number
+  yMax: number
+  width: number
+  height: number
+  aspectRatio: number | null
+}
+
+export interface Landmark3DBoundsSummary extends Landmark2DBoundsSummary {
+  zMin: number
+  zMax: number
+  zRange: number
+}
+
+export interface IdealLandmarks3DProjectionAspectRatioDebug {
+  asset?: number | null
+  rotated?: number | null
+  aligned?: number | null
+  current?: number | null
+  currentMinusAligned?: number | null
+}
+
+export interface IdealLandmarks3DProjectionDebug {
+  assetBounds?: Landmark3DBoundsSummary
+  rotatedBounds?: Landmark3DBoundsSummary
+  alignedBounds?: Landmark3DBoundsSummary
+  currentBounds?: Landmark2DBoundsSummary
+  aspectRatio: IdealLandmarks3DProjectionAspectRatioDebug
+}
+
 export type IdealLandmarks3DProjectionAlignmentMode =
   | "none"
   | "face_center_and_uniform_scale"
@@ -81,6 +113,7 @@ export interface IdealLandmarks3DProjectionResult {
   sourceIdealFaceName?: string
   summary?: IdealLandmarks3DProjectionSummary
   alignment?: IdealLandmarks3DProjectionAlignment
+  debug?: IdealLandmarks3DProjectionDebug
 }
 
 export interface ProjectIdealLandmarks3DOptions {
@@ -188,6 +221,10 @@ export function projectIdealLandmarks3D(
       landmarks: [],
       landmarkCount: idealLandmarks3D?.length ?? 0,
       alignment: createNoAlignment("idealLandmarks3D 478 points are not available"),
+      debug: createProjectionDebug({
+        assetBounds: summarizeLandmark3DBounds(idealLandmarks3D),
+        currentBounds: summarizeLandmark2DBounds(options.currentLandmarks),
+      }),
     }
   }
 
@@ -198,6 +235,10 @@ export function projectIdealLandmarks3D(
       landmarks: [],
       landmarkCount: idealLandmarks3D.length,
       alignment: createNoAlignment("current face pose is missing"),
+      debug: createProjectionDebug({
+        assetBounds: summarizeLandmark3DBounds(idealLandmarks3D),
+        currentBounds: summarizeLandmark2DBounds(options.currentLandmarks),
+      }),
     }
   }
 
@@ -216,6 +257,12 @@ export function projectIdealLandmarks3D(
     landmarkCount: alignmentResult.landmarks.length,
     summary: summarizeProjectedIdealLandmarks(alignmentResult.landmarks),
     alignment: alignmentResult.alignment,
+    debug: createProjectionDebug({
+      assetBounds: summarizeLandmark3DBounds(idealLandmarks3D),
+      rotatedBounds: summarizeLandmark3DBounds(rotatedLandmarks),
+      alignedBounds: summarizeLandmark3DBounds(alignmentResult.landmarks),
+      currentBounds: summarizeLandmark2DBounds(options.currentLandmarks),
+    }),
   }
 }
 
@@ -447,6 +494,99 @@ function getAspectRatioDifference(
   return currentAspectRatio !== undefined && projectedAspectRatio !== undefined
     ? currentAspectRatio - projectedAspectRatio
     : null
+}
+
+function createProjectionDebug(input: {
+  assetBounds?: Landmark3DBoundsSummary
+  rotatedBounds?: Landmark3DBoundsSummary
+  alignedBounds?: Landmark3DBoundsSummary
+  currentBounds?: Landmark2DBoundsSummary
+}): IdealLandmarks3DProjectionDebug {
+  return {
+    assetBounds: input.assetBounds,
+    rotatedBounds: input.rotatedBounds,
+    alignedBounds: input.alignedBounds,
+    currentBounds: input.currentBounds,
+    aspectRatio: {
+      asset: input.assetBounds?.aspectRatio ?? null,
+      rotated: input.rotatedBounds?.aspectRatio ?? null,
+      aligned: input.alignedBounds?.aspectRatio ?? null,
+      current: input.currentBounds?.aspectRatio ?? null,
+      currentMinusAligned:
+        input.currentBounds?.aspectRatio !== null &&
+        input.currentBounds?.aspectRatio !== undefined &&
+        input.alignedBounds?.aspectRatio !== null &&
+        input.alignedBounds?.aspectRatio !== undefined
+          ? input.currentBounds.aspectRatio - input.alignedBounds.aspectRatio
+          : null,
+    },
+  }
+}
+
+function summarizeLandmark2DBounds(
+  points: Array<{ x: number; y: number }> | undefined,
+): Landmark2DBoundsSummary | undefined {
+  const bounds = points ? calculatePointBounds(points) : null
+
+  if (!bounds) {
+    return undefined
+  }
+
+  return createLandmark2DBoundsSummary(bounds)
+}
+
+function summarizeLandmark3DBounds(
+  points: Array<{ x: number; y: number; z: number }> | undefined,
+): Landmark3DBoundsSummary | undefined {
+  const first = points?.[0]
+
+  if (!points || !first) {
+    return undefined
+  }
+
+  const bounds = points.reduce(
+    (currentBounds, point) => ({
+      minX: Math.min(currentBounds.minX, point.x),
+      maxX: Math.max(currentBounds.maxX, point.x),
+      minY: Math.min(currentBounds.minY, point.y),
+      maxY: Math.max(currentBounds.maxY, point.y),
+      minZ: Math.min(currentBounds.minZ, point.z),
+      maxZ: Math.max(currentBounds.maxZ, point.z),
+    }),
+    {
+      minX: first.x,
+      maxX: first.x,
+      minY: first.y,
+      maxY: first.y,
+      minZ: first.z,
+      maxZ: first.z,
+    },
+  )
+  const xySummary = createLandmark2DBoundsSummary(bounds)
+
+  return {
+    ...xySummary,
+    zMin: bounds.minZ,
+    zMax: bounds.maxZ,
+    zRange: bounds.maxZ - bounds.minZ,
+  }
+}
+
+function createLandmark2DBoundsSummary(
+  bounds: PointBounds2D,
+): Landmark2DBoundsSummary {
+  const width = bounds.maxX - bounds.minX
+  const height = bounds.maxY - bounds.minY
+
+  return {
+    xMin: bounds.minX,
+    xMax: bounds.maxX,
+    yMin: bounds.minY,
+    yMax: bounds.maxY,
+    width,
+    height,
+    aspectRatio: getAspectRatio(width, height) ?? null,
+  }
 }
 
 function getPositiveNumber(value: number | null | undefined): number | undefined {

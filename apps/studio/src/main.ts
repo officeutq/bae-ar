@@ -69,6 +69,22 @@ type IdealFaceAssetImportState =
       errors: string[]
     }
 
+type OverlayProjectedIdealPixelBoundsSummary = {
+  xMinPx: number
+  xMaxPx: number
+  yMinPx: number
+  yMaxPx: number
+  widthPx: number
+  heightPx: number
+  aspectRatioPx: number | null
+  canvasWidthPx: number
+  canvasHeightPx: number
+  displayWidthPx: number
+  displayHeightPx: number
+  videoWidthPx: number | null
+  videoHeightPx: number | null
+}
+
 async function bootstrap(): Promise<void> {
   const engine = new BeautyEngine()
   const camera = new CameraService()
@@ -319,6 +335,53 @@ y min / max: ${formatNumber(summary.yMin)} / ${formatNumber(summary.yMax)}
 z min / max: ${formatNumber(summary.zMin)} / ${formatNumber(summary.zMax)}`
   }
 
+  function formatProjectionBoundsDebug(
+    projection: IdealLandmarks3DProjectionResult,
+    overlayPixelBounds: OverlayProjectedIdealPixelBoundsSummary | undefined,
+  ): string {
+    const debug = projection.debug
+
+    return `Bounds / Aspect Ratio:
+asset: ${formatLandmarkBounds(debug?.assetBounds)}
+rotated: ${formatLandmarkBounds(debug?.rotatedBounds)}
+aligned: ${formatLandmarkBounds(debug?.alignedBounds)}
+current: ${formatLandmarkBounds(debug?.currentBounds)}
+overlay px: ${formatOverlayPixelBounds(overlayPixelBounds)}
+aspect asset / rotated / aligned / current / currentMinusAligned: ${formatNullableNumber(debug?.aspectRatio.asset)} / ${formatNullableNumber(debug?.aspectRatio.rotated)} / ${formatNullableNumber(debug?.aspectRatio.aligned)} / ${formatNullableNumber(debug?.aspectRatio.current)} / ${formatNullableNumber(debug?.aspectRatio.currentMinusAligned)}`
+  }
+
+  function formatLandmarkBounds(
+    bounds:
+      | NonNullable<
+          IdealLandmarks3DProjectionResult["debug"]
+        >["assetBounds"]
+      | NonNullable<
+          IdealLandmarks3DProjectionResult["debug"]
+        >["currentBounds"]
+      | undefined,
+  ): string {
+    if (!bounds) {
+      return "なし"
+    }
+
+    const zText =
+      "zMin" in bounds
+        ? ` / z ${formatNumber(bounds.zMin)}..${formatNumber(bounds.zMax)} / zRange ${formatNumber(bounds.zRange)}`
+        : ""
+
+    return `width ${formatNumber(bounds.width)} / height ${formatNumber(bounds.height)} / aspect ${formatNullableNumber(bounds.aspectRatio)} / x ${formatNumber(bounds.xMin)}..${formatNumber(bounds.xMax)} / y ${formatNumber(bounds.yMin)}..${formatNumber(bounds.yMax)}${zText}`
+  }
+
+  function formatOverlayPixelBounds(
+    bounds: OverlayProjectedIdealPixelBoundsSummary | undefined,
+  ): string {
+    if (!bounds) {
+      return "なし"
+    }
+
+    return `width ${formatNumber(bounds.widthPx)} / height ${formatNumber(bounds.heightPx)} / aspect ${formatNullableNumber(bounds.aspectRatioPx)} / x ${formatNumber(bounds.xMinPx)}..${formatNumber(bounds.xMaxPx)} / y ${formatNumber(bounds.yMinPx)}..${formatNumber(bounds.yMaxPx)} / canvas ${formatNumber(bounds.canvasWidthPx)}x${formatNumber(bounds.canvasHeightPx)} / display ${formatNumber(bounds.displayWidthPx)}x${formatNumber(bounds.displayHeightPx)} / video ${formatNullableNumber(bounds.videoWidthPx)}x${formatNullableNumber(bounds.videoHeightPx)}`
+  }
+
   function formatProjectionAlignment(
     alignment: IdealLandmarks3DProjectionResult["alignment"],
   ): string {
@@ -363,6 +426,7 @@ aspectRatioDifference: ${formatNullableNumber(alignment.aspectRatioDifference)}$
   function formatIdealLandmarks3DProjectionPreview(
     projection: IdealLandmarks3DProjectionResult,
     frame: FaceFrame | undefined,
+    overlayPixelBounds: OverlayProjectedIdealPixelBoundsSummary | undefined,
   ): string {
     if (projection.status !== "projected") {
       return `IdealFace 478 Projection
@@ -372,6 +436,7 @@ idealFace: ${projection.sourceIdealFaceName ?? "なし"} (${projection.sourceIde
 pose: ${frame ? `yaw ${formatNumber(frame.pose.yaw)} / pitch ${formatNumber(frame.pose.pitch)} / roll ${formatNumber(frame.pose.roll)}` : "なし"}
 ${formatProjectionAlignment(projection.alignment)}
 ${formatProjectionSummary(projection.summary)}
+${formatProjectionBoundsDebug(projection, overlayPixelBounds)}
 
 idealLandmarks3D 478点 Projection は未実行です。
 IdealFace asset JSON を読み込み、顔検出後に確認できます。`
@@ -383,7 +448,8 @@ landmarks: ${projection.landmarkCount}
 idealFace: ${projection.sourceIdealFaceName ?? "なし"} (${projection.sourceIdealFaceId ?? "なし"})
 pose: ${frame ? `yaw ${formatNumber(frame.pose.yaw)} / pitch ${formatNumber(frame.pose.pitch)} / roll ${formatNumber(frame.pose.roll)}` : "なし"}
 ${formatProjectionAlignment(projection.alignment)}
-${formatProjectionSummary(projection.summary)}`
+${formatProjectionSummary(projection.summary)}
+${formatProjectionBoundsDebug(projection, overlayPixelBounds)}`
   }
 
   function formatIdealFaceProjectionPreview(
@@ -449,6 +515,7 @@ ${pointPreview}`
     mediaPipeDebug: DetectorDebugInfo | null,
     faceFrameLoopDebug: ReturnType<BeautyEngine["getFaceFrameLoopDebugInfo"]>,
     importState: IdealFaceAssetImportState,
+    overlayPixelBounds: OverlayProjectedIdealPixelBoundsSummary | undefined,
   ): string {
     const videoDebug = faceFrameLoopDebug.video
 
@@ -495,7 +562,7 @@ ${formatIdealFacePreview(idealFace)}
 IdealFace JSON import:
 ${formatIdealFaceAssetImportState(importState)}
 
-${formatIdealLandmarks3DProjectionPreview(idealLandmarks3DProjection, frame)}
+${formatIdealLandmarks3DProjectionPreview(idealLandmarks3DProjection, frame, overlayPixelBounds)}
 
 ${formatIdealFaceProjectionPreview(idealFaceProjection)}
 
@@ -567,6 +634,56 @@ Camera:
     }
 
     return true
+  }
+
+  function calculateOverlayProjectedIdealPixelBounds(
+    projection: IdealLandmarks3DProjectionResult,
+  ): OverlayProjectedIdealPixelBoundsSummary | undefined {
+    if (
+      projection.status !== "projected" ||
+      projection.landmarks.length === 0 ||
+      overlayCanvas.width === 0 ||
+      overlayCanvas.height === 0
+    ) {
+      return undefined
+    }
+
+    const first = projection.landmarks[0]
+    const initialBounds = {
+      xMinPx: first.x * overlayCanvas.width,
+      xMaxPx: first.x * overlayCanvas.width,
+      yMinPx: first.y * overlayCanvas.height,
+      yMaxPx: first.y * overlayCanvas.height,
+    }
+    const bounds = projection.landmarks.reduce((currentBounds, landmark) => {
+      const x = landmark.x * overlayCanvas.width
+      const y = landmark.y * overlayCanvas.height
+
+      return {
+        xMinPx: Math.min(currentBounds.xMinPx, x),
+        xMaxPx: Math.max(currentBounds.xMaxPx, x),
+        yMinPx: Math.min(currentBounds.yMinPx, y),
+        yMaxPx: Math.max(currentBounds.yMaxPx, y),
+      }
+    }, initialBounds)
+    const widthPx = bounds.xMaxPx - bounds.xMinPx
+    const heightPx = bounds.yMaxPx - bounds.yMinPx
+    const input = engine.getInput()
+    const overlayRect = overlayCanvas.getBoundingClientRect()
+
+    return {
+      ...bounds,
+      widthPx,
+      heightPx,
+      aspectRatioPx:
+        widthPx > 0 && heightPx > 0 ? widthPx / heightPx : null,
+      canvasWidthPx: overlayCanvas.width,
+      canvasHeightPx: overlayCanvas.height,
+      displayWidthPx: overlayRect.width,
+      displayHeightPx: overlayRect.height,
+      videoWidthPx: input instanceof HTMLVideoElement ? input.videoWidth : null,
+      videoHeightPx: input instanceof HTMLVideoElement ? input.videoHeight : null,
+    }
   }
 
   function clearLandmarkOverlay(): void {
@@ -836,6 +953,8 @@ Camera:
     const idealFaceProjection = engine.getIdealFaceProjection()
     const projectionDifference = engine.getIdealFaceProjectionDifference()
     const availableIdealFaces = engine.getAvailableIdealFaces()
+    const overlayProjectedIdealPixelBounds =
+      calculateOverlayProjectedIdealPixelBounds(idealLandmarks3DProjection)
     const debugText = buildDebugText(
       frame,
       geometry,
@@ -847,6 +966,7 @@ Camera:
       mediaPipeDebug,
       faceFrameLoopDebug,
       idealFaceAssetImportState,
+      overlayProjectedIdealPixelBounds,
     )
 
     if (lastEngineState !== currentState) {
@@ -890,6 +1010,7 @@ Landmarks: ${frame?.landmarks.length ?? 0}
 IdealFace: ${idealFace.metadata.name} (${idealFace.metadata.id}) / ${idealFace.metadata.version} / controlPoints ${idealFace.model.controlPoints.length} 点 / idealLandmarks3D ${idealFace.model.idealLandmarks3D?.length ?? 0} 点
 IdealFace 478 Projection: ${idealLandmarks3DProjection.status} / ${idealLandmarks3DProjection.landmarkCount} 点
 Alignment: ${idealLandmarks3DProjection.alignment?.mode ?? "none"} / scale ${formatNullableNumber(idealLandmarks3DProjection.alignment?.scale)} / aspectDiff ${formatNullableNumber(idealLandmarks3DProjection.alignment?.aspectRatioDifference)}
+Aspect debug: asset ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectRatio.asset)} / rotated ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectRatio.rotated)} / aligned ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectRatio.aligned)} / current ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectRatio.current)} / overlay ${formatNullableNumber(overlayProjectedIdealPixelBounds?.aspectRatioPx)}
 Projection: ${idealFaceProjection.status} / ${idealFaceProjection.points.length} 点
 差分: ${projectionDifference.status} / 平均 ${formatNullableNumber(projectionDifference.averageDistance)} / 最大 ${formatNullableNumber(projectionDifference.maxDistance)}
 利用可能IdealFace: ${availableIdealFaces.length}
@@ -934,7 +1055,7 @@ ${formatPosePreview(frame)}`)}</pre>
         </details>
         <details data-debug-section="idealLandmarks3DProjection"${detailsOpenAttribute("idealLandmarks3DProjection")}>
           <summary>IdealFace 478 Projection 確認</summary>
-          <pre>${escapeHtml(formatIdealLandmarks3DProjectionPreview(idealLandmarks3DProjection, frame))}</pre>
+          <pre>${escapeHtml(formatIdealLandmarks3DProjectionPreview(idealLandmarks3DProjection, frame, overlayProjectedIdealPixelBounds))}</pre>
         </details>
         <details data-debug-section="idealFaceProjection"${detailsOpenAttribute("idealFaceProjection")}>
           <summary>IdealFace Projection 確認</summary>
