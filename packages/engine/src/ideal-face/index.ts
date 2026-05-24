@@ -1,4 +1,5 @@
 export * from "./Difference"
 export * from "./IdealFace"
+export * from "./IdealFaceAsset"
 export * from "./Projection"
 export * from "./presets"
