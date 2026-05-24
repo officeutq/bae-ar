@@ -107,13 +107,19 @@ Step 2-I-A のフレーム解析結果欄は、「正面基準候補」「推定
 
 Step 2-I 以降では、`left / right / up / down` をユーザーが必ず手動指定する方式にはしません。yaw が大きいフレームは左右方向の奥行き推定に、pitch が大きいフレームは上下方向の奥行き推定に寄与しやすいものとして、`FacePose` の yaw / pitch / roll と score に応じて observation の重みを決める方針です。roll が大きすぎるフレームや score が低いフレームは重みを下げます。最初の Step 2-I v1 では、厳密な 3D reconstruction、三角測量、bundle adjustment、カメラ内部パラメータ推定、本格 3D editor、手動微調整、保存 / export、Runtime への組み込みは行いません。
 
+Step 2-I-B は未実装の次ステップとして、pose-aware multi-frame inference dataset を作成します。`frontReferenceFrames` は正面基準候補から作り、複数フレームを平均して `idealLandmarks3D` の base x / y を作るために使います。`observationFrames` は除外されていない解析成功フレームから作り、2D landmarks、FacePose yaw / pitch / roll、score、weight を持つ observation として扱います。`left / right / up / down` は dataset の主構造にしません。
+
+Step 2-I-C は Step 2-I-B の dataset を使う pose-aware weighted z inference v1 として予定します。yaw / pitch は連続値として扱い、yaw も pitch も大きいフレームは単一カテゴリに押し込まず mixed pose observation として利用します。yaw 成分は左右方向の奥行き推定に、pitch 成分は上下方向の奥行き推定に寄与し、roll が大きすぎる、score が低い、表情崩れやブレがある observation は weight を下げる、または除外対象とします。
+
 推奨する MP4 動画は、H.264 / AVC codec、5〜15秒程度、30fps程度、720p程度から開始できるものです。顔が大きく写り、正面、左向き、右向き、上向き、下向きをゆっくり含み、手ブレが少なく、明るい場所で撮影されていることを推奨します。口は閉じ気味、表情はできるだけ neutral とします。
 
 初期段階では、長時間動画、高解像度すぎる動画、HEVC / H.265、MOV、WebM、複数画像入力は非推奨または未対応です。これらは将来対応を検討します。
 
 Engine Runtime は動画入力、フレーム抽出、代表フレーム抽出、手動ラベル確定、3D推測用 dataset 作成、`idealLandmarks3D` 候補生成、`idealLandmarks3D` 作成を行いません。Runtime は完成済みの IdealFace asset を読み込み、`idealLandmarks3D` 478点を現在 `FacePose` へ投影して projected ideal 2D landmarks 478点を生成します。
 
-Step 2-I-A では、`frontReferenceFrameIds` / `excludedFrameIds` と派生 `usableObservationFrames` summary、JSON preview の `poseAwareMultiFrameInference` 概要までを追加済みです。pose-aware 3D候補生成ロジックはまだ実装せず、Step 2-G v1 の候補生成と Step 2-H preview は従来どおりです。
+Step 2-I-A では、`frontReferenceFrameIds` / `excludedFrameIds` と派生 `usableObservationFrames` summary、JSON preview の `poseAwareMultiFrameInference` 概要までを追加済みです。Step 2-I 用操作は Step 2-I カード内に閉じ、旧ポーズ別候補 UI には混ぜません。画面上の 3 分類は排他的に表示します。pose-aware dataset 作成と pose-aware 3D候補生成ロジックはまだ実装せず、Step 2-G v1 の候補生成と Step 2-H preview は従来どおりです。
+
+旧 Step 2-F / Step 2-G v1 用の候補 UI は、代表フレーム候補中心に表示します。一方、Step 2-I 用 UI は除外判断のため、推定に使うフレームを全件操作可能にします。いずれも IdealFace Authoring Tool の責務であり、`packages/engine/src` や `apps/studio/src` には authoring 用処理や UI を入れません。
 
 ## Layer Mask Authoring Tool の責務
 
