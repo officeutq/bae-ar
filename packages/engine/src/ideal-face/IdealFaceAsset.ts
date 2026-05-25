@@ -1,4 +1,8 @@
-import type { IdealFace, IdealFaceLandmark3D } from "./IdealFace"
+import type {
+  IdealFace,
+  IdealFaceCorrectionProfile,
+  IdealFaceLandmark3D,
+} from "./IdealFace"
 
 export type IdealFaceAssetSchemaVersion = "ideal_face_asset_v1"
 
@@ -9,6 +13,8 @@ export type IdealFaceAssetLandmarkTopology = "mediapipe_face_landmarker_478"
 export type IdealFaceAssetCoordinateSpace = "bae_ar_ideal_landmarks3d_v1"
 
 export type IdealFaceAssetLandmark3D = IdealFaceLandmark3D
+
+export type IdealFaceAssetCorrectionProfile = IdealFaceCorrectionProfile
 
 export interface IdealFaceAssetV1 {
   schemaVersion: IdealFaceAssetSchemaVersion
@@ -25,6 +31,7 @@ export interface IdealFaceAssetV1 {
     coordinateSpace: IdealFaceAssetCoordinateSpace
     idealLandmarks3D: IdealFaceAssetLandmark3D[]
   }
+  correctionProfile?: IdealFaceAssetCorrectionProfile
   metadata?: Record<string, unknown>
 }
 
@@ -105,6 +112,8 @@ export function validateIdealFaceAssetV1(
     errors.push("metadata must be an object when provided")
   }
 
+  validateCorrectionProfile(input.correctionProfile, errors)
+
   if (errors.length > 0) {
     return {
       ok: false,
@@ -154,6 +163,7 @@ export function idealFaceAssetV1ToIdealFace(
       idealLandmarks3D: asset.model.idealLandmarks3D.map((landmark) => ({
         ...landmark,
       })),
+      correctionProfile: cloneCorrectionProfile(asset.correctionProfile),
     },
     landmarkTopology: {
       mediapipeLandmarkCount: IDEAL_FACE_ASSET_LANDMARK_COUNT,
@@ -161,6 +171,130 @@ export function idealFaceAssetV1ToIdealFace(
       projectionStatus: "not_implemented",
     },
   }
+}
+
+function cloneCorrectionProfile(
+  correctionProfile: IdealFaceCorrectionProfile | undefined,
+): IdealFaceCorrectionProfile | undefined {
+  if (!correctionProfile) {
+    return undefined
+  }
+
+  return {
+    ...correctionProfile,
+    landmarkStrengths: correctionProfile.landmarkStrengths.map(
+      (landmarkStrength) => ({
+        ...landmarkStrength,
+      }),
+    ),
+  }
+}
+
+function validateCorrectionProfile(input: unknown, errors: string[]): void {
+  if (input === undefined) {
+    return
+  }
+
+  const path = "correctionProfile"
+
+  if (!isRecord(input) || Array.isArray(input)) {
+    errors.push(`${path} must be an object when provided`)
+    return
+  }
+
+  validateStringLiteral(
+    input.schemaVersion,
+    `${path}.schemaVersion`,
+    "correction_profile_v1",
+    errors,
+  )
+  validateStringLiteral(
+    input.mode,
+    `${path}.mode`,
+    "per_landmark_strength",
+    errors,
+  )
+  validateFiniteNumber(input.defaultStrength, `${path}.defaultStrength`, errors)
+  validateNumberRange(input.defaultStrength, `${path}.defaultStrength`, 0, 1, errors)
+  validateExactNumber(input.minStrength, `${path}.minStrength`, 0, errors)
+  validateExactNumber(input.maxStrength, `${path}.maxStrength`, 1, errors)
+  validateFiniteNumber(
+    input.maxCorrectionDistance,
+    `${path}.maxCorrectionDistance`,
+    errors,
+  )
+
+  if (
+    typeof input.maxCorrectionDistance === "number" &&
+    Number.isFinite(input.maxCorrectionDistance) &&
+    input.maxCorrectionDistance <= 0
+  ) {
+    errors.push(`${path}.maxCorrectionDistance must be greater than 0`)
+  }
+
+  validateLandmarkStrengths(input.landmarkStrengths, errors)
+}
+
+function validateLandmarkStrengths(input: unknown, errors: string[]): void {
+  const path = "correctionProfile.landmarkStrengths"
+
+  if (!Array.isArray(input)) {
+    errors.push(`${path} must be an array`)
+    return
+  }
+
+  const seenIndexes = new Set<number>()
+
+  input.forEach((landmarkStrength, arrayIndex) => {
+    const itemPath = `${path}[${arrayIndex}]`
+
+    if (!isRecord(landmarkStrength)) {
+      errors.push(`${itemPath} must be an object`)
+      return
+    }
+
+    validateFiniteNumber(landmarkStrength.index, `${itemPath}.index`, errors)
+    validateFiniteNumber(
+      landmarkStrength.strength,
+      `${itemPath}.strength`,
+      errors,
+    )
+    validateNumberRange(
+      landmarkStrength.strength,
+      `${itemPath}.strength`,
+      0,
+      1,
+      errors,
+    )
+
+    if (
+      typeof landmarkStrength.index === "number" &&
+      Number.isFinite(landmarkStrength.index)
+    ) {
+      if (!Number.isInteger(landmarkStrength.index)) {
+        errors.push(`${itemPath}.index must be an integer`)
+      }
+
+      if (
+        Number.isInteger(landmarkStrength.index) &&
+        (landmarkStrength.index < 0 ||
+          landmarkStrength.index >= IDEAL_FACE_ASSET_LANDMARK_COUNT)
+      ) {
+        errors.push(
+          `${itemPath}.index must be between 0 and ${
+            IDEAL_FACE_ASSET_LANDMARK_COUNT - 1
+          }, got ${landmarkStrength.index}`,
+        )
+      } else if (
+        Number.isInteger(landmarkStrength.index) &&
+        seenIndexes.has(landmarkStrength.index)
+      ) {
+        errors.push(`${itemPath}.index duplicates index ${landmarkStrength.index}`)
+      } else if (Number.isInteger(landmarkStrength.index)) {
+        seenIndexes.add(landmarkStrength.index)
+      }
+    }
+  })
 }
 
 function validateIdealLandmarks3D(input: unknown, errors: string[]): void {
@@ -274,6 +408,39 @@ function validateFiniteNumber(
 
   if (typeof input === "number" && !Number.isFinite(input)) {
     errors.push(`${path} must be a finite number`)
+  }
+}
+
+function validateNumberRange(
+  input: unknown,
+  path: string,
+  min: number,
+  max: number,
+  errors: string[],
+): void {
+  if (
+    typeof input === "number" &&
+    Number.isFinite(input) &&
+    (input < min || input > max)
+  ) {
+    errors.push(`${path} must be between ${min} and ${max}, got ${input}`)
+  }
+}
+
+function validateExactNumber(
+  input: unknown,
+  path: string,
+  expected: number,
+  errors: string[],
+): void {
+  validateFiniteNumber(input, path, errors)
+
+  if (
+    typeof input === "number" &&
+    Number.isFinite(input) &&
+    input !== expected
+  ) {
+    errors.push(`${path} must be ${expected}, got ${input}`)
   }
 }
 
