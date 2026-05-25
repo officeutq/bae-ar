@@ -339,8 +339,9 @@ Step D: Quality improvements
 今後の開発は次の段階を目安に進めます。この順番は厳密固定ではありません。
 
 ```text
-Step 1: landmarkGroups v1 docs
+Step 1: landmarkGroups v1 docs specification
   ideal_face_asset_v1 / beauty_filter_asset_v1 で使う group 定義を整理する
+  詳細は landmarkGroups v1 docs に整理する
 
 Step 2: Engine landmarkGroups foundation
   asset の landmarkGroups を読み込み、expressionAttenuation が参照できるようにする
@@ -359,4 +360,4 @@ Step 6: beauty_filter_asset_v1 foundation
   IdealFace + landmarkGroups + correctionProfile + shapeWarpSettings + colorLayers を束ねる asset を定義する
 ```
 
-詳細は [beauty_filter_asset_v1 direction](beauty-filter-asset-v1.md) を参照してください。今回のステップでは docs の方向性整理のみを行い、TypeScript 実装、Engine 実装、Studio 実装、Authoring Tool UI、JSON export 変更、validator 実装、Color Processing、Layer System、Production Shape Warp、Runtime renderer integration は行いません。
+詳細は [beauty_filter_asset_v1 direction](beauty-filter-asset-v1.md) と [landmarkGroups v1](landmark-groups-v1.md) を参照してください。今回のステップでは docs の方向性整理のみを行い、TypeScript 実装、Engine 実装、Studio 実装、Authoring Tool UI、JSON export 変更、validator 実装、Color Processing、Layer System、Production Shape Warp、Runtime renderer integration は行いません。

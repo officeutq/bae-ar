@@ -61,6 +61,12 @@ This is safety attenuation, not individual part editing. The Engine foundation i
 
 See [expression-aware correctionProfile](docs/expression-aware-correction-profile.md). Engine foundation and Studio debug / Copy Debug display are implemented. Authoring Tool UI, correctionProfile / expressionAttenuation export changes, WebGL changes, expression target offsets, expression-specific IdealFace assets, and production renderer integration remain later work.
 
+## landmarkGroups v1 direction
+
+`landmarkGroups` defines meaningful MediaPipe landmark index groups such as `mouth`, `left_eye`, `right_eye`, and `face_boundary` for expression safety, and future `skin`, `lip`, `cheek`, and `eye_area` groups for color masks. It is referenced by `expressionAttenuation` and future `colorLayers`, but it is not an individual part editing command set.
+
+See [landmarkGroups v1](docs/landmark-groups-v1.md). This is a documentation specification only. Engine landmarkGroups asset loading, Authoring Tool Landmark Group Editor, JSON export changes, validator implementation, Color Processing, Layer System, and `beauty_filter_asset_v1` foundation remain unimplemented.
+
 ## Shape Warp production direction
 
 Shape Warp v1 debug prototype is Studio processed preview-only. CPU radial warp debug and WebGL mesh warp v1 prototype connect CorrectionPlan correction vectors to the image so the movement can be observed, but neither is the production-quality Runtime renderer.
@@ -286,6 +292,7 @@ debug
 - [リポジトリ構成](docs/repository-structure.md)
 - [correctionProfile v1](docs/correction-profile-v1.md)
 - [expression-aware correctionProfile](docs/expression-aware-correction-profile.md)
+- [landmarkGroups v1](docs/landmark-groups-v1.md)
 - [Shape Warp production direction](docs/shape-warp-production-direction.md)
 - [beauty_filter_asset_v1 direction](docs/beauty-filter-asset-v1.md)
 - [仕様書とロードマップ](docs/bae_ar_beauty_engine_spec_and_roadmap_2026_05.md)

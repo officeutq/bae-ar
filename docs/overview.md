@@ -254,7 +254,7 @@ beauty_filter_asset_v1
 
 `idealFace` は理想顔の形状、`landmarkGroups` は MediaPipe landmark index の意味領域、`correctionProfile` は shape correction の強度と safety attenuation、`shapeWarpSettings` は warp renderer / smoothing / boundary の設定、`colorLayers` は色加工、mask、合成順、opacity を扱います。
 
-`landmarkGroups` は、`expressionAttenuation` の `affectedLandmarkGroups` と、将来の `colorLayers` が参照する `skin` / `lip` / `cheek` などの group の整合性を保つために使います。Layer System は shape warp 用ではなく、color processing 用です。
+`landmarkGroups` は、`expressionAttenuation` の `affectedLandmarkGroups` と、将来の `colorLayers` が参照する `skin` / `lip` / `cheek` などの group の整合性を保つために使います。Layer System は shape warp 用ではなく、color processing 用です。`landmarkGroups v1` の JSON 仕様、Engine fallback、validation、Landmark Group Editor 方針は [landmarkGroups v1](landmark-groups-v1.md) に整理します。
 
 詳細は [beauty_filter_asset_v1 direction](beauty-filter-asset-v1.md) を参照してください。今回の整理は docs の方向性のみで、実装、validator、export、Production Shape Warp、Color Processing はまだ行いません。
 

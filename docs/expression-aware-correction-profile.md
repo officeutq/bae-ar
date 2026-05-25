@@ -47,7 +47,7 @@ CorrectionPlan:
 
 `expressionAttenuation` は、目だけ大きくする、鼻だけ細くする、顎だけ削るための機能ではありません。これは、表情や可動部位によって破綻しやすい領域の補正を弱める safety attenuation です。
 
-最終的な配布単位では、`expressionAttenuation` の `affectedLandmarkGroups` は `beauty_filter_asset_v1.landmarkGroups` の group id を参照する方向です。`landmarkGroups` は `correctionProfile` と `colorLayers` の両方から参照されるため、1つの filter asset 内で整合性を保ちます。
+最終的な配布単位では、`expressionAttenuation` の `affectedLandmarkGroups` は `beauty_filter_asset_v1.landmarkGroups` の group id を参照する方向です。`landmarkGroups` は `correctionProfile` と `colorLayers` の両方から参照されるため、1つの filter asset 内で整合性を保ちます。`landmarkGroups v1` の JSON 仕様、Engine fallback、validation 方針は [landmarkGroups v1](landmark-groups-v1.md) に整理します。
 
 ## JSON 仕様案
 
@@ -126,7 +126,7 @@ face_boundary:
   顔外周、背景、髪、眼鏡境界などの破綻を抑える
 ```
 
-v1 では landmark group の index 定義はまだ完全確定しません。将来は `beauty_filter_asset_v1.landmarkGroups` に group 定義を持ち、asset に存在しない場合は Engine fallback group を使う方向です。
+v1 では landmark group の index 定義はまだ完全確定しません。将来は `beauty_filter_asset_v1.landmarkGroups` に group 定義を持ち、asset に存在しない場合は Engine fallback group を使う方向です。現在は docs 仕様化のみで、Engine landmarkGroups asset loading foundation は未実装です。
 
 ```ts
 type LandmarkGroupId =

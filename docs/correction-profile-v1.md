@@ -122,7 +122,7 @@
 
 `expressionAttenuation` は、MediaPipe blendshape score を入力にし、`mouth` / `left_eye` / `right_eye` / `face_boundary` などの `affectedLandmarkGroups` ごとに `strengthScale` を変える safety attenuation です。`strengthScale` は 0.0 から 1.0 の値で、1.0 は通常どおり、0.0 はその group の補正なしを意味します。
 
-`affectedLandmarkGroups` は、将来 `beauty_filter_asset_v1.landmarkGroups` の group id を参照します。v1 ではまず `mouth` / `left_eye` / `right_eye` / `face_boundary` を想定し、将来の color processing では `skin` / `lip` / `cheek` / `eye_area` などを追加する可能性があります。
+`affectedLandmarkGroups` は、将来 `beauty_filter_asset_v1.landmarkGroups` の group id を参照します。v1 ではまず `mouth` / `left_eye` / `right_eye` / `face_boundary` を想定し、将来の color processing では `skin` / `lip` / `cheek` / `eye_area` などを追加する可能性があります。`landmarkGroups v1` の詳細は [landmarkGroups v1](landmark-groups-v1.md) に整理します。
 
 目的:
 
@@ -265,7 +265,7 @@ CorrectionPlan は姿勢補正を担当しません。姿勢への対応は Idea
 - Production Shape Warp
 - production renderer integration
 - 画像変形の本番実装
-- landmarkGroups v1 asset schema
+- landmarkGroups v1 asset schema implementation
 - shapeWarpSettings v1
 - colorLayers v1
 - beauty_filter_asset_v1

@@ -116,10 +116,12 @@ Beauty Studio:
 - WebGL mesh warp 本番候補方針の整理
 - Studio processed preview 限定 WebGL mesh warp v1 prototype
 - beauty_filter_asset_v1 direction docs
+- landmarkGroups v1 docs specification
 
 ### 3.2 未実装
 
-- landmarkGroups v1 asset schema
+- landmarkGroups v1 asset schema implementation
+- Engine landmarkGroups asset loading foundation
 - Authoring Tool landmark group editor
 - shapeWarpSettings v1
 - colorLayers v1
@@ -327,9 +329,9 @@ beauty_filter_asset_v1
 
 ただし内部は責務ごとに分離します。`idealFace` は理想顔の形状、`landmarkGroups` は landmark index の意味領域、`correctionProfile` は shape correction の強度と safety attenuation、`shapeWarpSettings` は warp renderer / smoothing / boundary の設定、`colorLayers` は色加工、mask、合成順、opacity を扱います。
 
-`landmarkGroups` v1 では、まず `mouth` / `left_eye` / `right_eye` / `face_boundary` を想定します。将来 color processing 向けに `skin` / `lip` / `cheek` / `eye_area` などを追加する可能性があります。Layer System は shape warp 用ではなく、color processing 用です。
+`landmarkGroups` v1 では、まず `mouth` / `left_eye` / `right_eye` / `face_boundary` を expression safety 用 group として想定します。将来 color processing 向けに `skin` / `lip` / `cheek` / `eye_area` などを追加する可能性があります。Layer System は shape warp 用ではなく、color processing 用です。詳細は [landmarkGroups v1](landmark-groups-v1.md) に整理します。
 
-詳細は [beauty_filter_asset_v1 direction](beauty-filter-asset-v1.md) に整理します。`beauty_filter_asset_v1`、`landmarkGroups` v1 asset schema、`shapeWarpSettings` v1、`colorLayers` v1、Production Shape Warp、Color Processing、Runtime renderer integration はまだ未実装です。
+詳細は [beauty_filter_asset_v1 direction](beauty-filter-asset-v1.md) に整理します。`landmarkGroups v1` は docs 仕様化のみで、Engine asset loading、Authoring Tool editor、JSON export、validator は未実装です。`beauty_filter_asset_v1`、`shapeWarpSettings` v1、`colorLayers` v1、Production Shape Warp、Color Processing、Runtime renderer integration はまだ未実装です。
 
 ## 7. IdealFace
 
@@ -366,7 +368,7 @@ IdealFace Authoring Tool は BAE AR 独自の IdealFace asset を作成・調整
 
 Engine 側では、`expressionAttenuation` v1 foundation も実装済みです。これは MediaPipe blendshape score に応じて `mouth` / `left_eye` / `right_eye` / `face_boundary` などの `affectedLandmarkGroups` ごとの `strengthScale` を弱める safety attenuation です。`affectedLandmarkGroups` は将来 `beauty_filter_asset_v1.landmarkGroups` の group id を参照します。`jawOpen` が高いときは `mouth` group、`eyeBlinkLeft` / `eyeSquintLeft` が高いときは `left_eye` group、`eyeBlinkRight` / `eyeSquintRight` が高いときは `right_eye` group の補正を弱めます。`strengthScale` は即時切替ではなく smoothing します。
 
-詳細な JSON 例、fallback、validation 方針、Runtime / Authoring / Studio の責務分離は [correctionProfile v1](correction-profile-v1.md) に定義します。expression-aware attenuation の設計方針は [expression-aware correctionProfile](expression-aware-correction-profile.md) に整理します。Engine 側 foundation、validation / fallback、expressionAttenuation v1 foundation、CorrectionPlan v1 debug foundation は実装済みです。Authoring Tool 編集 UI、asset export 連携、expression-specific IdealFace、expression target offset、Production Shape Warp は未実装です。
+詳細な JSON 例、fallback、validation 方針、Runtime / Authoring / Studio の責務分離は [correctionProfile v1](correction-profile-v1.md) に定義します。expression-aware attenuation の設計方針は [expression-aware correctionProfile](expression-aware-correction-profile.md) に、参照先 group の仕様は [landmarkGroups v1](landmark-groups-v1.md) に整理します。Engine 側 foundation、validation / fallback、expressionAttenuation v1 foundation、CorrectionPlan v1 debug foundation は実装済みです。Authoring Tool 編集 UI、asset export 連携、expression-specific IdealFace、expression target offset、Production Shape Warp は未実装です。
 
 ### 7.2 IdealFace Authoring Tool における idealLandmarks3D 作成方針
 
@@ -877,7 +879,7 @@ Milestone 4 に含めないもの:
 段階的な目安:
 
 ```text
-Step 1: landmarkGroups v1 docs
+Step 1: landmarkGroups v1 docs specification
 Step 2: Engine landmarkGroups foundation
 Step 3: Authoring Tool landmark group editor
 Step 4: shapeWarpSettings v1 docs / foundation
@@ -897,6 +899,7 @@ Step 6: beauty_filter_asset_v1 foundation
 今回追加した docs:
 
 - [beauty_filter_asset_v1 direction](beauty-filter-asset-v1.md)
+- [landmarkGroups v1](landmark-groups-v1.md)
 
 ### Milestone 7: Color Processing v1
 
