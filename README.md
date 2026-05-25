@@ -59,7 +59,7 @@ See [correctionProfile v1](docs/correction-profile-v1.md). Authoring Tool editin
 
 This is safety attenuation, not individual part editing. The first step is to weaken correction around the mouth during large jaw opening, around eyes during blink / squint, and around fragile boundaries, with smoothing to avoid abrupt visual changes. Expression target offsets and expression-specific IdealFace assets remain later steps.
 
-See [expression-aware correctionProfile](docs/expression-aware-correction-profile.md). Engine implementation, Studio implementation, Authoring Tool UI, JSON export changes, WebGL changes, and production renderer integration are not included in this documentation step.
+See [expression-aware correctionProfile](docs/expression-aware-correction-profile.md). Engine foundation and Studio debug / Copy Debug display are implemented. Authoring Tool UI, correctionProfile / expressionAttenuation export changes, WebGL changes, expression target offsets, expression-specific IdealFace assets, and production renderer integration remain later work.
 
 ## Shape Warp production direction
 

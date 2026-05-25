@@ -189,7 +189,7 @@ Beauty Studio
 
 ## fallback 仕様
 
-`correctionProfile` が存在しない既存 asset でも壊れないように、将来の Engine 実装では以下を fallback default として扱います。
+`correctionProfile` が存在しない既存 asset でも壊れないように、現在の Engine foundation では以下を fallback default として扱います。
 
 ```text
 correctionProfile が存在しない場合:
@@ -202,7 +202,7 @@ correctionProfile が存在しない場合:
 
 ## validation 方針
 
-将来の validator 実装では、以下を検証します。
+現在の Engine validator foundation では、以下を検証します。
 
 - `correctionProfile` は optional
 - 存在する場合、`schemaVersion` は `"correction_profile_v1"`

@@ -152,7 +152,7 @@ Beauty Studio:
 - IdealFace Projection v1 は `idealLandmarks3D` 478点を現在 `FacePose` へ投影します。
 - current-vs-projected ideal 478点 difference debug v1 は current landmarks と projected ideal `imageLandmarks` の差分確認用です。
 - `FaceGeometry` は landmarks から代表点やサイズを計算する補助解析です。
-- 実際の shape warp、color processing、rendering はまだありません。
+- Studio processed preview 限定の Shape Warp v1 debug prototype と WebGL mesh warp v1 prototype は実装済みです。Production Shape Warp / Production renderer / Runtime renderer integration、Color Processing はまだありません。
 - IdealFace Authoring Tool は Step 2-I-A/B/C と Step 2-H まで実装済みです。
 
 ## 4. 現在の処理パイプライン
