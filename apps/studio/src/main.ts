@@ -504,6 +504,7 @@ correctionProfile:
   defaultStrength: ${formatNumber(correctionProfile.defaultStrength)}
   maxCorrectionDistance: ${formatNumber(correctionProfile.maxCorrectionDistance)}
   landmarkStrength count: ${correctionProfile.landmarkStrengths.length}
+expressionAttenuation: ${correctionPlan.expressionAttenuation.status} / ${correctionPlan.expressionAttenuation.source}
 CorrectionPlan: ${correctionPlan.status}
 Shape Warp v1 debug: ${shapeWarpDebugSummary.status}
 Production Shape Warp: not_implemented`
@@ -774,6 +775,23 @@ ${topDifferencePreview}`
   function formatCorrectionPlanPreview(
     correctionPlan: CorrectionPlanDebug,
   ): string {
+    const expressionGroupScales = Object.values(
+      correctionPlan.expressionAttenuation.groupScales,
+    )
+      .map(
+        (groupScale) =>
+          `${groupScale.group}: target ${formatNumber(groupScale.targetScale)} / smoothed ${formatNumber(groupScale.smoothedScale)}`,
+      )
+      .join("\n")
+    const expressionActiveRules =
+      correctionPlan.expressionAttenuation.activeRules.length === 0
+        ? "なし"
+        : correctionPlan.expressionAttenuation.activeRules
+            .map(
+              (rule) =>
+                `${rule.id}: score ${formatNullableNumber(rule.score)} -> scale ${formatNumber(rule.targetScale)} (${rule.affectedLandmarkGroups.join(", ")})`,
+            )
+            .join("\n")
     const topVectorPreview =
       correctionPlan.topVectors.length === 0
         ? "なし"
@@ -786,7 +804,11 @@ projectedIdeal: x=${formatNumber(vector.projectedIdeal.x)} y=${formatNumber(vect
 raw dx: ${formatNumber(vector.rawDeltaX)}
 raw dy: ${formatNumber(vector.rawDeltaY)}
 raw distance: ${formatNumber(vector.rawDistance)}
+base strength: ${formatNumber(vector.baseStrength)}
+expression scale: ${formatNumber(vector.expressionStrengthScale)}
+final strength: ${formatNumber(vector.finalStrength)}
 strength: ${formatNumber(vector.strength)}
+affected groups: ${vector.affectedGroups.length > 0 ? vector.affectedGroups.join(", ") : "なし"}
 confidence: ${formatNumber(vector.confidence)}
 correction dx: ${formatNumber(vector.correctionDeltaX)}
 correction dy: ${formatNumber(vector.correctionDeltaY)}
@@ -813,6 +835,20 @@ max correction distance: ${formatNullableNumber(correctionPlan.summary.maxCorrec
 max correction distance landmark index: ${correctionPlan.summary.maxCorrectionDistanceLandmarkIndex ?? "なし"}
 clamped count: ${correctionPlan.summary.clampedCount}
 average strength: ${formatNullableNumber(correctionPlan.summary.averageStrength)}
+average base strength: ${formatNullableNumber(correctionPlan.summary.averageBaseStrength)}
+average final strength: ${formatNullableNumber(correctionPlan.summary.averageFinalStrength)}
+min expression scale: ${formatNullableNumber(correctionPlan.summary.minExpressionScale)}
+
+Expression attenuation:
+status: ${correctionPlan.expressionAttenuation.status}
+reason: ${correctionPlan.expressionAttenuation.reason ?? "なし"}
+source: ${correctionPlan.expressionAttenuation.source}
+smoothing: ${correctionPlan.expressionAttenuation.smoothing.enabled ? "enabled" : "disabled"}
+halfLifeMs: ${correctionPlan.expressionAttenuation.smoothing.halfLifeMs ?? "なし"}
+group scales:
+${expressionGroupScales}
+active rules:
+${expressionActiveRules}
 
 top correction vectors:
 ${topVectorPreview}`
@@ -2472,7 +2508,8 @@ Aspect debug: asset ${formatNullableNumber(idealLandmarks3DProjection.debug?.asp
 Coordinate conversion: ${idealLandmarks3DProjection.debug?.coordinate?.conversionMode ?? "なし"} / videoAspect ${formatNullableNumber(idealLandmarks3DProjection.debug?.coordinate?.videoAspectRatio)} / fallback ${idealLandmarks3DProjection.debug?.coordinate ? String(idealLandmarks3DProjection.debug.coordinate.fallbackUsed) : "なし"}
 478点差分: ${idealLandmarksDifference.status} / matched ${idealLandmarksDifference.matchedLandmarkCount} / 平均 ${formatNullableNumber(idealLandmarksDifference.averageDistance)} / 最大 ${formatNullableNumber(idealLandmarksDifference.maxDistance)} / 最大index ${idealLandmarksDifference.maxDistanceLandmarkIndex ?? "なし"}
 correctionProfile: ${correctionProfileSource} / ${correctionProfile.schemaVersion} / ${correctionProfile.mode} / default ${formatNumber(correctionProfile.defaultStrength)} / maxDistance ${formatNumber(correctionProfile.maxCorrectionDistance)} / landmarkStrengths ${correctionProfile.landmarkStrengths.length}
-CorrectionPlan: ${correctionPlan.status} / points ${correctionPlan.pointCount} / avgCorrection ${formatNullableNumber(correctionPlan.summary.averageCorrectionDistance)} / maxCorrection ${formatNullableNumber(correctionPlan.summary.maxCorrectionDistance)} / clamped ${correctionPlan.summary.clampedCount}
+Expression attenuation: ${correctionPlan.expressionAttenuation.status} / ${correctionPlan.expressionAttenuation.source} / mouth ${formatNumber(correctionPlan.expressionAttenuation.groupScales.mouth.smoothedScale)} / left_eye ${formatNumber(correctionPlan.expressionAttenuation.groupScales.left_eye.smoothedScale)} / right_eye ${formatNumber(correctionPlan.expressionAttenuation.groupScales.right_eye.smoothedScale)} / face_boundary ${formatNumber(correctionPlan.expressionAttenuation.groupScales.face_boundary.smoothedScale)}
+CorrectionPlan: ${correctionPlan.status} / points ${correctionPlan.pointCount} / avgCorrection ${formatNullableNumber(correctionPlan.summary.averageCorrectionDistance)} / maxCorrection ${formatNullableNumber(correctionPlan.summary.maxCorrectionDistance)} / clamped ${correctionPlan.summary.clampedCount} / avgBaseStrength ${formatNullableNumber(correctionPlan.summary.averageBaseStrength)} / avgFinalStrength ${formatNullableNumber(correctionPlan.summary.averageFinalStrength)} / minExpressionScale ${formatNullableNumber(correctionPlan.summary.minExpressionScale)}
 Shape Warp v1 debug: ${latestShapeWarpDebugSummary.status} / mode ${latestShapeWarpDebugSummary.mode} / preset ${latestShapeWarpDebugSummary.preset} / enabled ${String(latestShapeWarpDebugSummary.enabled)} / candidates ${latestShapeWarpDebugSummary.candidateVectorCount} / used ${latestShapeWarpDebugSummary.usedVectorCount} / skipped ${latestShapeWarpDebugSummary.skippedByDistanceCount} / meshStrength ${formatNumber(latestShapeWarpDebugSummary.meshWarpStrength)} / textureFiltering ${latestShapeWarpDebugSummary.textureFiltering} / wireframe ${String(latestShapeWarpDebugSummary.showWireframe)} / meshVertices ${latestShapeWarpDebugSummary.usedMeshVertexCount ?? "なし"} / triangles ${latestShapeWarpDebugSummary.triangleCount ?? "なし"} / webgl ${latestShapeWarpDebugSummary.webgl ?? "なし"} / radius ${formatNumber(latestShapeWarpDebugSummary.radiusPx)} / strength ${formatNumber(latestShapeWarpDebugSummary.globalWarpStrength)} / minDistance ${formatNumber(latestShapeWarpDebugSummary.minCorrectionDistance)} / sampling ${latestShapeWarpDebugSummary.sampling} / render ${formatNullableNumber(latestShapeWarpDebugSummary.renderTimeMs)} ms / avg ${formatNullableNumber(latestShapeWarpDebugSummary.averageRenderTimeMs)} ms
 Production Shape Warp: not_implemented
 利用可能IdealFace: ${availableIdealFaces.length}

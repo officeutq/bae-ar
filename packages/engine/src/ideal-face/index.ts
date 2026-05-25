@@ -1,5 +1,6 @@
 export * from "./CorrectionPlan"
 export * from "./Difference"
+export * from "./ExpressionAttenuation"
 export * from "./IdealFace"
 export * from "./IdealFaceAsset"
 export * from "./Projection"

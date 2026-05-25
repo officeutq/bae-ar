@@ -17,11 +17,14 @@ import type {
   IdealFacePreset,
   IdealFaceProjectionResult,
   ProjectionDifference,
+  ExpressionAttenuationState,
 } from "./ideal-face"
 import {
   calculateCorrectionPlanDebug,
   calculateIdealLandmarksDifference,
   calculateProjectionDifference,
+  createExpressionAttenuationState,
+  resetExpressionAttenuationState,
   DEFAULT_IDEAL_FACE_PRESETS,
   projectIdealFaceControlPoints,
   projectIdealLandmarks3D,
@@ -66,6 +69,8 @@ export class BeautyEngine {
   private faceFrameLoopDetectCallCount = 0
   private faceFrameLoopDetectSkipCount = 0
   private faceFrameLoopLastDetectSkipReason: string | null = null
+  private expressionAttenuationState: ExpressionAttenuationState =
+    createExpressionAttenuationState()
 
   constructor(options?: BeautyEngineOptions) {
     this.input = options?.input
@@ -125,6 +130,7 @@ export class BeautyEngine {
 
   setIdealFace(idealFace: IdealFace): void {
     this.idealFace = idealFace
+    resetExpressionAttenuationState(this.expressionAttenuationState)
   }
 
   getIdealFace(): IdealFace {
@@ -145,6 +151,7 @@ export class BeautyEngine {
     }
 
     this.idealFace = selectedIdealFace
+    resetExpressionAttenuationState(this.expressionAttenuationState)
 
     return selectedIdealFace
   }
@@ -184,6 +191,11 @@ export class BeautyEngine {
     return calculateCorrectionPlanDebug(
       this.getIdealLandmarksDifference(),
       this.idealFace,
+      {
+        blendshapes: this.currentFaceFrame?.blendshapes,
+        timestamp: this.currentFaceFrame?.timestamp,
+        expressionAttenuationState: this.expressionAttenuationState,
+      },
     )
   }
 
@@ -289,6 +301,10 @@ export class BeautyEngine {
 
         this.currentFaceFrame = frame
         this.currentFaceGeometry = analyzeFaceGeometry(frame)
+
+        if (!frame.detected) {
+          resetExpressionAttenuationState(this.expressionAttenuationState)
+        }
 
         this.faceFrameListeners.forEach((callback) => callback(frame))
       } catch {

@@ -3,6 +3,7 @@ import type {
   IdealFaceCorrectionProfileSource,
 } from "./IdealFace"
 import {
+  getExpressionAttenuationProfileOrDefault,
   getCorrectionProfileOrDefault,
   getCorrectionProfileSource,
 } from "./IdealFace"
@@ -10,6 +11,16 @@ import type {
   IdealLandmarkDifferenceItem,
   IdealLandmarksDifferenceDebug,
 } from "./Difference"
+import type { FaceBlendshape } from "../face/FaceFrame"
+import {
+  calculateExpressionAttenuationDebug,
+  createUnavailableExpressionAttenuationDebug,
+  getExpressionLandmarkGroupsForIndex,
+  getExpressionStrengthScaleForGroups,
+  type ExpressionAttenuationDebug,
+  type ExpressionAttenuationState,
+  type ExpressionLandmarkGroupId,
+} from "./ExpressionAttenuation"
 
 export type CorrectionPlanStatus =
   | "not_available"
@@ -32,6 +43,10 @@ export interface CorrectionVector {
   rawDeltaX: number
   rawDeltaY: number
   rawDistance: number
+  baseStrength: number
+  expressionStrengthScale: number
+  finalStrength: number
+  affectedGroups: ExpressionLandmarkGroupId[]
   strength: number
   confidence: number
   correctionDeltaX: number
@@ -57,6 +72,7 @@ export interface CorrectionPlanDebug {
     landmarkStrengthCount: number
     topVectorCount: number
   }
+  expressionAttenuation: ExpressionAttenuationDebug
   summary: {
     averageRawDistance: number | null
     maxRawDistance: number | null
@@ -66,6 +82,9 @@ export interface CorrectionPlanDebug {
     maxCorrectionDistanceLandmarkIndex: number | null
     clampedCount: number
     averageStrength: number | null
+    averageBaseStrength: number | null
+    averageFinalStrength: number | null
+    minExpressionScale: number | null
   }
   vectors: CorrectionVector[]
   topVectors: CorrectionVector[]
@@ -74,13 +93,28 @@ export interface CorrectionPlanDebug {
 const DEFAULT_TOP_CORRECTION_VECTOR_COUNT = 10
 const CORRECTION_PLAN_EXPECTED_POINT_COUNT = 478
 
+export interface CorrectionPlanCalculationOptions {
+  topVectorCount?: number
+  blendshapes?: FaceBlendshape[]
+  timestamp?: number
+  expressionAttenuationState?: ExpressionAttenuationState
+}
+
 export function calculateCorrectionPlanDebug(
   difference: IdealLandmarksDifferenceDebug,
   idealFace: IdealFace,
-  topVectorCount = DEFAULT_TOP_CORRECTION_VECTOR_COUNT,
+  optionsOrTopVectorCount: CorrectionPlanCalculationOptions | number = {},
 ): CorrectionPlanDebug {
+  const options =
+    typeof optionsOrTopVectorCount === "number"
+      ? { topVectorCount: optionsOrTopVectorCount }
+      : optionsOrTopVectorCount
+  const topVectorCount =
+    options.topVectorCount ?? DEFAULT_TOP_CORRECTION_VECTOR_COUNT
   const correctionProfile = getCorrectionProfileOrDefault(idealFace)
   const sourceCorrectionProfile = getCorrectionProfileSource(idealFace)
+  const expressionAttenuationProfile =
+    getExpressionAttenuationProfileOrDefault(idealFace)
   const baseConfig = {
     defaultStrength: correctionProfile.defaultStrength,
     minStrength: correctionProfile.minStrength,
@@ -91,11 +125,19 @@ export function calculateCorrectionPlanDebug(
   }
 
   if (difference.status === "not_available") {
+    const expressionAttenuation = createUnavailableExpressionAttenuationDebug({
+      profile: expressionAttenuationProfile.profile,
+      source: expressionAttenuationProfile.source,
+      reason: difference.reason ?? "ideal landmark difference is not available",
+      state: options.expressionAttenuationState,
+    })
+
     return emptyCorrectionPlan({
       status: "not_available",
       reason: difference.reason ?? "ideal landmark difference is not available",
       sourceCorrectionProfile,
       config: baseConfig,
+      expressionAttenuation,
     })
   }
 
@@ -104,14 +146,29 @@ export function calculateCorrectionPlanDebug(
     difference.status === "missing_projected_ideal_landmarks" ||
     difference.differences.length === 0
   ) {
+    const expressionAttenuation = createUnavailableExpressionAttenuationDebug({
+      profile: expressionAttenuationProfile.profile,
+      source: expressionAttenuationProfile.source,
+      reason: difference.reason ?? "ideal landmark difference is missing",
+      state: options.expressionAttenuationState,
+    })
+
     return emptyCorrectionPlan({
       status: "missing_difference",
       reason: difference.reason ?? "ideal landmark difference is missing",
       sourceCorrectionProfile,
       config: baseConfig,
+      expressionAttenuation,
     })
   }
 
+  const expressionAttenuation = calculateExpressionAttenuationDebug({
+    profile: expressionAttenuationProfile.profile,
+    source: expressionAttenuationProfile.source,
+    blendshapes: options.blendshapes,
+    timestamp: options.timestamp,
+    state: options.expressionAttenuationState,
+  })
   const strengthByIndex = new Map(
     correctionProfile.landmarkStrengths.map((item) => [
       item.index,
@@ -123,6 +180,7 @@ export function calculateCorrectionPlanDebug(
       item,
       strengthByIndex.get(item.index) ?? correctionProfile.defaultStrength,
       correctionProfile.maxCorrectionDistance,
+      expressionAttenuation,
     ),
   )
   const totals = vectors.reduce(
@@ -130,13 +188,15 @@ export function calculateCorrectionPlanDebug(
       rawDistance: summary.rawDistance + vector.rawDistance,
       correctionDistance:
         summary.correctionDistance + vector.correctionDistance,
-      strength: summary.strength + vector.strength,
+      baseStrength: summary.baseStrength + vector.baseStrength,
+      finalStrength: summary.finalStrength + vector.finalStrength,
       clampedCount: summary.clampedCount + (vector.clamped ? 1 : 0),
     }),
     {
       rawDistance: 0,
       correctionDistance: 0,
-      strength: 0,
+      baseStrength: 0,
+      finalStrength: 0,
       clampedCount: 0,
     },
   )
@@ -164,6 +224,7 @@ export function calculateCorrectionPlanDebug(
     sourceCorrectionProfile,
     pointCount: vectors.length,
     config: baseConfig,
+    expressionAttenuation,
     summary: {
       averageRawDistance: totals.rawDistance / vectors.length,
       maxRawDistance: maxRawDistanceVector.rawDistance,
@@ -172,7 +233,10 @@ export function calculateCorrectionPlanDebug(
       maxCorrectionDistance: maxCorrectionDistanceVector.correctionDistance,
       maxCorrectionDistanceLandmarkIndex: maxCorrectionDistanceVector.index,
       clampedCount: totals.clampedCount,
-      averageStrength: totals.strength / vectors.length,
+      averageStrength: totals.finalStrength / vectors.length,
+      averageBaseStrength: totals.baseStrength / vectors.length,
+      averageFinalStrength: totals.finalStrength / vectors.length,
+      minExpressionScale: expressionAttenuation.minExpressionScale,
     },
     vectors,
     topVectors: [...vectors]
@@ -186,11 +250,18 @@ export function calculateCorrectionPlanDebug(
 
 function calculateCorrectionVector(
   difference: IdealLandmarkDifferenceItem,
-  strength: number,
+  baseStrength: number,
   maxCorrectionDistance: number,
+  expressionAttenuation: ExpressionAttenuationDebug,
 ): CorrectionVector {
-  const scaledDeltaX = difference.deltaX * strength
-  const scaledDeltaY = difference.deltaY * strength
+  const affectedGroups = getExpressionLandmarkGroupsForIndex(difference.index)
+  const expressionStrengthScale = getExpressionStrengthScaleForGroups(
+    affectedGroups,
+    expressionAttenuation,
+  )
+  const finalStrength = baseStrength * expressionStrengthScale
+  const scaledDeltaX = difference.deltaX * finalStrength
+  const scaledDeltaY = difference.deltaY * finalStrength
   const scaledDistance = Math.sqrt(
     scaledDeltaX * scaledDeltaX + scaledDeltaY * scaledDeltaY,
   )
@@ -212,7 +283,11 @@ function calculateCorrectionVector(
     rawDeltaX: difference.deltaX,
     rawDeltaY: difference.deltaY,
     rawDistance: difference.distance,
-    strength,
+    baseStrength,
+    expressionStrengthScale,
+    finalStrength,
+    affectedGroups,
+    strength: finalStrength,
     confidence: 1,
     correctionDeltaX,
     correctionDeltaY,
@@ -230,6 +305,7 @@ function emptyCorrectionPlan(input: {
   reason: string
   sourceCorrectionProfile: IdealFaceCorrectionProfileSource
   config: CorrectionPlanDebug["config"]
+  expressionAttenuation: ExpressionAttenuationDebug
 }): CorrectionPlanDebug {
   return {
     status: input.status,
@@ -237,6 +313,7 @@ function emptyCorrectionPlan(input: {
     sourceCorrectionProfile: input.sourceCorrectionProfile,
     pointCount: 0,
     config: input.config,
+    expressionAttenuation: input.expressionAttenuation,
     summary: {
       averageRawDistance: null,
       maxRawDistance: null,
@@ -246,6 +323,9 @@ function emptyCorrectionPlan(input: {
       maxCorrectionDistanceLandmarkIndex: null,
       clampedCount: 0,
       averageStrength: null,
+      averageBaseStrength: null,
+      averageFinalStrength: null,
+      minExpressionScale: null,
     },
     vectors: [],
     topVectors: [],
