@@ -180,6 +180,7 @@ Layer Mask Authoring Tool を置く想定の場所です。
 実装が変わった場合は、該当する docs / README / 仕様書 / ロードマップも更新します。
 
 - `correction-profile-v1.md`: `ideal_face_asset_v1` に追加予定の optional `correctionProfile` 仕様、fallback、validation、CorrectionPlan との関係
+- `shape-warp-production-direction.md`: Shape Warp v1 debug prototype と production candidate の違い、WebGL mesh warp 方針、段階分け
 
 ## `tools/ideal-face-authoring` detailed scan
 
@@ -215,7 +216,7 @@ MP4 input
 
 ## 今後の構成変更
 
-IdealFace v1、Runtime 側の idealLandmarks3D 478点読み込み / 投影、current 478 landmarks と projected ideal 478 landmarks の difference debug は実装済みです。`correctionProfile` v1 は仕様のみで、CorrectionPlan、Shape Warp、Layer System、LayerMaskSpec は未実装です。追加する場合も、Engine Runtime の責務と Authoring Tool の責務を分け、Studio からは公開 API 経由で確認できるようにします。
+IdealFace v1、Runtime 側の idealLandmarks3D 478点読み込み / 投影、current 478 landmarks と projected ideal 478 landmarks の difference debug、`correctionProfile` v1 foundation、CorrectionPlan v1 debug foundation、Studio 向け Shape Warp v1 debug prototype は実装済みです。Production Shape Warp、Layer System、LayerMaskSpec は未実装です。追加する場合も、Engine Runtime の責務と Authoring Tool の責務を分け、Studio からは公開 API 経由で確認できるようにします。
 
 ## `tools/ideal-face-authoring` Step 1 / Step 2-A / Step 2-B
 

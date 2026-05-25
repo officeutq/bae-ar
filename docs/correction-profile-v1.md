@@ -13,7 +13,7 @@
 - 形状データと補正設定は意味が違うため分ける
 - 将来、profile だけ差し替える余地を残す
 
-今回は仕様ドキュメントのみです。TypeScript 型、validator、converter、Studio debug、CorrectionPlan、Shape Warp、Authoring Tool 編集 UI、export 処理はまだ実装しません。
+このドキュメントは correctionProfile v1 の仕様を定義します。現在は Engine 側 foundation、Studio debug summary、CorrectionPlan v1 debug foundation、Studio 向け Shape Warp v1 debug prototype まで実装済みです。Authoring Tool 編集 UI、export 処理変更、Production Shape Warp はまだ実装しません。
 
 ## JSON 例
 
@@ -224,17 +224,16 @@ CorrectionPlan は姿勢補正を担当しません。姿勢への対応は Idea
 - shape warp では最終的に pixel coordinate を使う
 - `correctionProfile` と CorrectionPlan v1 の入力は image-normalized coordinate 基準
 
-## 未実装範囲
+## 現在の実装状態と残り範囲
 
-この仕様は次の実装に進むためのドキュメントです。以下は未実装のままです。
+`correctionProfile` v1 の Engine 型 / validator / converter foundation、Studio debug summary、CorrectionPlan v1 debug foundation、Studio 向け Shape Warp v1 debug prototype は実装済みです。
 
-- TypeScript 型
-- validator
-- converter
-- Studio debug
-- CorrectionPlan
-- Shape Warp
-- 画像変形
+以下はまだ未実装です。
+
+- Production Shape Warp
+- WebGL mesh warp
+- production renderer integration
+- 画像変形の本番実装
 - Authoring Tool 編集 UI
 - `ideal_face_asset_v1` export 処理変更
 - Layer System

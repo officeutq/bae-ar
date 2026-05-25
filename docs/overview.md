@@ -60,7 +60,7 @@ Engine Runtime では、IdealFace の `idealLandmarks3D` 478点を現在顔の `
 
 `correctionProfile` は landmark ごとの `strength` と fallback / clamp 設定を持ちますが、dx / dy は保存しません。dx / dy は current landmarks、projected ideal `imageLandmarks`、顔姿勢、表情によって毎フレーム変わるため、Engine Runtime が毎フレーム計算します。
 
-詳細仕様は [correctionProfile v1](correction-profile-v1.md) を参照してください。TypeScript 型、validator、Authoring Tool 編集 UI、CorrectionPlan、Shape Warp はまだ実装しません。
+詳細仕様は [correctionProfile v1](correction-profile-v1.md) を参照してください。Engine 側 foundation、Studio debug summary、CorrectionPlan v1 debug foundation、Studio 向け Shape Warp v1 debug prototype は実装済みです。Authoring Tool 編集 UI と Production Shape Warp はまだ実装しません。
 
 ## IdealFace Projection の座標系方針
 
@@ -372,3 +372,11 @@ Shape Processing
 ## IdealFace Authoring Tool Current Generation Path
 
 Step 2-G v1 five-pose candidate generation has been removed from the current code. The active 3D candidate generation path is Step 2-I-C `pose_aware_weighted_z_v1`, followed by Step 2-H `currentCandidate` point cloud preview. The old five-pose path is available from Git history when needed. Future confidence debug, manual adjustment, save, and export work should be added to the Step 2-I active workflow.
+
+## Shape Warp production direction
+
+現在の Shape Warp v1 debug prototype は、CorrectionPlan の補正ベクトルを Studio の Processed preview に接続して観察するための CPU radial warp debug です。本番品質の Shape Warp ではありません。
+
+本番候補は WebGL mesh warp として整理します。current image-normalized landmarks を source vertices、CorrectionPlan `target` を target vertices、source video frame / source canvas を texture として扱い、MediaPipe face mesh topology の triangle mesh warp を検討します。
+
+詳細な段階分け、座標系方針、未決定事項は [Shape Warp production direction](shape-warp-production-direction.md) を参照してください。最初の WebGL mesh warp prototype は Studio processed preview 限定とし、Engine Runtime への本格統合、temporal smoothing、mask / boundary、glasses / hair、performance 対応は後段で扱います。
