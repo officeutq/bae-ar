@@ -221,8 +221,9 @@ Engine Runtime で current face と比較するため、IdealFace は `idealLand
 
 - IdealFace Authoring Tool は Step 2-I-C / Step 2-H まで実装済み
 - `idealLandmarks3D` 478点 Projection と current-vs-projected ideal difference debug は実装済み
-- `correctionProfile` v1 は仕様のみ
-- CorrectionPlan / Shape Warp は未実装
+- `correctionProfile` v1 foundation と CorrectionPlan v1 debug foundation は実装済み
+- Shape Warp v1 debug prototype は Studio processed preview 限定で実装済み
+- Production Shape Warp は未実装
 
 IdealFace Projection v1 の責務:
 
@@ -233,7 +234,7 @@ IdealFace Projection v1 の責務:
 
 current-vs-projected ideal 478点 difference debug v1 は、MediaPipe current image-normalized landmarks と projected ideal `imageLandmarks` の `deltaX` / `deltaY` / `distance` を計算します。平均差分、最大差分 index、top differences、overlay 上の difference line は debug 用であり、CorrectionPlan ではありません。
 
-現在は Perspective camera、face surface、mesh、renderer、CorrectionPlan、Shape Warp は未実装です。将来の完全版でも、Projection 後の ideal 2D landmarks はすでに現在姿勢を反映します。
+現在は Perspective camera、face surface、production mesh renderer、Production Shape Warp は未実装です。CorrectionPlan v1 debug foundation と Studio 向け Shape Warp v1 debug prototype は実装済みですが、本番 renderer ではありません。将来の完全版でも、Projection 後の ideal 2D landmarks はすでに現在姿勢を反映します。
 
 ## correctionProfile v1
 
@@ -241,7 +242,7 @@ current-vs-projected ideal 478点 difference debug v1 は、MediaPipe current im
 
 `correctionProfile` は per-landmark `strength`、`defaultStrength`、`maxCorrectionDistance` を持ちます。dx / dy は現在顔の姿勢、位置、表情、projection 結果によって毎フレーム変わるため JSON には保存せず、Engine Runtime が current landmarks と projected ideal `imageLandmarks` から計算します。
 
-詳細仕様、fallback、validation 方針、Runtime / Authoring / Studio の責務分離は [correctionProfile v1](correction-profile-v1.md) に定義します。TypeScript 型、validator、Authoring Tool 編集 UI、CorrectionPlan、Shape Warp は未実装です。
+詳細仕様、fallback、validation 方針、Runtime / Authoring / Studio の責務分離は [correctionProfile v1](correction-profile-v1.md) に定義します。Authoring Tool 編集 UI と Production Shape Warp は未実装です。
 
 ### IdealFace Projection の座標系方針
 
@@ -466,3 +467,28 @@ projected ideal 478 landmarks
 ## IdealFace Authoring Tool Current Generation Path
 
 Step 2-G v1 five-pose candidate generation has been removed from the current code. The active 3D candidate generation path is Step 2-I-C `pose_aware_weighted_z_v1`, and the JSON preview remains centered on `activeSummary`, `poseAware`, `currentCandidate`, `reference`, and `debug`. Runtime and Beauty Studio do not include authoring generation logic.
+
+## Shape Warp production direction
+
+Shape Warp v1 debug prototype は、CorrectionPlan の補正ベクトルを Studio processed preview に仮反映する CPU radial warp debug です。これは補正ベクトルと画像変形の接続を観察するための prototype であり、本番品質の warp 方式ではありません。
+
+本番候補は WebGL mesh warp とします。MediaPipe face mesh topology の triangle mesh を使い、current image-normalized landmarks を source vertices、CorrectionPlan `target` を target vertices、source video frame / source canvas を texture として扱う方向で検討します。
+
+```text
+source vertices:
+  current image-normalized landmarks
+
+target vertices:
+  CorrectionPlan target
+  current + correctionDelta
+
+texture:
+  source video frame / source canvas
+
+triangles:
+  MediaPipe face mesh topology
+```
+
+same-unit coordinate は IdealFace Projection 内部の rotation / uniform alignment 用です。WebGL mesh warp に same-unit landmarks を直接渡しません。WebGL へ渡す前に、image-normalized の source / target vertices を canvas / texture / viewport に合わせて pixel coordinate または clip coordinate へ変換します。
+
+詳細は [Shape Warp production direction](shape-warp-production-direction.md) に整理します。Studio WebGL mesh warp prototype、Runtime renderer integration、temporal smoothing、mask / boundary、glasses / hair、performance 対応は後段で扱います。

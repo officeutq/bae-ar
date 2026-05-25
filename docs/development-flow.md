@@ -77,7 +77,7 @@ same-unit の projected ideal landmarks を、そのまま `x * canvasWidth` / `
 
 current 478 landmarks は MediaPipe 由来の image-normalized 座標です。projected ideal 478 landmarks は、IdealFace same-unit landmarks を `FacePose` へ投影し、alignment 後に image-normalized 座標へ変換したものです。差分は `deltaX = projectedIdealImageX - currentX`、`deltaY = projectedIdealImageY - currentY` として計算します。
 
-現時点では、478点の current-vs-ideal difference debug は実装済みです。`CorrectionPlan`、Shape Warp は未実装です。
+現時点では、478点の current-vs-ideal difference debug、`correctionProfile` v1 foundation、CorrectionPlan v1 debug foundation、Studio 向け Shape Warp v1 debug prototype は実装済みです。Production Shape Warp は未実装です。
 
 `correctionProfile` v1 は、将来 `ideal_face_asset_v1` の optional top-level field として追加する補正設定です。landmark ごとの `strength` を持ちますが、dx / dy は JSON に保存しません。dx / dy は current landmarks と projected ideal `imageLandmarks` から Engine が毎フレーム計算します。詳細は [correctionProfile v1](correction-profile-v1.md) を参照してください。
 
@@ -303,3 +303,25 @@ PR 本文には、変更内容と確認結果を記載します。
 ## IdealFace Authoring Tool Cleanup Status
 
 The old Step 2-G v1 five-pose generation helper path has been removed. New IdealFace Authoring Tool feature work should target Step 2-I-A/B/C: frame selection, pose-aware inference dataset, and `pose_aware_weighted_z_v1` candidate generation. Legacy/debug paths should not receive new feature work.
+
+## Shape Warp production direction flow
+
+Shape Warp v1 debug prototype は、CorrectionPlan の補正ベクトルを画像へ接続するための Studio processed preview 限定 prototype として扱います。本番候補は WebGL mesh warp です。
+
+今後の開発は次の段階で進めます。
+
+```text
+Step A: docs / direction
+  CPU radial warp debug の位置づけと WebGL mesh warp 本命候補を整理する
+
+Step B: Studio WebGL mesh warp prototype
+  Studio processed preview 限定で current landmarks / CorrectionPlan target / texture / topology を接続する
+
+Step C: Runtime renderer integration
+  Engine Runtime renderer として lifecycle / disposal / fallback / performance を整理する
+
+Step D: Quality improvements
+  temporal smoothing / mask / boundary / glasses / hair / seam / stability を扱う
+```
+
+詳細は [Shape Warp production direction](shape-warp-production-direction.md) を参照してください。WebGL 実装、mesh warp 実装、renderer 実装、shader 実装、MediaPipe topology 実装はこの docs step では行いません。
