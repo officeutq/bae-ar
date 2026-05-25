@@ -19,6 +19,7 @@ import type {
   IdealFace,
   IdealLandmarksDifferenceDebug,
   IdealLandmarks3DProjectionResult,
+  LandmarkGroupsDebugSummary,
 } from "@bae-ar/engine"
 import type { CameraServiceState } from "./services/CameraService"
 import { CameraService } from "./services/CameraService"
@@ -474,6 +475,38 @@ faceHeight: ${formatNullableNumber(geometry?.faceHeight)}
 eyeDistance: ${formatNullableNumber(geometry?.eyeDistance)}`
   }
 
+  function formatLandmarkGroupsSummary(
+    summary: LandmarkGroupsDebugSummary,
+  ): string {
+    const groups =
+      summary.groups.length === 0
+        ? "  なし"
+        : summary.groups
+            .map(
+              (group) =>
+                `  ${group.id}: count ${group.indexCount} / purpose ${group.purpose ?? "なし"}`,
+            )
+            .join("\n")
+
+    return `landmarkGroups:
+  status: ${summary.status}
+  source: ${summary.source ?? "none"}
+  schemaVersion: ${summary.schemaVersion ?? "none"}
+  topology: ${summary.topology ?? "none"}
+  group count: ${summary.groupCount}
+groups:
+${groups}`
+  }
+
+  function formatExpressionGroupScale(
+    correctionPlan: CorrectionPlanDebug,
+    groupId: string,
+  ): string {
+    const groupScale = correctionPlan.expressionAttenuation.groupScales[groupId]
+
+    return groupScale ? formatNumber(groupScale.smoothedScale) : "なし"
+  }
+
   function formatIdealFacePreview(
     idealFace: IdealFace,
     projection: IdealLandmarks3DProjectionResult,
@@ -504,6 +537,7 @@ correctionProfile:
   defaultStrength: ${formatNumber(correctionProfile.defaultStrength)}
   maxCorrectionDistance: ${formatNumber(correctionProfile.maxCorrectionDistance)}
   landmarkStrength count: ${correctionProfile.landmarkStrengths.length}
+${formatLandmarkGroupsSummary(correctionPlan.landmarkGroups)}
 expressionAttenuation: ${correctionPlan.expressionAttenuation.status} / ${correctionPlan.expressionAttenuation.source}
 CorrectionPlan: ${correctionPlan.status}
 Shape Warp v1 debug: ${shapeWarpDebugSummary.status}
@@ -822,6 +856,7 @@ clamped: ${String(vector.clamped)}`,
 status: ${correctionPlan.status}
 reason: ${correctionPlan.reason ?? "なし"}
 source correctionProfile: ${correctionPlan.sourceCorrectionProfile}
+${formatLandmarkGroupsSummary(correctionPlan.landmarkGroups)}
 point count: ${correctionPlan.pointCount}
 default strength: ${formatNumber(correctionPlan.config.defaultStrength)}
 max correction distance: ${formatNumber(correctionPlan.config.maxCorrectionDistance)}
@@ -2508,7 +2543,8 @@ Aspect debug: asset ${formatNullableNumber(idealLandmarks3DProjection.debug?.asp
 Coordinate conversion: ${idealLandmarks3DProjection.debug?.coordinate?.conversionMode ?? "なし"} / videoAspect ${formatNullableNumber(idealLandmarks3DProjection.debug?.coordinate?.videoAspectRatio)} / fallback ${idealLandmarks3DProjection.debug?.coordinate ? String(idealLandmarks3DProjection.debug.coordinate.fallbackUsed) : "なし"}
 478点差分: ${idealLandmarksDifference.status} / matched ${idealLandmarksDifference.matchedLandmarkCount} / 平均 ${formatNullableNumber(idealLandmarksDifference.averageDistance)} / 最大 ${formatNullableNumber(idealLandmarksDifference.maxDistance)} / 最大index ${idealLandmarksDifference.maxDistanceLandmarkIndex ?? "なし"}
 correctionProfile: ${correctionProfileSource} / ${correctionProfile.schemaVersion} / ${correctionProfile.mode} / default ${formatNumber(correctionProfile.defaultStrength)} / maxDistance ${formatNumber(correctionProfile.maxCorrectionDistance)} / landmarkStrengths ${correctionProfile.landmarkStrengths.length}
-Expression attenuation: ${correctionPlan.expressionAttenuation.status} / ${correctionPlan.expressionAttenuation.source} / mouth ${formatNumber(correctionPlan.expressionAttenuation.groupScales.mouth.smoothedScale)} / left_eye ${formatNumber(correctionPlan.expressionAttenuation.groupScales.left_eye.smoothedScale)} / right_eye ${formatNumber(correctionPlan.expressionAttenuation.groupScales.right_eye.smoothedScale)} / face_boundary ${formatNumber(correctionPlan.expressionAttenuation.groupScales.face_boundary.smoothedScale)}
+landmarkGroups: ${correctionPlan.landmarkGroups.status} / ${correctionPlan.landmarkGroups.source ?? "none"} / groups ${correctionPlan.landmarkGroups.groupCount}
+Expression attenuation: ${correctionPlan.expressionAttenuation.status} / ${correctionPlan.expressionAttenuation.source} / mouth ${formatExpressionGroupScale(correctionPlan, "mouth")} / left_eye ${formatExpressionGroupScale(correctionPlan, "left_eye")} / right_eye ${formatExpressionGroupScale(correctionPlan, "right_eye")} / face_boundary ${formatExpressionGroupScale(correctionPlan, "face_boundary")}
 CorrectionPlan: ${correctionPlan.status} / points ${correctionPlan.pointCount} / avgCorrection ${formatNullableNumber(correctionPlan.summary.averageCorrectionDistance)} / maxCorrection ${formatNullableNumber(correctionPlan.summary.maxCorrectionDistance)} / clamped ${correctionPlan.summary.clampedCount} / avgBaseStrength ${formatNullableNumber(correctionPlan.summary.averageBaseStrength)} / avgFinalStrength ${formatNullableNumber(correctionPlan.summary.averageFinalStrength)} / minExpressionScale ${formatNullableNumber(correctionPlan.summary.minExpressionScale)}
 Shape Warp v1 debug: ${latestShapeWarpDebugSummary.status} / mode ${latestShapeWarpDebugSummary.mode} / preset ${latestShapeWarpDebugSummary.preset} / enabled ${String(latestShapeWarpDebugSummary.enabled)} / candidates ${latestShapeWarpDebugSummary.candidateVectorCount} / used ${latestShapeWarpDebugSummary.usedVectorCount} / skipped ${latestShapeWarpDebugSummary.skippedByDistanceCount} / meshStrength ${formatNumber(latestShapeWarpDebugSummary.meshWarpStrength)} / textureFiltering ${latestShapeWarpDebugSummary.textureFiltering} / wireframe ${String(latestShapeWarpDebugSummary.showWireframe)} / meshVertices ${latestShapeWarpDebugSummary.usedMeshVertexCount ?? "なし"} / triangles ${latestShapeWarpDebugSummary.triangleCount ?? "なし"} / webgl ${latestShapeWarpDebugSummary.webgl ?? "なし"} / radius ${formatNumber(latestShapeWarpDebugSummary.radiusPx)} / strength ${formatNumber(latestShapeWarpDebugSummary.globalWarpStrength)} / minDistance ${formatNumber(latestShapeWarpDebugSummary.minCorrectionDistance)} / sampling ${latestShapeWarpDebugSummary.sampling} / render ${formatNullableNumber(latestShapeWarpDebugSummary.renderTimeMs)} ms / avg ${formatNullableNumber(latestShapeWarpDebugSummary.averageRenderTimeMs)} ms
 Production Shape Warp: not_implemented

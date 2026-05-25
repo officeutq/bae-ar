@@ -4,9 +4,13 @@ import type {
   IdealFaceLandmark3D,
 } from "./IdealFace"
 import {
-  EXPRESSION_LANDMARK_GROUP_IDS,
   type ExpressionAttenuationProfile,
 } from "./ExpressionAttenuation"
+import {
+  DEFAULT_LANDMARK_GROUP_IDS,
+  cloneLandmarkGroups,
+  type LandmarkGroups,
+} from "./LandmarkGroups"
 
 export type IdealFaceAssetSchemaVersion = "ideal_face_asset_v1"
 
@@ -19,6 +23,8 @@ export type IdealFaceAssetCoordinateSpace = "bae_ar_ideal_landmarks3d_v1"
 export type IdealFaceAssetLandmark3D = IdealFaceLandmark3D
 
 export type IdealFaceAssetCorrectionProfile = IdealFaceCorrectionProfile
+
+export type IdealFaceAssetLandmarkGroups = LandmarkGroups
 
 export interface IdealFaceAssetV1 {
   schemaVersion: IdealFaceAssetSchemaVersion
@@ -35,6 +41,7 @@ export interface IdealFaceAssetV1 {
     coordinateSpace: IdealFaceAssetCoordinateSpace
     idealLandmarks3D: IdealFaceAssetLandmark3D[]
   }
+  landmarkGroups?: IdealFaceAssetLandmarkGroups
   correctionProfile?: IdealFaceAssetCorrectionProfile
   metadata?: Record<string, unknown>
 }
@@ -116,7 +123,12 @@ export function validateIdealFaceAssetV1(
     errors.push("metadata must be an object when provided")
   }
 
-  validateCorrectionProfile(input.correctionProfile, errors)
+  validateLandmarkGroups(input.landmarkGroups, errors)
+  validateCorrectionProfile(
+    input.correctionProfile,
+    errors,
+    getAvailableLandmarkGroupIdsForValidation(input.landmarkGroups),
+  )
 
   if (errors.length > 0) {
     return {
@@ -168,6 +180,7 @@ export function idealFaceAssetV1ToIdealFace(
         ...landmark,
       })),
       correctionProfile: cloneCorrectionProfile(asset.correctionProfile),
+      landmarkGroups: cloneLandmarkGroups(asset.landmarkGroups),
     },
     landmarkTopology: {
       mediapipeLandmarkCount: IDEAL_FACE_ASSET_LANDMARK_COUNT,
@@ -218,7 +231,11 @@ function cloneExpressionAttenuationProfile(
   }
 }
 
-function validateCorrectionProfile(input: unknown, errors: string[]): void {
+function validateCorrectionProfile(
+  input: unknown,
+  errors: string[],
+  availableLandmarkGroupIds: Set<string>,
+): void {
   if (input === undefined) {
     return
   }
@@ -261,12 +278,17 @@ function validateCorrectionProfile(input: unknown, errors: string[]): void {
   }
 
   validateLandmarkStrengths(input.landmarkStrengths, errors)
-  validateExpressionAttenuation(input.expressionAttenuation, errors)
+  validateExpressionAttenuation(
+    input.expressionAttenuation,
+    errors,
+    availableLandmarkGroupIds,
+  )
 }
 
 function validateExpressionAttenuation(
   input: unknown,
   errors: string[],
+  availableLandmarkGroupIds: Set<string>,
 ): void {
   if (input === undefined) {
     return
@@ -327,6 +349,7 @@ function validateExpressionAttenuation(
       rule.affectedLandmarkGroups,
       `${rulePath}.affectedLandmarkGroups`,
       errors,
+      availableLandmarkGroupIds,
     )
     validateNumberTupleRange(rule.inputRange, `${rulePath}.inputRange`, errors, {
       requireAscending: true,
@@ -348,6 +371,7 @@ function validateAffectedLandmarkGroups(
   input: unknown,
   path: string,
   errors: string[],
+  availableLandmarkGroupIds: Set<string>,
 ): void {
   if (!Array.isArray(input)) {
     errors.push(`${path} must be an array`)
@@ -355,16 +379,136 @@ function validateAffectedLandmarkGroups(
   }
 
   input.forEach((groupId, groupIndex) => {
-    if (
-      !(EXPRESSION_LANDMARK_GROUP_IDS as readonly unknown[]).includes(groupId)
-    ) {
+    if (typeof groupId !== "string") {
+      errors.push(`${path}[${groupIndex}] must be a string`)
+      return
+    }
+
+    if (!availableLandmarkGroupIds.has(groupId)) {
       errors.push(
-        `${path}[${groupIndex}] must be one of ${EXPRESSION_LANDMARK_GROUP_IDS.join(
+        `${path}[${groupIndex}] must reference an existing landmark group (${[
+          ...availableLandmarkGroupIds,
+        ].join(
           ", ",
-        )}`,
+        )}), got ${groupId}`,
       )
     }
   })
+}
+
+function validateLandmarkGroups(input: unknown, errors: string[]): void {
+  if (input === undefined) {
+    return
+  }
+
+  const path = "landmarkGroups"
+
+  if (!isRecord(input) || Array.isArray(input)) {
+    errors.push(`${path} must be an object when provided`)
+    return
+  }
+
+  validateStringLiteral(
+    input.schemaVersion,
+    `${path}.schemaVersion`,
+    "landmark_groups_v1",
+    errors,
+  )
+  validateStringLiteral(
+    input.topology,
+    `${path}.topology`,
+    "mediapipe_face_landmarker_478",
+    errors,
+  )
+
+  if (!Array.isArray(input.groups)) {
+    errors.push(`${path}.groups must be an array`)
+    return
+  }
+
+  const seenGroupIds = new Set<string>()
+
+  input.groups.forEach((group, groupIndex) => {
+    const groupPath = `${path}.groups[${groupIndex}]`
+
+    if (!isRecord(group)) {
+      errors.push(`${groupPath} must be an object`)
+      return
+    }
+
+    validateNonEmptyString(group.id, `${groupPath}.id`, errors)
+
+    if (typeof group.id === "string" && group.id.trim().length > 0) {
+      if (seenGroupIds.has(group.id)) {
+        errors.push(`${groupPath}.id duplicates group id ${group.id}`)
+      } else {
+        seenGroupIds.add(group.id)
+      }
+    }
+
+    validateString(group.label, `${groupPath}.label`, errors)
+
+    if (group.purpose !== undefined) {
+      validateString(group.purpose, `${groupPath}.purpose`, errors)
+    }
+
+    if (!Array.isArray(group.indices)) {
+      errors.push(`${groupPath}.indices must be an array`)
+      return
+    }
+
+    const seenIndices = new Set<number>()
+
+    group.indices.forEach((index, indexArrayIndex) => {
+      const indexPath = `${groupPath}.indices[${indexArrayIndex}]`
+
+      validateFiniteNumber(index, indexPath, errors)
+
+      if (typeof index !== "number" || !Number.isFinite(index)) {
+        return
+      }
+
+      if (!Number.isInteger(index)) {
+        errors.push(`${indexPath} must be an integer`)
+        return
+      }
+
+      if (index < 0 || index >= IDEAL_FACE_ASSET_LANDMARK_COUNT) {
+        errors.push(
+          `${indexPath} must be between 0 and ${
+            IDEAL_FACE_ASSET_LANDMARK_COUNT - 1
+          }, got ${index}`,
+        )
+        return
+      }
+
+      if (seenIndices.has(index)) {
+        errors.push(`${indexPath} duplicates index ${index} in group ${group.id}`)
+      } else {
+        seenIndices.add(index)
+      }
+    })
+  })
+}
+
+function getAvailableLandmarkGroupIdsForValidation(input: unknown): Set<string> {
+  if (input === undefined) {
+    return new Set(DEFAULT_LANDMARK_GROUP_IDS)
+  }
+
+  if (!isRecord(input) || !Array.isArray(input.groups)) {
+    return new Set()
+  }
+
+  return new Set(
+    input.groups
+      .filter((group): group is Record<string, unknown> => isRecord(group))
+      .map((group) => group.id)
+      .filter(
+        (groupId): groupId is string =>
+          typeof groupId === "string" && groupId.trim().length > 0,
+      ),
+  )
 }
 
 function validateNumberTupleRange(

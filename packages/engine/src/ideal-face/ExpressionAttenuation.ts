@@ -1,12 +1,14 @@
 import type { FaceBlendshape } from "../face/FaceFrame"
+import {
+  DEFAULT_LANDMARK_GROUPS_V1,
+  DEFAULT_LANDMARK_GROUP_IDS,
+  getLandmarkGroupsForIndex,
+  type LandmarkGroups,
+} from "./LandmarkGroups"
 
 export type ExpressionAttenuationSchemaVersion = "expression_attenuation_v1"
 
-export type ExpressionLandmarkGroupId =
-  | "mouth"
-  | "left_eye"
-  | "right_eye"
-  | "face_boundary"
+export type ExpressionLandmarkGroupId = string
 
 export interface ExpressionAttenuationRule {
   id: string
@@ -66,37 +68,16 @@ export interface ExpressionAttenuationState {
   groupScales: Record<ExpressionLandmarkGroupId, number>
 }
 
-export const EXPRESSION_LANDMARK_GROUP_IDS = [
-  "mouth",
-  "left_eye",
-  "right_eye",
-  "face_boundary",
-] as const satisfies readonly ExpressionLandmarkGroupId[]
+export const EXPRESSION_LANDMARK_GROUP_IDS =
+  DEFAULT_LANDMARK_GROUP_IDS as readonly ExpressionLandmarkGroupId[]
 
 // Initial v1 groups are safety/debug groups, not complete semantic segmentation.
 export const EXPRESSION_LANDMARK_GROUPS: Record<
   ExpressionLandmarkGroupId,
   readonly number[]
-> = {
-  mouth: [
-    0, 13, 14, 17, 37, 39, 40, 61, 78, 80, 81, 82, 84, 87, 88, 91, 95, 146,
-    178, 181, 185, 191, 267, 269, 270, 291, 308, 310, 311, 312, 314, 317, 318,
-    321, 324, 375, 402, 405, 409, 415,
-  ],
-  left_eye: [
-    7, 33, 133, 144, 145, 153, 154, 155, 157, 158, 159, 160, 161, 163, 173,
-    246,
-  ],
-  right_eye: [
-    249, 263, 362, 373, 374, 380, 381, 382, 384, 385, 386, 387, 388, 390,
-    398, 466,
-  ],
-  face_boundary: [
-    10, 21, 54, 58, 67, 93, 103, 109, 127, 132, 136, 148, 149, 150, 152, 162,
-    172, 176, 234, 251, 284, 288, 297, 323, 332, 338, 356, 361, 365, 377, 378,
-    379, 389, 397, 400, 454,
-  ],
-}
+> = Object.fromEntries(
+  DEFAULT_LANDMARK_GROUPS_V1.groups.map((group) => [group.id, group.indices]),
+)
 
 export const DEFAULT_EXPRESSION_ATTENUATION_V1: ExpressionAttenuationProfile = {
   schemaVersion: "expression_attenuation_v1",
@@ -146,7 +127,7 @@ export const DEFAULT_EXPRESSION_ATTENUATION_V1: ExpressionAttenuationProfile = {
 export function createExpressionAttenuationState(): ExpressionAttenuationState {
   return {
     previousTimestamp: null,
-    groupScales: createDefaultGroupScaleRecord(1),
+    groupScales: {},
   }
 }
 
@@ -154,20 +135,20 @@ export function resetExpressionAttenuationState(
   state: ExpressionAttenuationState,
 ): void {
   state.previousTimestamp = null
-  state.groupScales = createDefaultGroupScaleRecord(1)
+  state.groupScales = {}
 }
 
 export function getExpressionLandmarkGroupsForIndex(
   index: number,
+  landmarkGroups: LandmarkGroups = DEFAULT_LANDMARK_GROUPS_V1,
 ): ExpressionLandmarkGroupId[] {
-  return EXPRESSION_LANDMARK_GROUP_IDS.filter((groupId) =>
-    EXPRESSION_LANDMARK_GROUPS[groupId].includes(index),
-  )
+  return getLandmarkGroupsForIndex(index, landmarkGroups)
 }
 
 export function calculateExpressionAttenuationDebug(input: {
   profile: ExpressionAttenuationProfile | undefined
   source: ExpressionAttenuationSource
+  landmarkGroups: LandmarkGroups
   blendshapes: FaceBlendshape[] | undefined
   timestamp: number | undefined
   state: ExpressionAttenuationState | undefined
@@ -183,8 +164,8 @@ export function calculateExpressionAttenuationDebug(input: {
         enabled: false,
         halfLifeMs: null,
       },
-      targetScales: createDefaultGroupScaleRecord(1),
-      smoothedScales: createDefaultGroupScaleRecord(1),
+      targetScales: createDefaultGroupScaleRecord(1, input.landmarkGroups),
+      smoothedScales: createDefaultGroupScaleRecord(1, input.landmarkGroups),
       activeRules: [],
     })
   }
@@ -200,14 +181,26 @@ export function calculateExpressionAttenuationDebug(input: {
         enabled: input.profile.smoothing.enabled,
         halfLifeMs: input.profile.smoothing.halfLifeMs,
       },
-      targetScales: createDefaultGroupScaleRecord(1),
-      smoothedScales: createDefaultGroupScaleRecord(1),
+      targetScales: createDefaultGroupScaleRecord(
+        1,
+        input.landmarkGroups,
+        input.profile,
+      ),
+      smoothedScales: createDefaultGroupScaleRecord(
+        1,
+        input.landmarkGroups,
+        input.profile,
+      ),
       activeRules: [],
     })
   }
 
   const blendshapeScores = createBlendshapeScoreMap(input.blendshapes)
-  const targetScales = createDefaultGroupScaleRecord(1)
+  const targetScales = createDefaultGroupScaleRecord(
+    1,
+    input.landmarkGroups,
+    input.profile,
+  )
   const activeRules: ExpressionAttenuationActiveRuleDebug[] = []
 
   input.profile.rules.forEach((rule) => {
@@ -224,7 +217,7 @@ export function calculateExpressionAttenuationDebug(input: {
     })
 
     rule.affectedLandmarkGroups.forEach((groupId) => {
-      targetScales[groupId] = Math.min(targetScales[groupId], targetScale)
+      targetScales[groupId] = Math.min(targetScales[groupId] ?? 1, targetScale)
     })
   })
 
@@ -251,6 +244,7 @@ export function calculateExpressionAttenuationDebug(input: {
 export function createUnavailableExpressionAttenuationDebug(input: {
   profile: ExpressionAttenuationProfile | undefined
   source: ExpressionAttenuationSource
+  landmarkGroups: LandmarkGroups
   reason: string
   state: ExpressionAttenuationState | undefined
 }): ExpressionAttenuationDebug {
@@ -264,8 +258,16 @@ export function createUnavailableExpressionAttenuationDebug(input: {
       enabled: input.profile?.smoothing.enabled ?? false,
       halfLifeMs: input.profile?.smoothing.halfLifeMs ?? null,
     },
-    targetScales: createDefaultGroupScaleRecord(1),
-    smoothedScales: createDefaultGroupScaleRecord(1),
+    targetScales: createDefaultGroupScaleRecord(
+      1,
+      input.landmarkGroups,
+      input.profile,
+    ),
+    smoothedScales: createDefaultGroupScaleRecord(
+      1,
+      input.landmarkGroups,
+      input.profile,
+    ),
     activeRules: [],
   })
 }
@@ -280,7 +282,8 @@ export function getExpressionStrengthScaleForGroups(
 
   return Math.min(
     ...groups.map(
-      (groupId) => expressionAttenuation.groupScales[groupId].smoothedScale,
+      (groupId) =>
+        expressionAttenuation.groupScales[groupId]?.smoothedScale ?? 1,
     ),
   )
 }
@@ -328,7 +331,7 @@ function smoothGroupScales(input: {
       ? 0
       : 1 - Math.exp(-deltaTimeMs / input.smoothing.halfLifeMs)
 
-  EXPRESSION_LANDMARK_GROUP_IDS.forEach((groupId) => {
+  Object.keys(input.targetScales).forEach((groupId) => {
     const previousScale = input.state?.groupScales[groupId] ?? 1
     const targetScale = input.targetScales[groupId]
 
@@ -354,37 +357,24 @@ function createExpressionAttenuationDebug(input: {
   smoothedScales: Record<ExpressionLandmarkGroupId, number>
   activeRules: ExpressionAttenuationActiveRuleDebug[]
 }): ExpressionAttenuationDebug {
+  const groupScales = Object.fromEntries(
+    Object.keys(input.smoothedScales).map((groupId) => [
+      groupId,
+      createGroupScaleDebug(groupId, input.targetScales, input.smoothedScales),
+    ]),
+  )
+  const smoothedScaleValues = Object.values(input.smoothedScales)
+
   return {
     status: input.status,
     reason: input.reason,
     source: input.source,
     smoothing: input.smoothing,
-    groupScales: {
-      mouth: createGroupScaleDebug("mouth", input.targetScales, input.smoothedScales),
-      left_eye: createGroupScaleDebug(
-        "left_eye",
-        input.targetScales,
-        input.smoothedScales,
-      ),
-      right_eye: createGroupScaleDebug(
-        "right_eye",
-        input.targetScales,
-        input.smoothedScales,
-      ),
-      face_boundary: createGroupScaleDebug(
-        "face_boundary",
-        input.targetScales,
-        input.smoothedScales,
-      ),
-    },
+    groupScales,
     activeRules: input.activeRules,
     minExpressionScale:
-      input.status === "computed"
-        ? Math.min(
-            ...EXPRESSION_LANDMARK_GROUP_IDS.map(
-              (groupId) => input.smoothedScales[groupId],
-            ),
-          )
+      input.status === "computed" && smoothedScaleValues.length > 0
+        ? Math.min(...smoothedScaleValues)
         : null,
   }
 }
@@ -396,8 +386,8 @@ function createGroupScaleDebug(
 ): ExpressionAttenuationGroupScaleDebug {
   return {
     group,
-    targetScale: targetScales[group],
-    smoothedScale: smoothedScales[group],
+    targetScale: targetScales[group] ?? 1,
+    smoothedScale: smoothedScales[group] ?? 1,
   }
 }
 
@@ -419,13 +409,20 @@ function createBlendshapeScoreMap(
 
 function createDefaultGroupScaleRecord(
   value: number,
+  landmarkGroups: LandmarkGroups,
+  profile?: ExpressionAttenuationProfile,
 ): Record<ExpressionLandmarkGroupId, number> {
-  return {
-    mouth: value,
-    left_eye: value,
-    right_eye: value,
-    face_boundary: value,
-  }
+  const groupIds = new Set(landmarkGroups.groups.map((group) => group.id))
+
+  profile?.rules.forEach((rule) => {
+    rule.affectedLandmarkGroups.forEach((groupId) => {
+      groupIds.add(groupId)
+    })
+  })
+
+  return Object.fromEntries(
+    [...groupIds].map((groupId) => [groupId, value]),
+  )
 }
 
 function resetStateIfAvailable(
