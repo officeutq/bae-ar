@@ -29,7 +29,8 @@
 correctionProfile:
   - IdealFace asset に保存される補正設定
   - defaultStrength / landmarkStrengths / maxCorrectionDistance を持つ
-  - 今後 expressionAttenuation を optional extension として持てる
+  - optional extension として expressionAttenuation を扱える
+  - Engine foundation は実装済み
 
 expressionAttenuation:
   - MediaPipe blendshape score を入力にする
