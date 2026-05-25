@@ -1,5 +1,8 @@
 import {
   BeautyEngine,
+  MEDIAPIPE_FACE_MESH_TOPOLOGY_LANDMARK_COUNT,
+  MEDIAPIPE_FACE_MESH_TRIANGLE_COUNT,
+  MEDIAPIPE_FACE_MESH_TRIANGLES,
   MediaPipeFaceDetector,
   getCorrectionProfileOrDefault,
   getCorrectionProfileSource,
@@ -99,11 +102,17 @@ type ShapeWarpSamplingMode = "nearest" | "bilinear"
 
 type ShapeWarpDebugPreset = "off" | "weak" | "normal" | "strong" | "custom"
 
+type ShapeWarpDebugMode = "cpu_radial_debug" | "webgl_mesh_debug"
+
+type ShapeWarpWebglStatus = "available" | "unavailable"
+
+type ShapeWarpTextureFiltering = "linear" | "nearest"
+
 type ShapeWarpDebugSummary = {
   status: ShapeWarpDebugStatus
   preset: ShapeWarpDebugPreset
   enabled: boolean
-  mode: "cpu_radial_debug"
+  mode: ShapeWarpDebugMode
   source: "CorrectionPlan"
   correctionPlanStatus: CorrectionPlanDebug["status"]
   candidateVectorCount: number
@@ -113,23 +122,37 @@ type ShapeWarpDebugSummary = {
   globalWarpStrength: number
   maxVectors: number
   minCorrectionDistance: number
+  meshWarpStrength: number
+  textureFiltering: ShapeWarpTextureFiltering
+  showWireframe: boolean
   renderTimeMs: number | null
   averageRenderTimeMs: number | null
   canvasWidth: number
   canvasHeight: number
   sampling: ShapeWarpSamplingMode
   usedVectors: CorrectionVector[]
+  topology: "mediapipe_face_mesh" | null
+  topologyLandmarkCount: number | null
+  triangleCount: number | null
+  usedMeshVertexCount: number | null
+  correctionPlanPointCount: number | null
+  textureSource: "video" | "source_canvas" | null
+  webgl: ShapeWarpWebglStatus | null
+  webglError: string | null
   reason?: string
 }
 
 type ShapeWarpDebugSettings = {
   preset: ShapeWarpDebugPreset
   enabled: boolean
+  mode: ShapeWarpDebugMode
   radiusPx: number
   globalWarpStrength: number
   maxVectors: number
   minCorrectionDistance: number
   sampling: ShapeWarpSamplingMode
+  meshWarpStrength: number
+  textureFiltering: ShapeWarpTextureFiltering
 }
 
 type ShapeWarpVectorSelection = {
@@ -138,9 +161,40 @@ type ShapeWarpVectorSelection = {
   skippedByDistanceCount: number
 }
 
+type WebglMeshWarpRenderResult =
+  | {
+      status: "computed"
+      renderTimeMs: number
+      usedVectors: CorrectionVector[]
+      usedMeshVertexCount: number
+      webglStatus: "available"
+      webglError: null
+    }
+  | {
+      status: "not_available" | "passthrough"
+      reason: string
+      usedVectors: CorrectionVector[]
+      usedMeshVertexCount: number
+      webglStatus: ShapeWarpWebglStatus
+      webglError: string | null
+    }
+
+type WebglMeshWarpRenderer = {
+  canvas: HTMLCanvasElement
+  gl: WebGLRenderingContext
+  program: WebGLProgram
+  positionBuffer: WebGLBuffer
+  texCoordBuffer: WebGLBuffer
+  indexBuffer: WebGLBuffer
+  texture: WebGLTexture
+  positionLocation: number
+  texCoordLocation: number
+  textureLocation: WebGLUniformLocation
+}
+
 type ShapeWarpPresetConfig = Omit<
   ShapeWarpDebugSettings,
-  "preset"
+  "preset" | "mode"
 >
 
 const SHAPE_WARP_NORMAL_SETTINGS: ShapeWarpPresetConfig = {
@@ -150,6 +204,8 @@ const SHAPE_WARP_NORMAL_SETTINGS: ShapeWarpPresetConfig = {
   maxVectors: 15,
   minCorrectionDistance: 0.003,
   sampling: "bilinear",
+  meshWarpStrength: 1,
+  textureFiltering: "linear",
 }
 
 const SHAPE_WARP_DEBUG_PRESETS: Record<
@@ -166,6 +222,8 @@ const SHAPE_WARP_DEBUG_PRESETS: Record<
     maxVectors: 10,
     minCorrectionDistance: 0.004,
     sampling: "bilinear",
+    meshWarpStrength: 0.5,
+    textureFiltering: "linear",
   },
   normal: SHAPE_WARP_NORMAL_SETTINGS,
   strong: {
@@ -175,6 +233,8 @@ const SHAPE_WARP_DEBUG_PRESETS: Record<
     maxVectors: 25,
     minCorrectionDistance: 0.002,
     sampling: "bilinear",
+    meshWarpStrength: 1.75,
+    textureFiltering: "linear",
   },
 }
 
@@ -185,14 +245,18 @@ async function bootstrap(): Promise<void> {
   const app = document.querySelector<HTMLDivElement>("#app")
   const overlayCanvas = document.createElement("canvas")
   const processedCanvas = document.createElement("canvas")
+  const webglMeshCanvas = document.createElement("canvas")
   const shapeWarpDebugSettings: ShapeWarpDebugSettings = {
     preset: "off",
     enabled: false,
+    mode: "cpu_radial_debug",
     radiusPx: SHAPE_WARP_NORMAL_SETTINGS.radiusPx,
     globalWarpStrength: SHAPE_WARP_NORMAL_SETTINGS.globalWarpStrength,
     maxVectors: SHAPE_WARP_NORMAL_SETTINGS.maxVectors,
     minCorrectionDistance: SHAPE_WARP_NORMAL_SETTINGS.minCorrectionDistance,
     sampling: SHAPE_WARP_NORMAL_SETTINGS.sampling,
+    meshWarpStrength: SHAPE_WARP_NORMAL_SETTINGS.meshWarpStrength,
+    textureFiltering: SHAPE_WARP_NORMAL_SETTINGS.textureFiltering,
   }
   const stateLog: string[] = []
   let lastEngineState: BeautyEngineState | undefined
@@ -203,7 +267,10 @@ async function bootstrap(): Promise<void> {
   let showIdealLandmarkDifferenceLines = false
   let showCorrectionPlanLines = false
   let showShapeWarpUsedVectors = false
+  let showWebglMeshWireframe = false
   let shapeWarpRenderTimeAverageMs: number | null = null
+  let webglMeshWarpRenderer: WebglMeshWarpRenderer | null = null
+  let webglMeshWarpRendererError: string | null = null
   let latestShapeWarpDebugSummary: ShapeWarpDebugSummary =
     createShapeWarpDebugSummary({
       status: "disabled",
@@ -274,6 +341,7 @@ async function bootstrap(): Promise<void> {
   function createShapeWarpDebugSummary(input: {
     status: ShapeWarpDebugStatus
     correctionPlanStatus: CorrectionPlanDebug["status"]
+    mode?: ShapeWarpDebugMode
     candidateVectorCount?: number
     usedVectorCount?: number
     skippedByDistanceCount?: number
@@ -281,13 +349,21 @@ async function bootstrap(): Promise<void> {
     usedVectors?: CorrectionVector[]
     canvasWidth?: number
     canvasHeight?: number
+    topology?: "mediapipe_face_mesh" | null
+    topologyLandmarkCount?: number | null
+    triangleCount?: number | null
+    usedMeshVertexCount?: number | null
+    correctionPlanPointCount?: number | null
+    textureSource?: "video" | "source_canvas" | null
+    webgl?: ShapeWarpWebglStatus | null
+    webglError?: string | null
     reason?: string
   }): ShapeWarpDebugSummary {
     return {
       status: input.status,
       preset: shapeWarpDebugSettings.preset,
       enabled: shapeWarpDebugSettings.enabled,
-      mode: "cpu_radial_debug",
+      mode: input.mode ?? shapeWarpDebugSettings.mode,
       source: "CorrectionPlan",
       correctionPlanStatus: input.correctionPlanStatus,
       candidateVectorCount: input.candidateVectorCount ?? 0,
@@ -297,12 +373,23 @@ async function bootstrap(): Promise<void> {
       globalWarpStrength: shapeWarpDebugSettings.globalWarpStrength,
       maxVectors: shapeWarpDebugSettings.maxVectors,
       minCorrectionDistance: shapeWarpDebugSettings.minCorrectionDistance,
+      meshWarpStrength: shapeWarpDebugSettings.meshWarpStrength,
+      textureFiltering: shapeWarpDebugSettings.textureFiltering,
+      showWireframe: showWebglMeshWireframe,
       renderTimeMs: input.renderTimeMs ?? null,
       averageRenderTimeMs: shapeWarpRenderTimeAverageMs,
       canvasWidth: input.canvasWidth ?? processedCanvas.width,
       canvasHeight: input.canvasHeight ?? processedCanvas.height,
       sampling: shapeWarpDebugSettings.sampling,
       usedVectors: input.usedVectors ?? [],
+      topology: input.topology ?? null,
+      topologyLandmarkCount: input.topologyLandmarkCount ?? null,
+      triangleCount: input.triangleCount ?? null,
+      usedMeshVertexCount: input.usedMeshVertexCount ?? null,
+      correctionPlanPointCount: input.correctionPlanPointCount ?? null,
+      textureSource: input.textureSource ?? null,
+      webgl: input.webgl ?? null,
+      webglError: input.webglError ?? null,
       reason: input.reason,
     }
   }
@@ -752,6 +839,25 @@ clamped: ${String(vector.clamped)}`,
             )
             .join("\n\n")
 
+    const cpuRadialSettings = `CPU radial debug settings:
+radiusPx: ${formatNumber(summary.radiusPx)}
+globalWarpStrength: ${formatNumber(summary.globalWarpStrength)}
+maxVectors: ${summary.maxVectors}
+minCorrectionDistance: ${formatNumber(summary.minCorrectionDistance)}
+sampling: ${summary.sampling}`
+    const webglMeshSettings = `WebGL mesh debug settings:
+meshWarpStrength: ${formatNumber(summary.meshWarpStrength)}
+texture filtering: ${summary.textureFiltering}
+showWireframe: ${String(summary.showWireframe)}
+topology: ${summary.topology ?? "なし"}
+topologyLandmarkCount: ${summary.topologyLandmarkCount ?? "なし"}
+triangleCount: ${summary.triangleCount ?? "なし"}
+usedMeshVertexCount: ${summary.usedMeshVertexCount ?? "なし"}
+correctionPlanPointCount: ${summary.correctionPlanPointCount ?? "なし"}
+texture source: ${summary.textureSource ?? "なし"}
+webgl: ${summary.webgl ?? "なし"}
+webgl error: ${summary.webglError ?? "none"}`
+
     return `Shape Warp v1 debug:
 status: ${summary.status}
 preset: ${summary.preset}
@@ -759,14 +865,10 @@ enabled: ${String(summary.enabled)}
 mode: ${summary.mode}
 source: ${summary.source}
 correctionPlan status: ${summary.correctionPlanStatus}
-radiusPx: ${formatNumber(summary.radiusPx)}
-globalWarpStrength: ${formatNumber(summary.globalWarpStrength)}
-maxVectors: ${summary.maxVectors}
-minCorrectionDistance: ${formatNumber(summary.minCorrectionDistance)}
 candidateVectorCount: ${summary.candidateVectorCount}
 usedVectorCount: ${summary.usedVectorCount}
 skippedByDistanceCount: ${summary.skippedByDistanceCount}
-sampling: ${summary.sampling}
+${summary.mode === "webgl_mesh_debug" ? webglMeshSettings : cpuRadialSettings}
 render time ms: ${formatNullableNumber(summary.renderTimeMs)}
 average render time ms: ${formatNullableNumber(summary.averageRenderTimeMs)}
 canvas size: ${summary.canvasWidth}x${summary.canvasHeight}
@@ -778,7 +880,7 @@ used warp vectors:
 ${usedVectorPreview}
 
 これは Studio processed preview 用の debug prototype です。
-本番品質 warp / WebGL / mesh warp / パフォーマンス最適化は未実装です。`
+本番品質 warp / Runtime renderer integration / パフォーマンス最適化は未実装です。`
   }
 
   function buildDebugText(
@@ -1000,6 +1102,39 @@ Camera:
       return
     }
 
+    if (shapeWarpDebugSettings.mode === "webgl_mesh_debug") {
+      const renderResult = renderWebglMeshWarp(video, context, correctionPlan)
+
+      if (renderResult.status === "computed") {
+        recordShapeWarpRenderTime(renderResult.renderTimeMs)
+      }
+
+      latestShapeWarpDebugSummary = createShapeWarpDebugSummary({
+        status: renderResult.status,
+        correctionPlanStatus: correctionPlan.status,
+        mode: "webgl_mesh_debug",
+        candidateVectorCount: correctionPlan.vectors.length,
+        usedVectorCount: renderResult.usedVectors.length,
+        skippedByDistanceCount: 0,
+        renderTimeMs:
+          renderResult.status === "computed" ? renderResult.renderTimeMs : null,
+        usedVectors: renderResult.usedVectors,
+        canvasWidth: processedCanvas.width,
+        canvasHeight: processedCanvas.height,
+        topology: "mediapipe_face_mesh",
+        topologyLandmarkCount: MEDIAPIPE_FACE_MESH_TOPOLOGY_LANDMARK_COUNT,
+        triangleCount: MEDIAPIPE_FACE_MESH_TRIANGLE_COUNT,
+        usedMeshVertexCount: renderResult.usedMeshVertexCount,
+        correctionPlanPointCount: correctionPlan.pointCount,
+        textureSource: "video",
+        webgl: renderResult.webglStatus,
+        webglError: renderResult.webglError,
+        reason:
+          renderResult.status === "computed" ? undefined : renderResult.reason,
+      })
+      return
+    }
+
     const vectorSelection = selectShapeWarpVectors(correctionPlan)
 
     if (vectorSelection.vectors.length === 0) {
@@ -1142,6 +1277,429 @@ Camera:
     }
 
     context.putImageData(outputImageData, 0, 0)
+  }
+
+  function renderWebglMeshWarp(
+    video: HTMLVideoElement,
+    outputContext: CanvasRenderingContext2D,
+    correctionPlan: CorrectionPlanDebug,
+  ): WebglMeshWarpRenderResult {
+    const indexedVectors = new Map<number, CorrectionVector>()
+
+    correctionPlan.vectors.forEach((vector) => {
+      indexedVectors.set(vector.index, vector)
+    })
+
+    const meshVectors: CorrectionVector[] = []
+    const targetPositions = new Float32Array(
+      MEDIAPIPE_FACE_MESH_TOPOLOGY_LANDMARK_COUNT * 2,
+    )
+    const textureCoordinates = new Float32Array(
+      MEDIAPIPE_FACE_MESH_TOPOLOGY_LANDMARK_COUNT * 2,
+    )
+
+    for (
+      let index = 0;
+      index < MEDIAPIPE_FACE_MESH_TOPOLOGY_LANDMARK_COUNT;
+      index += 1
+    ) {
+      const vector = indexedVectors.get(index)
+
+      if (!vector) {
+        return {
+          status: "not_available",
+          reason: `CorrectionVector[${index}] is missing for WebGL mesh topology`,
+          usedVectors: meshVectors,
+          usedMeshVertexCount: meshVectors.length,
+          webglStatus: "unavailable",
+          webglError: `CorrectionVector[${index}] is missing`,
+        }
+      }
+
+      meshVectors.push(vector)
+
+      const positionOffset = index * 2
+      const targetX =
+        vector.current.x +
+        (vector.target.x - vector.current.x) *
+          shapeWarpDebugSettings.meshWarpStrength
+      const targetY =
+        vector.current.y +
+        (vector.target.y - vector.current.y) *
+          shapeWarpDebugSettings.meshWarpStrength
+
+      targetPositions[positionOffset] = targetX * 2 - 1
+      targetPositions[positionOffset + 1] = 1 - targetY * 2
+      textureCoordinates[positionOffset] = vector.current.x
+      textureCoordinates[positionOffset + 1] = 1 - vector.current.y
+    }
+
+    const renderer = getWebglMeshWarpRenderer()
+
+    if (!renderer) {
+      return {
+        status: "not_available",
+        reason:
+          webglMeshWarpRendererError ??
+          "WebGL mesh warp renderer is not available",
+        usedVectors: meshVectors,
+        usedMeshVertexCount: meshVectors.length,
+        webglStatus: "unavailable",
+        webglError: webglMeshWarpRendererError,
+      }
+    }
+
+    resizeWebglMeshCanvas(renderer.canvas)
+
+    const startedAt = performance.now()
+    const renderError = drawWebglMeshWarpFrame(
+      renderer,
+      video,
+      targetPositions,
+      textureCoordinates,
+    )
+
+    if (renderError) {
+      return {
+        status: "not_available",
+        reason: renderError,
+        usedVectors: meshVectors,
+        usedMeshVertexCount: meshVectors.length,
+        webglStatus: "unavailable",
+        webglError: renderError,
+      }
+    }
+
+    outputContext.drawImage(
+      renderer.canvas,
+      0,
+      0,
+      processedCanvas.width,
+      processedCanvas.height,
+    )
+
+    if (showWebglMeshWireframe) {
+      drawWebglMeshWireframeOverlay(outputContext, meshVectors)
+    }
+
+    return {
+      status: "computed",
+      renderTimeMs: performance.now() - startedAt,
+      usedVectors: meshVectors,
+      usedMeshVertexCount: meshVectors.length,
+      webglStatus: "available",
+      webglError: null,
+    }
+  }
+
+  function drawWebglMeshWireframeOverlay(
+    context: CanvasRenderingContext2D,
+    vectors: CorrectionVector[],
+  ): void {
+    context.save()
+    context.strokeStyle = "rgba(250, 204, 21, 0.55)"
+    context.lineWidth = 0.6
+
+    for (
+      let index = 0;
+      index < MEDIAPIPE_FACE_MESH_TRIANGLES.length;
+      index += 3
+    ) {
+      const first = vectors[MEDIAPIPE_FACE_MESH_TRIANGLES[index]]
+      const second = vectors[MEDIAPIPE_FACE_MESH_TRIANGLES[index + 1]]
+      const third = vectors[MEDIAPIPE_FACE_MESH_TRIANGLES[index + 2]]
+
+      if (!first || !second || !third) {
+        continue
+      }
+
+      context.beginPath()
+      moveToWarpedTarget(context, first)
+      lineToWarpedTarget(context, second)
+      lineToWarpedTarget(context, third)
+      context.closePath()
+      context.stroke()
+    }
+
+    context.restore()
+  }
+
+  function moveToWarpedTarget(
+    context: CanvasRenderingContext2D,
+    vector: CorrectionVector,
+  ): void {
+    const point = getWebglMeshWarpTargetPoint(vector)
+
+    context.moveTo(
+      point.x * processedCanvas.width,
+      point.y * processedCanvas.height,
+    )
+  }
+
+  function lineToWarpedTarget(
+    context: CanvasRenderingContext2D,
+    vector: CorrectionVector,
+  ): void {
+    const point = getWebglMeshWarpTargetPoint(vector)
+
+    context.lineTo(
+      point.x * processedCanvas.width,
+      point.y * processedCanvas.height,
+    )
+  }
+
+  function getWebglMeshWarpTargetPoint(vector: CorrectionVector): {
+    x: number
+    y: number
+  } {
+    return {
+      x:
+        vector.current.x +
+        (vector.target.x - vector.current.x) *
+          shapeWarpDebugSettings.meshWarpStrength,
+      y:
+        vector.current.y +
+        (vector.target.y - vector.current.y) *
+          shapeWarpDebugSettings.meshWarpStrength,
+    }
+  }
+
+  function getWebglMeshWarpRenderer(): WebglMeshWarpRenderer | null {
+    if (webglMeshWarpRenderer) {
+      return webglMeshWarpRenderer
+    }
+
+    if (webglMeshWarpRendererError) {
+      return null
+    }
+
+    const gl = webglMeshCanvas.getContext("webgl", {
+      alpha: true,
+      antialias: false,
+      premultipliedAlpha: false,
+    })
+
+    if (!gl) {
+      webglMeshWarpRendererError = "WebGL context is unavailable"
+      return null
+    }
+
+    const vertexShaderSource = `
+      attribute vec2 a_position;
+      attribute vec2 a_texCoord;
+      varying vec2 v_texCoord;
+
+      void main() {
+        gl_Position = vec4(a_position, 0.0, 1.0);
+        v_texCoord = a_texCoord;
+      }
+    `
+    const fragmentShaderSource = `
+      precision mediump float;
+
+      uniform sampler2D u_texture;
+      varying vec2 v_texCoord;
+
+      void main() {
+        gl_FragColor = texture2D(u_texture, v_texCoord);
+      }
+    `
+    const vertexShader = compileWebglShader(
+      gl,
+      gl.VERTEX_SHADER,
+      vertexShaderSource,
+    )
+    const fragmentShader = compileWebglShader(
+      gl,
+      gl.FRAGMENT_SHADER,
+      fragmentShaderSource,
+    )
+
+    if (!vertexShader || !fragmentShader) {
+      webglMeshWarpRendererError =
+        webglMeshWarpRendererError ?? "WebGL shader compile failed"
+      return null
+    }
+
+    const program = gl.createProgram()
+
+    if (!program) {
+      webglMeshWarpRendererError = "WebGL program creation failed"
+      return null
+    }
+
+    gl.attachShader(program, vertexShader)
+    gl.attachShader(program, fragmentShader)
+    gl.linkProgram(program)
+
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      webglMeshWarpRendererError =
+        gl.getProgramInfoLog(program) ?? "WebGL program link failed"
+      return null
+    }
+
+    const positionBuffer = gl.createBuffer()
+    const texCoordBuffer = gl.createBuffer()
+    const indexBuffer = gl.createBuffer()
+    const texture = gl.createTexture()
+    const textureLocation = gl.getUniformLocation(program, "u_texture")
+
+    if (
+      !positionBuffer ||
+      !texCoordBuffer ||
+      !indexBuffer ||
+      !texture ||
+      !textureLocation
+    ) {
+      webglMeshWarpRendererError =
+        "WebGL buffer, texture, or uniform creation failed"
+      return null
+    }
+
+    const positionLocation = gl.getAttribLocation(program, "a_position")
+    const texCoordLocation = gl.getAttribLocation(program, "a_texCoord")
+
+    if (positionLocation < 0 || texCoordLocation < 0) {
+      webglMeshWarpRendererError = "WebGL attribute location is unavailable"
+      return null
+    }
+
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer)
+    gl.bufferData(
+      gl.ELEMENT_ARRAY_BUFFER,
+      new Uint16Array(MEDIAPIPE_FACE_MESH_TRIANGLES),
+      gl.STATIC_DRAW,
+    )
+
+    webglMeshWarpRenderer = {
+      canvas: webglMeshCanvas,
+      gl,
+      program,
+      positionBuffer,
+      texCoordBuffer,
+      indexBuffer,
+      texture,
+      positionLocation,
+      texCoordLocation,
+      textureLocation,
+    }
+
+    return webglMeshWarpRenderer
+  }
+
+  function compileWebglShader(
+    gl: WebGLRenderingContext,
+    type: number,
+    source: string,
+  ): WebGLShader | null {
+    const shader = gl.createShader(type)
+
+    if (!shader) {
+      webglMeshWarpRendererError = "WebGL shader creation failed"
+      return null
+    }
+
+    gl.shaderSource(shader, source)
+    gl.compileShader(shader)
+
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+      webglMeshWarpRendererError =
+        gl.getShaderInfoLog(shader) ?? "WebGL shader compile failed"
+      gl.deleteShader(shader)
+      return null
+    }
+
+    return shader
+  }
+
+  function resizeWebglMeshCanvas(canvas: HTMLCanvasElement): void {
+    if (
+      canvas.width !== processedCanvas.width ||
+      canvas.height !== processedCanvas.height
+    ) {
+      canvas.width = processedCanvas.width
+      canvas.height = processedCanvas.height
+    }
+  }
+
+  function drawWebglMeshWarpFrame(
+    renderer: WebglMeshWarpRenderer,
+    video: HTMLVideoElement,
+    targetPositions: Float32Array,
+    textureCoordinates: Float32Array,
+  ): string | null {
+    const { gl } = renderer
+
+    try {
+      gl.viewport(0, 0, renderer.canvas.width, renderer.canvas.height)
+      gl.clearColor(0, 0, 0, 0)
+      gl.clear(gl.COLOR_BUFFER_BIT)
+      gl.useProgram(renderer.program)
+      gl.disable(gl.BLEND)
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, renderer.positionBuffer)
+      gl.bufferData(gl.ARRAY_BUFFER, targetPositions, gl.DYNAMIC_DRAW)
+      gl.enableVertexAttribArray(renderer.positionLocation)
+      gl.vertexAttribPointer(
+        renderer.positionLocation,
+        2,
+        gl.FLOAT,
+        false,
+        0,
+        0,
+      )
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, renderer.texCoordBuffer)
+      gl.bufferData(gl.ARRAY_BUFFER, textureCoordinates, gl.DYNAMIC_DRAW)
+      gl.enableVertexAttribArray(renderer.texCoordLocation)
+      gl.vertexAttribPointer(
+        renderer.texCoordLocation,
+        2,
+        gl.FLOAT,
+        false,
+        0,
+        0,
+      )
+
+      gl.activeTexture(gl.TEXTURE0)
+      gl.bindTexture(gl.TEXTURE_2D, renderer.texture)
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+      const textureFilter =
+        shapeWarpDebugSettings.textureFiltering === "nearest"
+          ? gl.NEAREST
+          : gl.LINEAR
+
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, textureFilter)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, textureFilter)
+      gl.texImage2D(
+        gl.TEXTURE_2D,
+        0,
+        gl.RGBA,
+        gl.RGBA,
+        gl.UNSIGNED_BYTE,
+        video,
+      )
+      gl.uniform1i(renderer.textureLocation, 0)
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, renderer.indexBuffer)
+      gl.drawElements(
+        gl.TRIANGLES,
+        MEDIAPIPE_FACE_MESH_TRIANGLES.length,
+        gl.UNSIGNED_SHORT,
+        0,
+      )
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error)
+    }
+
+    const webglError = gl.getError()
+
+    if (webglError !== gl.NO_ERROR) {
+      return `WebGL error ${webglError}`
+    }
+
+    return null
   }
 
   function writeNearestSample(
@@ -1346,6 +1904,9 @@ Camera:
       context.lineWidth = 2
       context.font = "10px sans-serif"
 
+      const shouldDrawVectorIndex =
+        latestShapeWarpDebugSummary.usedVectors.length <= 80
+
       latestShapeWarpDebugSummary.usedVectors.forEach((vector) => {
         const currentX = vector.current.x * overlayCanvas.width
         const currentY = vector.current.y * overlayCanvas.height
@@ -1359,7 +1920,10 @@ Camera:
         context.moveTo(currentX, currentY)
         context.lineTo(targetX, targetY)
         context.stroke()
-        context.fillText(String(vector.index), currentX + 4, currentY - 4)
+
+        if (shouldDrawVectorIndex) {
+          context.fillText(String(vector.index), currentX + 4, currentY - 4)
+        }
       })
     }
 
@@ -1467,6 +2031,25 @@ Camera:
 
   function attachShapeWarpDebugHandlers(): void {
     document
+      .querySelectorAll<HTMLInputElement>('input[name="shape-warp-mode"]')
+      .forEach((input) => {
+        input.addEventListener("change", (event) => {
+          if (
+            !(event.currentTarget instanceof HTMLInputElement) ||
+            !event.currentTarget.checked
+          ) {
+            return
+          }
+
+          shapeWarpDebugSettings.mode = parseShapeWarpDebugMode(
+            event.currentTarget.value,
+          )
+          render()
+          appendCameraPreview()
+        })
+      })
+
+    document
       .querySelectorAll<HTMLInputElement>('input[name="shape-warp-preset"]')
       .forEach((input) => {
         input.addEventListener("change", (event) => {
@@ -1572,6 +2155,51 @@ Camera:
           appendCameraPreview()
         })
       })
+
+    document
+      .querySelector<HTMLInputElement>("#shape-warp-mesh-strength")
+      ?.addEventListener("change", (event) => {
+        markShapeWarpDebugCustom()
+        shapeWarpDebugSettings.meshWarpStrength = parseDebugNumberInput(
+          event.currentTarget,
+          shapeWarpDebugSettings.meshWarpStrength,
+          0,
+          3,
+        )
+        render()
+        appendCameraPreview()
+      })
+
+    document
+      .querySelectorAll<HTMLInputElement>(
+        'input[name="shape-warp-texture-filtering"]',
+      )
+      .forEach((input) => {
+        input.addEventListener("change", (event) => {
+          if (
+            !(event.currentTarget instanceof HTMLInputElement) ||
+            !event.currentTarget.checked
+          ) {
+            return
+          }
+
+          markShapeWarpDebugCustom()
+          shapeWarpDebugSettings.textureFiltering =
+            event.currentTarget.value === "nearest" ? "nearest" : "linear"
+          render()
+          appendCameraPreview()
+        })
+      })
+
+    document
+      .querySelector<HTMLInputElement>("#shape-warp-webgl-wireframe")
+      ?.addEventListener("change", (event) => {
+        showWebglMeshWireframe =
+          event.currentTarget instanceof HTMLInputElement &&
+          event.currentTarget.checked
+        render()
+        appendCameraPreview()
+      })
   }
 
   function applyShapeWarpDebugPreset(preset: ShapeWarpDebugPreset): void {
@@ -1597,6 +2225,10 @@ Camera:
       shapeWarpDebugSettings.minCorrectionDistance
     shapeWarpDebugSettings.sampling =
       presetConfig.sampling ?? shapeWarpDebugSettings.sampling
+    shapeWarpDebugSettings.meshWarpStrength =
+      presetConfig.meshWarpStrength ?? shapeWarpDebugSettings.meshWarpStrength
+    shapeWarpDebugSettings.textureFiltering =
+      presetConfig.textureFiltering ?? shapeWarpDebugSettings.textureFiltering
   }
 
   function markShapeWarpDebugCustom(): void {
@@ -1617,6 +2249,12 @@ Camera:
     return "custom"
   }
 
+  function parseShapeWarpDebugMode(value: string): ShapeWarpDebugMode {
+    return value === "webgl_mesh_debug"
+      ? "webgl_mesh_debug"
+      : "cpu_radial_debug"
+  }
+
   function parseDebugNumberInput(
     input: EventTarget | null,
     fallback: number,
@@ -1634,6 +2272,16 @@ Camera:
     }
 
     return Math.max(min, Math.min(max, parsedValue))
+  }
+
+  function formatProcessedPreviewLabel(): string {
+    if (!shapeWarpDebugSettings.enabled) {
+      return "original"
+    }
+
+    return shapeWarpDebugSettings.mode === "webgl_mesh_debug"
+      ? `WebGL mesh debug / ${shapeWarpDebugSettings.preset}`
+      : `CPU radial debug / ${shapeWarpDebugSettings.preset}`
   }
 
   async function importIdealFaceAssetFile(file: File): Promise<void> {
@@ -1825,7 +2473,7 @@ Coordinate conversion: ${idealLandmarks3DProjection.debug?.coordinate?.conversio
 478点差分: ${idealLandmarksDifference.status} / matched ${idealLandmarksDifference.matchedLandmarkCount} / 平均 ${formatNullableNumber(idealLandmarksDifference.averageDistance)} / 最大 ${formatNullableNumber(idealLandmarksDifference.maxDistance)} / 最大index ${idealLandmarksDifference.maxDistanceLandmarkIndex ?? "なし"}
 correctionProfile: ${correctionProfileSource} / ${correctionProfile.schemaVersion} / ${correctionProfile.mode} / default ${formatNumber(correctionProfile.defaultStrength)} / maxDistance ${formatNumber(correctionProfile.maxCorrectionDistance)} / landmarkStrengths ${correctionProfile.landmarkStrengths.length}
 CorrectionPlan: ${correctionPlan.status} / points ${correctionPlan.pointCount} / avgCorrection ${formatNullableNumber(correctionPlan.summary.averageCorrectionDistance)} / maxCorrection ${formatNullableNumber(correctionPlan.summary.maxCorrectionDistance)} / clamped ${correctionPlan.summary.clampedCount}
-Shape Warp v1 debug: ${latestShapeWarpDebugSummary.status} / preset ${latestShapeWarpDebugSummary.preset} / enabled ${String(latestShapeWarpDebugSummary.enabled)} / candidates ${latestShapeWarpDebugSummary.candidateVectorCount} / used ${latestShapeWarpDebugSummary.usedVectorCount} / skipped ${latestShapeWarpDebugSummary.skippedByDistanceCount} / radius ${formatNumber(latestShapeWarpDebugSummary.radiusPx)} / strength ${formatNumber(latestShapeWarpDebugSummary.globalWarpStrength)} / minDistance ${formatNumber(latestShapeWarpDebugSummary.minCorrectionDistance)} / sampling ${latestShapeWarpDebugSummary.sampling} / render ${formatNullableNumber(latestShapeWarpDebugSummary.renderTimeMs)} ms / avg ${formatNullableNumber(latestShapeWarpDebugSummary.averageRenderTimeMs)} ms
+Shape Warp v1 debug: ${latestShapeWarpDebugSummary.status} / mode ${latestShapeWarpDebugSummary.mode} / preset ${latestShapeWarpDebugSummary.preset} / enabled ${String(latestShapeWarpDebugSummary.enabled)} / candidates ${latestShapeWarpDebugSummary.candidateVectorCount} / used ${latestShapeWarpDebugSummary.usedVectorCount} / skipped ${latestShapeWarpDebugSummary.skippedByDistanceCount} / meshStrength ${formatNumber(latestShapeWarpDebugSummary.meshWarpStrength)} / textureFiltering ${latestShapeWarpDebugSummary.textureFiltering} / wireframe ${String(latestShapeWarpDebugSummary.showWireframe)} / meshVertices ${latestShapeWarpDebugSummary.usedMeshVertexCount ?? "なし"} / triangles ${latestShapeWarpDebugSummary.triangleCount ?? "なし"} / webgl ${latestShapeWarpDebugSummary.webgl ?? "なし"} / radius ${formatNumber(latestShapeWarpDebugSummary.radiusPx)} / strength ${formatNumber(latestShapeWarpDebugSummary.globalWarpStrength)} / minDistance ${formatNumber(latestShapeWarpDebugSummary.minCorrectionDistance)} / sampling ${latestShapeWarpDebugSummary.sampling} / render ${formatNullableNumber(latestShapeWarpDebugSummary.renderTimeMs)} ms / avg ${formatNullableNumber(latestShapeWarpDebugSummary.averageRenderTimeMs)} ms
 Production Shape Warp: not_implemented
 利用可能IdealFace: ${availableIdealFaces.length}
 FPS: ${formatFps(faceFrameFps)}
@@ -1848,6 +2496,11 @@ Detect: ${faceFrameLoopDebug.detectCallCount}/${mediaPipeDebug?.detectSuccessCou
           <legend>Shape Warp Debug</legend>
           <p>Shape Warp Debug は CorrectionPlan の補正ベクトルを画像に仮反映する検証用です。本番品質の warp 方式ではありません。</p>
           <fieldset>
+            <legend>Shape Warp mode</legend>
+            <label><input type="radio" name="shape-warp-mode" value="cpu_radial_debug" ${shapeWarpDebugSettings.mode === "cpu_radial_debug" ? "checked" : ""} /> CPU radial debug</label>
+            <label><input type="radio" name="shape-warp-mode" value="webgl_mesh_debug" ${shapeWarpDebugSettings.mode === "webgl_mesh_debug" ? "checked" : ""} /> WebGL mesh debug</label>
+          </fieldset>
+          <fieldset>
             <legend>preset</legend>
             <label><input type="radio" name="shape-warp-preset" value="off" ${shapeWarpDebugSettings.preset === "off" ? "checked" : ""} /> off</label>
             <label><input type="radio" name="shape-warp-preset" value="weak" ${shapeWarpDebugSettings.preset === "weak" ? "checked" : ""} /> weak</label>
@@ -1859,26 +2512,46 @@ Detect: ${faceFrameLoopDebug.detectCallCount}/${mediaPipeDebug?.detectSuccessCou
             <input id="shape-warp-debug-enabled" type="checkbox" ${shapeWarpDebugSettings.enabled ? "checked" : ""} />
             Processed previewでShape Warp debugを有効化
           </label>
-          <label>
-            radiusPx
-            <input id="shape-warp-radius-px" type="number" min="1" max="128" step="1" value="${shapeWarpDebugSettings.radiusPx}" />
-          </label>
-          <label>
-            globalWarpStrength
-            <input id="shape-warp-global-strength" type="number" min="0" max="2" step="0.1" value="${shapeWarpDebugSettings.globalWarpStrength}" />
-          </label>
-          <label>
-            maxVectors
-            <input id="shape-warp-max-vectors" type="number" min="1" max="478" step="1" value="${shapeWarpDebugSettings.maxVectors}" />
-          </label>
-          <label>
-            minCorrectionDistance
-            <input id="shape-warp-min-correction-distance" type="number" min="0" max="0.05" step="0.001" value="${shapeWarpDebugSettings.minCorrectionDistance}" />
-          </label>
           <fieldset>
-            <legend>sampling</legend>
-            <label><input type="radio" name="shape-warp-sampling" value="bilinear" ${shapeWarpDebugSettings.sampling === "bilinear" ? "checked" : ""} /> bilinear</label>
-            <label><input type="radio" name="shape-warp-sampling" value="nearest" ${shapeWarpDebugSettings.sampling === "nearest" ? "checked" : ""} /> nearest</label>
+            <legend>CPU radial debug settings</legend>
+            <label>
+              radiusPx
+              <input id="shape-warp-radius-px" type="number" min="1" max="128" step="1" value="${shapeWarpDebugSettings.radiusPx}" />
+            </label>
+            <label>
+              globalWarpStrength
+              <input id="shape-warp-global-strength" type="number" min="0" max="2" step="0.1" value="${shapeWarpDebugSettings.globalWarpStrength}" />
+            </label>
+            <label>
+              maxVectors
+              <input id="shape-warp-max-vectors" type="number" min="1" max="478" step="1" value="${shapeWarpDebugSettings.maxVectors}" />
+            </label>
+            <label>
+              minCorrectionDistance
+              <input id="shape-warp-min-correction-distance" type="number" min="0" max="0.05" step="0.001" value="${shapeWarpDebugSettings.minCorrectionDistance}" />
+            </label>
+            <fieldset>
+              <legend>sampling</legend>
+              <label><input type="radio" name="shape-warp-sampling" value="bilinear" ${shapeWarpDebugSettings.sampling === "bilinear" ? "checked" : ""} /> bilinear</label>
+              <label><input type="radio" name="shape-warp-sampling" value="nearest" ${shapeWarpDebugSettings.sampling === "nearest" ? "checked" : ""} /> nearest</label>
+            </fieldset>
+          </fieldset>
+          <fieldset>
+            <legend>WebGL mesh debug settings</legend>
+            <label>
+              meshWarpStrength
+              <input id="shape-warp-mesh-strength" type="number" min="0" max="3" step="0.05" value="${shapeWarpDebugSettings.meshWarpStrength}" />
+            </label>
+            <fieldset>
+              <legend>texture filtering</legend>
+              <label><input type="radio" name="shape-warp-texture-filtering" value="linear" ${shapeWarpDebugSettings.textureFiltering === "linear" ? "checked" : ""} /> linear</label>
+              <label><input type="radio" name="shape-warp-texture-filtering" value="nearest" ${shapeWarpDebugSettings.textureFiltering === "nearest" ? "checked" : ""} /> nearest</label>
+            </fieldset>
+            <label>
+              <input id="shape-warp-webgl-wireframe" type="checkbox" ${showWebglMeshWireframe ? "checked" : ""} />
+              WebGL mesh wireframeを表示
+            </label>
+            <p>topologyLandmarkCount: ${MEDIAPIPE_FACE_MESH_TOPOLOGY_LANDMARK_COUNT} / triangleCount: ${MEDIAPIPE_FACE_MESH_TRIANGLE_COUNT}</p>
           </fieldset>
         </fieldset>
         <div class="preview-grid">
@@ -1887,7 +2560,7 @@ Detect: ${faceFrameLoopDebug.detectCallCount}/${mediaPipeDebug?.detectSuccessCou
             <div id="source-preview" class="preview-container">${camera.getVideo() ? "" : "利用できません"}</div>
           </section>
           <section>
-            <h3>Processed preview: ${shapeWarpDebugSettings.enabled ? `Shape Warp Debug ${shapeWarpDebugSettings.preset}` : "original"}</h3>
+            <h3>Processed preview: ${formatProcessedPreviewLabel()}</h3>
             <div id="processed-preview" class="preview-container">${camera.getVideo() ? "" : "利用できません"}</div>
           </section>
         </div>
