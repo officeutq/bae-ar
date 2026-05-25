@@ -75,16 +75,20 @@ Engine Runtime として使う Beauty Engine SDK を置く場所です。
 - idealLandmarks3D 478点 Projection
 - current-vs-projected ideal 478点 difference debug
 - ideal_face_asset_v1 の型 / validator / parse helper / converter
+- ideal_face_asset_v1 optional `landmarkGroups` 型 / validation / converter
 - correctionProfile v1 の型 / validator / fallback
 - expressionAttenuation v1 foundation / fallback rules
+- landmarkGroups v1 Engine foundation
+- Engine fallback group helper
+- asset / fallback group source handling
+- asset / fallback group source debug summary
 - CorrectionPlan v1 debug foundation
 - Studio processed preview 向け Shape Warp v1 debug prototype の入力となる correction vectors
 - Studio processed preview 限定 WebGL mesh warp v1 prototype 向けの MediaPipe face mesh topology
 
 将来追加予定:
 
-- landmarkGroups v1 asset schema implementation
-- Engine landmarkGroups asset loading foundation
+- expressionAttenuation falloff v1 Engine implementation
 - shapeWarpSettings v1
 - colorLayers v1
 - beauty_filter_asset_v1 foundation / validator / parser / converter
@@ -100,6 +104,8 @@ Engine Runtime は UI を持ちません。debug 用 UI、一時的な検証 UI�
 Projection / Shape Warp へ向けた座標系方針として、Engine Runtime は完成済み IdealFace asset の `idealLandmarks3D` を same-unit coordinate として読み込み、`FacePose` に合わせて same-unit 空間で回転と face center / uniform scale alignment を行います。Runtime Projection alignment では x/y 別 scale を行わず、IdealFace の縦横比を現在顔に合わせて歪めません。Projection result は `sameUnitLandmarks` と `imageLandmarks` を分けて持ち、Studio overlay / current-vs-ideal difference / Shape Warp 入力へ渡す座標は image-normalized coordinate に変換します。Studio overlay は `imageLandmarks` を使います。最終的な描画や画像変形では pixel coordinate を使います。
 
 `correctionProfile` v1 は `ideal_face_asset_v1` の optional top-level field として実装済みです。形状データである `idealLandmarks3D` とは分け、landmark ごとの `strength`、fallback、validation 方針を [correctionProfile v1](correction-profile-v1.md) に記載します。dx / dy は JSON に保存せず、Engine Runtime が毎フレーム計算します。`expressionAttenuation` v1 foundation も Engine 側で fallback rules、jawOpen / eyeBlink / eyeSquint の group strengthScale、halfLifeMs smoothing、CorrectionVector の `baseStrength` / `expressionStrengthScale` / `finalStrength` 反映まで実装済みです。
+
+`landmarkGroups` v1 は、Engine asset loading foundation、fallback groups、asset / fallback group source handling、Studio debug / Copy Debug summary まで実装済みです。asset に `landmarkGroups` がある場合は asset group を使い、ない場合は Engine fallback group を使います。`expressionAttenuation falloff v1` は docs direction のみで、Engine implementation は未実装です。
 
 ## `apps/studio`
 
@@ -167,6 +173,8 @@ Authoring Tool の生成・編集処理は Engine Runtime / Beauty Studio に混
 
 `tools/ideal-face-authoring` は `video_aspect_same_unit_v1` による video aspect 補正、pose-aware generation、将来の manual adjustment UI を担当し、`idealLandmarks3D` を same-unit coordinate として生成します。Runtime / Beauty Studio は Authoring generation logic を持ちません。
 
+Landmark Group Editor v1 prototype も実装済みです。`mouth` / `left_eye` / `right_eye` / `face_boundary` を選択し、478点 overlay 上で selected group を確認できます。click toggle、矩形範囲選択、index highlight、highlighted indices の一括追加 / 削除、group count / indices / reset selected / reset all、JSON preview summary、`ideal_face_asset_v1` optional `landmarkGroups` export に対応しています。
+
 ## `tools/layer-mask-authoring`
 
 将来予定です。
@@ -229,7 +237,7 @@ MP4 input
 
 ## 今後の構成変更
 
-IdealFace v1、Runtime 側の idealLandmarks3D 478点読み込み / 投影、current 478 landmarks と projected ideal 478 landmarks の difference debug、`correctionProfile` v1 foundation、`expressionAttenuation` v1 foundation、CorrectionPlan v1 debug foundation、Studio 向け Shape Warp v1 debug prototype、WebGL mesh warp v1 prototype は実装済みです。`landmarkGroups` v1 は docs 仕様化のみ追加済みで、asset schema implementation、Engine asset loading、Authoring Tool landmark group editor は未実装です。`shapeWarpSettings` v1、`colorLayers` v1、`beauty_filter_asset_v1`、Production Shape Warp、Layer System、LayerMaskSpec、Color Processing、Runtime renderer integration も未実装です。追加する場合も、Engine Runtime の責務と Authoring Tool の責務を分け、Studio からは公開 API 経由で確認できるようにします。
+IdealFace v1、Runtime 側の idealLandmarks3D 478点読み込み / 投影、current 478 landmarks と projected ideal 478 landmarks の difference debug、`correctionProfile` v1 foundation、`expressionAttenuation` v1 foundation、CorrectionPlan v1 debug foundation、Studio 向け Shape Warp v1 debug prototype、WebGL mesh warp v1 prototype は実装済みです。`landmarkGroups` v1 は docs specification、Engine foundation、asset / fallback group source handling、Studio debug / Copy Debug summary、Authoring Tool Landmark Group Editor v1 prototype、`ideal_face_asset_v1` optional `landmarkGroups` export まで実装済みです。`expressionAttenuation falloff v1` は docs direction のみで、Engine implementation は未実装です。`shapeWarpSettings` v1、`colorLayers` v1、`beauty_filter_asset_v1`、Production Shape Warp、Layer System、LayerMaskSpec、Color Processing、Runtime renderer integration も未実装です。追加する場合も、Engine Runtime の責務と Authoring Tool の責務を分け、Studio からは公開 API 経由で確認できるようにします。
 
 ## `tools/ideal-face-authoring` Step 1 / Step 2-A / Step 2-B
 

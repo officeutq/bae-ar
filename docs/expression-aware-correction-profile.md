@@ -49,6 +49,19 @@ CorrectionPlan:
 
 最終的な配布単位では、`expressionAttenuation` の `affectedLandmarkGroups` は `beauty_filter_asset_v1.landmarkGroups` の group id を参照する方向です。`landmarkGroups` は `correctionProfile` と `colorLayers` の両方から参照されるため、1つの filter asset 内で整合性を保ちます。`landmarkGroups v1` の JSON 仕様、Engine fallback、validation 方針は [landmarkGroups v1](landmark-groups-v1.md) に整理します。
 
+## expressionAttenuation falloff v1
+
+現在の `expressionAttenuation` は、group に含まれる landmark に group `strengthScale` を一律に適用します。`mouth` / `left_eye` / `right_eye` の group を広めに取った場合、この二値 membership によって group 境界付近で補正強度が急に変わる可能性があります。
+
+次の方針として、Engine 側で group 内の中心から外側への距離に応じた per-landmark `falloffWeight` を自動計算し、中心ほど強く attenuation、境界ほど通常補正へ滑らかに戻す `expressionAttenuation falloff v1` を検討します。
+
+```ts
+perLandmarkExpressionScale = lerp(1.0, groupScale, falloffWeight)
+finalStrength = baseStrength * perLandmarkExpressionScale
+```
+
+`landmarkGroups` JSON は当面 `indices` のみを持つ index group 定義として維持し、v1 では explicit per-index weights を保存しません。詳細方針は [expressionAttenuation falloff v1](expression-attenuation-falloff-v1.md) に整理します。
+
 ## JSON 仕様案
 
 `expressionAttenuation` は `correctionProfile` の optional extension として扱います。Engine 側の validator foundation は実装済みです。既存の `correction_profile_v1` の基本構造を壊さず、将来の Authoring Tool UI / converter / export 対応で段階的に扱えるようにします。

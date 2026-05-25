@@ -117,12 +117,18 @@ Beauty Studio:
 - Studio processed preview 限定 WebGL mesh warp v1 prototype
 - beauty_filter_asset_v1 direction docs
 - landmarkGroups v1 docs specification
+- landmarkGroups v1 Engine foundation
+- ideal_face_asset_v1 optional top-level landmarkGroups 型 / validation / converter
+- Engine fallback group / asset group source handling
+- Studio debug / Copy Debug landmarkGroups summary
+- IdealFace Authoring Tool Landmark Group Editor v1 prototype
+- Landmark Group Editor rectangle selection / index highlight / bulk add / bulk remove
+- ideal_face_asset_v1 optional landmarkGroups export
+- expressionAttenuation falloff v1 docs direction
 
 ### 3.2 未実装
 
-- landmarkGroups v1 asset schema implementation
-- Engine landmarkGroups asset loading foundation
-- Authoring Tool landmark group editor
+- expressionAttenuation falloff v1 Engine implementation
 - shapeWarpSettings v1
 - colorLayers v1
 - beauty_filter_asset_v1
@@ -331,7 +337,7 @@ beauty_filter_asset_v1
 
 `landmarkGroups` v1 では、まず `mouth` / `left_eye` / `right_eye` / `face_boundary` を expression safety 用 group として想定します。将来 color processing 向けに `skin` / `lip` / `cheek` / `eye_area` などを追加する可能性があります。Layer System は shape warp 用ではなく、color processing 用です。詳細は [landmarkGroups v1](landmark-groups-v1.md) に整理します。
 
-詳細は [beauty_filter_asset_v1 direction](beauty-filter-asset-v1.md) に整理します。`landmarkGroups v1` は docs 仕様化のみで、Engine asset loading、Authoring Tool editor、JSON export、validator は未実装です。`beauty_filter_asset_v1`、`shapeWarpSettings` v1、`colorLayers` v1、Production Shape Warp、Color Processing、Runtime renderer integration はまだ未実装です。
+詳細は [beauty_filter_asset_v1 direction](beauty-filter-asset-v1.md) に整理します。`landmarkGroups v1` は docs specification、Engine foundation、asset / fallback group source handling、Studio debug / Copy Debug summary、Authoring Tool Landmark Group Editor v1 prototype、`ideal_face_asset_v1` optional export まで実装済みです。`expressionAttenuation falloff v1` は docs direction のみで、Engine implementation は未実装です。`beauty_filter_asset_v1`、`shapeWarpSettings` v1、`colorLayers` v1、Production Shape Warp、Color Processing、Runtime renderer integration はまだ未実装です。
 
 ## 7. IdealFace
 
@@ -368,7 +374,9 @@ IdealFace Authoring Tool は BAE AR 独自の IdealFace asset を作成・調整
 
 Engine 側では、`expressionAttenuation` v1 foundation も実装済みです。これは MediaPipe blendshape score に応じて `mouth` / `left_eye` / `right_eye` / `face_boundary` などの `affectedLandmarkGroups` ごとの `strengthScale` を弱める safety attenuation です。`affectedLandmarkGroups` は将来 `beauty_filter_asset_v1.landmarkGroups` の group id を参照します。`jawOpen` が高いときは `mouth` group、`eyeBlinkLeft` / `eyeSquintLeft` が高いときは `left_eye` group、`eyeBlinkRight` / `eyeSquintRight` が高いときは `right_eye` group の補正を弱めます。`strengthScale` は即時切替ではなく smoothing します。
 
-詳細な JSON 例、fallback、validation 方針、Runtime / Authoring / Studio の責務分離は [correctionProfile v1](correction-profile-v1.md) に定義します。expression-aware attenuation の設計方針は [expression-aware correctionProfile](expression-aware-correction-profile.md) に、参照先 group の仕様は [landmarkGroups v1](landmark-groups-v1.md) に整理します。Engine 側 foundation、validation / fallback、expressionAttenuation v1 foundation、CorrectionPlan v1 debug foundation は実装済みです。Authoring Tool 編集 UI、asset export 連携、expression-specific IdealFace、expression target offset、Production Shape Warp は未実装です。
+group membership を二値のまま扱うと、広めの `mouth` / `left_eye` / `right_eye` group 境界で補正強度が急に変わる可能性があります。次の方針では、Engine が group 内の中心から外側への距離に応じて per-landmark falloff weight を自動計算し、中心ほど強く、境界ほど弱く attenuation します。
+
+詳細な JSON 例、fallback、validation 方針、Runtime / Authoring / Studio の責務分離は [correctionProfile v1](correction-profile-v1.md) に定義します。expression-aware attenuation の設計方針は [expression-aware correctionProfile](expression-aware-correction-profile.md) に、falloff 方針は [expressionAttenuation falloff v1](expression-attenuation-falloff-v1.md) に、参照先 group の仕様は [landmarkGroups v1](landmark-groups-v1.md) に整理します。Engine 側 foundation、validation / fallback、expressionAttenuation v1 foundation、CorrectionPlan v1 debug foundation は実装済みです。Authoring Tool 編集 UI、asset export 連携、expression-specific IdealFace、expression target offset、Production Shape Warp は未実装です。
 
 ### 7.2 IdealFace Authoring Tool における idealLandmarks3D 作成方針
 
@@ -426,7 +434,7 @@ Still planned:
 - confidence debug
 - manual adjustment UI
 - save / import
-- correctionProfile / landmarkGroups / beauty_filter_asset_v1 export
+- correctionProfile / beauty_filter_asset_v1 export
 - multiple image input
 
 ## 8. IdealFace Projection
@@ -549,7 +557,7 @@ deltaY = projectedIdealImageY - currentY
 
 この差分を `CorrectionPlan` に渡します。
 
-CorrectionPlan v1 debug foundation では、`correctionProfile` の `strength` を差分に掛け、`maxCorrectionDistance` で correction vector を clamp します。`expressionAttenuation` v1 foundation がある場合は、blendshape score から group ごとの `strengthScale` を計算し、`finalStrength = baseStrength * groupStrengthScale` として可動部位の補正を弱めます。`correctionProfile` は個別パーツ加工命令ではなく、current から projected ideal へ全体として自然に少し寄せるための補正率です。
+CorrectionPlan v1 debug foundation では、`correctionProfile` の `strength` を差分に掛け、`maxCorrectionDistance` で correction vector を clamp します。`expressionAttenuation` v1 foundation がある場合は、blendshape score から group ごとの `strengthScale` を計算し、`finalStrength = baseStrength * groupStrengthScale` として可動部位の補正を弱めます。falloff 導入後は `finalStrength = baseStrength * lerp(1.0, groupScale, falloffWeight)` の考え方で、group 境界の急な変化を抑えます。`correctionProfile` は個別パーツ加工命令ではなく、current から projected ideal へ全体として自然に少し寄せるための補正率です。
 
 やらないこと:
 
@@ -807,6 +815,8 @@ Milestone 4 に含めないもの:
 - expressionAttenuation v1 foundation
 - jawOpen / eyeBlink / eyeSquint による group strengthScale
 - halfLifeMs smoothing
+- landmarkGroups helper による affectedGroups 判定
+- asset / fallback landmarkGroups source handling
 - CorrectionVector の baseStrength / expressionStrengthScale / finalStrength
 - 478点分の correction vectors 計算
 - Studio debug / Copy Debug
@@ -817,8 +827,8 @@ Milestone 4 に含めないもの:
 未実装 / 後段:
 
 - Production Shape Warp への renderer 統合
-- landmarkGroups asset schema 連携
-- Authoring Tool UI / export 連携
+- expressionAttenuation falloff v1 Engine implementation
+- correctionProfile Authoring UI / export 連携
 - expression target offset
 - expression-specific IdealFace
 - quality tuning
@@ -868,7 +878,7 @@ Milestone 4 に含めないもの:
 
 ### Milestone 6.5: beauty_filter_asset_v1 foundation
 
-状態: docs direction 追加 / foundation 未実装
+状態: landmarkGroups 関連 Step 1〜4 実装済み / beauty_filter_asset_v1 foundation 未実装
 
 目的:
 
@@ -880,11 +890,21 @@ Milestone 4 に含めないもの:
 
 ```text
 Step 1: landmarkGroups v1 docs specification
+  -> 実装済み
+
 Step 2: Engine landmarkGroups foundation
+  -> 実装済み
+
 Step 3: Authoring Tool landmark group editor
-Step 4: shapeWarpSettings v1 docs / foundation
-Step 5: colorLayers v1 docs / foundation
-Step 6: beauty_filter_asset_v1 foundation
+  -> prototype 実装済み
+
+Step 4: expressionAttenuation falloff v1 docs direction
+  -> 実装済み
+
+Step 5: expressionAttenuation falloff v1 Engine foundation
+Step 6: shapeWarpSettings v1 docs / foundation
+Step 7: colorLayers v1 docs / foundation
+Step 8: beauty_filter_asset_v1 foundation
 ```
 
 完了条件:
@@ -900,6 +920,7 @@ Step 6: beauty_filter_asset_v1 foundation
 
 - [beauty_filter_asset_v1 direction](beauty-filter-asset-v1.md)
 - [landmarkGroups v1](landmark-groups-v1.md)
+- [expressionAttenuation falloff v1](expression-attenuation-falloff-v1.md)
 
 ### Milestone 7: Color Processing v1
 
@@ -961,7 +982,7 @@ Step 6: beauty_filter_asset_v1 foundation
 - confidence debug
 - manual adjustment UI
 - save / import
-- correctionProfile / landmarkGroups / beauty_filter_asset_v1 export
+- correctionProfile / beauty_filter_asset_v1 export
 - multiple image input
 
 ### Milestone 11: Layer Mask Authoring Tool

@@ -49,12 +49,15 @@ Engine Runtime は UI を持たない中核 SDK です。
 - ideal_face_asset_v1 の型 / validator / parse helper / converter
 - correctionProfile v1 の読み込み / validation / fallback
 - expressionAttenuation v1 foundation / fallback rules
+- landmarkGroups v1 asset schema implementation
+- Engine landmarkGroups asset loading foundation
+- Engine fallback group / asset group source handling
+- Studio debug / Copy Debug landmarkGroups summary
 - CorrectionPlan v1 debug foundation
 
 将来予定:
 
-- landmarkGroups v1 asset schema implementation
-- Engine landmarkGroups asset loading foundation
+- expressionAttenuation falloff v1 Engine implementation
 - shapeWarpSettings v1
 - colorLayers v1
 - beauty_filter_asset_v1 foundation / validator / parser / converter
@@ -253,7 +256,9 @@ current-vs-projected ideal 478点 difference debug v1 は、MediaPipe current im
 
 Engine 側では、`expressionAttenuation` を optional field として扱う v1 foundation も実装済みです。MediaPipe blendshape score から `mouth` / `left_eye` / `right_eye` / `face_boundary` などの group ごとの `strengthScale` を計算し、CorrectionPlan の `baseStrength` に掛けて `finalStrength` を決めます。急な切り替わりを避けるため、target scale と smoothed scale を分け、`halfLifeMs` を使った smoothing を行います。
 
-詳細仕様、fallback、validation 方針、Runtime / Authoring / Studio の責務分離は [correctionProfile v1](correction-profile-v1.md) に定義します。`expressionAttenuation` の方針は [expression-aware correctionProfile](expression-aware-correction-profile.md) に整理します。Authoring Tool 編集 UI、asset export 連携、expression-specific IdealFace、expression target offset、Production Shape Warp は未実装です。
+group membership を二値のまま扱うと、広めの `mouth` / `left_eye` / `right_eye` group 境界で `strengthScale` が急に変わる可能性があります。次の方針では、Engine が group 内の中心から外側への距離に応じた per-landmark falloff weight を自動計算し、中心ほど強く、境界ほど弱く attenuation します。
+
+詳細仕様、fallback、validation 方針、Runtime / Authoring / Studio の責務分離は [correctionProfile v1](correction-profile-v1.md) に定義します。`expressionAttenuation` の方針は [expression-aware correctionProfile](expression-aware-correction-profile.md) に、falloff 方針は [expressionAttenuation falloff v1](expression-attenuation-falloff-v1.md) に整理します。Authoring Tool 編集 UI、asset export 連携、expression-specific IdealFace、expression target offset、Production Shape Warp は未実装です。
 
 ### IdealFace Projection の座標系方針
 
@@ -387,7 +392,7 @@ beauty_filter_asset_v1
 
 Engine Runtime は UI を持たず、将来 `beauty_filter_asset_v1` を読み込んで Projection、current-vs-ideal difference、`expressionAttenuation`、`CorrectionPlan`、WebGL mesh warp、LayerMask 生成、`colorLayers` 合成、temporal smoothing / stability control を実行します。Beauty Studio は公開 API 経由で読み込み・状態確認・debug / overlay / Copy Debug / tuning UI を提供します。Authoring Tool 群は各セクションの作成・編集を担当します。
 
-詳細は [beauty_filter_asset_v1 direction](beauty-filter-asset-v1.md) に整理します。`landmarkGroups v1` は docs 仕様化のみで、Engine asset loading、Authoring Tool editor、JSON export、validator は未実装です。`beauty_filter_asset_v1`、`shapeWarpSettings`、`colorLayers`、Production Shape Warp、Color Processing、Runtime renderer integration はまだ未実装です。
+詳細は [beauty_filter_asset_v1 direction](beauty-filter-asset-v1.md) に整理します。`landmarkGroups v1` は docs specification、Engine foundation、asset / fallback group source handling、Studio debug / Copy Debug summary、Authoring Tool Landmark Group Editor v1 prototype、`ideal_face_asset_v1` optional export まで実装済みです。`expressionAttenuation falloff v1` は docs direction のみで、Engine implementation は未実装です。`beauty_filter_asset_v1`、`shapeWarpSettings`、`colorLayers`、Production Shape Warp、Color Processing、Runtime renderer integration はまだ未実装です。
 
 ## 配布方針
 

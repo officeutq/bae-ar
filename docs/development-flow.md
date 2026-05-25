@@ -79,7 +79,7 @@ current 478 landmarks は MediaPipe 由来の image-normalized 座標です。pr
 
 現時点では、478点の current-vs-ideal difference debug、`correctionProfile` v1 foundation、`expressionAttenuation` v1 foundation、CorrectionPlan v1 debug foundation、Studio 向け Shape Warp v1 debug prototype、Studio processed preview 限定 WebGL mesh warp v1 prototype は実装済みです。Production Shape Warp / Runtime renderer integration は未実装です。
 
-`correctionProfile` v1 は、`ideal_face_asset_v1` の optional top-level field として扱う補正設定です。landmark ごとの `strength` を持ちますが、dx / dy は JSON に保存しません。dx / dy は current landmarks と projected ideal `imageLandmarks` から Engine が毎フレーム計算します。`expressionAttenuation` v1 foundation では、MediaPipe blendshape score に応じて `mouth` / `left_eye` / `right_eye` / `face_boundary` などの group ごとの `strengthScale` を弱めます。詳細は [correctionProfile v1](correction-profile-v1.md) と [expression-aware correctionProfile](expression-aware-correction-profile.md) を参照してください。
+`correctionProfile` v1 は、`ideal_face_asset_v1` の optional top-level field として扱う補正設定です。landmark ごとの `strength` を持ちますが、dx / dy は JSON に保存しません。dx / dy は current landmarks と projected ideal `imageLandmarks` から Engine が毎フレーム計算します。`expressionAttenuation` v1 foundation では、MediaPipe blendshape score に応じて `mouth` / `left_eye` / `right_eye` / `face_boundary` などの group ごとの `strengthScale` を弱めます。group 内外の二値適用による境界の急な変化を避けるため、次の方針では Engine が group 内の per-landmark falloff weight を自動計算します。詳細は [correctionProfile v1](correction-profile-v1.md)、[expression-aware correctionProfile](expression-aware-correction-profile.md)、[expressionAttenuation falloff v1](expression-attenuation-falloff-v1.md) を参照してください。
 
 やらないこと:
 
@@ -92,7 +92,7 @@ current 478 landmarks は MediaPipe 由来の image-normalized 座標です。pr
 
 CorrectionPlan は姿勢補正を担当しません。姿勢への対応は IdealFace Projection の責務です。
 
-CorrectionPlan は Projection 後の current image-normalized landmarks と projected ideal image-normalized landmarks の差分を受け取り、`correctionProfile` の `strength` を掛け、`maxCorrectionDistance` で clamp して、実際に warp へ渡す安全な補正量を決めます。`expressionAttenuation` がある場合は、blendshape score から group ごとの target `strengthScale` を計算し、smoothing 後の scale を `baseStrength` に掛けて `finalStrength` を決めます。
+CorrectionPlan は Projection 後の current image-normalized landmarks と projected ideal image-normalized landmarks の差分を受け取り、`correctionProfile` の `strength` を掛け、`maxCorrectionDistance` で clamp して、実際に warp へ渡す安全な補正量を決めます。`expressionAttenuation` がある場合は、blendshape score から group ごとの target `strengthScale` を計算し、smoothing 後の scale を `baseStrength` に掛けて `finalStrength` を決めます。falloff 導入後は `finalStrength = baseStrength * lerp(1.0, groupScale, falloffWeight)` の考え方で、group 中心ほど強く、境界ほど通常補正へ戻します。
 
 扱うもの:
 
@@ -342,21 +342,32 @@ Step D: Quality improvements
 Step 1: landmarkGroups v1 docs specification
   ideal_face_asset_v1 / beauty_filter_asset_v1 で使う group 定義を整理する
   詳細は landmarkGroups v1 docs に整理する
+  -> 実装済み
 
 Step 2: Engine landmarkGroups foundation
   asset の landmarkGroups を読み込み、expressionAttenuation が参照できるようにする
   asset にない場合は Engine fallback group を使う
+  -> 実装済み
 
 Step 3: Authoring Tool landmark group editor
   IdealFace Authoring Tool で mouth / left_eye / right_eye / face_boundary を作成・編集できるようにする
+  rectangle selection / index highlight / bulk add / bulk remove を含む
+  -> prototype 実装済み
 
-Step 4: shapeWarpSettings v1 docs / foundation
+Step 4: expressionAttenuation falloff v1 docs direction
+  group 内の center distance による falloff 方針を整理する
+  -> 実装済み
+
+Step 5: expressionAttenuation falloff v1 Engine foundation
+  Engine 側で per-landmark falloff weight を自動計算する
+
+Step 6: shapeWarpSettings v1 docs / foundation
   WebGL mesh warp / smoothing / boundary / debug 設定を整理する
 
-Step 5: colorLayers v1 docs / foundation
+Step 7: colorLayers v1 docs / foundation
   whitening / skin smoothing / lip tint / cheek tint / layer order / opacity / mask / gradient を整理する
 
-Step 6: beauty_filter_asset_v1 foundation
+Step 8: beauty_filter_asset_v1 foundation
   IdealFace + landmarkGroups + correctionProfile + shapeWarpSettings + colorLayers を束ねる asset を定義する
 ```
 
