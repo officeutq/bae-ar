@@ -23,29 +23,35 @@ Downloaded `ideal_face_asset_v1` JSON keeps `schemaVersion` and `coordinateSpace
 - Studio overlay draws `imageLandmarks`; it does not draw same-unit landmarks directly with `canvasWidth` / `canvasHeight`.
 - Runtime must not non-uniformly scale IdealFace to match the current face aspect ratio.
 - Authoring Tool owns same-unit asset generation, video aspect correction, pose-aware generation, and future manual adjustment. Runtime owns loading finished IdealFace assets, projection, and conversion for overlay / difference / warp, but does not include authoring generation logic.
-- Current-vs-ideal difference, `CorrectionPlan`, and Shape Warp remain unimplemented for the 478-point path.
+- Current-vs-projected ideal 478-point difference debug is implemented. `CorrectionPlan` and Shape Warp remain unimplemented.
 
 ## Engine ideal_face_asset_v1 loading foundation
 
 `packages/engine` now exposes TypeScript types, validation helpers, a JSON parse helper, and a conversion helper for Authoring Tool export JSON with `schemaVersion: "ideal_face_asset_v1"`.
 
-This is only the Runtime loading foundation. Full 478-point projection, Studio file import UI, and Authoring Tool generation logic are not included in Engine Runtime.
+This is only the Runtime loading foundation. Authoring Tool generation logic is not included in Engine Runtime.
 
 ## Studio ideal_face_asset_v1 import
 
 `apps/studio` can select an `ideal_face_asset_v1` JSON file exported by the Authoring Tool, validate it through the Engine helper, convert it to an `IdealFace`, and apply it with `BeautyEngine.setIdealFace()`.
 
-This only verifies asset import and Engine reflection. Full 478-point Projection, Studio overlay for projected ideal landmarks, and Authoring Tool generation logic are still not included.
+This verifies asset import, Engine reflection, and the 478-point Projection debug path. Authoring Tool generation logic is still not included.
 
 ## idealLandmarks3D Projection v1
 
 `packages/engine` now exposes a Runtime Projection v1 helper for loaded IdealFace assets with 478 `idealLandmarks3D` points. It rotates the ideal 3D landmarks by the current `FacePose` and returns projected ideal 2D landmarks plus x / y / z range summary.
 
-`apps/studio` can show the 478-point Projection status, landmark count, and x / y / z ranges in debug output, and draws the projected ideal landmarks as small overlay points when available. Current-vs-ideal difference, `CorrectionPlan`, and Shape Warp are still not implemented.
+`apps/studio` can show the 478-point Projection status, landmark count, x / y / z ranges, and current-vs-projected ideal 478-point difference debug output. It draws projected ideal landmarks as small overlay points when available. `CorrectionPlan` and Shape Warp are still not implemented.
 
 `idealLandmarks3D` Projection v1 also applies a face center / uniform scale alignment when current landmarks are available. The alignment scale basis is `contain`: it compares current landmarks bbox width / height with the rotated projected ideal bbox width / height, calculates `widthRatio = currentWidth / projectedWidth` and `heightRatio = currentHeight / projectedHeight`, and uses the smaller ratio as the uniform scale. The v1 alignment keeps the IdealFace aspect ratio intact; it does not scale x / y separately or reshape the asset to match the current face.
 
-Projection debug also reports bounds and aspect ratios for the source asset, rotated projection, aligned projection, current landmarks, Studio overlay pixel positions, and the contain scale basis values including width ratio, height ratio, limiting axis, and chosen scale. These values are investigation-only: runtime alignment remains rotate + translate + uniform scale, while current 478 landmark difference comparison, `CorrectionPlan`, Shape Warp, and any future shape adjustment are still not implemented.
+Projection debug also reports bounds and aspect ratios for the source asset, rotated projection, aligned projection, current landmarks, Studio overlay pixel positions, and the contain scale basis values including width ratio, height ratio, limiting axis, and chosen scale. These values are investigation-only: runtime alignment remains rotate + translate + uniform scale, while `CorrectionPlan`, Shape Warp, and any future shape adjustment are still not implemented.
+
+## correctionProfile v1 specification
+
+`correctionProfile` v1 is documented as an optional top-level field for future `ideal_face_asset_v1` assets. It keeps per-landmark correction `strength` separate from the shape data in `idealLandmarks3D`, does not store per-frame dx / dy, and defines fallback / validation policy for the future `CorrectionPlan` implementation.
+
+See [correctionProfile v1](docs/correction-profile-v1.md). This is documentation only; TypeScript types, validator changes, export changes, Studio debug, `CorrectionPlan`, Shape Warp, and Authoring Tool editing UI are not implemented in this step.
 
 BAE AR は、リアルタイム顔加工・AR 表現を行う Beauty Engine Runtime と、その開発・検証・調整を行う Beauty Studio、将来の authoring tool 群を含むプロジェクトです。
 
@@ -108,8 +114,8 @@ tools/ideal-face-authoring
 - IdealFace v1 型定義
 - Natural v1 最小プリセット
 - IdealFace 公開 API
-- IdealFace Projection v1 の controlPoints 投影
-- Projection Difference Debug v1
+- idealLandmarks3D 478点 Projection
+- current-vs-projected ideal 478点 difference debug
 - Studio overlay / debug / Copy Debug 関連
 - IdealFace Authoring Tool Step 1: `natural_v1` metadata / controlPoints / 2D preview / JSON preview
 - IdealFace Authoring Tool Step 2-A: MP4 動画入力、metadata 表示、フレーム抽出、サムネイル一覧表示
@@ -254,6 +260,7 @@ debug
 - [アーキテクチャ](docs/architecture.md)
 - [開発フロー](docs/development-flow.md)
 - [リポジトリ構成](docs/repository-structure.md)
+- [correctionProfile v1](docs/correction-profile-v1.md)
 - [仕様書とロードマップ](docs/bae_ar_beauty_engine_spec_and_roadmap_2026_05.md)
 
 ## IdealFace Authoring Tool Step 1 / Step 2-A / Step 2-B

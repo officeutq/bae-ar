@@ -39,6 +39,7 @@ bae-ar/
 └─ docs/
    ├─ overview.md
    ├─ architecture.md
+   ├─ correction-profile-v1.md
    ├─ development-flow.md
    ├─ repository-structure.md
    └─ bae_ar_beauty_engine_spec_and_roadmap_2026_05.md
@@ -70,13 +71,12 @@ Engine Runtime として使う Beauty Engine SDK を置く場所です。
 - IdealFace v1 型定義
 - Natural v1 最小プリセット
 - IdealFace 公開 API
-- IdealFace Projection v1 の controlPoints 投影
-- Projection Difference Debug v1
+- idealLandmarks3D 478点 Projection
+- current-vs-projected ideal 478点 difference debug
 
 将来追加予定:
 
-- Runtime 側の idealLandmarks3D 478点読み込み / 投影の完全対応
-- current 478 landmarks と projected ideal 478 landmarks の本比較
+- correctionProfile v1 の型 / validator / fallback
 - CorrectionPlan
 - Shape Warp
 - Color Processing
@@ -87,6 +87,8 @@ Engine Runtime として使う Beauty Engine SDK を置く場所です。
 Engine Runtime は UI を持ちません。debug 用 UI、一時的な検証 UI、Authoring Tool の編集処理はここに入れません。
 
 Projection / Shape Warp へ向けた座標系方針として、Engine Runtime は完成済み IdealFace asset の `idealLandmarks3D` を same-unit coordinate として読み込み、`FacePose` に合わせて same-unit 空間で回転と face center / uniform scale alignment を行います。Runtime Projection alignment では x/y 別 scale を行わず、IdealFace の縦横比を現在顔に合わせて歪めません。Projection result は `sameUnitLandmarks` と `imageLandmarks` を分けて持ち、Studio overlay / current-vs-ideal difference / Shape Warp 入力へ渡す座標は image-normalized coordinate に変換します。Studio overlay は `imageLandmarks` を使います。最終的な描画や画像変形では pixel coordinate を使います。
+
+`correctionProfile` v1 は `ideal_face_asset_v1` の optional top-level field として仕様化します。形状データである `idealLandmarks3D` とは分け、landmark ごとの `strength`、fallback、validation 方針を [correctionProfile v1](correction-profile-v1.md) に記載します。dx / dy は JSON に保存せず、Engine Runtime が毎フレーム計算します。
 
 ## `apps/studio`
 
@@ -177,6 +179,8 @@ Layer Mask Authoring Tool を置く想定の場所です。
 
 実装が変わった場合は、該当する docs / README / 仕様書 / ロードマップも更新します。
 
+- `correction-profile-v1.md`: `ideal_face_asset_v1` に追加予定の optional `correctionProfile` 仕様、fallback、validation、CorrectionPlan との関係
+
 ## `tools/ideal-face-authoring` detailed scan
 
 詳細スキャンは Step 2-I-A の frame selection に渡す observation source です。表示用抽出フレームは debug / metadata 確認用であり、active workflow の中心ではありません。
@@ -211,7 +215,7 @@ MP4 input
 
 ## 今後の構成変更
 
-IdealFace v1 と controlPoints Projection v1 は実装済みです。Runtime 側の idealLandmarks3D 478点読み込み / 投影の完全対応、current 478 landmarks と projected ideal 478 landmarks の本比較、CorrectionPlan、Layer System、LayerMaskSpec は未実装です。追加する場合も、Engine Runtime の責務と Authoring Tool の責務を分け、Studio からは公開 API 経由で確認できるようにします。
+IdealFace v1、Runtime 側の idealLandmarks3D 478点読み込み / 投影、current 478 landmarks と projected ideal 478 landmarks の difference debug は実装済みです。`correctionProfile` v1 は仕様のみで、CorrectionPlan、Shape Warp、Layer System、LayerMaskSpec は未実装です。追加する場合も、Engine Runtime の責務と Authoring Tool の責務を分け、Studio からは公開 API 経由で確認できるようにします。
 
 ## `tools/ideal-face-authoring` Step 1 / Step 2-A / Step 2-B
 

@@ -77,7 +77,9 @@ same-unit の projected ideal landmarks を、そのまま `x * canvasWidth` / `
 
 current 478 landmarks は MediaPipe 由来の image-normalized 座標です。projected ideal 478 landmarks は、IdealFace same-unit landmarks を `FacePose` へ投影し、alignment 後に image-normalized 座標へ変換したものです。差分は `deltaX = projectedIdealImageX - currentX`、`deltaY = projectedIdealImageY - currentY` として計算します。
 
-現時点では、478点の current-vs-ideal difference、`CorrectionPlan`、Shape Warp は未実装です。
+現時点では、478点の current-vs-ideal difference debug は実装済みです。`CorrectionPlan`、Shape Warp は未実装です。
+
+`correctionProfile` v1 は、将来 `ideal_face_asset_v1` の optional top-level field として追加する補正設定です。landmark ごとの `strength` を持ちますが、dx / dy は JSON に保存しません。dx / dy は current landmarks と projected ideal `imageLandmarks` から Engine が毎フレーム計算します。詳細は [correctionProfile v1](correction-profile-v1.md) を参照してください。
 
 やらないこと:
 
@@ -90,12 +92,13 @@ current 478 landmarks は MediaPipe 由来の image-normalized 座標です。pr
 
 CorrectionPlan は姿勢補正を担当しません。姿勢への対応は IdealFace Projection の責務です。
 
-CorrectionPlan は Projection 後の current image-normalized landmarks と projected ideal image-normalized landmarks の差分を受け取り、実際に warp へ渡す安全な補正量を決めます。
+CorrectionPlan は Projection 後の current image-normalized landmarks と projected ideal image-normalized landmarks の差分を受け取り、`correctionProfile` の `strength` を掛け、`maxCorrectionDistance` で clamp して、実際に warp へ渡す安全な補正量を決めます。
 
 扱うもの:
 
 - 補正強度
 - 移動量上限
+- `correctionProfile` fallback
 - 滑らかさ
 - 過補正防止
 - 信頼度
@@ -154,6 +157,25 @@ Engine Runtime で行わないこと:
 Runtime Projection alignment では x/y 別 scale を行いません。IdealFace の縦横比を現在顔に合わせて歪めず、縦横比や形状そのものの調整は将来の IdealFace Authoring Tool manual adjustment UI で扱います。Authoring Tool は `video_aspect_same_unit_v1` による video aspect 補正、pose-aware generation、manual adjustment、same-unit `idealLandmarks3D` 生成を担当します。Runtime は完成済み IdealFace asset の読み込み、same-unit projection、overlay / difference / warp 用の image-normalized / pixel 座標変換を担当し、Authoring generation logic は持ちません。
 
 Beauty Studio では、開発確認用として overlay や簡易調整 UI を持ってよいです。ただし、本番配布対象には含めません。
+
+`correctionProfile` v1 の責務分離:
+
+```text
+IdealFace Authoring Tool
+  - correctionProfile を作成・編集する
+  - landmark index ごとの strength を設定する
+  - dx / dy は持たない
+
+Engine Runtime
+  - correctionProfile を読み込む
+  - correctionProfile がない場合は fallback default を使う
+  - dx / dy を毎フレーム計算する
+  - strength と maxCorrectionDistance から CorrectionPlan を生成する
+
+Beauty Studio
+  - Engine の公開 API から correctionProfile / CorrectionPlan を確認する
+  - Engine 内部実装や private field に直接依存しない
+```
 
 ## IdealFace Authoring Tool の開発方針
 
