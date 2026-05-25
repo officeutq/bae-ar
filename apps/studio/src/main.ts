@@ -1,6 +1,8 @@
 import {
   BeautyEngine,
   MediaPipeFaceDetector,
+  getCorrectionProfileOrDefault,
+  getCorrectionProfileSource,
   idealFaceAssetV1ToIdealFace,
   parseIdealFaceAssetV1Json,
 } from "@bae-ar/engine"
@@ -239,6 +241,9 @@ eyeDistance: ${formatNullableNumber(geometry?.eyeDistance)}`
     projection: IdealLandmarks3DProjectionResult,
     difference: IdealLandmarksDifferenceDebug,
   ): string {
+    const correctionProfile = getCorrectionProfileOrDefault(idealFace)
+    const correctionProfileSource = getCorrectionProfileSource(idealFace)
+
     return `IdealFace:
 名前: ${idealFace.metadata.name}
 preset id: ${idealFace.metadata.id}
@@ -252,6 +257,13 @@ ideal 478 landmarks生成: ${idealFace.landmarkTopology.canGenerateIdealLandmark
 sameUnitLandmarks: ${projection.sameUnitLandmarks.length}
 imageLandmarks: ${projection.imageLandmarks.length}
 current-vs-ideal difference: ${difference.status}
+correctionProfile:
+  source: ${correctionProfileSource}
+  schemaVersion: ${correctionProfile.schemaVersion}
+  mode: ${correctionProfile.mode}
+  defaultStrength: ${formatNumber(correctionProfile.defaultStrength)}
+  maxCorrectionDistance: ${formatNumber(correctionProfile.maxCorrectionDistance)}
+  landmarkStrength count: ${correctionProfile.landmarkStrengths.length}
 CorrectionPlan: not_implemented
 Shape Warp: not_implemented`
   }
@@ -954,6 +966,8 @@ Camera:
     const idealFace = engine.getIdealFace()
     const idealLandmarks3DProjection = engine.getIdealLandmarks3DProjection()
     const idealLandmarksDifference = engine.getIdealLandmarksDifference()
+    const correctionProfile = getCorrectionProfileOrDefault(idealFace)
+    const correctionProfileSource = getCorrectionProfileSource(idealFace)
     const availableIdealFaces = engine.getAvailableIdealFaces()
     const overlayProjectedIdealPixelBounds =
       calculateOverlayProjectedIdealPixelBounds(idealLandmarks3DProjection)
@@ -1014,6 +1028,7 @@ Alignment: ${idealLandmarks3DProjection.alignment?.mode ?? "none"} / scale basis
 Aspect debug: asset ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectRatio.asset)} / rotated ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectRatio.rotated)} / aligned ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectRatio.aligned)} / image ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectRatio.image)} / current ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectRatio.current)} / overlay ${formatNullableNumber(overlayProjectedIdealPixelBounds?.aspectRatioPx)}
 Coordinate conversion: ${idealLandmarks3DProjection.debug?.coordinate?.conversionMode ?? "なし"} / videoAspect ${formatNullableNumber(idealLandmarks3DProjection.debug?.coordinate?.videoAspectRatio)} / fallback ${idealLandmarks3DProjection.debug?.coordinate ? String(idealLandmarks3DProjection.debug.coordinate.fallbackUsed) : "なし"}
 478点差分: ${idealLandmarksDifference.status} / matched ${idealLandmarksDifference.matchedLandmarkCount} / 平均 ${formatNullableNumber(idealLandmarksDifference.averageDistance)} / 最大 ${formatNullableNumber(idealLandmarksDifference.maxDistance)} / 最大index ${idealLandmarksDifference.maxDistanceLandmarkIndex ?? "なし"}
+correctionProfile: ${correctionProfileSource} / ${correctionProfile.schemaVersion} / ${correctionProfile.mode} / default ${formatNumber(correctionProfile.defaultStrength)} / maxDistance ${formatNumber(correctionProfile.maxCorrectionDistance)} / landmarkStrengths ${correctionProfile.landmarkStrengths.length}
 CorrectionPlan: not_implemented
 Shape Warp: not_implemented
 利用可能IdealFace: ${availableIdealFaces.length}

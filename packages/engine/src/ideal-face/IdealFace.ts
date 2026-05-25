@@ -21,10 +21,42 @@ export interface IdealFaceLandmark3D {
   confidence: number
 }
 
+export type IdealFaceCorrectionProfileSchemaVersion = "correction_profile_v1"
+
+export type IdealFaceCorrectionProfileMode = "per_landmark_strength"
+
+export interface IdealFaceLandmarkStrength {
+  index: number
+  strength: number
+}
+
+export interface IdealFaceCorrectionProfile {
+  schemaVersion: IdealFaceCorrectionProfileSchemaVersion
+  mode: IdealFaceCorrectionProfileMode
+  defaultStrength: number
+  minStrength: number
+  maxStrength: number
+  maxCorrectionDistance: number
+  landmarkStrengths: IdealFaceLandmarkStrength[]
+}
+
+export type IdealFaceCorrectionProfileSource = "asset" | "fallback"
+
+export const DEFAULT_CORRECTION_PROFILE_V1: IdealFaceCorrectionProfile = {
+  schemaVersion: "correction_profile_v1",
+  mode: "per_landmark_strength",
+  defaultStrength: 0.25,
+  minStrength: 0.0,
+  maxStrength: 1.0,
+  maxCorrectionDistance: 0.015,
+  landmarkStrengths: [],
+}
+
 export interface IdealFaceModel3D {
   coordinateSpace: "normalized_canonical_face_v1" | "bae_ar_ideal_landmarks3d_v1"
   controlPoints: IdealFacePoint3D[]
   idealLandmarks3D?: IdealFaceLandmark3D[]
+  correctionProfile?: IdealFaceCorrectionProfile
 }
 
 export interface IdealFaceLandmarkTopology {
@@ -42,3 +74,15 @@ export interface IdealFace {
 }
 
 export type IdealFacePreset = IdealFace
+
+export function getCorrectionProfileOrDefault(
+  idealFace: IdealFace,
+): IdealFaceCorrectionProfile {
+  return idealFace.model.correctionProfile ?? DEFAULT_CORRECTION_PROFILE_V1
+}
+
+export function getCorrectionProfileSource(
+  idealFace: IdealFace,
+): IdealFaceCorrectionProfileSource {
+  return idealFace.model.correctionProfile ? "asset" : "fallback"
+}
