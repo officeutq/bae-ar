@@ -97,8 +97,11 @@ type ShapeWarpDebugStatus =
 
 type ShapeWarpSamplingMode = "nearest" | "bilinear"
 
+type ShapeWarpDebugPreset = "off" | "weak" | "normal" | "strong" | "custom"
+
 type ShapeWarpDebugSummary = {
   status: ShapeWarpDebugStatus
+  preset: ShapeWarpDebugPreset
   enabled: boolean
   mode: "cpu_radial_debug"
   source: "CorrectionPlan"
@@ -111,13 +114,16 @@ type ShapeWarpDebugSummary = {
   maxVectors: number
   minCorrectionDistance: number
   renderTimeMs: number | null
+  averageRenderTimeMs: number | null
   canvasWidth: number
   canvasHeight: number
   sampling: ShapeWarpSamplingMode
+  usedVectors: CorrectionVector[]
   reason?: string
 }
 
 type ShapeWarpDebugSettings = {
+  preset: ShapeWarpDebugPreset
   enabled: boolean
   radiusPx: number
   globalWarpStrength: number
@@ -132,6 +138,46 @@ type ShapeWarpVectorSelection = {
   skippedByDistanceCount: number
 }
 
+type ShapeWarpPresetConfig = Omit<
+  ShapeWarpDebugSettings,
+  "preset"
+>
+
+const SHAPE_WARP_NORMAL_SETTINGS: ShapeWarpPresetConfig = {
+  enabled: true,
+  radiusPx: 20,
+  globalWarpStrength: 0.35,
+  maxVectors: 15,
+  minCorrectionDistance: 0.003,
+  sampling: "bilinear",
+}
+
+const SHAPE_WARP_DEBUG_PRESETS: Record<
+  Exclude<ShapeWarpDebugPreset, "custom">,
+  Partial<ShapeWarpPresetConfig>
+> = {
+  off: {
+    enabled: false,
+  },
+  weak: {
+    enabled: true,
+    radiusPx: 16,
+    globalWarpStrength: 0.2,
+    maxVectors: 10,
+    minCorrectionDistance: 0.004,
+    sampling: "bilinear",
+  },
+  normal: SHAPE_WARP_NORMAL_SETTINGS,
+  strong: {
+    enabled: true,
+    radiusPx: 28,
+    globalWarpStrength: 0.65,
+    maxVectors: 25,
+    minCorrectionDistance: 0.002,
+    sampling: "bilinear",
+  },
+}
+
 async function bootstrap(): Promise<void> {
   const engine = new BeautyEngine()
   const camera = new CameraService()
@@ -140,12 +186,13 @@ async function bootstrap(): Promise<void> {
   const overlayCanvas = document.createElement("canvas")
   const processedCanvas = document.createElement("canvas")
   const shapeWarpDebugSettings: ShapeWarpDebugSettings = {
+    preset: "off",
     enabled: false,
-    radiusPx: 20,
-    globalWarpStrength: 0.35,
-    maxVectors: 15,
-    minCorrectionDistance: 0.003,
-    sampling: "bilinear",
+    radiusPx: SHAPE_WARP_NORMAL_SETTINGS.radiusPx,
+    globalWarpStrength: SHAPE_WARP_NORMAL_SETTINGS.globalWarpStrength,
+    maxVectors: SHAPE_WARP_NORMAL_SETTINGS.maxVectors,
+    minCorrectionDistance: SHAPE_WARP_NORMAL_SETTINGS.minCorrectionDistance,
+    sampling: SHAPE_WARP_NORMAL_SETTINGS.sampling,
   }
   const stateLog: string[] = []
   let lastEngineState: BeautyEngineState | undefined
@@ -155,6 +202,8 @@ async function bootstrap(): Promise<void> {
   let copyStatus = ""
   let showIdealLandmarkDifferenceLines = false
   let showCorrectionPlanLines = false
+  let showShapeWarpUsedVectors = false
+  let shapeWarpRenderTimeAverageMs: number | null = null
   let latestShapeWarpDebugSummary: ShapeWarpDebugSummary =
     createShapeWarpDebugSummary({
       status: "disabled",
@@ -229,12 +278,14 @@ async function bootstrap(): Promise<void> {
     usedVectorCount?: number
     skippedByDistanceCount?: number
     renderTimeMs?: number | null
+    usedVectors?: CorrectionVector[]
     canvasWidth?: number
     canvasHeight?: number
     reason?: string
   }): ShapeWarpDebugSummary {
     return {
       status: input.status,
+      preset: shapeWarpDebugSettings.preset,
       enabled: shapeWarpDebugSettings.enabled,
       mode: "cpu_radial_debug",
       source: "CorrectionPlan",
@@ -247,9 +298,11 @@ async function bootstrap(): Promise<void> {
       maxVectors: shapeWarpDebugSettings.maxVectors,
       minCorrectionDistance: shapeWarpDebugSettings.minCorrectionDistance,
       renderTimeMs: input.renderTimeMs ?? null,
+      averageRenderTimeMs: shapeWarpRenderTimeAverageMs,
       canvasWidth: input.canvasWidth ?? processedCanvas.width,
       canvasHeight: input.canvasHeight ?? processedCanvas.height,
       sampling: shapeWarpDebugSettings.sampling,
+      usedVectors: input.usedVectors ?? [],
       reason: input.reason,
     }
   }
@@ -681,8 +734,27 @@ ${topVectorPreview}`
   function formatShapeWarpDebugPreview(
     summary: ShapeWarpDebugSummary,
   ): string {
+    const usedVectorPreview =
+      summary.usedVectors.length === 0
+        ? "なし"
+        : summary.usedVectors
+            .slice(0, 10)
+            .map(
+              (vector) =>
+                `Landmark[${vector.index}]:
+correction distance: ${formatNumber(vector.correctionDistance)}
+correction dx: ${formatNumber(vector.correctionDeltaX)}
+correction dy: ${formatNumber(vector.correctionDeltaY)}
+target: x=${formatNumber(vector.target.x)} y=${formatNumber(vector.target.y)}
+current: x=${formatNumber(vector.current.x)} y=${formatNumber(vector.current.y)}
+strength: ${formatNumber(vector.strength)}
+clamped: ${String(vector.clamped)}`,
+            )
+            .join("\n\n")
+
     return `Shape Warp v1 debug:
 status: ${summary.status}
+preset: ${summary.preset}
 enabled: ${String(summary.enabled)}
 mode: ${summary.mode}
 source: ${summary.source}
@@ -696,10 +768,14 @@ usedVectorCount: ${summary.usedVectorCount}
 skippedByDistanceCount: ${summary.skippedByDistanceCount}
 sampling: ${summary.sampling}
 render time ms: ${formatNullableNumber(summary.renderTimeMs)}
+average render time ms: ${formatNullableNumber(summary.averageRenderTimeMs)}
 canvas size: ${summary.canvasWidth}x${summary.canvasHeight}
 debug prototype: true
 production shape warp: not_implemented
 reason: ${summary.reason ?? "なし"}
+
+used warp vectors:
+${usedVectorPreview}
 
 これは Studio processed preview 用の debug prototype です。
 本番品質 warp / WebGL / mesh warp / パフォーマンス最適化は未実装です。`
@@ -816,6 +892,7 @@ Camera:
         .querySelector("#source-preview")
         ?.append(input, overlayCanvas)
       document.querySelector("#processed-preview")?.append(processedCanvas)
+      drawProcessedPreview(input, latestFaceFrame, engine.getCorrectionPlan())
       drawLandmarkOverlay(
         latestFaceFrame,
         engine.getFaceGeometry(),
@@ -823,7 +900,6 @@ Camera:
         engine.getIdealLandmarksDifference(),
         engine.getCorrectionPlan(),
       )
-      drawProcessedPreview(input, latestFaceFrame, engine.getCorrectionPlan())
     }
   }
 
@@ -941,16 +1017,27 @@ Camera:
 
     const startedAt = performance.now()
     applyCpuRadialShapeWarp(context, vectorSelection.vectors)
+    const renderTimeMs = performance.now() - startedAt
+
+    recordShapeWarpRenderTime(renderTimeMs)
     latestShapeWarpDebugSummary = createShapeWarpDebugSummary({
       status: "computed",
       correctionPlanStatus: correctionPlan.status,
       candidateVectorCount: vectorSelection.candidateVectorCount,
       usedVectorCount: vectorSelection.vectors.length,
       skippedByDistanceCount: vectorSelection.skippedByDistanceCount,
-      renderTimeMs: performance.now() - startedAt,
+      renderTimeMs,
+      usedVectors: vectorSelection.vectors,
       canvasWidth: processedCanvas.width,
       canvasHeight: processedCanvas.height,
     })
+  }
+
+  function recordShapeWarpRenderTime(renderTimeMs: number): void {
+    shapeWarpRenderTimeAverageMs =
+      shapeWarpRenderTimeAverageMs === null
+        ? renderTimeMs
+        : shapeWarpRenderTimeAverageMs * 0.8 + renderTimeMs * 0.2
   }
 
   function clearProcessedPreview(): void {
@@ -1253,6 +1340,29 @@ Camera:
       })
     }
 
+    if (showShapeWarpUsedVectors) {
+      context.strokeStyle = "#facc15"
+      context.fillStyle = "#facc15"
+      context.lineWidth = 2
+      context.font = "10px sans-serif"
+
+      latestShapeWarpDebugSummary.usedVectors.forEach((vector) => {
+        const currentX = vector.current.x * overlayCanvas.width
+        const currentY = vector.current.y * overlayCanvas.height
+        const targetX = vector.target.x * overlayCanvas.width
+        const targetY = vector.target.y * overlayCanvas.height
+
+        context.beginPath()
+        context.arc(currentX, currentY, 2.5, 0, Math.PI * 2)
+        context.fill()
+        context.beginPath()
+        context.moveTo(currentX, currentY)
+        context.lineTo(targetX, targetY)
+        context.stroke()
+        context.fillText(String(vector.index), currentX + 4, currentY - 4)
+      })
+    }
+
     context.fillStyle = "#ff3f81"
 
     const geometryPoints = [
@@ -1343,10 +1453,37 @@ Camera:
       })
   }
 
+  function attachShapeWarpUsedVectorsOverlayHandler(): void {
+    document
+      .querySelector<HTMLInputElement>("#shape-warp-used-vectors")
+      ?.addEventListener("change", (event) => {
+        showShapeWarpUsedVectors =
+          event.currentTarget instanceof HTMLInputElement &&
+          event.currentTarget.checked
+        render()
+        appendCameraPreview()
+      })
+  }
+
   function attachShapeWarpDebugHandlers(): void {
+    document
+      .querySelector<HTMLSelectElement>("#shape-warp-preset")
+      ?.addEventListener("change", (event) => {
+        if (!(event.currentTarget instanceof HTMLSelectElement)) {
+          return
+        }
+
+        applyShapeWarpDebugPreset(
+          parseShapeWarpDebugPreset(event.currentTarget.value),
+        )
+        render()
+        appendCameraPreview()
+      })
+
     document
       .querySelector<HTMLInputElement>("#shape-warp-debug-enabled")
       ?.addEventListener("change", (event) => {
+        markShapeWarpDebugCustom()
         shapeWarpDebugSettings.enabled =
           event.currentTarget instanceof HTMLInputElement &&
           event.currentTarget.checked
@@ -1357,6 +1494,7 @@ Camera:
     document
       .querySelector<HTMLInputElement>("#shape-warp-radius-px")
       ?.addEventListener("change", (event) => {
+        markShapeWarpDebugCustom()
         shapeWarpDebugSettings.radiusPx = parseDebugNumberInput(
           event.currentTarget,
           shapeWarpDebugSettings.radiusPx,
@@ -1370,6 +1508,7 @@ Camera:
     document
       .querySelector<HTMLInputElement>("#shape-warp-global-strength")
       ?.addEventListener("change", (event) => {
+        markShapeWarpDebugCustom()
         shapeWarpDebugSettings.globalWarpStrength = parseDebugNumberInput(
           event.currentTarget,
           shapeWarpDebugSettings.globalWarpStrength,
@@ -1383,6 +1522,7 @@ Camera:
     document
       .querySelector<HTMLInputElement>("#shape-warp-max-vectors")
       ?.addEventListener("change", (event) => {
+        markShapeWarpDebugCustom()
         shapeWarpDebugSettings.maxVectors = Math.round(
           parseDebugNumberInput(
             event.currentTarget,
@@ -1398,6 +1538,7 @@ Camera:
     document
       .querySelector<HTMLInputElement>("#shape-warp-min-correction-distance")
       ?.addEventListener("change", (event) => {
+        markShapeWarpDebugCustom()
         shapeWarpDebugSettings.minCorrectionDistance = parseDebugNumberInput(
           event.currentTarget,
           shapeWarpDebugSettings.minCorrectionDistance,
@@ -1415,11 +1556,55 @@ Camera:
           return
         }
 
+        markShapeWarpDebugCustom()
         shapeWarpDebugSettings.sampling =
           event.currentTarget.value === "nearest" ? "nearest" : "bilinear"
         render()
         appendCameraPreview()
       })
+  }
+
+  function applyShapeWarpDebugPreset(preset: ShapeWarpDebugPreset): void {
+    shapeWarpDebugSettings.preset = preset
+
+    if (preset === "custom") {
+      return
+    }
+
+    const presetConfig = SHAPE_WARP_DEBUG_PRESETS[preset]
+
+    shapeWarpDebugSettings.enabled =
+      presetConfig.enabled ?? shapeWarpDebugSettings.enabled
+    shapeWarpDebugSettings.radiusPx =
+      presetConfig.radiusPx ?? shapeWarpDebugSettings.radiusPx
+    shapeWarpDebugSettings.globalWarpStrength =
+      presetConfig.globalWarpStrength ??
+      shapeWarpDebugSettings.globalWarpStrength
+    shapeWarpDebugSettings.maxVectors =
+      presetConfig.maxVectors ?? shapeWarpDebugSettings.maxVectors
+    shapeWarpDebugSettings.minCorrectionDistance =
+      presetConfig.minCorrectionDistance ??
+      shapeWarpDebugSettings.minCorrectionDistance
+    shapeWarpDebugSettings.sampling =
+      presetConfig.sampling ?? shapeWarpDebugSettings.sampling
+  }
+
+  function markShapeWarpDebugCustom(): void {
+    shapeWarpDebugSettings.preset = "custom"
+  }
+
+  function parseShapeWarpDebugPreset(value: string): ShapeWarpDebugPreset {
+    if (
+      value === "off" ||
+      value === "weak" ||
+      value === "normal" ||
+      value === "strong" ||
+      value === "custom"
+    ) {
+      return value
+    }
+
+    return "custom"
   }
 
   function parseDebugNumberInput(
@@ -1621,7 +1806,7 @@ Coordinate conversion: ${idealLandmarks3DProjection.debug?.coordinate?.conversio
 478点差分: ${idealLandmarksDifference.status} / matched ${idealLandmarksDifference.matchedLandmarkCount} / 平均 ${formatNullableNumber(idealLandmarksDifference.averageDistance)} / 最大 ${formatNullableNumber(idealLandmarksDifference.maxDistance)} / 最大index ${idealLandmarksDifference.maxDistanceLandmarkIndex ?? "なし"}
 correctionProfile: ${correctionProfileSource} / ${correctionProfile.schemaVersion} / ${correctionProfile.mode} / default ${formatNumber(correctionProfile.defaultStrength)} / maxDistance ${formatNumber(correctionProfile.maxCorrectionDistance)} / landmarkStrengths ${correctionProfile.landmarkStrengths.length}
 CorrectionPlan: ${correctionPlan.status} / points ${correctionPlan.pointCount} / avgCorrection ${formatNullableNumber(correctionPlan.summary.averageCorrectionDistance)} / maxCorrection ${formatNullableNumber(correctionPlan.summary.maxCorrectionDistance)} / clamped ${correctionPlan.summary.clampedCount}
-Shape Warp v1 debug: ${latestShapeWarpDebugSummary.status} / enabled ${String(latestShapeWarpDebugSummary.enabled)} / candidates ${latestShapeWarpDebugSummary.candidateVectorCount} / used ${latestShapeWarpDebugSummary.usedVectorCount} / skipped ${latestShapeWarpDebugSummary.skippedByDistanceCount} / radius ${formatNumber(latestShapeWarpDebugSummary.radiusPx)} / strength ${formatNumber(latestShapeWarpDebugSummary.globalWarpStrength)} / minDistance ${formatNumber(latestShapeWarpDebugSummary.minCorrectionDistance)} / sampling ${latestShapeWarpDebugSummary.sampling} / render ${formatNullableNumber(latestShapeWarpDebugSummary.renderTimeMs)} ms
+Shape Warp v1 debug: ${latestShapeWarpDebugSummary.status} / preset ${latestShapeWarpDebugSummary.preset} / enabled ${String(latestShapeWarpDebugSummary.enabled)} / candidates ${latestShapeWarpDebugSummary.candidateVectorCount} / used ${latestShapeWarpDebugSummary.usedVectorCount} / skipped ${latestShapeWarpDebugSummary.skippedByDistanceCount} / radius ${formatNumber(latestShapeWarpDebugSummary.radiusPx)} / strength ${formatNumber(latestShapeWarpDebugSummary.globalWarpStrength)} / minDistance ${formatNumber(latestShapeWarpDebugSummary.minCorrectionDistance)} / sampling ${latestShapeWarpDebugSummary.sampling} / render ${formatNullableNumber(latestShapeWarpDebugSummary.renderTimeMs)} ms / avg ${formatNullableNumber(latestShapeWarpDebugSummary.averageRenderTimeMs)} ms
 Production Shape Warp: not_implemented
 利用可能IdealFace: ${availableIdealFaces.length}
 FPS: ${formatFps(faceFrameFps)}
@@ -1636,9 +1821,23 @@ Detect: ${faceFrameLoopDebug.detectCallCount}/${mediaPipeDebug?.detectSuccessCou
           <input id="correction-plan-lines" type="checkbox" ${showCorrectionPlanLines ? "checked" : ""} />
           CorrectionPlan補正線を表示
         </label>
+        <label>
+          <input id="shape-warp-used-vectors" type="checkbox" ${showShapeWarpUsedVectors ? "checked" : ""} />
+          Shape Warp使用ベクトルを表示
+        </label>
         <fieldset>
           <legend>Shape Warp Debug</legend>
           <p>Shape Warp Debug は CorrectionPlan の補正ベクトルを画像に仮反映する検証用です。本番品質の warp 方式ではありません。</p>
+          <label>
+            preset
+            <select id="shape-warp-preset">
+              <option value="off" ${shapeWarpDebugSettings.preset === "off" ? "selected" : ""}>off</option>
+              <option value="weak" ${shapeWarpDebugSettings.preset === "weak" ? "selected" : ""}>weak</option>
+              <option value="normal" ${shapeWarpDebugSettings.preset === "normal" ? "selected" : ""}>normal</option>
+              <option value="strong" ${shapeWarpDebugSettings.preset === "strong" ? "selected" : ""}>strong</option>
+              <option value="custom" ${shapeWarpDebugSettings.preset === "custom" ? "selected" : ""}>custom</option>
+            </select>
+          </label>
           <label>
             <input id="shape-warp-debug-enabled" type="checkbox" ${shapeWarpDebugSettings.enabled ? "checked" : ""} />
             Processed previewでShape Warp debugを有効化
@@ -1673,7 +1872,7 @@ Detect: ${faceFrameLoopDebug.detectCallCount}/${mediaPipeDebug?.detectSuccessCou
             <div id="source-preview" class="preview-container">${camera.getVideo() ? "" : "利用できません"}</div>
           </section>
           <section>
-            <h3>Processed preview</h3>
+            <h3>Processed preview: ${shapeWarpDebugSettings.enabled ? `Shape Warp Debug ${shapeWarpDebugSettings.preset}` : "original"}</h3>
             <div id="processed-preview" class="preview-container">${camera.getVideo() ? "" : "利用できません"}</div>
           </section>
         </div>
@@ -1767,6 +1966,7 @@ Video srcObject: ${faceFrameLoopDebug.video?.hasSrcObject ? "あり" : "なし"}
     attachCopyDebugHandler(debugText)
     attachIdealLandmarkDifferenceOverlayHandler()
     attachCorrectionPlanOverlayHandler()
+    attachShapeWarpUsedVectorsOverlayHandler()
     attachShapeWarpDebugHandlers()
     attachIdealFaceAssetImportHandler()
     attachDebugDetailsHandlers()
