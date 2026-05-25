@@ -139,7 +139,9 @@ face_boundary:
   顔外周、背景、髪、眼鏡境界などの破綻を抑える
 ```
 
-v1 では landmark group の index 定義はまだ完全確定しません。将来は `beauty_filter_asset_v1.landmarkGroups` に group 定義を持ち、asset に存在しない場合は Engine fallback group を使う方向です。現在は docs 仕様化のみで、Engine landmarkGroups asset loading foundation は未実装です。
+v1 では landmark group の index 定義は Authoring Tool / Studio debug で調整中です。
+現在は ideal_face_asset_v1 の optional landmarkGroups、Engine asset loading foundation、fallback group、Studio debug / Copy Debug summary、Authoring Tool Landmark Group Editor v1 prototype、optional export まで実装済みです。
+将来 beauty_filter_asset_v1 が導入されたら、landmarkGroups は beauty_filter_asset_v1 の section として扱う方針です。
 
 ```ts
 type LandmarkGroupId =
