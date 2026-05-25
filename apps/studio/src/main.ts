@@ -10,6 +10,7 @@ import type {
   FaceGeometry,
   FaceGeometryPoint,
   IdealFace,
+  IdealLandmarksDifferenceDebug,
   IdealLandmarks3DProjectionResult,
   IdealFaceProjectionResult,
   ProjectionDifference,
@@ -36,6 +37,7 @@ type DebugSection =
   | "faceGeometry"
   | "idealFace"
   | "idealLandmarks3DProjection"
+  | "idealLandmarksDifference"
   | "idealFaceProjection"
   | "idealFaceProjectionDifference"
   | "mediaPipe"
@@ -97,6 +99,7 @@ async function bootstrap(): Promise<void> {
   let previousFrameTimestamp: number | undefined
   let faceFrameFps: number | undefined
   let copyStatus = ""
+  let showIdealLandmarkDifferenceLines = false
   let idealFaceAssetImportState: IdealFaceAssetImportState = {
     status: "idle",
   }
@@ -105,6 +108,7 @@ async function bootstrap(): Promise<void> {
     faceGeometry: false,
     idealFace: false,
     idealLandmarks3DProjection: false,
+    idealLandmarksDifference: false,
     idealFaceProjection: false,
     idealFaceProjectionDifference: false,
     mediaPipe: false,
@@ -529,11 +533,46 @@ point count: ${difference.points.length}
 ${pointPreview}`
   }
 
+  function formatIdealLandmarksDifferencePreview(
+    difference: IdealLandmarksDifferenceDebug,
+  ): string {
+    const topDifferencePreview =
+      difference.topDifferences.length === 0
+        ? "なし"
+        : difference.topDifferences
+            .map(
+              (item) =>
+                `Landmark[${item.index}]:
+current: x=${formatNumber(item.current.x)} y=${formatNumber(item.current.y)} z=${formatNullableNumber(item.current.z)}
+projectedIdeal: x=${formatNumber(item.projectedIdeal.x)} y=${formatNumber(item.projectedIdeal.y)} z=${formatNullableNumber(item.projectedIdeal.z)}
+dx: ${formatNumber(item.deltaX)}
+dy: ${formatNumber(item.deltaY)}
+distance: ${formatNumber(item.distance)}`,
+            )
+            .join("\n\n")
+
+    return `current-vs-projected ideal 478点差分:
+status: ${difference.status}
+reason: ${difference.reason ?? "なし"}
+current landmark count: ${difference.currentLandmarkCount}
+projected ideal landmark count: ${difference.projectedIdealLandmarkCount}
+matched landmark count: ${difference.matchedLandmarkCount}
+average distance: ${formatNullableNumber(difference.averageDistance)}
+max distance: ${formatNullableNumber(difference.maxDistance)}
+max distance landmark index: ${difference.maxDistanceLandmarkIndex ?? "なし"}
+average dx: ${formatNullableNumber(difference.averageDeltaX)}
+average dy: ${formatNullableNumber(difference.averageDeltaY)}
+
+top differences:
+${topDifferencePreview}`
+  }
+
   function buildDebugText(
     frame: FaceFrame | undefined,
     geometry: FaceGeometry | undefined,
     idealFace: IdealFace,
     idealLandmarks3DProjection: IdealLandmarks3DProjectionResult,
+    idealLandmarksDifference: IdealLandmarksDifferenceDebug,
     idealFaceProjection: IdealFaceProjectionResult,
     projectionDifference: ProjectionDifference,
     availableIdealFaces: IdealFace[],
@@ -589,6 +628,8 @@ ${formatIdealFaceAssetImportState(importState)}
 
 ${formatIdealLandmarks3DProjectionPreview(idealLandmarks3DProjection, frame, overlayPixelBounds)}
 
+${formatIdealLandmarksDifferencePreview(idealLandmarksDifference)}
+
 ${formatIdealFaceProjectionPreview(idealFaceProjection)}
 
 ${formatProjectionDifferencePreview(projectionDifference)}
@@ -639,6 +680,7 @@ Camera:
         latestFaceFrame,
         engine.getFaceGeometry(),
         engine.getIdealLandmarks3DProjection(),
+        engine.getIdealLandmarksDifference(),
         engine.getIdealFaceProjection(),
         engine.getIdealFaceProjectionDifference(),
       )
@@ -721,6 +763,7 @@ Camera:
     frame: FaceFrame | undefined,
     geometry: FaceGeometry | undefined,
     idealLandmarks3DProjection: IdealLandmarks3DProjectionResult,
+    idealLandmarksDifference: IdealLandmarksDifferenceDebug,
     idealFaceProjection: IdealFaceProjectionResult,
     projectionDifference: ProjectionDifference,
   ): void {
@@ -764,6 +807,24 @@ Camera:
         context.beginPath()
         context.arc(x, y, 1.2, 0, Math.PI * 2)
         context.fill()
+      })
+    }
+
+    if (showIdealLandmarkDifferenceLines) {
+      context.strokeStyle = "#f97316"
+      context.lineWidth = 1.5
+
+      idealLandmarksDifference.topDifferences.forEach((item) => {
+        context.beginPath()
+        context.moveTo(
+          item.current.x * overlayCanvas.width,
+          item.current.y * overlayCanvas.height,
+        )
+        context.lineTo(
+          item.projectedIdeal.x * overlayCanvas.width,
+          item.projectedIdeal.y * overlayCanvas.height,
+        )
+        context.stroke()
       })
     }
 
@@ -865,6 +926,18 @@ Camera:
           copyStatus = "コピーに失敗しました"
         }
 
+        render()
+        appendCameraPreview()
+      })
+  }
+
+  function attachIdealLandmarkDifferenceOverlayHandler(): void {
+    document
+      .querySelector<HTMLInputElement>("#ideal-landmark-difference-lines")
+      ?.addEventListener("change", (event) => {
+        showIdealLandmarkDifferenceLines =
+          event.currentTarget instanceof HTMLInputElement &&
+          event.currentTarget.checked
         render()
         appendCameraPreview()
       })
@@ -975,6 +1048,7 @@ Camera:
     const geometry = engine.getFaceGeometry()
     const idealFace = engine.getIdealFace()
     const idealLandmarks3DProjection = engine.getIdealLandmarks3DProjection()
+    const idealLandmarksDifference = engine.getIdealLandmarksDifference()
     const idealFaceProjection = engine.getIdealFaceProjection()
     const projectionDifference = engine.getIdealFaceProjectionDifference()
     const availableIdealFaces = engine.getAvailableIdealFaces()
@@ -985,6 +1059,7 @@ Camera:
       geometry,
       idealFace,
       idealLandmarks3DProjection,
+      idealLandmarksDifference,
       idealFaceProjection,
       projectionDifference,
       availableIdealFaces,
@@ -1037,6 +1112,7 @@ IdealFace 478 Projection: ${idealLandmarks3DProjection.status} / ${idealLandmark
 Alignment: ${idealLandmarks3DProjection.alignment?.mode ?? "none"} / scale basis ${idealLandmarks3DProjection.alignment?.scaleBasis?.mode ?? "none"} / scale ${formatNullableNumber(idealLandmarks3DProjection.alignment?.scale)} / limiting axis ${idealLandmarks3DProjection.alignment?.scaleBasis?.limitingAxis ?? "none"} / aspectDiff ${formatNullableNumber(idealLandmarks3DProjection.alignment?.aspectRatioDifference)}
 Aspect debug: asset ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectRatio.asset)} / rotated ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectRatio.rotated)} / aligned ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectRatio.aligned)} / image ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectRatio.image)} / current ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectRatio.current)} / overlay ${formatNullableNumber(overlayProjectedIdealPixelBounds?.aspectRatioPx)}
 Coordinate conversion: ${idealLandmarks3DProjection.debug?.coordinate?.conversionMode ?? "なし"} / videoAspect ${formatNullableNumber(idealLandmarks3DProjection.debug?.coordinate?.videoAspectRatio)} / fallback ${idealLandmarks3DProjection.debug?.coordinate ? String(idealLandmarks3DProjection.debug.coordinate.fallbackUsed) : "なし"}
+478点差分: ${idealLandmarksDifference.status} / matched ${idealLandmarksDifference.matchedLandmarkCount} / 平均 ${formatNullableNumber(idealLandmarksDifference.averageDistance)} / 最大 ${formatNullableNumber(idealLandmarksDifference.maxDistance)} / 最大index ${idealLandmarksDifference.maxDistanceLandmarkIndex ?? "なし"}
 Projection: ${idealFaceProjection.status} / ${idealFaceProjection.points.length} 点
 差分: ${projectionDifference.status} / 平均 ${formatNullableNumber(projectionDifference.averageDistance)} / 最大 ${formatNullableNumber(projectionDifference.maxDistance)}
 利用可能IdealFace: ${availableIdealFaces.length}
@@ -1044,6 +1120,10 @@ FPS: ${formatFps(faceFrameFps)}
 Loop: ${faceFrameLoopDebug.running ? "実行中" : "停止中"}
 Detect: ${faceFrameLoopDebug.detectCallCount}/${mediaPipeDebug?.detectSuccessCount ?? 0}</pre>
         <h2>プレビュー</h2>
+        <label>
+          <input id="ideal-landmark-difference-lines" type="checkbox" ${showIdealLandmarkDifferenceLines ? "checked" : ""} />
+          478点差分線を表示
+        </label>
         <div id="camera-preview" class="preview-container">${camera.getVideo() ? "" : "利用できません"}</div>
         <section>
           <h2>IdealFace JSON 読み込み</h2>
@@ -1082,6 +1162,10 @@ ${formatPosePreview(frame)}`)}</pre>
         <details data-debug-section="idealLandmarks3DProjection"${detailsOpenAttribute("idealLandmarks3DProjection")}>
           <summary>IdealFace 478 Projection 確認</summary>
           <pre>${escapeHtml(formatIdealLandmarks3DProjectionPreview(idealLandmarks3DProjection, frame, overlayProjectedIdealPixelBounds))}</pre>
+        </details>
+        <details data-debug-section="idealLandmarksDifference"${detailsOpenAttribute("idealLandmarksDifference")}>
+          <summary>current-vs-projected ideal 478点差分確認</summary>
+          <pre>${escapeHtml(formatIdealLandmarksDifferencePreview(idealLandmarksDifference))}</pre>
         </details>
         <details data-debug-section="idealFaceProjection"${detailsOpenAttribute("idealFaceProjection")}>
           <summary>IdealFace Projection 確認</summary>
@@ -1129,6 +1213,7 @@ Video srcObject: ${faceFrameLoopDebug.video?.hasSrcObject ? "あり" : "なし"}
     `
 
     attachCopyDebugHandler(debugText)
+    attachIdealLandmarkDifferenceOverlayHandler()
     attachIdealFaceAssetImportHandler()
     attachDebugDetailsHandlers()
   }
