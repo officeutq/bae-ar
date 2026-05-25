@@ -11,12 +11,14 @@ import {
 import type { FaceFrame } from "./face/FaceFrame"
 import type {
   IdealFace,
+  IdealLandmarksDifferenceDebug,
   IdealLandmarks3DProjectionResult,
   IdealFacePreset,
   IdealFaceProjectionResult,
   ProjectionDifference,
 } from "./ideal-face"
 import {
+  calculateIdealLandmarksDifference,
   calculateProjectionDifference,
   DEFAULT_IDEAL_FACE_PRESETS,
   projectIdealFaceControlPoints,
@@ -167,6 +169,13 @@ export class BeautyEngine {
 
   getIdealLandmarks3DProjection(): IdealLandmarks3DProjectionResult {
     return this.projectIdealLandmarks3D()
+  }
+
+  getIdealLandmarksDifference(): IdealLandmarksDifferenceDebug {
+    return calculateIdealLandmarksDifference(
+      this.currentFaceFrame?.landmarks,
+      this.getIdealLandmarks3DProjection(),
+    )
   }
 
   projectIdealLandmarks3D(): IdealLandmarks3DProjectionResult {
