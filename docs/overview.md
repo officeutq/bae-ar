@@ -28,7 +28,7 @@ BAE AR
 
 ## 現在の到達点
 
-現在の Runtime / Studio 実装は、カメラ映像を `HTMLVideoElement` として取得し、`BeautyEngine.setInput()` に渡し、MediaPipe Face Landmarker を使って `FaceFrame` を更新する段階です。FacePose の実推定、IdealFace v1、Natural v1 最小プリセット、IdealFace 公開 API、IdealFace Projection v1 の controlPoints 投影、Projection Difference Debug v1、Studio overlay / debug / Copy Debug 関連は実装済みです。
+現在の Runtime / Studio 実装は、カメラ映像を `HTMLVideoElement` として取得し、`BeautyEngine.setInput()` に渡し、MediaPipe Face Landmarker を使って `FaceFrame` を更新する段階です。FacePose の実推定、IdealFace v1、Natural v1 最小プリセット、IdealFace 公開 API、`idealLandmarks3D` 478点 Projection、current-vs-projected ideal 478点 difference debug、Studio overlay / debug / Copy Debug 関連は実装済みです。
 
 Studio では、Engine の公開 API から取得できる `FaceFrame` / `FaceGeometry` / debug 情報を表示し、landmarks と補助 geometry point を overlay で確認できます。
 
@@ -53,6 +53,14 @@ BAE AR が作る IdealFace は、BAE AR 独自の理想顔空間です。「こ�
 Engine Runtime では、IdealFace の `idealLandmarks3D` 478点を現在顔の `FacePose` へ投影し、現在姿勢を反映した projected ideal 2D landmarks 478点を生成します。shape processing は、MediaPipe Face Landmarker がカメラ映像から取得した current 478 landmarks と、projected ideal 478 landmarks を比較して進みます。
 
 2D 動画 / 複数画像から IdealFace を作る処理は、リアルタイム処理ではなく IdealFace Authoring Tool の責務です。IdealFace Authoring Tool は BAE AR 独自の IdealFace asset を作成・調整するツールであり、MediaPipe canonical face model そのものを作るツールではありません。`natural_v1` の controlPoints は現段階の投影検証用データであり、IdealFace 本体ではありません。
+
+## correctionProfile v1 の位置づけ
+
+`correctionProfile` v1 は、将来 `ideal_face_asset_v1` に optional top-level field として追加する補正設定です。`idealLandmarks3D` は理想顔の形状データ、`correctionProfile` は各 landmark をどれくらい projected ideal へ寄せるかを表す設定として分けます。
+
+`correctionProfile` は landmark ごとの `strength` と fallback / clamp 設定を持ちますが、dx / dy は保存しません。dx / dy は current landmarks、projected ideal `imageLandmarks`、顔姿勢、表情によって毎フレーム変わるため、Engine Runtime が毎フレーム計算します。
+
+詳細仕様は [correctionProfile v1](correction-profile-v1.md) を参照してください。TypeScript 型、validator、Authoring Tool 編集 UI、CorrectionPlan、Shape Warp はまだ実装しません。
 
 ## IdealFace Projection の座標系方針
 
@@ -188,6 +196,8 @@ shape processing は、個別パーツを独立して大きく変える方向に
 
 Shape Processing の差分は image-normalized coordinate で計算します。current 478 landmarks は MediaPipe 由来の image-normalized 座標です。projected ideal 478 landmarks は、IdealFace same-unit landmarks を `FacePose` へ投影し、alignment 後に image-normalized 座標へ変換したものです。差分は `deltaX = projectedIdealImageX - currentX`、`deltaY = projectedIdealImageY - currentY` として `CorrectionPlan` に渡します。
 
+将来の `CorrectionPlan` は、`correctionProfile` の `strength` をこの差分に掛け、`maxCorrectionDistance` で clamp した correction vector を生成します。`correctionProfile` は個別パーツ加工命令ではなく、current から projected ideal へ全体として自然に少し寄せるための補正率です。
+
 やらないこと:
 
 - 目だけ大きくする
@@ -245,6 +255,8 @@ Engine Runtime で行わないこと:
 - Studio / Authoring 用 UI
 
 Beauty Studio では、開発確認用として overlay や簡易調整 UI を持ってよいです。ただし、本番配布対象には含めません。
+
+`correctionProfile` v1 の責務分離では、IdealFace Authoring Tool が profile の作成・編集を担い、Engine Runtime が profile の読み込みと fallback、毎フレームの dx / dy 計算、strength 適用、clamp、CorrectionPlan 生成を担います。Beauty Studio は Engine の公開 API から correctionProfile / CorrectionPlan を確認し、debug / Copy Debug / overlay に表示します。
 
 ## IdealFace Authoring Tool Step 1 / Step 2-A / Step 2-B
 

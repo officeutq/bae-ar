@@ -44,12 +44,12 @@ Engine Runtime は UI を持たない中核 SDK です。
 - debug 情報の公開
 - IdealFace v1 の読み込み
 - IdealFace 公開 API
-- IdealFace Projection v1 の controlPoints 投影
-- Projection Difference Debug v1
+- idealLandmarks3D 478点 Projection
+- current-vs-projected ideal 478点 difference debug
 
 将来予定:
 
-- ideal 478 landmarks 生成
+- correctionProfile v1 の読み込み / fallback
 - CorrectionPlan 生成
 - Shape Warp
 - Color Processing
@@ -69,7 +69,7 @@ Beauty Studio は Engine Runtime を開発・検証・調整するための開�
 - `HTMLVideoElement` を `BeautyEngine.setInput()` へ渡す接続
 - `MediaPipeFaceDetector` の初期化と Engine への設定
 - Engine 状態、カメラ状態、検出状態、FaceFrame、FaceGeometry、MediaPipe debug の表示
-- landmarks / geometry point / projected IdealFace controlPoints / difference line overlay
+- landmarks / geometry point / projected ideal 478 landmarks / difference line overlay
 - Copy Debug 用の debug text 生成
 
 Studio は Engine Runtime の公開 API のみを利用します。Engine の private field や内部実装ファイルへ直接依存しません。
@@ -215,26 +215,33 @@ MediaPipe canonical face model は、MediaPipe 側が landmark 検出や face ge
 
 MediaPipe は検出側の基準です。BAE AR IdealFace は、「こう寄せたい」という理想顔を表す補正・比較側の基準です。MediaPipe 標準顔 = BAE AR 理想顔、とはしません。
 
-ただし、Engine Runtime で current face と比較するため、IdealFace から MediaPipe 478 landmarks と対応する ideal 478 landmarks を生成できる必要があります。
+Engine Runtime で current face と比較するため、IdealFace は `idealLandmarks3D` 478点を本体として持ち、現在の `FacePose` へ投影して projected ideal 478 landmarks を生成します。
 
-v1 の制限事項:
+現在の制限事項:
 
-- 3D model は Projection の土台確認用の最小 control point 群
-- ideal 478 landmarks の生成は未実装
-- IdealFace Authoring Tool は Step 2-I-C まで実装済み
-- IdealFace Projection v1 は controlPoints のみ部分実装
-- Projection Difference Debug v1 は代表点ベースの差分確認のみ実装
+- IdealFace Authoring Tool は Step 2-I-C / Step 2-H まで実装済み
+- `idealLandmarks3D` 478点 Projection と current-vs-projected ideal difference debug は実装済み
+- `correctionProfile` v1 は仕様のみ
+- CorrectionPlan / Shape Warp は未実装
 
 IdealFace Projection v1 の責務:
 
 - FacePose を受け取る
-- IdealFace の 3D controlPoints を現在姿勢へ回転する
-- Studio overlay 用の projected 2D points を生成する
-- FaceGeometry 代表点と projected IdealFace controlPoints の差分を debug 用に計算する
+- IdealFace の `idealLandmarks3D` 478点を現在姿勢へ回転する
+- same-unit 空間で face center + uniform scale alignment を行う
+- Studio overlay / current-vs-ideal difference / Shape Warp 入力用に `imageLandmarks` を生成する
 
-Projection Difference Debug v1 は、`faceCenter` / `leftEyeCenter` / `rightEyeCenter` / `noseTip` / `mouthCenter` / `chin` と、対応する projected IdealFace controlPoints の `deltaX` / `deltaY` / `distance` を計算します。平均差分、最大差分点、overlay 上の difference line は debug 用であり、CorrectionPlan ではありません。
+current-vs-projected ideal 478点 difference debug v1 は、MediaPipe current image-normalized landmarks と projected ideal `imageLandmarks` の `deltaX` / `deltaY` / `distance` を計算します。平均差分、最大差分 index、top differences、overlay 上の difference line は debug 用であり、CorrectionPlan ではありません。
 
-現在は Perspective camera、face surface、mesh、renderer、ideal 478 landmarks 生成、CorrectionPlan、Shape Warp は未実装です。将来の完全版では、Projection 後の ideal 2D landmarks はすでに現在姿勢を反映します。
+現在は Perspective camera、face surface、mesh、renderer、CorrectionPlan、Shape Warp は未実装です。将来の完全版でも、Projection 後の ideal 2D landmarks はすでに現在姿勢を反映します。
+
+## correctionProfile v1
+
+`correctionProfile` v1 は、`ideal_face_asset_v1` の optional top-level field として追加する将来仕様です。`idealLandmarks3D` は理想顔の形状データ、`correctionProfile` は各 landmark をどれくらい projected ideal へ寄せるかの補正設定として分けます。
+
+`correctionProfile` は per-landmark `strength`、`defaultStrength`、`maxCorrectionDistance` を持ちます。dx / dy は現在顔の姿勢、位置、表情、projection 結果によって毎フレーム変わるため JSON には保存せず、Engine Runtime が current landmarks と projected ideal `imageLandmarks` から計算します。
+
+詳細仕様、fallback、validation 方針、Runtime / Authoring / Studio の責務分離は [correctionProfile v1](correction-profile-v1.md) に定義します。TypeScript 型、validator、Authoring Tool 編集 UI、CorrectionPlan、Shape Warp は未実装です。
 
 ### IdealFace Projection の座標系方針
 
@@ -277,7 +284,7 @@ type IdealLandmarks3DProjectionResult = {
 }
 ```
 
-Studio overlay は `imageLandmarks` を `x * canvasWidth` / `y * canvasHeight` で描画します。same-unit landmarks をそのまま canvas pixel に変換しません。current 478 landmarks との差分比較、`CorrectionPlan`、Shape Warp はまだ実装しません。
+Studio overlay は `imageLandmarks` を `x * canvasWidth` / `y * canvasHeight` で描画します。same-unit landmarks をそのまま canvas pixel に変換しません。current 478 landmarks との差分比較 debug は実装済みですが、`CorrectionPlan`、Shape Warp はまだ実装しません。
 
 ## CorrectionPlan
 
@@ -286,6 +293,8 @@ CorrectionPlan は姿勢補正を担当しません。姿勢への対応は Idea
 CorrectionPlan の責務:
 
 - current image-normalized landmarks と projected ideal image-normalized landmarks の差分を受け取る
+- `correctionProfile` の strength を掛ける
+- `maxCorrectionDistance` で correction vector を clamp する
 - 実際に warp へ渡す安全な補正量を決める
 - 補正強度、移動量上限、滑らかさ、過補正防止、信頼度などを扱う
 
