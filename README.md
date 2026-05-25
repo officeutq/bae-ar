@@ -53,6 +53,14 @@ Projection debug also reports bounds and aspect ratios for the source asset, rot
 
 See [correctionProfile v1](docs/correction-profile-v1.md). Authoring Tool editing UI, production Shape Warp, and production renderer integration remain outside this step.
 
+## expression-aware correctionProfile direction
+
+`correctionProfile` can later add optional `expressionAttenuation` rules. These rules use MediaPipe blendshape scores such as `jawOpen`, `eyeBlinkLeft`, `eyeBlinkRight`, `eyeSquintLeft`, and `eyeSquintRight` to reduce `strengthScale` for affected landmark groups such as `mouth`, `left_eye`, `right_eye`, and `face_boundary`.
+
+This is safety attenuation, not individual part editing. The first step is to weaken correction around the mouth during large jaw opening, around eyes during blink / squint, and around fragile boundaries, with smoothing to avoid abrupt visual changes. Expression target offsets and expression-specific IdealFace assets remain later steps.
+
+See [expression-aware correctionProfile](docs/expression-aware-correction-profile.md). Engine implementation, Studio implementation, Authoring Tool UI, JSON export changes, WebGL changes, and production renderer integration are not included in this documentation step.
+
 ## Shape Warp production direction
 
 Shape Warp v1 debug prototype is a Studio processed preview-only CPU radial warp debug. It connects CorrectionPlan correction vectors to the image so the movement can be observed, but it is not the production-quality warp method.
@@ -269,6 +277,7 @@ debug
 - [開発フロー](docs/development-flow.md)
 - [リポジトリ構成](docs/repository-structure.md)
 - [correctionProfile v1](docs/correction-profile-v1.md)
+- [expression-aware correctionProfile](docs/expression-aware-correction-profile.md)
 - [Shape Warp production direction](docs/shape-warp-production-direction.md)
 - [仕様書とロードマップ](docs/bae_ar_beauty_engine_spec_and_roadmap_2026_05.md)
 

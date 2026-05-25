@@ -116,6 +116,23 @@
 - `maxCorrectionDistance` は image-normalized coordinate 基準
 - `correctionProfile` には dx / dy を保存しない
 
+## 将来拡張: expressionAttenuation
+
+`correctionProfile` は、将来 `expressionAttenuation` を optional extension として持てるようにします。
+
+`expressionAttenuation` は、MediaPipe blendshape score を入力にし、`mouth` / `left_eye` / `right_eye` / `face_boundary` などの `affectedLandmarkGroups` ごとに `strengthScale` を変える safety attenuation です。`strengthScale` は 0.0 から 1.0 の値で、1.0 は通常どおり、0.0 はその group の補正なしを意味します。
+
+目的:
+
+- 口が大きく開いているとき、口周りの warp を弱める
+- 目を閉じている / 細めているとき、目周りの warp を弱める
+- 顔外周など破綻しやすい領域の補正を安全側に倒す
+- 表情変化による急な切り替わりを smoothing で抑える
+
+`expressionAttenuation` は、目だけ大きくする、鼻だけ細くする、顎だけ削るための機能ではありません。表情や可動部位によって破綻しやすい領域の補正を弱める safety attenuation として扱います。
+
+詳細な JSON 仕様案、`jawOpen` / `eyeBlink` / `eyeSquint` の例、smoothing 方針、expression-specific IdealFace との関係は [expression-aware correctionProfile](expression-aware-correction-profile.md) に整理します。
+
 ## dx / dy を保存しない理由
 
 `dx / dy` は、現在の顔の姿勢、位置、表情、projection 結果によって毎フレーム変わるため、IdealFace asset の JSON には保存しません。
@@ -208,7 +225,8 @@ correctionProfile:
 CorrectionPlan:
   Engine が毎フレーム生成する実行計画
   current landmarks と projected ideal imageLandmarks の dx / dy を計算する
-  correctionProfile の strength を掛ける
+  correctionProfile の baseStrength を決める
+  expressionAttenuation がある場合は group strengthScale を掛ける
   maxCorrectionDistance で clamp する
   Shape Warp へ渡す correction vectors を持つ
 ```
@@ -219,6 +237,7 @@ CorrectionPlan は姿勢補正を担当しません。姿勢への対応は Idea
 
 - 個別パーツ加工はしない
 - `correctionProfile` は「目だけ大きくする」「鼻だけ細くする」「顎だけ削る」ための命令セットではない
+- `expressionAttenuation` も個別パーツ加工ではなく、破綻しやすい領域の補正を弱める安全制御である
 - 478 点それぞれに `strength` を持つことは許容する
 - ただし意味としては、current から projected ideal へ全体として自然に少し寄せるための補正率である
 - shape warp では最終的に pixel coordinate を使う
@@ -234,8 +253,11 @@ CorrectionPlan は姿勢補正を担当しません。姿勢への対応は Idea
 - WebGL mesh warp
 - production renderer integration
 - 画像変形の本番実装
+- expressionAttenuation の Engine 実装
 - Authoring Tool 編集 UI
 - `ideal_face_asset_v1` export 処理変更
+- expression-specific IdealFace
+- expression target offset
 - Layer System
 - LayerMaskSpec
 - Color Processing
