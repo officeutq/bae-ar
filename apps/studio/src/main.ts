@@ -106,6 +106,8 @@ type ShapeWarpDebugMode = "cpu_radial_debug" | "webgl_mesh_debug"
 
 type ShapeWarpWebglStatus = "available" | "unavailable"
 
+type ShapeWarpTextureFiltering = "linear" | "nearest"
+
 type ShapeWarpDebugSummary = {
   status: ShapeWarpDebugStatus
   preset: ShapeWarpDebugPreset
@@ -120,6 +122,9 @@ type ShapeWarpDebugSummary = {
   globalWarpStrength: number
   maxVectors: number
   minCorrectionDistance: number
+  meshWarpStrength: number
+  textureFiltering: ShapeWarpTextureFiltering
+  showWireframe: boolean
   renderTimeMs: number | null
   averageRenderTimeMs: number | null
   canvasWidth: number
@@ -146,6 +151,8 @@ type ShapeWarpDebugSettings = {
   maxVectors: number
   minCorrectionDistance: number
   sampling: ShapeWarpSamplingMode
+  meshWarpStrength: number
+  textureFiltering: ShapeWarpTextureFiltering
 }
 
 type ShapeWarpVectorSelection = {
@@ -197,6 +204,8 @@ const SHAPE_WARP_NORMAL_SETTINGS: ShapeWarpPresetConfig = {
   maxVectors: 15,
   minCorrectionDistance: 0.003,
   sampling: "bilinear",
+  meshWarpStrength: 1,
+  textureFiltering: "linear",
 }
 
 const SHAPE_WARP_DEBUG_PRESETS: Record<
@@ -213,6 +222,8 @@ const SHAPE_WARP_DEBUG_PRESETS: Record<
     maxVectors: 10,
     minCorrectionDistance: 0.004,
     sampling: "bilinear",
+    meshWarpStrength: 0.5,
+    textureFiltering: "linear",
   },
   normal: SHAPE_WARP_NORMAL_SETTINGS,
   strong: {
@@ -222,6 +233,8 @@ const SHAPE_WARP_DEBUG_PRESETS: Record<
     maxVectors: 25,
     minCorrectionDistance: 0.002,
     sampling: "bilinear",
+    meshWarpStrength: 1.75,
+    textureFiltering: "linear",
   },
 }
 
@@ -242,6 +255,8 @@ async function bootstrap(): Promise<void> {
     maxVectors: SHAPE_WARP_NORMAL_SETTINGS.maxVectors,
     minCorrectionDistance: SHAPE_WARP_NORMAL_SETTINGS.minCorrectionDistance,
     sampling: SHAPE_WARP_NORMAL_SETTINGS.sampling,
+    meshWarpStrength: SHAPE_WARP_NORMAL_SETTINGS.meshWarpStrength,
+    textureFiltering: SHAPE_WARP_NORMAL_SETTINGS.textureFiltering,
   }
   const stateLog: string[] = []
   let lastEngineState: BeautyEngineState | undefined
@@ -252,6 +267,7 @@ async function bootstrap(): Promise<void> {
   let showIdealLandmarkDifferenceLines = false
   let showCorrectionPlanLines = false
   let showShapeWarpUsedVectors = false
+  let showWebglMeshWireframe = false
   let shapeWarpRenderTimeAverageMs: number | null = null
   let webglMeshWarpRenderer: WebglMeshWarpRenderer | null = null
   let webglMeshWarpRendererError: string | null = null
@@ -357,6 +373,9 @@ async function bootstrap(): Promise<void> {
       globalWarpStrength: shapeWarpDebugSettings.globalWarpStrength,
       maxVectors: shapeWarpDebugSettings.maxVectors,
       minCorrectionDistance: shapeWarpDebugSettings.minCorrectionDistance,
+      meshWarpStrength: shapeWarpDebugSettings.meshWarpStrength,
+      textureFiltering: shapeWarpDebugSettings.textureFiltering,
+      showWireframe: showWebglMeshWireframe,
       renderTimeMs: input.renderTimeMs ?? null,
       averageRenderTimeMs: shapeWarpRenderTimeAverageMs,
       canvasWidth: input.canvasWidth ?? processedCanvas.width,
@@ -820,21 +839,16 @@ clamped: ${String(vector.clamped)}`,
             )
             .join("\n\n")
 
-    return `Shape Warp v1 debug:
-status: ${summary.status}
-preset: ${summary.preset}
-enabled: ${String(summary.enabled)}
-mode: ${summary.mode}
-source: ${summary.source}
-correctionPlan status: ${summary.correctionPlanStatus}
+    const cpuRadialSettings = `CPU radial debug settings:
 radiusPx: ${formatNumber(summary.radiusPx)}
 globalWarpStrength: ${formatNumber(summary.globalWarpStrength)}
 maxVectors: ${summary.maxVectors}
 minCorrectionDistance: ${formatNumber(summary.minCorrectionDistance)}
-candidateVectorCount: ${summary.candidateVectorCount}
-usedVectorCount: ${summary.usedVectorCount}
-skippedByDistanceCount: ${summary.skippedByDistanceCount}
-sampling: ${summary.sampling}
+sampling: ${summary.sampling}`
+    const webglMeshSettings = `WebGL mesh debug settings:
+meshWarpStrength: ${formatNumber(summary.meshWarpStrength)}
+texture filtering: ${summary.textureFiltering}
+showWireframe: ${String(summary.showWireframe)}
 topology: ${summary.topology ?? "なし"}
 topologyLandmarkCount: ${summary.topologyLandmarkCount ?? "なし"}
 triangleCount: ${summary.triangleCount ?? "なし"}
@@ -842,7 +856,19 @@ usedMeshVertexCount: ${summary.usedMeshVertexCount ?? "なし"}
 correctionPlanPointCount: ${summary.correctionPlanPointCount ?? "なし"}
 texture source: ${summary.textureSource ?? "なし"}
 webgl: ${summary.webgl ?? "なし"}
-webgl error: ${summary.webglError ?? "none"}
+webgl error: ${summary.webglError ?? "none"}`
+
+    return `Shape Warp v1 debug:
+status: ${summary.status}
+preset: ${summary.preset}
+enabled: ${String(summary.enabled)}
+mode: ${summary.mode}
+source: ${summary.source}
+correctionPlan status: ${summary.correctionPlanStatus}
+candidateVectorCount: ${summary.candidateVectorCount}
+usedVectorCount: ${summary.usedVectorCount}
+skippedByDistanceCount: ${summary.skippedByDistanceCount}
+${summary.mode === "webgl_mesh_debug" ? webglMeshSettings : cpuRadialSettings}
 render time ms: ${formatNullableNumber(summary.renderTimeMs)}
 average render time ms: ${formatNullableNumber(summary.averageRenderTimeMs)}
 canvas size: ${summary.canvasWidth}x${summary.canvasHeight}
@@ -1293,8 +1319,17 @@ Camera:
       meshVectors.push(vector)
 
       const positionOffset = index * 2
-      targetPositions[positionOffset] = vector.target.x * 2 - 1
-      targetPositions[positionOffset + 1] = 1 - vector.target.y * 2
+      const targetX =
+        vector.current.x +
+        (vector.target.x - vector.current.x) *
+          shapeWarpDebugSettings.meshWarpStrength
+      const targetY =
+        vector.current.y +
+        (vector.target.y - vector.current.y) *
+          shapeWarpDebugSettings.meshWarpStrength
+
+      targetPositions[positionOffset] = targetX * 2 - 1
+      targetPositions[positionOffset + 1] = 1 - targetY * 2
       textureCoordinates[positionOffset] = vector.current.x
       textureCoordinates[positionOffset + 1] = 1 - vector.current.y
     }
@@ -1343,6 +1378,10 @@ Camera:
       processedCanvas.height,
     )
 
+    if (showWebglMeshWireframe) {
+      drawWebglMeshWireframeOverlay(outputContext, meshVectors)
+    }
+
     return {
       status: "computed",
       renderTimeMs: performance.now() - startedAt,
@@ -1350,6 +1389,78 @@ Camera:
       usedMeshVertexCount: meshVectors.length,
       webglStatus: "available",
       webglError: null,
+    }
+  }
+
+  function drawWebglMeshWireframeOverlay(
+    context: CanvasRenderingContext2D,
+    vectors: CorrectionVector[],
+  ): void {
+    context.save()
+    context.strokeStyle = "rgba(250, 204, 21, 0.55)"
+    context.lineWidth = 0.6
+
+    for (
+      let index = 0;
+      index < MEDIAPIPE_FACE_MESH_TRIANGLES.length;
+      index += 3
+    ) {
+      const first = vectors[MEDIAPIPE_FACE_MESH_TRIANGLES[index]]
+      const second = vectors[MEDIAPIPE_FACE_MESH_TRIANGLES[index + 1]]
+      const third = vectors[MEDIAPIPE_FACE_MESH_TRIANGLES[index + 2]]
+
+      if (!first || !second || !third) {
+        continue
+      }
+
+      context.beginPath()
+      moveToWarpedTarget(context, first)
+      lineToWarpedTarget(context, second)
+      lineToWarpedTarget(context, third)
+      context.closePath()
+      context.stroke()
+    }
+
+    context.restore()
+  }
+
+  function moveToWarpedTarget(
+    context: CanvasRenderingContext2D,
+    vector: CorrectionVector,
+  ): void {
+    const point = getWebglMeshWarpTargetPoint(vector)
+
+    context.moveTo(
+      point.x * processedCanvas.width,
+      point.y * processedCanvas.height,
+    )
+  }
+
+  function lineToWarpedTarget(
+    context: CanvasRenderingContext2D,
+    vector: CorrectionVector,
+  ): void {
+    const point = getWebglMeshWarpTargetPoint(vector)
+
+    context.lineTo(
+      point.x * processedCanvas.width,
+      point.y * processedCanvas.height,
+    )
+  }
+
+  function getWebglMeshWarpTargetPoint(vector: CorrectionVector): {
+    x: number
+    y: number
+  } {
+    return {
+      x:
+        vector.current.x +
+        (vector.target.x - vector.current.x) *
+          shapeWarpDebugSettings.meshWarpStrength,
+      y:
+        vector.current.y +
+        (vector.target.y - vector.current.y) *
+          shapeWarpDebugSettings.meshWarpStrength,
     }
   }
 
@@ -1364,6 +1475,7 @@ Camera:
 
     const gl = webglMeshCanvas.getContext("webgl", {
       alpha: true,
+      antialias: false,
       premultipliedAlpha: false,
     })
 
@@ -1523,6 +1635,7 @@ Camera:
       gl.clearColor(0, 0, 0, 0)
       gl.clear(gl.COLOR_BUFFER_BIT)
       gl.useProgram(renderer.program)
+      gl.disable(gl.BLEND)
 
       gl.bindBuffer(gl.ARRAY_BUFFER, renderer.positionBuffer)
       gl.bufferData(gl.ARRAY_BUFFER, targetPositions, gl.DYNAMIC_DRAW)
@@ -1553,8 +1666,13 @@ Camera:
       gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true)
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+      const textureFilter =
+        shapeWarpDebugSettings.textureFiltering === "nearest"
+          ? gl.NEAREST
+          : gl.LINEAR
+
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, textureFilter)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, textureFilter)
       gl.texImage2D(
         gl.TEXTURE_2D,
         0,
@@ -2037,6 +2155,51 @@ Camera:
           appendCameraPreview()
         })
       })
+
+    document
+      .querySelector<HTMLInputElement>("#shape-warp-mesh-strength")
+      ?.addEventListener("change", (event) => {
+        markShapeWarpDebugCustom()
+        shapeWarpDebugSettings.meshWarpStrength = parseDebugNumberInput(
+          event.currentTarget,
+          shapeWarpDebugSettings.meshWarpStrength,
+          0,
+          3,
+        )
+        render()
+        appendCameraPreview()
+      })
+
+    document
+      .querySelectorAll<HTMLInputElement>(
+        'input[name="shape-warp-texture-filtering"]',
+      )
+      .forEach((input) => {
+        input.addEventListener("change", (event) => {
+          if (
+            !(event.currentTarget instanceof HTMLInputElement) ||
+            !event.currentTarget.checked
+          ) {
+            return
+          }
+
+          markShapeWarpDebugCustom()
+          shapeWarpDebugSettings.textureFiltering =
+            event.currentTarget.value === "nearest" ? "nearest" : "linear"
+          render()
+          appendCameraPreview()
+        })
+      })
+
+    document
+      .querySelector<HTMLInputElement>("#shape-warp-webgl-wireframe")
+      ?.addEventListener("change", (event) => {
+        showWebglMeshWireframe =
+          event.currentTarget instanceof HTMLInputElement &&
+          event.currentTarget.checked
+        render()
+        appendCameraPreview()
+      })
   }
 
   function applyShapeWarpDebugPreset(preset: ShapeWarpDebugPreset): void {
@@ -2062,6 +2225,10 @@ Camera:
       shapeWarpDebugSettings.minCorrectionDistance
     shapeWarpDebugSettings.sampling =
       presetConfig.sampling ?? shapeWarpDebugSettings.sampling
+    shapeWarpDebugSettings.meshWarpStrength =
+      presetConfig.meshWarpStrength ?? shapeWarpDebugSettings.meshWarpStrength
+    shapeWarpDebugSettings.textureFiltering =
+      presetConfig.textureFiltering ?? shapeWarpDebugSettings.textureFiltering
   }
 
   function markShapeWarpDebugCustom(): void {
@@ -2105,6 +2272,16 @@ Camera:
     }
 
     return Math.max(min, Math.min(max, parsedValue))
+  }
+
+  function formatProcessedPreviewLabel(): string {
+    if (!shapeWarpDebugSettings.enabled) {
+      return "original"
+    }
+
+    return shapeWarpDebugSettings.mode === "webgl_mesh_debug"
+      ? `WebGL mesh debug / ${shapeWarpDebugSettings.preset}`
+      : `CPU radial debug / ${shapeWarpDebugSettings.preset}`
   }
 
   async function importIdealFaceAssetFile(file: File): Promise<void> {
@@ -2296,7 +2473,7 @@ Coordinate conversion: ${idealLandmarks3DProjection.debug?.coordinate?.conversio
 478点差分: ${idealLandmarksDifference.status} / matched ${idealLandmarksDifference.matchedLandmarkCount} / 平均 ${formatNullableNumber(idealLandmarksDifference.averageDistance)} / 最大 ${formatNullableNumber(idealLandmarksDifference.maxDistance)} / 最大index ${idealLandmarksDifference.maxDistanceLandmarkIndex ?? "なし"}
 correctionProfile: ${correctionProfileSource} / ${correctionProfile.schemaVersion} / ${correctionProfile.mode} / default ${formatNumber(correctionProfile.defaultStrength)} / maxDistance ${formatNumber(correctionProfile.maxCorrectionDistance)} / landmarkStrengths ${correctionProfile.landmarkStrengths.length}
 CorrectionPlan: ${correctionPlan.status} / points ${correctionPlan.pointCount} / avgCorrection ${formatNullableNumber(correctionPlan.summary.averageCorrectionDistance)} / maxCorrection ${formatNullableNumber(correctionPlan.summary.maxCorrectionDistance)} / clamped ${correctionPlan.summary.clampedCount}
-Shape Warp v1 debug: ${latestShapeWarpDebugSummary.status} / mode ${latestShapeWarpDebugSummary.mode} / preset ${latestShapeWarpDebugSummary.preset} / enabled ${String(latestShapeWarpDebugSummary.enabled)} / candidates ${latestShapeWarpDebugSummary.candidateVectorCount} / used ${latestShapeWarpDebugSummary.usedVectorCount} / skipped ${latestShapeWarpDebugSummary.skippedByDistanceCount} / meshVertices ${latestShapeWarpDebugSummary.usedMeshVertexCount ?? "なし"} / triangles ${latestShapeWarpDebugSummary.triangleCount ?? "なし"} / webgl ${latestShapeWarpDebugSummary.webgl ?? "なし"} / radius ${formatNumber(latestShapeWarpDebugSummary.radiusPx)} / strength ${formatNumber(latestShapeWarpDebugSummary.globalWarpStrength)} / minDistance ${formatNumber(latestShapeWarpDebugSummary.minCorrectionDistance)} / sampling ${latestShapeWarpDebugSummary.sampling} / render ${formatNullableNumber(latestShapeWarpDebugSummary.renderTimeMs)} ms / avg ${formatNullableNumber(latestShapeWarpDebugSummary.averageRenderTimeMs)} ms
+Shape Warp v1 debug: ${latestShapeWarpDebugSummary.status} / mode ${latestShapeWarpDebugSummary.mode} / preset ${latestShapeWarpDebugSummary.preset} / enabled ${String(latestShapeWarpDebugSummary.enabled)} / candidates ${latestShapeWarpDebugSummary.candidateVectorCount} / used ${latestShapeWarpDebugSummary.usedVectorCount} / skipped ${latestShapeWarpDebugSummary.skippedByDistanceCount} / meshStrength ${formatNumber(latestShapeWarpDebugSummary.meshWarpStrength)} / textureFiltering ${latestShapeWarpDebugSummary.textureFiltering} / wireframe ${String(latestShapeWarpDebugSummary.showWireframe)} / meshVertices ${latestShapeWarpDebugSummary.usedMeshVertexCount ?? "なし"} / triangles ${latestShapeWarpDebugSummary.triangleCount ?? "なし"} / webgl ${latestShapeWarpDebugSummary.webgl ?? "なし"} / radius ${formatNumber(latestShapeWarpDebugSummary.radiusPx)} / strength ${formatNumber(latestShapeWarpDebugSummary.globalWarpStrength)} / minDistance ${formatNumber(latestShapeWarpDebugSummary.minCorrectionDistance)} / sampling ${latestShapeWarpDebugSummary.sampling} / render ${formatNullableNumber(latestShapeWarpDebugSummary.renderTimeMs)} ms / avg ${formatNullableNumber(latestShapeWarpDebugSummary.averageRenderTimeMs)} ms
 Production Shape Warp: not_implemented
 利用可能IdealFace: ${availableIdealFaces.length}
 FPS: ${formatFps(faceFrameFps)}
@@ -2335,28 +2512,47 @@ Detect: ${faceFrameLoopDebug.detectCallCount}/${mediaPipeDebug?.detectSuccessCou
             <input id="shape-warp-debug-enabled" type="checkbox" ${shapeWarpDebugSettings.enabled ? "checked" : ""} />
             Processed previewでShape Warp debugを有効化
           </label>
-          <label>
-            radiusPx
-            <input id="shape-warp-radius-px" type="number" min="1" max="128" step="1" value="${shapeWarpDebugSettings.radiusPx}" />
-          </label>
-          <label>
-            globalWarpStrength
-            <input id="shape-warp-global-strength" type="number" min="0" max="2" step="0.1" value="${shapeWarpDebugSettings.globalWarpStrength}" />
-          </label>
-          <label>
-            maxVectors
-            <input id="shape-warp-max-vectors" type="number" min="1" max="478" step="1" value="${shapeWarpDebugSettings.maxVectors}" />
-          </label>
-          <label>
-            minCorrectionDistance
-            <input id="shape-warp-min-correction-distance" type="number" min="0" max="0.05" step="0.001" value="${shapeWarpDebugSettings.minCorrectionDistance}" />
-          </label>
           <fieldset>
-            <legend>sampling</legend>
-            <label><input type="radio" name="shape-warp-sampling" value="bilinear" ${shapeWarpDebugSettings.sampling === "bilinear" ? "checked" : ""} /> bilinear</label>
-            <label><input type="radio" name="shape-warp-sampling" value="nearest" ${shapeWarpDebugSettings.sampling === "nearest" ? "checked" : ""} /> nearest</label>
+            <legend>CPU radial debug settings</legend>
+            <label>
+              radiusPx
+              <input id="shape-warp-radius-px" type="number" min="1" max="128" step="1" value="${shapeWarpDebugSettings.radiusPx}" />
+            </label>
+            <label>
+              globalWarpStrength
+              <input id="shape-warp-global-strength" type="number" min="0" max="2" step="0.1" value="${shapeWarpDebugSettings.globalWarpStrength}" />
+            </label>
+            <label>
+              maxVectors
+              <input id="shape-warp-max-vectors" type="number" min="1" max="478" step="1" value="${shapeWarpDebugSettings.maxVectors}" />
+            </label>
+            <label>
+              minCorrectionDistance
+              <input id="shape-warp-min-correction-distance" type="number" min="0" max="0.05" step="0.001" value="${shapeWarpDebugSettings.minCorrectionDistance}" />
+            </label>
+            <fieldset>
+              <legend>sampling</legend>
+              <label><input type="radio" name="shape-warp-sampling" value="bilinear" ${shapeWarpDebugSettings.sampling === "bilinear" ? "checked" : ""} /> bilinear</label>
+              <label><input type="radio" name="shape-warp-sampling" value="nearest" ${shapeWarpDebugSettings.sampling === "nearest" ? "checked" : ""} /> nearest</label>
+            </fieldset>
           </fieldset>
-          <p>radius / maxVectors / minCorrectionDistance / sampling は CPU radial debug 用です。WebGL mesh debug は CorrectionPlan target と MediaPipe face mesh topology を使います。</p>
+          <fieldset>
+            <legend>WebGL mesh debug settings</legend>
+            <label>
+              meshWarpStrength
+              <input id="shape-warp-mesh-strength" type="number" min="0" max="3" step="0.05" value="${shapeWarpDebugSettings.meshWarpStrength}" />
+            </label>
+            <fieldset>
+              <legend>texture filtering</legend>
+              <label><input type="radio" name="shape-warp-texture-filtering" value="linear" ${shapeWarpDebugSettings.textureFiltering === "linear" ? "checked" : ""} /> linear</label>
+              <label><input type="radio" name="shape-warp-texture-filtering" value="nearest" ${shapeWarpDebugSettings.textureFiltering === "nearest" ? "checked" : ""} /> nearest</label>
+            </fieldset>
+            <label>
+              <input id="shape-warp-webgl-wireframe" type="checkbox" ${showWebglMeshWireframe ? "checked" : ""} />
+              WebGL mesh wireframeを表示
+            </label>
+            <p>topologyLandmarkCount: ${MEDIAPIPE_FACE_MESH_TOPOLOGY_LANDMARK_COUNT} / triangleCount: ${MEDIAPIPE_FACE_MESH_TRIANGLE_COUNT}</p>
+          </fieldset>
         </fieldset>
         <div class="preview-grid">
           <section>
@@ -2364,7 +2560,7 @@ Detect: ${faceFrameLoopDebug.detectCallCount}/${mediaPipeDebug?.detectSuccessCou
             <div id="source-preview" class="preview-container">${camera.getVideo() ? "" : "利用できません"}</div>
           </section>
           <section>
-            <h3>Processed preview: ${shapeWarpDebugSettings.enabled ? `Shape Warp Debug ${shapeWarpDebugSettings.mode}` : "original"}</h3>
+            <h3>Processed preview: ${formatProcessedPreviewLabel()}</h3>
             <div id="processed-preview" class="preview-container">${camera.getVideo() ? "" : "利用できません"}</div>
           </section>
         </div>
