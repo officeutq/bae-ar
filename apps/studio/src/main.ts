@@ -9,6 +9,7 @@ import {
 import type {
   BeautyEngineState,
   CorrectionPlanDebug,
+  CorrectionVector,
   FaceFrame,
   FaceGeometry,
   FaceGeometryPoint,
@@ -40,6 +41,7 @@ type DebugSection =
   | "idealLandmarks3DProjection"
   | "idealLandmarksDifference"
   | "correctionPlan"
+  | "shapeWarpDebug"
   | "mediaPipe"
   | "loopTiming"
   | "fullDebugText"
@@ -87,12 +89,53 @@ type OverlayProjectedIdealPixelBoundsSummary = {
   videoHeightPx: number | null
 }
 
+type ShapeWarpDebugStatus =
+  | "disabled"
+  | "not_available"
+  | "passthrough"
+  | "computed"
+
+type ShapeWarpSamplingMode = "nearest"
+
+type ShapeWarpDebugSummary = {
+  status: ShapeWarpDebugStatus
+  enabled: boolean
+  mode: "cpu_radial_debug"
+  source: "CorrectionPlan"
+  correctionPlanStatus: CorrectionPlanDebug["status"]
+  usedVectorCount: number
+  radiusPx: number
+  globalWarpStrength: number
+  maxVectors: number
+  renderTimeMs: number | null
+  canvasWidth: number
+  canvasHeight: number
+  sampling: ShapeWarpSamplingMode
+  reason?: string
+}
+
+type ShapeWarpDebugSettings = {
+  enabled: boolean
+  radiusPx: number
+  globalWarpStrength: number
+  maxVectors: number
+  sampling: ShapeWarpSamplingMode
+}
+
 async function bootstrap(): Promise<void> {
   const engine = new BeautyEngine()
   const camera = new CameraService()
   const detector = new MediaPipeFaceDetector()
   const app = document.querySelector<HTMLDivElement>("#app")
   const overlayCanvas = document.createElement("canvas")
+  const processedCanvas = document.createElement("canvas")
+  const shapeWarpDebugSettings: ShapeWarpDebugSettings = {
+    enabled: false,
+    radiusPx: 32,
+    globalWarpStrength: 1.0,
+    maxVectors: 30,
+    sampling: "nearest",
+  }
   const stateLog: string[] = []
   let lastEngineState: BeautyEngineState | undefined
   let latestFaceFrame: FaceFrame | undefined
@@ -101,6 +144,12 @@ async function bootstrap(): Promise<void> {
   let copyStatus = ""
   let showIdealLandmarkDifferenceLines = false
   let showCorrectionPlanLines = false
+  let latestShapeWarpDebugSummary: ShapeWarpDebugSummary =
+    createShapeWarpDebugSummary({
+      status: "disabled",
+      correctionPlanStatus: "not_available",
+      reason: "Shape Warp debug is disabled",
+    })
   let idealFaceAssetImportState: IdealFaceAssetImportState = {
     status: "idle",
   }
@@ -111,12 +160,14 @@ async function bootstrap(): Promise<void> {
     idealLandmarks3DProjection: false,
     idealLandmarksDifference: false,
     correctionPlan: false,
+    shapeWarpDebug: false,
     mediaPipe: false,
     loopTiming: false,
     fullDebugText: false,
   }
 
   overlayCanvas.className = "overlay"
+  processedCanvas.className = "processed-canvas"
 
   if (!app) {
     throw new Error("Studio app root was not found")
@@ -158,6 +209,33 @@ async function bootstrap(): Promise<void> {
 
   function formatNullableNumber(value: number | null | undefined): string {
     return value === null || value === undefined ? "なし" : formatNumber(value)
+  }
+
+  function createShapeWarpDebugSummary(input: {
+    status: ShapeWarpDebugStatus
+    correctionPlanStatus: CorrectionPlanDebug["status"]
+    usedVectorCount?: number
+    renderTimeMs?: number | null
+    canvasWidth?: number
+    canvasHeight?: number
+    reason?: string
+  }): ShapeWarpDebugSummary {
+    return {
+      status: input.status,
+      enabled: shapeWarpDebugSettings.enabled,
+      mode: "cpu_radial_debug",
+      source: "CorrectionPlan",
+      correctionPlanStatus: input.correctionPlanStatus,
+      usedVectorCount: input.usedVectorCount ?? 0,
+      radiusPx: shapeWarpDebugSettings.radiusPx,
+      globalWarpStrength: shapeWarpDebugSettings.globalWarpStrength,
+      maxVectors: shapeWarpDebugSettings.maxVectors,
+      renderTimeMs: input.renderTimeMs ?? null,
+      canvasWidth: input.canvasWidth ?? processedCanvas.width,
+      canvasHeight: input.canvasHeight ?? processedCanvas.height,
+      sampling: shapeWarpDebugSettings.sampling,
+      reason: input.reason,
+    }
   }
 
   function formatGeometryPoint(
@@ -245,6 +323,7 @@ eyeDistance: ${formatNullableNumber(geometry?.eyeDistance)}`
     projection: IdealLandmarks3DProjectionResult,
     difference: IdealLandmarksDifferenceDebug,
     correctionPlan: CorrectionPlanDebug,
+    shapeWarpDebugSummary: ShapeWarpDebugSummary,
   ): string {
     const correctionProfile = getCorrectionProfileOrDefault(idealFace)
     const correctionProfileSource = getCorrectionProfileSource(idealFace)
@@ -270,7 +349,8 @@ correctionProfile:
   maxCorrectionDistance: ${formatNumber(correctionProfile.maxCorrectionDistance)}
   landmarkStrength count: ${correctionProfile.landmarkStrengths.length}
 CorrectionPlan: ${correctionPlan.status}
-Shape Warp: not_implemented`
+Shape Warp v1 debug: ${shapeWarpDebugSummary.status}
+Production Shape Warp: not_implemented`
   }
 
   function formatIdealFaceAssetImportState(
@@ -582,6 +662,28 @@ top correction vectors:
 ${topVectorPreview}`
   }
 
+  function formatShapeWarpDebugPreview(
+    summary: ShapeWarpDebugSummary,
+  ): string {
+    return `Shape Warp v1 debug:
+status: ${summary.status}
+enabled: ${String(summary.enabled)}
+mode: ${summary.mode}
+source: ${summary.source}
+correctionPlan status: ${summary.correctionPlanStatus}
+usedVectorCount: ${summary.usedVectorCount}
+radiusPx: ${formatNumber(summary.radiusPx)}
+globalWarpStrength: ${formatNumber(summary.globalWarpStrength)}
+maxVectors: ${summary.maxVectors}
+render time ms: ${formatNullableNumber(summary.renderTimeMs)}
+canvas size: ${summary.canvasWidth}x${summary.canvasHeight}
+sampling: ${summary.sampling}
+reason: ${summary.reason ?? "なし"}
+
+これは Studio processed preview 用の debug prototype です。
+本番品質 warp / WebGL / mesh warp / パフォーマンス最適化は未実装です。`
+  }
+
   function buildDebugText(
     frame: FaceFrame | undefined,
     geometry: FaceGeometry | undefined,
@@ -589,6 +691,7 @@ ${topVectorPreview}`
     idealLandmarks3DProjection: IdealLandmarks3DProjectionResult,
     idealLandmarksDifference: IdealLandmarksDifferenceDebug,
     correctionPlan: CorrectionPlanDebug,
+    shapeWarpDebugSummary: ShapeWarpDebugSummary,
     availableIdealFaces: IdealFace[],
     mediaPipeDebug: DetectorDebugInfo | null,
     faceFrameLoopDebug: ReturnType<BeautyEngine["getFaceFrameLoopDebugInfo"]>,
@@ -635,7 +738,7 @@ ${formatBlendshapePreview(frame)}
 Pose:
 ${formatPosePreview(frame)}
 
-${formatIdealFacePreview(idealFace, idealLandmarks3DProjection, idealLandmarksDifference, correctionPlan)}
+${formatIdealFacePreview(idealFace, idealLandmarks3DProjection, idealLandmarksDifference, correctionPlan, shapeWarpDebugSummary)}
 
 IdealFace JSON import:
 ${formatIdealFaceAssetImportState(importState)}
@@ -645,6 +748,8 @@ ${formatIdealLandmarks3DProjectionPreview(idealLandmarks3DProjection, frame, ove
 ${formatIdealLandmarksDifferencePreview(idealLandmarksDifference)}
 
 ${formatCorrectionPlanPreview(correctionPlan)}
+
+${formatShapeWarpDebugPreview(shapeWarpDebugSummary)}
 
 availableIdealFaces: ${availableIdealFaces
   .map((availableIdealFace) => availableIdealFace.metadata.id)
@@ -687,8 +792,9 @@ Camera:
 
     if (input instanceof HTMLVideoElement) {
       document
-        .querySelector("#camera-preview")
+        .querySelector("#source-preview")
         ?.append(input, overlayCanvas)
+      document.querySelector("#processed-preview")?.append(processedCanvas)
       drawLandmarkOverlay(
         latestFaceFrame,
         engine.getFaceGeometry(),
@@ -696,6 +802,7 @@ Camera:
         engine.getIdealLandmarksDifference(),
         engine.getCorrectionPlan(),
       )
+      drawProcessedPreview(input, latestFaceFrame, engine.getCorrectionPlan())
     }
   }
 
@@ -713,6 +820,198 @@ Camera:
     }
 
     return true
+  }
+
+  function resizeProcessedCanvas(video: HTMLVideoElement): boolean {
+    if (video.videoWidth === 0 || video.videoHeight === 0) {
+      return false
+    }
+
+    if (
+      processedCanvas.width !== video.videoWidth ||
+      processedCanvas.height !== video.videoHeight
+    ) {
+      processedCanvas.width = video.videoWidth
+      processedCanvas.height = video.videoHeight
+    }
+
+    return true
+  }
+
+  function drawProcessedPreview(
+    video: HTMLVideoElement,
+    frame: FaceFrame | undefined,
+    correctionPlan: CorrectionPlanDebug,
+  ): void {
+    if (!resizeProcessedCanvas(video)) {
+      clearProcessedPreview()
+      latestShapeWarpDebugSummary = createShapeWarpDebugSummary({
+        status: "not_available",
+        correctionPlanStatus: correctionPlan.status,
+        reason: "processed canvas size is not available",
+      })
+      return
+    }
+
+    const context = processedCanvas.getContext("2d", {
+      willReadFrequently: true,
+    })
+
+    if (!context) {
+      latestShapeWarpDebugSummary = createShapeWarpDebugSummary({
+        status: "not_available",
+        correctionPlanStatus: correctionPlan.status,
+        reason: "processed canvas context is not available",
+      })
+      return
+    }
+
+    context.drawImage(video, 0, 0, processedCanvas.width, processedCanvas.height)
+
+    if (!shapeWarpDebugSettings.enabled) {
+      latestShapeWarpDebugSummary = createShapeWarpDebugSummary({
+        status: "disabled",
+        correctionPlanStatus: correctionPlan.status,
+        canvasWidth: processedCanvas.width,
+        canvasHeight: processedCanvas.height,
+        reason: "Shape Warp debug is disabled",
+      })
+      return
+    }
+
+    if (!frame?.detected || frame.landmarks.length === 0) {
+      latestShapeWarpDebugSummary = createShapeWarpDebugSummary({
+        status: "passthrough",
+        correctionPlanStatus: correctionPlan.status,
+        canvasWidth: processedCanvas.width,
+        canvasHeight: processedCanvas.height,
+        reason: "FaceFrame is not detected; original video is drawn",
+      })
+      return
+    }
+
+    if (correctionPlan.status !== "computed") {
+      latestShapeWarpDebugSummary = createShapeWarpDebugSummary({
+        status: "not_available",
+        correctionPlanStatus: correctionPlan.status,
+        canvasWidth: processedCanvas.width,
+        canvasHeight: processedCanvas.height,
+        reason:
+          correctionPlan.reason ??
+          "CorrectionPlan is not computed; original video is drawn",
+      })
+      return
+    }
+
+    const vectors = selectShapeWarpVectors(correctionPlan)
+
+    if (vectors.length === 0) {
+      latestShapeWarpDebugSummary = createShapeWarpDebugSummary({
+        status: "passthrough",
+        correctionPlanStatus: correctionPlan.status,
+        canvasWidth: processedCanvas.width,
+        canvasHeight: processedCanvas.height,
+        reason: "No correction vectors are available for Shape Warp debug",
+      })
+      return
+    }
+
+    const startedAt = performance.now()
+    applyCpuRadialShapeWarp(context, vectors)
+    latestShapeWarpDebugSummary = createShapeWarpDebugSummary({
+      status: "computed",
+      correctionPlanStatus: correctionPlan.status,
+      usedVectorCount: vectors.length,
+      renderTimeMs: performance.now() - startedAt,
+      canvasWidth: processedCanvas.width,
+      canvasHeight: processedCanvas.height,
+    })
+  }
+
+  function clearProcessedPreview(): void {
+    const context = processedCanvas.getContext("2d")
+
+    context?.clearRect(0, 0, processedCanvas.width, processedCanvas.height)
+  }
+
+  function selectShapeWarpVectors(
+    correctionPlan: CorrectionPlanDebug,
+  ): CorrectionVector[] {
+    return [...correctionPlan.vectors]
+      .filter((vector) => vector.correctionDistance > 0)
+      .sort(
+        (current, next) =>
+          next.correctionDistance - current.correctionDistance,
+      )
+      .slice(0, shapeWarpDebugSettings.maxVectors)
+  }
+
+  function applyCpuRadialShapeWarp(
+    context: CanvasRenderingContext2D,
+    vectors: CorrectionVector[],
+  ): void {
+    const width = processedCanvas.width
+    const height = processedCanvas.height
+    const radiusPx = shapeWarpDebugSettings.radiusPx
+    const radiusPxSquared = radiusPx * radiusPx
+    const globalWarpStrength = shapeWarpDebugSettings.globalWarpStrength
+    const sourceImageData = context.getImageData(0, 0, width, height)
+    const outputImageData = context.createImageData(width, height)
+    const vectorInputs = vectors.map((vector) => ({
+      currentPxX: vector.current.x * width,
+      currentPxY: vector.current.y * height,
+      correctionPxX: vector.correctionDeltaX * width,
+      correctionPxY: vector.correctionDeltaY * height,
+    }))
+
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        let accumulatedWarpX = 0
+        let accumulatedWarpY = 0
+
+        vectorInputs.forEach((vector) => {
+          const dx = x - vector.currentPxX
+          const dy = y - vector.currentPxY
+          const distanceSquared = dx * dx + dy * dy
+
+          if (distanceSquared >= radiusPxSquared) {
+            return
+          }
+
+          const distance = Math.sqrt(distanceSquared)
+          const falloff = 1 - distance / radiusPx
+          const weight = falloff * falloff
+
+          accumulatedWarpX += vector.correctionPxX * weight
+          accumulatedWarpY += vector.correctionPxY * weight
+        })
+
+        const sourceX = clampPixelIndex(
+          Math.round(x - accumulatedWarpX * globalWarpStrength),
+          width,
+        )
+        const sourceY = clampPixelIndex(
+          Math.round(y - accumulatedWarpY * globalWarpStrength),
+          height,
+        )
+        const sourceIndex = (sourceY * width + sourceX) * 4
+        const outputIndex = (y * width + x) * 4
+
+        outputImageData.data[outputIndex] = sourceImageData.data[sourceIndex]
+        outputImageData.data[outputIndex + 1] =
+          sourceImageData.data[sourceIndex + 1]
+        outputImageData.data[outputIndex + 2] =
+          sourceImageData.data[sourceIndex + 2]
+        outputImageData.data[outputIndex + 3] =
+          sourceImageData.data[sourceIndex + 3]
+      }
+    }
+
+    context.putImageData(outputImageData, 0, 0)
+  }
+
+  function clampPixelIndex(value: number, size: number): number {
+    return Math.max(0, Math.min(size - 1, value))
   }
 
   function calculateOverlayProjectedIdealPixelBounds(
@@ -947,6 +1246,78 @@ Camera:
       })
   }
 
+  function attachShapeWarpDebugHandlers(): void {
+    document
+      .querySelector<HTMLInputElement>("#shape-warp-debug-enabled")
+      ?.addEventListener("change", (event) => {
+        shapeWarpDebugSettings.enabled =
+          event.currentTarget instanceof HTMLInputElement &&
+          event.currentTarget.checked
+        render()
+        appendCameraPreview()
+      })
+
+    document
+      .querySelector<HTMLInputElement>("#shape-warp-radius-px")
+      ?.addEventListener("change", (event) => {
+        shapeWarpDebugSettings.radiusPx = parseDebugNumberInput(
+          event.currentTarget,
+          shapeWarpDebugSettings.radiusPx,
+          1,
+          128,
+        )
+        render()
+        appendCameraPreview()
+      })
+
+    document
+      .querySelector<HTMLInputElement>("#shape-warp-global-strength")
+      ?.addEventListener("change", (event) => {
+        shapeWarpDebugSettings.globalWarpStrength = parseDebugNumberInput(
+          event.currentTarget,
+          shapeWarpDebugSettings.globalWarpStrength,
+          0,
+          2,
+        )
+        render()
+        appendCameraPreview()
+      })
+
+    document
+      .querySelector<HTMLInputElement>("#shape-warp-max-vectors")
+      ?.addEventListener("change", (event) => {
+        shapeWarpDebugSettings.maxVectors = Math.round(
+          parseDebugNumberInput(
+            event.currentTarget,
+            shapeWarpDebugSettings.maxVectors,
+            1,
+            478,
+          ),
+        )
+        render()
+        appendCameraPreview()
+      })
+  }
+
+  function parseDebugNumberInput(
+    input: EventTarget | null,
+    fallback: number,
+    min: number,
+    max: number,
+  ): number {
+    if (!(input instanceof HTMLInputElement)) {
+      return fallback
+    }
+
+    const parsedValue = Number(input.value)
+
+    if (!Number.isFinite(parsedValue)) {
+      return fallback
+    }
+
+    return Math.max(min, Math.min(max, parsedValue))
+  }
+
   async function importIdealFaceAssetFile(file: File): Promise<void> {
     idealFaceAssetImportState = {
       status: "loading",
@@ -1066,6 +1437,7 @@ Camera:
       idealLandmarks3DProjection,
       idealLandmarksDifference,
       correctionPlan,
+      latestShapeWarpDebugSummary,
       availableIdealFaces,
       mediaPipeDebug,
       faceFrameLoopDebug,
@@ -1086,13 +1458,20 @@ Camera:
           <span aria-live="polite">${copyStatus}</span>
         </header>
         <style>
+          .preview-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 16px;
+          }
+
           .preview-container {
             position: relative;
             display: inline-block;
             max-width: 100%;
           }
 
-          .preview-container video {
+          .preview-container video,
+          .preview-container canvas.processed-canvas {
             display: block;
             max-width: 100%;
             height: auto;
@@ -1119,7 +1498,8 @@ Coordinate conversion: ${idealLandmarks3DProjection.debug?.coordinate?.conversio
 478点差分: ${idealLandmarksDifference.status} / matched ${idealLandmarksDifference.matchedLandmarkCount} / 平均 ${formatNullableNumber(idealLandmarksDifference.averageDistance)} / 最大 ${formatNullableNumber(idealLandmarksDifference.maxDistance)} / 最大index ${idealLandmarksDifference.maxDistanceLandmarkIndex ?? "なし"}
 correctionProfile: ${correctionProfileSource} / ${correctionProfile.schemaVersion} / ${correctionProfile.mode} / default ${formatNumber(correctionProfile.defaultStrength)} / maxDistance ${formatNumber(correctionProfile.maxCorrectionDistance)} / landmarkStrengths ${correctionProfile.landmarkStrengths.length}
 CorrectionPlan: ${correctionPlan.status} / points ${correctionPlan.pointCount} / avgCorrection ${formatNullableNumber(correctionPlan.summary.averageCorrectionDistance)} / maxCorrection ${formatNullableNumber(correctionPlan.summary.maxCorrectionDistance)} / clamped ${correctionPlan.summary.clampedCount}
-Shape Warp: not_implemented
+Shape Warp v1 debug: ${latestShapeWarpDebugSummary.status} / enabled ${String(latestShapeWarpDebugSummary.enabled)} / usedVectors ${latestShapeWarpDebugSummary.usedVectorCount} / radius ${formatNumber(latestShapeWarpDebugSummary.radiusPx)} / strength ${formatNumber(latestShapeWarpDebugSummary.globalWarpStrength)} / render ${formatNullableNumber(latestShapeWarpDebugSummary.renderTimeMs)} ms
+Production Shape Warp: not_implemented
 利用可能IdealFace: ${availableIdealFaces.length}
 FPS: ${formatFps(faceFrameFps)}
 Loop: ${faceFrameLoopDebug.running ? "実行中" : "停止中"}
@@ -1133,7 +1513,35 @@ Detect: ${faceFrameLoopDebug.detectCallCount}/${mediaPipeDebug?.detectSuccessCou
           <input id="correction-plan-lines" type="checkbox" ${showCorrectionPlanLines ? "checked" : ""} />
           CorrectionPlan補正線を表示
         </label>
-        <div id="camera-preview" class="preview-container">${camera.getVideo() ? "" : "利用できません"}</div>
+        <fieldset>
+          <legend>Shape Warp Debug</legend>
+          <label>
+            <input id="shape-warp-debug-enabled" type="checkbox" ${shapeWarpDebugSettings.enabled ? "checked" : ""} />
+            Processed previewでShape Warp debugを有効化
+          </label>
+          <label>
+            radiusPx
+            <input id="shape-warp-radius-px" type="number" min="1" max="128" step="1" value="${shapeWarpDebugSettings.radiusPx}" />
+          </label>
+          <label>
+            globalWarpStrength
+            <input id="shape-warp-global-strength" type="number" min="0" max="2" step="0.1" value="${shapeWarpDebugSettings.globalWarpStrength}" />
+          </label>
+          <label>
+            maxVectors
+            <input id="shape-warp-max-vectors" type="number" min="1" max="478" step="1" value="${shapeWarpDebugSettings.maxVectors}" />
+          </label>
+        </fieldset>
+        <div class="preview-grid">
+          <section>
+            <h3>Source preview</h3>
+            <div id="source-preview" class="preview-container">${camera.getVideo() ? "" : "利用できません"}</div>
+          </section>
+          <section>
+            <h3>Processed preview</h3>
+            <div id="processed-preview" class="preview-container">${camera.getVideo() ? "" : "利用できません"}</div>
+          </section>
+        </div>
         <section>
           <h2>IdealFace JSON 読み込み</h2>
           <label>
@@ -1166,7 +1574,7 @@ ${formatPosePreview(frame)}`)}</pre>
         </details>
         <details data-debug-section="idealFace"${detailsOpenAttribute("idealFace")}>
           <summary>IdealFace 確認</summary>
-          <pre>${escapeHtml(formatIdealFacePreview(idealFace, idealLandmarks3DProjection, idealLandmarksDifference, correctionPlan))}</pre>
+          <pre>${escapeHtml(formatIdealFacePreview(idealFace, idealLandmarks3DProjection, idealLandmarksDifference, correctionPlan, latestShapeWarpDebugSummary))}</pre>
         </details>
         <details data-debug-section="idealLandmarks3DProjection"${detailsOpenAttribute("idealLandmarks3DProjection")}>
           <summary>IdealFace 478 Projection 確認</summary>
@@ -1179,6 +1587,10 @@ ${formatPosePreview(frame)}`)}</pre>
         <details data-debug-section="correctionPlan"${detailsOpenAttribute("correctionPlan")}>
           <summary>CorrectionPlan v1 Debug</summary>
           <pre>${escapeHtml(formatCorrectionPlanPreview(correctionPlan))}</pre>
+        </details>
+        <details data-debug-section="shapeWarpDebug"${detailsOpenAttribute("shapeWarpDebug")}>
+          <summary>Shape Warp v1 Debug</summary>
+          <pre>${escapeHtml(formatShapeWarpDebugPreview(latestShapeWarpDebugSummary))}</pre>
         </details>
         <details data-debug-section="mediaPipe"${detailsOpenAttribute("mediaPipe")}>
           <summary>MediaPipe Debug</summary>
@@ -1220,6 +1632,7 @@ Video srcObject: ${faceFrameLoopDebug.video?.hasSrcObject ? "あり" : "なし"}
     attachCopyDebugHandler(debugText)
     attachIdealLandmarkDifferenceOverlayHandler()
     attachCorrectionPlanOverlayHandler()
+    attachShapeWarpDebugHandlers()
     attachIdealFaceAssetImportHandler()
     attachDebugDetailsHandlers()
   }
