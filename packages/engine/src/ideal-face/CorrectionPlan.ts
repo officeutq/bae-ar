@@ -7,6 +7,12 @@ import {
   getCorrectionProfileOrDefault,
   getCorrectionProfileSource,
 } from "./IdealFace"
+import {
+  createLandmarkGroupsDebugSummary,
+  getLandmarkGroupsOrDefault,
+  type LandmarkGroups,
+  type LandmarkGroupsDebugSummary,
+} from "./LandmarkGroups"
 import type {
   IdealLandmarkDifferenceItem,
   IdealLandmarksDifferenceDebug,
@@ -63,6 +69,7 @@ export interface CorrectionPlanDebug {
   status: CorrectionPlanStatus
   reason?: string
   sourceCorrectionProfile: IdealFaceCorrectionProfileSource
+  landmarkGroups: LandmarkGroupsDebugSummary
   pointCount: number
   config: {
     defaultStrength: number
@@ -115,6 +122,10 @@ export function calculateCorrectionPlanDebug(
   const sourceCorrectionProfile = getCorrectionProfileSource(idealFace)
   const expressionAttenuationProfile =
     getExpressionAttenuationProfileOrDefault(idealFace)
+  const landmarkGroupsResolution = getLandmarkGroupsOrDefault(idealFace)
+  const landmarkGroupsDebugSummary = createLandmarkGroupsDebugSummary(
+    landmarkGroupsResolution,
+  )
   const baseConfig = {
     defaultStrength: correctionProfile.defaultStrength,
     minStrength: correctionProfile.minStrength,
@@ -128,6 +139,7 @@ export function calculateCorrectionPlanDebug(
     const expressionAttenuation = createUnavailableExpressionAttenuationDebug({
       profile: expressionAttenuationProfile.profile,
       source: expressionAttenuationProfile.source,
+      landmarkGroups: landmarkGroupsResolution.groups,
       reason: difference.reason ?? "ideal landmark difference is not available",
       state: options.expressionAttenuationState,
     })
@@ -136,6 +148,7 @@ export function calculateCorrectionPlanDebug(
       status: "not_available",
       reason: difference.reason ?? "ideal landmark difference is not available",
       sourceCorrectionProfile,
+      landmarkGroups: landmarkGroupsDebugSummary,
       config: baseConfig,
       expressionAttenuation,
     })
@@ -149,6 +162,7 @@ export function calculateCorrectionPlanDebug(
     const expressionAttenuation = createUnavailableExpressionAttenuationDebug({
       profile: expressionAttenuationProfile.profile,
       source: expressionAttenuationProfile.source,
+      landmarkGroups: landmarkGroupsResolution.groups,
       reason: difference.reason ?? "ideal landmark difference is missing",
       state: options.expressionAttenuationState,
     })
@@ -157,6 +171,7 @@ export function calculateCorrectionPlanDebug(
       status: "missing_difference",
       reason: difference.reason ?? "ideal landmark difference is missing",
       sourceCorrectionProfile,
+      landmarkGroups: landmarkGroupsDebugSummary,
       config: baseConfig,
       expressionAttenuation,
     })
@@ -165,6 +180,7 @@ export function calculateCorrectionPlanDebug(
   const expressionAttenuation = calculateExpressionAttenuationDebug({
     profile: expressionAttenuationProfile.profile,
     source: expressionAttenuationProfile.source,
+    landmarkGroups: landmarkGroupsResolution.groups,
     blendshapes: options.blendshapes,
     timestamp: options.timestamp,
     state: options.expressionAttenuationState,
@@ -181,6 +197,7 @@ export function calculateCorrectionPlanDebug(
       strengthByIndex.get(item.index) ?? correctionProfile.defaultStrength,
       correctionProfile.maxCorrectionDistance,
       expressionAttenuation,
+      landmarkGroupsResolution.groups,
     ),
   )
   const totals = vectors.reduce(
@@ -222,6 +239,7 @@ export function calculateCorrectionPlanDebug(
           `expected 478 correction vectors; got ${vectors.length}`
         : undefined,
     sourceCorrectionProfile,
+    landmarkGroups: landmarkGroupsDebugSummary,
     pointCount: vectors.length,
     config: baseConfig,
     expressionAttenuation,
@@ -253,8 +271,12 @@ function calculateCorrectionVector(
   baseStrength: number,
   maxCorrectionDistance: number,
   expressionAttenuation: ExpressionAttenuationDebug,
+  landmarkGroups: LandmarkGroups,
 ): CorrectionVector {
-  const affectedGroups = getExpressionLandmarkGroupsForIndex(difference.index)
+  const affectedGroups = getExpressionLandmarkGroupsForIndex(
+    difference.index,
+    landmarkGroups,
+  )
   const expressionStrengthScale = getExpressionStrengthScaleForGroups(
     affectedGroups,
     expressionAttenuation,
@@ -304,6 +326,7 @@ function emptyCorrectionPlan(input: {
   status: Exclude<CorrectionPlanStatus, "computed" | "landmark_count_mismatch">
   reason: string
   sourceCorrectionProfile: IdealFaceCorrectionProfileSource
+  landmarkGroups: LandmarkGroupsDebugSummary
   config: CorrectionPlanDebug["config"]
   expressionAttenuation: ExpressionAttenuationDebug
 }): CorrectionPlanDebug {
@@ -311,6 +334,7 @@ function emptyCorrectionPlan(input: {
     status: input.status,
     reason: input.reason,
     sourceCorrectionProfile: input.sourceCorrectionProfile,
+    landmarkGroups: input.landmarkGroups,
     pointCount: 0,
     config: input.config,
     expressionAttenuation: input.expressionAttenuation,

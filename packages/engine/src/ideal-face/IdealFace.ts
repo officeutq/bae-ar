@@ -3,6 +3,7 @@ import {
   type ExpressionAttenuationProfile,
   type ExpressionAttenuationSource,
 } from "./ExpressionAttenuation"
+import type { LandmarkGroups } from "./LandmarkGroups"
 
 export interface IdealFaceMetadata {
   id: string
@@ -64,6 +65,7 @@ export interface IdealFaceModel3D {
   controlPoints: IdealFacePoint3D[]
   idealLandmarks3D?: IdealFaceLandmark3D[]
   correctionProfile?: IdealFaceCorrectionProfile
+  landmarkGroups?: LandmarkGroups
 }
 
 export interface IdealFaceLandmarkTopology {
