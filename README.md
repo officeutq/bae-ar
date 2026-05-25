@@ -55,9 +55,9 @@ See [correctionProfile v1](docs/correction-profile-v1.md). Authoring Tool editin
 
 ## expression-aware correctionProfile direction
 
-`correctionProfile` can later add optional `expressionAttenuation` rules. These rules use MediaPipe blendshape scores such as `jawOpen`, `eyeBlinkLeft`, `eyeBlinkRight`, `eyeSquintLeft`, and `eyeSquintRight` to reduce `strengthScale` for affected landmark groups such as `mouth`, `left_eye`, `right_eye`, and `face_boundary`.
+`correctionProfile` supports optional `expressionAttenuation` rules in the Engine foundation. These rules use MediaPipe blendshape scores such as `jawOpen`, `eyeBlinkLeft`, `eyeBlinkRight`, `eyeSquintLeft`, and `eyeSquintRight` to reduce `strengthScale` for affected landmark groups such as `mouth`, `left_eye`, `right_eye`, and `face_boundary`.
 
-This is safety attenuation, not individual part editing. The first step is to weaken correction around the mouth during large jaw opening, around eyes during blink / squint, and around fragile boundaries, with smoothing to avoid abrupt visual changes. Expression target offsets and expression-specific IdealFace assets remain later steps.
+This is safety attenuation, not individual part editing. The Engine foundation includes fallback rules, validation, `halfLifeMs` smoothing, and CorrectionPlan `finalStrength` integration. Studio debug / Copy Debug can show expression attenuation summary. Authoring Tool UI, correctionProfile / expressionAttenuation export changes, expression target offsets, expression-specific IdealFace assets, and production renderer integration remain later work.
 
 See [expression-aware correctionProfile](docs/expression-aware-correction-profile.md). Engine foundation and Studio debug / Copy Debug display are implemented. Authoring Tool UI, correctionProfile / expressionAttenuation export changes, WebGL changes, expression target offsets, expression-specific IdealFace assets, and production renderer integration remain later work.
 

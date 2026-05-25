@@ -189,7 +189,7 @@ Layer Mask Authoring Tool を置く想定の場所です。
 
 実装が変わった場合は、該当する docs / README / 仕様書 / ロードマップも更新します。
 
-- `correction-profile-v1.md`: `ideal_face_asset_v1` に追加予定の optional `correctionProfile` 仕様、fallback、validation、CorrectionPlan との関係
+- `correction-profile-v1.md`: `ideal_face_asset_v1` の optional `correctionProfile` 仕様、fallback、validation、`expressionAttenuation`、CorrectionPlan との関係
 - `shape-warp-production-direction.md`: Shape Warp v1 debug prototype と production candidate の違い、WebGL mesh warp 方針、段階分け
 - `beauty-filter-asset-v1.md`: 最終フィルター / プリセットを `idealFace` / `landmarkGroups` / `correctionProfile` / `shapeWarpSettings` / `colorLayers` に分けつつ、1つの `beauty_filter_asset_v1` JSON として配布する方向性
 

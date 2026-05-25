@@ -103,6 +103,7 @@ Beauty Studio:
 - current-vs-projected ideal 478点 difference debug v1
 - top differences difference line overlay
 - correctionProfile v1 の Engine 型 / validation / fallback foundation
+- expressionAttenuation v1 foundation: jawOpen / eyeBlink / eyeSquint による group strengthScale、halfLifeMs smoothing、CorrectionVector の baseStrength / expressionStrengthScale / finalStrength
 - CorrectionPlan v1 debug foundation
 - 478点分の correction vectors 計算
 - CorrectionPlan vector overlay
