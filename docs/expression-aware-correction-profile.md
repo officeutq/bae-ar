@@ -2,7 +2,7 @@
 
 ## 目的
 
-このドキュメントは、`correctionProfile` の将来拡張として `expressionAttenuation` を追加する方針を整理します。
+このドキュメントは、`correctionProfile` の optional extension として Engine foundation 実装済みの `expressionAttenuation` v1 の方針と、未実装の後段範囲を整理します。
 
 現在の WebGL mesh warp debug prototype では、`normal` / `strong` のように補正を強めると、輪郭線や境界が目立つことがあります。また、口を開けたときに口内が塗りつぶされたように見えたり、目周りで黒目が瞼色になることがあります。
 

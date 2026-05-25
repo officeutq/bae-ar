@@ -160,6 +160,8 @@ shapeWarpSettings:
 
 Production Shape Warp / Runtime renderer integration はまだ未実装です。現在の Studio Shape Warp v1 debug prototype と WebGL mesh warp v1 prototype は、Production Runtime renderer ではありません。
 
+`shapeWarpSettings` はフィルターごとの公開設定であり、WebGL shader、renderer lifecycle、GPU resource 管理、fallback 実装などの Engine 内部実装は含めません。Engine 側は `shapeWarpSettings` を読み取り、実際の renderer / smoothing / boundary 処理を実行します。
+
 ### colorLayers
 
 `colorLayers` は、色加工の layer 群です。

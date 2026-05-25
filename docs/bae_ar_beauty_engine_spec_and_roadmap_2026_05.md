@@ -125,7 +125,7 @@ Beauty Studio:
 - beauty_filter_asset_v1
 - Production Shape Warp
 - Production WebGL mesh warp / Runtime renderer integration
-- MediaPipe topology triangle mesh warp
+- Production MediaPipe topology triangle mesh warp
 - temporal smoothing
 - mask / boundary handling
 - glasses / hair handling
@@ -546,7 +546,7 @@ deltaY = projectedIdealImageY - currentY
 
 この差分を `CorrectionPlan` に渡します。
 
-CorrectionPlan v1 debug foundation では、`correctionProfile` の `strength` を差分に掛け、`maxCorrectionDistance` で correction vector を clamp します。将来 `expressionAttenuation` がある場合は、blendshape score から group ごとの `strengthScale` を計算し、`finalStrength = baseStrength * groupStrengthScale` として可動部位の補正を弱めます。`correctionProfile` は個別パーツ加工命令ではなく、current から projected ideal へ全体として自然に少し寄せるための補正率です。
+CorrectionPlan v1 debug foundation では、`correctionProfile` の `strength` を差分に掛け、`maxCorrectionDistance` で correction vector を clamp します。`expressionAttenuation` v1 foundation がある場合は、blendshape score から group ごとの `strengthScale` を計算し、`finalStrength = baseStrength * groupStrengthScale` として可動部位の補正を弱めます。`correctionProfile` は個別パーツ加工命令ではなく、current から projected ideal へ全体として自然に少し寄せるための補正率です。
 
 やらないこと:
 
@@ -790,7 +790,7 @@ Milestone 4 に含めないもの:
 
 - optional `correctionProfile` がない asset では fallback default を使える。
 - `correctionProfile` の per-landmark strength を correction vector に適用できる。
-- 将来 `expressionAttenuation` がある場合、blendshape score に応じて group strengthScale を適用できる。
+- `expressionAttenuation` v1 foundation により、blendshape score に応じて group strengthScale を適用できる。
 - `maxCorrectionDistance` で correction vector を clamp できる。
 - 補正強度、移動量上限、滑らかさ、過補正防止、信頼度を扱える。
 - 姿勢補正を担当していない。
@@ -857,7 +857,7 @@ Milestone 4 に含めないもの:
 
 - Production Shape Warp
 - Production WebGL mesh warp / Runtime renderer integration
-- MediaPipe topology triangle mesh warp
+- Production MediaPipe topology triangle mesh warp
 - temporal smoothing
 - mask / boundary handling
 - glasses / hair handling

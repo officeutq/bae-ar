@@ -2,7 +2,7 @@
 
 ## 目的
 
-`correctionProfile` は、`ideal_face_asset_v1` に optional な top-level field として追加する将来仕様です。最終的な配布単位では、`beauty_filter_asset_v1` の `correctionProfile` セクションとして `idealFace`、`landmarkGroups`、`shapeWarpSettings`、`colorLayers` と一緒に束ねる方向です。
+`correctionProfile` v1 は、`ideal_face_asset_v1` の optional top-level field として Engine foundation 実装済みです。最終的な配布単位では、`beauty_filter_asset_v1` の `correctionProfile` セクションとして `idealFace`、`landmarkGroups`、`shapeWarpSettings`、`colorLayers` と一緒に束ねる方向です。
 
 `idealLandmarks3D` の各点に直接 `strength` を混ぜず、別セクションとして保持します。
 
@@ -17,7 +17,7 @@
 
 ## JSON 例
 
-以下は `correctionProfile` の位置と値の意味を示す短縮例です。実装時は既存の `ideal_face_asset_v1` の `source` / `model` 構造に合わせ、`correctionProfile` を asset の top-level field として追加します。
+以下は `correctionProfile` の位置と値の意味を示す短縮例です。現在の Engine foundation では既存の `ideal_face_asset_v1` の `source` / `model` 構造に合わせ、`correctionProfile` を asset の top-level field として扱います。
 
 ```json
 {
@@ -116,9 +116,9 @@
 - `maxCorrectionDistance` は image-normalized coordinate 基準
 - `correctionProfile` には dx / dy を保存しない
 
-## 将来拡張: expressionAttenuation
+## optional extension: expressionAttenuation
 
-`correctionProfile` は、将来 `expressionAttenuation` を optional extension として持てるようにします。
+`correctionProfile` は、optional extension として `expressionAttenuation` を扱える Engine foundation 実装済みです。`jawOpen` / `eyeBlink` / `eyeSquint` による group `strengthScale`、`halfLifeMs` smoothing、CorrectionPlan `finalStrength` 反映は実装済みです。Authoring Tool UI / export 連携、expression-specific IdealFace、expression target offset は未実装です。
 
 `expressionAttenuation` は、MediaPipe blendshape score を入力にし、`mouth` / `left_eye` / `right_eye` / `face_boundary` などの `affectedLandmarkGroups` ごとに `strengthScale` を変える safety attenuation です。`strengthScale` は 0.0 から 1.0 の値で、1.0 は通常どおり、0.0 はその group の補正なしを意味します。
 
