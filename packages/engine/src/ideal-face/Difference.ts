@@ -71,6 +71,7 @@ export interface IdealLandmarksDifferenceDebug {
   maxDistanceLandmarkIndex: number | null
   averageDeltaX: number | null
   averageDeltaY: number | null
+  differences: IdealLandmarkDifferenceItem[]
   topDifferences: IdealLandmarkDifferenceItem[]
 }
 
@@ -260,6 +261,7 @@ export function calculateIdealLandmarksDifference(
     maxDistanceLandmarkIndex: maxDifference.index,
     averageDeltaX: total.deltaX / differences.length,
     averageDeltaY: total.deltaY / differences.length,
+    differences,
     topDifferences: [...differences]
       .sort((current, next) => next.distance - current.distance)
       .slice(0, topDifferenceCount),
@@ -326,6 +328,7 @@ function emptyIdealLandmarksDifference(input: {
     maxDistanceLandmarkIndex: null,
     averageDeltaX: null,
     averageDeltaY: null,
+    differences: [],
     topDifferences: [],
   }
 }

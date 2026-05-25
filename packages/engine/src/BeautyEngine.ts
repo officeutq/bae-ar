@@ -11,6 +11,7 @@ import {
 import type { FaceFrame } from "./face/FaceFrame"
 import type {
   IdealFace,
+  CorrectionPlanDebug,
   IdealLandmarksDifferenceDebug,
   IdealLandmarks3DProjectionResult,
   IdealFacePreset,
@@ -18,6 +19,7 @@ import type {
   ProjectionDifference,
 } from "./ideal-face"
 import {
+  calculateCorrectionPlanDebug,
   calculateIdealLandmarksDifference,
   calculateProjectionDifference,
   DEFAULT_IDEAL_FACE_PRESETS,
@@ -175,6 +177,13 @@ export class BeautyEngine {
     return calculateIdealLandmarksDifference(
       this.currentFaceFrame?.landmarks,
       this.getIdealLandmarks3DProjection(),
+    )
+  }
+
+  getCorrectionPlan(): CorrectionPlanDebug {
+    return calculateCorrectionPlanDebug(
+      this.getIdealLandmarksDifference(),
+      this.idealFace,
     )
   }
 

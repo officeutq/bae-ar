@@ -1,3 +1,4 @@
+export * from "./CorrectionPlan"
 export * from "./Difference"
 export * from "./IdealFace"
 export * from "./IdealFaceAsset"

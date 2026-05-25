@@ -8,6 +8,7 @@ import {
 } from "@bae-ar/engine"
 import type {
   BeautyEngineState,
+  CorrectionPlanDebug,
   FaceFrame,
   FaceGeometry,
   FaceGeometryPoint,
@@ -38,6 +39,7 @@ type DebugSection =
   | "idealFace"
   | "idealLandmarks3DProjection"
   | "idealLandmarksDifference"
+  | "correctionPlan"
   | "mediaPipe"
   | "loopTiming"
   | "fullDebugText"
@@ -98,6 +100,7 @@ async function bootstrap(): Promise<void> {
   let faceFrameFps: number | undefined
   let copyStatus = ""
   let showIdealLandmarkDifferenceLines = false
+  let showCorrectionPlanLines = false
   let idealFaceAssetImportState: IdealFaceAssetImportState = {
     status: "idle",
   }
@@ -107,6 +110,7 @@ async function bootstrap(): Promise<void> {
     idealFace: false,
     idealLandmarks3DProjection: false,
     idealLandmarksDifference: false,
+    correctionPlan: false,
     mediaPipe: false,
     loopTiming: false,
     fullDebugText: false,
@@ -240,6 +244,7 @@ eyeDistance: ${formatNullableNumber(geometry?.eyeDistance)}`
     idealFace: IdealFace,
     projection: IdealLandmarks3DProjectionResult,
     difference: IdealLandmarksDifferenceDebug,
+    correctionPlan: CorrectionPlanDebug,
   ): string {
     const correctionProfile = getCorrectionProfileOrDefault(idealFace)
     const correctionProfileSource = getCorrectionProfileSource(idealFace)
@@ -264,7 +269,7 @@ correctionProfile:
   defaultStrength: ${formatNumber(correctionProfile.defaultStrength)}
   maxCorrectionDistance: ${formatNumber(correctionProfile.maxCorrectionDistance)}
   landmarkStrength count: ${correctionProfile.landmarkStrengths.length}
-CorrectionPlan: not_implemented
+CorrectionPlan: ${correctionPlan.status}
 Shape Warp: not_implemented`
   }
 
@@ -530,12 +535,60 @@ top differences:
 ${topDifferencePreview}`
   }
 
+  function formatCorrectionPlanPreview(
+    correctionPlan: CorrectionPlanDebug,
+  ): string {
+    const topVectorPreview =
+      correctionPlan.topVectors.length === 0
+        ? "なし"
+        : correctionPlan.topVectors
+            .map(
+              (vector) =>
+                `Landmark[${vector.index}]:
+current: x=${formatNumber(vector.current.x)} y=${formatNumber(vector.current.y)} z=${formatNullableNumber(vector.current.z)}
+projectedIdeal: x=${formatNumber(vector.projectedIdeal.x)} y=${formatNumber(vector.projectedIdeal.y)} z=${formatNullableNumber(vector.projectedIdeal.z)}
+raw dx: ${formatNumber(vector.rawDeltaX)}
+raw dy: ${formatNumber(vector.rawDeltaY)}
+raw distance: ${formatNumber(vector.rawDistance)}
+strength: ${formatNumber(vector.strength)}
+confidence: ${formatNumber(vector.confidence)}
+correction dx: ${formatNumber(vector.correctionDeltaX)}
+correction dy: ${formatNumber(vector.correctionDeltaY)}
+correction distance: ${formatNumber(vector.correctionDistance)}
+target: x=${formatNumber(vector.target.x)} y=${formatNumber(vector.target.y)}
+clamped: ${String(vector.clamped)}`,
+            )
+            .join("\n\n")
+
+    return `CorrectionPlan v1 debug
+status: ${correctionPlan.status}
+reason: ${correctionPlan.reason ?? "なし"}
+source correctionProfile: ${correctionPlan.sourceCorrectionProfile}
+point count: ${correctionPlan.pointCount}
+default strength: ${formatNumber(correctionPlan.config.defaultStrength)}
+max correction distance: ${formatNumber(correctionPlan.config.maxCorrectionDistance)}
+landmarkStrength count: ${correctionPlan.config.landmarkStrengthCount}
+top vector count: ${correctionPlan.config.topVectorCount}
+average raw distance: ${formatNullableNumber(correctionPlan.summary.averageRawDistance)}
+max raw distance: ${formatNullableNumber(correctionPlan.summary.maxRawDistance)}
+max raw distance landmark index: ${correctionPlan.summary.maxRawDistanceLandmarkIndex ?? "なし"}
+average correction distance: ${formatNullableNumber(correctionPlan.summary.averageCorrectionDistance)}
+max correction distance: ${formatNullableNumber(correctionPlan.summary.maxCorrectionDistance)}
+max correction distance landmark index: ${correctionPlan.summary.maxCorrectionDistanceLandmarkIndex ?? "なし"}
+clamped count: ${correctionPlan.summary.clampedCount}
+average strength: ${formatNullableNumber(correctionPlan.summary.averageStrength)}
+
+top correction vectors:
+${topVectorPreview}`
+  }
+
   function buildDebugText(
     frame: FaceFrame | undefined,
     geometry: FaceGeometry | undefined,
     idealFace: IdealFace,
     idealLandmarks3DProjection: IdealLandmarks3DProjectionResult,
     idealLandmarksDifference: IdealLandmarksDifferenceDebug,
+    correctionPlan: CorrectionPlanDebug,
     availableIdealFaces: IdealFace[],
     mediaPipeDebug: DetectorDebugInfo | null,
     faceFrameLoopDebug: ReturnType<BeautyEngine["getFaceFrameLoopDebugInfo"]>,
@@ -582,7 +635,7 @@ ${formatBlendshapePreview(frame)}
 Pose:
 ${formatPosePreview(frame)}
 
-${formatIdealFacePreview(idealFace, idealLandmarks3DProjection, idealLandmarksDifference)}
+${formatIdealFacePreview(idealFace, idealLandmarks3DProjection, idealLandmarksDifference, correctionPlan)}
 
 IdealFace JSON import:
 ${formatIdealFaceAssetImportState(importState)}
@@ -590,6 +643,8 @@ ${formatIdealFaceAssetImportState(importState)}
 ${formatIdealLandmarks3DProjectionPreview(idealLandmarks3DProjection, frame, overlayPixelBounds)}
 
 ${formatIdealLandmarksDifferencePreview(idealLandmarksDifference)}
+
+${formatCorrectionPlanPreview(correctionPlan)}
 
 availableIdealFaces: ${availableIdealFaces
   .map((availableIdealFace) => availableIdealFace.metadata.id)
@@ -639,6 +694,7 @@ Camera:
         engine.getFaceGeometry(),
         engine.getIdealLandmarks3DProjection(),
         engine.getIdealLandmarksDifference(),
+        engine.getCorrectionPlan(),
       )
     }
   }
@@ -720,6 +776,7 @@ Camera:
     geometry: FaceGeometry | undefined,
     idealLandmarks3DProjection: IdealLandmarks3DProjectionResult,
     idealLandmarksDifference: IdealLandmarksDifferenceDebug,
+    correctionPlan: CorrectionPlanDebug,
   ): void {
     const input = engine.getInput()
 
@@ -777,6 +834,24 @@ Camera:
         context.lineTo(
           item.projectedIdeal.x * overlayCanvas.width,
           item.projectedIdeal.y * overlayCanvas.height,
+        )
+        context.stroke()
+      })
+    }
+
+    if (showCorrectionPlanLines) {
+      context.strokeStyle = "#38bdf8"
+      context.lineWidth = 1.5
+
+      correctionPlan.topVectors.forEach((vector) => {
+        context.beginPath()
+        context.moveTo(
+          vector.current.x * overlayCanvas.width,
+          vector.current.y * overlayCanvas.height,
+        )
+        context.lineTo(
+          vector.target.x * overlayCanvas.width,
+          vector.target.y * overlayCanvas.height,
         )
         context.stroke()
       })
@@ -853,6 +928,18 @@ Camera:
       .querySelector<HTMLInputElement>("#ideal-landmark-difference-lines")
       ?.addEventListener("change", (event) => {
         showIdealLandmarkDifferenceLines =
+          event.currentTarget instanceof HTMLInputElement &&
+          event.currentTarget.checked
+        render()
+        appendCameraPreview()
+      })
+  }
+
+  function attachCorrectionPlanOverlayHandler(): void {
+    document
+      .querySelector<HTMLInputElement>("#correction-plan-lines")
+      ?.addEventListener("change", (event) => {
+        showCorrectionPlanLines =
           event.currentTarget instanceof HTMLInputElement &&
           event.currentTarget.checked
         render()
@@ -966,6 +1053,7 @@ Camera:
     const idealFace = engine.getIdealFace()
     const idealLandmarks3DProjection = engine.getIdealLandmarks3DProjection()
     const idealLandmarksDifference = engine.getIdealLandmarksDifference()
+    const correctionPlan = engine.getCorrectionPlan()
     const correctionProfile = getCorrectionProfileOrDefault(idealFace)
     const correctionProfileSource = getCorrectionProfileSource(idealFace)
     const availableIdealFaces = engine.getAvailableIdealFaces()
@@ -977,6 +1065,7 @@ Camera:
       idealFace,
       idealLandmarks3DProjection,
       idealLandmarksDifference,
+      correctionPlan,
       availableIdealFaces,
       mediaPipeDebug,
       faceFrameLoopDebug,
@@ -1029,7 +1118,7 @@ Aspect debug: asset ${formatNullableNumber(idealLandmarks3DProjection.debug?.asp
 Coordinate conversion: ${idealLandmarks3DProjection.debug?.coordinate?.conversionMode ?? "なし"} / videoAspect ${formatNullableNumber(idealLandmarks3DProjection.debug?.coordinate?.videoAspectRatio)} / fallback ${idealLandmarks3DProjection.debug?.coordinate ? String(idealLandmarks3DProjection.debug.coordinate.fallbackUsed) : "なし"}
 478点差分: ${idealLandmarksDifference.status} / matched ${idealLandmarksDifference.matchedLandmarkCount} / 平均 ${formatNullableNumber(idealLandmarksDifference.averageDistance)} / 最大 ${formatNullableNumber(idealLandmarksDifference.maxDistance)} / 最大index ${idealLandmarksDifference.maxDistanceLandmarkIndex ?? "なし"}
 correctionProfile: ${correctionProfileSource} / ${correctionProfile.schemaVersion} / ${correctionProfile.mode} / default ${formatNumber(correctionProfile.defaultStrength)} / maxDistance ${formatNumber(correctionProfile.maxCorrectionDistance)} / landmarkStrengths ${correctionProfile.landmarkStrengths.length}
-CorrectionPlan: not_implemented
+CorrectionPlan: ${correctionPlan.status} / points ${correctionPlan.pointCount} / avgCorrection ${formatNullableNumber(correctionPlan.summary.averageCorrectionDistance)} / maxCorrection ${formatNullableNumber(correctionPlan.summary.maxCorrectionDistance)} / clamped ${correctionPlan.summary.clampedCount}
 Shape Warp: not_implemented
 利用可能IdealFace: ${availableIdealFaces.length}
 FPS: ${formatFps(faceFrameFps)}
@@ -1039,6 +1128,10 @@ Detect: ${faceFrameLoopDebug.detectCallCount}/${mediaPipeDebug?.detectSuccessCou
         <label>
           <input id="ideal-landmark-difference-lines" type="checkbox" ${showIdealLandmarkDifferenceLines ? "checked" : ""} />
           478点差分線を表示
+        </label>
+        <label>
+          <input id="correction-plan-lines" type="checkbox" ${showCorrectionPlanLines ? "checked" : ""} />
+          CorrectionPlan補正線を表示
         </label>
         <div id="camera-preview" class="preview-container">${camera.getVideo() ? "" : "利用できません"}</div>
         <section>
@@ -1073,7 +1166,7 @@ ${formatPosePreview(frame)}`)}</pre>
         </details>
         <details data-debug-section="idealFace"${detailsOpenAttribute("idealFace")}>
           <summary>IdealFace 確認</summary>
-          <pre>${escapeHtml(formatIdealFacePreview(idealFace, idealLandmarks3DProjection, idealLandmarksDifference))}</pre>
+          <pre>${escapeHtml(formatIdealFacePreview(idealFace, idealLandmarks3DProjection, idealLandmarksDifference, correctionPlan))}</pre>
         </details>
         <details data-debug-section="idealLandmarks3DProjection"${detailsOpenAttribute("idealLandmarks3DProjection")}>
           <summary>IdealFace 478 Projection 確認</summary>
@@ -1082,6 +1175,10 @@ ${formatPosePreview(frame)}`)}</pre>
         <details data-debug-section="idealLandmarksDifference"${detailsOpenAttribute("idealLandmarksDifference")}>
           <summary>current-vs-projected ideal 478点差分確認</summary>
           <pre>${escapeHtml(formatIdealLandmarksDifferencePreview(idealLandmarksDifference))}</pre>
+        </details>
+        <details data-debug-section="correctionPlan"${detailsOpenAttribute("correctionPlan")}>
+          <summary>CorrectionPlan v1 Debug</summary>
+          <pre>${escapeHtml(formatCorrectionPlanPreview(correctionPlan))}</pre>
         </details>
         <details data-debug-section="mediaPipe"${detailsOpenAttribute("mediaPipe")}>
           <summary>MediaPipe Debug</summary>
@@ -1122,6 +1219,7 @@ Video srcObject: ${faceFrameLoopDebug.video?.hasSrcObject ? "あり" : "なし"}
 
     attachCopyDebugHandler(debugText)
     attachIdealLandmarkDifferenceOverlayHandler()
+    attachCorrectionPlanOverlayHandler()
     attachIdealFaceAssetImportHandler()
     attachDebugDetailsHandlers()
   }
