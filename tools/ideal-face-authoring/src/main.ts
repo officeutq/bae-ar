@@ -75,6 +75,7 @@ const LANDMARK_GROUP_EDITOR_FUTURE_GROUP_IDS = [
 const LANDMARK_GROUP_EDITOR_PREVIEW_INDICES_COUNT = 48
 const LANDMARK_GROUP_EDITOR_CANVAS_PADDING = 28
 const LANDMARK_GROUP_EDITOR_HIT_RADIUS_PX = 9
+const LANDMARK_GROUP_EDITOR_MIN_DRAG_DISTANCE_PX = 4
 const POSE_AWARE_MIN_OBSERVATION_FRAME_COUNT = 5
 const POSE_AWARE_MIN_YAW_OR_PITCH_RANGE = 10
 const POSE_AWARE_YAW_COVERAGE_OK_RANGE = 15
@@ -386,8 +387,20 @@ interface IdealFaceAssetV1 {
 type LandmarkGroupEditorGroupId =
   (typeof LANDMARK_GROUP_EDITOR_GROUP_IDS)[number]
 
+type LandmarkGroupEditorSelectionMode = "click" | "rectangle"
+
+interface LandmarkGroupEditorRangeSelection {
+  startX: number
+  startY: number
+  endX: number
+  endY: number
+}
+
 interface LandmarkGroupEditorState {
   selectedGroupId: LandmarkGroupEditorGroupId
+  selectionMode: LandmarkGroupEditorSelectionMode
+  rangeSelection: LandmarkGroupEditorRangeSelection | null
+  highlightedIndexInput: string
   groups: LandmarkGroups
 }
 
@@ -395,6 +408,28 @@ interface LandmarkGroupEditorCanvasPoint {
   index: number
   x: number
   y: number
+}
+
+interface LandmarkGroupEditorIndexSummary {
+  indices: number[]
+  count: number
+  alreadyInSelectedGroupCount: number
+  notInSelectedGroupCount: number
+}
+
+interface LandmarkGroupEditorHighlightSummary
+  extends LandmarkGroupEditorIndexSummary {
+  extractedCount: number
+  invalidCount: number
+  invalidIndicesPreview: number[]
+}
+
+interface LandmarkGroupEditorDragState {
+  pointerId: number
+  startX: number
+  startY: number
+  currentX: number
+  currentY: number
 }
 
 interface IdealFaceAssetExportSummary {
@@ -458,6 +493,7 @@ let idealLandmarks3DCandidateResult: IdealLandmarks3DCandidateResult =
   createInitialIdealLandmarks3DCandidateResult()
 let landmarkGroupEditorState: LandmarkGroupEditorState =
   createInitialLandmarkGroupEditorState()
+let landmarkGroupEditorDragState: LandmarkGroupEditorDragState | null = null
 let pointCloudPreviewCamera: PointCloudPreviewCamera = {
   ...DEFAULT_POINT_CLOUD_CAMERA,
 }
@@ -836,6 +872,9 @@ function createInitialIdealLandmarks3DCandidateResult(): IdealLandmarks3DCandida
 function createInitialLandmarkGroupEditorState(): LandmarkGroupEditorState {
   return {
     selectedGroupId: "mouth",
+    selectionMode: "click",
+    rangeSelection: null,
+    highlightedIndexInput: "",
     groups: createInitialLandmarkGroups(),
   }
 }
@@ -901,6 +940,36 @@ function setSelectedLandmarkGroupId(groupId: string | undefined): void {
   }
 }
 
+function setLandmarkGroupEditorSelectionMode(
+  selectionMode: string | undefined,
+): void {
+  if (selectionMode !== "click" && selectionMode !== "rectangle") {
+    return
+  }
+
+  landmarkGroupEditorDragState = null
+  landmarkGroupEditorState = {
+    ...landmarkGroupEditorState,
+    selectionMode,
+  }
+}
+
+function setLandmarkGroupEditorRangeSelection(
+  rangeSelection: LandmarkGroupEditorRangeSelection | null,
+): void {
+  landmarkGroupEditorState = {
+    ...landmarkGroupEditorState,
+    rangeSelection,
+  }
+}
+
+function setLandmarkGroupEditorHighlightedIndexInput(value: string): void {
+  landmarkGroupEditorState = {
+    ...landmarkGroupEditorState,
+    highlightedIndexInput: value,
+  }
+}
+
 function isLandmarkGroupEditorGroupId(
   value: string | undefined,
 ): value is LandmarkGroupEditorGroupId {
@@ -954,6 +1023,56 @@ function toggleSelectedLandmarkGroupIndex(index: number): void {
   )
 }
 
+function addIndicesToSelectedLandmarkGroup(indices: number[]): void {
+  const selectedGroup = getSelectedLandmarkGroup()
+  const selectedIndexSet = new Set(selectedGroup.indices)
+
+  normalizeLandmarkGroupIndices(indices).forEach((index) => {
+    selectedIndexSet.add(index)
+  })
+
+  updateLandmarkGroupIndices(
+    landmarkGroupEditorState.selectedGroupId,
+    [...selectedIndexSet],
+  )
+}
+
+function removeIndicesFromSelectedLandmarkGroup(indices: number[]): void {
+  const selectedGroup = getSelectedLandmarkGroup()
+  const selectedIndexSet = new Set(selectedGroup.indices)
+
+  normalizeLandmarkGroupIndices(indices).forEach((index) => {
+    selectedIndexSet.delete(index)
+  })
+
+  updateLandmarkGroupIndices(
+    landmarkGroupEditorState.selectedGroupId,
+    [...selectedIndexSet],
+  )
+}
+
+function addRangeSelectionToSelectedLandmarkGroup(): void {
+  addIndicesToSelectedLandmarkGroup(getCurrentRangeSelectionSummary().indices)
+}
+
+function removeRangeSelectionFromSelectedLandmarkGroup(): void {
+  removeIndicesFromSelectedLandmarkGroup(
+    getCurrentRangeSelectionSummary().indices,
+  )
+}
+
+function addHighlightedIndicesToSelectedLandmarkGroup(): void {
+  addIndicesToSelectedLandmarkGroup(getHighlightedIndexSummary().indices)
+}
+
+function removeHighlightedIndicesFromSelectedLandmarkGroup(): void {
+  removeIndicesFromSelectedLandmarkGroup(getHighlightedIndexSummary().indices)
+}
+
+function clearHighlightedIndices(): void {
+  setLandmarkGroupEditorHighlightedIndexInput("")
+}
+
 function clearSelectedLandmarkGroup(): void {
   updateLandmarkGroupIndices(landmarkGroupEditorState.selectedGroupId, [])
 }
@@ -971,6 +1090,7 @@ function resetSelectedLandmarkGroup(): void {
 
 function resetAllLandmarkGroups(): void {
   landmarkGroupEditorState = {
+    ...landmarkGroupEditorState,
     selectedGroupId: landmarkGroupEditorState.selectedGroupId,
     groups: createInitialLandmarkGroups(),
   }
@@ -981,6 +1101,101 @@ function buildLandmarkGroupsForExport(): LandmarkGroups {
     ...landmarkGroupEditorState.groups,
     groups: landmarkGroupEditorState.groups.groups.map(cloneLandmarkGroup),
   }
+}
+
+function parseLandmarkGroupEditorIndexInput(value: string): number[] {
+  return (value.match(/-?\d+/g) ?? []).map((match) => Number(match))
+}
+
+function getHighlightedIndexSummary(): LandmarkGroupEditorHighlightSummary {
+  const extractedIndices = parseLandmarkGroupEditorIndexInput(
+    landmarkGroupEditorState.highlightedIndexInput,
+  )
+  const invalidIndices = extractedIndices.filter(
+    (index) =>
+      !Number.isInteger(index) ||
+      index < 0 ||
+      index >= REQUIRED_LANDMARK_COUNT,
+  )
+  const validIndices = normalizeLandmarkGroupIndices(extractedIndices)
+  const baseSummary = summarizeLandmarkGroupEditorIndices(validIndices)
+
+  return {
+    ...baseSummary,
+    extractedCount: extractedIndices.length,
+    invalidCount: invalidIndices.length,
+    invalidIndicesPreview: invalidIndices.slice(
+      0,
+      LANDMARK_GROUP_EDITOR_PREVIEW_INDICES_COUNT,
+    ),
+  }
+}
+
+function getCurrentRangeSelectionSummary(): LandmarkGroupEditorIndexSummary {
+  const result = idealLandmarks3DCandidateResult
+
+  if (
+    result.status !== "generated" ||
+    result.landmarks.length !== REQUIRED_LANDMARK_COUNT ||
+    !landmarkGroupEditorState.rangeSelection
+  ) {
+    return summarizeLandmarkGroupEditorIndices([])
+  }
+
+  const canvas = document.querySelector<HTMLCanvasElement>(
+    "[data-landmark-group-editor-canvas]",
+  )
+  const width = canvas?.getBoundingClientRect().width ?? 1
+  const height = canvas?.getBoundingClientRect().height ?? 1
+  const points = getLandmarkGroupEditorCanvasPoints(
+    result.landmarks,
+    Math.max(1, width),
+    Math.max(1, height),
+  )
+
+  return summarizeLandmarkGroupEditorIndices(
+    getLandmarkGroupEditorIndicesInRange(
+      points,
+      landmarkGroupEditorState.rangeSelection,
+    ),
+  )
+}
+
+function summarizeLandmarkGroupEditorIndices(
+  indices: number[],
+): LandmarkGroupEditorIndexSummary {
+  const normalizedIndices = normalizeLandmarkGroupIndices(indices)
+  const selectedIndexSet = new Set(getSelectedLandmarkGroup().indices)
+  const alreadyInSelectedGroupCount = normalizedIndices.filter((index) =>
+    selectedIndexSet.has(index),
+  ).length
+
+  return {
+    indices: normalizedIndices,
+    count: normalizedIndices.length,
+    alreadyInSelectedGroupCount,
+    notInSelectedGroupCount:
+      normalizedIndices.length - alreadyInSelectedGroupCount,
+  }
+}
+
+function formatLandmarkGroupEditorIndicesPreview(indices: number[]): string {
+  if (indices.length === 0) {
+    return "なし"
+  }
+
+  const previewIndices = indices.slice(
+    0,
+    LANDMARK_GROUP_EDITOR_PREVIEW_INDICES_COUNT,
+  )
+  const omittedCount = Math.max(
+    0,
+    indices.length - LANDMARK_GROUP_EDITOR_PREVIEW_INDICES_COUNT,
+  )
+
+  return `${previewIndices.join(", ")}${
+    omittedCount > 0 ? ` ... +${omittedCount}` : ""
+  }`
 }
 
 function validateLandmarkGroupEditorGroups(groups: LandmarkGroups): string[] {
@@ -1230,16 +1445,49 @@ function toCurrentCandidatePreview(
 function toLandmarkGroupsPreview(): unknown {
   const groups = buildLandmarkGroupsForExport()
   const validationErrors = validateLandmarkGroupEditorGroups(groups)
+  const rangeSummary = getCurrentRangeSelectionSummary()
+  const highlightSummary = getHighlightedIndexSummary()
 
   return {
     schemaVersion: groups.schemaVersion,
     topology: groups.topology,
     selectedGroupId: landmarkGroupEditorState.selectedGroupId,
+    selectionMode: landmarkGroupEditorState.selectionMode,
     groupCount: groups.groups.length,
     exportIncludesFullIndices: true,
     validation: {
       ok: validationErrors.length === 0,
       errors: validationErrors,
+    },
+    rangeSelection: {
+      count: rangeSummary.count,
+      alreadyInSelectedGroupCount: rangeSummary.alreadyInSelectedGroupCount,
+      notInSelectedGroupCount: rangeSummary.notInSelectedGroupCount,
+      indicesPreview: rangeSummary.indices.slice(
+        0,
+        LANDMARK_GROUP_EDITOR_PREVIEW_INDICES_COUNT,
+      ),
+      omittedIndexCount: Math.max(
+        0,
+        rangeSummary.indices.length - LANDMARK_GROUP_EDITOR_PREVIEW_INDICES_COUNT,
+      ),
+    },
+    highlightedIndices: {
+      extractedCount: highlightSummary.extractedCount,
+      validCount: highlightSummary.count,
+      invalidCount: highlightSummary.invalidCount,
+      alreadyInSelectedGroupCount:
+        highlightSummary.alreadyInSelectedGroupCount,
+      notInSelectedGroupCount: highlightSummary.notInSelectedGroupCount,
+      indicesPreview: highlightSummary.indices.slice(
+        0,
+        LANDMARK_GROUP_EDITOR_PREVIEW_INDICES_COUNT,
+      ),
+      omittedIndexCount: Math.max(
+        0,
+        highlightSummary.indices.length -
+          LANDMARK_GROUP_EDITOR_PREVIEW_INDICES_COUNT,
+      ),
     },
     groups: groups.groups.map((group) => ({
       id: group.id,
@@ -3128,6 +3376,8 @@ function renderLandmarkGroupEditorPanel(): string {
     selectedGroup.indices.length === 0
       ? "なし"
       : selectedGroup.indices.join(", ")
+  const rangeSummary = getCurrentRangeSelectionSummary()
+  const highlightSummary = getHighlightedIndexSummary()
   const canShowOverlay =
     result.status === "generated" &&
     result.landmarks.length === REQUIRED_LANDMARK_COUNT
@@ -3139,6 +3389,7 @@ function renderLandmarkGroupEditorPanel(): string {
           <h2>ランドマークグループ編集</h2>
           <p>MediaPipe 478点のうち、どの点を mouth / left_eye / right_eye / face_boundary として扱うかを編集します。</p>
           <p>landmarkGroups は expressionAttenuation や将来の colorLayers が参照します。これは目だけ大きくする、鼻だけ細くする、顎だけ削るための設定ではありません。</p>
+          <p>Studio の Copy Debug に出た Landmark[index] を Index highlight に貼り付けると、その点を overlay 上で確認できます。矩形範囲選択では、ドラッグした範囲内の landmark をまとめて追加 / 削除できます。</p>
         </div>
       </div>
       <div class="landmark-group-editor-layout">
@@ -3173,6 +3424,43 @@ function renderLandmarkGroupEditorPanel(): string {
               `
             }).join("")}
           </select>
+          <div class="landmark-group-selection-mode" aria-label="選択モード">
+            <span>選択モード</span>
+            <label>
+              <input
+                type="radio"
+                name="landmark-group-selection-mode"
+                value="click"
+                data-landmark-group-selection-mode="click"
+                ${
+                  landmarkGroupEditorState.selectionMode === "click"
+                    ? "checked"
+                    : ""
+                }
+              />
+              クリック
+            </label>
+            <label>
+              <input
+                type="radio"
+                name="landmark-group-selection-mode"
+                value="rectangle"
+                data-landmark-group-selection-mode="rectangle"
+                ${
+                  landmarkGroupEditorState.selectionMode === "rectangle"
+                    ? "checked"
+                    : ""
+                }
+              />
+              矩形範囲
+            </label>
+          </div>
+          <div class="landmark-group-legend" aria-label="overlay legend">
+            <span><i class="legend-dot legend-dot-normal"></i>通常点</span>
+            <span><i class="legend-dot legend-dot-selected"></i>selected group</span>
+            <span><i class="legend-dot legend-dot-range"></i>range candidate</span>
+            <span><i class="legend-dot legend-dot-highlight"></i>highlighted index</span>
+          </div>
           <dl class="pose-aware-summary-list landmark-group-summary-list">
             <div>
               <dt>selected group</dt>
@@ -3201,6 +3489,83 @@ function renderLandmarkGroupEditorPanel(): string {
             <button class="landmark-group-action-button" type="button" data-landmark-group-action="reset-all">
               すべて初期値に戻す
             </button>
+          </div>
+          <div class="landmark-group-bulk-panel">
+            <h3>範囲選択</h3>
+            <dl class="pose-aware-summary-list landmark-group-summary-list">
+              <div>
+                <dt>candidate count</dt>
+                <dd>${rangeSummary.count}</dd>
+              </div>
+              <div>
+                <dt>already in group</dt>
+                <dd>${rangeSummary.alreadyInSelectedGroupCount}</dd>
+              </div>
+              <div>
+                <dt>not in group</dt>
+                <dd>${rangeSummary.notInSelectedGroupCount}</dd>
+              </div>
+            </dl>
+            <p>${escapeHtml(formatLandmarkGroupEditorIndicesPreview(rangeSummary.indices))}</p>
+            <div class="landmark-group-editor-actions">
+              <button class="landmark-group-action-button" type="button" data-landmark-group-action="add-range">
+                範囲内の点を選択中 group に追加
+              </button>
+              <button class="landmark-group-action-button" type="button" data-landmark-group-action="remove-range">
+                範囲内の点を選択中 group から削除
+              </button>
+            </div>
+          </div>
+          <div class="landmark-group-bulk-panel">
+            <label class="landmark-group-select-label" for="landmark-group-highlight-input">
+              Index highlight
+            </label>
+            <textarea
+              id="landmark-group-highlight-input"
+              class="landmark-group-highlight-input"
+              rows="4"
+              placeholder="1,4,5,44 または Landmark[1], Landmark[4]"
+              data-landmark-group-highlight-input="true"
+            >${escapeHtml(landmarkGroupEditorState.highlightedIndexInput)}</textarea>
+            <dl class="pose-aware-summary-list landmark-group-summary-list">
+              <div>
+                <dt>extracted</dt>
+                <dd>${highlightSummary.extractedCount}</dd>
+              </div>
+              <div>
+                <dt>valid</dt>
+                <dd>${highlightSummary.count}</dd>
+              </div>
+              <div>
+                <dt>invalid</dt>
+                <dd>${highlightSummary.invalidCount}</dd>
+              </div>
+              <div>
+                <dt>already in group</dt>
+                <dd>${highlightSummary.alreadyInSelectedGroupCount}</dd>
+              </div>
+              <div>
+                <dt>not in group</dt>
+                <dd>${highlightSummary.notInSelectedGroupCount}</dd>
+              </div>
+            </dl>
+            <p>${escapeHtml(formatLandmarkGroupEditorIndicesPreview(highlightSummary.indices))}</p>
+            ${
+              highlightSummary.invalidCount > 0
+                ? `<p class="landmark-group-validation-errors-inline">invalid: ${escapeHtml(formatLandmarkGroupEditorIndicesPreview(highlightSummary.invalidIndicesPreview))}</p>`
+                : ""
+            }
+            <div class="landmark-group-editor-actions">
+              <button class="landmark-group-action-button" type="button" data-landmark-group-action="add-highlighted">
+                ハイライト中の点を選択中 group に追加
+              </button>
+              <button class="landmark-group-action-button" type="button" data-landmark-group-action="remove-highlighted">
+                ハイライト中の点を選択中 group から削除
+              </button>
+              <button class="landmark-group-action-button" type="button" data-landmark-group-action="clear-highlighted">
+                ハイライトをクリア
+              </button>
+            </div>
           </div>
           ${
             validationErrors.length === 0
@@ -3668,6 +4033,13 @@ function drawLandmarkGroupEditorCanvas(): void {
     height,
   )
   const selectedIndexSet = new Set(getSelectedLandmarkGroup().indices)
+  const activeRangeSelection = getActiveLandmarkGroupEditorRangeSelection()
+  const rangeIndexSet = new Set(
+    activeRangeSelection
+      ? getLandmarkGroupEditorIndicesInRange(points, activeRangeSelection)
+      : [],
+  )
+  const highlightedIndexSet = new Set(getHighlightedIndexSummary().indices)
 
   canvas.width = Math.round(width * devicePixelRatio)
   canvas.height = Math.round(height * devicePixelRatio)
@@ -3687,17 +4059,53 @@ function drawLandmarkGroupEditorCanvas(): void {
 
   for (const point of points) {
     const selected = selectedIndexSet.has(point.index)
+    const rangeCandidate = rangeIndexSet.has(point.index)
+    const highlighted = highlightedIndexSet.has(point.index)
+    const radius = selected ? 4.4 : rangeCandidate || highlighted ? 3.8 : 2.2
+    const fillStyle = selected
+      ? "#d94f45"
+      : rangeCandidate
+        ? "#2f78c4"
+        : highlighted
+          ? "#c98518"
+          : "#9fb4ad"
 
     context.beginPath()
-    context.arc(point.x, point.y, selected ? 4.3 : 2.2, 0, Math.PI * 2)
-    context.fillStyle = selected ? "#d94f45" : "#9fb4ad"
+    context.arc(point.x, point.y, radius, 0, Math.PI * 2)
+    context.fillStyle = fillStyle
     context.fill()
 
-    if (selected) {
-      context.strokeStyle = "#7d2a28"
-      context.lineWidth = 1.4
+    if (highlighted || rangeCandidate || selected) {
+      context.strokeStyle = selected
+        ? "#7d2a28"
+        : rangeCandidate
+          ? "#184f8b"
+          : "#7a510c"
+      context.lineWidth = selected ? 1.4 : 1.2
       context.stroke()
     }
+  }
+
+  if (activeRangeSelection) {
+    const normalizedRange = normalizeLandmarkGroupEditorRange(
+      activeRangeSelection,
+    )
+
+    context.fillStyle = "rgba(47, 120, 196, 0.12)"
+    context.strokeStyle = "#2f78c4"
+    context.lineWidth = 1.5
+    context.fillRect(
+      normalizedRange.xMin,
+      normalizedRange.yMin,
+      normalizedRange.width,
+      normalizedRange.height,
+    )
+    context.strokeRect(
+      normalizedRange.xMin,
+      normalizedRange.yMin,
+      normalizedRange.width,
+      normalizedRange.height,
+    )
   }
 
   context.fillStyle = "#25342e"
@@ -3707,6 +4115,19 @@ function drawLandmarkGroupEditorCanvas(): void {
     12,
     20,
   )
+}
+
+function getActiveLandmarkGroupEditorRangeSelection(): LandmarkGroupEditorRangeSelection | null {
+  if (landmarkGroupEditorDragState) {
+    return {
+      startX: landmarkGroupEditorDragState.startX,
+      startY: landmarkGroupEditorDragState.startY,
+      endX: landmarkGroupEditorDragState.currentX,
+      endY: landmarkGroupEditorDragState.currentY,
+    }
+  }
+
+  return landmarkGroupEditorState.rangeSelection
 }
 
 function getLandmarkGroupEditorCanvasPoints(
@@ -3769,6 +4190,48 @@ function findNearestLandmarkGroupEditorPoint(
     nearestDistance <= LANDMARK_GROUP_EDITOR_HIT_RADIUS_PX
     ? nearestPoint
     : null
+}
+
+function getLandmarkGroupEditorIndicesInRange(
+  points: LandmarkGroupEditorCanvasPoint[],
+  rangeSelection: LandmarkGroupEditorRangeSelection,
+): number[] {
+  const range = normalizeLandmarkGroupEditorRange(rangeSelection)
+
+  return points
+    .filter(
+      (point) =>
+        point.x >= range.xMin &&
+        point.x <= range.xMax &&
+        point.y >= range.yMin &&
+        point.y <= range.yMax,
+    )
+    .map((point) => point.index)
+}
+
+function normalizeLandmarkGroupEditorRange(
+  rangeSelection: LandmarkGroupEditorRangeSelection,
+): {
+  xMin: number
+  xMax: number
+  yMin: number
+  yMax: number
+  width: number
+  height: number
+} {
+  const xMin = Math.min(rangeSelection.startX, rangeSelection.endX)
+  const xMax = Math.max(rangeSelection.startX, rangeSelection.endX)
+  const yMin = Math.min(rangeSelection.startY, rangeSelection.endY)
+  const yMax = Math.max(rangeSelection.startY, rangeSelection.endY)
+
+  return {
+    xMin,
+    xMax,
+    yMin,
+    yMax,
+    width: xMax - xMin,
+    height: yMax - yMin,
+  }
 }
 
 function drawPointCloudPreviewGuide(
@@ -4110,6 +4573,38 @@ function attachLandmarkGroupEditorHandler(): void {
     })
 
   document
+    .querySelectorAll<HTMLInputElement>("[data-landmark-group-selection-mode]")
+    .forEach((input) => {
+      input.addEventListener("change", () => {
+        if (!input.checked) {
+          return
+        }
+
+        setLandmarkGroupEditorSelectionMode(input.value)
+        render()
+      })
+    })
+
+  document
+    .querySelector<HTMLTextAreaElement>("[data-landmark-group-highlight-input]")
+    ?.addEventListener("input", (event) => {
+      const textarea = event.currentTarget as HTMLTextAreaElement
+      const selectionStart = textarea.selectionStart
+      const selectionEnd = textarea.selectionEnd
+
+      setLandmarkGroupEditorHighlightedIndexInput(textarea.value)
+      render()
+      requestAnimationFrame(() => {
+        const nextTextarea = document.querySelector<HTMLTextAreaElement>(
+          "[data-landmark-group-highlight-input]",
+        )
+
+        nextTextarea?.focus()
+        nextTextarea?.setSelectionRange(selectionStart, selectionEnd)
+      })
+    })
+
+  document
     .querySelectorAll<HTMLButtonElement>("[data-landmark-group-action]")
     .forEach((button) => {
       button.addEventListener("click", () => {
@@ -4130,6 +4625,36 @@ function attachLandmarkGroupEditorHandler(): void {
         if (action === "reset-all") {
           resetAllLandmarkGroups()
           render()
+          return
+        }
+
+        if (action === "add-range") {
+          addRangeSelectionToSelectedLandmarkGroup()
+          render()
+          return
+        }
+
+        if (action === "remove-range") {
+          removeRangeSelectionFromSelectedLandmarkGroup()
+          render()
+          return
+        }
+
+        if (action === "add-highlighted") {
+          addHighlightedIndicesToSelectedLandmarkGroup()
+          render()
+          return
+        }
+
+        if (action === "remove-highlighted") {
+          removeHighlightedIndicesFromSelectedLandmarkGroup()
+          render()
+          return
+        }
+
+        if (action === "clear-highlighted") {
+          clearHighlightedIndices()
+          render()
         }
       })
     })
@@ -4140,6 +4665,10 @@ function attachLandmarkGroupEditorHandler(): void {
 
   if (canvas) {
     canvas.addEventListener("click", (event) => {
+      if (landmarkGroupEditorState.selectionMode !== "click") {
+        return
+      }
+
       const result = idealLandmarks3DCandidateResult
 
       if (
@@ -4168,9 +4697,94 @@ function attachLandmarkGroupEditorHandler(): void {
       toggleSelectedLandmarkGroupIndex(nearestPoint.index)
       render()
     })
+
+    canvas.addEventListener("pointerdown", (event) => {
+      if (landmarkGroupEditorState.selectionMode !== "rectangle") {
+        return
+      }
+
+      const point = getLandmarkGroupEditorCanvasEventPoint(canvas, event)
+
+      landmarkGroupEditorDragState = {
+        pointerId: event.pointerId,
+        startX: point.x,
+        startY: point.y,
+        currentX: point.x,
+        currentY: point.y,
+      }
+      canvas.setPointerCapture(event.pointerId)
+      drawLandmarkGroupEditorCanvas()
+    })
+
+    canvas.addEventListener("pointermove", (event) => {
+      if (
+        landmarkGroupEditorState.selectionMode !== "rectangle" ||
+        !landmarkGroupEditorDragState ||
+        landmarkGroupEditorDragState.pointerId !== event.pointerId
+      ) {
+        return
+      }
+
+      const point = getLandmarkGroupEditorCanvasEventPoint(canvas, event)
+
+      landmarkGroupEditorDragState = {
+        ...landmarkGroupEditorDragState,
+        currentX: point.x,
+        currentY: point.y,
+      }
+      drawLandmarkGroupEditorCanvas()
+    })
+
+    canvas.addEventListener("pointerup", (event) => {
+      if (
+        landmarkGroupEditorState.selectionMode !== "rectangle" ||
+        !landmarkGroupEditorDragState ||
+        landmarkGroupEditorDragState.pointerId !== event.pointerId
+      ) {
+        return
+      }
+
+      const point = getLandmarkGroupEditorCanvasEventPoint(canvas, event)
+      const rangeSelection = {
+        startX: landmarkGroupEditorDragState.startX,
+        startY: landmarkGroupEditorDragState.startY,
+        endX: point.x,
+        endY: point.y,
+      }
+      const distance = Math.hypot(
+        rangeSelection.endX - rangeSelection.startX,
+        rangeSelection.endY - rangeSelection.startY,
+      )
+
+      landmarkGroupEditorDragState = null
+      canvas.releasePointerCapture(event.pointerId)
+      setLandmarkGroupEditorRangeSelection(
+        distance >= LANDMARK_GROUP_EDITOR_MIN_DRAG_DISTANCE_PX
+          ? rangeSelection
+          : null,
+      )
+      render()
+    })
+
+    canvas.addEventListener("pointercancel", () => {
+      landmarkGroupEditorDragState = null
+      drawLandmarkGroupEditorCanvas()
+    })
   }
 
   drawLandmarkGroupEditorCanvas()
+}
+
+function getLandmarkGroupEditorCanvasEventPoint(
+  canvas: HTMLCanvasElement,
+  event: PointerEvent | MouseEvent,
+): Point2D {
+  const rect = canvas.getBoundingClientRect()
+
+  return {
+    x: event.clientX - rect.left,
+    y: event.clientY - rect.top,
+  }
 }
 
 function attachPointCloudCanvasInteractionHandler(): void {
@@ -5688,6 +6302,68 @@ style.textContent = `
     font-weight: 800;
   }
 
+  .landmark-group-selection-mode,
+  .landmark-group-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    align-items: center;
+    color: #25342e;
+    font-size: 12px;
+    font-weight: 800;
+  }
+
+  .landmark-group-selection-mode span {
+    flex-basis: 100%;
+    color: #5d675f;
+  }
+
+  .landmark-group-selection-mode label {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  .landmark-group-legend {
+    border: 1px solid #dce6e1;
+    border-radius: 8px;
+    background: #fbfdfc;
+    padding: 8px 10px;
+  }
+
+  .landmark-group-legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  .legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 999px;
+    border: 1px solid currentColor;
+  }
+
+  .legend-dot-normal {
+    background: #9fb4ad;
+    color: #7c918a;
+  }
+
+  .legend-dot-selected {
+    background: #d94f45;
+    color: #7d2a28;
+  }
+
+  .legend-dot-range {
+    background: #2f78c4;
+    color: #184f8b;
+  }
+
+  .legend-dot-highlight {
+    background: #c98518;
+    color: #7a510c;
+  }
+
   #landmark-group-select {
     width: 100%;
     min-height: 40px;
@@ -5721,6 +6397,8 @@ style.textContent = `
 
   .landmark-group-validation-ok,
   .landmark-group-validation-errors,
+  .landmark-group-validation-errors-inline,
+  .landmark-group-bulk-panel,
   .landmark-group-indices-panel,
   .landmark-group-future-panel {
     margin: 0;
@@ -5747,6 +6425,43 @@ style.textContent = `
     border-color: #d69a94;
     background: #fff7f6;
     color: #7d2a28;
+  }
+
+  .landmark-group-validation-errors-inline {
+    border-color: #d69a94;
+    background: #fff7f6;
+    color: #7d2a28;
+  }
+
+  .landmark-group-bulk-panel {
+    display: grid;
+    gap: 8px;
+  }
+
+  .landmark-group-bulk-panel h3 {
+    margin: 0;
+    color: #25342e;
+    font-size: 13px;
+  }
+
+  .landmark-group-bulk-panel p {
+    margin: 0;
+    overflow-wrap: anywhere;
+    font-size: 12px;
+  }
+
+  .landmark-group-highlight-input {
+    width: 100%;
+    min-height: 88px;
+    resize: vertical;
+    border: 1px solid #b7c7c2;
+    border-radius: 6px;
+    background: #ffffff;
+    color: #25342e;
+    padding: 9px 10px;
+    font: inherit;
+    font-size: 13px;
+    line-height: 1.45;
   }
 
   .landmark-group-indices-panel h3,
