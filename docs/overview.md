@@ -60,7 +60,9 @@ Engine Runtime では、IdealFace の `idealLandmarks3D` 478点を現在顔の `
 
 `correctionProfile` は landmark ごとの `strength` と fallback / clamp 設定を持ちますが、dx / dy は保存しません。dx / dy は current landmarks、projected ideal `imageLandmarks`、顔姿勢、表情によって毎フレーム変わるため、Engine Runtime が毎フレーム計算します。
 
-詳細仕様は [correctionProfile v1](correction-profile-v1.md) を参照してください。Engine 側 foundation、Studio debug summary、CorrectionPlan v1 debug foundation、Studio 向け Shape Warp v1 debug prototype は実装済みです。Authoring Tool 編集 UI と Production Shape Warp はまだ実装しません。
+将来拡張として、MediaPipe blendshape score に応じて `affectedLandmarkGroups` ごとの `strengthScale` を弱める `expressionAttenuation` を追加できるようにします。これは、口を開けたときの `mouth` group、まばたき / 目細め時の `left_eye` / `right_eye` group、顔外周などを安全側に倒すための attenuation です。個別パーツ加工ではなく、表情や可動部位で破綻しやすい領域の補正を弱める方針です。
+
+詳細仕様は [correctionProfile v1](correction-profile-v1.md) と [expression-aware correctionProfile](expression-aware-correction-profile.md) を参照してください。Engine 側 foundation、Studio debug summary、CorrectionPlan v1 debug foundation、Studio 向け Shape Warp v1 debug prototype は実装済みです。Authoring Tool 編集 UI、`expressionAttenuation` 実装、Production Shape Warp はまだ実装しません。
 
 ## IdealFace Projection の座標系方針
 
@@ -196,7 +198,7 @@ shape processing は、個別パーツを独立して大きく変える方向に
 
 Shape Processing の差分は image-normalized coordinate で計算します。current 478 landmarks は MediaPipe 由来の image-normalized 座標です。projected ideal 478 landmarks は、IdealFace same-unit landmarks を `FacePose` へ投影し、alignment 後に image-normalized 座標へ変換したものです。差分は `deltaX = projectedIdealImageX - currentX`、`deltaY = projectedIdealImageY - currentY` として `CorrectionPlan` に渡します。
 
-将来の `CorrectionPlan` は、`correctionProfile` の `strength` をこの差分に掛け、`maxCorrectionDistance` で clamp した correction vector を生成します。`correctionProfile` は個別パーツ加工命令ではなく、current から projected ideal へ全体として自然に少し寄せるための補正率です。
+将来の `CorrectionPlan` は、`correctionProfile` の `strength` をこの差分に掛け、`maxCorrectionDistance` で clamp した correction vector を生成します。`expressionAttenuation` がある場合は、blendshape score から計算した group ごとの `strengthScale` を掛け、`finalStrength = baseStrength * groupStrengthScale` として補正量を安全側に調整します。`correctionProfile` は個別パーツ加工命令ではなく、current から projected ideal へ全体として自然に少し寄せるための補正率です。
 
 やらないこと:
 

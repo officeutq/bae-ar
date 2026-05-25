@@ -242,7 +242,9 @@ current-vs-projected ideal 478点 difference debug v1 は、MediaPipe current im
 
 `correctionProfile` は per-landmark `strength`、`defaultStrength`、`maxCorrectionDistance` を持ちます。dx / dy は現在顔の姿勢、位置、表情、projection 結果によって毎フレーム変わるため JSON には保存せず、Engine Runtime が current landmarks と projected ideal `imageLandmarks` から計算します。
 
-詳細仕様、fallback、validation 方針、Runtime / Authoring / Studio の責務分離は [correctionProfile v1](correction-profile-v1.md) に定義します。Authoring Tool 編集 UI と Production Shape Warp は未実装です。
+将来拡張として、`expressionAttenuation` を optional field として扱います。MediaPipe blendshape score から `mouth` / `left_eye` / `right_eye` / `face_boundary` などの group ごとの `strengthScale` を計算し、CorrectionPlan の `baseStrength` に掛けます。急な切り替わりを避けるため、target scale と smoothed scale を分け、`halfLifeMs` を使った smoothing を候補にします。
+
+詳細仕様、fallback、validation 方針、Runtime / Authoring / Studio の責務分離は [correctionProfile v1](correction-profile-v1.md) に定義します。`expressionAttenuation` の方針は [expression-aware correctionProfile](expression-aware-correction-profile.md) に整理します。Authoring Tool 編集 UI、expression-aware attenuation の Engine 実装、Production Shape Warp は未実装です。
 
 ### IdealFace Projection の座標系方針
 
@@ -294,14 +296,15 @@ CorrectionPlan は姿勢補正を担当しません。姿勢への対応は Idea
 CorrectionPlan の責務:
 
 - current image-normalized landmarks と projected ideal image-normalized landmarks の差分を受け取る
-- `correctionProfile` の strength を掛ける
+- `correctionProfile` の baseStrength を決める
+- expression-aware attenuation がある場合は group strengthScale を掛ける
 - `maxCorrectionDistance` で correction vector を clamp する
 - 実際に warp へ渡す安全な補正量を決める
 - 補正強度、移動量上限、滑らかさ、過補正防止、信頼度などを扱う
 
 CorrectionPlan は same-unit projection 後、image-normalized に変換された current-vs-ideal 差分を受け取ります。CorrectionPlan は `FacePose` の推定や IdealFace projection を担当しません。
 
-CorrectionPlan は個別パーツ加工命令セットにはしません。
+CorrectionPlan は個別パーツ加工命令セットにはしません。`expressionAttenuation` も、目だけ大きくする、鼻だけ細くする、顎だけ削るための機能ではなく、表情や可動部位によって破綻しやすい領域の補正を弱める safety attenuation です。
 
 ## Shape Processing
 

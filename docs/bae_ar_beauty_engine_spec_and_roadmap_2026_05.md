@@ -331,7 +331,9 @@ IdealFace Authoring Tool は BAE AR 独自の IdealFace asset を作成・調整
 
 `correctionProfile` には dx / dy を保存しません。dx / dy は current landmarks、projected ideal `imageLandmarks`、顔姿勢、表情、projection 結果によって毎フレーム変わるため、Engine Runtime が毎フレーム計算します。
 
-詳細な JSON 例、fallback、validation 方針、Runtime / Authoring / Studio の責務分離は [correctionProfile v1](correction-profile-v1.md) に定義します。Engine 側 foundation と CorrectionPlan v1 debug foundation は実装済みです。Authoring Tool 編集 UI と Production Shape Warp は未実装です。
+将来拡張として、`expressionAttenuation` を optional extension として持てるようにします。これは MediaPipe blendshape score に応じて `mouth` / `left_eye` / `right_eye` / `face_boundary` などの `affectedLandmarkGroups` ごとの `strengthScale` を弱める safety attenuation です。`jawOpen` が高いときは `mouth` group、`eyeBlinkLeft` / `eyeSquintLeft` が高いときは `left_eye` group、`eyeBlinkRight` / `eyeSquintRight` が高いときは `right_eye` group の補正を弱めます。`strengthScale` は即時切替ではなく smoothing します。
+
+詳細な JSON 例、fallback、validation 方針、Runtime / Authoring / Studio の責務分離は [correctionProfile v1](correction-profile-v1.md) に定義します。expression-aware attenuation の設計方針は [expression-aware correctionProfile](expression-aware-correction-profile.md) に整理します。Engine 側 foundation と CorrectionPlan v1 debug foundation は実装済みです。Authoring Tool 編集 UI、`expressionAttenuation` 実装、Production Shape Warp は未実装です。
 
 ### 7.2 IdealFace Authoring Tool における idealLandmarks3D 作成方針
 
@@ -511,7 +513,7 @@ deltaY = projectedIdealImageY - currentY
 
 この差分を `CorrectionPlan` に渡します。
 
-CorrectionPlan v1 debug foundation では、`correctionProfile` の `strength` を差分に掛け、`maxCorrectionDistance` で correction vector を clamp します。`correctionProfile` は個別パーツ加工命令ではなく、current から projected ideal へ全体として自然に少し寄せるための補正率です。
+CorrectionPlan v1 debug foundation では、`correctionProfile` の `strength` を差分に掛け、`maxCorrectionDistance` で correction vector を clamp します。将来 `expressionAttenuation` がある場合は、blendshape score から group ごとの `strengthScale` を計算し、`finalStrength = baseStrength * groupStrengthScale` として可動部位の補正を弱めます。`correctionProfile` は個別パーツ加工命令ではなく、current から projected ideal へ全体として自然に少し寄せるための補正率です。
 
 やらないこと:
 
@@ -555,10 +557,13 @@ correctionProfile:
 CorrectionPlan:
   Engine が毎フレーム生成する実行計画
   current landmarks と projected ideal imageLandmarks の dx / dy を計算する
-  correctionProfile の strength を掛ける
+  correctionProfile の baseStrength を決める
+  expressionAttenuation がある場合は group strengthScale を掛ける
   maxCorrectionDistance で clamp する
   Shape Warp へ渡す correction vectors を持つ
 ```
+
+`expressionAttenuation` は、目だけ大きくする、鼻だけ細くする、顎だけ削るための機能ではありません。表情や可動部位によって破綻しやすい領域の補正を弱める safety attenuation です。表情別 IdealFace や expression target offset は後段であり、まずは Step 1 として blendshape score による group strengthScale 制御を扱います。
 
 ## 11. Color Processing / Layer System
 
@@ -751,6 +756,7 @@ Milestone 4 に含めないもの:
 
 - optional `correctionProfile` がない asset では fallback default を使える。
 - `correctionProfile` の per-landmark strength を correction vector に適用できる。
+- 将来 `expressionAttenuation` がある場合、blendshape score に応じて group strengthScale を適用できる。
 - `maxCorrectionDistance` で correction vector を clamp できる。
 - 補正強度、移動量上限、滑らかさ、過補正防止、信頼度を扱える。
 - 姿勢補正を担当していない。
@@ -771,6 +777,9 @@ Milestone 4 に含めないもの:
 
 - Production Shape Warp への renderer 統合
 - temporal smoothing
+- expression-aware attenuation 実装
+- expression target offset
+- expression-specific IdealFace
 - quality tuning
 - correctionProfile Authoring UI との連携
 - 本番 SDK API としての整理
