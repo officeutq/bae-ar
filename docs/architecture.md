@@ -253,7 +253,9 @@ current-vs-projected ideal 478点 difference debug v1 は、MediaPipe current im
 
 Engine 側では、`expressionAttenuation` を optional field として扱う v1 foundation も実装済みです。MediaPipe blendshape score から `mouth` / `left_eye` / `right_eye` / `face_boundary` などの group ごとの `strengthScale` を計算し、CorrectionPlan の `baseStrength` に掛けて `finalStrength` を決めます。急な切り替わりを避けるため、target scale と smoothed scale を分け、`halfLifeMs` を使った smoothing を行います。
 
-詳細仕様、fallback、validation 方針、Runtime / Authoring / Studio の責務分離は [correctionProfile v1](correction-profile-v1.md) に定義します。`expressionAttenuation` の方針は [expression-aware correctionProfile](expression-aware-correction-profile.md) に整理します。Authoring Tool 編集 UI、asset export 連携、expression-specific IdealFace、expression target offset、Production Shape Warp は未実装です。
+group membership を二値のまま扱うと、広めの `mouth` / `left_eye` / `right_eye` group 境界で `strengthScale` が急に変わる可能性があります。次の方針では、Engine が group 内の中心から外側への距離に応じた per-landmark falloff weight を自動計算し、中心ほど強く、境界ほど弱く attenuation します。
+
+詳細仕様、fallback、validation 方針、Runtime / Authoring / Studio の責務分離は [correctionProfile v1](correction-profile-v1.md) に定義します。`expressionAttenuation` の方針は [expression-aware correctionProfile](expression-aware-correction-profile.md) に、falloff 方針は [expressionAttenuation falloff v1](expression-attenuation-falloff-v1.md) に整理します。Authoring Tool 編集 UI、asset export 連携、expression-specific IdealFace、expression target offset、Production Shape Warp は未実装です。
 
 ### IdealFace Projection の座標系方針
 

@@ -120,7 +120,7 @@ eye_area
 
 `landmarkGroups` は個別パーツ加工の命令ではありません。`expressionAttenuation` が補正を弱める領域を参照したり、`colorLayers` が mask 対象の意味領域を参照したりするための index group 定義です。
 
-詳細仕様、JSON 例、Engine fallback、validation、Landmark Group Editor 方針は [landmarkGroups v1](landmark-groups-v1.md) に整理します。現時点では docs 仕様化のみで、Engine landmarkGroups asset loading foundation、Authoring Tool UI、JSON export、validator は未実装です。
+詳細仕様、JSON 例、Engine fallback、validation、Landmark Group Editor 方針は [landmarkGroups v1](landmark-groups-v1.md) に整理します。`expressionAttenuation` が group 内でどれくらい効くかは、v1 では Engine が falloff weight を自動計算する方針です。詳細は [expressionAttenuation falloff v1](expression-attenuation-falloff-v1.md) に整理します。Engine landmarkGroups asset loading foundation、Authoring Tool Landmark Group Editor、`ideal_face_asset_v1` optional `landmarkGroups` export は実装済みですが、`beauty_filter_asset_v1` foundation、Color Processing、Layer System は未実装です。
 
 ### correctionProfile
 
@@ -146,6 +146,8 @@ jawOpen が高い
 ```
 
 `correctionProfile` は個別パーツ加工命令セットではありません。current 478 landmarks と projected ideal 478 landmarks の差分に対して、どれくらい安全に寄せるかを決める設定です。
+
+`expressionAttenuation falloff v1` では、`groupScale` を group 内の全 landmark に二値適用するのではなく、中心ほど強く、境界ほど 1.0 に戻る per-landmark scale として扱う方針です。`beauty_filter_asset_v1` の `landmarkGroups` JSON は当面 `indices` のまま維持し、explicit per-index weights は将来候補とします。
 
 ### shapeWarpSettings
 

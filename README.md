@@ -61,11 +61,17 @@ This is safety attenuation, not individual part editing. The Engine foundation i
 
 See [expression-aware correctionProfile](docs/expression-aware-correction-profile.md). Engine foundation and Studio debug / Copy Debug display are implemented. Authoring Tool UI, correctionProfile / expressionAttenuation export changes, WebGL changes, expression target offsets, expression-specific IdealFace assets, and production renderer integration remain later work.
 
+## expressionAttenuation falloff v1 direction
+
+`expressionAttenuation` currently applies group `strengthScale` by binary group membership. As `mouth` / `left_eye` / `right_eye` groups become wider, this can create abrupt strength changes near group boundaries.
+
+See [expressionAttenuation falloff v1](docs/expression-attenuation-falloff-v1.md). The direction is for Engine to compute per-landmark falloff weights automatically inside each group, strongest near the group center and smoothly returning to 1.0 near the outer boundary. `landmarkGroups` JSON remains an index group definition; explicit per-index weights are only a future option. This is documentation only; Engine / Studio / Authoring Tool / validator implementation is not included in this step.
+
 ## landmarkGroups v1 direction
 
 `landmarkGroups` defines meaningful MediaPipe landmark index groups such as `mouth`, `left_eye`, `right_eye`, and `face_boundary` for expression safety, and future `skin`, `lip`, `cheek`, and `eye_area` groups for color masks. It is referenced by `expressionAttenuation` and future `colorLayers`, but it is not an individual part editing command set.
 
-See [landmarkGroups v1](docs/landmark-groups-v1.md). This is a documentation specification only. Engine landmarkGroups asset loading, Authoring Tool Landmark Group Editor, JSON export changes, validator implementation, Color Processing, Layer System, and `beauty_filter_asset_v1` foundation remain unimplemented.
+See [landmarkGroups v1](docs/landmark-groups-v1.md). Engine landmarkGroups asset loading, fallback groups, Authoring Tool Landmark Group Editor, and `ideal_face_asset_v1` optional `landmarkGroups` export are implemented. Color Processing, Layer System, and `beauty_filter_asset_v1` foundation remain unimplemented.
 
 ## Shape Warp production direction
 
@@ -292,6 +298,7 @@ debug
 - [リポジトリ構成](docs/repository-structure.md)
 - [correctionProfile v1](docs/correction-profile-v1.md)
 - [expression-aware correctionProfile](docs/expression-aware-correction-profile.md)
+- [expressionAttenuation falloff v1](docs/expression-attenuation-falloff-v1.md)
 - [landmarkGroups v1](docs/landmark-groups-v1.md)
 - [Shape Warp production direction](docs/shape-warp-production-direction.md)
 - [beauty_filter_asset_v1 direction](docs/beauty-filter-asset-v1.md)

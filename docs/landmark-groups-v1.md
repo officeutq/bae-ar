@@ -27,7 +27,7 @@ OK:
   lip group を lip tint の対象にする
 ```
 
-現在は `expressionAttenuation` v1 foundation が Engine 側に実装済みで、`mouth` / `left_eye` / `right_eye` / `face_boundary` などの group id を参照します。ただし、`landmarkGroups v1` の asset schema implementation、Engine landmarkGroups asset loading foundation、Authoring Tool landmark group editor は未実装です。このドキュメントは実装前の仕様整理です。
+現在は `expressionAttenuation` v1 foundation が Engine 側に実装済みで、`mouth` / `left_eye` / `right_eye` / `face_boundary` などの group id を参照します。`landmarkGroups v1` の Engine asset loading foundation、fallback groups、Authoring Tool Landmark Group Editor、`ideal_face_asset_v1` optional `landmarkGroups` export も実装済みです。`beauty_filter_asset_v1` foundation、Color Processing、Layer System はまだ未実装です。
 
 ## JSON 仕様案
 
@@ -178,6 +178,8 @@ jawOpen が高い
 
 `expressionAttenuation` は group id を参照するだけです。group の index 定義自体は `landmarkGroups` が持ちます。
 
+`landmarkGroups` は、どの landmark が group に属するかを定義します。group 内でどの landmark にどれくらい attenuation を効かせるかは、次の方針として Engine が `expressionAttenuation falloff` を自動計算します。v1 では `landmarkGroups` JSON に per-index weight を保存せず、`indices` を維持します。詳細は [expressionAttenuation falloff v1](expression-attenuation-falloff-v1.md) に整理します。
+
 ## colorLayers との関係
 
 将来の `colorLayers` は、`targetGroup` や `mask.group` で `landmarkGroups.groups[].id` を参照します。
@@ -277,7 +279,7 @@ landmarkGroups:
   reason: asset has no landmarkGroups
 ```
 
-現在の `expressionAttenuation` v1 foundation は Engine fallback group を前提に動きます。asset 由来の `landmarkGroups` 読み込みは未実装です。
+現在の `expressionAttenuation` v1 foundation は、asset 由来の `landmarkGroups` がある場合は asset group を使い、ない場合は Engine fallback group を使います。
 
 ## validation 方針
 
@@ -301,7 +303,7 @@ landmarkGroups:
 
 ## Authoring Tool との関係
 
-将来、IdealFace Authoring Tool または Beauty Filter Authoring Tool に Landmark Group Editor を追加します。
+IdealFace Authoring Tool には Landmark Group Editor v1 prototype を追加済みです。将来、Beauty Filter Authoring Tool へ統合する可能性があります。
 
 ```text
 Landmark Group Editor:
@@ -353,7 +355,7 @@ Beauty Filter Authoring Tool
 
 ```text
 1. tools/ideal-face-authoring に landmarkGroups docs / export 方針を追加する
-2. 必要に応じて Landmark Group Editor を追加する
+2. Landmark Group Editor v1 prototype で group 範囲を編集する
 3. beauty_filter_asset_v1 foundation が見えてきたら Beauty Filter Authoring Tool への統合 / 改名を検討する
 ```
 

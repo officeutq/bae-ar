@@ -124,6 +124,8 @@
 
 `affectedLandmarkGroups` は、将来 `beauty_filter_asset_v1.landmarkGroups` の group id を参照します。v1 ではまず `mouth` / `left_eye` / `right_eye` / `face_boundary` を想定し、将来の color processing では `skin` / `lip` / `cheek` / `eye_area` などを追加する可能性があります。`landmarkGroups v1` の詳細は [landmarkGroups v1](landmark-groups-v1.md) に整理します。
 
+group membership を二値のまま使うと、広めに取った `mouth` / `left_eye` / `right_eye` の境界で `strengthScale` が急に変わる可能性があります。次の方針では、Engine が group 内の center distance などから per-landmark `falloffWeight` を自動計算し、中心ほど強く、境界ほど弱く attenuation する方向です。詳細は [expressionAttenuation falloff v1](expression-attenuation-falloff-v1.md) に整理します。
+
 目的:
 
 - 口が大きく開いているとき、口周りの warp を弱める
