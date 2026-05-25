@@ -2,7 +2,7 @@
 
 ## 目的
 
-`correctionProfile` は、`ideal_face_asset_v1` に optional な top-level field として追加する将来仕様です。
+`correctionProfile` は、`ideal_face_asset_v1` に optional な top-level field として追加する将来仕様です。最終的な配布単位では、`beauty_filter_asset_v1` の `correctionProfile` セクションとして `idealFace`、`landmarkGroups`、`shapeWarpSettings`、`colorLayers` と一緒に束ねる方向です。
 
 `idealLandmarks3D` の各点に直接 `strength` を混ぜず、別セクションとして保持します。
 
@@ -13,7 +13,7 @@
 - 形状データと補正設定は意味が違うため分ける
 - 将来、profile だけ差し替える余地を残す
 
-このドキュメントは correctionProfile v1 の仕様を定義します。現在は Engine 側 foundation、Studio debug summary、CorrectionPlan v1 debug foundation、Studio 向け Shape Warp v1 debug prototype まで実装済みです。Authoring Tool 編集 UI、export 処理変更、Production Shape Warp はまだ実装しません。
+このドキュメントは correctionProfile v1 の仕様を定義します。現在は Engine 側 foundation、Studio debug summary、CorrectionPlan v1 debug foundation、Studio 向け Shape Warp v1 debug prototype まで実装済みです。Authoring Tool 編集 UI、export 処理変更、`beauty_filter_asset_v1`、Production Shape Warp はまだ実装しません。
 
 ## JSON 例
 
@@ -122,6 +122,8 @@
 
 `expressionAttenuation` は、MediaPipe blendshape score を入力にし、`mouth` / `left_eye` / `right_eye` / `face_boundary` などの `affectedLandmarkGroups` ごとに `strengthScale` を変える safety attenuation です。`strengthScale` は 0.0 から 1.0 の値で、1.0 は通常どおり、0.0 はその group の補正なしを意味します。
 
+`affectedLandmarkGroups` は、将来 `beauty_filter_asset_v1.landmarkGroups` の group id を参照します。v1 ではまず `mouth` / `left_eye` / `right_eye` / `face_boundary` を想定し、将来の color processing では `skin` / `lip` / `cheek` / `eye_area` などを追加する可能性があります。
+
 目的:
 
 - 口が大きく開いているとき、口周りの warp を弱める
@@ -132,6 +134,8 @@
 `expressionAttenuation` は、目だけ大きくする、鼻だけ細くする、顎だけ削るための機能ではありません。表情や可動部位によって破綻しやすい領域の補正を弱める safety attenuation として扱います。
 
 詳細な JSON 仕様案、`jawOpen` / `eyeBlink` / `eyeSquint` の例、smoothing 方針、expression-specific IdealFace との関係は [expression-aware correctionProfile](expression-aware-correction-profile.md) に整理します。
+
+最終的な filter asset の束ね方は [beauty_filter_asset_v1 direction](beauty-filter-asset-v1.md) に整理します。`correctionProfile` は shape correction の強度と safety attenuation を担当し、`idealLandmarks3D` の形状データや `colorLayers` の色加工設定とは混ぜません。
 
 ## dx / dy を保存しない理由
 
@@ -250,10 +254,13 @@ CorrectionPlan は姿勢補正を担当しません。姿勢への対応は Idea
 以下はまだ未実装です。
 
 - Production Shape Warp
-- WebGL mesh warp
 - production renderer integration
 - 画像変形の本番実装
 - expressionAttenuation の Engine 実装
+- landmarkGroups v1 asset schema
+- shapeWarpSettings v1
+- colorLayers v1
+- beauty_filter_asset_v1
 - Authoring Tool 編集 UI
 - `ideal_face_asset_v1` export 処理変更
 - expression-specific IdealFace

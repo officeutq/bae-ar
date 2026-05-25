@@ -2,11 +2,11 @@
 
 このドキュメントは、Shape Warp v1 debug prototype の次に進むための本番候補方針を整理します。
 
-今回は docs / README / roadmap への反映だけを行います。WebGL 実装、mesh warp 実装、renderer 実装、shader 実装、MediaPipe face mesh topology の実装はまだ行いません。
+このドキュメントは docs / README / roadmap への反映として始まり、現在は Studio processed preview 限定の WebGL mesh warp v1 prototype まで進んでいます。Production Shape Warp、Runtime renderer integration、renderer lifecycle、shader hardening、MediaPipe face mesh topology の本番整理はまだ行いません。
 
 ## 現在の位置づけ
 
-現在の Shape Warp v1 debug prototype は、CorrectionPlan の補正ベクトルを Studio の Processed preview に仮反映するための CPU radial warp debug です。
+現在の Shape Warp v1 debug prototype は、CorrectionPlan の補正ベクトルを Studio の Processed preview に仮反映するための debug 系統です。CPU radial warp debug に加えて、Studio processed preview 限定の WebGL mesh warp v1 prototype も実装済みです。
 
 ```text
 CPU radial warp debug:
@@ -33,6 +33,8 @@ Production Shape Warp candidate:
 ```
 
 WebGL mesh warp では、画像を直接ピクセル単位で radial に引っ張るのではなく、顔メッシュの三角形を source から target へ変形する方向で検討します。
+
+将来の `beauty_filter_asset_v1` では、WebGL mesh warp の mode、`meshWarpStrength`、`temporalSmoothing`、boundary / mask / feather などの実行設定候補を `shapeWarpSettings` セクションとして分離します。`shapeWarpSettings` は renderer / smoothing / boundary の設定であり、`idealFace` の形状データや `correctionProfile` の補正強度、`colorLayers` の色加工設定とは混ぜません。
 
 ## Processing flow
 
@@ -106,15 +108,15 @@ same-unit landmarks を WebGL mesh warp に直接使ってはいけません。P
 
 ### Step A: docs / direction
 
-今回のステップです。
+完了済みの docs step です。
 
 - CPU radial warp debug の位置づけを明確にする
 - 本番候補を WebGL mesh warp として整理する
-- WebGL / mesh / renderer はまだ実装しない
+- Production renderer はまだ実装しない
 
 ### Step B: Studio WebGL mesh warp prototype
 
-次以降の実装候補です。
+Studio processed preview 限定で実装済みの prototype です。
 
 - Studio processed preview 限定
 - Engine Runtime 本体への本格統合はまだしない
@@ -165,16 +167,19 @@ same-unit landmarks を WebGL mesh warp に直接使ってはいけません。P
 
 このステップでは以下を実装しません。
 
-- WebGL 実装
-- shader 実装
-- triangle mesh warp 実装
-- renderer 実装
-- MediaPipe face mesh topology 実装
+- Studio WebGL mesh warp v1 prototype の追加修正
+- Production shader 実装
+- Production triangle mesh warp 実装
+- Runtime renderer 実装
+- MediaPipe face mesh topology の本番整理
 - CPU radial warp の修正
 - CorrectionPlan の仕様変更
 - correctionProfile の仕様変更
+- shapeWarpSettings v1 実装
+- beauty_filter_asset_v1 実装
 - Authoring Tool の変更
 - Shape Warp の本番実装
+- Runtime renderer integration
 - Layer System
 - LayerMaskSpec
 - Color Processing

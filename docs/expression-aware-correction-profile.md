@@ -17,6 +17,7 @@
 - Studio 実装
 - Authoring Tool 編集 UI
 - `ideal_face_asset_v1` export 変更
+- `beauty_filter_asset_v1` 実装
 - WebGL mesh warp 修正
 - Production Shape Warp
 - Runtime renderer integration
@@ -48,6 +49,8 @@ CorrectionPlan:
 ```
 
 `expressionAttenuation` は、目だけ大きくする、鼻だけ細くする、顎だけ削るための機能ではありません。これは、表情や可動部位によって破綻しやすい領域の補正を弱める safety attenuation です。
+
+最終的な配布単位では、`expressionAttenuation` の `affectedLandmarkGroups` は `beauty_filter_asset_v1.landmarkGroups` の group id を参照する方向です。`landmarkGroups` は `correctionProfile` と `colorLayers` の両方から参照されるため、1つの filter asset 内で整合性を保ちます。
 
 ## JSON 仕様案
 
@@ -126,7 +129,7 @@ face_boundary:
   顔外周、背景、髪、眼鏡境界などの破綻を抑える
 ```
 
-v1 では landmark group の index 定義はまだ完全確定しません。将来 `LANDMARK_GROUPS` のような定数で、MediaPipe 478 topology に対する group index を管理します。
+v1 では landmark group の index 定義はまだ完全確定しません。将来は `beauty_filter_asset_v1.landmarkGroups` に group 定義を持ち、asset に存在しない場合は Engine fallback group を使う方向です。
 
 ```ts
 type LandmarkGroupId =
@@ -135,6 +138,8 @@ type LandmarkGroupId =
   | "right_eye"
   | "face_boundary"
 ```
+
+将来 color processing 向けには、`skin` / `lip` / `cheek` / `eye_area` などの group を追加する可能性があります。これらは `colorLayers` の mask 対象として使う候補であり、shape warp 用の個別パーツ変形命令ではありません。
 
 ## 最初に使う blendshapes
 

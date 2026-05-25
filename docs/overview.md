@@ -237,6 +237,27 @@ Layer System は shape warp ではなく、color processing 用に使います�
 
 Layer は色加工範囲、効果、強度、合成順を整理する仕組みです。`jaw_layer` で顎を削る、`eye_layer` で目を大きくする、`nose_layer` で鼻を細くする、のような使い方はしません。
 
+## beauty_filter_asset_v1 の方向性
+
+最終的なフィルター / プリセットは、複数の独立 JSON ではなく、1つの `beauty_filter_asset_v1` JSON として配布する方針です。
+
+内部構造は責務ごとに分離します。
+
+```text
+beauty_filter_asset_v1
+  ├─ idealFace
+  ├─ landmarkGroups
+  ├─ correctionProfile
+  ├─ shapeWarpSettings
+  └─ colorLayers
+```
+
+`idealFace` は理想顔の形状、`landmarkGroups` は MediaPipe landmark index の意味領域、`correctionProfile` は shape correction の強度と safety attenuation、`shapeWarpSettings` は warp renderer / smoothing / boundary の設定、`colorLayers` は色加工、mask、合成順、opacity を扱います。
+
+`landmarkGroups` は、`expressionAttenuation` の `affectedLandmarkGroups` と、将来の `colorLayers` が参照する `skin` / `lip` / `cheek` などの group の整合性を保つために使います。Layer System は shape warp 用ではなく、color processing 用です。
+
+詳細は [beauty_filter_asset_v1 direction](beauty-filter-asset-v1.md) を参照してください。今回の整理は docs の方向性のみで、実装、validator、export、Production Shape Warp、Color Processing はまだ行いません。
+
 ## IdealFace Authoring Tool detailed scan
 
 詳細スキャンは Step 2-I-A の frame selection に渡す observation source です。表示用の粗いフレーム抽出は debug / metadata 確認用であり、pose-aware inference の中心データではありません。
