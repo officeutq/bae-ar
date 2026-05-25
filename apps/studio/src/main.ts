@@ -1467,17 +1467,22 @@ Camera:
 
   function attachShapeWarpDebugHandlers(): void {
     document
-      .querySelector<HTMLSelectElement>("#shape-warp-preset")
-      ?.addEventListener("change", (event) => {
-        if (!(event.currentTarget instanceof HTMLSelectElement)) {
-          return
-        }
+      .querySelectorAll<HTMLInputElement>('input[name="shape-warp-preset"]')
+      .forEach((input) => {
+        input.addEventListener("change", (event) => {
+          if (
+            !(event.currentTarget instanceof HTMLInputElement) ||
+            !event.currentTarget.checked
+          ) {
+            return
+          }
 
-        applyShapeWarpDebugPreset(
-          parseShapeWarpDebugPreset(event.currentTarget.value),
-        )
-        render()
-        appendCameraPreview()
+          applyShapeWarpDebugPreset(
+            parseShapeWarpDebugPreset(event.currentTarget.value),
+          )
+          render()
+          appendCameraPreview()
+        })
       })
 
     document
@@ -1550,17 +1555,22 @@ Camera:
       })
 
     document
-      .querySelector<HTMLSelectElement>("#shape-warp-sampling")
-      ?.addEventListener("change", (event) => {
-        if (!(event.currentTarget instanceof HTMLSelectElement)) {
-          return
-        }
+      .querySelectorAll<HTMLInputElement>('input[name="shape-warp-sampling"]')
+      .forEach((input) => {
+        input.addEventListener("change", (event) => {
+          if (
+            !(event.currentTarget instanceof HTMLInputElement) ||
+            !event.currentTarget.checked
+          ) {
+            return
+          }
 
-        markShapeWarpDebugCustom()
-        shapeWarpDebugSettings.sampling =
-          event.currentTarget.value === "nearest" ? "nearest" : "bilinear"
-        render()
-        appendCameraPreview()
+          markShapeWarpDebugCustom()
+          shapeWarpDebugSettings.sampling =
+            event.currentTarget.value === "nearest" ? "nearest" : "bilinear"
+          render()
+          appendCameraPreview()
+        })
       })
   }
 
@@ -1722,6 +1732,15 @@ Camera:
       })
   }
 
+  function isShapeWarpDebugControlActive(): boolean {
+    const activeElement = document.activeElement
+
+    return (
+      activeElement instanceof HTMLElement &&
+      Boolean(activeElement.closest("[data-shape-warp-debug-controls]"))
+    )
+  }
+
   function render(): void {
     const currentState = engine.getState()
     const mediaPipeDebug =
@@ -1825,19 +1844,17 @@ Detect: ${faceFrameLoopDebug.detectCallCount}/${mediaPipeDebug?.detectSuccessCou
           <input id="shape-warp-used-vectors" type="checkbox" ${showShapeWarpUsedVectors ? "checked" : ""} />
           Shape Warp使用ベクトルを表示
         </label>
-        <fieldset>
+        <fieldset data-shape-warp-debug-controls="true">
           <legend>Shape Warp Debug</legend>
           <p>Shape Warp Debug は CorrectionPlan の補正ベクトルを画像に仮反映する検証用です。本番品質の warp 方式ではありません。</p>
-          <label>
-            preset
-            <select id="shape-warp-preset">
-              <option value="off" ${shapeWarpDebugSettings.preset === "off" ? "selected" : ""}>off</option>
-              <option value="weak" ${shapeWarpDebugSettings.preset === "weak" ? "selected" : ""}>weak</option>
-              <option value="normal" ${shapeWarpDebugSettings.preset === "normal" ? "selected" : ""}>normal</option>
-              <option value="strong" ${shapeWarpDebugSettings.preset === "strong" ? "selected" : ""}>strong</option>
-              <option value="custom" ${shapeWarpDebugSettings.preset === "custom" ? "selected" : ""}>custom</option>
-            </select>
-          </label>
+          <fieldset>
+            <legend>preset</legend>
+            <label><input type="radio" name="shape-warp-preset" value="off" ${shapeWarpDebugSettings.preset === "off" ? "checked" : ""} /> off</label>
+            <label><input type="radio" name="shape-warp-preset" value="weak" ${shapeWarpDebugSettings.preset === "weak" ? "checked" : ""} /> weak</label>
+            <label><input type="radio" name="shape-warp-preset" value="normal" ${shapeWarpDebugSettings.preset === "normal" ? "checked" : ""} /> normal</label>
+            <label><input type="radio" name="shape-warp-preset" value="strong" ${shapeWarpDebugSettings.preset === "strong" ? "checked" : ""} /> strong</label>
+            <label><input type="radio" name="shape-warp-preset" value="custom" ${shapeWarpDebugSettings.preset === "custom" ? "checked" : ""} /> custom</label>
+          </fieldset>
           <label>
             <input id="shape-warp-debug-enabled" type="checkbox" ${shapeWarpDebugSettings.enabled ? "checked" : ""} />
             Processed previewでShape Warp debugを有効化
@@ -1858,13 +1875,11 @@ Detect: ${faceFrameLoopDebug.detectCallCount}/${mediaPipeDebug?.detectSuccessCou
             minCorrectionDistance
             <input id="shape-warp-min-correction-distance" type="number" min="0" max="0.05" step="0.001" value="${shapeWarpDebugSettings.minCorrectionDistance}" />
           </label>
-          <label>
-            sampling
-            <select id="shape-warp-sampling">
-              <option value="bilinear" ${shapeWarpDebugSettings.sampling === "bilinear" ? "selected" : ""}>bilinear</option>
-              <option value="nearest" ${shapeWarpDebugSettings.sampling === "nearest" ? "selected" : ""}>nearest</option>
-            </select>
-          </label>
+          <fieldset>
+            <legend>sampling</legend>
+            <label><input type="radio" name="shape-warp-sampling" value="bilinear" ${shapeWarpDebugSettings.sampling === "bilinear" ? "checked" : ""} /> bilinear</label>
+            <label><input type="radio" name="shape-warp-sampling" value="nearest" ${shapeWarpDebugSettings.sampling === "nearest" ? "checked" : ""} /> nearest</label>
+          </fieldset>
         </fieldset>
         <div class="preview-grid">
           <section>
@@ -1974,7 +1989,9 @@ Video srcObject: ${faceFrameLoopDebug.video?.hasSrcObject ? "あり" : "なし"}
 
   engine.setFaceDetector(detector)
   window.setInterval(() => {
-    render()
+    if (!isShapeWarpDebugControlActive()) {
+      render()
+    }
     appendCameraPreview()
   }, 1000)
 
