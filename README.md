@@ -71,7 +71,7 @@ See [expressionAttenuation falloff v1](docs/expression-attenuation-falloff-v1.md
 
 `landmarkGroups` defines meaningful MediaPipe landmark index groups such as `mouth`, `left_eye`, `right_eye`, and `face_boundary` for expression safety, and future `skin`, `lip`, `cheek`, and `eye_area` groups for color masks. It is referenced by `expressionAttenuation` and future `colorLayers`, but it is not an individual part editing command set.
 
-See [landmarkGroups v1](docs/landmark-groups-v1.md). Engine landmarkGroups asset loading, fallback groups, Authoring Tool Landmark Group Editor, and `ideal_face_asset_v1` optional `landmarkGroups` export are implemented. Color Processing, Layer System, and `beauty_filter_asset_v1` foundation remain unimplemented.
+See [landmarkGroups v1](docs/landmark-groups-v1.md). Engine landmarkGroups asset loading, fallback groups, Studio debug / Copy Debug summary, Authoring Tool Landmark Group Editor v1 prototype, rectangle selection, index highlight, bulk add / remove, and `ideal_face_asset_v1` optional `landmarkGroups` export are implemented. Color Processing, Layer System, and `beauty_filter_asset_v1` foundation remain unimplemented.
 
 ## Shape Warp production direction
 
@@ -211,7 +211,7 @@ Still planned:
 - confidence debug
 - manual adjustment UI
 - save / import
-- correctionProfile / landmarkGroups / beauty_filter_asset_v1 export
+- correctionProfile / beauty_filter_asset_v1 export
 - multiple image input
 
 ## 現在の処理パイプライン
@@ -376,5 +376,5 @@ Still planned:
 - confidence debug
 - manual adjustment UI
 - save / import
-- correctionProfile / landmarkGroups / beauty_filter_asset_v1 export
+- correctionProfile / beauty_filter_asset_v1 export
 - multiple image input

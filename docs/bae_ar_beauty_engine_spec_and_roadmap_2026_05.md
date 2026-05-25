@@ -117,12 +117,18 @@ Beauty Studio:
 - Studio processed preview 限定 WebGL mesh warp v1 prototype
 - beauty_filter_asset_v1 direction docs
 - landmarkGroups v1 docs specification
+- landmarkGroups v1 Engine foundation
+- ideal_face_asset_v1 optional top-level landmarkGroups 型 / validation / converter
+- Engine fallback group / asset group source handling
+- Studio debug / Copy Debug landmarkGroups summary
+- IdealFace Authoring Tool Landmark Group Editor v1 prototype
+- Landmark Group Editor rectangle selection / index highlight / bulk add / bulk remove
+- ideal_face_asset_v1 optional landmarkGroups export
+- expressionAttenuation falloff v1 docs direction
 
 ### 3.2 未実装
 
-- landmarkGroups v1 asset schema implementation
-- Engine landmarkGroups asset loading foundation
-- Authoring Tool landmark group editor
+- expressionAttenuation falloff v1 Engine implementation
 - shapeWarpSettings v1
 - colorLayers v1
 - beauty_filter_asset_v1
@@ -331,7 +337,7 @@ beauty_filter_asset_v1
 
 `landmarkGroups` v1 では、まず `mouth` / `left_eye` / `right_eye` / `face_boundary` を expression safety 用 group として想定します。将来 color processing 向けに `skin` / `lip` / `cheek` / `eye_area` などを追加する可能性があります。Layer System は shape warp 用ではなく、color processing 用です。詳細は [landmarkGroups v1](landmark-groups-v1.md) に整理します。
 
-詳細は [beauty_filter_asset_v1 direction](beauty-filter-asset-v1.md) に整理します。`landmarkGroups v1` は docs 仕様化のみで、Engine asset loading、Authoring Tool editor、JSON export、validator は未実装です。`beauty_filter_asset_v1`、`shapeWarpSettings` v1、`colorLayers` v1、Production Shape Warp、Color Processing、Runtime renderer integration はまだ未実装です。
+詳細は [beauty_filter_asset_v1 direction](beauty-filter-asset-v1.md) に整理します。`landmarkGroups v1` は docs specification、Engine foundation、asset / fallback group source handling、Studio debug / Copy Debug summary、Authoring Tool Landmark Group Editor v1 prototype、`ideal_face_asset_v1` optional export まで実装済みです。`expressionAttenuation falloff v1` は docs direction のみで、Engine implementation は未実装です。`beauty_filter_asset_v1`、`shapeWarpSettings` v1、`colorLayers` v1、Production Shape Warp、Color Processing、Runtime renderer integration はまだ未実装です。
 
 ## 7. IdealFace
 
@@ -428,7 +434,7 @@ Still planned:
 - confidence debug
 - manual adjustment UI
 - save / import
-- correctionProfile / landmarkGroups / beauty_filter_asset_v1 export
+- correctionProfile / beauty_filter_asset_v1 export
 - multiple image input
 
 ## 8. IdealFace Projection
@@ -809,6 +815,8 @@ Milestone 4 に含めないもの:
 - expressionAttenuation v1 foundation
 - jawOpen / eyeBlink / eyeSquint による group strengthScale
 - halfLifeMs smoothing
+- landmarkGroups helper による affectedGroups 判定
+- asset / fallback landmarkGroups source handling
 - CorrectionVector の baseStrength / expressionStrengthScale / finalStrength
 - 478点分の correction vectors 計算
 - Studio debug / Copy Debug
@@ -819,8 +827,8 @@ Milestone 4 に含めないもの:
 未実装 / 後段:
 
 - Production Shape Warp への renderer 統合
-- landmarkGroups asset schema 連携
-- Authoring Tool UI / export 連携
+- expressionAttenuation falloff v1 Engine implementation
+- correctionProfile Authoring UI / export 連携
 - expression target offset
 - expression-specific IdealFace
 - quality tuning
@@ -870,7 +878,7 @@ Milestone 4 に含めないもの:
 
 ### Milestone 6.5: beauty_filter_asset_v1 foundation
 
-状態: docs direction 追加 / foundation 未実装
+状態: landmarkGroups 関連 Step 1〜4 実装済み / beauty_filter_asset_v1 foundation 未実装
 
 目的:
 
@@ -882,11 +890,21 @@ Milestone 4 に含めないもの:
 
 ```text
 Step 1: landmarkGroups v1 docs specification
+  -> 実装済み
+
 Step 2: Engine landmarkGroups foundation
+  -> 実装済み
+
 Step 3: Authoring Tool landmark group editor
-Step 4: shapeWarpSettings v1 docs / foundation
-Step 5: colorLayers v1 docs / foundation
-Step 6: beauty_filter_asset_v1 foundation
+  -> prototype 実装済み
+
+Step 4: expressionAttenuation falloff v1 docs direction
+  -> 実装済み
+
+Step 5: expressionAttenuation falloff v1 Engine foundation
+Step 6: shapeWarpSettings v1 docs / foundation
+Step 7: colorLayers v1 docs / foundation
+Step 8: beauty_filter_asset_v1 foundation
 ```
 
 完了条件:
@@ -902,6 +920,7 @@ Step 6: beauty_filter_asset_v1 foundation
 
 - [beauty_filter_asset_v1 direction](beauty-filter-asset-v1.md)
 - [landmarkGroups v1](landmark-groups-v1.md)
+- [expressionAttenuation falloff v1](expression-attenuation-falloff-v1.md)
 
 ### Milestone 7: Color Processing v1
 
@@ -963,7 +982,7 @@ Step 6: beauty_filter_asset_v1 foundation
 - confidence debug
 - manual adjustment UI
 - save / import
-- correctionProfile / landmarkGroups / beauty_filter_asset_v1 export
+- correctionProfile / beauty_filter_asset_v1 export
 - multiple image input
 
 ### Milestone 11: Layer Mask Authoring Tool

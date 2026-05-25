@@ -373,21 +373,32 @@ Layer Mask / Color Authoring Tool は、shape warp 用の個別パーツ変形�
 ```text
 Step 1: landmarkGroups v1 docs specification
   ideal_face_asset_v1 / beauty_filter_asset_v1 で使う group 定義を整理する
+  -> 実装済み
 
 Step 2: Engine landmarkGroups foundation
   asset の landmarkGroups を読み込み、expressionAttenuation が参照できるようにする
   asset にない場合は Engine fallback group を使う
+  -> 実装済み
 
 Step 3: Authoring Tool landmark group editor
   IdealFace Authoring Tool で mouth / left_eye / right_eye / face_boundary を作成・編集できるようにする
+  rectangle selection / index highlight / bulk add / bulk remove を含む
+  -> prototype 実装済み
 
-Step 4: shapeWarpSettings v1 docs / foundation
+Step 4: expressionAttenuation falloff v1 docs direction
+  group 内の center distance による falloff 方針を整理する
+  -> 実装済み
+
+Step 5: expressionAttenuation falloff v1 Engine foundation
+  Engine 側で per-landmark falloff weight を自動計算する
+
+Step 6: shapeWarpSettings v1 docs / foundation
   WebGL mesh warp / smoothing / boundary / debug 設定を整理する
 
-Step 5: colorLayers v1 docs / foundation
+Step 7: colorLayers v1 docs / foundation
   whitening / skin smoothing / lip tint / cheek tint / layer order / opacity / mask / gradient を整理する
 
-Step 6: beauty_filter_asset_v1 foundation
+Step 8: beauty_filter_asset_v1 foundation
   IdealFace + landmarkGroups + correctionProfile + shapeWarpSettings + colorLayers を束ねる asset を定義する
 ```
 
@@ -401,11 +412,18 @@ Step 6: beauty_filter_asset_v1 foundation
 - CorrectionPlan v1 debug foundation
 - Studio Shape Warp debug prototype
 - WebGL mesh warp v1 prototype
+- landmarkGroups v1 asset schema implementation
+- Engine landmarkGroups asset loading foundation
+- Engine fallback group / asset group source handling
+- Studio debug / Copy Debug landmarkGroups summary
+- Authoring Tool Landmark Group Editor v1 prototype
+- rectangle selection / index highlight / bulk add / bulk remove
+- ideal_face_asset_v1 optional landmarkGroups export
+- expressionAttenuation falloff v1 docs direction
 
 まだ未実装:
 
-- landmarkGroups v1 asset schema implementation
-- Authoring Tool landmark group editor
+- expressionAttenuation falloff v1 Engine implementation
 - shapeWarpSettings v1
 - colorLayers v1
 - beauty_filter_asset_v1

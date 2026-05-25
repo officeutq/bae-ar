@@ -49,12 +49,15 @@ Engine Runtime は UI を持たない中核 SDK です。
 - ideal_face_asset_v1 の型 / validator / parse helper / converter
 - correctionProfile v1 の読み込み / validation / fallback
 - expressionAttenuation v1 foundation / fallback rules
+- landmarkGroups v1 asset schema implementation
+- Engine landmarkGroups asset loading foundation
+- Engine fallback group / asset group source handling
+- Studio debug / Copy Debug landmarkGroups summary
 - CorrectionPlan v1 debug foundation
 
 将来予定:
 
-- landmarkGroups v1 asset schema implementation
-- Engine landmarkGroups asset loading foundation
+- expressionAttenuation falloff v1 Engine implementation
 - shapeWarpSettings v1
 - colorLayers v1
 - beauty_filter_asset_v1 foundation / validator / parser / converter
@@ -389,7 +392,7 @@ beauty_filter_asset_v1
 
 Engine Runtime は UI を持たず、将来 `beauty_filter_asset_v1` を読み込んで Projection、current-vs-ideal difference、`expressionAttenuation`、`CorrectionPlan`、WebGL mesh warp、LayerMask 生成、`colorLayers` 合成、temporal smoothing / stability control を実行します。Beauty Studio は公開 API 経由で読み込み・状態確認・debug / overlay / Copy Debug / tuning UI を提供します。Authoring Tool 群は各セクションの作成・編集を担当します。
 
-詳細は [beauty_filter_asset_v1 direction](beauty-filter-asset-v1.md) に整理します。`landmarkGroups v1` は docs 仕様化のみで、Engine asset loading、Authoring Tool editor、JSON export、validator は未実装です。`beauty_filter_asset_v1`、`shapeWarpSettings`、`colorLayers`、Production Shape Warp、Color Processing、Runtime renderer integration はまだ未実装です。
+詳細は [beauty_filter_asset_v1 direction](beauty-filter-asset-v1.md) に整理します。`landmarkGroups v1` は docs specification、Engine foundation、asset / fallback group source handling、Studio debug / Copy Debug summary、Authoring Tool Landmark Group Editor v1 prototype、`ideal_face_asset_v1` optional export まで実装済みです。`expressionAttenuation falloff v1` は docs direction のみで、Engine implementation は未実装です。`beauty_filter_asset_v1`、`shapeWarpSettings`、`colorLayers`、Production Shape Warp、Color Processing、Runtime renderer integration はまだ未実装です。
 
 ## 配布方針
 

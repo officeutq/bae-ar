@@ -342,21 +342,32 @@ Step D: Quality improvements
 Step 1: landmarkGroups v1 docs specification
   ideal_face_asset_v1 / beauty_filter_asset_v1 で使う group 定義を整理する
   詳細は landmarkGroups v1 docs に整理する
+  -> 実装済み
 
 Step 2: Engine landmarkGroups foundation
   asset の landmarkGroups を読み込み、expressionAttenuation が参照できるようにする
   asset にない場合は Engine fallback group を使う
+  -> 実装済み
 
 Step 3: Authoring Tool landmark group editor
   IdealFace Authoring Tool で mouth / left_eye / right_eye / face_boundary を作成・編集できるようにする
+  rectangle selection / index highlight / bulk add / bulk remove を含む
+  -> prototype 実装済み
 
-Step 4: shapeWarpSettings v1 docs / foundation
+Step 4: expressionAttenuation falloff v1 docs direction
+  group 内の center distance による falloff 方針を整理する
+  -> 実装済み
+
+Step 5: expressionAttenuation falloff v1 Engine foundation
+  Engine 側で per-landmark falloff weight を自動計算する
+
+Step 6: shapeWarpSettings v1 docs / foundation
   WebGL mesh warp / smoothing / boundary / debug 設定を整理する
 
-Step 5: colorLayers v1 docs / foundation
+Step 7: colorLayers v1 docs / foundation
   whitening / skin smoothing / lip tint / cheek tint / layer order / opacity / mask / gradient を整理する
 
-Step 6: beauty_filter_asset_v1 foundation
+Step 8: beauty_filter_asset_v1 foundation
   IdealFace + landmarkGroups + correctionProfile + shapeWarpSettings + colorLayers を束ねる asset を定義する
 ```
 

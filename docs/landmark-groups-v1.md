@@ -27,7 +27,7 @@ OK:
   lip group を lip tint の対象にする
 ```
 
-現在は `expressionAttenuation` v1 foundation が Engine 側に実装済みで、`mouth` / `left_eye` / `right_eye` / `face_boundary` などの group id を参照します。`landmarkGroups v1` の Engine asset loading foundation、fallback groups、Authoring Tool Landmark Group Editor、`ideal_face_asset_v1` optional `landmarkGroups` export も実装済みです。`beauty_filter_asset_v1` foundation、Color Processing、Layer System はまだ未実装です。
+現在は `expressionAttenuation` v1 foundation が Engine 側に実装済みで、`mouth` / `left_eye` / `right_eye` / `face_boundary` などの group id を参照します。`landmarkGroups v1` の Engine asset loading foundation、fallback groups、asset / fallback group source handling、Studio debug / Copy Debug summary、Authoring Tool Landmark Group Editor、矩形範囲選択、index highlight、`ideal_face_asset_v1` optional `landmarkGroups` export も実装済みです。`expressionAttenuation falloff v1` は docs direction のみで Engine implementation は未実装です。`beauty_filter_asset_v1` foundation、Color Processing、Layer System はまだ未実装です。
 
 ## JSON 仕様案
 
@@ -254,7 +254,7 @@ beauty_filter_asset_v1
 
 ## Engine fallback 方針
 
-将来の Engine landmarkGroups foundation では、asset に `landmarkGroups` がある場合は asset group を優先します。asset に `landmarkGroups` がない場合は、Engine fallback group を使います。
+現在の Engine landmarkGroups foundation では、asset に `landmarkGroups` がある場合は asset group を優先します。asset に `landmarkGroups` がない場合は、Engine fallback group を使います。
 
 ```text
 group source:
@@ -310,9 +310,13 @@ Landmark Group Editor:
   - 478点 overlay を表示する
   - group を選ぶ
   - 点をクリックして group に追加 / 削除する
+  - 矩形範囲選択でまとめて追加 / 削除する
+  - Studio Copy Debug などの index list を貼り付けて highlight する
+  - highlighted indices をまとめて追加 / 削除する
   - 選択中 group の点を色付き表示する
   - group count / indices を確認する
   - JSON preview に landmarkGroups を出す
+  - ideal_face_asset_v1 export に optional top-level landmarkGroups を含める
 ```
 
 最初に対象とする group:

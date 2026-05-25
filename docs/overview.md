@@ -64,6 +64,8 @@ Engine 側では、MediaPipe blendshape score に応じて `affectedLandmarkGrou
 
 詳細仕様は [correctionProfile v1](correction-profile-v1.md) と [expression-aware correctionProfile](expression-aware-correction-profile.md) を参照してください。Engine 側 foundation、validation / fallback、expressionAttenuation v1 foundation、Studio debug summary、CorrectionPlan v1 debug foundation、Studio 向け Shape Warp v1 debug prototype は実装済みです。Authoring Tool 編集 UI、asset export 連携、expression-specific IdealFace、expression target offset、Production Shape Warp は未実装です。
 
+`landmarkGroups v1` は docs specification、Engine foundation、asset / fallback group source handling、Studio debug / Copy Debug summary、IdealFace Authoring Tool Landmark Group Editor v1 prototype、`ideal_face_asset_v1` optional `landmarkGroups` export まで実装済みです。`expressionAttenuation falloff v1` は docs direction のみで、Engine implementation は未実装です。
+
 ## IdealFace Projection の座標系方針
 
 IdealFace Projection から Shape Warp へ進むため、座標系は以下の 3 種類に分けます。
@@ -172,14 +174,14 @@ debug
 
 `currentCandidate` は Step 2-H preview に表示される現在の candidate です。`generationMethod` は `pose_aware_weighted_z_v1` で、478 landmarks 全文は出さず、summary と先頭数点 preview に留めます。`natural_v1` の 6 controlPoints は reference / projection debug 用であり、IdealFace 本体は `idealLandmarks3D` 478点です。
 
-legacy / debug と分類した helper には、今後の新機能を追加しません。現行 UI には Step 2-G v1 を旧方式として示す注記が残っていますが、active workflow は Step 2-I です。confidence debug、手動微調整 UI、保存 / import、correctionProfile / landmarkGroups / beauty_filter_asset_v1 export は Step 2-I active workflow 側で扱います。
+legacy / debug と分類した helper には、今後の新機能を追加しません。現行 UI には Step 2-G v1 を旧方式として示す注記が残っていますが、active workflow は Step 2-I です。confidence debug、手動微調整 UI、保存 / import、correctionProfile / beauty_filter_asset_v1 export は Step 2-I active workflow 側で扱います。
 
 Still planned:
 
 - confidence debug
 - manual adjustment UI
 - save / import
-- correctionProfile / landmarkGroups / beauty_filter_asset_v1 export
+- correctionProfile / beauty_filter_asset_v1 export
 - multiple image input
 
 ## Shape Processing の考え方
@@ -254,9 +256,9 @@ beauty_filter_asset_v1
 
 `idealFace` は理想顔の形状、`landmarkGroups` は MediaPipe landmark index の意味領域、`correctionProfile` は shape correction の強度と safety attenuation、`shapeWarpSettings` は warp renderer / smoothing / boundary の設定、`colorLayers` は色加工、mask、合成順、opacity を扱います。
 
-`landmarkGroups` は、`expressionAttenuation` の `affectedLandmarkGroups` と、将来の `colorLayers` が参照する `skin` / `lip` / `cheek` などの group の整合性を保つために使います。Layer System は shape warp 用ではなく、color processing 用です。`landmarkGroups v1` の JSON 仕様、Engine fallback、validation、Landmark Group Editor 方針は [landmarkGroups v1](landmark-groups-v1.md) に整理します。
+`landmarkGroups` は、`expressionAttenuation` の `affectedLandmarkGroups` と、将来の `colorLayers` が参照する `skin` / `lip` / `cheek` などの group の整合性を保つために使います。Layer System は shape warp 用ではなく、color processing 用です。`landmarkGroups v1` の JSON 仕様、Engine fallback、validation、Landmark Group Editor 方針は [landmarkGroups v1](landmark-groups-v1.md) に整理します。現在は Engine foundation、Authoring Tool Landmark Group Editor v1 prototype、`ideal_face_asset_v1` optional export まで実装済みです。
 
-詳細は [beauty_filter_asset_v1 direction](beauty-filter-asset-v1.md) を参照してください。今回の整理は docs の方向性のみで、実装、validator、export、Production Shape Warp、Color Processing はまだ行いません。
+詳細は [beauty_filter_asset_v1 direction](beauty-filter-asset-v1.md) を参照してください。`beauty_filter_asset_v1` foundation、shapeWarpSettings、colorLayers、Production Shape Warp、Color Processing はまだ実装しません。
 
 ## IdealFace Authoring Tool detailed scan
 
