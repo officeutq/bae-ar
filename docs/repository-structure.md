@@ -73,22 +73,32 @@ Engine Runtime として使う Beauty Engine SDK を置く場所です。
 - IdealFace 公開 API
 - idealLandmarks3D 478点 Projection
 - current-vs-projected ideal 478点 difference debug
+- ideal_face_asset_v1 の型 / validator / parse helper / converter
+- correctionProfile v1 の型 / validator / fallback
+- expressionAttenuation v1 foundation / fallback rules
+- CorrectionPlan v1 debug foundation
+- Studio processed preview 向け Shape Warp v1 debug prototype の入力となる correction vectors
+- Studio processed preview 限定 WebGL mesh warp v1 prototype 向けの MediaPipe face mesh topology
 
 将来追加予定:
 
-- correctionProfile v1 の型 / validator / fallback
-- CorrectionPlan
-- Shape Warp
+- landmarkGroups v1 asset schema
+- Engine landmarkGroups asset loading foundation
+- shapeWarpSettings v1
+- colorLayers v1
+- beauty_filter_asset_v1 foundation / validator / parser / converter
+- Production Shape Warp
+- Production WebGL mesh warp / Runtime renderer integration
+- renderer production lifecycle / disposal / fallback
 - Color Processing
 - Layer System
 - LayerMaskSpec の読み込み
-- renderer
 
 Engine Runtime は UI を持ちません。debug 用 UI、一時的な検証 UI、Authoring Tool の編集処理はここに入れません。
 
 Projection / Shape Warp へ向けた座標系方針として、Engine Runtime は完成済み IdealFace asset の `idealLandmarks3D` を same-unit coordinate として読み込み、`FacePose` に合わせて same-unit 空間で回転と face center / uniform scale alignment を行います。Runtime Projection alignment では x/y 別 scale を行わず、IdealFace の縦横比を現在顔に合わせて歪めません。Projection result は `sameUnitLandmarks` と `imageLandmarks` を分けて持ち、Studio overlay / current-vs-ideal difference / Shape Warp 入力へ渡す座標は image-normalized coordinate に変換します。Studio overlay は `imageLandmarks` を使います。最終的な描画や画像変形では pixel coordinate を使います。
 
-`correctionProfile` v1 は `ideal_face_asset_v1` の optional top-level field として仕様化します。形状データである `idealLandmarks3D` とは分け、landmark ごとの `strength`、fallback、validation 方針を [correctionProfile v1](correction-profile-v1.md) に記載します。dx / dy は JSON に保存せず、Engine Runtime が毎フレーム計算します。
+`correctionProfile` v1 は `ideal_face_asset_v1` の optional top-level field として実装済みです。形状データである `idealLandmarks3D` とは分け、landmark ごとの `strength`、fallback、validation 方針を [correctionProfile v1](correction-profile-v1.md) に記載します。dx / dy は JSON に保存せず、Engine Runtime が毎フレーム計算します。`expressionAttenuation` v1 foundation も Engine 側で fallback rules、jawOpen / eyeBlink / eyeSquint の group strengthScale、halfLifeMs smoothing、CorrectionVector の `baseStrength` / `expressionStrengthScale` / `finalStrength` 反映まで実装済みです。
 
 ## `apps/studio`
 

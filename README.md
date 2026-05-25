@@ -23,7 +23,7 @@ Downloaded `ideal_face_asset_v1` JSON keeps `schemaVersion` and `coordinateSpace
 - Studio overlay draws `imageLandmarks`; it does not draw same-unit landmarks directly with `canvasWidth` / `canvasHeight`.
 - Runtime must not non-uniformly scale IdealFace to match the current face aspect ratio.
 - Authoring Tool owns same-unit asset generation, video aspect correction, pose-aware generation, and future manual adjustment. Runtime owns loading finished IdealFace assets, projection, and conversion for overlay / difference / warp, but does not include authoring generation logic.
-- Current-vs-projected ideal 478-point difference debug, `correctionProfile` foundation, CorrectionPlan v1 debug foundation, and Shape Warp v1 debug prototype are implemented. Production Shape Warp remains unimplemented.
+- Current-vs-projected ideal 478-point difference debug, `correctionProfile` foundation, `expressionAttenuation` foundation, CorrectionPlan v1 debug foundation, Shape Warp v1 debug prototype, and Studio processed preview-only WebGL mesh warp v1 prototype are implemented. Production Shape Warp and Runtime renderer integration remain unimplemented.
 
 ## Engine ideal_face_asset_v1 loading foundation
 
@@ -49,9 +49,9 @@ Projection debug also reports bounds and aspect ratios for the source asset, rot
 
 ## correctionProfile v1 specification
 
-`correctionProfile` v1 is documented as an optional top-level field for future `ideal_face_asset_v1` assets. It keeps per-landmark correction `strength` separate from the shape data in `idealLandmarks3D`, does not store per-frame dx / dy, and defines fallback / validation policy for the future `CorrectionPlan` implementation.
+`correctionProfile` v1 is implemented as an optional top-level field for `ideal_face_asset_v1` assets. It keeps per-landmark correction `strength` separate from the shape data in `idealLandmarks3D`, does not store per-frame dx / dy, and defines fallback / validation policy used by the CorrectionPlan v1 debug foundation.
 
-See [correctionProfile v1](docs/correction-profile-v1.md). Authoring Tool editing UI, production Shape Warp, and production renderer integration remain outside this step.
+See [correctionProfile v1](docs/correction-profile-v1.md). Authoring Tool editing UI, correctionProfile export authoring, production Shape Warp, and production renderer integration remain outside this step.
 
 ## expression-aware correctionProfile direction
 
@@ -63,7 +63,7 @@ See [expression-aware correctionProfile](docs/expression-aware-correction-profil
 
 ## Shape Warp production direction
 
-Shape Warp v1 debug prototype is a Studio processed preview-only CPU radial warp debug. It connects CorrectionPlan correction vectors to the image so the movement can be observed, but it is not the production-quality warp method.
+Shape Warp v1 debug prototype is Studio processed preview-only. CPU radial warp debug and WebGL mesh warp v1 prototype connect CorrectionPlan correction vectors to the image so the movement can be observed, but neither is the production-quality Runtime renderer.
 
 The production Shape Warp candidate is WebGL mesh warp. The candidate direction is to use MediaPipe face mesh topology, treat current image-normalized landmarks as source vertices, treat CorrectionPlan `target` points as target vertices, use the source video frame / source canvas as the texture, and remap texture triangles from current to target positions.
 
@@ -98,7 +98,7 @@ Beauty Studio
 
 IdealFace Authoring Tool
   理想 3D 顔プリセットを作成する authoring tool
-  Step 2-I-C まで実装済み
+  Step 2-I-A/B/C と Step 2-H まで実装済み
   リアルタイム Engine Runtime には含めない
 
 Layer Mask Authoring Tool
@@ -119,7 +119,7 @@ docs
   設計・仕様・ロードマップ
 
 tools/ideal-face-authoring
-  IdealFace Authoring Tool。Step 2-I-C まで実装済み
+  IdealFace Authoring Tool。Step 2-I-A/B/C と Step 2-H まで実装済み
 ```
 
 ## 現在の実装状況
@@ -192,15 +192,15 @@ debug
 
 `currentCandidate` は Step 2-H preview に表示される現在の candidate です。`generationMethod` は `pose_aware_weighted_z_v1` で、478 landmarks 全文は出さず、summary と先頭数点 preview に留めます。`natural_v1` の 6 controlPoints は reference / projection debug 用であり、IdealFace 本体は `idealLandmarks3D` 478点です。
 
-legacy / debug と分類した UI や helper には、今後の新機能を追加しません。confidence debug、手動微調整 UI、保存 / export は Step 2-I active workflow 側に追加します。
+legacy / debug と分類した helper には、今後の新機能を追加しません。現行 UI には Step 2-G v1 を旧方式として示す注記が残っていますが、active workflow は Step 2-I です。confidence debug、手動微調整 UI、保存 / import、correctionProfile / beauty_filter_asset_v1 export は Step 2-I active workflow 側で扱います。
 
 Still planned:
 
 - confidence debug
 - manual adjustment UI
-- save / export
+- save / import
+- correctionProfile / landmarkGroups / beauty_filter_asset_v1 export
 - multiple image input
-- Runtime idealLandmarks3D loading / projection completion
 
 ## 現在の処理パイプライン
 
@@ -361,6 +361,6 @@ Still planned:
 
 - confidence debug
 - manual adjustment UI
-- save / export
+- save / import
+- correctionProfile / landmarkGroups / beauty_filter_asset_v1 export
 - multiple image input
-- Runtime idealLandmarks3D loading / projection completion

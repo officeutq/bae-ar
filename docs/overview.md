@@ -18,13 +18,13 @@ BAE AR
 │  └─ Engine を開発・検証・調整する開発ツール
 │
 ├─ IdealFace Authoring Tool
-│  └─ 理想 3D 顔プリセットを作成する authoring tool。Step 2-I-C まで実装済み
+│  └─ 理想 3D 顔プリセットを作成する authoring tool。Step 2-I-A/B/C と Step 2-H まで実装済み
 │
 └─ Layer Mask Authoring Tool
    └─ 色加工用 LayerMaskSpec を作成する将来ツール
 ```
 
-現在の実装は `packages/engine`、`apps/studio`、`tools/ideal-face-authoring` が中心です。`tools/ideal-face-authoring` は Step 2-I-C まで実装済みで、`tools/layer-mask-authoring` は将来予定です。
+現在の実装は `packages/engine`、`apps/studio`、`tools/ideal-face-authoring` が中心です。`tools/ideal-face-authoring` は Step 2-I-A/B/C と Step 2-H まで実装済みで、`tools/layer-mask-authoring` は将来予定です。
 
 ## 現在の到達点
 
@@ -60,9 +60,9 @@ Engine Runtime では、IdealFace の `idealLandmarks3D` 478点を現在顔の `
 
 `correctionProfile` は landmark ごとの `strength` と fallback / clamp 設定を持ちますが、dx / dy は保存しません。dx / dy は current landmarks、projected ideal `imageLandmarks`、顔姿勢、表情によって毎フレーム変わるため、Engine Runtime が毎フレーム計算します。
 
-将来拡張として、MediaPipe blendshape score に応じて `affectedLandmarkGroups` ごとの `strengthScale` を弱める `expressionAttenuation` を追加できるようにします。これは、口を開けたときの `mouth` group、まばたき / 目細め時の `left_eye` / `right_eye` group、顔外周などを安全側に倒すための attenuation です。個別パーツ加工ではなく、表情や可動部位で破綻しやすい領域の補正を弱める方針です。
+Engine 側では、MediaPipe blendshape score に応じて `affectedLandmarkGroups` ごとの `strengthScale` を弱める `expressionAttenuation` v1 foundation も実装済みです。これは、口を開けたときの `mouth` group、まばたき / 目細め時の `left_eye` / `right_eye` group、顔外周などを安全側に倒すための attenuation です。個別パーツ加工ではなく、表情や可動部位で破綻しやすい領域の補正を弱める方針です。
 
-詳細仕様は [correctionProfile v1](correction-profile-v1.md) と [expression-aware correctionProfile](expression-aware-correction-profile.md) を参照してください。Engine 側 foundation、Studio debug summary、CorrectionPlan v1 debug foundation、Studio 向け Shape Warp v1 debug prototype は実装済みです。Authoring Tool 編集 UI、`expressionAttenuation` 実装、Production Shape Warp はまだ実装しません。
+詳細仕様は [correctionProfile v1](correction-profile-v1.md) と [expression-aware correctionProfile](expression-aware-correction-profile.md) を参照してください。Engine 側 foundation、validation / fallback、expressionAttenuation v1 foundation、Studio debug summary、CorrectionPlan v1 debug foundation、Studio 向け Shape Warp v1 debug prototype は実装済みです。Authoring Tool 編集 UI、asset export 連携、expression-specific IdealFace、expression target offset、Production Shape Warp は未実装です。
 
 ## IdealFace Projection の座標系方針
 
@@ -172,15 +172,15 @@ debug
 
 `currentCandidate` は Step 2-H preview に表示される現在の candidate です。`generationMethod` は `pose_aware_weighted_z_v1` で、478 landmarks 全文は出さず、summary と先頭数点 preview に留めます。`natural_v1` の 6 controlPoints は reference / projection debug 用であり、IdealFace 本体は `idealLandmarks3D` 478点です。
 
-legacy / debug と分類した UI や helper には、今後の新機能を追加しません。confidence debug、手動微調整 UI、保存 / export は Step 2-I active workflow 側に追加します。
+legacy / debug と分類した helper には、今後の新機能を追加しません。現行 UI には Step 2-G v1 を旧方式として示す注記が残っていますが、active workflow は Step 2-I です。confidence debug、手動微調整 UI、保存 / import、correctionProfile / landmarkGroups / beauty_filter_asset_v1 export は Step 2-I active workflow 側で扱います。
 
 Still planned:
 
 - confidence debug
 - manual adjustment UI
-- save / export
+- save / import
+- correctionProfile / landmarkGroups / beauty_filter_asset_v1 export
 - multiple image input
-- Runtime idealLandmarks3D loading / projection completion
 
 ## Shape Processing の考え方
 

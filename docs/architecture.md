@@ -46,16 +46,25 @@ Engine Runtime は UI を持たない中核 SDK です。
 - IdealFace 公開 API
 - idealLandmarks3D 478点 Projection
 - current-vs-projected ideal 478点 difference debug
+- ideal_face_asset_v1 の型 / validator / parse helper / converter
+- correctionProfile v1 の読み込み / validation / fallback
+- expressionAttenuation v1 foundation / fallback rules
+- CorrectionPlan v1 debug foundation
 
 将来予定:
 
-- correctionProfile v1 の読み込み / fallback
-- CorrectionPlan 生成
-- Shape Warp
+- landmarkGroups v1 asset schema
+- Engine landmarkGroups asset loading foundation
+- shapeWarpSettings v1
+- colorLayers v1
+- beauty_filter_asset_v1 foundation / validator / parser / converter
+- Production Shape Warp
+- Production WebGL mesh warp / Runtime renderer integration
 - Color Processing
 - Layer System
 - LayerMaskSpec の読み込み
-- rendering / runtime quality control
+- renderer production lifecycle / disposal / fallback
+- runtime quality control
 
 Engine Runtime は定義済みの IdealFace / LayerMaskSpec を読み込んで使います。IdealFace の作成、2D 動画からの 3D 顔生成、LayerMaskSpec の作成、mask の手作業編集、Studio / Authoring 用 UI は Runtime に含めません。
 
@@ -221,9 +230,9 @@ Engine Runtime で current face と比較するため、IdealFace は `idealLand
 
 - IdealFace Authoring Tool は Step 2-I-C / Step 2-H まで実装済み
 - `idealLandmarks3D` 478点 Projection と current-vs-projected ideal difference debug は実装済み
-- `correctionProfile` v1 foundation と CorrectionPlan v1 debug foundation は実装済み
-- Shape Warp v1 debug prototype は Studio processed preview 限定で実装済み
-- Production Shape Warp は未実装
+- `correctionProfile` v1 foundation、validation / fallback、`expressionAttenuation` v1 foundation、CorrectionPlan v1 debug foundation は実装済み
+- Shape Warp v1 debug prototype と Studio processed preview 限定 WebGL mesh warp v1 prototype は実装済み
+- Production Shape Warp / Runtime renderer integration は未実装
 
 IdealFace Projection v1 の責務:
 
@@ -234,7 +243,7 @@ IdealFace Projection v1 の責務:
 
 current-vs-projected ideal 478点 difference debug v1 は、MediaPipe current image-normalized landmarks と projected ideal `imageLandmarks` の `deltaX` / `deltaY` / `distance` を計算します。平均差分、最大差分 index、top differences、overlay 上の difference line は debug 用であり、CorrectionPlan ではありません。
 
-現在は Perspective camera、face surface、production mesh renderer、Production Shape Warp は未実装です。CorrectionPlan v1 debug foundation と Studio 向け Shape Warp v1 debug prototype は実装済みですが、本番 renderer ではありません。将来の完全版でも、Projection 後の ideal 2D landmarks はすでに現在姿勢を反映します。
+現在は Perspective camera、face surface、production mesh renderer、Production Shape Warp / Runtime renderer integration は未実装です。CorrectionPlan v1 debug foundation、Studio 向け Shape Warp v1 debug prototype、Studio processed preview 限定 WebGL mesh warp v1 prototype は実装済みですが、本番 renderer ではありません。将来の完全版でも、Projection 後の ideal 2D landmarks はすでに現在姿勢を反映します。
 
 ## correctionProfile v1
 
@@ -242,9 +251,9 @@ current-vs-projected ideal 478点 difference debug v1 は、MediaPipe current im
 
 `correctionProfile` は per-landmark `strength`、`defaultStrength`、`maxCorrectionDistance` を持ちます。dx / dy は現在顔の姿勢、位置、表情、projection 結果によって毎フレーム変わるため JSON には保存せず、Engine Runtime が current landmarks と projected ideal `imageLandmarks` から計算します。
 
-将来拡張として、`expressionAttenuation` を optional field として扱います。MediaPipe blendshape score から `mouth` / `left_eye` / `right_eye` / `face_boundary` などの group ごとの `strengthScale` を計算し、CorrectionPlan の `baseStrength` に掛けます。急な切り替わりを避けるため、target scale と smoothed scale を分け、`halfLifeMs` を使った smoothing を候補にします。
+Engine 側では、`expressionAttenuation` を optional field として扱う v1 foundation も実装済みです。MediaPipe blendshape score から `mouth` / `left_eye` / `right_eye` / `face_boundary` などの group ごとの `strengthScale` を計算し、CorrectionPlan の `baseStrength` に掛けて `finalStrength` を決めます。急な切り替わりを避けるため、target scale と smoothed scale を分け、`halfLifeMs` を使った smoothing を行います。
 
-詳細仕様、fallback、validation 方針、Runtime / Authoring / Studio の責務分離は [correctionProfile v1](correction-profile-v1.md) に定義します。`expressionAttenuation` の方針は [expression-aware correctionProfile](expression-aware-correction-profile.md) に整理します。Authoring Tool 編集 UI、expression-aware attenuation の Engine 実装、Production Shape Warp は未実装です。
+詳細仕様、fallback、validation 方針、Runtime / Authoring / Studio の責務分離は [correctionProfile v1](correction-profile-v1.md) に定義します。`expressionAttenuation` の方針は [expression-aware correctionProfile](expression-aware-correction-profile.md) に整理します。Authoring Tool 編集 UI、asset export 連携、expression-specific IdealFace、expression target offset、Production Shape Warp は未実装です。
 
 ### IdealFace Projection の座標系方針
 
@@ -494,7 +503,7 @@ Step 2-G v1 five-pose candidate generation has been removed from the current cod
 
 ## Shape Warp production direction
 
-Shape Warp v1 debug prototype は、CorrectionPlan の補正ベクトルを Studio processed preview に仮反映する CPU radial warp debug です。これは補正ベクトルと画像変形の接続を観察するための prototype であり、本番品質の warp 方式ではありません。
+Shape Warp v1 debug prototype は、CorrectionPlan の補正ベクトルを Studio processed preview に仮反映する検証用です。CPU radial warp debug と Studio processed preview 限定 WebGL mesh warp v1 prototype があり、どちらも補正ベクトルと画像変形の接続を観察するための prototype であり、本番品質の Runtime renderer ではありません。
 
 本番候補は WebGL mesh warp とします。MediaPipe face mesh topology の triangle mesh を使い、current image-normalized landmarks を source vertices、CorrectionPlan `target` を target vertices、source video frame / source canvas を texture として扱う方向で検討します。
 

@@ -75,5 +75,5 @@ legacy / debug と分類した UI や helper には、今後の新機能を追�
 
 - confidence debug を Step 2-I active workflow 側に追加する
 - manual adjustment UI を Step 2-I active workflow 側に追加する
-- save / export を Step 2-I active workflow 側に追加する
+- save / import と correctionProfile / landmarkGroups / beauty_filter_asset_v1 export を Step 2-I active workflow 側で扱う
 - multiple image input は Step 2-I active workflow に接続する
