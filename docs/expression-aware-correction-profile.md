@@ -10,7 +10,7 @@
 
 ## 今回の範囲
 
-今回採用するのは docs 上の設計方針です。以下はまだ行いません。
+現在は Engine 側の `expressionAttenuation` v1 foundation、fallback rules、validation、CorrectionPlan への `finalStrength` 反映まで実装済みです。以下はまだ行いません。
 
 - TypeScript 実装
 - Engine 実装
@@ -233,10 +233,10 @@ smoothedScale = previousScale + (targetScale - previousScale) * alpha
 または half-life ベース:
 
 ```ts
-alpha = 1 - Math.exp(-deltaTimeMs / smoothingTimeMs)
+alpha = 1 - Math.exp(-deltaTimeMs / halfLifeMs)
 ```
 
-docs 上では実装方式を確定しすぎず、`halfLifeMs` を使った smoothing を候補として扱います。JSON 例の `halfLifeMs: 120` は、表情変化への追従と急な切り替わり抑制のバランスを確認するための初期候補です。
+Engine v1 foundation では、`halfLifeMs` を使った smoothing を実装済みです。JSON 例の `halfLifeMs: 120` は、表情変化への追従と急な切り替わり抑制のバランスを確認するための初期値です。
 
 ## CorrectionPlan での計算順
 
@@ -284,7 +284,7 @@ Step 3:
   neutral / mouthOpen / smile / blink などの IdealFace を持つ方式を検討
 ```
 
-今回採用するのは Step 1 です。IdealFace 自体はまだ表情別に分けません。
+現在採用しているのは Step 1 です。Engine 側 foundation は実装済みですが、Authoring Tool UI / export 連携、expression target offset、expression-specific IdealFace はまだ扱いません。IdealFace 自体はまだ表情別に分けません。
 
 ## 現在の破綻との関係
 

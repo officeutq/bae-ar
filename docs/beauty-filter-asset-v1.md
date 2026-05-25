@@ -403,9 +403,16 @@ Step 6: beauty_filter_asset_v1 foundation
 - shapeWarpSettings v1
 - colorLayers v1
 - beauty_filter_asset_v1
+- beauty_filter_asset_v1 validator / parser / converter
 - Production Shape Warp
+- Production WebGL mesh warp / Runtime renderer integration
+- Runtime renderer lifecycle / disposal / fallback
+- mask / boundary / feather 本格対応
+- glasses / hair handling
+- temporal smoothing for production renderer
 - Color Processing
-- Runtime renderer integration
+- Layer System
+- LayerMaskSpec
 
 ## 今回やらないこと
 

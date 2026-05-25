@@ -13,7 +13,7 @@
 - 形状データと補正設定は意味が違うため分ける
 - 将来、profile だけ差し替える余地を残す
 
-このドキュメントは correctionProfile v1 の仕様を定義します。現在は Engine 側 foundation、Studio debug summary、CorrectionPlan v1 debug foundation、Studio 向け Shape Warp v1 debug prototype まで実装済みです。Authoring Tool 編集 UI、export 処理変更、`beauty_filter_asset_v1`、Production Shape Warp はまだ実装しません。
+このドキュメントは correctionProfile v1 の仕様を定義します。現在は Engine 側 foundation、validation / fallback、expressionAttenuation v1 foundation、Studio debug summary、CorrectionPlan v1 debug foundation、Studio 向け Shape Warp v1 debug prototype、Studio processed preview 限定 WebGL mesh warp v1 prototype まで実装済みです。Authoring Tool 編集 UI、correctionProfile / expressionAttenuation export 変更、`beauty_filter_asset_v1`、Production Shape Warp はまだ実装しません。
 
 ## JSON 例
 
@@ -249,20 +249,30 @@ CorrectionPlan は姿勢補正を担当しません。姿勢への対応は Idea
 
 ## 現在の実装状態と残り範囲
 
-`correctionProfile` v1 の Engine 型 / validator / converter foundation、Studio debug summary、CorrectionPlan v1 debug foundation、Studio 向け Shape Warp v1 debug prototype は実装済みです。
+`correctionProfile` v1 の Engine 型 / validator / converter foundation、fallback default、`expressionAttenuation` v1 foundation、Studio debug summary、CorrectionPlan v1 debug foundation、Studio 向け Shape Warp v1 debug prototype、Studio processed preview 限定 WebGL mesh warp v1 prototype は実装済みです。
+
+実装済みの `expressionAttenuation` v1 foundation:
+
+- default fallback rules
+- `jawOpen` による `mouth` group strengthScale
+- `eyeBlinkLeft` / `eyeBlinkRight` による `left_eye` / `right_eye` group strengthScale
+- `eyeSquintLeft` / `eyeSquintRight` による `left_eye` / `right_eye` group strengthScale
+- `halfLifeMs` smoothing
+- CorrectionVector の `baseStrength` / `expressionStrengthScale` / `finalStrength`
 
 以下はまだ未実装です。
 
 - Production Shape Warp
 - production renderer integration
 - 画像変形の本番実装
-- expressionAttenuation の Engine 実装
 - landmarkGroups v1 asset schema
 - shapeWarpSettings v1
 - colorLayers v1
 - beauty_filter_asset_v1
 - Authoring Tool 編集 UI
 - `ideal_face_asset_v1` export 処理変更
+- correctionProfile / expressionAttenuation Authoring Tool UI
+- correctionProfile / expressionAttenuation asset export 変更
 - expression-specific IdealFace
 - expression target offset
 - Layer System

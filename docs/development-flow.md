@@ -8,7 +8,7 @@ BAE AR は、Engine Runtime、Beauty Studio、IdealFace Authoring Tool、Layer M
 - Beauty Studio は Engine Runtime を開発・検証・調整するための開発ツールです。
 - Studio は Engine Runtime の公開 API のみを使います。
 - Studio から Engine Runtime の内部実装へ直接依存しません。
-- IdealFace Authoring Tool は Step 2-I-C まで実装済みです。
+- IdealFace Authoring Tool は Step 2-I-A/B/C と Step 2-H まで実装済みです。
 - Layer Mask Authoring Tool は将来予定です。
 - Authoring Tool の処理を Runtime に混ぜません。
 - 1 つの Issue では目的を絞って小さく実装します。
@@ -77,9 +77,9 @@ same-unit の projected ideal landmarks を、そのまま `x * canvasWidth` / `
 
 current 478 landmarks は MediaPipe 由来の image-normalized 座標です。projected ideal 478 landmarks は、IdealFace same-unit landmarks を `FacePose` へ投影し、alignment 後に image-normalized 座標へ変換したものです。差分は `deltaX = projectedIdealImageX - currentX`、`deltaY = projectedIdealImageY - currentY` として計算します。
 
-現時点では、478点の current-vs-ideal difference debug、`correctionProfile` v1 foundation、CorrectionPlan v1 debug foundation、Studio 向け Shape Warp v1 debug prototype は実装済みです。Production Shape Warp は未実装です。
+現時点では、478点の current-vs-ideal difference debug、`correctionProfile` v1 foundation、`expressionAttenuation` v1 foundation、CorrectionPlan v1 debug foundation、Studio 向け Shape Warp v1 debug prototype、Studio processed preview 限定 WebGL mesh warp v1 prototype は実装済みです。Production Shape Warp / Runtime renderer integration は未実装です。
 
-`correctionProfile` v1 は、将来 `ideal_face_asset_v1` の optional top-level field として追加する補正設定です。landmark ごとの `strength` を持ちますが、dx / dy は JSON に保存しません。dx / dy は current landmarks と projected ideal `imageLandmarks` から Engine が毎フレーム計算します。将来拡張として、MediaPipe blendshape score に応じて `mouth` / `left_eye` / `right_eye` / `face_boundary` などの group ごとの `strengthScale` を弱める `expressionAttenuation` を扱います。詳細は [correctionProfile v1](correction-profile-v1.md) と [expression-aware correctionProfile](expression-aware-correction-profile.md) を参照してください。
+`correctionProfile` v1 は、`ideal_face_asset_v1` の optional top-level field として扱う補正設定です。landmark ごとの `strength` を持ちますが、dx / dy は JSON に保存しません。dx / dy は current landmarks と projected ideal `imageLandmarks` から Engine が毎フレーム計算します。`expressionAttenuation` v1 foundation では、MediaPipe blendshape score に応じて `mouth` / `left_eye` / `right_eye` / `face_boundary` などの group ごとの `strengthScale` を弱めます。詳細は [correctionProfile v1](correction-profile-v1.md) と [expression-aware correctionProfile](expression-aware-correction-profile.md) を参照してください。
 
 やらないこと:
 

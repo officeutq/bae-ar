@@ -153,7 +153,7 @@ Beauty Studio:
 - current-vs-projected ideal 478点 difference debug v1 は current landmarks と projected ideal `imageLandmarks` の差分確認用です。
 - `FaceGeometry` は landmarks から代表点やサイズを計算する補助解析です。
 - 実際の shape warp、color processing、rendering はまだありません。
-- IdealFace Authoring Tool は Step 2-I-C まで実装済みです。
+- IdealFace Authoring Tool は Step 2-I-A/B/C と Step 2-H まで実装済みです。
 
 ## 4. 現在の処理パイプライン
 
@@ -357,15 +357,15 @@ IdealFace Authoring Tool は BAE AR 独自の IdealFace asset を作成・調整
 
 ### 7.3 correctionProfile v1
 
-`correctionProfile` v1 は、`ideal_face_asset_v1` の optional top-level field として追加する将来仕様です。`idealLandmarks3D` は理想顔の形状データ、`correctionProfile` は各 landmark をどれくらい projected ideal へ寄せるかを表す補正設定として分けます。
+`correctionProfile` v1 は、`ideal_face_asset_v1` の optional top-level field として扱う補正設定です。`idealLandmarks3D` は理想顔の形状データ、`correctionProfile` は各 landmark をどれくらい projected ideal へ寄せるかを表す補正設定として分けます。
 
 `correctionProfile` は v1 では `"per_landmark_strength"` mode のみを持ち、`defaultStrength`、`landmarkStrengths`、`maxCorrectionDistance` を定義します。`strength` は 0.0 から 1.0 で、0.0 は補正なし、1.0 は projected ideal に完全一致、0.25 は current から projected ideal への差分の 25% だけ寄せることを意味します。
 
 `correctionProfile` には dx / dy を保存しません。dx / dy は current landmarks、projected ideal `imageLandmarks`、顔姿勢、表情、projection 結果によって毎フレーム変わるため、Engine Runtime が毎フレーム計算します。
 
-将来拡張として、`expressionAttenuation` を optional extension として持てるようにします。これは MediaPipe blendshape score に応じて `mouth` / `left_eye` / `right_eye` / `face_boundary` などの `affectedLandmarkGroups` ごとの `strengthScale` を弱める safety attenuation です。`affectedLandmarkGroups` は将来 `beauty_filter_asset_v1.landmarkGroups` の group id を参照します。`jawOpen` が高いときは `mouth` group、`eyeBlinkLeft` / `eyeSquintLeft` が高いときは `left_eye` group、`eyeBlinkRight` / `eyeSquintRight` が高いときは `right_eye` group の補正を弱めます。`strengthScale` は即時切替ではなく smoothing します。
+Engine 側では、`expressionAttenuation` v1 foundation も実装済みです。これは MediaPipe blendshape score に応じて `mouth` / `left_eye` / `right_eye` / `face_boundary` などの `affectedLandmarkGroups` ごとの `strengthScale` を弱める safety attenuation です。`affectedLandmarkGroups` は将来 `beauty_filter_asset_v1.landmarkGroups` の group id を参照します。`jawOpen` が高いときは `mouth` group、`eyeBlinkLeft` / `eyeSquintLeft` が高いときは `left_eye` group、`eyeBlinkRight` / `eyeSquintRight` が高いときは `right_eye` group の補正を弱めます。`strengthScale` は即時切替ではなく smoothing します。
 
-詳細な JSON 例、fallback、validation 方針、Runtime / Authoring / Studio の責務分離は [correctionProfile v1](correction-profile-v1.md) に定義します。expression-aware attenuation の設計方針は [expression-aware correctionProfile](expression-aware-correction-profile.md) に整理します。Engine 側 foundation と CorrectionPlan v1 debug foundation は実装済みです。Authoring Tool 編集 UI、`expressionAttenuation` 実装、Production Shape Warp は未実装です。
+詳細な JSON 例、fallback、validation 方針、Runtime / Authoring / Studio の責務分離は [correctionProfile v1](correction-profile-v1.md) に定義します。expression-aware attenuation の設計方針は [expression-aware correctionProfile](expression-aware-correction-profile.md) に整理します。Engine 側 foundation、validation / fallback、expressionAttenuation v1 foundation、CorrectionPlan v1 debug foundation は実装済みです。Authoring Tool 編集 UI、asset export 連携、expression-specific IdealFace、expression target offset、Production Shape Warp は未実装です。
 
 ### 7.2 IdealFace Authoring Tool における idealLandmarks3D 作成方針
 
@@ -422,9 +422,9 @@ Still planned:
 
 - confidence debug
 - manual adjustment UI
-- save / export
+- save / import
+- correctionProfile / landmarkGroups / beauty_filter_asset_v1 export
 - multiple image input
-- Runtime idealLandmarks3D loading / projection completion
 
 ## 8. IdealFace Projection
 
@@ -447,12 +447,13 @@ current-vs-projected ideal 478点 difference debug v1:
 - `deltaY = projectedIdeal.y - current.y`
 - `distance = sqrt(deltaX * deltaX + deltaY * deltaY)`
 
-現在は `deltaX` / `deltaY` / `distance`、平均差分、最大差分 landmark index、top differences を debug 表示します。これは CorrectionPlan ではなく、warp へ渡す補正量も生成しません。
+現在は `deltaX` / `deltaY` / `distance`、平均差分、最大差分 landmark index、top differences を debug 表示します。これは CorrectionPlan ではありません。warp へ渡す補正量は、後段の CorrectionPlan v1 debug foundation が `correctionProfile` と `expressionAttenuation` を使って生成します。
 
-未実装:
+Production 未実装:
 
-- correctionProfile v1 の型 / validator / converter
-- Shape Warp / CorrectionPlan
+- Production Shape Warp
+- Production WebGL mesh warp / Runtime renderer integration
+- Production renderer lifecycle / disposal / fallback
 
 将来の完全版では、Projection 後の ideal 2D landmarks はすでに現在姿勢を反映します。したがって、CorrectionPlan は姿勢補正を担当しません。
 
@@ -502,7 +503,7 @@ type IdealLandmarks3DProjectionResult = {
 
 Runtime Projection alignment では x/y 別 scale を行いません。IdealFace の縦横比を現在顔に合わせて歪めません。縦横比や形状そのものの調整は、将来の IdealFace Authoring Tool manual adjustment UI で扱います。
 
-Studio overlay は `imageLandmarks` を `x * canvasWidth` / `y * canvasHeight` で描画します。same-unit landmarks をそのまま canvas pixel に変換しません。current 478 landmarks との差分比較 debug、CorrectionPlan v1 debug foundation、Studio 向け Shape Warp v1 debug prototype は実装済みです。Production Shape Warp はまだ実装しません。
+Studio overlay は `imageLandmarks` を `x * canvasWidth` / `y * canvasHeight` で描画します。same-unit landmarks をそのまま canvas pixel に変換しません。current 478 landmarks との差分比較 debug、CorrectionPlan v1 debug foundation、Studio 向け Shape Warp v1 debug prototype、Studio processed preview 限定 WebGL mesh warp v1 prototype は実装済みです。Production Shape Warp / Runtime renderer integration は未実装です。
 
 ## 9. Shape Processing
 
@@ -776,7 +777,6 @@ Milestone 4 に含めないもの:
 - CorrectionPlan production integration
 - Production Shape Warp
 - Production WebGL mesh warp / Runtime renderer integration
-- Runtime renderer integration
 
 ### Milestone 5: CorrectionPlan v1
 
@@ -801,6 +801,10 @@ Milestone 4 に含めないもの:
 - correctionProfile fallback default
 - per-landmark strength 適用
 - maxCorrectionDistance clamp
+- expressionAttenuation v1 foundation
+- jawOpen / eyeBlink / eyeSquint による group strengthScale
+- halfLifeMs smoothing
+- CorrectionVector の baseStrength / expressionStrengthScale / finalStrength
 - 478点分の correction vectors 計算
 - Studio debug / Copy Debug
 - CorrectionPlan vector overlay
@@ -810,8 +814,8 @@ Milestone 4 に含めないもの:
 未実装 / 後段:
 
 - Production Shape Warp への renderer 統合
-- temporal smoothing
-- expression-aware attenuation 実装
+- landmarkGroups asset schema 連携
+- Authoring Tool UI / export 連携
 - expression target offset
 - expression-specific IdealFace
 - quality tuning
@@ -843,6 +847,10 @@ Milestone 4 に含めないもの:
 - nearest / bilinear sampling
 - preset 比較機能
 - Shape Warp 使用ベクトル overlay
+- Studio processed preview 限定 WebGL mesh warp v1 prototype
+- WebGL mesh debug mode
+- meshWarpStrength / texture filtering / wireframe debug
+- MediaPipe face mesh topology による triangle count / mesh vertex summary
 - Studio debug / Copy Debug summary
 
 未実装 / 後段:
@@ -850,7 +858,6 @@ Milestone 4 に含めないもの:
 - Production Shape Warp
 - Production WebGL mesh warp / Runtime renderer integration
 - MediaPipe topology triangle mesh warp
-- Runtime renderer integration
 - temporal smoothing
 - mask / boundary handling
 - glasses / hair handling
@@ -949,9 +956,9 @@ Step 6: beauty_filter_asset_v1 foundation
 
 - confidence debug
 - manual adjustment UI
-- save / export
+- save / import
+- correctionProfile / landmarkGroups / beauty_filter_asset_v1 export
 - multiple image input
-- Runtime idealLandmarks3D loading / projection completion
 
 ### Milestone 11: Layer Mask Authoring Tool
 
@@ -1146,7 +1153,7 @@ Step 2-G v1 five-pose candidate generation has been removed from the current cod
 
 ## 20. Shape Warp production direction
 
-Shape Warp v1 debug prototype は、CorrectionPlan の補正ベクトルを Studio の Processed preview に接続するための CPU radial warp debug です。これは debug prototype であり、本番品質の Shape Warp ではありません。今後も検証・比較用として残します。
+Shape Warp v1 debug prototype は、CorrectionPlan の補正ベクトルを Studio の Processed preview に接続するための debug prototype です。CPU radial warp debug と Studio processed preview 限定 WebGL mesh warp v1 prototype は実装済みですが、本番品質の Shape Warp / Runtime renderer ではありません。今後も検証・比較用として残します。
 
 Production Shape Warp の本命候補は WebGL mesh warp とします。MediaPipe face mesh topology を使った triangle mesh warp を検討し、current image-normalized landmarks を source vertices、CorrectionPlan `target` を target vertices、source video frame / source canvas を texture として扱います。
 
@@ -1192,7 +1199,7 @@ Step A: docs / direction
   今回のステップであり、実装は行わない。
 
 Step B: Studio WebGL mesh warp prototype
-  Studio processed preview 限定で、current landmarks と CorrectionPlan target を使った mesh warp を試す。
+  Studio processed preview 限定で、current landmarks と CorrectionPlan target を使った mesh warp を試す。v1 prototype は実装済み。
   Source preview は元映像のまま残し、CPU radial debug と切り替え比較できるようにする。
 
 Step C: Runtime renderer integration
