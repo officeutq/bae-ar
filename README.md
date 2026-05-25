@@ -67,7 +67,15 @@ Shape Warp v1 debug prototype is a Studio processed preview-only CPU radial warp
 
 The production Shape Warp candidate is WebGL mesh warp. The candidate direction is to use MediaPipe face mesh topology, treat current image-normalized landmarks as source vertices, treat CorrectionPlan `target` points as target vertices, use the source video frame / source canvas as the texture, and remap texture triangles from current to target positions.
 
-See [Shape Warp production direction](docs/shape-warp-production-direction.md). WebGL implementation, mesh warp implementation, renderer implementation, shader implementation, and MediaPipe topology implementation are not included in this documentation step.
+See [Shape Warp production direction](docs/shape-warp-production-direction.md). Studio WebGL mesh warp v1 prototype is implemented for processed preview verification, while Production Shape Warp, Runtime renderer integration, renderer lifecycle, shader hardening, and MediaPipe topology production handling remain outside this documentation step.
+
+## beauty_filter_asset_v1 direction
+
+最終的なフィルター / プリセットの配布単位は、`IdealFace + landmarkGroups + correctionProfile + shapeWarpSettings + colorLayers` を束ねた 1つの `beauty_filter_asset_v1` JSON として整理します。
+
+ただし、内部では `idealFace`、`landmarkGroups`、`correctionProfile`、`shapeWarpSettings`、`colorLayers` を責務ごとに分離します。`landmarkGroups` は `expressionAttenuation` と将来の `colorLayers` が参照する group id の整合性を保つための定義です。Layer System は shape warp 用ではなく color processing 用です。
+
+See [beauty_filter_asset_v1 direction](docs/beauty-filter-asset-v1.md). This is a documentation direction only. TypeScript implementation, Engine implementation, Studio implementation, Authoring Tool UI, JSON export changes, validator implementation, Color Processing, Layer System, Production Shape Warp, and Runtime renderer integration are not included in this step.
 
 BAE AR は、リアルタイム顔加工・AR 表現を行う Beauty Engine Runtime と、その開発・検証・調整を行う Beauty Studio、将来の authoring tool 群を含むプロジェクトです。
 
@@ -279,6 +287,7 @@ debug
 - [correctionProfile v1](docs/correction-profile-v1.md)
 - [expression-aware correctionProfile](docs/expression-aware-correction-profile.md)
 - [Shape Warp production direction](docs/shape-warp-production-direction.md)
+- [beauty_filter_asset_v1 direction](docs/beauty-filter-asset-v1.md)
 - [仕様書とロードマップ](docs/bae_ar_beauty_engine_spec_and_roadmap_2026_05.md)
 
 ## IdealFace Authoring Tool Step 1 / Step 2-A / Step 2-B

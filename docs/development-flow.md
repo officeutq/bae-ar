@@ -328,4 +328,35 @@ Step D: Quality improvements
   temporal smoothing / mask / boundary / glasses / hair / seam / stability を扱う
 ```
 
-詳細は [Shape Warp production direction](shape-warp-production-direction.md) を参照してください。WebGL 実装、mesh warp 実装、renderer 実装、shader 実装、MediaPipe topology 実装はこの docs step では行いません。
+詳細は [Shape Warp production direction](shape-warp-production-direction.md) を参照してください。Studio WebGL mesh warp v1 prototype は processed preview 限定で実装済みです。Production renderer 実装、shader hardening、MediaPipe topology の本番整理はこの docs step では行いません。
+
+## beauty_filter_asset_v1 staged direction
+
+最終的なフィルター / プリセットは、`idealFace`、`landmarkGroups`、`correctionProfile`、`shapeWarpSettings`、`colorLayers` を束ねた 1つの `beauty_filter_asset_v1` JSON として配布する方針です。
+
+ただし、内部では責務を分離します。`idealFace` は理想顔の形状、`landmarkGroups` は MediaPipe landmark index の意味領域、`correctionProfile` は shape correction の強度と safety attenuation、`shapeWarpSettings` は warp renderer / smoothing / boundary の設定、`colorLayers` は色加工、mask、合成順、opacity を扱います。Layer System は shape warp 用ではなく color processing 用です。
+
+今後の開発は次の段階を目安に進めます。この順番は厳密固定ではありません。
+
+```text
+Step 1: landmarkGroups v1 docs
+  ideal_face_asset_v1 / beauty_filter_asset_v1 で使う group 定義を整理する
+
+Step 2: Engine landmarkGroups foundation
+  asset の landmarkGroups を読み込み、expressionAttenuation が参照できるようにする
+  asset にない場合は Engine fallback group を使う
+
+Step 3: Authoring Tool landmark group editor
+  IdealFace Authoring Tool で mouth / left_eye / right_eye / face_boundary を作成・編集できるようにする
+
+Step 4: shapeWarpSettings v1 docs / foundation
+  WebGL mesh warp / smoothing / boundary / debug 設定を整理する
+
+Step 5: colorLayers v1 docs / foundation
+  whitening / skin smoothing / lip tint / cheek tint / layer order / opacity / mask / gradient を整理する
+
+Step 6: beauty_filter_asset_v1 foundation
+  IdealFace + landmarkGroups + correctionProfile + shapeWarpSettings + colorLayers を束ねる asset を定義する
+```
+
+詳細は [beauty_filter_asset_v1 direction](beauty-filter-asset-v1.md) を参照してください。今回のステップでは docs の方向性整理のみを行い、TypeScript 実装、Engine 実装、Studio 実装、Authoring Tool UI、JSON export 変更、validator 実装、Color Processing、Layer System、Production Shape Warp、Runtime renderer integration は行いません。

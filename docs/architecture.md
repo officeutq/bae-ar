@@ -287,7 +287,7 @@ type IdealLandmarks3DProjectionResult = {
 }
 ```
 
-Studio overlay は `imageLandmarks` を `x * canvasWidth` / `y * canvasHeight` で描画します。same-unit landmarks をそのまま canvas pixel に変換しません。current 478 landmarks との差分比較 debug、CorrectionPlan v1 debug foundation、Studio 向け Shape Warp v1 debug prototype は実装済みです。Production Shape Warp / WebGL mesh warp / Runtime renderer integration は後段です。
+Studio overlay は `imageLandmarks` を `x * canvasWidth` / `y * canvasHeight` で描画します。same-unit landmarks をそのまま canvas pixel に変換しません。current 478 landmarks との差分比較 debug、CorrectionPlan v1 debug foundation、Studio 向け Shape Warp v1 debug prototype、Studio processed preview 限定の WebGL mesh warp v1 prototype は実装済みです。Production Shape Warp / Runtime renderer integration は後段です。
 
 ## CorrectionPlan
 
@@ -358,6 +358,27 @@ LayerMask は FaceLandmarks から生成する 2D mask です。
 - `eye_area_layer`: 目周辺 landmarks を少し広げた範囲
 
 `jaw_layer` で顎を削る、`eye_layer` で目を大きくする、`nose_layer` で鼻を細くする、のような使い方はしません。
+
+## beauty_filter_asset_v1
+
+最終的なフィルター / プリセットは、1つの `beauty_filter_asset_v1` JSON として配布する方針です。
+
+```text
+beauty_filter_asset_v1
+  ├─ idealFace
+  ├─ landmarkGroups
+  ├─ correctionProfile
+  ├─ shapeWarpSettings
+  └─ colorLayers
+```
+
+1つの JSON に束ねる理由は、`idealFace` と `landmarkGroups` の対応、`correctionProfile.expressionAttenuation.affectedLandmarkGroups` の参照、`colorLayers` が参照する `skin` / `lip` / `cheek` などの group の整合性を保つためです。サービス側では 1つの filter asset を選択するだけでよくなり、Engine Runtime は 1つの asset から shape / color の両方を実行できます。
+
+ただし、内部では責務を混ぜません。`idealFace` は理想顔の形状、`landmarkGroups` は landmark index の意味領域、`correctionProfile` は shape correction の強度と safety attenuation、`shapeWarpSettings` は warp renderer / smoothing / boundary の設定、`colorLayers` は色加工、mask、合成順、opacity を扱います。
+
+Engine Runtime は UI を持たず、将来 `beauty_filter_asset_v1` を読み込んで Projection、current-vs-ideal difference、`expressionAttenuation`、`CorrectionPlan`、WebGL mesh warp、LayerMask 生成、`colorLayers` 合成、temporal smoothing / stability control を実行します。Beauty Studio は公開 API 経由で読み込み・状態確認・debug / overlay / Copy Debug / tuning UI を提供します。Authoring Tool 群は各セクションの作成・編集を担当します。
+
+詳細は [beauty_filter_asset_v1 direction](beauty-filter-asset-v1.md) に整理します。`beauty_filter_asset_v1`、`landmarkGroups` asset schema、`shapeWarpSettings`、`colorLayers`、Production Shape Warp、Color Processing、Runtime renderer integration はまだ未実装です。
 
 ## 配布方針
 
@@ -494,4 +515,4 @@ triangles:
 
 same-unit coordinate は IdealFace Projection 内部の rotation / uniform alignment 用です。WebGL mesh warp に same-unit landmarks を直接渡しません。WebGL へ渡す前に、image-normalized の source / target vertices を canvas / texture / viewport に合わせて pixel coordinate または clip coordinate へ変換します。
 
-詳細は [Shape Warp production direction](shape-warp-production-direction.md) に整理します。Studio WebGL mesh warp prototype、Runtime renderer integration、temporal smoothing、mask / boundary、glasses / hair、performance 対応は後段で扱います。
+詳細は [Shape Warp production direction](shape-warp-production-direction.md) に整理します。Studio WebGL mesh warp v1 prototype は processed preview 限定で実装済みです。Runtime renderer integration、temporal smoothing、mask / boundary、glasses / hair、performance 対応は後段で扱います。

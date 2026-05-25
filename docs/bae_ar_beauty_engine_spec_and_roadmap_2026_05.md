@@ -113,13 +113,19 @@ Beauty Studio:
 - Shape Warp 使用ベクトル overlay
 - Shape Warp production direction docs
 - WebGL mesh warp 本番候補方針の整理
+- Studio processed preview 限定 WebGL mesh warp v1 prototype
+- beauty_filter_asset_v1 direction docs
 
 ### 3.2 未実装
 
+- landmarkGroups v1 asset schema
+- Authoring Tool landmark group editor
+- shapeWarpSettings v1
+- colorLayers v1
+- beauty_filter_asset_v1
 - Production Shape Warp
-- WebGL mesh warp
+- Production WebGL mesh warp / Runtime renderer integration
 - MediaPipe topology triangle mesh warp
-- Runtime renderer integration
 - temporal smoothing
 - mask / boundary handling
 - glasses / hair handling
@@ -128,7 +134,6 @@ Beauty Studio:
 - Color Processing
 - Layer System
 - LayerMaskSpec
-- renderer
 - runtime quality control
 - preset API
 - IdealFace Authoring Tool の手動微調整、保存 / export
@@ -298,6 +303,33 @@ type FaceGeometry = {
 
 重要: `FaceGeometry` は shape processing の中心ではありません。shape processing の中心は current 478 landmarks と IdealFace 由来の ideal 478 landmarks です。
 
+### 6.3 beauty_filter_asset_v1
+
+最終的なフィルター / プリセットは、1つの `beauty_filter_asset_v1` JSON として配布する方針です。
+
+```text
+beauty_filter_asset_v1
+  ├─ idealFace
+  ├─ landmarkGroups
+  ├─ correctionProfile
+  ├─ shapeWarpSettings
+  └─ colorLayers
+```
+
+1つの JSON に束ねる理由:
+
+- IdealFace と landmarkGroups の対応を保つため
+- correctionProfile が参照する `affectedLandmarkGroups` の整合性を保つため
+- colorLayers が参照する `skin` / `lip` / `cheek` などの group の整合性を保つため
+- サービス側では 1つの filter asset を選択するだけでよくなるため
+- Engine は 1つの asset を読み込んで shape / color の両方を実行できるため
+
+ただし内部は責務ごとに分離します。`idealFace` は理想顔の形状、`landmarkGroups` は landmark index の意味領域、`correctionProfile` は shape correction の強度と safety attenuation、`shapeWarpSettings` は warp renderer / smoothing / boundary の設定、`colorLayers` は色加工、mask、合成順、opacity を扱います。
+
+`landmarkGroups` v1 では、まず `mouth` / `left_eye` / `right_eye` / `face_boundary` を想定します。将来 color processing 向けに `skin` / `lip` / `cheek` / `eye_area` などを追加する可能性があります。Layer System は shape warp 用ではなく、color processing 用です。
+
+詳細は [beauty_filter_asset_v1 direction](beauty-filter-asset-v1.md) に整理します。`beauty_filter_asset_v1`、`landmarkGroups` v1 asset schema、`shapeWarpSettings` v1、`colorLayers` v1、Production Shape Warp、Color Processing、Runtime renderer integration はまだ未実装です。
+
 ## 7. IdealFace
 
 IdealFace v1 は実装済みです。
@@ -331,7 +363,7 @@ IdealFace Authoring Tool は BAE AR 独自の IdealFace asset を作成・調整
 
 `correctionProfile` には dx / dy を保存しません。dx / dy は current landmarks、projected ideal `imageLandmarks`、顔姿勢、表情、projection 結果によって毎フレーム変わるため、Engine Runtime が毎フレーム計算します。
 
-将来拡張として、`expressionAttenuation` を optional extension として持てるようにします。これは MediaPipe blendshape score に応じて `mouth` / `left_eye` / `right_eye` / `face_boundary` などの `affectedLandmarkGroups` ごとの `strengthScale` を弱める safety attenuation です。`jawOpen` が高いときは `mouth` group、`eyeBlinkLeft` / `eyeSquintLeft` が高いときは `left_eye` group、`eyeBlinkRight` / `eyeSquintRight` が高いときは `right_eye` group の補正を弱めます。`strengthScale` は即時切替ではなく smoothing します。
+将来拡張として、`expressionAttenuation` を optional extension として持てるようにします。これは MediaPipe blendshape score に応じて `mouth` / `left_eye` / `right_eye` / `face_boundary` などの `affectedLandmarkGroups` ごとの `strengthScale` を弱める safety attenuation です。`affectedLandmarkGroups` は将来 `beauty_filter_asset_v1.landmarkGroups` の group id を参照します。`jawOpen` が高いときは `mouth` group、`eyeBlinkLeft` / `eyeSquintLeft` が高いときは `left_eye` group、`eyeBlinkRight` / `eyeSquintRight` が高いときは `right_eye` group の補正を弱めます。`strengthScale` は即時切替ではなく smoothing します。
 
 詳細な JSON 例、fallback、validation 方針、Runtime / Authoring / Studio の責務分離は [correctionProfile v1](correction-profile-v1.md) に定義します。expression-aware attenuation の設計方針は [expression-aware correctionProfile](expression-aware-correction-profile.md) に整理します。Engine 側 foundation と CorrectionPlan v1 debug foundation は実装済みです。Authoring Tool 編集 UI、`expressionAttenuation` 実装、Production Shape Warp は未実装です。
 
@@ -587,6 +619,8 @@ Layer System は shape warp ではなく、color processing 用に使います�
 - `jaw_layer` で顎を削る、`eye_layer` で目を大きくする、`nose_layer` で鼻を細くする、のような使い方はしない
 - Layer は色加工範囲、効果、強度、合成順を整理する仕組み
 
+将来の `beauty_filter_asset_v1` では、色加工の設定を `colorLayers` セクションとして持ちます。`colorLayers` は whitening、skin smoothing、brightness、tone、lip color、cheek color、shadow / highlight、layer order、opacity、blend mode、mask / feather / gradient を扱う候補です。`colorLayers` は `landmarkGroups` の `skin` / `lip` / `cheek` / `eye_area` などを参照する可能性があります。
+
 ## 12. LayerMask / LayerMaskSpec
 
 LayerMask は FaceLandmarks から生成する 2D mask です。LayerMaskSpec はその生成方法を定義する仕様です。
@@ -741,7 +775,7 @@ Milestone 4 に含めないもの:
 
 - CorrectionPlan production integration
 - Production Shape Warp
-- WebGL mesh warp
+- Production WebGL mesh warp / Runtime renderer integration
 - Runtime renderer integration
 
 ### Milestone 5: CorrectionPlan v1
@@ -814,13 +848,47 @@ Milestone 4 に含めないもの:
 未実装 / 後段:
 
 - Production Shape Warp
-- WebGL mesh warp
+- Production WebGL mesh warp / Runtime renderer integration
 - MediaPipe topology triangle mesh warp
 - Runtime renderer integration
 - temporal smoothing
 - mask / boundary handling
 - glasses / hair handling
 - performance / mobile optimization
+
+### Milestone 6.5: beauty_filter_asset_v1 foundation
+
+状態: docs direction 追加 / foundation 未実装
+
+目的:
+
+- IdealFace + landmarkGroups + correctionProfile + shapeWarpSettings + colorLayers を束ねる最終 filter asset を定義する。
+- 配布単位は 1つの `beauty_filter_asset_v1` JSON にする。
+- 内部は責務ごとに分離し、意味を混ぜない。
+
+段階的な目安:
+
+```text
+Step 1: landmarkGroups v1 docs
+Step 2: Engine landmarkGroups foundation
+Step 3: Authoring Tool landmark group editor
+Step 4: shapeWarpSettings v1 docs / foundation
+Step 5: colorLayers v1 docs / foundation
+Step 6: beauty_filter_asset_v1 foundation
+```
+
+完了条件:
+
+- `landmarkGroups` を `expressionAttenuation` と `colorLayers` が参照できる。
+- `shapeWarpSettings` が WebGL mesh warp / smoothing / boundary の設定を表す。
+- `colorLayers` が色加工、mask、合成順、opacity を表す。
+- Engine Runtime は 1つの asset から shape / color の両方を実行できる。
+- Studio は Engine の公開 API 経由で読み込み・状態確認を行う。
+- Authoring Tool 群は各セクションの作成・編集を担当し、Runtime に UI を持ち込まない。
+
+今回追加した docs:
+
+- [beauty_filter_asset_v1 direction](beauty-filter-asset-v1.md)
 
 ### Milestone 7: Color Processing v1
 
@@ -1051,7 +1119,7 @@ BAE AR の shape processing では、IdealFace は 3D の `idealLandmarks3D` 478
 
 Runtime は、その 3D ideal landmarks を現在顔の `FacePose` へ投影し、2D の projected ideal 478 landmarks を生成します。Projection 内部では same-unit coordinate で回転と uniform alignment を行い、Studio overlay / difference / Shape Warp 入力へ渡す前に image-normalized coordinate へ変換します。正面 2D の 478 点だけでは顔の角度変化に追随できないため、顔の角度変化への対応は IdealFace の 3D landmarks を `FacePose` へ投影することで行います。
 
-Shape Processing は、MediaPipe Face Landmarker がカメラ映像から取得した current image-normalized 478 landmarks と、IdealFace 由来の projected ideal image-normalized 478 landmarks の差分を見ます。この差分をもとに CorrectionPlan v1 debug foundation が correction vectors を生成し、Studio 向け Shape Warp v1 debug prototype へ進みます。Production Shape Warp / WebGL mesh warp / Runtime renderer integration は後段です。最終的な image warp では pixel coordinate を使います。
+Shape Processing は、MediaPipe Face Landmarker がカメラ映像から取得した current image-normalized 478 landmarks と、IdealFace 由来の projected ideal image-normalized 478 landmarks の差分を見ます。この差分をもとに CorrectionPlan v1 debug foundation が correction vectors を生成し、Studio 向け Shape Warp v1 debug prototype と Studio processed preview 限定の WebGL mesh warp v1 prototype へ進みます。Production Shape Warp / Runtime renderer integration は後段です。最終的な image warp では pixel coordinate を使います。
 
 現在の `natural_v1` の 6 点 controlPoints は、現段階の投影検証用データです。Projection の流れを確認するための暫定データであり、IdealFace 本体ではありません。
 
@@ -1066,7 +1134,7 @@ Runtime
 Shape Processing
   = current image-normalized 478 landmarks と projected ideal image-normalized 478 landmarks の差分を見る
   = 差分をもとに CorrectionPlan v1 debug foundation / Shape Warp v1 debug prototype へ進む
-  = Production Shape Warp / WebGL mesh warp / Runtime renderer integration は後段
+  = Production Shape Warp / Runtime renderer integration は後段
 ```
 
 `CorrectionPlan` は姿勢補正を担当しません。Projection 後に image-normalized coordinate へ変換された current-vs-ideal 差分を受け取り、`FacePose` の推定や IdealFace projection は担当しません。
@@ -1147,4 +1215,4 @@ Step D: Quality improvements
 - temporal smoothing の方式
 - correctionProfile authoring UI
 
-詳細は [Shape Warp production direction](shape-warp-production-direction.md) を参照します。WebGL 実装、shader 実装、triangle mesh warp 実装、renderer 実装、MediaPipe face mesh topology 実装はまだ行いません。
+詳細は [Shape Warp production direction](shape-warp-production-direction.md) を参照します。Studio WebGL mesh warp v1 prototype は processed preview 限定で実装済みです。Production shader 実装、Production triangle mesh warp 実装、Runtime renderer 実装、MediaPipe face mesh topology の本番整理はまだ行いません。
