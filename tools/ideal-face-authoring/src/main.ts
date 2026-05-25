@@ -1,7 +1,10 @@
 import {
+  DEFAULT_LANDMARK_GROUPS_V1,
   NATURAL_IDEAL_FACE_PRESET,
   type FaceLandmark,
   type FacePose,
+  type LandmarkGroup,
+  type LandmarkGroups,
 } from "@bae-ar/engine"
 import {
   FaceLandmarker,
@@ -57,6 +60,21 @@ const POINT_CLOUD_MAX_ZOOM = 5
 const POINT_CLOUD_ROTATION_SENSITIVITY = 0.01
 const POINT_CLOUD_ZOOM_SENSITIVITY = 0.001
 const POINT_CLOUD_MAX_PITCH = (Math.PI * 89) / 180
+const LANDMARK_GROUP_EDITOR_GROUP_IDS = [
+  "mouth",
+  "left_eye",
+  "right_eye",
+  "face_boundary",
+] as const
+const LANDMARK_GROUP_EDITOR_FUTURE_GROUP_IDS = [
+  "skin",
+  "lip",
+  "cheek",
+  "eye_area",
+] as const
+const LANDMARK_GROUP_EDITOR_PREVIEW_INDICES_COUNT = 48
+const LANDMARK_GROUP_EDITOR_CANVAS_PADDING = 28
+const LANDMARK_GROUP_EDITOR_HIT_RADIUS_PX = 9
 const POSE_AWARE_MIN_OBSERVATION_FRAME_COUNT = 5
 const POSE_AWARE_MIN_YAW_OR_PITCH_RANGE = 10
 const POSE_AWARE_YAW_COVERAGE_OK_RANGE = 15
@@ -346,6 +364,7 @@ interface IdealFaceAssetV1 {
       confidence: number
     }>
   }
+  landmarkGroups?: LandmarkGroups
   metadata: {
     frontReferenceFrameCount: number
     observationFrameCount: number
@@ -362,6 +381,20 @@ interface IdealFaceAssetV1 {
       lowConfidenceLandmarkCount: number
     }
   }
+}
+
+type LandmarkGroupEditorGroupId =
+  (typeof LANDMARK_GROUP_EDITOR_GROUP_IDS)[number]
+
+interface LandmarkGroupEditorState {
+  selectedGroupId: LandmarkGroupEditorGroupId
+  groups: LandmarkGroups
+}
+
+interface LandmarkGroupEditorCanvasPoint {
+  index: number
+  x: number
+  y: number
 }
 
 interface IdealFaceAssetExportSummary {
@@ -423,6 +456,8 @@ let idealLandmarks3DFrameSelection: IdealLandmarks3DFrameSelection =
   createEmptyIdealLandmarks3DFrameSelection()
 let idealLandmarks3DCandidateResult: IdealLandmarks3DCandidateResult =
   createInitialIdealLandmarks3DCandidateResult()
+let landmarkGroupEditorState: LandmarkGroupEditorState =
+  createInitialLandmarkGroupEditorState()
 let pointCloudPreviewCamera: PointCloudPreviewCamera = {
   ...DEFAULT_POINT_CLOUD_CAMERA,
 }
@@ -434,6 +469,8 @@ const thumbnailCanvas = document.createElement("canvas")
 if (!app) {
   throw new Error("IdealFace Authoring Tool app root was not found")
 }
+
+const appRoot = app
 
 extractionVideo.muted = true
 extractionVideo.playsInline = true
@@ -796,6 +833,204 @@ function createInitialIdealLandmarks3DCandidateResult(): IdealLandmarks3DCandida
   }
 }
 
+function createInitialLandmarkGroupEditorState(): LandmarkGroupEditorState {
+  return {
+    selectedGroupId: "mouth",
+    groups: createInitialLandmarkGroups(),
+  }
+}
+
+function createInitialLandmarkGroups(): LandmarkGroups {
+  return {
+    schemaVersion: "landmark_groups_v1",
+    topology: "mediapipe_face_landmarker_478",
+    groups: LANDMARK_GROUP_EDITOR_GROUP_IDS.map((groupId) => {
+      const fallbackGroup = DEFAULT_LANDMARK_GROUPS_V1.groups.find(
+        (group) => group.id === groupId,
+      )
+
+      if (!fallbackGroup) {
+        throw new Error(`Fallback landmark group was not found: ${groupId}`)
+      }
+
+      return cloneLandmarkGroup(fallbackGroup)
+    }),
+  }
+}
+
+function cloneLandmarkGroup(group: LandmarkGroup): LandmarkGroup {
+  return {
+    ...group,
+    indices: normalizeLandmarkGroupIndices(group.indices),
+  }
+}
+
+function normalizeLandmarkGroupIndices(indices: number[]): number[] {
+  return [...new Set(indices)]
+    .filter(
+      (index) =>
+        Number.isInteger(index) &&
+        index >= 0 &&
+        index < REQUIRED_LANDMARK_COUNT,
+    )
+    .sort((a, b) => a - b)
+}
+
+function getSelectedLandmarkGroup(): LandmarkGroup {
+  const selectedGroup = landmarkGroupEditorState.groups.groups.find(
+    (group) => group.id === landmarkGroupEditorState.selectedGroupId,
+  )
+
+  if (!selectedGroup) {
+    throw new Error(
+      `Selected landmark group was not found: ${landmarkGroupEditorState.selectedGroupId}`,
+    )
+  }
+
+  return selectedGroup
+}
+
+function setSelectedLandmarkGroupId(groupId: string | undefined): void {
+  if (!isLandmarkGroupEditorGroupId(groupId)) {
+    return
+  }
+
+  landmarkGroupEditorState = {
+    ...landmarkGroupEditorState,
+    selectedGroupId: groupId,
+  }
+}
+
+function isLandmarkGroupEditorGroupId(
+  value: string | undefined,
+): value is LandmarkGroupEditorGroupId {
+  return (
+    value !== undefined &&
+    LANDMARK_GROUP_EDITOR_GROUP_IDS.includes(value as LandmarkGroupEditorGroupId)
+  )
+}
+
+function updateLandmarkGroupIndices(
+  groupId: LandmarkGroupEditorGroupId,
+  indices: number[],
+): void {
+  landmarkGroupEditorState = {
+    ...landmarkGroupEditorState,
+    groups: {
+      ...landmarkGroupEditorState.groups,
+      groups: landmarkGroupEditorState.groups.groups.map((group) =>
+        group.id === groupId
+          ? {
+              ...group,
+              indices: normalizeLandmarkGroupIndices(indices),
+            }
+          : group,
+      ),
+    },
+  }
+}
+
+function toggleSelectedLandmarkGroupIndex(index: number): void {
+  if (
+    !Number.isInteger(index) ||
+    index < 0 ||
+    index >= REQUIRED_LANDMARK_COUNT
+  ) {
+    return
+  }
+
+  const selectedGroup = getSelectedLandmarkGroup()
+  const selectedIndexSet = new Set(selectedGroup.indices)
+
+  if (selectedIndexSet.has(index)) {
+    selectedIndexSet.delete(index)
+  } else {
+    selectedIndexSet.add(index)
+  }
+
+  updateLandmarkGroupIndices(
+    landmarkGroupEditorState.selectedGroupId,
+    [...selectedIndexSet],
+  )
+}
+
+function clearSelectedLandmarkGroup(): void {
+  updateLandmarkGroupIndices(landmarkGroupEditorState.selectedGroupId, [])
+}
+
+function resetSelectedLandmarkGroup(): void {
+  const fallbackGroup = DEFAULT_LANDMARK_GROUPS_V1.groups.find(
+    (group) => group.id === landmarkGroupEditorState.selectedGroupId,
+  )
+
+  updateLandmarkGroupIndices(
+    landmarkGroupEditorState.selectedGroupId,
+    fallbackGroup?.indices ?? [],
+  )
+}
+
+function resetAllLandmarkGroups(): void {
+  landmarkGroupEditorState = {
+    selectedGroupId: landmarkGroupEditorState.selectedGroupId,
+    groups: createInitialLandmarkGroups(),
+  }
+}
+
+function buildLandmarkGroupsForExport(): LandmarkGroups {
+  return {
+    ...landmarkGroupEditorState.groups,
+    groups: landmarkGroupEditorState.groups.groups.map(cloneLandmarkGroup),
+  }
+}
+
+function validateLandmarkGroupEditorGroups(groups: LandmarkGroups): string[] {
+  const errors: string[] = []
+
+  if (groups.schemaVersion !== "landmark_groups_v1") {
+    errors.push('schemaVersion must be "landmark_groups_v1"')
+  }
+
+  if (groups.topology !== "mediapipe_face_landmarker_478") {
+    errors.push('topology must be "mediapipe_face_landmarker_478"')
+  }
+
+  const seenGroupIds = new Set<string>()
+
+  groups.groups.forEach((group) => {
+    if (group.id.trim().length === 0) {
+      errors.push("group id must not be empty")
+      return
+    }
+
+    if (seenGroupIds.has(group.id)) {
+      errors.push(`group id duplicates ${group.id}`)
+    }
+
+    seenGroupIds.add(group.id)
+
+    const seenIndices = new Set<number>()
+
+    group.indices.forEach((index) => {
+      if (
+        !Number.isInteger(index) ||
+        index < 0 ||
+        index >= REQUIRED_LANDMARK_COUNT
+      ) {
+        errors.push(`${group.id} includes invalid index ${index}`)
+        return
+      }
+
+      if (seenIndices.has(index)) {
+        errors.push(`${group.id} duplicates index ${index}`)
+      }
+
+      seenIndices.add(index)
+    })
+  })
+
+  return errors
+}
+
 function resetIdealLandmarks3DCandidateResult(): void {
   idealLandmarks3DCandidateResult =
     createInitialIdealLandmarks3DCandidateResult()
@@ -992,6 +1227,38 @@ function toCurrentCandidatePreview(
   }
 }
 
+function toLandmarkGroupsPreview(): unknown {
+  const groups = buildLandmarkGroupsForExport()
+  const validationErrors = validateLandmarkGroupEditorGroups(groups)
+
+  return {
+    schemaVersion: groups.schemaVersion,
+    topology: groups.topology,
+    selectedGroupId: landmarkGroupEditorState.selectedGroupId,
+    groupCount: groups.groups.length,
+    exportIncludesFullIndices: true,
+    validation: {
+      ok: validationErrors.length === 0,
+      errors: validationErrors,
+    },
+    groups: groups.groups.map((group) => ({
+      id: group.id,
+      label: group.label,
+      purpose: group.purpose,
+      count: group.indices.length,
+      indicesPreview: group.indices.slice(
+        0,
+        LANDMARK_GROUP_EDITOR_PREVIEW_INDICES_COUNT,
+      ),
+      omittedIndexCount: Math.max(
+        0,
+        group.indices.length - LANDMARK_GROUP_EDITOR_PREVIEW_INDICES_COUNT,
+      ),
+    })),
+    futureCandidates: LANDMARK_GROUP_EDITOR_FUTURE_GROUP_IDS,
+  }
+}
+
 function buildFrontReferenceCoordinateDebug(
   frontReferenceFrames: PoseAwareInferenceFrame[],
 ): {
@@ -1174,6 +1441,7 @@ function buildIdealFaceAssetV1(
         confidence: roundIdealFaceAssetNumber(landmark.confidence),
       })),
     },
+    landmarkGroups: buildLandmarkGroupsForExport(),
     metadata: {
       frontReferenceFrameCount: result.summary.frontReferenceFrameCount,
       observationFrameCount: result.summary.observationFrameCount,
@@ -2841,8 +3109,129 @@ function renderIdealFaceAssetExportPanel(
           <dt>fileName</dt>
           <dd>${escapeHtml(exportSummary.fileName)}</dd>
         </div>
+        <div>
+          <dt>landmarkGroups</dt>
+          <dd>included (${landmarkGroupEditorState.groups.groups.length} groups)</dd>
+        </div>
       </dl>
     </div>
+  `
+}
+
+function renderLandmarkGroupEditorPanel(): string {
+  const result = idealLandmarks3DCandidateResult
+  const selectedGroup = getSelectedLandmarkGroup()
+  const validationErrors = validateLandmarkGroupEditorGroups(
+    landmarkGroupEditorState.groups,
+  )
+  const selectedIndicesText =
+    selectedGroup.indices.length === 0
+      ? "なし"
+      : selectedGroup.indices.join(", ")
+  const canShowOverlay =
+    result.status === "generated" &&
+    result.landmarks.length === REQUIRED_LANDMARK_COUNT
+
+  return `
+    <section class="landmark-group-editor-panel" aria-label="ランドマークグループ編集">
+      <div class="panel-heading">
+        <div>
+          <h2>ランドマークグループ編集</h2>
+          <p>MediaPipe 478点のうち、どの点を mouth / left_eye / right_eye / face_boundary として扱うかを編集します。</p>
+          <p>landmarkGroups は expressionAttenuation や将来の colorLayers が参照します。これは目だけ大きくする、鼻だけ細くする、顎だけ削るための設定ではありません。</p>
+        </div>
+      </div>
+      <div class="landmark-group-editor-layout">
+        <div class="landmark-group-editor-preview">
+          ${
+            canShowOverlay
+              ? renderLandmarkGroupEditorCanvas()
+              : `<div class="landmark-group-editor-empty">
+                  <p>pose-aware 3D候補を生成すると、x/y を表示用に正規化した 478点 overlay で group を編集できます。</p>
+                </div>`
+          }
+        </div>
+        <div class="landmark-group-editor-controls">
+          <label class="landmark-group-select-label" for="landmark-group-select">
+            Group select
+          </label>
+          <select id="landmark-group-select" data-landmark-group-select="true">
+            ${LANDMARK_GROUP_EDITOR_GROUP_IDS.map((groupId) => {
+              const group = landmarkGroupEditorState.groups.groups.find(
+                (item) => item.id === groupId,
+              )
+              const label = group?.label ?? groupId
+
+              return `
+                <option value="${groupId}" ${
+                  groupId === landmarkGroupEditorState.selectedGroupId
+                    ? "selected"
+                    : ""
+                }>
+                  ${escapeHtml(label)} (${groupId})
+                </option>
+              `
+            }).join("")}
+          </select>
+          <dl class="pose-aware-summary-list landmark-group-summary-list">
+            <div>
+              <dt>selected group</dt>
+              <dd>${escapeHtml(selectedGroup.id)}</dd>
+            </div>
+            <div>
+              <dt>purpose</dt>
+              <dd>${escapeHtml(selectedGroup.purpose ?? "none")}</dd>
+            </div>
+            <div>
+              <dt>count</dt>
+              <dd>${selectedGroup.indices.length}</dd>
+            </div>
+            <div>
+              <dt>topology</dt>
+              <dd>${landmarkGroupEditorState.groups.topology}</dd>
+            </div>
+          </dl>
+          <div class="landmark-group-editor-actions">
+            <button class="landmark-group-action-button" type="button" data-landmark-group-action="clear-selected">
+              選択中 group をクリア
+            </button>
+            <button class="landmark-group-action-button" type="button" data-landmark-group-action="reset-selected">
+              選択中 group を初期値に戻す
+            </button>
+            <button class="landmark-group-action-button" type="button" data-landmark-group-action="reset-all">
+              すべて初期値に戻す
+            </button>
+          </div>
+          ${
+            validationErrors.length === 0
+              ? `<p class="landmark-group-validation-ok">landmarkGroups guard: OK</p>`
+              : `<ul class="landmark-group-validation-errors">
+                  ${validationErrors
+                    .map((error) => `<li>${escapeHtml(error)}</li>`)
+                    .join("")}
+                </ul>`
+          }
+          <div class="landmark-group-indices-panel">
+            <h3>Indices</h3>
+            <p>${escapeHtml(selectedIndicesText)}</p>
+          </div>
+          <div class="landmark-group-future-panel">
+            <h3>将来候補</h3>
+            <p>${LANDMARK_GROUP_EDITOR_FUTURE_GROUP_IDS.join(", ")}</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  `
+}
+
+function renderLandmarkGroupEditorCanvas(): string {
+  return `
+    <canvas
+      class="landmark-group-editor-canvas"
+      data-landmark-group-editor-canvas="true"
+      aria-label="Landmark Group Editor 478点 overlay"
+    ></canvas>
   `
 }
 
@@ -3249,6 +3638,139 @@ function drawPointCloudPreviewCanvas(): void {
   updatePointCloudCameraLabel()
 }
 
+function drawLandmarkGroupEditorCanvas(): void {
+  const canvas = document.querySelector<HTMLCanvasElement>(
+    "[data-landmark-group-editor-canvas]",
+  )
+  const result = idealLandmarks3DCandidateResult
+
+  if (
+    !canvas ||
+    result.status !== "generated" ||
+    result.landmarks.length !== REQUIRED_LANDMARK_COUNT
+  ) {
+    return
+  }
+
+  const context = canvas.getContext("2d")
+
+  if (!context) {
+    return
+  }
+
+  const rect = canvas.getBoundingClientRect()
+  const width = Math.max(1, rect.width)
+  const height = Math.max(1, rect.height)
+  const devicePixelRatio = window.devicePixelRatio || 1
+  const points = getLandmarkGroupEditorCanvasPoints(
+    result.landmarks,
+    width,
+    height,
+  )
+  const selectedIndexSet = new Set(getSelectedLandmarkGroup().indices)
+
+  canvas.width = Math.round(width * devicePixelRatio)
+  canvas.height = Math.round(height * devicePixelRatio)
+  context.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0)
+  context.clearRect(0, 0, width, height)
+  context.fillStyle = "#ffffff"
+  context.fillRect(0, 0, width, height)
+
+  context.strokeStyle = "#d9e4df"
+  context.lineWidth = 1
+  context.strokeRect(
+    LANDMARK_GROUP_EDITOR_CANVAS_PADDING,
+    LANDMARK_GROUP_EDITOR_CANVAS_PADDING,
+    width - LANDMARK_GROUP_EDITOR_CANVAS_PADDING * 2,
+    height - LANDMARK_GROUP_EDITOR_CANVAS_PADDING * 2,
+  )
+
+  for (const point of points) {
+    const selected = selectedIndexSet.has(point.index)
+
+    context.beginPath()
+    context.arc(point.x, point.y, selected ? 4.3 : 2.2, 0, Math.PI * 2)
+    context.fillStyle = selected ? "#d94f45" : "#9fb4ad"
+    context.fill()
+
+    if (selected) {
+      context.strokeStyle = "#7d2a28"
+      context.lineWidth = 1.4
+      context.stroke()
+    }
+  }
+
+  context.fillStyle = "#25342e"
+  context.font = "700 12px system-ui, sans-serif"
+  context.fillText(
+    `${getSelectedLandmarkGroup().id}: ${selectedIndexSet.size} / ${REQUIRED_LANDMARK_COUNT}`,
+    12,
+    20,
+  )
+}
+
+function getLandmarkGroupEditorCanvasPoints(
+  landmarks: IdealLandmark3DCandidate[],
+  width: number,
+  height: number,
+): LandmarkGroupEditorCanvasPoint[] {
+  const bounds = buildLandmarkBoundsSummary(landmarks)
+
+  if (!bounds || bounds.width === 0 || bounds.height === 0) {
+    return landmarks.map((landmark) => ({
+      index: landmark.index,
+      x: width / 2,
+      y: height / 2,
+    }))
+  }
+
+  const drawableWidth = Math.max(
+    1,
+    width - LANDMARK_GROUP_EDITOR_CANVAS_PADDING * 2,
+  )
+  const drawableHeight = Math.max(
+    1,
+    height - LANDMARK_GROUP_EDITOR_CANVAS_PADDING * 2,
+  )
+  const scale = Math.min(
+    drawableWidth / bounds.width,
+    drawableHeight / bounds.height,
+  )
+  const fittedWidth = bounds.width * scale
+  const fittedHeight = bounds.height * scale
+  const offsetX = (width - fittedWidth) / 2
+  const offsetY = (height - fittedHeight) / 2
+
+  return landmarks.map((landmark) => ({
+    index: landmark.index,
+    x: offsetX + (landmark.x - bounds.xMin) * scale,
+    y: offsetY + (landmark.y - bounds.yMin) * scale,
+  }))
+}
+
+function findNearestLandmarkGroupEditorPoint(
+  points: LandmarkGroupEditorCanvasPoint[],
+  x: number,
+  y: number,
+): LandmarkGroupEditorCanvasPoint | null {
+  let nearestPoint: LandmarkGroupEditorCanvasPoint | null = null
+  let nearestDistance = Number.POSITIVE_INFINITY
+
+  for (const point of points) {
+    const distance = Math.hypot(point.x - x, point.y - y)
+
+    if (distance < nearestDistance) {
+      nearestPoint = point
+      nearestDistance = distance
+    }
+  }
+
+  return nearestPoint &&
+    nearestDistance <= LANDMARK_GROUP_EDITOR_HIT_RADIUS_PX
+    ? nearestPoint
+    : null
+}
+
 function drawPointCloudPreviewGuide(
   context: CanvasRenderingContext2D,
   width: number,
@@ -3460,6 +3982,7 @@ function buildAuthoringDebugPreview(): unknown {
       candidate: toPoseAwareCandidatePreview(),
     },
     currentCandidate: toCurrentCandidatePreview(currentCandidate),
+    landmarkGroups: toLandmarkGroupsPreview(),
     coordinateDebug: toCoordinateDebugPreview(
       poseAwareDataset,
       currentCandidate,
@@ -3478,7 +4001,7 @@ function attachVideoInputHandler(): void {
   document
     .querySelector<HTMLInputElement>("#video-file-input")
     ?.addEventListener("change", async (event) => {
-      const input = event.currentTarget
+      const input = event.currentTarget as HTMLInputElement
       const file = input.files?.[0]
 
       if (!file) {
@@ -3574,6 +4097,80 @@ function attachIdealLandmarks3DCandidateHandler(): void {
 
   attachPointCloudCanvasInteractionHandler()
   drawPointCloudPreviewCanvas()
+}
+
+function attachLandmarkGroupEditorHandler(): void {
+  document
+    .querySelector<HTMLSelectElement>("[data-landmark-group-select]")
+    ?.addEventListener("change", (event) => {
+      const select = event.currentTarget as HTMLSelectElement
+
+      setSelectedLandmarkGroupId(select.value)
+      render()
+    })
+
+  document
+    .querySelectorAll<HTMLButtonElement>("[data-landmark-group-action]")
+    .forEach((button) => {
+      button.addEventListener("click", () => {
+        const action = button.dataset.landmarkGroupAction
+
+        if (action === "clear-selected") {
+          clearSelectedLandmarkGroup()
+          render()
+          return
+        }
+
+        if (action === "reset-selected") {
+          resetSelectedLandmarkGroup()
+          render()
+          return
+        }
+
+        if (action === "reset-all") {
+          resetAllLandmarkGroups()
+          render()
+        }
+      })
+    })
+
+  const canvas = document.querySelector<HTMLCanvasElement>(
+    "[data-landmark-group-editor-canvas]",
+  )
+
+  if (canvas) {
+    canvas.addEventListener("click", (event) => {
+      const result = idealLandmarks3DCandidateResult
+
+      if (
+        result.status !== "generated" ||
+        result.landmarks.length !== REQUIRED_LANDMARK_COUNT
+      ) {
+        return
+      }
+
+      const rect = canvas.getBoundingClientRect()
+      const points = getLandmarkGroupEditorCanvasPoints(
+        result.landmarks,
+        rect.width,
+        rect.height,
+      )
+      const nearestPoint = findNearestLandmarkGroupEditorPoint(
+        points,
+        event.clientX - rect.left,
+        event.clientY - rect.top,
+      )
+
+      if (!nearestPoint) {
+        return
+      }
+
+      toggleSelectedLandmarkGroupIndex(nearestPoint.index)
+      render()
+    })
+  }
+
+  drawLandmarkGroupEditorCanvas()
 }
 
 function attachPointCloudCanvasInteractionHandler(): void {
@@ -4261,7 +4858,7 @@ async function extractFramesFromVideo(
 }
 
 function render(): void {
-  app.innerHTML = `
+  appRoot.innerHTML = `
     <main>
       <header class="app-header">
         <div>
@@ -4317,6 +4914,8 @@ function render(): void {
 
       ${renderIdealLandmarks3DPointCloudPreviewPanel()}
 
+      ${renderLandmarkGroupEditorPanel()}
+
       <section class="json-panel">
         <h2>JSON preview</h2>
         <pre>${escapeHtml(JSON.stringify(buildAuthoringDebugPreview(), null, 2))}</pre>
@@ -4328,6 +4927,7 @@ function render(): void {
   attachAnalysisHandler()
   attachPoseAwareFrameSelectionHandler()
   attachIdealLandmarks3DCandidateHandler()
+  attachLandmarkGroupEditorHandler()
 }
 
 const style = document.createElement("style")
@@ -4462,6 +5062,7 @@ style.textContent = `
   .selected-clear-button,
   .candidate-generate-button,
   .ideal-face-export-button,
+  .landmark-group-action-button,
   .point-cloud-preset-button {
     display: inline-flex;
     align-items: center;
@@ -4484,7 +5085,8 @@ style.textContent = `
   .candidate-label-button,
   .selected-clear-button,
   .candidate-generate-button,
-  .ideal-face-export-button {
+  .ideal-face-export-button,
+  .landmark-group-action-button {
     font-family: inherit;
   }
 
@@ -4511,6 +5113,7 @@ style.textContent = `
   .selected-clear-button:focus-visible,
   .candidate-generate-button:focus-visible,
   .ideal-face-export-button:focus-visible,
+  .landmark-group-action-button:focus-visible,
   .point-cloud-preset-button:focus-visible {
     outline: 3px solid #9fc8bd;
     outline-offset: 2px;
@@ -5020,6 +5623,146 @@ style.textContent = `
     grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   }
 
+  .landmark-group-editor-panel {
+    display: grid;
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+
+  .landmark-group-editor-layout {
+    display: grid;
+    grid-template-columns: minmax(320px, 1fr) minmax(280px, 0.7fr);
+    gap: 14px;
+    align-items: start;
+  }
+
+  .landmark-group-editor-preview,
+  .landmark-group-editor-controls {
+    min-width: 0;
+  }
+
+  .landmark-group-editor-canvas,
+  .landmark-group-editor-empty {
+    width: 100%;
+    border: 1px solid #ccd8d3;
+    border-radius: 8px;
+    background: #ffffff;
+  }
+
+  .landmark-group-editor-canvas {
+    display: block;
+    height: min(56vw, 560px);
+    min-height: 320px;
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+
+  .landmark-group-editor-empty {
+    display: grid;
+    min-height: 260px;
+    place-items: center;
+    padding: 18px;
+    color: #5d675f;
+    text-align: center;
+    font-size: 14px;
+    font-weight: 700;
+  }
+
+  .landmark-group-editor-empty p {
+    margin: 0;
+    line-height: 1.6;
+  }
+
+  .landmark-group-editor-controls {
+    display: grid;
+    gap: 10px;
+    border: 1px solid #ccd8d3;
+    border-radius: 8px;
+    background: #ffffff;
+    padding: 14px;
+  }
+
+  .landmark-group-select-label {
+    color: #5d675f;
+    font-size: 12px;
+    font-weight: 800;
+  }
+
+  #landmark-group-select {
+    width: 100%;
+    min-height: 40px;
+    border: 1px solid #b7c7c2;
+    border-radius: 6px;
+    background: #ffffff;
+    color: #25342e;
+    padding: 8px 10px;
+    font: inherit;
+    font-weight: 800;
+  }
+
+  .landmark-group-summary-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .landmark-group-editor-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .landmark-group-action-button {
+    min-height: 34px;
+    background: #edf4f1;
+    color: #25342e;
+    border: 1px solid #b7c7c2;
+    padding: 6px 10px;
+    font-size: 12px;
+  }
+
+  .landmark-group-validation-ok,
+  .landmark-group-validation-errors,
+  .landmark-group-indices-panel,
+  .landmark-group-future-panel {
+    margin: 0;
+    border: 1px solid #dce6e1;
+    border-radius: 8px;
+    background: #fbfdfc;
+    padding: 10px 12px;
+    color: #5d675f;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.5;
+  }
+
+  .landmark-group-validation-ok {
+    border-color: #9fc8bd;
+    background: #edf8f4;
+    color: #27594c;
+  }
+
+  .landmark-group-validation-errors {
+    display: grid;
+    gap: 4px;
+    padding-left: 28px;
+    border-color: #d69a94;
+    background: #fff7f6;
+    color: #7d2a28;
+  }
+
+  .landmark-group-indices-panel h3,
+  .landmark-group-future-panel h3 {
+    margin: 0 0 6px;
+    color: #25342e;
+    font-size: 13px;
+  }
+
+  .landmark-group-indices-panel p,
+  .landmark-group-future-panel p {
+    margin: 0;
+    overflow-wrap: anywhere;
+    font-size: 12px;
+  }
+
   .dataset-entry-card {
     display: grid;
     grid-template-columns: 104px minmax(0, 1fr);
@@ -5426,7 +6169,8 @@ style.textContent = `
 
     dl,
     .video-workspace,
-    .workspace {
+    .workspace,
+    .landmark-group-editor-layout {
       grid-template-columns: 1fr;
     }
 
