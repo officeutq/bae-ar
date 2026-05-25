@@ -3,6 +3,10 @@ import type {
   IdealFaceCorrectionProfile,
   IdealFaceLandmark3D,
 } from "./IdealFace"
+import {
+  EXPRESSION_LANDMARK_GROUP_IDS,
+  type ExpressionAttenuationProfile,
+} from "./ExpressionAttenuation"
 
 export type IdealFaceAssetSchemaVersion = "ideal_face_asset_v1"
 
@@ -187,6 +191,30 @@ function cloneCorrectionProfile(
         ...landmarkStrength,
       }),
     ),
+    expressionAttenuation: cloneExpressionAttenuationProfile(
+      correctionProfile.expressionAttenuation,
+    ),
+  }
+}
+
+function cloneExpressionAttenuationProfile(
+  expressionAttenuation: ExpressionAttenuationProfile | undefined,
+): ExpressionAttenuationProfile | undefined {
+  if (!expressionAttenuation) {
+    return undefined
+  }
+
+  return {
+    ...expressionAttenuation,
+    smoothing: {
+      ...expressionAttenuation.smoothing,
+    },
+    rules: expressionAttenuation.rules.map((rule) => ({
+      ...rule,
+      affectedLandmarkGroups: [...rule.affectedLandmarkGroups],
+      inputRange: [...rule.inputRange] as [number, number],
+      strengthScaleRange: [...rule.strengthScaleRange] as [number, number],
+    })),
   }
 }
 
@@ -233,6 +261,155 @@ function validateCorrectionProfile(input: unknown, errors: string[]): void {
   }
 
   validateLandmarkStrengths(input.landmarkStrengths, errors)
+  validateExpressionAttenuation(input.expressionAttenuation, errors)
+}
+
+function validateExpressionAttenuation(
+  input: unknown,
+  errors: string[],
+): void {
+  if (input === undefined) {
+    return
+  }
+
+  const path = "correctionProfile.expressionAttenuation"
+
+  if (!isRecord(input) || Array.isArray(input)) {
+    errors.push(`${path} must be an object when provided`)
+    return
+  }
+
+  validateStringLiteral(
+    input.schemaVersion,
+    `${path}.schemaVersion`,
+    "expression_attenuation_v1",
+    errors,
+  )
+
+  if (!isRecord(input.smoothing) || Array.isArray(input.smoothing)) {
+    errors.push(`${path}.smoothing must be an object`)
+  } else {
+    if (typeof input.smoothing.enabled !== "boolean") {
+      errors.push(`${path}.smoothing.enabled must be a boolean`)
+    }
+
+    validateFiniteNumber(
+      input.smoothing.halfLifeMs,
+      `${path}.smoothing.halfLifeMs`,
+      errors,
+    )
+
+    if (
+      typeof input.smoothing.halfLifeMs === "number" &&
+      Number.isFinite(input.smoothing.halfLifeMs) &&
+      input.smoothing.halfLifeMs <= 0
+    ) {
+      errors.push(`${path}.smoothing.halfLifeMs must be greater than 0`)
+    }
+  }
+
+  if (!Array.isArray(input.rules)) {
+    errors.push(`${path}.rules must be an array`)
+    return
+  }
+
+  input.rules.forEach((rule, ruleIndex) => {
+    const rulePath = `${path}.rules[${ruleIndex}]`
+
+    if (!isRecord(rule)) {
+      errors.push(`${rulePath} must be an object`)
+      return
+    }
+
+    validateNonEmptyString(rule.id, `${rulePath}.id`, errors)
+    validateNonEmptyString(rule.blendshape, `${rulePath}.blendshape`, errors)
+    validateAffectedLandmarkGroups(
+      rule.affectedLandmarkGroups,
+      `${rulePath}.affectedLandmarkGroups`,
+      errors,
+    )
+    validateNumberTupleRange(rule.inputRange, `${rulePath}.inputRange`, errors, {
+      requireAscending: true,
+    })
+    validateNumberTupleRange(
+      rule.strengthScaleRange,
+      `${rulePath}.strengthScaleRange`,
+      errors,
+      {
+        requireAscending: false,
+        min: 0,
+        max: 1,
+      },
+    )
+  })
+}
+
+function validateAffectedLandmarkGroups(
+  input: unknown,
+  path: string,
+  errors: string[],
+): void {
+  if (!Array.isArray(input)) {
+    errors.push(`${path} must be an array`)
+    return
+  }
+
+  input.forEach((groupId, groupIndex) => {
+    if (
+      !(EXPRESSION_LANDMARK_GROUP_IDS as readonly unknown[]).includes(groupId)
+    ) {
+      errors.push(
+        `${path}[${groupIndex}] must be one of ${EXPRESSION_LANDMARK_GROUP_IDS.join(
+          ", ",
+        )}`,
+      )
+    }
+  })
+}
+
+function validateNumberTupleRange(
+  input: unknown,
+  path: string,
+  errors: string[],
+  options?: {
+    requireAscending: boolean
+    min?: number
+    max?: number
+  },
+): void {
+  if (!Array.isArray(input) || input.length !== 2) {
+    errors.push(`${path} must be [number, number]`)
+    return
+  }
+
+  validateFiniteNumber(input[0], `${path}[0]`, errors)
+  validateFiniteNumber(input[1], `${path}[1]`, errors)
+
+  if (
+    options?.requireAscending &&
+    typeof input[0] === "number" &&
+    Number.isFinite(input[0]) &&
+    typeof input[1] === "number" &&
+    Number.isFinite(input[1]) &&
+    input[0] >= input[1]
+  ) {
+    errors.push(`${path}[0] must be less than ${path}[1]`)
+  }
+
+  if (options?.min !== undefined && options?.max !== undefined) {
+    const min = options.min
+    const max = options.max
+
+    input.forEach((value, valueIndex) => {
+      validateNumberRange(
+        value,
+        `${path}[${valueIndex}]`,
+        min,
+        max,
+        errors,
+      )
+    })
+  }
 }
 
 function validateLandmarkStrengths(input: unknown, errors: string[]): void {
@@ -375,6 +552,18 @@ function validateString(
 ): void {
   if (typeof input !== "string") {
     errors.push(`${path} must be a string`)
+  }
+}
+
+function validateNonEmptyString(
+  input: unknown,
+  path: string,
+  errors: string[],
+): void {
+  validateString(input, path, errors)
+
+  if (typeof input === "string" && input.trim().length === 0) {
+    errors.push(`${path} must not be empty`)
   }
 }
 

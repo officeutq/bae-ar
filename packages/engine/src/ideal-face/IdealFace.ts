@@ -1,3 +1,9 @@
+import {
+  DEFAULT_EXPRESSION_ATTENUATION_V1,
+  type ExpressionAttenuationProfile,
+  type ExpressionAttenuationSource,
+} from "./ExpressionAttenuation"
+
 export interface IdealFaceMetadata {
   id: string
   name: string
@@ -38,6 +44,7 @@ export interface IdealFaceCorrectionProfile {
   maxStrength: number
   maxCorrectionDistance: number
   landmarkStrengths: IdealFaceLandmarkStrength[]
+  expressionAttenuation?: ExpressionAttenuationProfile
 }
 
 export type IdealFaceCorrectionProfileSource = "asset" | "fallback"
@@ -85,4 +92,26 @@ export function getCorrectionProfileSource(
   idealFace: IdealFace,
 ): IdealFaceCorrectionProfileSource {
   return idealFace.model.correctionProfile ? "asset" : "fallback"
+}
+
+export function getExpressionAttenuationProfileOrDefault(
+  idealFace: IdealFace,
+): {
+  profile: ExpressionAttenuationProfile
+  source: Exclude<ExpressionAttenuationSource, "none">
+} {
+  const expressionAttenuation =
+    idealFace.model.correctionProfile?.expressionAttenuation
+
+  if (expressionAttenuation) {
+    return {
+      profile: expressionAttenuation,
+      source: "asset",
+    }
+  }
+
+  return {
+    profile: DEFAULT_EXPRESSION_ATTENUATION_V1,
+    source: "fallback",
+  }
 }
