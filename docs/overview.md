@@ -56,7 +56,7 @@ Engine Runtime では、IdealFace の `idealLandmarks3D` 478点を現在顔の `
 
 ## correctionProfile v1 の位置づけ
 
-`correctionProfile` v1 は、将来 `ideal_face_asset_v1` に optional top-level field として追加する補正設定です。`idealLandmarks3D` は理想顔の形状データ、`correctionProfile` は各 landmark をどれくらい projected ideal へ寄せるかを表す設定として分けます。
+`correctionProfile` v1 は、`ideal_face_asset_v1` の optional top-level field として Engine foundation 実装済みです。`idealLandmarks3D` は理想顔の形状データ、`correctionProfile` は各 landmark をどれくらい projected ideal へ寄せるかを表す設定として分けます。Authoring Tool 編集 UI、asset export 連携、`beauty_filter_asset_v1` foundation は未実装です。
 
 `correctionProfile` は landmark ごとの `strength` と fallback / clamp 設定を持ちますが、dx / dy は保存しません。dx / dy は current landmarks、projected ideal `imageLandmarks`、顔姿勢、表情によって毎フレーム変わるため、Engine Runtime が毎フレーム計算します。
 
@@ -198,7 +198,7 @@ shape processing は、個別パーツを独立して大きく変える方向に
 
 Shape Processing の差分は image-normalized coordinate で計算します。current 478 landmarks は MediaPipe 由来の image-normalized 座標です。projected ideal 478 landmarks は、IdealFace same-unit landmarks を `FacePose` へ投影し、alignment 後に image-normalized 座標へ変換したものです。差分は `deltaX = projectedIdealImageX - currentX`、`deltaY = projectedIdealImageY - currentY` として `CorrectionPlan` に渡します。
 
-将来の `CorrectionPlan` は、`correctionProfile` の `strength` をこの差分に掛け、`maxCorrectionDistance` で clamp した correction vector を生成します。`expressionAttenuation` がある場合は、blendshape score から計算した group ごとの `strengthScale` を掛け、`finalStrength = baseStrength * groupStrengthScale` として補正量を安全側に調整します。`correctionProfile` は個別パーツ加工命令ではなく、current から projected ideal へ全体として自然に少し寄せるための補正率です。
+CorrectionPlan v1 debug foundation は、`correctionProfile` の `strength` をこの差分に掛け、`maxCorrectionDistance` で clamp した correction vector を生成します。`expressionAttenuation` がある場合は、blendshape score から計算した group ごとの `strengthScale` を掛け、`finalStrength = baseStrength * groupStrengthScale` として補正量を安全側に調整します。`correctionProfile` は個別パーツ加工命令ではなく、current から projected ideal へ全体として自然に少し寄せるための補正率です。
 
 やらないこと:
 
@@ -254,7 +254,7 @@ beauty_filter_asset_v1
 
 `idealFace` は理想顔の形状、`landmarkGroups` は MediaPipe landmark index の意味領域、`correctionProfile` は shape correction の強度と safety attenuation、`shapeWarpSettings` は warp renderer / smoothing / boundary の設定、`colorLayers` は色加工、mask、合成順、opacity を扱います。
 
-`landmarkGroups` は、`expressionAttenuation` の `affectedLandmarkGroups` と、将来の `colorLayers` が参照する `skin` / `lip` / `cheek` などの group の整合性を保つために使います。Layer System は shape warp 用ではなく、color processing 用です。
+`landmarkGroups` は、`expressionAttenuation` の `affectedLandmarkGroups` と、将来の `colorLayers` が参照する `skin` / `lip` / `cheek` などの group の整合性を保つために使います。Layer System は shape warp 用ではなく、color processing 用です。`landmarkGroups v1` の JSON 仕様、Engine fallback、validation、Landmark Group Editor 方針は [landmarkGroups v1](landmark-groups-v1.md) に整理します。
 
 詳細は [beauty_filter_asset_v1 direction](beauty-filter-asset-v1.md) を参照してください。今回の整理は docs の方向性のみで、実装、validator、export、Production Shape Warp、Color Processing はまだ行いません。
 
@@ -374,7 +374,7 @@ BAE AR の shape processing では、IdealFace は 3D の `idealLandmarks3D` 478
 
 Runtime は IdealFace の 3D landmarks を現在顔の `FacePose` へ投影し、現在姿勢を反映した 2D の projected ideal 478 landmarks を生成します。正面 2D の 478 点だけでは、yaw / pitch / roll などの顔の角度変化に追随できないため、角度変化への対応は Projection の責務として扱います。
 
-Shape Processing は、MediaPipe Face Landmarker がカメラ映像から取得した current 478 landmarks と、IdealFace 由来の projected ideal 478 landmarks の差分を見ます。この差分が、将来の `CorrectionPlan` / Shape Warp へ渡される後段処理の入力になります。
+Shape Processing は、MediaPipe Face Landmarker がカメラ映像から取得した current 478 landmarks と、IdealFace 由来の projected ideal 478 landmarks の差分を見ます。この差分が、CorrectionPlan v1 debug foundation / Shape Warp v1 debug prototype へ渡される後段処理の入力になります。
 
 現在の `natural_v1` の 6 点 controlPoints は、現段階の投影検証用データです。これは IdealFace 本体ではなく、IdealFace の本体は `idealLandmarks3D` 478 点です。
 
@@ -398,7 +398,7 @@ Step 2-G v1 five-pose candidate generation has been removed from the current cod
 
 ## Shape Warp production direction
 
-現在の Shape Warp v1 debug prototype は、CorrectionPlan の補正ベクトルを Studio の Processed preview に接続して観察するための CPU radial warp debug です。本番品質の Shape Warp ではありません。
+現在の Shape Warp v1 debug prototype は、CorrectionPlan の補正ベクトルを Studio の Processed preview に接続して観察するための debug prototype です。CPU radial warp debug と Studio processed preview 限定 WebGL mesh warp v1 prototype は実装済みですが、本番品質の Shape Warp / Runtime renderer ではありません。
 
 本番候補は WebGL mesh warp として整理します。current image-normalized landmarks を source vertices、CorrectionPlan `target` を target vertices、source video frame / source canvas を texture として扱い、MediaPipe face mesh topology の triangle mesh warp を検討します。
 

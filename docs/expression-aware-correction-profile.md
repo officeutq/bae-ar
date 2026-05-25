@@ -2,21 +2,18 @@
 
 ## 目的
 
-このドキュメントは、`correctionProfile` の将来拡張として `expressionAttenuation` を追加する方針を整理します。
+このドキュメントは、`correctionProfile` の optional extension として Engine foundation 実装済みの `expressionAttenuation` v1 の方針と、未実装の後段範囲を整理します。
 
 現在の WebGL mesh warp debug prototype では、`normal` / `strong` のように補正を強めると、輪郭線や境界が目立つことがあります。また、口を開けたときに口内が塗りつぶされたように見えたり、目周りで黒目が瞼色になることがあります。
 
-これは WebGL mesh warp 自体だけの問題ではなく、現在の `CorrectionPlan` が表情、可動部位、保護領域をまだ考慮していないことが主な課題です。まずは表情別 IdealFace を作るのではなく、MediaPipe blendshape score に応じて landmark group ごとの補正強度を弱める safety attenuation を `correctionProfile` の optional extension として設計します。
+これは WebGL mesh warp 自体だけの問題ではなく、`CorrectionPlan` 側で表情、可動部位、保護領域を安全側に扱う必要があるという課題です。現在は表情別 IdealFace を作るのではなく、MediaPipe blendshape score に応じて landmark group ごとの補正強度を弱める `expressionAttenuation` v1 foundation を Engine 側に実装済みです。
 
 ## 今回の範囲
 
-現在は Engine 側の `expressionAttenuation` v1 foundation、fallback rules、validation、CorrectionPlan への `finalStrength` 反映まで実装済みです。以下はまだ行いません。
+現在は Engine 側の `expressionAttenuation` v1 foundation、fallback rules、validation、CorrectionPlan への `finalStrength` 反映、Studio debug / Copy Debug 表示まで実装済みです。以下はまだ行いません。
 
-- TypeScript 実装
-- Engine 実装
-- Studio 実装
 - Authoring Tool 編集 UI
-- `ideal_face_asset_v1` export 変更
+- correctionProfile / expressionAttenuation export 変更
 - `beauty_filter_asset_v1` 実装
 - WebGL mesh warp 修正
 - Production Shape Warp
@@ -50,11 +47,11 @@ CorrectionPlan:
 
 `expressionAttenuation` は、目だけ大きくする、鼻だけ細くする、顎だけ削るための機能ではありません。これは、表情や可動部位によって破綻しやすい領域の補正を弱める safety attenuation です。
 
-最終的な配布単位では、`expressionAttenuation` の `affectedLandmarkGroups` は `beauty_filter_asset_v1.landmarkGroups` の group id を参照する方向です。`landmarkGroups` は `correctionProfile` と `colorLayers` の両方から参照されるため、1つの filter asset 内で整合性を保ちます。
+最終的な配布単位では、`expressionAttenuation` の `affectedLandmarkGroups` は `beauty_filter_asset_v1.landmarkGroups` の group id を参照する方向です。`landmarkGroups` は `correctionProfile` と `colorLayers` の両方から参照されるため、1つの filter asset 内で整合性を保ちます。`landmarkGroups v1` の JSON 仕様、Engine fallback、validation 方針は [landmarkGroups v1](landmark-groups-v1.md) に整理します。
 
 ## JSON 仕様案
 
-`expressionAttenuation` は `correctionProfile` の optional extension として扱います。既存の `correction_profile_v1` の基本構造を壊さず、将来の validator / converter / export 対応で段階的に扱えるようにします。
+`expressionAttenuation` は `correctionProfile` の optional extension として扱います。Engine 側の validator foundation は実装済みです。既存の `correction_profile_v1` の基本構造を壊さず、将来の Authoring Tool UI / converter / export 対応で段階的に扱えるようにします。
 
 ```json
 {
@@ -129,7 +126,7 @@ face_boundary:
   顔外周、背景、髪、眼鏡境界などの破綻を抑える
 ```
 
-v1 では landmark group の index 定義はまだ完全確定しません。将来は `beauty_filter_asset_v1.landmarkGroups` に group 定義を持ち、asset に存在しない場合は Engine fallback group を使う方向です。
+v1 では landmark group の index 定義はまだ完全確定しません。将来は `beauty_filter_asset_v1.landmarkGroups` に group 定義を持ち、asset に存在しない場合は Engine fallback group を使う方向です。現在は docs 仕様化のみで、Engine landmarkGroups asset loading foundation は未実装です。
 
 ```ts
 type LandmarkGroupId =

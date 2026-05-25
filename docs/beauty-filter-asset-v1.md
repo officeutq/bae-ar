@@ -120,6 +120,8 @@ eye_area
 
 `landmarkGroups` は個別パーツ加工の命令ではありません。`expressionAttenuation` が補正を弱める領域を参照したり、`colorLayers` が mask 対象の意味領域を参照したりするための index group 定義です。
 
+詳細仕様、JSON 例、Engine fallback、validation、Landmark Group Editor 方針は [landmarkGroups v1](landmark-groups-v1.md) に整理します。現時点では docs 仕様化のみで、Engine landmarkGroups asset loading foundation、Authoring Tool UI、JSON export、validator は未実装です。
+
 ### correctionProfile
 
 `correctionProfile` は、理想顔へどれくらい寄せるかを表す shape correction 設定です。
@@ -159,6 +161,8 @@ shapeWarpSettings:
 ```
 
 Production Shape Warp / Runtime renderer integration はまだ未実装です。現在の Studio Shape Warp v1 debug prototype と WebGL mesh warp v1 prototype は、Production Runtime renderer ではありません。
+
+`shapeWarpSettings` はフィルターごとの公開設定であり、WebGL shader、renderer lifecycle、GPU resource 管理、fallback 実装などの Engine 内部実装は含めません。Engine 側は `shapeWarpSettings` を読み取り、実際の renderer / smoothing / boundary 処理を実行します。
 
 ### colorLayers
 
@@ -365,7 +369,7 @@ Layer Mask / Color Authoring Tool は、shape warp 用の個別パーツ変形�
 以下の順番は厳密固定ではなく、段階的な目安です。
 
 ```text
-Step 1: landmarkGroups v1 docs
+Step 1: landmarkGroups v1 docs specification
   ideal_face_asset_v1 / beauty_filter_asset_v1 で使う group 定義を整理する
 
 Step 2: Engine landmarkGroups foundation
@@ -398,7 +402,7 @@ Step 6: beauty_filter_asset_v1 foundation
 
 まだ未実装:
 
-- landmarkGroups v1 asset schema
+- landmarkGroups v1 asset schema implementation
 - Authoring Tool landmark group editor
 - shapeWarpSettings v1
 - colorLayers v1

@@ -55,11 +55,17 @@ See [correctionProfile v1](docs/correction-profile-v1.md). Authoring Tool editin
 
 ## expression-aware correctionProfile direction
 
-`correctionProfile` can later add optional `expressionAttenuation` rules. These rules use MediaPipe blendshape scores such as `jawOpen`, `eyeBlinkLeft`, `eyeBlinkRight`, `eyeSquintLeft`, and `eyeSquintRight` to reduce `strengthScale` for affected landmark groups such as `mouth`, `left_eye`, `right_eye`, and `face_boundary`.
+`correctionProfile` supports optional `expressionAttenuation` rules in the Engine foundation. These rules use MediaPipe blendshape scores such as `jawOpen`, `eyeBlinkLeft`, `eyeBlinkRight`, `eyeSquintLeft`, and `eyeSquintRight` to reduce `strengthScale` for affected landmark groups such as `mouth`, `left_eye`, `right_eye`, and `face_boundary`.
 
-This is safety attenuation, not individual part editing. The first step is to weaken correction around the mouth during large jaw opening, around eyes during blink / squint, and around fragile boundaries, with smoothing to avoid abrupt visual changes. Expression target offsets and expression-specific IdealFace assets remain later steps.
+This is safety attenuation, not individual part editing. The Engine foundation includes fallback rules, validation, `halfLifeMs` smoothing, and CorrectionPlan `finalStrength` integration. Studio debug / Copy Debug can show expression attenuation summary. Authoring Tool UI, correctionProfile / expressionAttenuation export changes, expression target offsets, expression-specific IdealFace assets, and production renderer integration remain later work.
 
-See [expression-aware correctionProfile](docs/expression-aware-correction-profile.md). Engine implementation, Studio implementation, Authoring Tool UI, JSON export changes, WebGL changes, and production renderer integration are not included in this documentation step.
+See [expression-aware correctionProfile](docs/expression-aware-correction-profile.md). Engine foundation and Studio debug / Copy Debug display are implemented. Authoring Tool UI, correctionProfile / expressionAttenuation export changes, WebGL changes, expression target offsets, expression-specific IdealFace assets, and production renderer integration remain later work.
+
+## landmarkGroups v1 direction
+
+`landmarkGroups` defines meaningful MediaPipe landmark index groups such as `mouth`, `left_eye`, `right_eye`, and `face_boundary` for expression safety, and future `skin`, `lip`, `cheek`, and `eye_area` groups for color masks. It is referenced by `expressionAttenuation` and future `colorLayers`, but it is not an individual part editing command set.
+
+See [landmarkGroups v1](docs/landmark-groups-v1.md). This is a documentation specification only. Engine landmarkGroups asset loading, Authoring Tool Landmark Group Editor, JSON export changes, validator implementation, Color Processing, Layer System, and `beauty_filter_asset_v1` foundation remain unimplemented.
 
 ## Shape Warp production direction
 
@@ -286,6 +292,7 @@ debug
 - [リポジトリ構成](docs/repository-structure.md)
 - [correctionProfile v1](docs/correction-profile-v1.md)
 - [expression-aware correctionProfile](docs/expression-aware-correction-profile.md)
+- [landmarkGroups v1](docs/landmark-groups-v1.md)
 - [Shape Warp production direction](docs/shape-warp-production-direction.md)
 - [beauty_filter_asset_v1 direction](docs/beauty-filter-asset-v1.md)
 - [仕様書とロードマップ](docs/bae_ar_beauty_engine_spec_and_roadmap_2026_05.md)

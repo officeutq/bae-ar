@@ -2,7 +2,7 @@
 
 ## 目的
 
-`correctionProfile` は、`ideal_face_asset_v1` に optional な top-level field として追加する将来仕様です。最終的な配布単位では、`beauty_filter_asset_v1` の `correctionProfile` セクションとして `idealFace`、`landmarkGroups`、`shapeWarpSettings`、`colorLayers` と一緒に束ねる方向です。
+`correctionProfile` v1 は、`ideal_face_asset_v1` の optional top-level field として Engine foundation 実装済みです。最終的な配布単位では、`beauty_filter_asset_v1` の `correctionProfile` セクションとして `idealFace`、`landmarkGroups`、`shapeWarpSettings`、`colorLayers` と一緒に束ねる方向です。
 
 `idealLandmarks3D` の各点に直接 `strength` を混ぜず、別セクションとして保持します。
 
@@ -17,7 +17,7 @@
 
 ## JSON 例
 
-以下は `correctionProfile` の位置と値の意味を示す短縮例です。実装時は既存の `ideal_face_asset_v1` の `source` / `model` 構造に合わせ、`correctionProfile` を asset の top-level field として追加します。
+以下は `correctionProfile` の位置と値の意味を示す短縮例です。現在の Engine foundation では既存の `ideal_face_asset_v1` の `source` / `model` 構造に合わせ、`correctionProfile` を asset の top-level field として扱います。
 
 ```json
 {
@@ -116,13 +116,13 @@
 - `maxCorrectionDistance` は image-normalized coordinate 基準
 - `correctionProfile` には dx / dy を保存しない
 
-## 将来拡張: expressionAttenuation
+## optional extension: expressionAttenuation
 
-`correctionProfile` は、将来 `expressionAttenuation` を optional extension として持てるようにします。
+`correctionProfile` は、optional extension として `expressionAttenuation` を扱える Engine foundation 実装済みです。`jawOpen` / `eyeBlink` / `eyeSquint` による group `strengthScale`、`halfLifeMs` smoothing、CorrectionPlan `finalStrength` 反映は実装済みです。Authoring Tool UI / export 連携、expression-specific IdealFace、expression target offset は未実装です。
 
 `expressionAttenuation` は、MediaPipe blendshape score を入力にし、`mouth` / `left_eye` / `right_eye` / `face_boundary` などの `affectedLandmarkGroups` ごとに `strengthScale` を変える safety attenuation です。`strengthScale` は 0.0 から 1.0 の値で、1.0 は通常どおり、0.0 はその group の補正なしを意味します。
 
-`affectedLandmarkGroups` は、将来 `beauty_filter_asset_v1.landmarkGroups` の group id を参照します。v1 ではまず `mouth` / `left_eye` / `right_eye` / `face_boundary` を想定し、将来の color processing では `skin` / `lip` / `cheek` / `eye_area` などを追加する可能性があります。
+`affectedLandmarkGroups` は、将来 `beauty_filter_asset_v1.landmarkGroups` の group id を参照します。v1 ではまず `mouth` / `left_eye` / `right_eye` / `face_boundary` を想定し、将来の color processing では `skin` / `lip` / `cheek` / `eye_area` などを追加する可能性があります。`landmarkGroups v1` の詳細は [landmarkGroups v1](landmark-groups-v1.md) に整理します。
 
 目的:
 
@@ -189,7 +189,7 @@ Beauty Studio
 
 ## fallback 仕様
 
-`correctionProfile` が存在しない既存 asset でも壊れないように、将来の Engine 実装では以下を fallback default として扱います。
+`correctionProfile` が存在しない既存 asset でも壊れないように、現在の Engine foundation では以下を fallback default として扱います。
 
 ```text
 correctionProfile が存在しない場合:
@@ -202,7 +202,7 @@ correctionProfile が存在しない場合:
 
 ## validation 方針
 
-将来の validator 実装では、以下を検証します。
+現在の Engine validator foundation では、以下を検証します。
 
 - `correctionProfile` は optional
 - 存在する場合、`schemaVersion` は `"correction_profile_v1"`
@@ -265,7 +265,7 @@ CorrectionPlan は姿勢補正を担当しません。姿勢への対応は Idea
 - Production Shape Warp
 - production renderer integration
 - 画像変形の本番実装
-- landmarkGroups v1 asset schema
+- landmarkGroups v1 asset schema implementation
 - shapeWarpSettings v1
 - colorLayers v1
 - beauty_filter_asset_v1

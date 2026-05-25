@@ -34,7 +34,9 @@ Production Shape Warp candidate:
 
 WebGL mesh warp では、画像を直接ピクセル単位で radial に引っ張るのではなく、顔メッシュの三角形を source から target へ変形する方向で検討します。
 
-将来の `beauty_filter_asset_v1` では、WebGL mesh warp の mode、`meshWarpStrength`、`temporalSmoothing`、boundary / mask / feather などの実行設定候補を `shapeWarpSettings` セクションとして分離します。`shapeWarpSettings` は renderer / smoothing / boundary の設定であり、`idealFace` の形状データや `correctionProfile` の補正強度、`colorLayers` の色加工設定とは混ぜません。
+将来の `beauty_filter_asset_v1` では、WebGL mesh warp の mode、`meshWarpStrength`、`temporalSmoothing`、boundary / mask / feather などの実行設定候補を `shapeWarpSettings` セクションとして分離します。`shapeWarpSettings` は renderer / smoothing / boundary の公開設定であり、`idealFace` の形状データや `correctionProfile` の補正強度、`colorLayers` の色加工設定とは混ぜません。
+
+`shapeWarpSettings` はフィルターごとの公開設定であり、WebGL shader、renderer lifecycle、GPU resource 管理、fallback 実装などの Engine 内部実装は含めません。Engine 側は `shapeWarpSettings` を読み取り、実際の renderer / smoothing / boundary 処理を実行します。
 
 ## Processing flow
 

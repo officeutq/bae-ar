@@ -53,7 +53,7 @@ Engine Runtime は UI を持たない中核 SDK です。
 
 将来予定:
 
-- landmarkGroups v1 asset schema
+- landmarkGroups v1 asset schema implementation
 - Engine landmarkGroups asset loading foundation
 - shapeWarpSettings v1
 - colorLayers v1
@@ -247,7 +247,7 @@ current-vs-projected ideal 478点 difference debug v1 は、MediaPipe current im
 
 ## correctionProfile v1
 
-`correctionProfile` v1 は、`ideal_face_asset_v1` の optional top-level field として追加する将来仕様です。`idealLandmarks3D` は理想顔の形状データ、`correctionProfile` は各 landmark をどれくらい projected ideal へ寄せるかの補正設定として分けます。
+`correctionProfile` v1 は、`ideal_face_asset_v1` の optional top-level field として Engine foundation 実装済みです。`idealLandmarks3D` は理想顔の形状データ、`correctionProfile` は各 landmark をどれくらい projected ideal へ寄せるかの補正設定として分けます。Authoring Tool 編集 UI、asset export 連携、`beauty_filter_asset_v1` foundation は未実装です。
 
 `correctionProfile` は per-landmark `strength`、`defaultStrength`、`maxCorrectionDistance` を持ちます。dx / dy は現在顔の姿勢、位置、表情、projection 結果によって毎フレーム変わるため JSON には保存せず、Engine Runtime が current landmarks と projected ideal `imageLandmarks` から計算します。
 
@@ -383,11 +383,11 @@ beauty_filter_asset_v1
 
 1つの JSON に束ねる理由は、`idealFace` と `landmarkGroups` の対応、`correctionProfile.expressionAttenuation.affectedLandmarkGroups` の参照、`colorLayers` が参照する `skin` / `lip` / `cheek` などの group の整合性を保つためです。サービス側では 1つの filter asset を選択するだけでよくなり、Engine Runtime は 1つの asset から shape / color の両方を実行できます。
 
-ただし、内部では責務を混ぜません。`idealFace` は理想顔の形状、`landmarkGroups` は landmark index の意味領域、`correctionProfile` は shape correction の強度と safety attenuation、`shapeWarpSettings` は warp renderer / smoothing / boundary の設定、`colorLayers` は色加工、mask、合成順、opacity を扱います。
+ただし、内部では責務を混ぜません。`idealFace` は理想顔の形状、`landmarkGroups` は landmark index の意味領域、`correctionProfile` は shape correction の強度と safety attenuation、`shapeWarpSettings` は warp renderer / smoothing / boundary の設定、`colorLayers` は色加工、mask、合成順、opacity を扱います。`landmarkGroups v1` の仕様は [landmarkGroups v1](landmark-groups-v1.md) に整理します。
 
 Engine Runtime は UI を持たず、将来 `beauty_filter_asset_v1` を読み込んで Projection、current-vs-ideal difference、`expressionAttenuation`、`CorrectionPlan`、WebGL mesh warp、LayerMask 生成、`colorLayers` 合成、temporal smoothing / stability control を実行します。Beauty Studio は公開 API 経由で読み込み・状態確認・debug / overlay / Copy Debug / tuning UI を提供します。Authoring Tool 群は各セクションの作成・編集を担当します。
 
-詳細は [beauty_filter_asset_v1 direction](beauty-filter-asset-v1.md) に整理します。`beauty_filter_asset_v1`、`landmarkGroups` asset schema、`shapeWarpSettings`、`colorLayers`、Production Shape Warp、Color Processing、Runtime renderer integration はまだ未実装です。
+詳細は [beauty_filter_asset_v1 direction](beauty-filter-asset-v1.md) に整理します。`landmarkGroups v1` は docs 仕様化のみで、Engine asset loading、Authoring Tool editor、JSON export、validator は未実装です。`beauty_filter_asset_v1`、`shapeWarpSettings`、`colorLayers`、Production Shape Warp、Color Processing、Runtime renderer integration はまだ未実装です。
 
 ## 配布方針
 
