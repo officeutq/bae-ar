@@ -285,7 +285,7 @@ type IdealLandmarks3DProjectionResult = {
 }
 ```
 
-Studio overlay は `imageLandmarks` を `x * canvasWidth` / `y * canvasHeight` で描画します。same-unit landmarks をそのまま canvas pixel に変換しません。current 478 landmarks との差分比較 debug は実装済みですが、`CorrectionPlan`、Shape Warp はまだ実装しません。
+Studio overlay は `imageLandmarks` を `x * canvasWidth` / `y * canvasHeight` で描画します。same-unit landmarks をそのまま canvas pixel に変換しません。current 478 landmarks との差分比較 debug、CorrectionPlan v1 debug foundation、Studio 向け Shape Warp v1 debug prototype は実装済みです。Production Shape Warp / WebGL mesh warp / Runtime renderer integration は後段です。
 
 ## CorrectionPlan
 

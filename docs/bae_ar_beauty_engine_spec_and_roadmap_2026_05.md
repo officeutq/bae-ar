@@ -102,12 +102,29 @@ Beauty Studio:
 - projected ideal `imageLandmarks` overlay
 - current-vs-projected ideal 478点 difference debug v1
 - top differences difference line overlay
+- correctionProfile v1 の Engine 型 / validation / fallback foundation
+- CorrectionPlan v1 debug foundation
+- 478点分の correction vectors 計算
+- CorrectionPlan vector overlay
+- Studio 向け Shape Warp v1 debug prototype
+- CPU radial warp debug
+- Shape Warp debug safety tuning
+- Shape Warp debug preset 比較機能
+- Shape Warp 使用ベクトル overlay
+- Shape Warp production direction docs
+- WebGL mesh warp 本番候補方針の整理
 
 ### 3.2 未実装
 
-- correctionProfile v1 の TypeScript 型 / validator / converter
-- CorrectionPlan
-- Shape Warp
+- Production Shape Warp
+- WebGL mesh warp
+- MediaPipe topology triangle mesh warp
+- Runtime renderer integration
+- temporal smoothing
+- mask / boundary handling
+- glasses / hair handling
+- performance / mobile optimization
+- correctionProfile Authoring UI
 - Color Processing
 - Layer System
 - LayerMaskSpec
@@ -494,7 +511,7 @@ deltaY = projectedIdealImageY - currentY
 
 この差分を `CorrectionPlan` に渡します。
 
-将来の CorrectionPlan では、`correctionProfile` の `strength` を差分に掛け、`maxCorrectionDistance` で correction vector を clamp します。`correctionProfile` は個別パーツ加工命令ではなく、current から projected ideal へ全体として自然に少し寄せるための補正率です。
+CorrectionPlan v1 debug foundation では、`correctionProfile` の `strength` を差分に掛け、`maxCorrectionDistance` で correction vector を clamp します。`correctionProfile` は個別パーツ加工命令ではなく、current から projected ideal へ全体として自然に少し寄せるための補正率です。
 
 やらないこと:
 
@@ -689,7 +706,7 @@ Studio は Engine の private field、内部状態、内部実装へ直接アク
 
 ### Milestone 4: IdealFace Projection v1
 
-状態: 部分実装済み（4-A / 4-B / 4-C）
+状態: 実装済み（Projection / overlay / difference debug）
 
 目的:
 
@@ -704,15 +721,27 @@ Studio は Engine の private field、内部状態、内部実装へ直接アク
 - Studio overlay で top differences の difference line を確認できる。
 - 平均差分と最大差分 landmark index を確認できる。
 
-未実装:
+実装済み:
 
-- ideal 478 landmarks の生成
-- current 478 landmarks と ideal 478 landmarks の比較
-- Shape Warp / CorrectionPlan
+- idealLandmarks3D 478点 Projection
+- Projection result の `sameUnitLandmarks` / `imageLandmarks` 分離
+- Studio overlay
+- current-vs-projected ideal 478点 difference debug
+- difference line overlay
+- bounds / aspect / coordinate conversion debug
+- face center + uniform scale alignment
+- contain scale basis debug
+
+Milestone 4 に含めないもの:
+
+- CorrectionPlan production integration
+- Production Shape Warp
+- WebGL mesh warp
+- Runtime renderer integration
 
 ### Milestone 5: CorrectionPlan v1
 
-状態: 未実装
+状態: debug foundation 実装済み / production integration 未実装
 
 目的:
 
@@ -727,9 +756,29 @@ Studio は Engine の private field、内部状態、内部実装へ直接アク
 - 姿勢補正を担当していない。
 - 個別パーツ加工命令セットになっていない。
 
+実装済み:
+
+- correctionProfile fallback default
+- per-landmark strength 適用
+- maxCorrectionDistance clamp
+- 478点分の correction vectors 計算
+- Studio debug / Copy Debug
+- CorrectionPlan vector overlay
+- current-vs-projected ideal difference からの raw delta 利用
+- image-normalized coordinate 基準の target 計算
+
+未実装 / 後段:
+
+- Production Shape Warp への renderer 統合
+- temporal smoothing
+- quality tuning
+- correctionProfile Authoring UI との連携
+- 本番 SDK API としての整理
+- mobile / performance 対応
+
 ### Milestone 6: Shape Warp v1
 
-状態: 未実装
+状態: Studio debug prototype 実装済み / Production Shape Warp 未実装
 
 目的:
 
@@ -740,6 +789,29 @@ Studio は Engine の private field、内部状態、内部実装へ直接アク
 - Studio で加工前後を比較できる。
 - 過補正や破綻を debug できる。
 - 目だけ、鼻だけ、顎だけの個別パーツ加工になっていない。
+
+実装済み:
+
+- Studio processed preview 限定 Shape Warp v1 debug prototype
+- CPU radial warp debug
+- Source preview / Processed preview 分離
+- Shape Warp Debug ON/OFF
+- radius / strength / maxVectors / minCorrectionDistance
+- nearest / bilinear sampling
+- preset 比較機能
+- Shape Warp 使用ベクトル overlay
+- Studio debug / Copy Debug summary
+
+未実装 / 後段:
+
+- Production Shape Warp
+- WebGL mesh warp
+- MediaPipe topology triangle mesh warp
+- Runtime renderer integration
+- temporal smoothing
+- mask / boundary handling
+- glasses / hair handling
+- performance / mobile optimization
 
 ### Milestone 7: Color Processing v1
 
@@ -970,7 +1042,7 @@ BAE AR の shape processing では、IdealFace は 3D の `idealLandmarks3D` 478
 
 Runtime は、その 3D ideal landmarks を現在顔の `FacePose` へ投影し、2D の projected ideal 478 landmarks を生成します。Projection 内部では same-unit coordinate で回転と uniform alignment を行い、Studio overlay / difference / Shape Warp 入力へ渡す前に image-normalized coordinate へ変換します。正面 2D の 478 点だけでは顔の角度変化に追随できないため、顔の角度変化への対応は IdealFace の 3D landmarks を `FacePose` へ投影することで行います。
 
-Shape Processing は、MediaPipe Face Landmarker がカメラ映像から取得した current image-normalized 478 landmarks と、IdealFace 由来の projected ideal image-normalized 478 landmarks の差分を見ます。この差分をもとに、将来 `CorrectionPlan` / Shape Warp へ進みます。最終的な image warp では pixel coordinate を使います。
+Shape Processing は、MediaPipe Face Landmarker がカメラ映像から取得した current image-normalized 478 landmarks と、IdealFace 由来の projected ideal image-normalized 478 landmarks の差分を見ます。この差分をもとに CorrectionPlan v1 debug foundation が correction vectors を生成し、Studio 向け Shape Warp v1 debug prototype へ進みます。Production Shape Warp / WebGL mesh warp / Runtime renderer integration は後段です。最終的な image warp では pixel coordinate を使います。
 
 現在の `natural_v1` の 6 点 controlPoints は、現段階の投影検証用データです。Projection の流れを確認するための暫定データであり、IdealFace 本体ではありません。
 
@@ -984,7 +1056,8 @@ Runtime
 
 Shape Processing
   = current image-normalized 478 landmarks と projected ideal image-normalized 478 landmarks の差分を見る
-  = 差分をもとに CorrectionPlan / Shape Warp へ進む
+  = 差分をもとに CorrectionPlan v1 debug foundation / Shape Warp v1 debug prototype へ進む
+  = Production Shape Warp / WebGL mesh warp / Runtime renderer integration は後段
 ```
 
 `CorrectionPlan` は姿勢補正を担当しません。Projection 後に image-normalized coordinate へ変換された current-vs-ideal 差分を受け取り、`FacePose` の推定や IdealFace projection は担当しません。
