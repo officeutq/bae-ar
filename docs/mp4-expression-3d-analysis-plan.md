@@ -8,7 +8,7 @@
 
 `frontReference` / `useForInference` / `expressionGroup` は用途タグであり、重複可能です。`excluded` だけは排他的で、除外済み frame は正面基準 / 推定 / 表情解析の処理対象から外れます。neutral 自動分類は主導線から外し、neutralFrames は将来 `frontReferenceFrames` の中から表情が少ないものを選ぶ方針です。
 
-MP4 detailed scan / Step 2-I-A frame selection では、単純な均等抽出ではなく、`frontReferenceCandidate` の提示と用途別 bucket の充足状況を見ながら frame を採用する `usage-aware frame sampling v1` を導入する方針です。`frontReferenceCandidate` は自動候補、`frontReference` はユーザーが手動選択する正面基準です。詳細は [usage-aware frame sampling v1](usage-aware-frame-sampling-v1.md) に整理します。
+MP4 detailed scan / Step 2-I-A frame selection では、単純な均等抽出ではなく、`frontReferenceCandidate` の提示と用途別 bucket の充足状況を見ながら frame を採用する `usage-aware frame sampling v1` を導入する方針です。v1 prototype では adaptive sampling を ON にすると、required bucket の `idealFaceInference` が target 80 に達した時点で early stop できます。expression groups は optional bucket として不足 warning を表示します。`frontReferenceCandidate` は自動候補、`frontReference` はユーザーが手動選択する正面基準で、early stop 条件には含めません。詳細は [usage-aware frame sampling v1](usage-aware-frame-sampling-v1.md) に整理します。
 
 neutral 3D 478 / expression 3D 478 の生成、3D 比較、`landmarkFollowStrengths` 自動生成、`expressionFollow` export、Engine 実装、Studio 実装、validator 変更はまだ行いません。
 
@@ -46,6 +46,7 @@ landmarkFollowStrengths:
 - expressionFollow v1 docs direction
 - Expression frame grouping summary prototype
 - Frame usage card UI prototype
+- usage-aware adaptive scan / early stop prototype
 
 未実装:
 

@@ -65,6 +65,7 @@ Engine Runtime に Studio / Authoring 用 UI や生成・編集処理は入れ�
 - usage-aware frame sampling v1 docs 方針
 - IdealFace Authoring Tool Expression frame grouping summary prototype
 - IdealFace Authoring Tool frame usage card UI prototype
+- IdealFace Authoring Tool usage-aware adaptive scan prototype
 
 ### 未実装 / 後段
 
@@ -113,7 +114,7 @@ Step 2-I-A の frame usage では、`frontReference` / `useForInference` / `expr
 
 MP4 detailed scan / Step 2-I-A frame selection では、`frontReferenceCandidate` の提示と用途別 bucket の充足状況を見ながら frame を採用する `usage-aware frame sampling v1` を導入する方針です。`frontReferenceCandidate` は自動で「正面基準に良さそう」と判定された候補で、`frontReference` はユーザーが手動選択する正面基準です。これは完全自動確定ではなく、自動初期値 + Frame Review Carousel での手動確認・修正として扱います。詳細は [usage-aware frame sampling v1](docs/usage-aware-frame-sampling-v1.md) を参照してください。
 
-現在の IdealFace Authoring Tool には、`usage-aware frame sampling v1` の最初の prototype として scan preset（quick / standard / detailed）と usage bucket summary を追加しています。`frontReference` は usage bucket から分離し、手動選択数 / 自動候補数 / 推奨数の summary として表示します。完全な adaptive sampling、targetCount に基づく採用制御、early stop はまだ未実装です。
+現在の IdealFace Authoring Tool には、`usage-aware frame sampling v1` の prototype として scan preset（quick / standard / detailed）、usage bucket summary、adaptive scan / early stop を追加しています。`frontReference` は usage bucket から分離し、手動選択数 / 自動候補数 / 推奨数の summary として表示します。adaptive sampling を ON にした場合、v1 の required bucket は `idealFaceInference` で、targetCount を満たすと早期終了できます。expression groups は optional bucket として不足 warning を表示し、`frontReference` は early stop 条件に含めません。
 
 Step 2-I-A では、一覧カードに加えて Frame Review Carousel で1フレームを大きく確認しながら、`frontReference` / `expressionGroup` / `useForInference` / `excluded` を調整できます。Review 側と一覧カード側は同じ `frameUsage` state を更新し、JSON preview の `frameUsage` summary に反映します。
 
@@ -169,7 +170,7 @@ Step 2-I-A では、一覧カードに加えて Frame Review Carousel で1フレ
 - `frontReference` / `useForInference` / `expressionGroup` は用途タグであり、重複可能です。
 - `excluded` だけは排他的で、除外済み frame は正面基準 / 推定 / 表情解析の処理対象から外れます。
 - `poseOutOfRange` / `mixedExpression` / `pending` / `missingBlendshapes` は注意タグとして扱い、自動除外にはしません。
-- `usage-aware frame sampling v1` では、`frontReferenceCandidate` を自動候補として提示し、`frontReference` はユーザーが手動選択する正面基準として扱います。`idealFaceInference` / expression groups は用途 bucket として扱い、targetCount までバランスよく採用します。
+- `usage-aware frame sampling v1` では、`frontReferenceCandidate` を自動候補として提示し、`frontReference` はユーザーが手動選択する正面基準として扱います。`idealFaceInference` / expression groups は用途 bucket として扱い、targetCount までバランスよく採用します。adaptive sampling ON の場合、v1 required bucket の `idealFaceInference` が満たされたら early stop し、expression groups は optional bucket として不足 warning を表示します。
 - JSON preview に `expressionAnalysis` summary を表示します。
 - JSON preview に `frameUsage` summary を表示します。
 - neutral 3D 478 / expression 3D 478 の生成、3D 比較、`landmarkFollowStrengths` 自動生成、`expressionFollow` export はまだ未実装です。
