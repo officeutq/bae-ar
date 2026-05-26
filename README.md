@@ -61,6 +61,12 @@ See [correctionProfile v1](docs/correction-profile-v1.md). Authoring Tool editin
 
 See [expressionFollow v1](docs/expression-follow-v1.md). This is documentation direction only. TypeScript implementation, Engine implementation, Studio implementation, Authoring Tool UI, JSON export changes, validator changes, MP4 expression 3D analysis, landmarkFollowStrengths auto generation, Production Shape Warp, and Runtime renderer integration are not included in this step.
 
+## MP4 expression 3D analysis plan
+
+`landmarkFollowStrengths` は、IdealFace Authoring Tool が MP4 の表情別 frame group から neutral 3D 478 / expression 3D 478 を生成し、同じ `comparisonSpace` の same-unit 3D landmarks 同士を比較して自動生成する方針です。
+
+See [MP4 expression 3D analysis plan](docs/mp4-expression-3d-analysis-plan.md). This is documentation direction only. TypeScript implementation, Engine implementation, Studio implementation, Authoring Tool UI, JSON export changes, validator changes, MP4 expression 3D analysis implementation, and landmarkFollowStrengths auto generation are not included in this step.
+
 ## expression-aware correctionProfile direction
 
 `correctionProfile` currently supports optional `expressionAttenuation` rules in the Engine foundation. These rules use MediaPipe blendshape scores such as `jawOpen`, `eyeBlinkLeft`, `eyeBlinkRight`, `eyeSquintLeft`, and `eyeSquintRight` to reduce `strengthScale` for affected landmark groups such as `mouth`, `left_eye`, `right_eye`, and `face_boundary`.
@@ -304,6 +310,7 @@ debug
 - [リポジトリ構成](docs/repository-structure.md)
 - [correctionProfile v1](docs/correction-profile-v1.md)
 - [expressionFollow v1](docs/expression-follow-v1.md)
+- [MP4 expression 3D analysis plan](docs/mp4-expression-3d-analysis-plan.md)
 - [expression-aware correctionProfile](docs/expression-aware-correction-profile.md)
 - [expressionAttenuation falloff v1](docs/expression-attenuation-falloff-v1.md)
 - [landmarkGroups v1](docs/landmark-groups-v1.md)

@@ -79,7 +79,7 @@ current 478 landmarks は MediaPipe 由来の image-normalized 座標です。pr
 
 現時点では、478点の current-vs-ideal difference debug、`correctionProfile` v1 foundation、`expressionAttenuation` v1 foundation、CorrectionPlan v1 debug foundation、Studio 向け Shape Warp v1 debug prototype、Studio processed preview 限定 WebGL mesh warp v1 prototype は実装済みです。Production Shape Warp / Runtime renderer integration は未実装です。
 
-`correctionProfile` v1 は、`ideal_face_asset_v1` の optional top-level field として扱う補正設定です。landmark ごとの `strength` を持ちますが、dx / dy は JSON に保存しません。dx / dy は current landmarks と projected ideal `imageLandmarks` から Engine が毎フレーム計算します。今後の表情制御では、単純に group の補正強度を下げる `expressionAttenuation` ではなく、表情ごとに landmark が neutral な projected ideal へどれだけ追従するかを定義する `expressionFollow v1` を中心にします。詳細は [correctionProfile v1](correction-profile-v1.md)、[expressionFollow v1](expression-follow-v1.md)、[expression-aware correctionProfile](expression-aware-correction-profile.md)、[expressionAttenuation falloff v1](expression-attenuation-falloff-v1.md) を参照してください。
+`correctionProfile` v1 は、`ideal_face_asset_v1` の optional top-level field として扱う補正設定です。landmark ごとの `strength` を持ちますが、dx / dy は JSON に保存しません。dx / dy は current landmarks と projected ideal `imageLandmarks` から Engine が毎フレーム計算します。今後の表情制御では、単純に group の補正強度を下げる `expressionAttenuation` ではなく、表情ごとに landmark が neutral な projected ideal へどれだけ追従するかを定義する `expressionFollow v1` を中心にします。MP4 からの `landmarkFollowStrengths` 自動生成は IdealFace Authoring Tool の責務として扱います。詳細は [correctionProfile v1](correction-profile-v1.md)、[expressionFollow v1](expression-follow-v1.md)、[MP4 expression 3D analysis plan](mp4-expression-3d-analysis-plan.md)、[expression-aware correctionProfile](expression-aware-correction-profile.md)、[expressionAttenuation falloff v1](expression-attenuation-falloff-v1.md) を参照してください。
 
 やらないこと:
 
@@ -201,6 +201,8 @@ MP4 input
        idealLandmarks3D 478点候補生成
   -> Step 2-H currentCandidate point cloud preview
 ```
+
+次段では、同じ detailed scan / pose-aware workflow を使い、neutral frame group と expression frame group から neutral 3D 478 / expression 3D 478 を生成して比較し、`expressionFollow.rules[].landmarkFollowStrengths` を自動生成する方針です。詳細は [MP4 expression 3D analysis plan](mp4-expression-3d-analysis-plan.md) に整理します。
 
 Removed legacy workflow:
 
@@ -361,16 +363,19 @@ Step 4: expressionFollow v1 docs direction
   MP4 の neutral 3D 478 / expression 3D 478 比較による自動生成方針を整理する
   -> 実装済み
 
-Step 5: expressionFollow v1 foundation
+Step 5: MP4 expression 3D analysis docs / foundation
+  IdealFace Authoring Tool で frame grouping、3D 478 比較、landmarkFollowStrengths 自動生成を整理する
+
+Step 6: expressionFollow v1 foundation
   Engine 側で expressionFollow を読み込み、landmark ごとの idealFollowStrength を CorrectionPlan に反映する
 
-Step 6: shapeWarpSettings v1 docs / foundation
+Step 7: shapeWarpSettings v1 docs / foundation
   WebGL mesh warp / smoothing / boundary / debug 設定を整理する
 
-Step 7: colorLayers v1 docs / foundation
+Step 8: colorLayers v1 docs / foundation
   whitening / skin smoothing / lip tint / cheek tint / layer order / opacity / mask / gradient を整理する
 
-Step 8: beauty_filter_asset_v1 foundation
+Step 9: beauty_filter_asset_v1 foundation
   IdealFace + landmarkGroups + correctionProfile + shapeWarpSettings + colorLayers を束ねる asset を定義する
 ```
 

@@ -114,7 +114,7 @@ expressionAttenuation falloff:
 
 ## 今後の authoring 方針
 
-`expressionFollow.rules[].landmarkFollowStrengths` は手作業だけで作るのではなく、IdealFace Authoring Tool が MP4 の表情別 frame group から自動生成する方針です。
+`expressionFollow.rules[].landmarkFollowStrengths` は手作業だけで作るのではなく、IdealFace Authoring Tool が MP4 の表情別 frame group から自動生成する方針です。詳細は [MP4 expression 3D analysis plan](mp4-expression-3d-analysis-plan.md) に整理します。
 
 ```text
 neutral 3D 478:

@@ -120,7 +120,7 @@ eye_area
 
 `landmarkGroups` は個別パーツ加工の命令ではありません。`expressionFollow` が表情時の追従制御を適用する対象範囲を参照したり、既存 `expressionAttenuation` が補正を弱める領域を参照したり、`colorLayers` が mask 対象の意味領域を参照したりするための index group 定義です。
 
-詳細仕様、JSON 例、Engine fallback、validation、Landmark Group Editor 方針は [landmarkGroups v1](landmark-groups-v1.md) に整理します。`expressionFollow v1` では `affectedLandmarkGroups` が対象範囲、`landmarkFollowStrengths` が landmark ごとの追従率です。詳細は [expressionFollow v1](expression-follow-v1.md) に整理します。`expressionAttenuation falloff v1` は fallback / 参考案です。Engine landmarkGroups asset loading foundation、Authoring Tool Landmark Group Editor、`ideal_face_asset_v1` optional `landmarkGroups` export は実装済みですが、`expressionFollow v1` 実装、`beauty_filter_asset_v1` foundation、Color Processing、Layer System は未実装です。
+詳細仕様、JSON 例、Engine fallback、validation、Landmark Group Editor 方針は [landmarkGroups v1](landmark-groups-v1.md) に整理します。`expressionFollow v1` では `affectedLandmarkGroups` が対象範囲、`landmarkFollowStrengths` が landmark ごとの追従率です。詳細は [expressionFollow v1](expression-follow-v1.md) に、MP4 からの自動生成方針は [MP4 expression 3D analysis plan](mp4-expression-3d-analysis-plan.md) に整理します。`expressionAttenuation falloff v1` は fallback / 参考案です。Engine landmarkGroups asset loading foundation、Authoring Tool Landmark Group Editor、`ideal_face_asset_v1` optional `landmarkGroups` export は実装済みですが、`expressionFollow v1` 実装、`beauty_filter_asset_v1` foundation、Color Processing、Layer System は未実装です。
 
 ### correctionProfile
 
@@ -370,6 +370,7 @@ IdealFace Authoring Tool:
 ```
 
 2D 動画 / 複数画像から IdealFace を作る処理は、リアルタイム処理ではなく IdealFace Authoring Tool の責務です。
+MP4 から expressionFollow 用の `landmarkFollowStrengths` を生成する処理も Authoring Tool の責務です。詳細は [MP4 expression 3D analysis plan](mp4-expression-3d-analysis-plan.md) に整理します。
 
 ### Layer Mask / Color Authoring Tool
 
@@ -406,16 +407,23 @@ Step 4: expressionFollow v1 docs direction
   MP4 の neutral 3D 478 / expression 3D 478 比較による自動生成方針を整理する
   -> 実装済み
 
-Step 5: expressionFollow v1 foundation
+Step 5: MP4 expression 3D analysis docs direction
+  IdealFace Authoring Tool 側の frame grouping、3D 478 比較、landmarkFollowStrengths 自動生成方針を整理する
+  -> 実装済み
+
+Step 6: MP4 expression 3D analysis foundation
+  Authoring Tool 側で analysis summary / JSON preview を生成する
+
+Step 7: expressionFollow v1 foundation
   Engine 側で expressionFollow を読み込み、landmark ごとの idealFollowStrength を CorrectionPlan に反映する
 
-Step 6: shapeWarpSettings v1 docs / foundation
+Step 8: shapeWarpSettings v1 docs / foundation
   WebGL mesh warp / smoothing / boundary / debug 設定を整理する
 
-Step 7: colorLayers v1 docs / foundation
+Step 9: colorLayers v1 docs / foundation
   whitening / skin smoothing / lip tint / cheek tint / layer order / opacity / mask / gradient を整理する
 
-Step 8: beauty_filter_asset_v1 foundation
+Step 10: beauty_filter_asset_v1 foundation
   IdealFace + landmarkGroups + correctionProfile + shapeWarpSettings + colorLayers を束ねる asset を定義する
 ```
 
@@ -438,6 +446,7 @@ Step 8: beauty_filter_asset_v1 foundation
 - ideal_face_asset_v1 optional landmarkGroups export
 - expressionAttenuation falloff v1 docs direction
 - expressionFollow v1 docs direction
+- MP4 expression 3D analysis plan docs direction
 
 まだ未実装:
 
