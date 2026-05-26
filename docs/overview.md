@@ -176,7 +176,7 @@ debug
 
 `currentCandidate` は Step 2-H preview に表示される現在の candidate です。`generationMethod` は `pose_aware_weighted_z_v1` で、478 landmarks 全文は出さず、summary と先頭数点 preview に留めます。`natural_v1` の 6 controlPoints は reference / projection debug 用であり、IdealFace 本体は `idealLandmarks3D` 478点です。
 
-legacy / debug と分類した helper には、今後の新機能を追加しません。現行 UI には Step 2-G v1 を旧方式として示す注記が残っていますが、active workflow は Step 2-I です。confidence debug、手動微調整 UI、保存 / import、correctionProfile / beauty_filter_asset_v1 export は Step 2-I active workflow 側で扱います。
+legacy / debug と分類した helper には、今後の新機能を追加しません。旧 Step 2-C〜2-G v1 の 5ポーズ方式は削除済みで、現在の UI では Step 2-I-C `pose_aware_weighted_z_v1` を現行の 3D candidate generation として扱います。confidence debug、手動微調整 UI、保存 / import、correctionProfile / beauty_filter_asset_v1 export は Step 2-I active workflow 側で扱います。
 
 Still planned:
 
