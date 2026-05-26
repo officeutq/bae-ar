@@ -14,7 +14,7 @@
 
 現在の課題は、`maxScanFrames` が 150 程度だと、正面基準、IdealFace 本体生成用、pose coverage 用、表情解析用を十分にカバーしきれないことです。一方で、単純に frame 数を増やすだけでは、mouthSmile など特定表情ばかり大量に集まる可能性があります。noFace / invalidLandmarks など使えない frame も混ざります。
 
-そのため v1 では、detailed scan した frame を用途候補へ分類し、用途 bucket ごとの targetCount を満たすまで採用します。
+そのため v1 では、detailed scan した frame を `frontReferenceCandidate` と用途 bucket へ分類します。`frontReferenceCandidate` は正面基準に良さそうな自動候補の提示であり、最終的な `frontReference` はユーザーが Frame Review Carousel / frame card で手動選択します。
 
 ## 基本方針
 
@@ -22,22 +22,27 @@
 MP4 を順に detailed scan する
   -> 各 frame の face detection / landmarks / blendshapes / pose / confidence を確認する
   -> 使えない frame は excluded
-  -> 使える frame を用途候補に分類する
-  -> 用途別 bucket に必要数まで採用する
+  -> 使える frame を frontReferenceCandidate と用途候補に分類する
+  -> frontReferenceCandidate は手動選択用の候補として提示する
+  -> idealFaceInference / expression groups は用途別 bucket に必要数まで採用する
   -> ある用途が targetCount に達したら、その用途では以後採用しない
   -> ただし、同じ frame が他の不足用途に使える場合は、その用途には採用できる
   -> 全用途が十分に満たされたら早期終了できる
 ```
 
-frame を単一カテゴリに分類しません。`frontReference` / `useForInference` / `expressionGroup` は用途タグとして重複可能です。`excluded` だけは排他的です。
+frame を単一カテゴリに分類しません。`frontReference` / `useForInference` / `expressionGroup` は用途タグとして重複可能です。`excluded` だけは排他的です。ただし `frontReference` は自動採用 bucket ではなく、手動選択される正面基準です。
 
 ある bucket が `targetCount` に達していても、frame 自体を完全に捨てるわけではありません。その用途には採用しないだけで、他の不足している用途に使えるなら採用します。
 
-## 用途 bucket
+## 正面基準候補と用途 bucket
 
 ```text
+frontReferenceCandidate:
+  自動で「正面基準に良さそう」と判定された候補
+
 frontReference:
-  正面姿勢・座標正規化・default face の土台候補
+  ユーザーが手動選択した正面基準 frame
+  正面姿勢・座標正規化・default face の土台に使う
 
 idealFaceInference:
   pose-aware 3D candidate generation に使う observation frame
@@ -66,11 +71,13 @@ eyeSquintRight:
 
 `idealFaceInference` は既存 UI の `useForInference` に相当します。将来的に UI 表示名は「IdealFace生成に使う」や「3D顔推定に使う」などへ見直す可能性があります。
 
-## 初期 target count 案
+`frontReferenceCandidate` は候補提示であり、自動採用 bucket ではありません。`frontReference` は候補や frame card を確認したユーザーが手動で選びます。
+
+## 初期 target count / recommended count 案
 
 ```text
 frontReference:
-  target 10
+  recommended 5〜10
 
 idealFaceInference:
   target 80
@@ -143,7 +150,12 @@ for (const frame of detailedScanFrames) {
     continue
   }
 
-  const usageCandidates = classifyUsageCandidates(frame)
+  const frontReferenceCandidate = isFrontReferenceCandidate(frame)
+  const usageCandidates = classifyAutoUsageBucketCandidates(frame)
+
+  if (frontReferenceCandidate) {
+    addFrameToFrontReferenceCandidates(frame)
+  }
 
   for (const usage of usageCandidates) {
     if (bucket[usage].count < bucket[usage].targetCount) {
@@ -161,24 +173,35 @@ for (const frame of detailedScanFrames) {
 
 ## 用途判定方針
 
-### frontReference
+### frontReferenceCandidate / frontReference
+
+```text
+frontReferenceCandidate:
+  顔検出がある
+  landmarks が 478
+  excluded ではない
+  正面に近い
+  pose が極端ではない
+  できれば表情が強すぎない
+
+frontReference:
+  ユーザーが手動選択した正面基準 frame
+  姿勢・座標正規化・default face の土台に使う
+```
+
+`frontReferenceCandidate` の候補 threshold:
 
 ```text
 正面に近い
 pose が極端ではない
 顔検出が安定している
 できれば表情が強すぎない
-```
-
-候補 threshold:
-
-```text
 abs(yaw) <= 15
 abs(pitch) <= 20
 abs(roll) <= 10
 ```
 
-ただし、表情が多少あっても `frontReference` として手動選択可能とする方針は維持します。
+ただし、これは候補提示であり、最終的な `frontReference` ではありません。表情が多少あっても、ユーザーが確認して `frontReference` として手動選択可能とする方針は維持します。
 
 ### idealFaceInference
 
@@ -232,10 +255,11 @@ v1 では、各 expression group は expression dropdown の `autoExpressionGrou
 
 ```text
 usage-aware sampling:
-  初期 frameUsage を作る
+  frontReferenceCandidate を提示し、idealFaceInference / expression groups の初期 frameUsage を作る
 
 Frame Review Carousel / frame card:
   ユーザーが frontReference / useForInference / expressionGroup / excluded を確認・修正する
+  frontReference はここで手動選択する
 
 最終 frameUsage:
   Step 2-I-B pose-aware inference dataset
@@ -257,12 +281,15 @@ usage-aware sampling は完全自動確定ではありません。自動初期�
     "sourceFrameCount": 500,
     "scannedFrameCount": 312,
     "earlyStopped": true,
+    "frontReference": {
+      "selectedCount": 6,
+      "candidateCount": 18,
+      "recommendedMin": 5,
+      "recommendedMax": 10,
+      "status": "ok",
+      "candidateFrameIdPreview": ["179", "182", "183"]
+    },
     "buckets": [
-      {
-        "id": "frontReference",
-        "targetCount": 10,
-        "selectedCount": 10
-      },
       {
         "id": "idealFaceInference",
         "targetCount": 80,
@@ -314,15 +341,16 @@ adaptive:
 
 v1 では `adaptive` を将来候補として整理します。実装時にはまず `standard` / `detailed` preset から始めてもよい方針です。
 
+`frontReference` は `buckets` には含めず、手動選択された正面基準の summary として別 section にします。
+
 ## 早期終了条件
 
-すべての required bucket が `targetCount` を満たした場合、scan を早期終了できます。ただし optional bucket が不足している場合は warning を出して続行するか、ユーザー選択にします。
+すべての required bucket が `targetCount` を満たした場合、scan を早期終了できます。ただし optional bucket が不足している場合は warning を出して続行するか、ユーザー選択にします。`frontReferenceCandidate` / `frontReference` は自動採用 bucket ではないため、早期終了の bucket target には含めません。
 
 required / optional の候補:
 
 ```text
 required:
-  frontReference
   idealFaceInference
 
 optional:
@@ -379,6 +407,7 @@ Beauty Studio:
 IdealFace Authoring Tool には、`usage-aware frame sampling v1` の最初の prototype として scan preset と usage bucket summary を追加済みです。
 
 - `quick` / `standard` / `detailed` で `maxScanFrames` を切り替えます。
-- `frontReference` / `idealFaceInference` / expression groups の `selectedCount` / `targetCount` / `status` を summary 表示します。
+- `frontReference` は自動 bucket から分離し、手動選択数 / 自動候補数 / recommended count / status を summary 表示します。
+- `idealFaceInference` / expression groups の `selectedCount` / `targetCount` / `status` を bucket summary 表示します。
 - JSON preview に `usageAwareSampling` summary を表示します。
 - 完全な adaptive sampling、bucket target に基づく採用制御、early stop、3D比較、`landmarkFollowStrengths` 自動生成は未実装です。

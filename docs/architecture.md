@@ -115,7 +115,7 @@ Current active workflow:
 MP4 input
   -> detailed scan
   -> Step 2-I-A frame selection
-       正面基準候補 / 推定に使うフレーム / 除外フレーム
+       正面基準の手動選択 / 推定に使うフレーム / 除外フレーム
   -> Step 2-I-B pose-aware inference dataset
   -> Step 2-I-C pose_aware_weighted_z_v1 candidate generation
        roll 補正
@@ -420,7 +420,7 @@ Current active workflow:
 MP4 input
   -> detailed scan
   -> Step 2-I-A frame selection
-       正面基準候補 / 推定に使うフレーム / 除外フレーム
+       正面基準の手動選択 / 推定に使うフレーム / 除外フレーム
   -> Step 2-I-B pose-aware inference dataset
   -> Step 2-I-C pose_aware_weighted_z_v1 candidate generation
        roll 補正

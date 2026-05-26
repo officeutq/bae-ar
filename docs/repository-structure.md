@@ -134,7 +134,7 @@ Current active workflow:
 MP4 input
   -> detailed scan
   -> Step 2-I-A frame selection
-       正面基準候補 / 推定に使うフレーム / 除外フレーム
+       正面基準の手動選択 / 推定に使うフレーム / 除外フレーム
   -> Step 2-I-B pose-aware inference dataset
   -> Step 2-I-C pose_aware_weighted_z_v1 candidate generation
        roll 補正
@@ -203,7 +203,7 @@ Layer Mask Authoring Tool を置く想定の場所です。
 - `correction-profile-v1.md`: `ideal_face_asset_v1` の optional `correctionProfile` 仕様、fallback、validation、`expressionFollow` / `expressionAttenuation`、CorrectionPlan との関係
 - `expression-follow-v1.md`: 表情ごとの `idealFollowStrength` / `landmarkFollowStrengths` と MP4 由来 3D 478 比較による自動生成方針
 - `mp4-expression-3d-analysis-plan.md`: IdealFace Authoring Tool が MP4 から neutral / expression 3D 478 を生成し、`landmarkFollowStrengths` を自動生成する計画
-- `usage-aware-frame-sampling-v1.md`: MP4 detailed scan / Step 2-I-A frame selection で用途別 bucket の targetCount を見ながら frame を採用する方針
+- `usage-aware-frame-sampling-v1.md`: MP4 detailed scan / Step 2-I-A frame selection で `frontReferenceCandidate` を提示し、用途別 bucket の targetCount を見ながら frame を採用する方針
 - `landmark-groups-v1.md`: `ideal_face_asset_v1` / `beauty_filter_asset_v1` で使う optional `landmarkGroups` 仕様、Engine fallback、validation、Landmark Group Editor 方針
 - `shape-warp-production-direction.md`: Shape Warp v1 debug prototype と production candidate の違い、WebGL mesh warp 方針、段階分け
 - `beauty-filter-asset-v1.md`: 最終フィルター / プリセットを `idealFace` / `landmarkGroups` / `correctionProfile` / `shapeWarpSettings` / `colorLayers` に分けつつ、1つの `beauty_filter_asset_v1` JSON として配布する方向性
@@ -212,7 +212,7 @@ Layer Mask Authoring Tool を置く想定の場所です。
 
 詳細スキャンは Step 2-I-A の frame selection に渡す observation source です。表示用抽出フレームは debug / metadata 確認用であり、active workflow の中心ではありません。
 
-`usage-aware frame sampling v1` では、`frontReference` / `idealFaceInference` / expression groups を用途 bucket として扱い、targetCount までバランスよく採用します。ある bucket が targetCount に達した場合、その用途では以後採用しませんが、他用途には引き続き使える方針です。詳細は [usage-aware frame sampling v1](usage-aware-frame-sampling-v1.md) を参照してください。
+`usage-aware frame sampling v1` では、`frontReferenceCandidate` を自動候補として提示し、`frontReference` はユーザーが手動選択する正面基準として扱います。`idealFaceInference` / expression groups は用途 bucket として扱い、targetCount までバランスよく採用します。ある bucket が targetCount に達した場合、その用途では以後採用しませんが、他用途には引き続き使える方針です。詳細は [usage-aware frame sampling v1](usage-aware-frame-sampling-v1.md) を参照してください。
 
 Current active workflow:
 
@@ -220,7 +220,7 @@ Current active workflow:
 MP4 input
   -> detailed scan
   -> Step 2-I-A frame selection
-       正面基準候補 / 推定に使うフレーム / 除外フレーム
+       正面基準の手動選択 / 推定に使うフレーム / 除外フレーム
   -> Step 2-I-B pose-aware inference dataset
   -> Step 2-I-C pose_aware_weighted_z_v1 candidate generation
        roll 補正

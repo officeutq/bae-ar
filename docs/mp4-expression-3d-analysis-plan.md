@@ -8,7 +8,7 @@
 
 `frontReference` / `useForInference` / `expressionGroup` は用途タグであり、重複可能です。`excluded` だけは排他的で、除外済み frame は正面基準 / 推定 / 表情解析の処理対象から外れます。neutral 自動分類は主導線から外し、neutralFrames は将来 `frontReferenceFrames` の中から表情が少ないものを選ぶ方針です。
 
-MP4 detailed scan / Step 2-I-A frame selection では、単純な均等抽出ではなく、用途別 bucket の充足状況を見ながら frame を採用する `usage-aware frame sampling v1` を導入する方針です。詳細は [usage-aware frame sampling v1](usage-aware-frame-sampling-v1.md) に整理します。
+MP4 detailed scan / Step 2-I-A frame selection では、単純な均等抽出ではなく、`frontReferenceCandidate` の提示と用途別 bucket の充足状況を見ながら frame を採用する `usage-aware frame sampling v1` を導入する方針です。`frontReferenceCandidate` は自動候補、`frontReference` はユーザーが手動選択する正面基準です。詳細は [usage-aware frame sampling v1](usage-aware-frame-sampling-v1.md) に整理します。
 
 neutral 3D 478 / expression 3D 478 の生成、3D 比較、`landmarkFollowStrengths` 自動生成、`expressionFollow` export、Engine 実装、Studio 実装、validator 変更はまだ行いません。
 
@@ -83,7 +83,11 @@ Step 2-I-A では、frame を単一カテゴリへ分類せず、用途タグと
 
 ```text
 frontReference:
-  正面姿勢・座標正規化・default face の土台に使う frame
+  ユーザーが手動選択した正面基準 frame
+  正面姿勢・座標正規化・default face の土台に使う
+
+frontReferenceCandidate:
+  自動で「正面基準に良さそう」と判定された候補 frame
 
 useForInference:
   pose-aware 3D 推定の observation frame として使う
@@ -101,7 +105,7 @@ excluded:
 
 Expression grouping は、`mouthPucker` / `jawOpen` / `mouthSmile` / `eyeBlink` / `eyeSquint` / `mixedExpression` などの自動判定を行い、`expressionGroup` dropdown の初期値として使います。`mixedExpression` / `pending` / `missingBlendshapes` は expressionFollow の単一表情 rule 生成には不向きですが、landmarks / pose が有効な frame は pose-aware 3D 推定に使える可能性があるため、自動除外にはしません。
 
-`usage-aware frame sampling v1` では、`frontReference` / `idealFaceInference` / expression groups ごとに targetCount を持つ bucket として扱います。ある bucket が targetCount に達した場合、その用途では以後採用しませんが、同じ frame が他の不足用途に使える場合は採用できます。これは完全自動確定ではなく、自動初期値 + Frame Review Carousel / frame card での手動確認・修正として扱います。
+`usage-aware frame sampling v1` では、`frontReference` を自動採用 bucket とは扱いません。`frontReferenceCandidate` を自動候補として提示し、ユーザーが Frame Review Carousel / frame card で `frontReference` を手動選択します。`idealFaceInference` / expression groups は targetCount を持つ bucket として扱い、ある bucket が targetCount に達した場合、その用途では以後採用しませんが、同じ frame が他の不足用途に使える場合は採用できます。
 
 ## neutral frame group
 
