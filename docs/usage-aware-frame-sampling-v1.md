@@ -339,13 +339,13 @@ adaptive:
   bucket target を満たすまで scan。ただし maxScanFrames 上限あり。
 ```
 
-v1 では `adaptive` を将来候補として整理します。実装時にはまず `standard` / `detailed` preset から始めてもよい方針です。
+v1 prototype では、scan preset とは別に adaptive sampling を ON/OFF できます。OFF の場合は従来通り preset の `maxScanFrames` まで scan します。ON の場合は bucket target に基づいて用途ごとに frame を採用し、required bucket が満たされた時点で早期終了できます。
 
 `frontReference` は `buckets` には含めず、手動選択された正面基準の summary として別 section にします。
 
 ## 早期終了条件
 
-すべての required bucket が `targetCount` を満たした場合、scan を早期終了できます。ただし optional bucket が不足している場合は warning を出して続行するか、ユーザー選択にします。`frontReferenceCandidate` / `frontReference` は自動採用 bucket ではないため、早期終了の bucket target には含めません。
+すべての required bucket が `targetCount` を満たした場合、scan を早期終了できます。v1 prototype では required bucket が満たされたら early stop し、optional bucket の不足は warning として表示します。`frontReferenceCandidate` / `frontReference` は自動採用 bucket ではないため、早期終了の bucket target には含めません。
 
 required / optional の候補:
 
@@ -389,8 +389,6 @@ Beauty Studio:
 - Engine 実装
 - Studio 実装
 - validator 変更
-- usage-aware sampling implementation
-- adaptive scan implementation
 - inferenceWeight implementation
 - neutral 3D 478 generation
 - expression 3D 478 generation
@@ -404,10 +402,14 @@ Beauty Studio:
 
 ## Prototype implementation note
 
-IdealFace Authoring Tool には、`usage-aware frame sampling v1` の最初の prototype として scan preset と usage bucket summary を追加済みです。
+IdealFace Authoring Tool には、`usage-aware frame sampling v1` の prototype として scan preset、usage bucket summary、adaptive scan / early stop を追加済みです。
 
 - `quick` / `standard` / `detailed` で `maxScanFrames` を切り替えます。
 - `frontReference` は自動 bucket から分離し、手動選択数 / 自動候補数 / recommended count / status を summary 表示します。
 - `idealFaceInference` / expression groups の `selectedCount` / `targetCount` / `status` を bucket summary 表示します。
-- JSON preview に `usageAwareSampling` summary を表示します。
-- 完全な adaptive sampling、bucket target に基づく採用制御、early stop、3D比較、`landmarkFollowStrengths` 自動生成は未実装です。
+- adaptive sampling を ON にすると、bucket が targetCount に達した用途にはそれ以上採用せず、同じ frame が他の不足用途に使える場合はそちらへ採用できます。
+- v1 の required bucket は `idealFaceInference` です。`idealFaceInference` が target 80 に達した場合、`earlyStopReason: "required_buckets_satisfied"` で early stop できます。
+- expression groups は optional bucket として扱い、不足時は warning を表示します。
+- `frontReferenceCandidate` / `frontReference` は early stop 条件に含めません。`frontReference` は引き続きユーザーが手動選択します。
+- JSON preview に `adaptiveSamplingImplemented` / `adaptiveSamplingEnabled` / `earlyStopped` / `earlyStopReason` を含む `usageAwareSampling` summary を表示します。
+- 3D比較、`landmarkFollowStrengths` 自動生成、`expressionFollow` export、Engine 実装、Studio 実装は未実装です。

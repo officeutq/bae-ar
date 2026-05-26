@@ -125,6 +125,8 @@ const USAGE_BUCKET_TARGETS = {
   eyeSquintLeft: 10,
   eyeSquintRight: 10,
 } as const
+const REQUIRED_USAGE_BUCKET_IDS = ["idealFaceInference"] as const
+const OPTIONAL_USAGE_BUCKET_IDS = [...EXPRESSION_GROUP_IDS] as const
 const FRAME_EXPRESSION_GROUP_IDS = [
   "none",
   ...EXPRESSION_GROUP_IDS,
@@ -216,6 +218,8 @@ type UsageBucketId = keyof typeof USAGE_BUCKET_TARGETS
 
 type UsageBucketStatus = "ok" | "insufficient"
 
+type EarlyStopReason = "required_buckets_satisfied"
+
 type ExcludedReason = (typeof EXCLUDED_REASON_IDS)[number]
 
 type WarningReason = (typeof WARNING_REASON_IDS)[number]
@@ -229,6 +233,8 @@ interface AuthoringFrameUsage {
   excluded: boolean
   excludedReason?: ExcludedReason
   warningReasons: WarningReason[]
+  adaptiveBucketAdoptions: UsageBucketId[]
+  adaptiveSkippedBuckets: UsageBucketId[]
 }
 
 type PoseAwareInferenceDatasetStatus =
@@ -565,6 +571,9 @@ interface DetailedScanSummary {
   analyzedFrameCount: number
   detectedFrameCount: number
   candidateSourceFrameCount: number
+  adaptiveSamplingEnabled: boolean
+  earlyStopped: boolean
+  earlyStopReason: EarlyStopReason | null
 }
 
 type ExpressionGroupId = (typeof EXPRESSION_GROUP_IDS)[number]
@@ -612,6 +621,7 @@ interface FrameUsageSummary {
   frontReferenceCount: number
   useForInferenceCount: number
   expressionGroupCounts: Record<FrameExpressionGroup, number>
+  adaptiveBucketAdoptionCounts: Record<UsageBucketId, number>
   excludedCount: number
   excludedReasonCounts: Record<ExcludedReason, number>
   warningReasonCounts: Record<WarningReason, number>
@@ -624,6 +634,8 @@ interface FrameUsageSummary {
     excluded: boolean
     excludedReason?: ExcludedReason
     warningReasons: WarningReason[]
+    adaptiveBucketAdoptions: UsageBucketId[]
+    adaptiveSkippedBuckets: UsageBucketId[]
   }>
 }
 
@@ -642,6 +654,17 @@ interface UsageBucketSummary {
   selectedCount: number
   status: UsageBucketStatus
   priority: "required" | "optional"
+  skippedAfterTargetCount: number
+}
+
+interface AdaptiveScanMetrics {
+  enabled: boolean
+  selectedCounts: Record<UsageBucketId, number>
+  skippedAfterTargetCount: Record<UsageBucketId, number>
+  earlyStopped: boolean
+  earlyStopReason: EarlyStopReason | null
+  scannedFrameCount: number
+  maxScanFrames: number
 }
 
 interface VideoSourceState {
@@ -664,6 +687,8 @@ let faceLandmarker: FaceLandmarker | null = null
 let faceLandmarkerInitialization: Promise<FaceLandmarker> | null = null
 let authoringFrameUsages: Record<string, AuthoringFrameUsage> = {}
 let scanPreset: ScanPreset = "standard"
+let adaptiveSamplingEnabled = false
+let lastAdaptiveScanMetrics: AdaptiveScanMetrics | null = null
 let frameReviewIndex = 0
 let idealLandmarks3DCandidateResult: IdealLandmarks3DCandidateResult =
   createInitialIdealLandmarks3DCandidateResult()
@@ -863,6 +888,35 @@ function getScanSettings(preset: ScanPreset = scanPreset): {
   }
 }
 
+function createUsageBucketCountRecord(): Record<UsageBucketId, number> {
+  return (Object.keys(USAGE_BUCKET_TARGETS) as UsageBucketId[]).reduce(
+    (record, id) => ({
+      ...record,
+      [id]: 0,
+    }),
+    {} as Record<UsageBucketId, number>,
+  )
+}
+
+function createAdaptiveScanMetrics(
+  enabled: boolean,
+  maxScanFrames: number,
+): AdaptiveScanMetrics {
+  return {
+    enabled,
+    selectedCounts: createUsageBucketCountRecord(),
+    skippedAfterTargetCount: createUsageBucketCountRecord(),
+    earlyStopped: false,
+    earlyStopReason: null,
+    scannedFrameCount: 0,
+    maxScanFrames,
+  }
+}
+
+function getSkippedAfterTargetCount(id: UsageBucketId): number {
+  return lastAdaptiveScanMetrics?.skippedAfterTargetCount[id] ?? 0
+}
+
 function isScanPreset(value: string | undefined): value is ScanPreset {
   return (
     value === "quick" || value === "standard" || value === "detailed"
@@ -895,6 +949,9 @@ function createEmptyDetailedScanSummary(): DetailedScanSummary {
     analyzedFrameCount: 0,
     detectedFrameCount: 0,
     candidateSourceFrameCount: 0,
+    adaptiveSamplingEnabled,
+    earlyStopped: false,
+    earlyStopReason: null,
   }
 }
 
@@ -1022,6 +1079,7 @@ function scoreDirectionalCandidate(
 
 function resetAuthoringFrameUsages(): void {
   authoringFrameUsages = {}
+  lastAdaptiveScanMetrics = null
   frameReviewIndex = 0
 }
 
@@ -2393,7 +2451,84 @@ function createDefaultAuthoringFrameUsage(
     excluded,
     excludedReason,
     warningReasons,
+    adaptiveBucketAdoptions: [],
+    adaptiveSkippedBuckets: [],
   }
+}
+
+function isUsageBucketSatisfied(
+  metrics: AdaptiveScanMetrics,
+  id: UsageBucketId,
+): boolean {
+  return metrics.selectedCounts[id] >= USAGE_BUCKET_TARGETS[id]
+}
+
+function adoptUsageBucketForAdaptiveScan(
+  usage: AuthoringFrameUsage,
+  metrics: AdaptiveScanMetrics,
+  id: UsageBucketId,
+): void {
+  if (isUsageBucketSatisfied(metrics, id)) {
+    metrics.skippedAfterTargetCount[id] += 1
+    usage.adaptiveSkippedBuckets = addUsageBucketId(
+      usage.adaptiveSkippedBuckets,
+      id,
+    )
+    return
+  }
+
+  metrics.selectedCounts[id] += 1
+  usage.adaptiveBucketAdoptions = addUsageBucketId(
+    usage.adaptiveBucketAdoptions,
+    id,
+  )
+
+  if (id === "idealFaceInference") {
+    usage.useForInference = true
+  }
+}
+
+function applyAdaptiveSamplingToFrame(
+  frame: ExtractedVideoFrame,
+  metrics: AdaptiveScanMetrics,
+): void {
+  const usage = createDefaultAuthoringFrameUsage(frame)
+
+  if (usage.excluded) {
+    authoringFrameUsages = {
+      ...authoringFrameUsages,
+      [usage.frameId]: usage,
+    }
+    return
+  }
+
+  usage.useForInference = false
+  adoptUsageBucketForAdaptiveScan(usage, metrics, "idealFaceInference")
+
+  const expressionUsageBucketId = toExpressionUsageBucketId(
+    usage.autoExpressionGroup,
+  )
+
+  if (expressionUsageBucketId) {
+    adoptUsageBucketForAdaptiveScan(
+      usage,
+      metrics,
+      expressionUsageBucketId,
+    )
+  }
+
+  authoringFrameUsages = {
+    ...authoringFrameUsages,
+    [usage.frameId]: usage,
+  }
+}
+
+function areRequiredUsageBucketsSatisfied(
+  metrics: AdaptiveScanMetrics,
+): boolean {
+  return REQUIRED_USAGE_BUCKET_IDS.every((id) =>
+    isUsageBucketSatisfied(metrics, id),
+  )
 }
 
 function getAuthoringFrameUsage(
@@ -2443,6 +2578,34 @@ function setAuthoringFrameUsage(
   }
 }
 
+function addUsageBucketId(
+  bucketIds: UsageBucketId[],
+  bucketId: UsageBucketId,
+): UsageBucketId[] {
+  return bucketIds.includes(bucketId) ? bucketIds : [...bucketIds, bucketId]
+}
+
+function removeUsageBucketId(
+  bucketIds: UsageBucketId[],
+  bucketId: UsageBucketId,
+): UsageBucketId[] {
+  return bucketIds.filter((id) => id !== bucketId)
+}
+
+function removeExpressionUsageBucketIds(
+  bucketIds: UsageBucketId[],
+): UsageBucketId[] {
+  return bucketIds.filter((id) => id === "idealFaceInference")
+}
+
+function toExpressionUsageBucketId(
+  expressionGroup: FrameExpressionGroup,
+): UsageBucketId | null {
+  return EXPRESSION_GROUP_IDS.includes(expressionGroup as ExpressionGroupId)
+    ? (expressionGroup as ExpressionGroupId)
+    : null
+}
+
 function setAuthoringFrameFrontReference(
   frameId: string,
   frontReference: boolean,
@@ -2466,7 +2629,18 @@ function setAuthoringFrameUseForInference(
     return
   }
 
-  setAuthoringFrameUsage(frameId, { useForInference })
+  setAuthoringFrameUsage(frameId, {
+    useForInference,
+    adaptiveBucketAdoptions: useForInference
+      ? addUsageBucketId(
+          usage.adaptiveBucketAdoptions,
+          "idealFaceInference",
+        )
+      : removeUsageBucketId(
+          usage.adaptiveBucketAdoptions,
+          "idealFaceInference",
+        ),
+  })
 }
 
 function isFrameExpressionGroup(
@@ -2485,7 +2659,18 @@ function setAuthoringFrameExpressionGroup(
     return
   }
 
-  setAuthoringFrameUsage(frameId, { expressionGroup })
+  const expressionUsageBucketId = toExpressionUsageBucketId(expressionGroup)
+  const adaptiveBucketAdoptions = expressionUsageBucketId
+    ? addUsageBucketId(
+        removeExpressionUsageBucketIds(usage.adaptiveBucketAdoptions),
+        expressionUsageBucketId,
+      )
+    : removeExpressionUsageBucketIds(usage.adaptiveBucketAdoptions)
+
+  setAuthoringFrameUsage(frameId, {
+    expressionGroup,
+    adaptiveBucketAdoptions,
+  })
 }
 
 function excludeAuthoringFrame(frameId: string): void {
@@ -2495,6 +2680,8 @@ function excludeAuthoringFrame(frameId: string): void {
     expressionGroup: "none",
     excluded: true,
     excludedReason: "manual",
+    adaptiveBucketAdoptions: [],
+    adaptiveSkippedBuckets: [],
   })
 }
 
@@ -2512,6 +2699,13 @@ function restoreAuthoringFrame(frameId: string): void {
     excluded: false,
     excludedReason: undefined,
     warningReasons: usage.warningReasons,
+    adaptiveBucketAdoptions: [
+      "idealFaceInference",
+      ...([toExpressionUsageBucketId(usage.autoExpressionGroup)].filter(
+        (id): id is ExpressionGroupId => id !== null,
+      )),
+    ],
+    adaptiveSkippedBuckets: [],
   })
 }
 
@@ -2583,6 +2777,7 @@ function createWarningReasonCountRecord(): Record<WarningReason, number> {
 function getFrameUsageSummary(): FrameUsageSummary {
   const frames = getDetailedScanFrames()
   const expressionGroupCounts = createFrameExpressionGroupCountRecord()
+  const adaptiveBucketAdoptionCounts = createUsageBucketCountRecord()
   const excludedReasonCounts = createExcludedReasonCountRecord()
   const warningReasonCounts = createWarningReasonCountRecord()
   let frontReferenceCount = 0
@@ -2611,6 +2806,9 @@ function getFrameUsageSummary(): FrameUsageSummary {
     }
 
     expressionGroupCounts[usage.expressionGroup] += 1
+    usage.adaptiveBucketAdoptions.forEach((id) => {
+      adaptiveBucketAdoptionCounts[id] += 1
+    })
   })
 
   return {
@@ -2618,6 +2816,7 @@ function getFrameUsageSummary(): FrameUsageSummary {
     frontReferenceCount,
     useForInferenceCount,
     expressionGroupCounts,
+    adaptiveBucketAdoptionCounts,
     excludedCount,
     excludedReasonCounts,
     warningReasonCounts,
@@ -2633,6 +2832,8 @@ function getFrameUsageSummary(): FrameUsageSummary {
         excluded: usage.excluded,
         excludedReason: usage.excludedReason,
         warningReasons: usage.warningReasons,
+        adaptiveBucketAdoptions: usage.adaptiveBucketAdoptions,
+        adaptiveSkippedBuckets: usage.adaptiveSkippedBuckets,
       }
     }),
   }
@@ -2704,6 +2905,10 @@ function getUsageBucketSelectedCount(
   id: UsageBucketId,
   frameUsageSummary: FrameUsageSummary,
 ): number {
+  if (lastAdaptiveScanMetrics?.enabled) {
+    return frameUsageSummary.adaptiveBucketAdoptionCounts[id]
+  }
+
   if (id === "idealFaceInference") {
     return frameUsageSummary.useForInferenceCount
   }
@@ -2724,6 +2929,7 @@ function getUsageBucketSummary(): UsageBucketSummary[] {
       selectedCount,
       status: selectedCount >= targetCount ? "ok" : "insufficient",
       priority: id === "idealFaceInference" ? "required" : "optional",
+      skippedAfterTargetCount: getSkippedAfterTargetCount(id),
     }
   })
 }
@@ -2743,6 +2949,10 @@ function buildFrontReferenceWarnings(
   if (summary.candidateCount === 0) {
     warnings.push(
       "正面基準候補が見つかりません。動画内に正面に近い frame が少ない可能性があります。",
+    )
+  } else if (summary.candidateCount < summary.recommendedMin) {
+    warnings.push(
+      `frontReferenceCandidate が少なめです（候補 ${summary.candidateCount} / 推奨 ${recommendedLabel}）。frontReference は手動選択のまま維持してください。`,
     )
   }
 
@@ -4649,6 +4859,8 @@ function renderFrameReviewCarousel(activeFrames: ExtractedVideoFrame[]): string 
   const frameId = getFrameIdFromFrame(frame)
   const warningText =
     usage.warningReasons.length > 0 ? usage.warningReasons.join(", ") : "なし"
+  const adoptedText = usage.adaptiveBucketAdoptions.join(", ") || "なし"
+  const skippedText = usage.adaptiveSkippedBuckets.join(", ") || "なし"
   const excludedReasonText = usage.excludedReason ?? "なし"
   const frontReferenceWarning =
     usage.frontReference && usage.warningReasons.includes("poseOutOfRange")
@@ -4737,6 +4949,14 @@ function renderFrameReviewCarousel(activeFrames: ExtractedVideoFrame[]): string 
               <dd class="${usage.warningReasons.length > 0 ? "frame-usage-warning" : ""}">${escapeHtml(warningText)}</dd>
             </div>
             <div>
+              <dt>adaptive adopted</dt>
+              <dd>${escapeHtml(adoptedText)}</dd>
+            </div>
+            <div>
+              <dt>adaptive skipped</dt>
+              <dd>${escapeHtml(skippedText)}</dd>
+            </div>
+            <div>
               <dt>除外理由</dt>
               <dd>${escapeHtml(excludedReasonText)}</dd>
             </div>
@@ -4771,6 +4991,8 @@ function renderAuthoringFrameCard(frame: ExtractedVideoFrame): string {
   const landmarksCount = analysis?.landmarks.length ?? 0
   const frameId = getFrameIdFromFrame(frame)
   const warningText = usage.warningReasons.join(", ")
+  const adoptedText = usage.adaptiveBucketAdoptions.join(", ") || "なし"
+  const skippedText = usage.adaptiveSkippedBuckets.join(", ") || "なし"
   const frontReferenceWarning =
     usage.frontReference && usage.warningReasons.includes("poseOutOfRange")
       ? "正面基準には不向きな pose です。"
@@ -4832,6 +5054,8 @@ function renderAuthoringFrameCard(frame: ExtractedVideoFrame): string {
               : ""
           }
           <span>自動判定: ${escapeHtml(usage.autoExpressionGroup)}</span>
+          <span>adaptive adopted: ${escapeHtml(adoptedText)}</span>
+          <span>adaptive skipped: ${escapeHtml(skippedText)}</span>
           <span>pose: yaw ${formatNumber(pose.yaw)} / pitch ${formatNumber(pose.pitch)} / roll ${formatNumber(pose.roll)}</span>
           <span>landmarks 数: ${landmarksCount}</span>
           <span>score: ${formatPoseAwareScore(getPoseAwareCandidateScore(frame.index))}</span>
@@ -4874,15 +5098,39 @@ function renderExcludedAuthoringFrameCard(frame: ExtractedVideoFrame): string {
 function renderUsageBucketSummaryPanel(): string {
   const frontReference = getFrontReferenceSummary()
   const buckets = getUsageBucketSummary()
+  const scanSummary = getDetailedScanSummary()
   const warnings = [
     ...buildFrontReferenceWarnings(frontReference),
     ...buildUsageBucketWarnings(buckets),
   ]
   const recommendedLabel = `${frontReference.recommendedMin}〜${frontReference.recommendedMax}`
+  const modeLabel = scanSummary.adaptiveSamplingEnabled ? "adaptive" : "preset"
 
   return `
     <div class="usage-bucket-summary">
       <strong>usage-aware sampling summary</strong>
+      <dl class="usage-bucket-status-list">
+        <div>
+          <dt>mode</dt>
+          <dd>${modeLabel}</dd>
+        </div>
+        <div>
+          <dt>scanned</dt>
+          <dd>${scanSummary.scannedFrameCount} / ${scanSummary.maxScanFrames}</dd>
+        </div>
+        <div>
+          <dt>adaptive sampling</dt>
+          <dd>${scanSummary.adaptiveSamplingEnabled ? "enabled" : "disabled"}</dd>
+        </div>
+        <div>
+          <dt>early stopped</dt>
+          <dd>${scanSummary.earlyStopped ? "yes" : "no"}</dd>
+        </div>
+        <div>
+          <dt>reason</dt>
+          <dd>${scanSummary.earlyStopReason ?? "なし"}</dd>
+        </div>
+      </dl>
       <div class="usage-bucket-grid">
         <div class="usage-bucket-item usage-bucket-item-${frontReference.status} usage-bucket-item-required">
           <span>正面基準</span>
@@ -4898,7 +5146,7 @@ function renderUsageBucketSummaryPanel(): string {
               <div class="usage-bucket-item usage-bucket-item-${bucket.status} usage-bucket-item-${bucket.priority}">
                 <span>${bucket.id}</span>
                 <strong>${bucket.selectedCount} / ${bucket.targetCount}</strong>
-                <em>${bucket.status}</em>
+                <em>${bucket.status} / skipped ${bucket.skippedAfterTargetCount}</em>
               </div>
             `,
           )
@@ -4913,7 +5161,7 @@ function renderUsageBucketSummaryPanel(): string {
                 .join("")}
             </ul>`
       }
-      <p class="usage-bucket-note">summary only: adaptive sampling / early stop / 3D comparison / landmarkFollowStrengths auto generation は未実装です。</p>
+      <p class="usage-bucket-note">adaptive sampling / early stop は prototype 実装済みです。3D comparison / landmarkFollowStrengths auto generation は未実装です。</p>
     </div>
   `
 }
@@ -5460,28 +5708,41 @@ function drawPointCloudPreviewGuide(
 
 function renderScanPresetControl(disabled: boolean): string {
   const scanSettings = getScanSettings()
+  const modeLabel = adaptiveSamplingEnabled ? "adaptive" : "preset"
 
   return `
-    <div class="scan-preset-control" role="radiogroup" aria-label="スキャン精度">
-      <span>スキャン精度</span>
-      ${(Object.keys(SCAN_PRESET_MAX_SCAN_FRAMES) as ScanPreset[])
-        .map(
-          (preset) => `
-            <label>
-              <input
-                type="radio"
-                name="scan-preset"
-                value="${preset}"
-                data-scan-preset="${preset}"
-                ${scanPreset === preset ? "checked" : ""}
-                ${disabled ? "disabled" : ""}
-              />
-              ${preset}
-            </label>
-          `,
-        )
-        .join("")}
-      <strong>maxScanFrames: ${scanSettings.maxScanFrames}</strong>
+    <div class="scan-controls">
+      <div class="scan-preset-control" role="radiogroup" aria-label="スキャン精度">
+        <span>スキャン精度</span>
+        ${(Object.keys(SCAN_PRESET_MAX_SCAN_FRAMES) as ScanPreset[])
+          .map(
+            (preset) => `
+              <label>
+                <input
+                  type="radio"
+                  name="scan-preset"
+                  value="${preset}"
+                  data-scan-preset="${preset}"
+                  ${scanPreset === preset ? "checked" : ""}
+                  ${disabled ? "disabled" : ""}
+                />
+                ${preset}
+              </label>
+            `,
+          )
+          .join("")}
+        <strong>maxScanFrames: ${scanSettings.maxScanFrames}</strong>
+      </div>
+      <label class="adaptive-sampling-toggle">
+        <input
+          type="checkbox"
+          data-adaptive-sampling-enabled
+          ${adaptiveSamplingEnabled ? "checked" : ""}
+          ${disabled ? "disabled" : ""}
+        />
+        用途がそろったら早期終了する
+        <strong>mode: ${modeLabel}</strong>
+      </label>
     </div>
   `
 }
@@ -5543,6 +5804,18 @@ function renderAnalysisPanel(): string {
         <div>
           <dt>候補抽出対象</dt>
           <dd>${summary.candidateSourceFrameCount}</dd>
+        </div>
+        <div>
+          <dt>adaptive sampling</dt>
+          <dd>${summary.adaptiveSamplingEnabled ? "enabled" : "disabled"}</dd>
+        </div>
+        <div>
+          <dt>early stopped</dt>
+          <dd>${summary.earlyStopped ? "yes" : "no"}</dd>
+        </div>
+        <div>
+          <dt>early stop reason</dt>
+          <dd>${summary.earlyStopReason ?? "なし"}</dd>
         </div>
       </dl>
       <p class="candidate-note">詳細スキャン済みの有効フレームは Step 2-I の正面基準の手動選択 / 推定に使うフレーム / 除外フレームとして扱います。</p>
@@ -5676,6 +5949,9 @@ function toScanSummaryPreview(scanSummary: DetailedScanSummary): unknown {
     analyzedFrameCount: scanSummary.analyzedFrameCount,
     detectedFrameCount: scanSummary.detectedFrameCount,
     candidateSourceFrameCount: scanSummary.candidateSourceFrameCount,
+    adaptiveSamplingEnabled: scanSummary.adaptiveSamplingEnabled,
+    earlyStopped: scanSummary.earlyStopped,
+    earlyStopReason: scanSummary.earlyStopReason,
   }
 }
 
@@ -5684,11 +5960,15 @@ function toUsageAwareSamplingPreview(): unknown {
   const frontReference = getFrontReferenceSummary()
 
   return {
-    status: "summary_only",
+    status: "prototype",
     preset: scanSummary.scanPreset,
+    mode: scanSummary.adaptiveSamplingEnabled ? "adaptive" : "preset",
     maxScanFrames: scanSummary.maxScanFrames,
-    adaptiveSamplingImplemented: false,
-    earlyStopped: false,
+    scannedFrameCount: scanSummary.scannedFrameCount,
+    adaptiveSamplingImplemented: true,
+    adaptiveSamplingEnabled: scanSummary.adaptiveSamplingEnabled,
+    earlyStopped: scanSummary.earlyStopped,
+    earlyStopReason: scanSummary.earlyStopReason,
     frontReference: {
       selectedCount: frontReference.selectedCount,
       candidateCount: frontReference.candidateCount,
@@ -5702,7 +5982,11 @@ function toUsageAwareSamplingPreview(): unknown {
       targetCount: bucket.targetCount,
       selectedCount: bucket.selectedCount,
       status: bucket.status,
+      priority: bucket.priority,
+      skippedAfterTargetCount: bucket.skippedAfterTargetCount,
     })),
+    requiredBuckets: [...REQUIRED_USAGE_BUCKET_IDS],
+    optionalBuckets: [...OPTIONAL_USAGE_BUCKET_IDS],
   }
 }
 
@@ -5910,6 +6194,7 @@ function buildAuthoringDebugPreview(): unknown {
       scanSettings: {
         preset: scanSummary.scanPreset,
         maxScanFrames: scanSummary.maxScanFrames,
+        adaptiveSamplingEnabled: scanSummary.adaptiveSamplingEnabled,
       },
       videoSource: toVideoSourceDebugPreview(analysisSummary),
       scanSummary: toScanSummaryPreview(scanSummary),
@@ -5961,6 +6246,27 @@ function attachScanPresetHandler(): void {
         }
         render()
       })
+    })
+}
+
+function attachAdaptiveSamplingHandler(): void {
+  document
+    .querySelector<HTMLInputElement>("[data-adaptive-sampling-enabled]")
+    ?.addEventListener("change", (event) => {
+      const input = event.currentTarget as HTMLInputElement
+      adaptiveSamplingEnabled = input.checked
+
+      if (
+        videoSource &&
+        videoSource.scanSummary.scannedFrameCount === 0 &&
+        videoSource.scanSummary.analyzedFrameCount === 0
+      ) {
+        updateVideoSource({
+          scanSummary: createEmptyDetailedScanSummary(),
+        })
+      }
+
+      render()
     })
 }
 
@@ -6451,11 +6757,38 @@ interface DetailedScanResult {
   detailedScanFrames: ExtractedVideoFrame[]
 }
 
+function buildDetailedScanSummary(
+  scanSettings: ReturnType<typeof getScanSettings>,
+  intervalSec: number,
+  scannedFrames: ExtractedVideoFrame[],
+  detectedFrameCount: number,
+  metrics: AdaptiveScanMetrics,
+): DetailedScanSummary {
+  return {
+    scanPreset: scanSettings.preset,
+    scanIntervalSec: intervalSec,
+    maxScanFrames: scanSettings.maxScanFrames,
+    scannedFrameCount: scannedFrames.length,
+    analyzedFrameCount: scannedFrames.length,
+    detectedFrameCount,
+    candidateSourceFrameCount:
+      getCandidateSourceFramesFromFrames(scannedFrames).length,
+    adaptiveSamplingEnabled: metrics.enabled,
+    earlyStopped: metrics.earlyStopped,
+    earlyStopReason: metrics.earlyStopReason,
+  }
+}
+
 async function scanVideoForPoseAwareFrames(
   video: HTMLVideoElement,
   landmarker: FaceLandmarker,
 ): Promise<DetailedScanResult> {
   const scanSettings = getScanSettings()
+  const adaptiveMetrics = createAdaptiveScanMetrics(
+    adaptiveSamplingEnabled,
+    scanSettings.maxScanFrames,
+  )
+  lastAdaptiveScanMetrics = adaptiveMetrics
   const scanPlan = getDetailedScanPlan(
     video.duration,
     scanSettings.maxScanFrames,
@@ -6513,39 +6846,44 @@ async function scanVideoForPoseAwareFrames(
       startedAt,
     )
     scannedFrames.push(frame)
+    adaptiveMetrics.scannedFrameCount = scannedFrames.length
 
     if (frame.analysis?.detected) {
       detectedFrameCount += 1
     }
 
+    if (adaptiveMetrics.enabled) {
+      applyAdaptiveSamplingToFrame(frame, adaptiveMetrics)
+      if (areRequiredUsageBucketsSatisfied(adaptiveMetrics)) {
+        adaptiveMetrics.earlyStopped = true
+        adaptiveMetrics.earlyStopReason = "required_buckets_satisfied"
+      }
+    }
+
     updateVideoSource({
       detailedScanFrames: [...scannedFrames],
-      scanSummary: {
-        scanPreset: scanSettings.preset,
-        scanIntervalSec: scanPlan.intervalSec,
-        maxScanFrames: scanSettings.maxScanFrames,
-        scannedFrameCount: scanPlan.timestamps.length,
-        analyzedFrameCount: scannedFrames.length,
+      scanSummary: buildDetailedScanSummary(
+        scanSettings,
+        scanPlan.intervalSec,
+        scannedFrames,
         detectedFrameCount,
-        candidateSourceFrameCount: getCandidateSourceFramesFromFrames(
-          scannedFrames,
-        ).length,
-      },
+        adaptiveMetrics,
+      ),
     })
     render()
+
+    if (adaptiveMetrics.earlyStopped) {
+      break
+    }
   }
 
-  const candidateSourceFrames =
-    getCandidateSourceFramesFromFrames(scannedFrames)
-  const scanSummary: DetailedScanSummary = {
-    scanPreset: scanSettings.preset,
-    scanIntervalSec: scanPlan.intervalSec,
-    maxScanFrames: scanSettings.maxScanFrames,
-    scannedFrameCount: scanPlan.timestamps.length,
-    analyzedFrameCount: scannedFrames.length,
+  const scanSummary = buildDetailedScanSummary(
+    scanSettings,
+    scanPlan.intervalSec,
+    scannedFrames,
     detectedFrameCount,
-    candidateSourceFrameCount: candidateSourceFrames.length,
-  }
+    adaptiveMetrics,
+  )
 
   return {
     scanSummary,
@@ -7071,6 +7409,7 @@ function render(): void {
   attachVideoInputHandler()
   attachAnalysisHandler()
   attachScanPresetHandler()
+  attachAdaptiveSamplingHandler()
   attachPoseAwareFrameSelectionHandler()
   attachIdealLandmarks3DCandidateHandler()
   attachLandmarkGroupEditorHandler()
@@ -7333,12 +7672,19 @@ style.textContent = `
     font-weight: 700;
   }
 
-  .scan-preset-control {
+  .scan-controls {
+    display: grid;
+    gap: 8px;
+    margin: 0 0 12px;
+  }
+
+  .scan-preset-control,
+  .adaptive-sampling-toggle {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: 8px;
-    margin: 0 0 12px;
+    margin: 0;
     border: 1px solid #ccd8d3;
     border-radius: 8px;
     background: #ffffff;
@@ -7348,7 +7694,8 @@ style.textContent = `
     font-weight: 800;
   }
 
-  .scan-preset-control label {
+  .scan-preset-control label,
+  .adaptive-sampling-toggle {
     display: inline-flex;
     align-items: center;
     gap: 5px;
@@ -7360,6 +7707,11 @@ style.textContent = `
   }
 
   .scan-preset-control strong {
+    margin-left: auto;
+    color: #27594c;
+  }
+
+  .adaptive-sampling-toggle strong {
     margin-left: auto;
     color: #27594c;
   }
@@ -7497,6 +7849,10 @@ style.textContent = `
   .usage-bucket-summary {
     display: grid;
     gap: 8px;
+  }
+
+  .usage-bucket-status-list {
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   }
 
   .usage-bucket-grid {

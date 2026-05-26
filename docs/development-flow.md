@@ -10,7 +10,7 @@ BAE AR は、Engine Runtime、Beauty Studio、IdealFace Authoring Tool、Layer M
 - Studio から Engine Runtime の内部実装へ直接依存しません。
 - IdealFace Authoring Tool は Step 2-I-A/B/C と Step 2-H まで実装済みです。
 - IdealFace Authoring Tool の Step 2-I-A では、`frontReference` / `useForInference` / `expressionGroup` を重複可能な用途タグとして扱い、`excluded` だけを排他的に扱います。
-- MP4 detailed scan / Step 2-I-A frame selection では、`usage-aware frame sampling v1` として `frontReferenceCandidate` を提示し、`idealFaceInference` / expression groups は用途別 bucket の targetCount を見ながら frame を採用する方針です。`frontReference` は自動 bucket ではなく、ユーザーが手動選択する正面基準です。
+- MP4 detailed scan / Step 2-I-A frame selection では、`usage-aware frame sampling v1` として `frontReferenceCandidate` を提示し、`idealFaceInference` / expression groups は用途別 bucket の targetCount を見ながら frame を採用します。v1 prototype の adaptive sampling では required bucket の `idealFaceInference` が満たされたら early stop できます。expression groups は optional bucket として不足 warning を表示します。`frontReference` は自動 bucket ではなく、ユーザーが手動選択する正面基準で、early stop 条件には含めません。
 - Step 2-I-A では、一覧カードに加えて Frame Review Carousel で1フレームを大きく確認しながら、`frontReference` / `expressionGroup` / `useForInference` / `excluded` を調整できます。
 - `poseOutOfRange` は自動除外ではなく注意タグとして扱います。正面基準には不向きですが、pose-aware 3D 推定には使える可能性があるため、`useForInference` の対象に残せます。
 - `noFace` / `invalidLandmarks` / `manual` は除外理由として扱い、`mixedExpression` / `pending` / `missingBlendshapes` は注意タグとして扱います。
@@ -207,7 +207,7 @@ MP4 input
   -> Step 2-H currentCandidate point cloud preview
 ```
 
-次段では、同じ detailed scan / pose-aware workflow を使い、neutral frame group と expression frame group から neutral 3D 478 / expression 3D 478 を生成して比較し、`expressionFollow.rules[].landmarkFollowStrengths` を自動生成する方針です。frame selection は単純な均等抽出ではなく、[usage-aware frame sampling v1](usage-aware-frame-sampling-v1.md) に沿って `frontReferenceCandidate` を提示し、`idealFaceInference` / expression groups の不足状況を見ながら初期 `frameUsage` を作ります。`frontReference` はユーザーが手動確認・選択します。詳細は [MP4 expression 3D analysis plan](mp4-expression-3d-analysis-plan.md) に整理します。
+次段では、同じ detailed scan / pose-aware workflow を使い、neutral frame group と expression frame group から neutral 3D 478 / expression 3D 478 を生成して比較し、`expressionFollow.rules[].landmarkFollowStrengths` を自動生成する方針です。frame selection は単純な均等抽出ではなく、[usage-aware frame sampling v1](usage-aware-frame-sampling-v1.md) に沿って `frontReferenceCandidate` を提示し、`idealFaceInference` / expression groups の不足状況を見ながら初期 `frameUsage` を作ります。v1 prototype では adaptive sampling を ON にした場合、required bucket の `idealFaceInference` が target 80 に達すると early stop し、optional expression bucket の不足は warning として扱います。`frontReference` はユーザーが手動確認・選択します。詳細は [MP4 expression 3D analysis plan](mp4-expression-3d-analysis-plan.md) に整理します。
 
 Removed legacy workflow:
 
@@ -375,6 +375,8 @@ Step 5: MP4 expression 3D analysis docs / foundation
 
 Step 5.5: usage-aware frame sampling v1 docs / foundation
   MP4 detailed scan で用途別 bucket の targetCount を見ながら frameUsage 初期値を作る
+  adaptive sampling ON の場合、required bucket の idealFaceInference が満たされたら early stop する
+  expression groups は optional bucket として不足 warning を表示する
 
 Step 6: expressionFollow v1 foundation
   Engine 側で expressionFollow を読み込み、landmark ごとの idealFollowStrength を CorrectionPlan に反映する
