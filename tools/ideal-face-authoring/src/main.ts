@@ -613,6 +613,7 @@ let videoSource: VideoSourceState | null = null
 let faceLandmarker: FaceLandmarker | null = null
 let faceLandmarkerInitialization: Promise<FaceLandmarker> | null = null
 let authoringFrameUsages: Record<string, AuthoringFrameUsage> = {}
+let frameReviewIndex = 0
 let idealLandmarks3DCandidateResult: IdealLandmarks3DCandidateResult =
   createInitialIdealLandmarks3DCandidateResult()
 let landmarkGroupEditorState: LandmarkGroupEditorState =
@@ -951,6 +952,7 @@ function scoreDirectionalCandidate(
 
 function resetAuthoringFrameUsages(): void {
   authoringFrameUsages = {}
+  frameReviewIndex = 0
 }
 
 function buildLandmarkPreview(
@@ -4253,6 +4255,7 @@ function renderAuthoringFrameUsagePanel(
 ): string {
   return `
     <div class="frame-usage-panel">
+      ${renderFrameReviewCarousel(activeFrames)}
       <section class="frame-usage-section" aria-label="フレーム一覧">
         <h4>フレーム一覧（${activeFrames.length}件）</h4>
         <p>1フレーム1カードで、正面基準 / 表情 / 推定に使う用途を設定します。</p>
@@ -4276,6 +4279,164 @@ function renderAuthoringFrameUsagePanel(
         }
       </section>
     </div>
+  `
+}
+
+function getClampedFrameReviewIndex(frameCount: number): number {
+  return frameCount === 0 ? 0 : clamp(frameReviewIndex, 0, frameCount - 1)
+}
+
+function setFrameReviewIndex(nextIndex: number): void {
+  const activeFrameCount = getDetailedScanFrames().filter(
+    (frame) => !getAuthoringFrameUsage(frame).excluded,
+  ).length
+
+  frameReviewIndex = getClampedFrameReviewIndexForCount(
+    nextIndex,
+    activeFrameCount,
+  )
+}
+
+function getClampedFrameReviewIndexForCount(
+  nextIndex: number,
+  frameCount: number,
+): number {
+  return frameCount === 0 ? 0 : clamp(nextIndex, 0, frameCount - 1)
+}
+
+function renderFrameReviewCarousel(activeFrames: ExtractedVideoFrame[]): string {
+  frameReviewIndex = getClampedFrameReviewIndex(activeFrames.length)
+
+  if (activeFrames.length === 0) {
+    return `
+      <section class="frame-usage-section frame-review-carousel" aria-label="フレームレビュー">
+        <h4>フレームレビュー</h4>
+        <p>detailed scan 済みの有効フレームを大きく確認できます。</p>
+        <p class="pose-aware-empty">レビュー対象のフレームはまだありません。</p>
+      </section>
+    `
+  }
+
+  const frame = activeFrames[frameReviewIndex]
+  const usage = getAuthoringFrameUsage(frame)
+  const analysis = frame.analysis
+  const pose = analysis?.pose ?? EMPTY_FACE_POSE
+  const landmarksCount = analysis?.landmarks.length ?? 0
+  const frameId = getFrameIdFromFrame(frame)
+  const warningText =
+    usage.warningReasons.length > 0 ? usage.warningReasons.join(", ") : "なし"
+  const excludedReasonText = usage.excludedReason ?? "なし"
+  const frontReferenceWarning =
+    usage.frontReference && usage.warningReasons.includes("poseOutOfRange")
+      ? "正面基準には不向きな pose です。"
+      : null
+
+  return `
+    <section class="frame-usage-section frame-review-carousel" aria-label="フレームレビュー">
+      <div class="frame-review-heading">
+        <div>
+          <h4>フレームレビュー</h4>
+          <p>1フレームを大きく確認しながら、正面基準 / 表情 / 推定に使う / 除外を調整します。</p>
+        </div>
+        <strong>${frameReviewIndex + 1} / ${activeFrames.length}</strong>
+      </div>
+      <div class="frame-review-card">
+        <figure class="frame-review-preview">
+          <img src="${escapeHtml(frame.analysisImageUrl || frame.thumbnailUrl)}" alt="Frame ${String(frame.index).padStart(3, "0")} / ${frame.timestamp.toFixed(3)}s" />
+          <figcaption>Frame ${escapeHtml(frameId)} / ${frame.timestamp.toFixed(3)}s</figcaption>
+        </figure>
+        <div class="frame-review-details">
+          <div class="frame-review-nav" aria-label="フレームレビュー移動">
+            <button
+              class="candidate-label-button pose-aware-inline-action"
+              type="button"
+              data-frame-review-step="-1"
+              ${frameReviewIndex === 0 ? "disabled" : ""}
+            >
+              前へ
+            </button>
+            <button
+              class="candidate-label-button pose-aware-inline-action"
+              type="button"
+              data-frame-review-step="1"
+              ${frameReviewIndex === activeFrames.length - 1 ? "disabled" : ""}
+            >
+              次へ
+            </button>
+          </div>
+          <div class="frame-usage-controls frame-review-controls">
+            <label>
+              <input
+                type="checkbox"
+                data-frame-usage-front-reference="${escapeHtml(frameId)}"
+                ${usage.frontReference ? "checked" : ""}
+              />
+              正面基準
+            </label>
+            <label class="frame-usage-expression-control">
+              <span>表情</span>
+              <select data-frame-usage-expression="${escapeHtml(frameId)}">
+                ${FRAME_EXPRESSION_GROUP_IDS.map(
+                  (groupId) => `
+                    <option value="${groupId}" ${
+                      usage.expressionGroup === groupId ? "selected" : ""
+                    }>
+                      ${groupId}
+                    </option>
+                  `,
+                ).join("")}
+              </select>
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                data-frame-usage-inference="${escapeHtml(frameId)}"
+                ${usage.useForInference ? "checked" : ""}
+              />
+              推定に使う
+            </label>
+          </div>
+          <button
+            class="candidate-label-button pose-aware-inline-action"
+            type="button"
+            data-frame-usage-exclude="${escapeHtml(frameId)}"
+          >
+            除外する
+          </button>
+          <dl class="frame-review-debug">
+            <div>
+              <dt>自動判定</dt>
+              <dd>${escapeHtml(usage.autoExpressionGroup)}</dd>
+            </div>
+            <div>
+              <dt>warning</dt>
+              <dd class="${usage.warningReasons.length > 0 ? "frame-usage-warning" : ""}">${escapeHtml(warningText)}</dd>
+            </div>
+            <div>
+              <dt>除外理由</dt>
+              <dd>${escapeHtml(excludedReasonText)}</dd>
+            </div>
+            <div>
+              <dt>pose</dt>
+              <dd>yaw ${formatNumber(pose.yaw)} / pitch ${formatNumber(pose.pitch)} / roll ${formatNumber(pose.roll)}</dd>
+            </div>
+            <div>
+              <dt>landmarks</dt>
+              <dd>${landmarksCount}</dd>
+            </div>
+            <div>
+              <dt>score</dt>
+              <dd>${formatPoseAwareScore(getPoseAwareCandidateScore(frame.index))}</dd>
+            </div>
+          </dl>
+          ${
+            frontReferenceWarning
+              ? `<p class="frame-usage-warning">${escapeHtml(frontReferenceWarning)}</p>`
+              : ""
+          }
+        </div>
+      </div>
+    </section>
   `
 }
 
@@ -5341,6 +5502,21 @@ function attachAnalysisHandler(): void {
 }
 
 function attachPoseAwareFrameSelectionHandler(): void {
+  document
+    .querySelectorAll<HTMLButtonElement>("[data-frame-review-step]")
+    .forEach((button) => {
+      button.addEventListener("click", () => {
+        const step = Number(button.dataset.frameReviewStep ?? "0")
+
+        if (!Number.isFinite(step)) {
+          return
+        }
+
+        setFrameReviewIndex(frameReviewIndex + step)
+        render()
+      })
+    })
+
   document
     .querySelectorAll<HTMLInputElement>("[data-frame-usage-front-reference]")
     .forEach((input) => {
@@ -6877,6 +7053,120 @@ style.textContent = `
     gap: 10px;
   }
 
+  .frame-review-carousel {
+    background: #f7fbf9;
+  }
+
+  .frame-review-heading {
+    display: flex;
+    align-items: start;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .frame-review-heading strong {
+    border: 1px solid #bdd0c9;
+    border-radius: 8px;
+    background: #ffffff;
+    padding: 5px 10px;
+    color: #25342e;
+    font-size: 13px;
+    line-height: 1;
+    white-space: nowrap;
+  }
+
+  .frame-review-card {
+    display: grid;
+    grid-template-columns: minmax(280px, 1.35fr) minmax(240px, 0.65fr);
+    gap: 14px;
+    min-width: 0;
+  }
+
+  .frame-review-preview {
+    display: grid;
+    gap: 7px;
+    margin: 0;
+    min-width: 0;
+  }
+
+  .frame-review-preview img {
+    display: block;
+    width: 100%;
+    max-height: 420px;
+    aspect-ratio: 16 / 9;
+    border: 1px solid #25342e;
+    border-radius: 8px;
+    object-fit: contain;
+    background: #1f2824;
+  }
+
+  .frame-review-preview figcaption {
+    color: #25342e;
+    font-size: 13px;
+    font-weight: 900;
+    line-height: 1.35;
+  }
+
+  .frame-review-details {
+    display: grid;
+    gap: 10px;
+    align-content: start;
+    min-width: 0;
+  }
+
+  .frame-review-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .frame-review-nav button:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+  }
+
+  .frame-review-controls {
+    border: 1px solid #dde6e2;
+    border-radius: 8px;
+    background: #ffffff;
+    padding: 10px;
+  }
+
+  .frame-review-debug {
+    display: grid;
+    gap: 7px;
+    margin: 0;
+    border: 1px solid #dde6e2;
+    border-radius: 8px;
+    background: #ffffff;
+    padding: 10px;
+  }
+
+  .frame-review-debug div {
+    display: grid;
+    grid-template-columns: 86px minmax(0, 1fr);
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .frame-review-debug dt,
+  .frame-review-debug dd {
+    min-width: 0;
+    margin: 0;
+    overflow-wrap: anywhere;
+    font-size: 12px;
+    font-weight: 800;
+    line-height: 1.35;
+  }
+
+  .frame-review-debug dt {
+    color: #5d675f;
+  }
+
+  .frame-review-debug dd {
+    color: #25342e;
+  }
+
   .frame-usage-card {
     display: grid;
     grid-template-columns: 104px minmax(0, 1fr);
@@ -7034,6 +7324,19 @@ style.textContent = `
     color: #5d675f;
     font-size: 11px;
     font-weight: 700;
+  }
+
+  @media (max-width: 760px) {
+    .frame-review-heading,
+    .frame-review-card {
+      display: grid;
+      grid-template-columns: 1fr;
+    }
+
+    .frame-review-debug div {
+      grid-template-columns: 1fr;
+      gap: 2px;
+    }
   }
 
   .pose-aware-frame-actions {

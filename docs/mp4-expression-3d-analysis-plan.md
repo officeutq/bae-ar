@@ -4,7 +4,7 @@
 
 このドキュメントは、`expressionFollow v1` の次段として、IdealFace Authoring Tool が MP4 を解析し、表情別 frame group から neutral 3D 478 / expression 3D 478 を生成し、3D 差分から `landmarkFollowStrengths` を自動生成する方針を整理します。
 
-2026-05 時点では、最初の prototype として IdealFace Authoring Tool に Expression frame grouping summary と frame usage card UI を追加済みです。detailed scan frames の blendshape score から expression dropdown の自動初期値を作り、frame ごとに `frontReference` / `useForInference` / `expressionGroup` / `excluded` を設定できます。
+2026-05 時点では、最初の prototype として IdealFace Authoring Tool に Expression frame grouping summary、frame usage card UI、Frame Review Carousel を追加済みです。detailed scan frames の blendshape score から expression dropdown の自動初期値を作り、一覧カードと Frame Review Carousel で1フレームを大きく確認しながら `frontReference` / `useForInference` / `expressionGroup` / `excluded` を設定できます。
 
 `frontReference` / `useForInference` / `expressionGroup` は用途タグであり、重複可能です。`excluded` だけは排他的で、除外済み frame は正面基準 / 推定 / 表情解析の処理対象から外れます。neutral 自動分類は主導線から外し、neutralFrames は将来 `frontReferenceFrames` の中から表情が少ないものを選ぶ方針です。
 

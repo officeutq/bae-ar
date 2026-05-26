@@ -10,6 +10,7 @@ BAE AR は、Engine Runtime、Beauty Studio、IdealFace Authoring Tool、Layer M
 - Studio から Engine Runtime の内部実装へ直接依存しません。
 - IdealFace Authoring Tool は Step 2-I-A/B/C と Step 2-H まで実装済みです。
 - IdealFace Authoring Tool の Step 2-I-A では、`frontReference` / `useForInference` / `expressionGroup` を重複可能な用途タグとして扱い、`excluded` だけを排他的に扱います。
+- Step 2-I-A では、一覧カードに加えて Frame Review Carousel で1フレームを大きく確認しながら、`frontReference` / `expressionGroup` / `useForInference` / `excluded` を調整できます。
 - `poseOutOfRange` は自動除外ではなく注意タグとして扱います。正面基準には不向きですが、pose-aware 3D 推定には使える可能性があるため、`useForInference` の対象に残せます。
 - `noFace` / `invalidLandmarks` / `manual` は除外理由として扱い、`mixedExpression` / `pending` / `missingBlendshapes` は注意タグとして扱います。
 - Layer Mask Authoring Tool は将来予定です。
