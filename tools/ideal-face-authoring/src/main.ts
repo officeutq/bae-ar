@@ -434,7 +434,9 @@ interface StableZLandmarkValue {
 }
 
 interface StableZSummary {
-  generationMethod: "pose_aware_canonical_stable_z_v1"
+  generationMethod:
+    | "pose_aware_canonical_stable_z_v1"
+    | "pose_aware_canonical_balanced_frame_z_v1"
   zMin: number
   zMax: number
   zAverage: number
@@ -521,6 +523,48 @@ interface NearFrontObservationDebugSummary {
   frontReferenceFrameCount: number
   useForInferenceFrontReferenceFrameCount: number
   warning: string | null
+}
+
+interface FrameZHintSummary {
+  generationMethod: "pose_aware_canonical_balanced_frame_z_v1"
+  zMin: number
+  zMax: number
+  zAverage: number
+  zRange: number
+  fallbackCount: number
+  clampCount: number
+  stableZFallbackUsed: boolean
+  combined: ZHintSourceWeightSummary
+  yawDerived: ZHintSourceWeightSummary
+  pitchDerived: ZHintSourceWeightSummary
+}
+
+interface CandidateDebugComparisonItem {
+  generationMethod: IdealLandmarks3DGenerationMethod
+  zMin: number
+  zMax: number
+  zRange: number
+  boundsCenterX: number | null
+  boundsCenterZ: number | null
+  noseTipX: number | null
+  noseTipZ: number | null
+  mouthCenterX: number | null
+  mouthCenterZ: number | null
+  chinX: number | null
+  chinZ: number | null
+  leftCheekZ: number | null
+  rightCheekZ: number | null
+  leftContourZ: number | null
+  rightContourZ: number | null
+  leftRightZAverageDelta: number | null
+  leftRightZRangeDelta: number | null
+  topViewAsymmetryScore: number | null
+}
+
+interface BalancedFrameZCandidateComparisonDebug {
+  canonical3D: CandidateDebugComparisonItem | null
+  canonicalStableZ: CandidateDebugComparisonItem | null
+  balancedFrameZ: CandidateDebugComparisonItem
 }
 
 interface PoseAwareYawBinSummary {
@@ -615,9 +659,35 @@ interface PoseAwareCanonicalStableZDebug {
   warnings: string[]
 }
 
+interface PoseAwareCanonicalBalancedFrameZDebug {
+  generationMethod: "pose_aware_canonical_balanced_frame_z_v1"
+  generationSummary: {
+    observationFrameCount: number
+    frontReferenceFrameCount: number
+    nearFrontObservationFrameCount: number
+    useForInferenceFrontReferenceFrameCount: number
+  }
+  observationFrames: PoseAwareObservationFrameDebugSummary
+  directionBalance: DirectionBalanceSummary
+  frameZHint: FrameZHintSummary
+  canonicalAverageWeights: CanonicalAverageWeightDebugSummary
+  frameWeights: FrameStableZWeightDebugSummary
+  nearFrontObservation: NearFrontObservationDebugSummary
+  canonicalization: {
+    frameLocal3DBounds: LandmarkBoundsSummary | null
+    inversePoseCanonical3DBounds: LandmarkBoundsSummary | null
+    canonicalAverage: LandmarkSpatialSummary
+  }
+  comparison?: PoseAwareCandidateComparisonDebug
+  multiCandidateComparison: BalancedFrameZCandidateComparisonDebug
+  topView: TopViewZAsymmetrySummary
+  warnings: string[]
+}
+
 type IdealLandmarks3DCandidateDebug =
   | PoseAwareCanonical3DDebug
   | PoseAwareCanonicalStableZDebug
+  | PoseAwareCanonicalBalancedFrameZDebug
 
 interface PoseAwareMultiFrameSummary {
   status: PoseAwareInferenceStatus
@@ -645,6 +715,7 @@ type IdealLandmarks3DGenerationMethod =
   | "pose_aware_weighted_z_v1"
   | "pose_aware_canonical_3d_v1"
   | "pose_aware_canonical_stable_z_v1"
+  | "pose_aware_canonical_balanced_frame_z_v1"
 
 type PointCloudPreviewPreset = "front" | "side" | "top" | "reset"
 
@@ -1411,7 +1482,8 @@ function isIdealLandmarks3DGenerationMethod(
   return (
     value === "pose_aware_weighted_z_v1" ||
     value === "pose_aware_canonical_3d_v1" ||
-    value === "pose_aware_canonical_stable_z_v1"
+    value === "pose_aware_canonical_stable_z_v1" ||
+    value === "pose_aware_canonical_balanced_frame_z_v1"
   )
 }
 
@@ -5175,6 +5247,8 @@ function buildTopViewZAsymmetrySummary(
 
 function buildStableZSummary(
   stableZValues: StableZLandmarkValue[],
+  generationMethod: StableZSummary["generationMethod"] =
+    "pose_aware_canonical_stable_z_v1",
 ): StableZSummary {
   const zValues = stableZValues.map((item) => item.z)
   const confidenceValues = stableZValues.map((item) => item.confidence)
@@ -5182,7 +5256,7 @@ function buildStableZSummary(
   const candidateCounts = stableZValues.map((item) => item.candidateCount)
 
   return {
-    generationMethod: "pose_aware_canonical_stable_z_v1",
+    generationMethod,
     zMin: zValues.length === 0 ? 0 : roundDebugNumber(Math.min(...zValues)),
     zMax: zValues.length === 0 ? 0 : roundDebugNumber(Math.max(...zValues)),
     zAverage: roundDebugNumber(averageNumbers(zValues)),
@@ -5230,6 +5304,20 @@ function buildZHintSourceWeightSummary(
         ? null
         : roundDebugNumber(getWeightedAverageZ(hints)),
     zRange: getZRange(zValues),
+  }
+}
+
+function buildZValueSummary(values: number[]): ZHintSourceWeightSummary {
+  const finiteValues = values.filter((value) => Number.isFinite(value))
+
+  return {
+    count: finiteValues.length,
+    weightTotal: roundDebugNumber(finiteValues.length),
+    zAverage:
+      finiteValues.length === 0
+        ? null
+        : roundDebugNumber(averageNumbers(finiteValues)),
+    zRange: getZRange(finiteValues),
   }
 }
 
@@ -5363,6 +5451,84 @@ function buildNearFrontObservationDebugSummary(
     frontReferenceFrameCount: dataset.frontReferenceFrames.length,
     useForInferenceFrontReferenceFrameCount,
     warning,
+  }
+}
+
+function buildCandidateDebugComparisonItem(
+  result: IdealLandmarks3DCandidateResult,
+): CandidateDebugComparisonItem | null {
+  if (result.status !== "generated" || result.generationMethod === null) {
+    return null
+  }
+
+  return buildCandidateDebugComparisonItemFromLandmarks(
+    result.generationMethod,
+    result.landmarks,
+  )
+}
+
+function buildCandidateDebugComparisonItemFromLandmarks(
+  generationMethod: IdealLandmarks3DGenerationMethod,
+  landmarks: IdealLandmark3DCandidate[],
+): CandidateDebugComparisonItem {
+  const spatial = buildLandmarkSpatialSummary(landmarks)
+  const representative = getPoseAwareRepresentativePointSummary(landmarks)
+  const topView = buildTopViewZAsymmetrySummary(landmarks)
+  const zValues = landmarks.map((landmark) => landmark.z)
+  const zMin = zValues.length === 0 ? 0 : roundDebugNumber(Math.min(...zValues))
+  const zMax = zValues.length === 0 ? 0 : roundDebugNumber(Math.max(...zValues))
+
+  return {
+    generationMethod,
+    zMin,
+    zMax,
+    zRange: roundDebugNumber(zMax - zMin),
+    boundsCenterX: spatial.boundsCenter?.x ?? null,
+    boundsCenterZ: spatial.boundsCenter?.z ?? null,
+    noseTipX: representative.noseTipX,
+    noseTipZ: representative.noseTipZ,
+    mouthCenterX: representative.mouthCenterX,
+    mouthCenterZ: representative.mouthCenterZ,
+    chinX: representative.chinX,
+    chinZ: representative.chinZ,
+    leftCheekZ: representative.leftCheekZ,
+    rightCheekZ: representative.rightCheekZ,
+    leftContourZ: representative.leftContourZ,
+    rightContourZ: representative.rightContourZ,
+    leftRightZAverageDelta: topView.leftRightZAverageDelta,
+    leftRightZRangeDelta: topView.leftRightZRangeDelta,
+    topViewAsymmetryScore: topView.topViewAsymmetryScore,
+  }
+}
+
+function buildFrameZHintSummary(
+  hintsByLandmark: PoseAwareZHint[][],
+  frameZValues: number[],
+  fallbackCount: number,
+  clampCount: number,
+): FrameZHintSummary {
+  const allHints = hintsByLandmark.flat()
+  const yawHints = allHints.filter((hint) => hint.source === "yaw")
+  const pitchHints = allHints.filter((hint) => hint.source === "pitch")
+
+  return {
+    generationMethod: "pose_aware_canonical_balanced_frame_z_v1",
+    zMin:
+      frameZValues.length === 0
+        ? 0
+        : roundDebugNumber(Math.min(...frameZValues)),
+    zMax:
+      frameZValues.length === 0
+        ? 0
+        : roundDebugNumber(Math.max(...frameZValues)),
+    zAverage: roundDebugNumber(averageNumbers(frameZValues)),
+    zRange: getZRange(frameZValues) ?? 0,
+    fallbackCount,
+    clampCount,
+    stableZFallbackUsed: fallbackCount > 0,
+    combined: buildZValueSummary(frameZValues),
+    yawDerived: buildZHintSourceWeightSummary(yawHints),
+    pitchDerived: buildZHintSourceWeightSummary(pitchHints),
   }
 }
 
@@ -5708,6 +5874,230 @@ function buildPoseAwareCanonicalStableZLandmarksFromFrames(
     canonicalFramePoints: canonicalFrames.flatMap(
       (frame) => frame.canonicalPoints,
     ),
+    weightTotal: roundDebugNumber(
+      canonicalFrames.reduce((sum, frame) => sum + frame.weight, 0),
+    ),
+  }
+}
+
+function buildPoseAwareBalancedFrameZFrameLocalAndCanonicalPoints(
+  frame: PoseAwareInferenceFrame,
+  basePoints: PoseAwareBasePoint[],
+  stableZValues: StableZLandmarkValue[],
+  frameWeight: FrameStableZWeightDebug,
+): {
+  localPoints: Array<Point3D & { index: number }>
+  canonicalPoints: Array<Point3D & { index: number }>
+  weight: number
+  hintsByLandmark: PoseAwareZHint[][]
+  frameZValues: number[]
+  fallbackCount: number
+  clampCount: number
+} | null {
+  const sameUnitLandmarks = getSameUnitLandmarks2D(frame)
+  const hintsByLandmark = collectPoseAwareStableZHintsForFrame(
+    frame,
+    basePoints,
+    frameWeight,
+  )
+  const weight = frameWeight.finalCanonicalAverageWeight
+
+  if (
+    !sameUnitLandmarks ||
+    sameUnitLandmarks.length !== REQUIRED_LANDMARK_COUNT ||
+    !Number.isFinite(weight) ||
+    weight <= 0
+  ) {
+    return null
+  }
+
+  let fallbackCount = 0
+  const clampCount = 0
+  const frameZValues: number[] = []
+  const localPoints = sameUnitLandmarks.map((landmark, index) => {
+    const hints = hintsByLandmark[index] ?? []
+    const weightTotal = hints.reduce((sum, hint) => sum + hint.weight, 0)
+    const fallbackUsed = hints.length === 0 || weightTotal <= 0
+    const z = fallbackUsed
+      ? stableZValues[index]?.z ?? 0
+      : getWeightedAverageZ(hints)
+
+    if (fallbackUsed) {
+      fallbackCount += 1
+    }
+
+    frameZValues.push(z)
+
+    return {
+      index,
+      x: landmark.x,
+      y: landmark.y,
+      z: Number(z.toFixed(4)),
+    }
+  })
+  const canonicalPoints = localPoints.map((point) => ({
+    index: point.index,
+    ...inverseRotatePoseAwarePoint3D(point, frame.pose),
+  }))
+
+  return {
+    localPoints,
+    canonicalPoints,
+    weight,
+    hintsByLandmark,
+    frameZValues,
+    fallbackCount,
+    clampCount,
+  }
+}
+
+function buildPoseAwareCanonicalBalancedFrameZLandmarksFromFrames(
+  observationFrames: PoseAwareInferenceFrame[],
+  basePoints: PoseAwareBasePoint[],
+  stableZValues: StableZLandmarkValue[],
+  frameWeights: FrameStableZWeightDebug[],
+  dataset: PoseAwareInferenceDataset,
+): {
+  landmarks: IdealLandmark3DCandidate[]
+  localPoints: Array<Point3D & { index: number }>
+  canonicalFramePoints: Array<Point3D & { index: number }>
+  hintsByLandmark: PoseAwareZHint[][]
+  frameZValues: number[]
+  fallbackCount: number
+  clampCount: number
+  weightTotal: number
+} | null {
+  const frameWeightById = new Map(
+    frameWeights.map((frameWeight) => [frameWeight.frameId, frameWeight]),
+  )
+  const canonicalFrames = observationFrames
+    .map((frame) => {
+      const frameWeight = frameWeightById.get(frame.frameId)
+
+      if (!frameWeight) {
+        return null
+      }
+
+      return buildPoseAwareBalancedFrameZFrameLocalAndCanonicalPoints(
+        frame,
+        basePoints,
+        stableZValues,
+        frameWeight,
+      )
+    })
+    .filter(
+      (
+        frame,
+      ): frame is {
+        localPoints: Array<Point3D & { index: number }>
+        canonicalPoints: Array<Point3D & { index: number }>
+        weight: number
+        hintsByLandmark: PoseAwareZHint[][]
+        frameZValues: number[]
+        fallbackCount: number
+        clampCount: number
+      } => frame !== null,
+    )
+
+  if (canonicalFrames.length === 0) {
+    return null
+  }
+
+  const hintsByLandmark = Array.from(
+    { length: REQUIRED_LANDMARK_COUNT },
+    () => [] as PoseAwareZHint[],
+  )
+
+  canonicalFrames.forEach((frame) => {
+    frame.hintsByLandmark.forEach((hints, index) => {
+      hintsByLandmark[index].push(...hints)
+    })
+  })
+
+  const uncenteredLandmarks = Array.from(
+    { length: REQUIRED_LANDMARK_COUNT },
+    (_, index) => {
+      const points = canonicalFrames
+        .map((frame) => ({
+          point: frame.canonicalPoints[index],
+          weight: frame.weight,
+        }))
+        .filter(
+          (
+            item,
+          ): item is {
+            point: Point3D & { index: number }
+            weight: number
+          } =>
+            Boolean(item.point) &&
+            Number.isFinite(item.point.x) &&
+            Number.isFinite(item.point.y) &&
+            Number.isFinite(item.point.z) &&
+            Number.isFinite(item.weight) &&
+            item.weight > 0,
+        )
+      const weightTotal = points.reduce((sum, item) => sum + item.weight, 0)
+      const stableZ = stableZValues[index]
+      const hints = hintsByLandmark[index] ?? []
+      const confidence =
+        hints.length === 0
+          ? stableZ?.confidence ?? 0.12
+          : inferPoseAwareLandmarkConfidence(
+              hints,
+              dataset,
+              getWeightedAverageZ(hints),
+            )
+
+      if (weightTotal <= 0) {
+        return {
+          index,
+          x: 0,
+          y: 0,
+          z: 0,
+          confidence,
+          source: "pose_aware_canonical_balanced_frame_z_v1" as const,
+        }
+      }
+
+      return {
+        index,
+        x: Number(
+          (
+            points.reduce((sum, item) => sum + item.point.x * item.weight, 0) /
+            weightTotal
+          ).toFixed(4),
+        ),
+        y: Number(
+          (
+            points.reduce((sum, item) => sum + item.point.y * item.weight, 0) /
+            weightTotal
+          ).toFixed(4),
+        ),
+        z: Number(
+          (
+            points.reduce((sum, item) => sum + item.point.z * item.weight, 0) /
+            weightTotal
+          ).toFixed(4),
+        ),
+        confidence,
+        source: "pose_aware_canonical_balanced_frame_z_v1" as const,
+      }
+    },
+  )
+
+  return {
+    landmarks: centerPoseAwareCanonicalLandmarks(uncenteredLandmarks),
+    localPoints: canonicalFrames.flatMap((frame) => frame.localPoints),
+    canonicalFramePoints: canonicalFrames.flatMap(
+      (frame) => frame.canonicalPoints,
+    ),
+    hintsByLandmark,
+    frameZValues: canonicalFrames.flatMap((frame) => frame.frameZValues),
+    fallbackCount: canonicalFrames.reduce(
+      (sum, frame) => sum + frame.fallbackCount,
+      0,
+    ),
+    clampCount: canonicalFrames.reduce((sum, frame) => sum + frame.clampCount, 0),
     weightTotal: roundDebugNumber(
       canonicalFrames.reduce((sum, frame) => sum + frame.weight, 0),
     ),
@@ -6086,6 +6476,162 @@ function buildPoseAwareCanonicalStableZCandidateDebug(
   }
 }
 
+function buildPoseAwareCanonicalBalancedFrameZWarnings(
+  directionBalance: DirectionBalanceSummary,
+  frameZHint: FrameZHintSummary,
+  frameCount: number,
+  nearFrontObservation: NearFrontObservationDebugSummary,
+  topView: TopViewZAsymmetrySummary,
+  comparison: BalancedFrameZCandidateComparisonDebug,
+): string[] {
+  const warnings: string[] = []
+
+  if (
+    isDirectionSignalOneSidedOrImbalanced(
+      directionBalance.totalYawPositiveSignal,
+      directionBalance.totalYawNegativeSignal,
+      directionBalance.yawPositiveNegativeSignalRatio,
+    )
+  ) {
+    warnings.push("yaw direction signal is strongly imbalanced.")
+  }
+
+  if (nearFrontObservation.warning) {
+    warnings.push(nearFrontObservation.warning)
+  }
+
+  if (nearFrontObservation.useForInferenceFrontReferenceFrameCount === 0) {
+    warnings.push("useForInference frontReference count is 0.")
+  }
+
+  warnings.push(topView.warning)
+
+  if (
+    frameZHint.fallbackCount / Math.max(frameCount * REQUIRED_LANDMARK_COUNT, 1) >=
+    POSE_AWARE_STABLE_Z_FALLBACK_WARNING_RATIO
+  ) {
+    warnings.push("frameZHint fallback is high.")
+  }
+
+  if (
+    frameZHint.clampCount / Math.max(frameCount * REQUIRED_LANDMARK_COUNT, 1) >=
+    POSE_AWARE_STABLE_Z_CLAMPED_FRAME_WARNING_RATIO
+  ) {
+    warnings.push("frameZHint clamp is high.")
+  }
+
+  const stableZComparison = comparison.canonicalStableZ
+
+  if (
+    stableZComparison &&
+    comparison.balancedFrameZ.zRange > stableZComparison.zRange
+  ) {
+    warnings.push("balanced_frame_z result has larger zRange than canonical_stable_z.")
+  }
+
+  if (
+    stableZComparison?.topViewAsymmetryScore !== null &&
+    stableZComparison?.topViewAsymmetryScore !== undefined &&
+    comparison.balancedFrameZ.topViewAsymmetryScore !== null &&
+    comparison.balancedFrameZ.topViewAsymmetryScore >
+      stableZComparison.topViewAsymmetryScore
+  ) {
+    warnings.push(
+      "balanced_frame_z result has worse topViewAsymmetry than canonical_stable_z.",
+    )
+  }
+
+  return warnings
+}
+
+function buildPoseAwareCanonicalBalancedFrameZCandidateDebug(
+  dataset: PoseAwareInferenceDataset,
+  canonicalResult: {
+    landmarks: IdealLandmark3DCandidate[]
+    localPoints: Array<Point3D & { index: number }>
+    canonicalFramePoints: Array<Point3D & { index: number }>
+    hintsByLandmark: PoseAwareZHint[][]
+    frameZValues: number[]
+    fallbackCount: number
+    clampCount: number
+  },
+  directionBalance: DirectionBalanceSummary,
+  frameWeights: FrameStableZWeightDebug[],
+  canonical3DResult: IdealLandmarks3DCandidateResult | null,
+  stableZResult: IdealLandmarks3DCandidateResult | null,
+): PoseAwareCanonicalBalancedFrameZDebug {
+  const observationFrames = dataset.observationFrames
+  const observationSummary =
+    buildPoseAwareObservationFrameDebugSummary(observationFrames)
+  const frameZHint = buildFrameZHintSummary(
+    canonicalResult.hintsByLandmark,
+    canonicalResult.frameZValues,
+    canonicalResult.fallbackCount,
+    canonicalResult.clampCount,
+  )
+  const comparison = buildPoseAwareCandidateComparisonDebug(
+    stableZResult,
+    canonicalResult.landmarks,
+    "pose_aware_canonical_balanced_frame_z_v1",
+  )
+  const topView = buildTopViewZAsymmetrySummary(canonicalResult.landmarks)
+  const nearFrontObservation = buildNearFrontObservationDebugSummary(dataset)
+  const multiCandidateComparison: BalancedFrameZCandidateComparisonDebug = {
+    canonical3D: canonical3DResult
+      ? buildCandidateDebugComparisonItem(canonical3DResult)
+      : null,
+    canonicalStableZ: stableZResult
+      ? buildCandidateDebugComparisonItem(stableZResult)
+      : null,
+    balancedFrameZ: buildCandidateDebugComparisonItemFromLandmarks(
+      "pose_aware_canonical_balanced_frame_z_v1",
+      canonicalResult.landmarks,
+    ),
+  }
+  const debugWithoutWarnings = {
+    generationMethod: "pose_aware_canonical_balanced_frame_z_v1" as const,
+    generationSummary: {
+      observationFrameCount: dataset.observationFrames.length,
+      frontReferenceFrameCount: dataset.frontReferenceFrames.length,
+      nearFrontObservationFrameCount:
+        nearFrontObservation.nearFrontObservationFrameCount,
+      useForInferenceFrontReferenceFrameCount:
+        nearFrontObservation.useForInferenceFrontReferenceFrameCount,
+    },
+    observationFrames: observationSummary,
+    directionBalance,
+    frameZHint,
+    canonicalAverageWeights:
+      buildCanonicalAverageWeightDebugSummary(frameWeights),
+    frameWeights: buildFrameStableZWeightDebugSummary(frameWeights),
+    nearFrontObservation,
+    canonicalization: {
+      frameLocal3DBounds: buildLandmarkBoundsSummary(
+        canonicalResult.localPoints,
+      ),
+      inversePoseCanonical3DBounds: buildLandmarkBoundsSummary(
+        canonicalResult.canonicalFramePoints,
+      ),
+      canonicalAverage: buildLandmarkSpatialSummary(canonicalResult.landmarks),
+    },
+    comparison,
+    multiCandidateComparison,
+    topView,
+  }
+
+  return {
+    ...debugWithoutWarnings,
+    warnings: buildPoseAwareCanonicalBalancedFrameZWarnings(
+      directionBalance,
+      frameZHint,
+      observationFrames.length,
+      nearFrontObservation,
+      topView,
+      multiCandidateComparison,
+    ),
+  }
+}
+
 function buildPoseAwareIdealLandmarks3DCandidateResult(
   dataset: PoseAwareInferenceDataset,
 ): IdealLandmarks3DCandidateResult {
@@ -6335,11 +6881,111 @@ function buildPoseAwareCanonicalStableZIdealLandmarks3DCandidateResult(
   }
 }
 
+function buildPoseAwareCanonicalBalancedFrameZIdealLandmarks3DCandidateResult(
+  dataset: PoseAwareInferenceDataset,
+  canonical3DResult: IdealLandmarks3DCandidateResult | null,
+  stableZResult: IdealLandmarks3DCandidateResult | null,
+): IdealLandmarks3DCandidateResult {
+  if (dataset.status === "missing_front_reference") {
+    return {
+      ...createInitialIdealLandmarks3DCandidateResult(),
+      status: "insufficient_data",
+      generationMethod: "pose_aware_canonical_balanced_frame_z_v1",
+      message:
+        "frontReference frame is missing, so pose-aware canonical balanced frame-z 3D candidate generation cannot run.",
+    }
+  }
+
+  if (dataset.observationFrames.length === 0) {
+    return {
+      ...createInitialIdealLandmarks3DCandidateResult(),
+      status: "insufficient_data",
+      generationMethod: "pose_aware_canonical_balanced_frame_z_v1",
+      message:
+        "useForInference observation frames are missing, so pose-aware canonical balanced frame-z 3D candidate generation cannot run.",
+    }
+  }
+
+  const basePoints = buildPoseAwareBasePoints(dataset.frontReferenceFrames)
+
+  if (!basePoints || basePoints.length !== REQUIRED_LANDMARK_COUNT) {
+    return {
+      ...createInitialIdealLandmarks3DCandidateResult(),
+      status: "insufficient_data",
+      generationMethod: "pose_aware_canonical_balanced_frame_z_v1",
+      message:
+        "frontReference base 478 landmarks are unavailable, so pose-aware canonical balanced frame-z 3D candidate generation cannot run.",
+    }
+  }
+
+  const { frameWeights, directionBalance } = buildFrameStableZWeightDebug(
+    dataset.observationFrames,
+  )
+  const stableZHintsByLandmark = mergePoseAwareStableZHints(
+    dataset.observationFrames,
+    basePoints,
+    frameWeights,
+  )
+  const stableZValues = buildStableZValues(dataset, stableZHintsByLandmark)
+  const canonicalResult = buildPoseAwareCanonicalBalancedFrameZLandmarksFromFrames(
+    dataset.observationFrames,
+    basePoints,
+    stableZValues,
+    frameWeights,
+    dataset,
+  )
+
+  if (!canonicalResult || canonicalResult.landmarks.length !== REQUIRED_LANDMARK_COUNT) {
+    return {
+      ...createInitialIdealLandmarks3DCandidateResult(),
+      status: "insufficient_data",
+      generationMethod: "pose_aware_canonical_balanced_frame_z_v1",
+      message:
+        "observation frames could not be inverse-rotated into canonical balanced frame-z 3D landmarks.",
+    }
+  }
+
+  const landmarks = canonicalResult.landmarks
+  const debug = buildPoseAwareCanonicalBalancedFrameZCandidateDebug(
+    dataset,
+    canonicalResult,
+    directionBalance,
+    frameWeights,
+    canonical3DResult,
+    stableZResult,
+  )
+
+  return {
+    status: "generated",
+    generationMethod: "pose_aware_canonical_balanced_frame_z_v1",
+    landmarkCount: landmarks.length,
+    landmarks,
+    landmarksPreview: landmarks.slice(0, IDEAL_LANDMARKS_3D_PREVIEW_COUNT),
+    summary: buildIdealLandmarks3DCandidateSummary(landmarks, {
+      frontReferenceFrameCount: dataset.frontReferenceFrames.length,
+      observationFrameCount: dataset.observationFrames.length,
+      excludedFrameCount: dataset.excludedFrameCount,
+    }),
+    message:
+      "Step 2-I-B dataset observations were converted to frame-local 3D using each frame's own yaw / pitch zHint, then inverse-rotated and direction-balanced in canonical average.",
+    debug,
+  }
+}
+
 function buildPoseAwareCandidateResult(
   dataset: PoseAwareInferenceDataset,
   generationMethod: IdealLandmarks3DGenerationMethod,
   oldResult: IdealLandmarks3DCandidateResult | null,
+  comparisonResult: IdealLandmarks3DCandidateResult | null = null,
 ): IdealLandmarks3DCandidateResult {
+  if (generationMethod === "pose_aware_canonical_balanced_frame_z_v1") {
+    return buildPoseAwareCanonicalBalancedFrameZIdealLandmarks3DCandidateResult(
+      dataset,
+      comparisonResult,
+      oldResult,
+    )
+  }
+
   if (generationMethod === "pose_aware_canonical_stable_z_v1") {
     return buildPoseAwareCanonicalStableZIdealLandmarks3DCandidateResult(
       dataset,
@@ -6365,6 +7011,7 @@ function toPoseAwareCandidatePreview(): unknown {
         "pose_aware_weighted_z_v1",
         "pose_aware_canonical_3d_v1",
         "pose_aware_canonical_stable_z_v1",
+        "pose_aware_canonical_balanced_frame_z_v1",
       ] as IdealLandmarks3DGenerationMethod[]
     ).map((generationMethod) => {
       const cachedResult = idealLandmarks3DCandidateResults[generationMethod]
@@ -6401,6 +7048,7 @@ function toPoseAwareCandidatePreview(): unknown {
       "frontReference frames are used as reference basis. Only useForInference frames contribute to IdealFace shape inference.",
       "pose_aware_canonical_3d_v1 inverse-rotates provisional frame-local 3D points into canonical space before averaging.",
       "pose_aware_canonical_stable_z_v1 builds direction-balanced stableZ before frame-local 3D and canonical averaging.",
+      "pose_aware_canonical_balanced_frame_z_v1 uses each frame's own zHint for frame-local 3D, then direction-balances canonical averaging.",
     ],
   }
 }
@@ -6548,6 +7196,7 @@ function renderPoseAwareCandidateMethodControls(): string {
           ${renderGenerationMethodOption("pose_aware_weighted_z_v1")}
           ${renderGenerationMethodOption("pose_aware_canonical_3d_v1")}
           ${renderGenerationMethodOption("pose_aware_canonical_stable_z_v1")}
+          ${renderGenerationMethodOption("pose_aware_canonical_balanced_frame_z_v1")}
         </select>
       </label>
     </div>
@@ -6559,6 +7208,7 @@ function renderPoseAwareCachedCandidateSwitches(): string {
     "pose_aware_weighted_z_v1",
     "pose_aware_canonical_3d_v1",
     "pose_aware_canonical_stable_z_v1",
+    "pose_aware_canonical_balanced_frame_z_v1",
   ]
 
   return `
@@ -6757,6 +7407,7 @@ function renderPoseAwareCanonicalDebugBlock(
       </div>
     </dl>
     ${renderPoseAwareStableZDebugBlock(debug)}
+    ${renderPoseAwareBalancedFrameZDebugBlock(debug)}
     <div class="pose-aware-coverage">
       <strong>yaw bins</strong>
       <ul>
@@ -6936,6 +7587,172 @@ function renderPoseAwareStableZDebugBlock(
     <h5>top view debug</h5>
     <dl class="pose-aware-summary-list">
       ${renderTopViewZAsymmetryRows(debug.topView)}
+    </dl>
+  `
+}
+
+function renderPoseAwareBalancedFrameZDebugBlock(
+  debug: IdealLandmarks3DCandidateDebug,
+): string {
+  if (debug.generationMethod !== "pose_aware_canonical_balanced_frame_z_v1") {
+    return ""
+  }
+
+  return `
+    <h5>balanced frame-z generation summary</h5>
+    <dl class="pose-aware-summary-list">
+      <div>
+        <dt>observation / frontReference</dt>
+        <dd>${debug.generationSummary.observationFrameCount} / ${debug.generationSummary.frontReferenceFrameCount}</dd>
+      </div>
+      <div>
+        <dt>nearFront observation</dt>
+        <dd>${debug.generationSummary.nearFrontObservationFrameCount}</dd>
+      </div>
+      <div>
+        <dt>useForInference frontReference</dt>
+        <dd>${debug.generationSummary.useForInferenceFrontReferenceFrameCount}</dd>
+      </div>
+    </dl>
+    <h5>frameZHint summary</h5>
+    <dl class="pose-aware-summary-list">
+      <div>
+        <dt>frameZHint min / max / average</dt>
+        <dd>${formatNumber(debug.frameZHint.zMin)} / ${formatNumber(debug.frameZHint.zMax)} / ${formatNumber(debug.frameZHint.zAverage)}</dd>
+      </div>
+      <div>
+        <dt>frameZHint range</dt>
+        <dd>${formatNumber(debug.frameZHint.zRange)}</dd>
+      </div>
+      <div>
+        <dt>fallback / clamp</dt>
+        <dd>${debug.frameZHint.fallbackCount} / ${debug.frameZHint.clampCount}</dd>
+      </div>
+      <div>
+        <dt>stableZ fallback used</dt>
+        <dd>${debug.frameZHint.stableZFallbackUsed ? "true" : "false"}</dd>
+      </div>
+      ${renderZHintSourceWeightSummaryRows("combined frameZHint", debug.frameZHint.combined)}
+      ${renderZHintSourceWeightSummaryRows("yaw-derived zHint", debug.frameZHint.yawDerived)}
+      ${renderZHintSourceWeightSummaryRows("pitch-derived zHint", debug.frameZHint.pitchDerived)}
+    </dl>
+    <h5>canonical average weights</h5>
+    <dl class="pose-aware-summary-list">
+      <div>
+        <dt>yaw canonical weight + / -</dt>
+        <dd>${formatNumber(debug.canonicalAverageWeights.yawPositiveCanonicalAverageWeightTotal)} / ${formatNumber(debug.canonicalAverageWeights.yawNegativeCanonicalAverageWeightTotal)}</dd>
+      </div>
+      <div>
+        <dt>pitch canonical weight + / -</dt>
+        <dd>${formatNumber(debug.canonicalAverageWeights.pitchPositiveCanonicalAverageWeightTotal)} / ${formatNumber(debug.canonicalAverageWeights.pitchNegativeCanonicalAverageWeightTotal)}</dd>
+      </div>
+      <div>
+        <dt>yaw canonical frame count + / -</dt>
+        <dd>${debug.canonicalAverageWeights.yawPositiveCanonicalAverageFrameCount} / ${debug.canonicalAverageWeights.yawNegativeCanonicalAverageFrameCount}</dd>
+      </div>
+      <div>
+        <dt>canonical balance avg / min / max</dt>
+        <dd>${formatNumber(debug.canonicalAverageWeights.averageCanonicalAverageDirectionBalanceWeight)} / ${formatNumber(debug.canonicalAverageWeights.minCanonicalAverageDirectionBalanceWeight)} / ${formatNumber(debug.canonicalAverageWeights.maxCanonicalAverageDirectionBalanceWeight)}</dd>
+      </div>
+      <div>
+        <dt>canonical balance clamped frames</dt>
+        <dd>${debug.canonicalAverageWeights.clampedCanonicalAverageDirectionBalanceWeightCount}</dd>
+      </div>
+    </dl>
+    <h5>near-front observation</h5>
+    <dl class="pose-aware-summary-list">
+      <div>
+        <dt>nearFront / frontReference</dt>
+        <dd>${debug.nearFrontObservation.nearFrontObservationFrameCount} / ${debug.nearFrontObservation.frontReferenceFrameCount}</dd>
+      </div>
+      <div>
+        <dt>useForInference frontReference</dt>
+        <dd>${debug.nearFrontObservation.useForInferenceFrontReferenceFrameCount}</dd>
+      </div>
+    </dl>
+    <h5>three-method comparison</h5>
+    ${renderBalancedFrameZCandidateComparisonItem(
+      "pose_aware_canonical_3d_v1",
+      debug.multiCandidateComparison.canonical3D,
+    )}
+    ${renderBalancedFrameZCandidateComparisonItem(
+      "pose_aware_canonical_stable_z_v1",
+      debug.multiCandidateComparison.canonicalStableZ,
+    )}
+    ${renderBalancedFrameZCandidateComparisonItem(
+      "pose_aware_canonical_balanced_frame_z_v1",
+      debug.multiCandidateComparison.balancedFrameZ,
+    )}
+    <h5>frame weight debug</h5>
+    <dl class="pose-aware-summary-list">
+      <div>
+        <dt>yaw + / yaw - avg weight</dt>
+        <dd>${formatNumber(debug.frameWeights.yawPositiveFramesAverageWeight)} / ${formatNumber(debug.frameWeights.yawNegativeFramesAverageWeight)}</dd>
+      </div>
+      <div>
+        <dt>pitch + / pitch - avg weight</dt>
+        <dd>${formatNumber(debug.frameWeights.pitchPositiveFramesAverageWeight)} / ${formatNumber(debug.frameWeights.pitchNegativeFramesAverageWeight)}</dd>
+      </div>
+    </dl>
+    ${renderFrameStableZWeightList("top weighted frames", debug.frameWeights.topWeightedFrames)}
+    ${renderFrameStableZWeightList("lowest weighted frames", debug.frameWeights.lowestWeightedFrames)}
+    <h5>top view debug</h5>
+    <dl class="pose-aware-summary-list">
+      ${renderTopViewZAsymmetryRows(debug.topView)}
+    </dl>
+  `
+}
+
+function renderBalancedFrameZCandidateComparisonItem(
+  label: string,
+  item: CandidateDebugComparisonItem | null,
+): string {
+  if (!item) {
+    return `
+      <h6>${label}</h6>
+      <p class="pose-aware-ready-text">not generated</p>
+    `
+  }
+
+  return `
+    <h6>${label}</h6>
+    <dl class="pose-aware-summary-list">
+      <div>
+        <dt>z min / max / range</dt>
+        <dd>${formatNumber(item.zMin)} / ${formatNumber(item.zMax)} / ${formatNumber(item.zRange)}</dd>
+      </div>
+      <div>
+        <dt>bounds center x / z</dt>
+        <dd>${formatNullableDebugNumber(item.boundsCenterX)} / ${formatNullableDebugNumber(item.boundsCenterZ)}</dd>
+      </div>
+      <div>
+        <dt>nose x / z</dt>
+        <dd>${formatNullableDebugNumber(item.noseTipX)} / ${formatNullableDebugNumber(item.noseTipZ)}</dd>
+      </div>
+      <div>
+        <dt>mouth center x / z</dt>
+        <dd>${formatNullableDebugNumber(item.mouthCenterX)} / ${formatNullableDebugNumber(item.mouthCenterZ)}</dd>
+      </div>
+      <div>
+        <dt>chin x / z</dt>
+        <dd>${formatNullableDebugNumber(item.chinX)} / ${formatNullableDebugNumber(item.chinZ)}</dd>
+      </div>
+      <div>
+        <dt>left / right cheek z</dt>
+        <dd>${formatNullableDebugNumber(item.leftCheekZ)} / ${formatNullableDebugNumber(item.rightCheekZ)}</dd>
+      </div>
+      <div>
+        <dt>left / right contour z</dt>
+        <dd>${formatNullableDebugNumber(item.leftContourZ)} / ${formatNullableDebugNumber(item.rightContourZ)}</dd>
+      </div>
+      <div>
+        <dt>left-right avg / range delta</dt>
+        <dd>${formatNullableDebugNumber(item.leftRightZAverageDelta)} / ${formatNullableDebugNumber(item.leftRightZRangeDelta)}</dd>
+      </div>
+      <div>
+        <dt>top view asymmetry</dt>
+        <dd>${formatNullableDebugNumber(item.topViewAsymmetryScore)}</dd>
+      </div>
     </dl>
   `
 }
@@ -9080,16 +9897,23 @@ function attachIdealLandmarks3DCandidateHandler(): void {
         "pose_aware_canonical_stable_z_v1",
         canonicalResult,
       )
+      const balancedFrameZResult = buildPoseAwareCandidateResult(
+        dataset,
+        "pose_aware_canonical_balanced_frame_z_v1",
+        stableZResult,
+        canonicalResult,
+      )
 
       idealLandmarks3DCandidateResults = {
         pose_aware_weighted_z_v1: weightedResult,
         pose_aware_canonical_3d_v1: canonicalResult,
         pose_aware_canonical_stable_z_v1: stableZResult,
+        pose_aware_canonical_balanced_frame_z_v1: balancedFrameZResult,
       }
       idealLandmarks3DCandidateResult =
         idealLandmarks3DCandidateResults[
           selectedIdealLandmarks3DGenerationMethod
-        ] ?? stableZResult
+        ] ?? balancedFrameZResult
       pointCloudPreviewCamera = createPointCloudPreviewCamera()
       render()
     })
