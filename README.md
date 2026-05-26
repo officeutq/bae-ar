@@ -1,279 +1,92 @@
 # BAE AR
 
-## IdealFace Authoring Tool cleanup status
-
-Current active authoring flow is MP4 input -> detailed scan -> Step 2-I-A frame selection -> Step 2-I-B pose-aware inference dataset -> Step 2-I-C `pose_aware_weighted_z_v1` candidate generation -> Step 2-H `currentCandidate` point cloud preview -> IdealFace asset JSON export v1.
-
-The old Step 2-C to 2-G v1 five-pose UI/state/JSON preview has been removed from the current tool surface. `selectedRepresentativeFrames`, `idealLandmarks3DInferenceDataset`, `representativeFrameCandidates`, and `legacy.step2Gv1` are no longer exposed in the UI or JSON preview. The JSON preview is organized around `activeSummary`, `poseAware`, `currentCandidate`, `reference`, and `debug`.
-
-The old Step 2-G v1 generation helper path has been removed from the current code. 3D candidate generation is now centered on Step 2-I-C `pose_aware_weighted_z_v1`; the old five-pose path can be referenced from Git history when needed. IdealFace JSON export v1 downloads the generated `currentCandidate` as `ideal_face_asset_v1` with the full 478 `idealLandmarks3D` points while keeping the in-app JSON preview limited to summary and preview data. New features such as confidence debug, manual adjustment, save, and import should be added only to the Step 2-I active workflow, not to legacy/debug paths.
-
-## IdealFace Authoring Tool coordinate normalization
-
-`tools/ideal-face-authoring` now applies `video_aspect_same_unit_v1` coordinate normalization for Step 2-I-C `pose_aware_weighted_z_v1`. MediaPipe image-normalized x/y are converted to face-centered same-unit coordinates with `xScale = videoWidth / videoHeight` and `yScale = 1` before roll correction, front reference base generation, observation dx/dy comparison, and z hint inference.
-
-Downloaded `ideal_face_asset_v1` JSON keeps `schemaVersion` and `coordinateSpace` unchanged, while `idealLandmarks3D` x/y/z values now come from the normalized coordinate space. The UI and in-app JSON preview still report video aspect ratio, raw image-normalized bounds, same-unit bounds, current candidate bounds, and aspect ratio debug. Runtime Projection keeps rotate + translate + uniform scale alignment only.
-
-## IdealFace Projection coordinate policy
-
-- `idealLandmarks3D` is stored in same-unit coordinate space.
-- Runtime Projection rotates and aligns IdealFace in same-unit space.
-- Studio overlay and future Shape Warp use image-normalized / pixel coordinates.
-- Projection result separates same-unit projected landmarks from image-normalized projected landmarks as `sameUnitLandmarks` and `imageLandmarks`.
-- Studio overlay draws `imageLandmarks`; it does not draw same-unit landmarks directly with `canvasWidth` / `canvasHeight`.
-- Runtime must not non-uniformly scale IdealFace to match the current face aspect ratio.
-- Authoring Tool owns same-unit asset generation, video aspect correction, pose-aware generation, and future manual adjustment. Runtime owns loading finished IdealFace assets, projection, and conversion for overlay / difference / warp, but does not include authoring generation logic.
-- Current-vs-projected ideal 478-point difference debug, `correctionProfile` foundation, `expressionAttenuation` foundation, CorrectionPlan v1 debug foundation, Shape Warp v1 debug prototype, and Studio processed preview-only WebGL mesh warp v1 prototype are implemented. Production Shape Warp and Runtime renderer integration remain unimplemented.
-
-## Engine ideal_face_asset_v1 loading foundation
-
-`packages/engine` now exposes TypeScript types, validation helpers, a JSON parse helper, and a conversion helper for Authoring Tool export JSON with `schemaVersion: "ideal_face_asset_v1"`.
-
-This is only the Runtime loading foundation. Authoring Tool generation logic is not included in Engine Runtime.
-
-## Studio ideal_face_asset_v1 import
-
-`apps/studio` can select an `ideal_face_asset_v1` JSON file exported by the Authoring Tool, validate it through the Engine helper, convert it to an `IdealFace`, and apply it with `BeautyEngine.setIdealFace()`.
-
-This verifies asset import, Engine reflection, and the 478-point Projection debug path. Authoring Tool generation logic is still not included.
-
-## idealLandmarks3D Projection v1
-
-`packages/engine` now exposes a Runtime Projection v1 helper for loaded IdealFace assets with 478 `idealLandmarks3D` points. It rotates the ideal 3D landmarks by the current `FacePose` and returns projected ideal 2D landmarks plus x / y / z range summary.
-
-`apps/studio` can show the 478-point Projection status, landmark count, x / y / z ranges, current-vs-projected ideal 478-point difference debug output, CorrectionPlan debug summary, and Shape Warp v1 debug prototype summary. It draws projected ideal landmarks and debug overlays when available. Production Shape Warp is still not implemented.
-
-`idealLandmarks3D` Projection v1 also applies a face center / uniform scale alignment when current landmarks are available. The alignment scale basis is `contain`: it compares current landmarks bbox width / height with the rotated projected ideal bbox width / height, calculates `widthRatio = currentWidth / projectedWidth` and `heightRatio = currentHeight / projectedHeight`, and uses the smaller ratio as the uniform scale. The v1 alignment keeps the IdealFace aspect ratio intact; it does not scale x / y separately or reshape the asset to match the current face.
-
-Projection debug also reports bounds and aspect ratios for the source asset, rotated projection, aligned projection, current landmarks, Studio overlay pixel positions, and the contain scale basis values including width ratio, height ratio, limiting axis, and chosen scale. These values are investigation-only: runtime alignment remains rotate + translate + uniform scale, while production Shape Warp and any future production renderer integration are still not implemented.
-
-## correctionProfile v1 specification
-
-`correctionProfile` v1 is implemented as an optional top-level field for `ideal_face_asset_v1` assets. It keeps per-landmark correction `strength` separate from the shape data in `idealLandmarks3D`, does not store per-frame dx / dy, and defines fallback / validation policy used by the CorrectionPlan v1 debug foundation.
-
-See [correctionProfile v1](docs/correction-profile-v1.md). Authoring Tool editing UI, correctionProfile export authoring, production Shape Warp, and production renderer integration remain outside this step.
-
-## expressionFollow v1 direction
-
-今後の表情制御は、単純に group の補正強度を下げる `expressionAttenuation` ではなく、表情ごとに landmark が neutral な projected ideal へどれだけ追従するかを定義する `expressionFollow v1` を中心に整理します。
-
-`idealFollowStrength` は `0.0 = current / camera を優先`、`1.0 = projected ideal を優先` です。`landmarkGroups` は rule の対象範囲、`landmarkFollowStrengths` は landmark ごとの追従率です。`landmarkFollowStrengths[].idealFollowStrength` は rule 最大時の target value であり、実行時は blendshape score と `inputRange` から `ruleAmount` を計算して、`1.0` から target へ補間した `effectiveIdealFollowStrength` を使います。`landmarkFollowStrengths` は MP4 の表情別 frame group から neutral 3D 478 / expression 3D 478 を生成し、同じ `comparisonSpace` で 3D 差分を比較して自動生成する方針です。
-
-See [expressionFollow v1](docs/expression-follow-v1.md). This is documentation direction only. TypeScript implementation, Engine implementation, Studio implementation, Authoring Tool UI, JSON export changes, validator changes, MP4 expression 3D analysis, landmarkFollowStrengths auto generation, Production Shape Warp, and Runtime renderer integration are not included in this step.
-
-## MP4 expression 3D analysis plan
-
-`landmarkFollowStrengths` は、IdealFace Authoring Tool が MP4 の表情別 frame group から neutral 3D 478 / expression 3D 478 を生成し、同じ `comparisonSpace` の same-unit 3D landmarks 同士を比較して自動生成する方針です。
-
-See [MP4 expression 3D analysis plan](docs/mp4-expression-3d-analysis-plan.md). This is documentation direction only. TypeScript implementation, Engine implementation, Studio implementation, Authoring Tool UI, JSON export changes, validator changes, MP4 expression 3D analysis implementation, and landmarkFollowStrengths auto generation are not included in this step.
-
-## expression-aware correctionProfile direction
-
-`correctionProfile` currently supports optional `expressionAttenuation` rules in the Engine foundation. These rules use MediaPipe blendshape scores such as `jawOpen`, `eyeBlinkLeft`, `eyeBlinkRight`, `eyeSquintLeft`, and `eyeSquintRight` to reduce `strengthScale` for affected landmark groups such as `mouth`, `left_eye`, `right_eye`, and `face_boundary`.
-
-This is the existing safety attenuation foundation, not the future center specification. See [expression-aware correctionProfile](docs/expression-aware-correction-profile.md). Engine foundation and Studio debug / Copy Debug display are implemented. Future expression work should prioritize [expressionFollow v1](docs/expression-follow-v1.md).
-
-## expressionAttenuation falloff v1 direction
-
-`expressionAttenuation falloff v1` is now positioned as a fallback / reference idea for the old `expressionAttenuation` direction. It is not the center expression control specification.
-
-See [expressionAttenuation falloff v1](docs/expression-attenuation-falloff-v1.md). The main direction is [expressionFollow v1](docs/expression-follow-v1.md), where `landmarkFollowStrengths` defines per-landmark ideal follow strength. Falloff may be used only when `landmarkFollowStrengths` is missing or as a debug/reference fallback.
-
-## landmarkGroups v1 direction
-
-`landmarkGroups` defines meaningful MediaPipe landmark index groups such as `mouth`, `left_eye`, `right_eye`, and `face_boundary` for expression safety, and future `skin`, `lip`, `cheek`, and `eye_area` groups for color masks. It is referenced by `expressionFollow`, existing `expressionAttenuation`, and future `colorLayers`, but it is not an individual part editing command set.
-
-See [landmarkGroups v1](docs/landmark-groups-v1.md). Engine landmarkGroups asset loading, fallback groups, Studio debug / Copy Debug summary, Authoring Tool Landmark Group Editor v1 prototype, rectangle selection, index highlight, bulk add / remove, and `ideal_face_asset_v1` optional `landmarkGroups` export are implemented. Color Processing, Layer System, and `beauty_filter_asset_v1` foundation remain unimplemented.
-
-## Shape Warp production direction
-
-Shape Warp v1 debug prototype is Studio processed preview-only. CPU radial warp debug and WebGL mesh warp v1 prototype connect CorrectionPlan correction vectors to the image so the movement can be observed, but neither is the production-quality Runtime renderer.
-
-The production Shape Warp candidate is WebGL mesh warp. The candidate direction is to use MediaPipe face mesh topology, treat current image-normalized landmarks as source vertices, treat CorrectionPlan `target` points as target vertices, use the source video frame / source canvas as the texture, and remap texture triangles from current to target positions.
-
-See [Shape Warp production direction](docs/shape-warp-production-direction.md). Studio WebGL mesh warp v1 prototype is implemented for processed preview verification, while Production Shape Warp, Runtime renderer integration, renderer lifecycle, shader hardening, and MediaPipe topology production handling remain outside this documentation step.
-
-## beauty_filter_asset_v1 direction
-
-最終的なフィルター / プリセットの配布単位は、`IdealFace + landmarkGroups + correctionProfile + shapeWarpSettings + colorLayers` を束ねた 1つの `beauty_filter_asset_v1` JSON として整理します。
-
-ただし、内部では `idealFace`、`landmarkGroups`、`correctionProfile`、`shapeWarpSettings`、`colorLayers` を責務ごとに分離します。`landmarkGroups` は `expressionFollow` / `expressionAttenuation` と将来の `colorLayers` が参照する group id の整合性を保つための定義です。Layer System は shape warp 用ではなく color processing 用です。
-
-See [beauty_filter_asset_v1 direction](docs/beauty-filter-asset-v1.md). This is a documentation direction only. TypeScript implementation, Engine implementation, Studio implementation, Authoring Tool UI, JSON export changes, validator implementation, Color Processing, Layer System, Production Shape Warp, and Runtime renderer integration are not included in this step.
+## 概要
 
 BAE AR は、リアルタイム顔加工・AR 表現を行う Beauty Engine Runtime と、その開発・検証・調整を行う Beauty Studio、将来の authoring tool 群を含むプロジェクトです。
 
 目的は、単なるフィルターではなく、本番サービスに組み込める自然で破綻しにくい Beauty Engine を育てることです。
 
+Shape Processing は、目だけ大きくする、鼻だけ細くする、顎だけ削るような個別パーツ加工ではありません。現在顔の MediaPipe 478 landmarks と、IdealFace 由来の projected ideal 478 landmarks を比較し、顔全体として自然に少し warp する方針です。
+
 ## 全体構成
-
-BAE AR は 4 領域に分けます。
-
-```text
-Engine Runtime
-  本番でリアルタイム加工する中核 SDK
-  UI を持たない
-  実行専用
-
-Beauty Studio
-  Engine を開発・検証・調整する開発ツール
-  Engine の公開 API のみを使う
-  Engine 内部実装へ直接依存しない
-
-IdealFace Authoring Tool
-  理想 3D 顔プリセットを作成する authoring tool
-  Step 2-I-A/B/C と Step 2-H まで実装済み
-  リアルタイム Engine Runtime には含めない
-
-Layer Mask Authoring Tool
-  色加工用 LayerMaskSpec を作成する将来ツール
-  リアルタイム Engine Runtime には含めない
-```
-
-現在のリポジトリでは、`packages/engine`、`apps/studio`、`tools/ideal-face-authoring` が実装済み領域です。
 
 ```text
 packages/engine
   Engine Runtime として使う Beauty Engine SDK
+  UI を持たない実行専用 SDK
 
 apps/studio
   Engine Runtime を開発・検証・調整する Beauty Studio
-
-docs
-  設計・仕様・ロードマップ
+  Engine の公開 API のみを使う
 
 tools/ideal-face-authoring
-  IdealFace Authoring Tool。Step 2-I-A/B/C と Step 2-H まで実装済み
+  IdealFace Authoring Tool
+  Step 2-I-A/B/C と Step 2-H まで実装済み
+
+docs
+  設計、仕様、ロードマップ、開発方針
+
+tools/layer-mask-authoring
+  将来予定の Layer Mask Authoring Tool
 ```
+
+Engine Runtime に Studio / Authoring 用 UI や生成・編集処理は入れません。Authoring Tool は IdealFace や将来の `expressionFollow` 用データを作成し、Engine Runtime は完成済み asset を読み込んで実行します。
 
 ## 現在の実装状況
 
-実装済み:
+### 実装済み
 
 - `BeautyEngine` の基本ライフサイクル: `initialize()` / `start()` / `stop()` / `dispose()`
 - 入力保持: `setInput()` / `getInput()`
 - `FaceDetector` 差し替え: `setFaceDetector()` / `getFaceDetector()`
 - `HTMLVideoElement` 入力に対する FaceFrame loop
 - `MediaPipeFaceDetector` による MediaPipe Face Landmarker 接続
-- `FaceFrame` の更新: `detected` / `timestamp` / `landmarks` / `blendshapes` / `pose`
+- `FaceFrame` 更新: `detected` / `timestamp` / `landmarks` / `blendshapes` / `pose`
 - `FaceGeometry` の補助解析
-- Studio 側のカメラ入力、debug 表示、landmark / geometry overlay
+- Studio 側のカメラ入力、debug 表示、landmark / geometry overlay、Copy Debug
 - FacePose の実推定
-- IdealFace v1 型定義
-- Natural v1 最小プリセット
-- IdealFace 公開 API
-- idealLandmarks3D 478点 Projection
-- current-vs-projected ideal 478点 difference debug
-- Studio overlay / debug / Copy Debug 関連
-- IdealFace Authoring Tool Step 1: `natural_v1` metadata / controlPoints / 2D preview / JSON preview
-- IdealFace Authoring Tool Step 2-A: MP4 動画入力、metadata 表示、フレーム抽出、サムネイル一覧表示
-- IdealFace Authoring Tool Step 2-B: 抽出フレームの MediaPipe 解析、2D 478 landmarks / FacePose 取得、解析 summary 表示
-- IdealFace Authoring Tool Step 2-I-A/B/C: detailed scan の結果から frame selection、pose-aware inference dataset、`pose_aware_weighted_z_v1` candidate generation へ進む active workflow
-- IdealFace Authoring Tool Step 2-H: Step 2-I-C で生成した `currentCandidate` を interactive 3D point cloud preview として確認
+- IdealFace v1 型定義、Natural v1 最小プリセット、IdealFace 公開 API
+- `ideal_face_asset_v1` 読み込み foundation、validator、parse helper、converter
+- `idealLandmarks3D` 478点 Projection
+- current-vs-projected ideal 478点差分 debug
+- `correctionProfile` v1 foundation、validation / fallback
+- `expressionAttenuation` v1 foundation
+- CorrectionPlan v1 debug foundation
+- Studio 向け Shape Warp v1 debug prototype
+- Studio processed preview 限定 WebGL mesh warp v1 prototype
+- `landmarkGroups` v1 docs specification / Engine foundation
+- Engine fallback groups / asset group source handling
+- Studio debug / Copy Debug landmarkGroups summary
+- IdealFace Authoring Tool Landmark Group Editor v1 prototype
+- Landmark Group Editor rectangle selection / index highlight / bulk add / bulk remove
+- `ideal_face_asset_v1` optional `landmarkGroups` export
+- `expressionFollow v1` docs 方針
+- MP4 expression 3D analysis plan docs 方針
 
-## IdealFace Authoring Tool active workflow and removed legacy path
+### 未実装 / 後段
 
-Current active workflow:
-
-```text
-MP4 input
-  -> detailed scan
-  -> Step 2-I-A frame selection
-       正面基準候補 / 推定に使うフレーム / 除外フレーム
-  -> Step 2-I-B pose-aware inference dataset
-  -> Step 2-I-C pose_aware_weighted_z_v1 candidate generation
-       roll 補正
-       yaw / pitch / weight による z hint
-       idealLandmarks3D 478点候補生成
-  -> Step 2-H currentCandidate point cloud preview
-```
-
-Removed legacy workflow:
-
-旧 Step 2-C〜2-G v1 の 5ポーズ方式は過去の実装です。現在コードからは UI / state / JSON preview / generation helper を削除済みで、必要な場合は Git 履歴を参照します。現在の docs では、旧方式を現行の authoring 主導線として扱いません。
-
-削除済みの代表例:
-
-- old five-pose candidate UI
-- `selectedRepresentativeFrames`
-- `idealLandmarks3DInferenceDataset`
-- `representativeFrameCandidates` / representative candidate UI and JSON preview
-- `legacy.step2Gv1` JSON preview
-- `buildIdealLandmarks3DCandidateResult()`
-- `inferCandidateZ()`
-- `inferCandidateConfidence()`
-- `generationMethod: "step_2_g_v1"`
-
-Current JSON preview:
-
-```text
-activeSummary
-poseAware
-currentCandidate
-reference
-debug
-```
-
-`currentCandidate` は Step 2-H preview に表示される現在の candidate です。`generationMethod` は `pose_aware_weighted_z_v1` で、478 landmarks 全文は出さず、summary と先頭数点 preview に留めます。`natural_v1` の 6 controlPoints は reference / projection debug 用であり、IdealFace 本体は `idealLandmarks3D` 478点です。
-
-legacy / debug と分類した helper には、今後の新機能を追加しません。現行 UI には Step 2-G v1 を旧方式として示す注記が残っていますが、active workflow は Step 2-I です。confidence debug、手動微調整 UI、保存 / import、correctionProfile / beauty_filter_asset_v1 export は Step 2-I active workflow 側で扱います。
-
-Still planned:
-
+- `expressionFollow v1` Engine 実装
+- MP4 expression 3D analysis 実装
+- `landmarkFollowStrengths` 自動生成
+- expressionFollow Authoring UI
+- correctionProfile / expressionFollow export
+- `beauty_filter_asset_v1` foundation / validator / parser / converter
+- `shapeWarpSettings` v1
+- `colorLayers` v1
+- Production Shape Warp
+- Runtime renderer integration
+- Production WebGL mesh warp / renderer lifecycle / disposal / fallback
+- Color Processing
+- Layer System
+- LayerMaskSpec
 - confidence debug
 - manual adjustment UI
 - save / import
-- correctionProfile / beauty_filter_asset_v1 export
 - multiple image input
 
-## 現在の処理パイプライン
+## IdealFace Authoring Tool
 
-現在実装済みのパイプラインは以下です。
-
-```text
-Camera input
-  -> HTMLVideoElement
-  -> BeautyEngine.setInput()
-  -> MediaPipeFaceDetector
-  -> FaceFrame loop
-  -> FaceFrame 更新
-  -> Studio debug / overlay
-```
-
-`FaceFrame` は MediaPipe 由来の現在フレームの生データです。`FaceGeometry` は debug / overlay / 顔サイズ確認 / 代表点確認などの補助情報であり、shape processing の中心ではありません。
-
-## IdealFace と MediaPipe canonical face model
-
-MediaPipe canonical face model は、MediaPipe 側が landmark 検出や face geometry のために使う標準顔モデル・基準顔です。BAE AR はその考え方を参考にする可能性はありますが、MediaPipe canonical face model そのものを作成・編集対象にはしません。
-
-BAE AR の IdealFace は、BAE AR 独自の理想顔 canonical face / お面データです。MediaPipe 478 landmarks そのものでも、MediaPipe canonical face model そのものでもありません。MediaPipe は検出側の基準、BAE AR IdealFace は補正・比較側の基準として分けて扱います。
-
-## Shape Processing 方針
-
-shape processing は個別パーツ加工ではありません。
-
-```text
-現在顔から MediaPipe 478 landmarks を取得
-  -> FacePose を推定
-  -> IdealFace 3D model を現在姿勢へ投影
-  -> ideal 2D landmarks 478 点を生成
-  -> current 478 landmarks と ideal 478 landmarks の差分を取る
-  -> CorrectionPlan を生成
-  -> 顔全体として自然に少し warp
-```
-
-やらないこと:
-
-- 目だけ大きくする
-- 鼻だけ細くする
-- 顎だけ削る
-- 個別パーツ加工を主機能として増やす
-
-## IdealFace Authoring Tool Step 2-I active workflow
-
-詳細スキャンは Step 2-I-A の frame selection に渡す observation source です。表示用の粗いフレーム抽出や Step 1 の 6 controlPoints は reference / debug として扱い、active authoring の中心には置きません。
-
-Current active workflow:
+現在の active workflow は Step 2-I 系です。
 
 ```text
 MP4 input
@@ -285,24 +98,135 @@ MP4 input
        roll 補正
        yaw / pitch / weight による z hint
        idealLandmarks3D 478点候補生成
-  -> Step 2-H currentCandidate point cloud preview
+  -> Step 2-H currentCandidate 3D 点群 preview
+  -> IdealFace asset JSON export v1
 ```
 
-Step 2-H は、Step 2-I-C で生成された `currentCandidate` を確認する interactive 3D point cloud preview です。preview camera、y 軸反転、z 表示倍率は表示専用であり、candidate data 自体は変更しません。
+旧 Step 2-C〜2-G v1 の 5ポーズ方式は削除済みです。現在コードからは UI / state / JSON preview / generation helper を削除しており、必要な場合は Git 履歴を参照します。
 
-Current JSON preview:
+今後の新機能は、旧方式ではなく Step 2-I active workflow 側に追加します。`currentCandidate` は Step 2-H preview に表示される現在の candidate で、`generationMethod` は `pose_aware_weighted_z_v1` です。`natural_v1` の 6 controlPoints は reference / projection debug 用であり、IdealFace 本体は `idealLandmarks3D` 478点です。
+
+## IdealFace Projection / 座標系方針
+
+- `idealLandmarks3D` は same-unit coordinate として保存します。
+- Runtime Projection は same-unit 空間で rotate + translate + uniform scale alignment を行います。
+- Studio overlay / current-vs-ideal difference / Shape Warp 入力には image-normalized / pixel coordinate を使います。
+- Projection result は `sameUnitLandmarks` と `imageLandmarks` を分けて扱います。
+- Studio overlay は `imageLandmarks` を描画します。
+- same-unit landmarks を `canvasWidth` / `canvasHeight` に直接掛けて描画しません。
+- Runtime は IdealFace の x/y を別々に scale せず、IdealFace の縦横比を現在顔に合わせて歪めません。
+- video aspect 補正、pose-aware generation、将来の manual adjustment は Authoring Tool の責務です。
+
+## correctionProfile / CorrectionPlan
+
+`correctionProfile` v1 は、`ideal_face_asset_v1` の optional top-level field として Engine foundation 実装済みです。
+
+要点:
+
+- `idealLandmarks3D` と `correctionProfile` は分けます。
+- `correctionProfile` は landmark ごとの `strength`、fallback、`maxCorrectionDistance` を扱います。
+- dx / dy は JSON に保存しません。
+- dx / dy は current landmarks と projected ideal `imageLandmarks` から Engine が毎フレーム計算します。
+- CorrectionPlan v1 debug foundation は `correctionProfile` を使い、478点分の correction vectors を生成します。
+- CorrectionPlan は姿勢補正を担当しません。姿勢への対応は IdealFace Projection の責務です。
+
+詳細は [correctionProfile v1](docs/correction-profile-v1.md) を参照してください。
+
+## expressionFollow v1
+
+今後の表情制御は、単純に group の補正強度を下げる `expressionAttenuation` ではなく、`expressionFollow v1` を中心に整理します。
+
+要点:
+
+- `expressionFollow` は、表情時に各 landmark が neutral な projected ideal へどれだけ追従するかを定義します。
+- `idealFollowStrength` は `0.0 = current / camera を優先`、`1.0 = projected ideal を優先` です。
+- `landmarkGroups` は rule の対象範囲です。
+- `landmarkFollowStrengths` は landmark ごとの追従率です。
+- `landmarkFollowStrengths[].idealFollowStrength` は rule 最大時の target value です。
+- 実行時は blendshape score と `inputRange` から `ruleAmount` を計算し、`1.0` から target へ補間した `effectiveIdealFollowStrength` を使います。
+
+`expressionAttenuation` は既存 Engine foundation として残りますが、今後の中心仕様ではありません。`expressionAttenuation falloff v1` は fallback / 参考案として扱います。今後の expression work は `expressionFollow v1` を優先します。
+
+詳細は [expressionFollow v1](docs/expression-follow-v1.md)、[expression-aware correctionProfile](docs/expression-aware-correction-profile.md)、[expressionAttenuation falloff v1](docs/expression-attenuation-falloff-v1.md) を参照してください。
+
+## MP4 expression 3D analysis plan
+
+`landmarkFollowStrengths` は手作業だけでなく、IdealFace Authoring Tool が MP4 の表情別 frame group から自動生成する方針です。
+
+要点:
+
+- neutral frame group から neutral 3D 478 を生成します。
+- mouthPucker / jawOpen / mouthSmile / eyeBlink / eyeSquint などの expression frame group から expression 3D 478 を生成します。
+- 比較は projected 2D / image-normalized ではなく、same-unit 3D 478 同士で行います。
+- `comparisonSpace` は `bae_ar_ideal_landmarks3d_v1` を推奨します。
+- `distance3D` から `idealFollowStrength` を生成します。
+- `affectedLandmarkGroups` は対象範囲、`landmarkFollowStrengths` は対象範囲内の landmark ごとの追従率です。
+- JSON preview / export は段階的に進めます。
+
+これは docs 方針のみで、MP4 expression 3D analysis 実装と `landmarkFollowStrengths` 自動生成は未実装です。
+
+詳細は [MP4 expression 3D analysis plan](docs/mp4-expression-3d-analysis-plan.md) を参照してください。
+
+## landmarkGroups v1
+
+`landmarkGroups` は、MediaPipe landmark index 群に意味を与える定義です。
+
+要点:
+
+- `mouth` / `left_eye` / `right_eye` / `face_boundary` などの index group を定義します。
+- `expressionFollow` / `expressionAttenuation` / 将来の `colorLayers` が参照します。
+- 個別パーツ加工命令ではありません。
+- `mouth` group で目だけ大きくする、`jaw` group で顎だけ削る、のような使い方はしません。
+- Engine asset loading / fallback groups / Studio debug / Copy Debug summary は実装済みです。
+- Authoring Tool Landmark Group Editor / rectangle selection / index highlight / bulk add / bulk remove / optional export は実装済みです。
+
+詳細は [landmarkGroups v1](docs/landmark-groups-v1.md) を参照してください。
+
+## Shape Warp
+
+現在の Shape Warp は debug / prototype 段階です。
+
+要点:
+
+- Studio の Shape Warp v1 debug prototype は実装済みです。
+- Studio processed preview 限定 WebGL mesh warp v1 prototype は実装済みです。
+- 本番候補は WebGL mesh warp です。
+- Production Shape Warp / Runtime renderer integration は未実装です。
+- Runtime renderer lifecycle、shader hardening、MediaPipe topology の本番整理は後段です。
+
+詳細は [Shape Warp production 方針](docs/shape-warp-production-direction.md) を参照してください。
+
+## beauty_filter_asset_v1
+
+最終的なフィルター / プリセットは、`beauty_filter_asset_v1` として 1つの JSON に束ねる方針です。
 
 ```text
-activeSummary
-poseAware
-currentCandidate
-reference
-debug
+beauty_filter_asset_v1
+  ├─ idealFace
+  ├─ landmarkGroups
+  ├─ correctionProfile
+  ├─ shapeWarpSettings
+  └─ colorLayers
 ```
 
-`currentCandidate` は Step 2-H preview に表示される現在の candidate です。`generationMethod` は `pose_aware_weighted_z_v1` で、478 landmarks 全文は出さず、summary と先頭数点 preview に留めます。`natural_v1` の 6 controlPoints は reference / projection debug 用であり、IdealFace 本体は `idealLandmarks3D` 478点です。
+内部では、`idealFace`、`landmarkGroups`、`correctionProfile`、`shapeWarpSettings`、`colorLayers` を責務ごとに分離します。`landmarkGroups` は `expressionFollow` / `expressionAttenuation` と将来の `colorLayers` が参照する group id の整合性を保つための定義です。
 
-## ドキュメント
+現在は docs 方針のみで、`beauty_filter_asset_v1` foundation は未実装です。Color Processing と Layer System も未実装です。
+
+詳細は [beauty_filter_asset_v1 方針](docs/beauty-filter-asset-v1.md) を参照してください。
+
+## 起動コマンド
+
+root の `package.json` には以下の script があります。
+
+```bash
+npm run start
+npm run start:ideal-face-authoring
+```
+
+`npm run start` は `apps/studio` を起動します。`npm run start:ideal-face-authoring` は `tools/ideal-face-authoring` を起動します。
+
+## 関連ドキュメント
 
 - [概要](docs/overview.md)
 - [アーキテクチャ](docs/architecture.md)
@@ -314,81 +238,22 @@ debug
 - [expression-aware correctionProfile](docs/expression-aware-correction-profile.md)
 - [expressionAttenuation falloff v1](docs/expression-attenuation-falloff-v1.md)
 - [landmarkGroups v1](docs/landmark-groups-v1.md)
-- [Shape Warp production direction](docs/shape-warp-production-direction.md)
-- [beauty_filter_asset_v1 direction](docs/beauty-filter-asset-v1.md)
+- [Shape Warp production 方針](docs/shape-warp-production-direction.md)
+- [beauty_filter_asset_v1 方針](docs/beauty-filter-asset-v1.md)
 - [仕様書とロードマップ](docs/bae_ar_beauty_engine_spec_and_roadmap_2026_05.md)
 
-## IdealFace Authoring Tool Step 1 / Step 2-A / Step 2-B
+## 今回 README で扱わないこと
 
-Step 1 の `natural_v1` metadata と 6 controlPoints は reference / projection debug 用です。IdealFace 本体は `idealLandmarks3D` 478点です。
-
-Step 2-A は MP4 動画入力、metadata 確認、表示用の粗いフレーム抽出を扱います。表示用抽出フレームは debug / metadata 確認用であり、Step 2-I の observation source ではありません。
-
-Step 2-B は MediaPipe による 2D 478 landmarks と FacePose の取得を扱います。その後続は旧 Step 2-C〜2-G ではなく、detailed scan から Step 2-I-A/B/C の pose-aware workflow へ進みます。
-
-## IdealFace Authoring Tool removed Step 2-C to 2-G v1 history
-
-Removed legacy workflow:
-
-旧 Step 2-C〜2-G v1 の 5ポーズ方式は過去の実装です。現在コードからは UI / state / JSON preview / generation helper を削除済みで、必要な場合は Git 履歴を参照します。現在の docs では、旧方式を現行の authoring 主導線として扱いません。
-
-削除済みの代表例:
-
-- old five-pose candidate UI
-- `selectedRepresentativeFrames`
-- `idealLandmarks3DInferenceDataset`
-- `representativeFrameCandidates` / representative candidate UI and JSON preview
-- `legacy.step2Gv1` JSON preview
-- `buildIdealLandmarks3DCandidateResult()`
-- `inferCandidateZ()`
-- `inferCandidateConfidence()`
-- `generationMethod: "step_2_g_v1"`
-
-Step 2-A / 2-B の動画入力、metadata 確認、MediaPipe 解析は残します。ただし、その後続は旧 Step 2-C〜2-G ではなく、detailed scan から Step 2-I-A/B/C の pose-aware workflow へ進みます。
-
-legacy / debug と分類した UI や helper には、今後の新機能を追加しません。confidence debug、手動微調整 UI、保存 / export は Step 2-I active workflow 側に追加します。
-
-## IdealFace Authoring Tool の idealLandmarks3D 作成方針
-
-IdealFace の本体である `idealLandmarks3D` 478点は、IdealFace Authoring Tool 側で作成します。現在の入力は MP4 動画で、複数画像入力は将来対応です。
-
-Current active workflow:
-
-```text
-MP4 input
-  -> detailed scan
-  -> Step 2-I-A frame selection
-       正面基準候補 / 推定に使うフレーム / 除外フレーム
-  -> Step 2-I-B pose-aware inference dataset
-  -> Step 2-I-C pose_aware_weighted_z_v1 candidate generation
-       roll 補正
-       yaw / pitch / weight による z hint
-       idealLandmarks3D 478点候補生成
-  -> Step 2-H currentCandidate point cloud preview
-```
-
-この処理は完全自動生成ではなく、自動推定 + 将来の手動補正として扱います。動画入力、詳細スキャン、pose-aware dataset 作成、candidate generation、3D point cloud preview は IdealFace Authoring Tool の責務であり、Engine Runtime には含めません。Engine Runtime は完成済み IdealFace asset を読み込み、現在の `FacePose` へ投影して使います。
-
-Removed legacy workflow:
-
-旧 Step 2-C〜2-G v1 の 5ポーズ方式は過去の実装です。現在コードからは UI / state / JSON preview / generation helper を削除済みで、必要な場合は Git 履歴を参照します。現在の docs では、旧方式を現行の authoring 主導線として扱いません。
-
-削除済みの代表例:
-
-- old five-pose candidate UI
-- `selectedRepresentativeFrames`
-- `idealLandmarks3DInferenceDataset`
-- `representativeFrameCandidates` / representative candidate UI and JSON preview
-- `legacy.step2Gv1` JSON preview
-- `buildIdealLandmarks3DCandidateResult()`
-- `inferCandidateZ()`
-- `inferCandidateConfidence()`
-- `generationMethod: "step_2_g_v1"`
-
-Still planned:
-
-- confidence debug
-- manual adjustment UI
-- save / import
-- correctionProfile / beauty_filter_asset_v1 export
-- multiple image input
+- TypeScript 実装
+- Engine 実装
+- Studio 実装
+- Authoring Tool UI 実装
+- JSON export 変更
+- validator 変更
+- `expressionFollow v1` 実装
+- MP4 expression 3D analysis 実装
+- `landmarkFollowStrengths` 自動生成
+- Production Shape Warp
+- Runtime renderer integration
+- Color Processing
+- Layer System
