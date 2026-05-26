@@ -360,6 +360,12 @@ interface Point3D extends Point2D {
   z: number
 }
 
+interface Point3DDebug {
+  x: number | null
+  y: number | null
+  z: number | null
+}
+
 interface LandmarkBoundsSummary {
   pointCount: number
   xMin: number
@@ -557,10 +563,17 @@ interface FrameZHintSummary {
 
 interface CandidateDebugComparisonItem {
   generationMethod: IdealLandmarks3DGenerationMethod
+  centroidX: number | null
+  centroidY: number | null
+  centroidZ: number | null
+  semanticCenterX: number | null
+  semanticCenterY: number | null
   zMin: number
   zMax: number
+  zAverage: number
   zRange: number
   boundsCenterX: number | null
+  boundsCenterY: number | null
   boundsCenterZ: number | null
   noseTipX: number | null
   noseTipZ: number | null
@@ -568,6 +581,7 @@ interface CandidateDebugComparisonItem {
   mouthCenterZ: number | null
   chinX: number | null
   chinZ: number | null
+  noseOffsetFromBoundsCenterX: number | null
   leftCheekZ: number | null
   rightCheekZ: number | null
   leftContourZ: number | null
@@ -668,12 +682,17 @@ interface CandidateSemanticAlignmentMetricDebug {
   leftRightZRangeDelta: number | null
 }
 
+type PoseAwareMediaPipeMeshGenerationMethod =
+  | "pose_aware_mediapipe_mesh_average_v1"
+  | "pose_aware_mediapipe_mesh_semantic_origin_v1"
+
 interface SemanticCenterAlignmentDebug {
   enabled: true
   stage: "before_canonical_average"
+  purpose: "per_frame_registration"
   mode: SemanticCenterAlignmentMode
   source: "frontReferenceBase"
-  targetGenerationMethod: "pose_aware_mediapipe_mesh_average_v1"
+  targetGenerationMethod: PoseAwareMediaPipeMeshGenerationMethod
   frontReferenceSemanticCenter: SemanticCenterAlignmentPointDebug
   availableModeCenters: Record<
     SemanticCenterAlignmentMode,
@@ -686,6 +705,33 @@ interface SemanticCenterAlignmentDebug {
     beforePerFrameSemanticAlignment: CandidateSemanticAlignmentMetricDebug
     afterPerFrameSemanticAlignment: CandidateSemanticAlignmentMetricDebug
   }
+}
+
+interface SemanticOriginCenteringDebug {
+  enabled: true
+  generationMethod: "pose_aware_mediapipe_mesh_semantic_origin_v1"
+  mode: "eyes_nose_mouth"
+  stage: "after_canonical_average"
+  purpose: "asset_rotation_origin"
+  xYCenterPolicy: "semantic_center_xy"
+  zCenterPolicy: "z_average"
+  centroidXYCenterDisabled: true
+  finalSemanticCenterBefore: SemanticCenterAlignmentPointDebug
+  finalSemanticOriginOffset: SemanticCenterAlignmentPointDebug
+  zAverageBefore: { z: number | null }
+  finalSemanticCenterAfter: SemanticCenterAlignmentPointDebug
+  zAverageAfter: { z: number | null }
+  centroidBefore: Point3DDebug
+  centroidAfter: Point3DDebug
+  boundsCenterBefore: Point3DDebug
+  boundsCenterAfter: Point3DDebug
+}
+
+interface RuntimeProjectionAssumptionDebug {
+  rotationCenter: "asset_origin_0_0_0"
+  runtimeAlignment: "projected_bounds_center_to_current_bounds_center"
+  authoringOriginPolicy: "semantic_center_xy_z_average"
+  note: "Runtime alignment remains bounds-center based; semantic center is used only to place the asset rotation origin."
 }
 
 interface PoseAwarePartialCandidateSummary {
@@ -823,6 +869,10 @@ interface MediaPipeMeshAverageCandidateComparisonDebug {
   mediaPipeMeshAverage: CandidateDebugComparisonItem & {
     semanticCenterAlignmentEnabled: boolean
   }
+  mediaPipeMeshSemanticOrigin: (CandidateDebugComparisonItem & {
+    semanticCenterAlignmentEnabled: boolean
+    semanticOriginCenteringEnabled: boolean
+  }) | null
 }
 
 interface CenterAlignmentPointDebug {
@@ -844,7 +894,7 @@ interface FrontReferenceCenterAlignmentDebug {
   enabled: true
   mode: "bounds_center_xy"
   source: "frontReferenceBase"
-  targetGenerationMethod: "pose_aware_mediapipe_mesh_average_v1"
+  targetGenerationMethod: PoseAwareMediaPipeMeshGenerationMethod
   frontReferenceBoundsCenter: CenterAlignmentPointDebug
   candidateBoundsCenterBeforeAlignment: CenterAlignmentPointDebug
   alignmentOffset: CenterAlignmentPointDebug
@@ -860,13 +910,13 @@ interface PostBoundsCenterAlignmentDebug {
   enabled: false
   mode: "bounds_center_xy"
   source: "frontReferenceBase"
-  targetGenerationMethod: "pose_aware_mediapipe_mesh_average_v1"
+  targetGenerationMethod: PoseAwareMediaPipeMeshGenerationMethod
   stage: "post_candidate_generation"
   disabledReason: string
 }
 
 interface PoseAwareMediaPipeMeshAverageDebug {
-  generationMethod: "pose_aware_mediapipe_mesh_average_v1"
+  generationMethod: PoseAwareMediaPipeMeshGenerationMethod
   settings: MediaPipeMeshAverageSettingsDebug
   generationSummary: {
     observationFrameCount: number
@@ -891,6 +941,8 @@ interface PoseAwareMediaPipeMeshAverageDebug {
   frontReferenceCenterAlignment: FrontReferenceCenterAlignmentDebug | null
   postBoundsCenterAlignment: PostBoundsCenterAlignmentDebug
   semanticCenterAlignment: SemanticCenterAlignmentDebug | null
+  semanticOriginCentering?: SemanticOriginCenteringDebug
+  runtimeProjectionAssumption?: RuntimeProjectionAssumptionDebug
   topView: TopViewZAsymmetrySummary
   warnings: string[]
 }
@@ -929,6 +981,7 @@ type IdealLandmarks3DGenerationMethod =
   | "pose_aware_canonical_stable_z_v1"
   | "pose_aware_canonical_balanced_frame_z_v1"
   | "pose_aware_mediapipe_mesh_average_v1"
+  | "pose_aware_mediapipe_mesh_semantic_origin_v1"
 
 type PointCloudPreviewPreset = "front" | "side" | "top" | "reset"
 
@@ -1716,7 +1769,8 @@ function isIdealLandmarks3DGenerationMethod(
     value === "pose_aware_canonical_3d_v1" ||
     value === "pose_aware_canonical_stable_z_v1" ||
     value === "pose_aware_canonical_balanced_frame_z_v1" ||
-    value === "pose_aware_mediapipe_mesh_average_v1"
+    value === "pose_aware_mediapipe_mesh_average_v1" ||
+    value === "pose_aware_mediapipe_mesh_semantic_origin_v1"
   )
 }
 
@@ -5311,6 +5365,64 @@ function centerPoseAwareCanonicalLandmarks(
   }))
 }
 
+function centerPoseAwareCanonicalLandmarksToSemanticOrigin(
+  landmarks: IdealLandmark3DCandidate[],
+): {
+  landmarks: IdealLandmark3DCandidate[]
+  semanticOriginCentering: SemanticOriginCenteringDebug
+} {
+  const spatialBefore = buildLandmarkSpatialSummary(landmarks)
+  const semanticCenterBefore = calculateSemanticCenter(
+    landmarks,
+    SEMANTIC_CENTER_ALIGNMENT_MODE,
+  )
+  const semanticOriginX = semanticCenterBefore?.x ?? 0
+  const semanticOriginY = semanticCenterBefore?.y ?? 0
+  const zAverageBefore = calculateZAverage(landmarks) ?? 0
+  const centeredLandmarks = landmarks.map((landmark) => ({
+    ...landmark,
+    x: Number((landmark.x - semanticOriginX).toFixed(4)),
+    y: Number((landmark.y - semanticOriginY).toFixed(4)),
+    z: Number((landmark.z - zAverageBefore).toFixed(4)),
+    source: "pose_aware_mediapipe_mesh_semantic_origin_v1" as const,
+  }))
+  const spatialAfter = buildLandmarkSpatialSummary(centeredLandmarks)
+  const semanticCenterAfter = calculateSemanticCenter(
+    centeredLandmarks,
+    SEMANTIC_CENTER_ALIGNMENT_MODE,
+  )
+
+  return {
+    landmarks: centeredLandmarks,
+    semanticOriginCentering: {
+      enabled: true,
+      generationMethod: "pose_aware_mediapipe_mesh_semantic_origin_v1",
+      mode: "eyes_nose_mouth",
+      stage: "after_canonical_average",
+      purpose: "asset_rotation_origin",
+      xYCenterPolicy: "semantic_center_xy",
+      zCenterPolicy: "z_average",
+      centroidXYCenterDisabled: true,
+      finalSemanticCenterBefore:
+        toSemanticCenterAlignmentPointDebug(semanticCenterBefore),
+      finalSemanticOriginOffset: {
+        x: roundDebugNumber(-semanticOriginX),
+        y: roundDebugNumber(-semanticOriginY),
+      },
+      zAverageBefore: { z: roundDebugNumber(zAverageBefore) },
+      finalSemanticCenterAfter:
+        toSemanticCenterAlignmentPointDebug(semanticCenterAfter),
+      zAverageAfter: {
+        z: calculateZAverage(centeredLandmarks),
+      },
+      centroidBefore: toPoint3DDebug(spatialBefore.centroid),
+      centroidAfter: toPoint3DDebug(spatialAfter.centroid),
+      boundsCenterBefore: toPoint3DDebug(spatialBefore.boundsCenter),
+      boundsCenterAfter: toPoint3DDebug(spatialAfter.boundsCenter),
+    },
+  }
+}
+
 function buildPoseAwareObservationFrameDebugSummary(
   observationFrames: PoseAwareInferenceFrame[],
 ): PoseAwareObservationFrameDebugSummary {
@@ -5442,6 +5554,26 @@ function toSemanticCenterAlignmentPointDebug(
     x: point === null ? null : roundDebugNumber(point.x),
     y: point === null ? null : roundDebugNumber(point.y),
   }
+}
+
+function toPoint3DDebug(point: Point3D | null): Point3DDebug {
+  return {
+    x: point === null ? null : roundDebugNumber(point.x),
+    y: point === null ? null : roundDebugNumber(point.y),
+    z: point === null ? null : roundDebugNumber(point.z),
+  }
+}
+
+function calculateZAverage(
+  points: Array<{ z?: number }>,
+): number | null {
+  const zValues = points
+    .map((point) => point.z)
+    .filter((value): value is number => Number.isFinite(value))
+
+  return zValues.length === 0
+    ? null
+    : roundDebugNumber(averageNumbers(zValues))
 }
 
 function averagePoints2D(points: Point2D[]): Point2D | null {
@@ -5847,16 +5979,30 @@ function buildCandidateDebugComparisonItemFromLandmarks(
   const spatial = buildLandmarkSpatialSummary(landmarks)
   const representative = getPoseAwareRepresentativePointSummary(landmarks)
   const topView = buildTopViewZAsymmetrySummary(landmarks)
+  const semanticCenter = calculateSemanticCenter(
+    landmarks,
+    SEMANTIC_CENTER_ALIGNMENT_MODE,
+  )
   const zValues = landmarks.map((landmark) => landmark.z)
   const zMin = zValues.length === 0 ? 0 : roundDebugNumber(Math.min(...zValues))
   const zMax = zValues.length === 0 ? 0 : roundDebugNumber(Math.max(...zValues))
+  const zAverage = roundDebugNumber(averageNumbers(zValues))
 
   return {
     generationMethod,
+    centroidX: spatial.centroid?.x ?? null,
+    centroidY: spatial.centroid?.y ?? null,
+    centroidZ: spatial.centroid?.z ?? null,
+    semanticCenterX:
+      semanticCenter === null ? null : roundDebugNumber(semanticCenter.x),
+    semanticCenterY:
+      semanticCenter === null ? null : roundDebugNumber(semanticCenter.y),
     zMin,
     zMax,
+    zAverage,
     zRange: roundDebugNumber(zMax - zMin),
     boundsCenterX: spatial.boundsCenter?.x ?? null,
+    boundsCenterY: spatial.boundsCenter?.y ?? null,
     boundsCenterZ: spatial.boundsCenter?.z ?? null,
     noseTipX: representative.noseTipX,
     noseTipZ: representative.noseTipZ,
@@ -5864,6 +6010,7 @@ function buildCandidateDebugComparisonItemFromLandmarks(
     mouthCenterZ: representative.mouthCenterZ,
     chinX: representative.chinX,
     chinZ: representative.chinZ,
+    noseOffsetFromBoundsCenterX: representative.noseOffsetFromBoundsCenterX,
     leftCheekZ: representative.leftCheekZ,
     rightCheekZ: representative.rightCheekZ,
     leftContourZ: representative.leftContourZ,
@@ -6889,6 +7036,8 @@ function buildPoseAwareMediaPipeMeshAverageLandmarksFromFrames(
   observationFrames: PoseAwareInferenceFrame[],
   frameWeights: FrameStableZWeightDebug[],
   frontReferenceBasePoints: PoseAwareBasePoint[],
+  generationMethod: PoseAwareMediaPipeMeshGenerationMethod =
+    "pose_aware_mediapipe_mesh_average_v1",
 ): {
   landmarks: IdealLandmark3DCandidate[]
   landmarksBeforeSemanticAlignment: IdealLandmark3DCandidate[]
@@ -6896,6 +7045,7 @@ function buildPoseAwareMediaPipeMeshAverageLandmarksFromFrames(
   canonicalFramePointsBeforeSemanticAlignment: Array<Point3D & { index: number }>
   canonicalFramePoints: Array<Point3D & { index: number }>
   semanticCenterAlignment: SemanticCenterAlignmentDebug | null
+  semanticOriginCentering?: SemanticOriginCenteringDebug
   rawZValues: number[]
   normalizedZValues: number[]
   scaledZValues: number[]
@@ -7002,14 +7152,12 @@ function buildPoseAwareMediaPipeMeshAverageLandmarksFromFrames(
     return null
   }
 
-  const buildAveragedLandmarks = (
+  const buildUncenteredAveragedLandmarks = (
     getFramePoints: (
       frame: (typeof canonicalFrames)[number],
     ) => Array<Point3D & { index: number }>,
   ): IdealLandmark3DCandidate[] => {
-    const uncenteredLandmarks = Array.from(
-    { length: REQUIRED_LANDMARK_COUNT },
-    (_, index) => {
+    return Array.from({ length: REQUIRED_LANDMARK_COUNT }, (_, index) => {
       const points = canonicalFrames
         .map((frame) => ({
           point: getFramePoints(frame)[index],
@@ -7043,7 +7191,7 @@ function buildPoseAwareMediaPipeMeshAverageLandmarksFromFrames(
           y: 0,
           z: 0,
           confidence,
-          source: "pose_aware_mediapipe_mesh_average_v1" as const,
+          source: generationMethod,
         }
       }
 
@@ -7068,27 +7216,47 @@ function buildPoseAwareMediaPipeMeshAverageLandmarksFromFrames(
           ).toFixed(4),
         ),
         confidence,
-        source: "pose_aware_mediapipe_mesh_average_v1" as const,
+        source: generationMethod,
       }
-    },
-    )
-
-    return centerPoseAwareCanonicalLandmarks(uncenteredLandmarks)
+    })
   }
 
-  const landmarksBeforeSemanticAlignment = buildAveragedLandmarks(
-    (frame) => frame.canonicalPointsBeforeSemanticAlignment,
+  const centerAveragedLandmarks = (
+    uncenteredLandmarks: IdealLandmark3DCandidate[],
+  ): {
+    landmarks: IdealLandmark3DCandidate[]
+    semanticOriginCentering?: SemanticOriginCenteringDebug
+  } => {
+    if (generationMethod === "pose_aware_mediapipe_mesh_semantic_origin_v1") {
+      return centerPoseAwareCanonicalLandmarksToSemanticOrigin(
+        uncenteredLandmarks,
+      )
+    }
+
+    return {
+      landmarks: centerPoseAwareCanonicalLandmarks(uncenteredLandmarks),
+    }
+  }
+
+  const landmarksBeforeSemanticAlignment = centerAveragedLandmarks(
+    buildUncenteredAveragedLandmarks(
+      (frame) => frame.canonicalPointsBeforeSemanticAlignment,
+    ),
+  ).landmarks
+  const centeredResult = centerAveragedLandmarks(
+    buildUncenteredAveragedLandmarks((frame) => frame.canonicalPoints),
   )
-  const landmarks = buildAveragedLandmarks((frame) => frame.canonicalPoints)
+  const landmarks = centeredResult.landmarks
   const representativeFrameAlignmentPreview = canonicalFrames
     .map((frame) => frame.semanticAlignment)
     .slice(0, POSE_AWARE_STABLE_Z_FRAME_DEBUG_COUNT)
   const semanticCenterAlignment: SemanticCenterAlignmentDebug = {
     enabled: true,
     stage: "before_canonical_average",
+    purpose: "per_frame_registration",
     mode: SEMANTIC_CENTER_ALIGNMENT_MODE,
     source: "frontReferenceBase",
-    targetGenerationMethod: "pose_aware_mediapipe_mesh_average_v1",
+    targetGenerationMethod: generationMethod,
     frontReferenceSemanticCenter:
       toSemanticCenterAlignmentPointDebug(frontReferenceSemanticCenter),
     availableModeCenters:
@@ -7121,6 +7289,7 @@ function buildPoseAwareMediaPipeMeshAverageLandmarksFromFrames(
       (frame) => frame.canonicalPoints,
     ),
     semanticCenterAlignment,
+    semanticOriginCentering: centeredResult.semanticOriginCentering,
     rawZValues: canonicalFrames.flatMap((frame) => frame.rawValues),
     normalizedZValues: canonicalFrames.flatMap(
       (frame) => frame.normalizedValues,
@@ -7667,6 +7836,7 @@ function buildPoseAwareMediaPipeMeshAverageWarnings(
   topView: TopViewZAsymmetrySummary,
   comparison: MediaPipeMeshAverageCandidateComparisonDebug,
   canonicalAverage: LandmarkSpatialSummary,
+  targetGenerationMethod: PoseAwareMediaPipeMeshGenerationMethod,
 ): string[] {
   const warnings: string[] = []
 
@@ -7712,10 +7882,15 @@ function buildPoseAwareMediaPipeMeshAverageWarnings(
   warnings.push(topView.warning)
 
   const balancedFrameZ = comparison.balancedFrameZ
+  const targetComparisonItem =
+    targetGenerationMethod === "pose_aware_mediapipe_mesh_semantic_origin_v1"
+      ? (comparison.mediaPipeMeshSemanticOrigin ??
+        comparison.mediaPipeMeshAverage)
+      : comparison.mediaPipeMeshAverage
 
   if (
     balancedFrameZ &&
-    comparison.mediaPipeMeshAverage.zRange > balancedFrameZ.zRange
+    targetComparisonItem.zRange > balancedFrameZ.zRange
   ) {
     warnings.push("new method worsens zRange versus balanced_frame_z.")
   }
@@ -7723,8 +7898,8 @@ function buildPoseAwareMediaPipeMeshAverageWarnings(
   if (
     balancedFrameZ?.topViewAsymmetryScore !== null &&
     balancedFrameZ?.topViewAsymmetryScore !== undefined &&
-    comparison.mediaPipeMeshAverage.topViewAsymmetryScore !== null &&
-    comparison.mediaPipeMeshAverage.topViewAsymmetryScore >
+    targetComparisonItem.topViewAsymmetryScore !== null &&
+    targetComparisonItem.topViewAsymmetryScore >
       balancedFrameZ.topViewAsymmetryScore
   ) {
     warnings.push(
@@ -7746,6 +7921,7 @@ function buildPoseAwareMediaPipeMeshAverageCandidateDebug(
     >
     canonicalFramePoints: Array<Point3D & { index: number }>
     semanticCenterAlignment: SemanticCenterAlignmentDebug | null
+    semanticOriginCentering?: SemanticOriginCenteringDebug
     rawZValues: number[]
     normalizedZValues: number[]
     scaledZValues: number[]
@@ -7755,6 +7931,10 @@ function buildPoseAwareMediaPipeMeshAverageCandidateDebug(
   canonical3DResult: IdealLandmarks3DCandidateResult | null,
   stableZResult: IdealLandmarks3DCandidateResult | null,
   balancedFrameZResult: IdealLandmarks3DCandidateResult | null,
+  mediaPipeMeshAverageResult: IdealLandmarks3DCandidateResult | null,
+  mediaPipeMeshSemanticOriginResult: IdealLandmarks3DCandidateResult | null,
+  generationMethod: PoseAwareMediaPipeMeshGenerationMethod =
+    "pose_aware_mediapipe_mesh_average_v1",
 ): PoseAwareMediaPipeMeshAverageDebug {
   const observationFrames = dataset.observationFrames
   const observationSummary =
@@ -7773,8 +7953,42 @@ function buildPoseAwareMediaPipeMeshAverageCandidateDebug(
   const comparison = buildPoseAwareCandidateComparisonDebug(
     balancedFrameZResult,
     canonicalResult.landmarks,
-    "pose_aware_mediapipe_mesh_average_v1",
+    generationMethod,
   )
+  const emptyMediaPipeMeshAverageComparison =
+    buildCandidateDebugComparisonItemFromLandmarks(
+      "pose_aware_mediapipe_mesh_average_v1",
+      [],
+    )
+  const mediaPipeMeshAverageComparison =
+    mediaPipeMeshAverageResult !== null
+      ? (buildCandidateDebugComparisonItem(mediaPipeMeshAverageResult) ??
+        emptyMediaPipeMeshAverageComparison)
+      : generationMethod === "pose_aware_mediapipe_mesh_average_v1"
+        ? buildCandidateDebugComparisonItemFromLandmarks(
+            "pose_aware_mediapipe_mesh_average_v1",
+            canonicalResult.landmarks,
+          )
+        : emptyMediaPipeMeshAverageComparison
+  const semanticOriginDebug =
+    mediaPipeMeshSemanticOriginResult?.debug?.generationMethod ===
+    "pose_aware_mediapipe_mesh_semantic_origin_v1"
+      ? mediaPipeMeshSemanticOriginResult.debug
+      : generationMethod === "pose_aware_mediapipe_mesh_semantic_origin_v1"
+        ? canonicalResult
+        : null
+  const mediaPipeMeshSemanticOriginComparison =
+    mediaPipeMeshSemanticOriginResult !== null
+      ? buildCandidateDebugComparisonItemFromLandmarks(
+          "pose_aware_mediapipe_mesh_semantic_origin_v1",
+          mediaPipeMeshSemanticOriginResult.landmarks,
+        )
+      : generationMethod === "pose_aware_mediapipe_mesh_semantic_origin_v1"
+        ? buildCandidateDebugComparisonItemFromLandmarks(
+            "pose_aware_mediapipe_mesh_semantic_origin_v1",
+            canonicalResult.landmarks,
+          )
+        : null
   const multiCandidateComparison: MediaPipeMeshAverageCandidateComparisonDebug = {
     canonical3D: canonical3DResult
       ? buildCandidateDebugComparisonItem(canonical3DResult)
@@ -7786,16 +8000,24 @@ function buildPoseAwareMediaPipeMeshAverageCandidateDebug(
       ? buildCandidateDebugComparisonItem(balancedFrameZResult)
       : null,
     mediaPipeMeshAverage: {
-      ...buildCandidateDebugComparisonItemFromLandmarks(
-        "pose_aware_mediapipe_mesh_average_v1",
-        canonicalResult.landmarks,
-      ),
+      ...mediaPipeMeshAverageComparison,
       semanticCenterAlignmentEnabled:
-        canonicalResult.semanticCenterAlignment?.enabled ?? false,
+        generationMethod === "pose_aware_mediapipe_mesh_average_v1"
+          ? canonicalResult.semanticCenterAlignment?.enabled ?? false
+          : false,
     },
+    mediaPipeMeshSemanticOrigin: mediaPipeMeshSemanticOriginComparison
+      ? {
+          ...mediaPipeMeshSemanticOriginComparison,
+          semanticCenterAlignmentEnabled:
+            semanticOriginDebug?.semanticCenterAlignment?.enabled ?? false,
+          semanticOriginCenteringEnabled:
+            semanticOriginDebug?.semanticOriginCentering?.enabled ?? false,
+        }
+      : null,
   }
   const debugWithoutWarnings = {
-    generationMethod: "pose_aware_mediapipe_mesh_average_v1" as const,
+    generationMethod,
     settings: getMediaPipeZSettingsDebug(),
     generationSummary: {
       observationFrameCount: dataset.observationFrames.length,
@@ -7830,13 +8052,25 @@ function buildPoseAwareMediaPipeMeshAverageCandidateDebug(
       enabled: false as const,
       mode: "bounds_center_xy" as const,
       source: "frontReferenceBase" as const,
-      targetGenerationMethod:
-        "pose_aware_mediapipe_mesh_average_v1" as const,
+      targetGenerationMethod: generationMethod,
       stage: "post_candidate_generation" as const,
       disabledReason:
         "Final candidate boundsCenter post alignment is disabled; per-frame semantic center alignment runs before canonical average.",
     },
     semanticCenterAlignment: canonicalResult.semanticCenterAlignment,
+    ...(generationMethod === "pose_aware_mediapipe_mesh_semantic_origin_v1"
+      ? {
+          semanticOriginCentering: canonicalResult.semanticOriginCentering,
+          runtimeProjectionAssumption: {
+            rotationCenter: "asset_origin_0_0_0" as const,
+            runtimeAlignment:
+              "projected_bounds_center_to_current_bounds_center" as const,
+            authoringOriginPolicy: "semantic_center_xy_z_average" as const,
+            note:
+              "Runtime alignment remains bounds-center based; semantic center is used only to place the asset rotation origin." as const,
+          },
+        }
+      : {}),
     topView,
   }
 
@@ -7849,6 +8083,7 @@ function buildPoseAwareMediaPipeMeshAverageCandidateDebug(
       topView,
       multiCandidateComparison,
       canonicalAverage,
+      generationMethod,
     ),
   }
 }
@@ -8198,12 +8433,17 @@ function buildPoseAwareMediaPipeMeshAverageIdealLandmarks3DCandidateResult(
   canonical3DResult: IdealLandmarks3DCandidateResult | null,
   stableZResult: IdealLandmarks3DCandidateResult | null,
   balancedFrameZResult: IdealLandmarks3DCandidateResult | null,
+  generationMethod: PoseAwareMediaPipeMeshGenerationMethod =
+    "pose_aware_mediapipe_mesh_average_v1",
+  mediaPipeMeshAverageResult: IdealLandmarks3DCandidateResult | null = null,
+  mediaPipeMeshSemanticOriginResult: IdealLandmarks3DCandidateResult | null =
+    null,
 ): IdealLandmarks3DCandidateResult {
   if (dataset.status === "missing_front_reference") {
     return {
       ...createInitialIdealLandmarks3DCandidateResult(),
       status: "insufficient_data",
-      generationMethod: "pose_aware_mediapipe_mesh_average_v1",
+      generationMethod,
       message:
         "frontReference frame is missing, so pose-aware MediaPipe mesh average candidate generation cannot run.",
     }
@@ -8213,7 +8453,7 @@ function buildPoseAwareMediaPipeMeshAverageIdealLandmarks3DCandidateResult(
     return {
       ...createInitialIdealLandmarks3DCandidateResult(),
       status: "insufficient_data",
-      generationMethod: "pose_aware_mediapipe_mesh_average_v1",
+      generationMethod,
       message:
         "useForInference observation frames are missing, so pose-aware MediaPipe mesh average candidate generation cannot run.",
     }
@@ -8225,7 +8465,7 @@ function buildPoseAwareMediaPipeMeshAverageIdealLandmarks3DCandidateResult(
     return {
       ...createInitialIdealLandmarks3DCandidateResult(),
       status: "insufficient_data",
-      generationMethod: "pose_aware_mediapipe_mesh_average_v1",
+      generationMethod,
       message:
         "frontReference base 478 landmarks are unavailable, so pose-aware MediaPipe mesh average candidate generation cannot run.",
     }
@@ -8239,11 +8479,11 @@ function buildPoseAwareMediaPipeMeshAverageIdealLandmarks3DCandidateResult(
     return {
       ...createInitialIdealLandmarks3DCandidateResult(),
       status: "insufficient_data",
-      generationMethod: "pose_aware_mediapipe_mesh_average_v1",
+      generationMethod,
       message:
         "MediaPipe landmark.z is unavailable in detailed scan observation frames, so MediaPipe mesh average candidate generation cannot run.",
       debug: {
-        generationMethod: "pose_aware_mediapipe_mesh_average_v1",
+        generationMethod,
         settings: getMediaPipeZSettingsDebug(),
         generationSummary: {
           observationFrameCount: dataset.observationFrames.length,
@@ -8284,18 +8524,32 @@ function buildPoseAwareMediaPipeMeshAverageIdealLandmarks3DCandidateResult(
             ),
             semanticCenterAlignmentEnabled: false,
           },
+          mediaPipeMeshSemanticOrigin: null,
         },
         frontReferenceCenterAlignment: null,
         postBoundsCenterAlignment: {
           enabled: false,
           mode: "bounds_center_xy",
           source: "frontReferenceBase",
-          targetGenerationMethod: "pose_aware_mediapipe_mesh_average_v1",
+          targetGenerationMethod: generationMethod,
           stage: "post_candidate_generation",
           disabledReason:
             "Final candidate boundsCenter post alignment is disabled; MediaPipe landmark.z was unavailable before per-frame semantic alignment could run.",
         },
         semanticCenterAlignment: null,
+        ...(generationMethod === "pose_aware_mediapipe_mesh_semantic_origin_v1"
+          ? {
+              runtimeProjectionAssumption: {
+                rotationCenter: "asset_origin_0_0_0" as const,
+                runtimeAlignment:
+                  "projected_bounds_center_to_current_bounds_center" as const,
+                authoringOriginPolicy:
+                  "semantic_center_xy_z_average" as const,
+                note:
+                  "Runtime alignment remains bounds-center based; semantic center is used only to place the asset rotation origin." as const,
+              },
+            }
+          : {}),
         topView: buildTopViewZAsymmetrySummary([]),
         warnings: ["MediaPipe landmark.z is unavailable."],
       },
@@ -8309,13 +8563,14 @@ function buildPoseAwareMediaPipeMeshAverageIdealLandmarks3DCandidateResult(
     dataset.observationFrames,
     frameWeights,
     basePoints,
+    generationMethod,
   )
 
   if (!canonicalResult || canonicalResult.landmarks.length !== REQUIRED_LANDMARK_COUNT) {
     return {
       ...createInitialIdealLandmarks3DCandidateResult(),
       status: "insufficient_data",
-      generationMethod: "pose_aware_mediapipe_mesh_average_v1",
+      generationMethod,
       message:
         "observation frames could not be inverse-rotated into MediaPipe mesh average canonical 3D landmarks.",
     }
@@ -8330,11 +8585,14 @@ function buildPoseAwareMediaPipeMeshAverageIdealLandmarks3DCandidateResult(
     canonical3DResult,
     stableZResult,
     balancedFrameZResult,
+    mediaPipeMeshAverageResult,
+    mediaPipeMeshSemanticOriginResult,
+    generationMethod,
   )
 
   return {
     status: "generated",
-    generationMethod: "pose_aware_mediapipe_mesh_average_v1",
+    generationMethod,
     landmarkCount: landmarks.length,
     landmarks,
     landmarksPreview: landmarks.slice(0, IDEAL_LANDMARKS_3D_PREVIEW_COUNT),
@@ -8344,7 +8602,9 @@ function buildPoseAwareMediaPipeMeshAverageIdealLandmarks3DCandidateResult(
       excludedFrameCount: dataset.excludedFrameCount,
     }),
     message:
-      "Step 2-I-B dataset observations used MediaPipe landmark.z for frame-local 3D, then inverse pose rotation and direction-balanced canonical weighted average. dx / sin(yaw) zHint is not used.",
+      generationMethod === "pose_aware_mediapipe_mesh_semantic_origin_v1"
+        ? "Step 2-I-B dataset observations used MediaPipe landmark.z for frame-local 3D, then inverse pose rotation, per-frame semantic registration, direction-balanced canonical weighted average, and semantic-origin x/y plus z-average centering. dx / sin(yaw) zHint is not used."
+        : "Step 2-I-B dataset observations used MediaPipe landmark.z for frame-local 3D, then inverse pose rotation and direction-balanced canonical weighted average. dx / sin(yaw) zHint is not used.",
     debug,
   }
 }
@@ -8361,6 +8621,16 @@ function buildPoseAwareCandidateResult(
       comparisonResult,
       null,
       oldResult,
+    )
+  }
+
+  if (generationMethod === "pose_aware_mediapipe_mesh_semantic_origin_v1") {
+    return buildPoseAwareMediaPipeMeshAverageIdealLandmarks3DCandidateResult(
+      dataset,
+      comparisonResult,
+      null,
+      oldResult,
+      "pose_aware_mediapipe_mesh_semantic_origin_v1",
     )
   }
 
@@ -8399,6 +8669,7 @@ function toPoseAwareCandidatePreview(): unknown {
         "pose_aware_canonical_stable_z_v1",
         "pose_aware_canonical_balanced_frame_z_v1",
         "pose_aware_mediapipe_mesh_average_v1",
+        "pose_aware_mediapipe_mesh_semantic_origin_v1",
       ] as IdealLandmarks3DGenerationMethod[]
     ).map((generationMethod) => {
       const cachedResult = idealLandmarks3DCandidateResults[generationMethod]
@@ -8586,6 +8857,7 @@ function renderPoseAwareCandidateMethodControls(): string {
           ${renderGenerationMethodOption("pose_aware_canonical_stable_z_v1")}
           ${renderGenerationMethodOption("pose_aware_canonical_balanced_frame_z_v1")}
           ${renderGenerationMethodOption("pose_aware_mediapipe_mesh_average_v1")}
+          ${renderGenerationMethodOption("pose_aware_mediapipe_mesh_semantic_origin_v1")}
         </select>
       </label>
       <label>
@@ -8639,6 +8911,7 @@ function renderPoseAwareCachedCandidateSwitches(): string {
     "pose_aware_canonical_stable_z_v1",
     "pose_aware_canonical_balanced_frame_z_v1",
     "pose_aware_mediapipe_mesh_average_v1",
+    "pose_aware_mediapipe_mesh_semantic_origin_v1",
   ]
 
   return `
@@ -8900,7 +9173,10 @@ function renderPoseAwareCanonicalDebugBlock(
 function renderPoseAwareMediaPipeMeshAverageDebugBlock(
   debug: IdealLandmarks3DCandidateDebug,
 ): string {
-  if (debug.generationMethod !== "pose_aware_mediapipe_mesh_average_v1") {
+  if (
+    debug.generationMethod !== "pose_aware_mediapipe_mesh_average_v1" &&
+    debug.generationMethod !== "pose_aware_mediapipe_mesh_semantic_origin_v1"
+  ) {
     return ""
   }
 
@@ -8939,6 +9215,10 @@ function renderPoseAwareMediaPipeMeshAverageDebugBlock(
         <dd>${formatNullableDebugNumber(debug.semanticCenterAlignment?.frontReferenceSemanticCenter.x ?? null)} / ${formatNullableDebugNumber(debug.semanticCenterAlignment?.frontReferenceSemanticCenter.y ?? null)}</dd>
       </div>
       <div>
+        <dt>purpose</dt>
+        <dd>${debug.semanticCenterAlignment?.purpose ?? "none"}</dd>
+      </div>
+      <div>
         <dt>post boundsCenter alignment</dt>
         <dd>${debug.postBoundsCenterAlignment.enabled ? "true" : "false"} / ${debug.postBoundsCenterAlignment.stage}</dd>
       </div>
@@ -8969,6 +9249,8 @@ function renderPoseAwareMediaPipeMeshAverageDebugBlock(
     </dl>
     ${renderSemanticCenterCandidateComparison(debug.semanticCenterAlignment)}
     ${renderSemanticCenterFrameAlignmentPreview(debug.semanticCenterAlignment)}
+    ${renderSemanticOriginCenteringDebug(debug.semanticOriginCentering ?? null)}
+    ${renderRuntimeProjectionAssumptionDebug(debug.runtimeProjectionAssumption ?? null)}
     <h5>MediaPipe z availability</h5>
     <dl class="pose-aware-summary-list">
       <div>
@@ -9026,7 +9308,7 @@ function renderPoseAwareMediaPipeMeshAverageDebugBlock(
         <dd>${formatNumber(debug.canonicalAverageWeights.averageCanonicalAverageDirectionBalanceWeight)} / ${formatNumber(debug.canonicalAverageWeights.minCanonicalAverageDirectionBalanceWeight)} / ${formatNumber(debug.canonicalAverageWeights.maxCanonicalAverageDirectionBalanceWeight)}</dd>
       </div>
     </dl>
-    <h5>four-method comparison</h5>
+    <h5>method comparison</h5>
     ${renderBalancedFrameZCandidateComparisonItem(
       "pose_aware_canonical_3d_v1",
       debug.multiCandidateComparison.canonical3D,
@@ -9042,6 +9324,10 @@ function renderPoseAwareMediaPipeMeshAverageDebugBlock(
     ${renderBalancedFrameZCandidateComparisonItem(
       "pose_aware_mediapipe_mesh_average_v1",
       debug.multiCandidateComparison.mediaPipeMeshAverage,
+    )}
+    ${renderBalancedFrameZCandidateComparisonItem(
+      "pose_aware_mediapipe_mesh_semantic_origin_v1",
+      debug.multiCandidateComparison.mediaPipeMeshSemanticOrigin,
     )}
     <h5>frame weight debug</h5>
     ${renderFrameStableZWeightList("top weighted frames", debug.frameWeights.topWeightedFrames)}
@@ -9305,12 +9591,20 @@ function renderBalancedFrameZCandidateComparisonItem(
     <h6>${label}</h6>
     <dl class="pose-aware-summary-list">
       <div>
-        <dt>z min / max / range</dt>
-        <dd>${formatNumber(item.zMin)} / ${formatNumber(item.zMax)} / ${formatNumber(item.zRange)}</dd>
+        <dt>centroid x / y / z</dt>
+        <dd>${formatNullableDebugNumber(item.centroidX)} / ${formatNullableDebugNumber(item.centroidY)} / ${formatNullableDebugNumber(item.centroidZ)}</dd>
       </div>
       <div>
-        <dt>bounds center x / z</dt>
-        <dd>${formatNullableDebugNumber(item.boundsCenterX)} / ${formatNullableDebugNumber(item.boundsCenterZ)}</dd>
+        <dt>semantic center x / y</dt>
+        <dd>${formatNullableDebugNumber(item.semanticCenterX)} / ${formatNullableDebugNumber(item.semanticCenterY)}</dd>
+      </div>
+      <div>
+        <dt>z min / max / avg / range</dt>
+        <dd>${formatNumber(item.zMin)} / ${formatNumber(item.zMax)} / ${formatNumber(item.zAverage)} / ${formatNumber(item.zRange)}</dd>
+      </div>
+      <div>
+        <dt>bounds center x / y / z</dt>
+        <dd>${formatNullableDebugNumber(item.boundsCenterX)} / ${formatNullableDebugNumber(item.boundsCenterY)} / ${formatNullableDebugNumber(item.boundsCenterZ)}</dd>
       </div>
       <div>
         <dt>nose x / z</dt>
@@ -9323,6 +9617,10 @@ function renderBalancedFrameZCandidateComparisonItem(
       <div>
         <dt>chin x / z</dt>
         <dd>${formatNullableDebugNumber(item.chinX)} / ${formatNullableDebugNumber(item.chinZ)}</dd>
+      </div>
+      <div>
+        <dt>nose offset from bounds center x</dt>
+        <dd>${formatNullableDebugNumber(item.noseOffsetFromBoundsCenterX)}</dd>
       </div>
       <div>
         <dt>left / right cheek z</dt>
@@ -9348,6 +9646,110 @@ function renderBalancedFrameZCandidateComparisonItem(
             </div>`
           : ""
       }
+      ${
+        "semanticOriginCenteringEnabled" in item
+          ? `<div>
+              <dt>semantic origin centering</dt>
+              <dd>${item.semanticOriginCenteringEnabled ? "true" : "false"}</dd>
+            </div>`
+          : ""
+      }
+    </dl>
+  `
+}
+
+function renderPoint3DDebug(point: Point3DDebug): string {
+  return `${formatNullableDebugNumber(point.x)} / ${formatNullableDebugNumber(point.y)} / ${formatNullableDebugNumber(point.z)}`
+}
+
+function renderSemanticOriginCenteringDebug(
+  centering: SemanticOriginCenteringDebug | null,
+): string {
+  if (!centering) {
+    return ""
+  }
+
+  return `
+    <h5>semantic origin centering</h5>
+    <dl class="pose-aware-summary-list">
+      <div>
+        <dt>enabled / stage / purpose</dt>
+        <dd>${centering.enabled ? "true" : "false"} / ${centering.stage} / ${centering.purpose}</dd>
+      </div>
+      <div>
+        <dt>mode</dt>
+        <dd>${centering.mode}</dd>
+      </div>
+      <div>
+        <dt>xy / z policy</dt>
+        <dd>${centering.xYCenterPolicy} / ${centering.zCenterPolicy}</dd>
+      </div>
+      <div>
+        <dt>centroid xy center disabled</dt>
+        <dd>${centering.centroidXYCenterDisabled ? "true" : "false"}</dd>
+      </div>
+      <div>
+        <dt>semantic center before x / y</dt>
+        <dd>${formatNullableDebugNumber(centering.finalSemanticCenterBefore.x)} / ${formatNullableDebugNumber(centering.finalSemanticCenterBefore.y)}</dd>
+      </div>
+      <div>
+        <dt>semantic origin offset x / y</dt>
+        <dd>${formatNullableDebugNumber(centering.finalSemanticOriginOffset.x)} / ${formatNullableDebugNumber(centering.finalSemanticOriginOffset.y)}</dd>
+      </div>
+      <div>
+        <dt>semantic center after x / y</dt>
+        <dd>${formatNullableDebugNumber(centering.finalSemanticCenterAfter.x)} / ${formatNullableDebugNumber(centering.finalSemanticCenterAfter.y)}</dd>
+      </div>
+      <div>
+        <dt>z average before / after</dt>
+        <dd>${formatNullableDebugNumber(centering.zAverageBefore.z)} / ${formatNullableDebugNumber(centering.zAverageAfter.z)}</dd>
+      </div>
+      <div>
+        <dt>centroid before x / y / z</dt>
+        <dd>${renderPoint3DDebug(centering.centroidBefore)}</dd>
+      </div>
+      <div>
+        <dt>centroid after x / y / z</dt>
+        <dd>${renderPoint3DDebug(centering.centroidAfter)}</dd>
+      </div>
+      <div>
+        <dt>bounds center before x / y / z</dt>
+        <dd>${renderPoint3DDebug(centering.boundsCenterBefore)}</dd>
+      </div>
+      <div>
+        <dt>bounds center after x / y / z</dt>
+        <dd>${renderPoint3DDebug(centering.boundsCenterAfter)}</dd>
+      </div>
+    </dl>
+  `
+}
+
+function renderRuntimeProjectionAssumptionDebug(
+  assumption: RuntimeProjectionAssumptionDebug | null,
+): string {
+  if (!assumption) {
+    return ""
+  }
+
+  return `
+    <h5>runtime projection assumption</h5>
+    <dl class="pose-aware-summary-list">
+      <div>
+        <dt>rotation center</dt>
+        <dd>${assumption.rotationCenter}</dd>
+      </div>
+      <div>
+        <dt>runtime alignment</dt>
+        <dd>${assumption.runtimeAlignment}</dd>
+      </div>
+      <div>
+        <dt>authoring origin policy</dt>
+        <dd>${assumption.authoringOriginPolicy}</dd>
+      </div>
+      <div>
+        <dt>note</dt>
+        <dd>${assumption.note}</dd>
+      </div>
     </dl>
   `
 }
@@ -11626,6 +12028,15 @@ function attachIdealLandmarks3DCandidateHandler(): void {
           stableZResult,
           balancedFrameZResult,
         )
+      const mediaPipeMeshSemanticOriginResult =
+        buildPoseAwareMediaPipeMeshAverageIdealLandmarks3DCandidateResult(
+          dataset,
+          canonicalResult,
+          stableZResult,
+          balancedFrameZResult,
+          "pose_aware_mediapipe_mesh_semantic_origin_v1",
+          mediaPipeMeshAverageResult,
+        )
 
       idealLandmarks3DCandidateResults = {
         pose_aware_weighted_z_v1: weightedResult,
@@ -11633,6 +12044,8 @@ function attachIdealLandmarks3DCandidateHandler(): void {
         pose_aware_canonical_stable_z_v1: stableZResult,
         pose_aware_canonical_balanced_frame_z_v1: balancedFrameZResult,
         pose_aware_mediapipe_mesh_average_v1: mediaPipeMeshAverageResult,
+        pose_aware_mediapipe_mesh_semantic_origin_v1:
+          mediaPipeMeshSemanticOriginResult,
       }
       idealLandmarks3DCandidateResult =
         idealLandmarks3DCandidateResults[
