@@ -34,6 +34,7 @@ const LEFT_EYE_OUTER_INDEX = 263
 const RIGHT_EYE_OUTER_INDEX = 33
 const NOSE_TIP_INDEX = 4
 const MOUTH_CENTER_INDICES = [13, 14]
+const CHIN_INDEX = 152
 const REQUIRED_LANDMARK_COUNT = 478
 const FRONT_POSE_LIMIT = {
   yaw: 12,
@@ -93,6 +94,12 @@ const MIXED_POSE_MIN_ABS_DEG = 8
 const POSE_AWARE_DATASET_FRAME_PREVIEW_COUNT = 3
 const POSE_AWARE_Z_MIN_COMPONENT_DEG = 5
 const POSE_AWARE_Z_HINT_CLAMP = 0.35
+const POSE_AWARE_CANONICAL_NEAR_FRONT_YAW_DEG = 5
+const POSE_AWARE_CANONICAL_YAW_IMBALANCE_WARNING_RATIO = 0.4
+const POSE_AWARE_CANONICAL_CENTER_OFFSET_WARNING = 0.03
+const POSE_AWARE_CANONICAL_MIN_NEAR_FRONT_COUNT = 3
+const POSE_AWARE_CANONICAL_Z_RANGE_WARNING_MIN = 0.02
+const POSE_AWARE_CANONICAL_Z_RANGE_WARNING_MAX = 1
 const POSE_AWARE_LOW_CONFIDENCE_THRESHOLD = 0.45
 const POSE_AWARE_SHAPE_FRAME_POSE_PENALTY_DEG = 45
 const POSE_AWARE_MIN_SHAPE_FRAME_WEIGHT = 0.25
@@ -316,6 +323,10 @@ interface Point2D {
   y: number
 }
 
+interface Point3D extends Point2D {
+  z: number
+}
+
 interface LandmarkBoundsSummary {
   pointCount: number
   xMin: number
@@ -328,6 +339,12 @@ interface LandmarkBoundsSummary {
   height: number
   zRange?: number
   aspectRatio: number | null
+}
+
+interface LandmarkSpatialSummary {
+  bounds: LandmarkBoundsSummary | null
+  centroid: Point3D | null
+  boundsCenter: Point3D | null
 }
 
 interface VideoAspectSummary {
@@ -368,6 +385,70 @@ interface PoseAwareZHint {
   frameId: string
 }
 
+interface PoseAwareYawBinSummary {
+  id: string
+  yawMin: number | null
+  yawMax: number | null
+  count: number
+  weightTotal: number
+}
+
+interface PoseAwareObservationFrameDebugSummary {
+  totalObservationFrameCount: number
+  negativeYawCount: number
+  positiveYawCount: number
+  nearFrontCount: number
+  yawBins: PoseAwareYawBinSummary[]
+}
+
+interface PoseAwareRepresentativePointSummary {
+  noseTipX: number | null
+  mouthCenterX: number | null
+  chinX: number | null
+  noseOffsetFromBoundsCenterX: number | null
+}
+
+interface PoseAwarePartialCandidateSummary {
+  frameCount: number
+  weightTotal: number
+  spatial: LandmarkSpatialSummary
+  representative: PoseAwareRepresentativePointSummary
+}
+
+interface PoseAwareCandidateComparisonDebug {
+  oldGenerationMethod: "pose_aware_weighted_z_v1"
+  newGenerationMethod: "pose_aware_canonical_3d_v1"
+  oldCandidate: {
+    spatial: LandmarkSpatialSummary
+    representative: PoseAwareRepresentativePointSummary
+  }
+  newCandidate: {
+    spatial: LandmarkSpatialSummary
+    representative: PoseAwareRepresentativePointSummary
+  }
+  noseOffsetDelta: number | null
+  boundsCenterOffset: Point3D | null
+}
+
+interface PoseAwareCanonical3DDebug {
+  generationMethod: "pose_aware_canonical_3d_v1"
+  observationFrames: PoseAwareObservationFrameDebugSummary
+  canonicalization: {
+    frameLocal3DBounds: LandmarkBoundsSummary | null
+    inversePoseCanonical3DBounds: LandmarkBoundsSummary | null
+    canonicalAverage: LandmarkSpatialSummary
+  }
+  comparison?: PoseAwareCandidateComparisonDebug
+  partialCandidates: {
+    rightYawOnly: PoseAwarePartialCandidateSummary
+    leftYawOnly: PoseAwarePartialCandidateSummary
+    nearFrontOnly: PoseAwarePartialCandidateSummary
+  }
+  warnings: string[]
+}
+
+type IdealLandmarks3DCandidateDebug = PoseAwareCanonical3DDebug
+
 interface PoseAwareMultiFrameSummary {
   status: PoseAwareInferenceStatus
   frontReferenceFrameCount: number
@@ -390,7 +471,9 @@ type IdealLandmarks3DCandidateStatus =
   | "insufficient_data"
   | "error"
 
-type IdealLandmarks3DGenerationMethod = "pose_aware_weighted_z_v1"
+type IdealLandmarks3DGenerationMethod =
+  | "pose_aware_weighted_z_v1"
+  | "pose_aware_canonical_3d_v1"
 
 type PointCloudPreviewPreset = "front" | "side" | "top" | "reset"
 
@@ -423,7 +506,7 @@ interface IdealLandmark3DCandidate {
   y: number
   z: number
   confidence: number
-  source: "pose_aware_weighted_z_v1"
+  source: IdealLandmarks3DGenerationMethod
 }
 
 interface IdealLandmarks3DCandidateResult {
@@ -446,6 +529,7 @@ interface IdealLandmarks3DCandidateResult {
     excludedFrameCount: number
   }
   message: string | null
+  debug?: IdealLandmarks3DCandidateDebug
 }
 
 interface IdealFaceAssetV1 {
@@ -698,6 +782,11 @@ let lastAdaptiveScanMetrics: AdaptiveScanMetrics | null = null
 let frameReviewIndex = 0
 let idealLandmarks3DCandidateResult: IdealLandmarks3DCandidateResult =
   createInitialIdealLandmarks3DCandidateResult()
+let idealLandmarks3DCandidateResults: Partial<
+  Record<IdealLandmarks3DGenerationMethod, IdealLandmarks3DCandidateResult>
+> = {}
+let selectedIdealLandmarks3DGenerationMethod: IdealLandmarks3DGenerationMethod =
+  "pose_aware_weighted_z_v1"
 let landmarkGroupEditorState: LandmarkGroupEditorState =
   createInitialLandmarkGroupEditorState()
 let landmarkGroupEditorDragState: LandmarkGroupEditorDragState | null = null
@@ -1145,6 +1234,15 @@ function createInitialIdealLandmarks3DCandidateResult(): IdealLandmarks3DCandida
   }
 }
 
+function isIdealLandmarks3DGenerationMethod(
+  value: string | undefined,
+): value is IdealLandmarks3DGenerationMethod {
+  return (
+    value === "pose_aware_weighted_z_v1" ||
+    value === "pose_aware_canonical_3d_v1"
+  )
+}
+
 function createInitialLandmarkGroupEditorState(): LandmarkGroupEditorState {
   return {
     selectedGroupId: "mouth",
@@ -1525,6 +1623,7 @@ function validateLandmarkGroupEditorGroups(groups: LandmarkGroups): string[] {
 function resetIdealLandmarks3DCandidateResult(): void {
   idealLandmarks3DCandidateResult =
     createInitialIdealLandmarks3DCandidateResult()
+  idealLandmarks3DCandidateResults = {}
   pointCloudPreviewCamera = createPointCloudPreviewCamera()
 }
 
@@ -1591,6 +1690,48 @@ function buildLandmarkBoundsSummary(
   }
 
   return summary
+}
+
+function buildLandmarkSpatialSummary(
+  points: Array<{ x: number; y: number; z?: number }>,
+): LandmarkSpatialSummary {
+  const finitePoints = points.filter(
+    (point) =>
+      Number.isFinite(point.x) &&
+      Number.isFinite(point.y) &&
+      Number.isFinite(point.z ?? 0),
+  )
+  const bounds = buildLandmarkBoundsSummary(finitePoints)
+  const zValues = finitePoints
+    .map((point) => point.z)
+    .filter((value): value is number => Number.isFinite(value))
+
+  return {
+    bounds,
+    centroid:
+      finitePoints.length === 0
+        ? null
+        : {
+            x: roundDebugNumber(
+              averageNumbers(finitePoints.map((point) => point.x)),
+            ),
+            y: roundDebugNumber(
+              averageNumbers(finitePoints.map((point) => point.y)),
+            ),
+            z: roundDebugNumber(averageNumbers(zValues)),
+          },
+    boundsCenter:
+      bounds === null
+        ? null
+        : {
+            x: roundDebugNumber((bounds.xMin + bounds.xMax) / 2),
+            y: roundDebugNumber((bounds.yMin + bounds.yMax) / 2),
+            z:
+              bounds.zMin === undefined || bounds.zMax === undefined
+                ? 0
+                : roundDebugNumber((bounds.zMin + bounds.zMax) / 2),
+          },
+  }
 }
 
 function getVideoAspectSummary(): VideoAspectSummary {
@@ -1715,6 +1856,7 @@ function toCurrentCandidatePreview(
     },
     export: exportSummary,
     preview: result.landmarksPreview,
+    debug: result.debug ?? null,
   }
 }
 
@@ -1870,7 +2012,7 @@ function isExportableIdealFaceCandidate(
 } {
   return (
     result.status === "generated" &&
-    result.generationMethod === "pose_aware_weighted_z_v1" &&
+    result.generationMethod !== null &&
     result.landmarkCount === REQUIRED_LANDMARK_COUNT &&
     result.landmarks.length === REQUIRED_LANDMARK_COUNT
   )
@@ -1885,7 +2027,7 @@ function getIdealFaceAssetExportDisabledReason(
 
   if (
     result.status !== "generated" ||
-    result.generationMethod !== "pose_aware_weighted_z_v1"
+    result.generationMethod === null
   ) {
     return "先に pose-aware 3D候補を生成してください。"
   }
@@ -1925,7 +2067,7 @@ function buildIdealFaceAssetExportSummary(
 ): IdealFaceAssetExportSummary {
   return {
     schemaVersion: IDEAL_FACE_ASSET_SCHEMA_VERSION,
-    generationMethod: "pose_aware_weighted_z_v1",
+    generationMethod: result.generationMethod ?? "pose_aware_weighted_z_v1",
     landmarkCount: result.landmarkCount,
     canExport: isExportableIdealFaceCandidate(result),
     fileName: buildIdealFaceAssetFileName(date),
@@ -2062,6 +2204,49 @@ function renderBoundsSummaryRows(
     <div>
       <dt>aspect ratio</dt>
       <dd>${formatNullableDebugNumber(bounds?.aspectRatio)}</dd>
+    </div>
+  `
+}
+
+function formatPoint3D(point: Point3D | null | undefined): string {
+  return point
+    ? `x ${formatNumber(point.x)} / y ${formatNumber(point.y)} / z ${formatNumber(point.z)}`
+    : "none"
+}
+
+function renderSpatialSummaryRows(spatial: LandmarkSpatialSummary): string {
+  return `
+    <div>
+      <dt>centroid</dt>
+      <dd>${formatPoint3D(spatial.centroid)}</dd>
+    </div>
+    <div>
+      <dt>bounds center</dt>
+      <dd>${formatPoint3D(spatial.boundsCenter)}</dd>
+    </div>
+    ${renderBoundsSummaryRows(spatial.bounds)}
+  `
+}
+
+function renderRepresentativeSummaryRows(
+  representative: PoseAwareRepresentativePointSummary,
+): string {
+  return `
+    <div>
+      <dt>nose tip x</dt>
+      <dd>${formatNullableDebugNumber(representative.noseTipX)}</dd>
+    </div>
+    <div>
+      <dt>mouth center x</dt>
+      <dd>${formatNullableDebugNumber(representative.mouthCenterX)}</dd>
+    </div>
+    <div>
+      <dt>chin x</dt>
+      <dd>${formatNullableDebugNumber(representative.chinX)}</dd>
+    </div>
+    <div>
+      <dt>nose offset from bounds center x</dt>
+      <dd>${formatNullableDebugNumber(representative.noseOffsetFromBoundsCenterX)}</dd>
     </div>
   `
 }
@@ -3652,6 +3837,49 @@ function rotatePoint2D(
   }
 }
 
+function rotatePoint3DAroundX(point: Point3D, angleRad: number): Point3D {
+  const cos = Math.cos(angleRad)
+  const sin = Math.sin(angleRad)
+
+  return {
+    x: point.x,
+    y: point.y * cos - point.z * sin,
+    z: point.y * sin + point.z * cos,
+  }
+}
+
+function rotatePoint3DAroundY(point: Point3D, angleRad: number): Point3D {
+  const cos = Math.cos(angleRad)
+  const sin = Math.sin(angleRad)
+
+  return {
+    x: point.x * cos + point.z * sin,
+    y: point.y,
+    z: -point.x * sin + point.z * cos,
+  }
+}
+
+function rotatePoint3DAroundZ(point: Point3D, angleRad: number): Point3D {
+  const cos = Math.cos(angleRad)
+  const sin = Math.sin(angleRad)
+
+  return {
+    x: point.x * cos - point.y * sin,
+    y: point.x * sin + point.y * cos,
+    z: point.z,
+  }
+}
+
+function inverseRotatePoseAwarePoint3D(point: Point3D, pose: FacePose): Point3D {
+  const roll = degreesToRadians(-pose.roll)
+  const pitch = degreesToRadians(-pose.pitch)
+  const yaw = degreesToRadians(-pose.yaw)
+  const unrolled = rotatePoint3DAroundZ(point, roll)
+  const unpitched = rotatePoint3DAroundX(unrolled, pitch)
+
+  return rotatePoint3DAroundY(unpitched, yaw)
+}
+
 function toSameUnitPoint(
   point: Point2D,
   center: Point2D,
@@ -3710,6 +3938,32 @@ function getImageNormalizedRollCorrectedLandmarks2D(
       index,
       x: rotated.x,
       y: rotated.y,
+    }
+  })
+}
+
+function getSameUnitLandmarks2D(
+  frame: PoseAwareInferenceFrame,
+): PoseAwareCorrectedLandmark2D[] | null {
+  const center = getFaceCenter2D(frame.landmarks)
+
+  if (!center || frame.landmarks.length !== REQUIRED_LANDMARK_COUNT) {
+    return null
+  }
+
+  const videoAspectRatio = getVideoAspectRatioForNormalization()
+
+  return frame.landmarks.map((landmark, index) => {
+    const sameUnitPoint = toSameUnitPoint(
+      landmark,
+      center,
+      videoAspectRatio,
+    )
+
+    return {
+      index,
+      x: sameUnitPoint.x,
+      y: sameUnitPoint.y,
     }
   })
 }
@@ -4087,7 +4341,443 @@ function centerPoseAwareZValues(
         POSE_AWARE_Z_HINT_CLAMP,
       ).toFixed(4),
     ),
+    }))
+}
+
+function centerPoseAwareCanonicalLandmarks(
+  landmarks: IdealLandmark3DCandidate[],
+): IdealLandmark3DCandidate[] {
+  const xAverage = averageNumbers(landmarks.map((landmark) => landmark.x))
+  const yAverage = averageNumbers(landmarks.map((landmark) => landmark.y))
+  const zAverage = averageNumbers(landmarks.map((landmark) => landmark.z))
+
+  return landmarks.map((landmark) => ({
+    ...landmark,
+    x: Number((landmark.x - xAverage).toFixed(4)),
+    y: Number((landmark.y - yAverage).toFixed(4)),
+    z: Number((landmark.z - zAverage).toFixed(4)),
   }))
+}
+
+function buildPoseAwareObservationFrameDebugSummary(
+  observationFrames: PoseAwareInferenceFrame[],
+): PoseAwareObservationFrameDebugSummary {
+  const yawBins: Array<{
+    id: string
+    yawMin: number | null
+    yawMax: number | null
+  }> = [
+    { id: "leftStrong", yawMin: null, yawMax: -15 },
+    { id: "leftMid", yawMin: -15, yawMax: -5 },
+    { id: "nearFront", yawMin: -5, yawMax: 5 },
+    { id: "rightMid", yawMin: 5, yawMax: 15 },
+    { id: "rightStrong", yawMin: 15, yawMax: null },
+  ]
+
+  return {
+    totalObservationFrameCount: observationFrames.length,
+    negativeYawCount: observationFrames.filter((frame) => frame.pose.yaw < 0)
+      .length,
+    positiveYawCount: observationFrames.filter((frame) => frame.pose.yaw > 0)
+      .length,
+    nearFrontCount: observationFrames.filter(
+      (frame) =>
+        Math.abs(frame.pose.yaw) <= POSE_AWARE_CANONICAL_NEAR_FRONT_YAW_DEG,
+    ).length,
+    yawBins: yawBins.map((bin) => {
+      const framesInBin = observationFrames.filter((frame) => {
+        const aboveMin = bin.yawMin === null || frame.pose.yaw >= bin.yawMin
+        const belowMax = bin.yawMax === null || frame.pose.yaw < bin.yawMax
+
+        return aboveMin && belowMax
+      })
+      const weightTotal = framesInBin.reduce(
+        (sum, frame) => sum + calculatePoseAwareShapeFrameWeight(frame),
+        0,
+      )
+
+      return {
+        ...bin,
+        count: framesInBin.length,
+        weightTotal: roundDebugNumber(weightTotal),
+      }
+    }),
+  }
+}
+
+function getPoseAwareRepresentativePointSummary(
+  landmarks: Array<{ index: number; x: number; y: number; z?: number }>,
+): PoseAwareRepresentativePointSummary {
+  const noseTip = landmarks.find((landmark) => landmark.index === NOSE_TIP_INDEX)
+  const chin = landmarks.find((landmark) => landmark.index === CHIN_INDEX)
+  const mouthPoints = MOUTH_CENTER_INDICES.map((index) =>
+    landmarks.find((landmark) => landmark.index === index),
+  ).filter(
+    (landmark): landmark is { index: number; x: number; y: number; z?: number } =>
+      landmark !== undefined && Number.isFinite(landmark.x),
+  )
+  const spatial = buildLandmarkSpatialSummary(landmarks)
+  const mouthCenterX =
+    mouthPoints.length === 0
+      ? null
+      : roundDebugNumber(averageNumbers(mouthPoints.map((point) => point.x)))
+  const noseTipX = noseTip ? roundDebugNumber(noseTip.x) : null
+
+  return {
+    noseTipX,
+    mouthCenterX,
+    chinX: chin ? roundDebugNumber(chin.x) : null,
+    noseOffsetFromBoundsCenterX:
+      noseTipX === null || spatial.boundsCenter === null
+        ? null
+        : roundDebugNumber(noseTipX - spatial.boundsCenter.x),
+  }
+}
+
+function buildEmptyPoseAwarePartialCandidateSummary(): PoseAwarePartialCandidateSummary {
+  return {
+    frameCount: 0,
+    weightTotal: 0,
+    spatial: buildLandmarkSpatialSummary([]),
+    representative: getPoseAwareRepresentativePointSummary([]),
+  }
+}
+
+function buildPoseAwareFrameLocalAndCanonicalPoints(
+  frame: PoseAwareInferenceFrame,
+  basePoints: PoseAwareBasePoint[],
+): {
+  localPoints: Array<Point3D & { index: number }>
+  canonicalPoints: Array<Point3D & { index: number }>
+  weight: number
+} | null {
+  const sameUnitLandmarks = getSameUnitLandmarks2D(frame)
+  const hintsByLandmark = collectPoseAwareZHintsForFrame(frame, basePoints)
+  const weight = calculatePoseAwareShapeFrameWeight(frame)
+
+  if (
+    !sameUnitLandmarks ||
+    sameUnitLandmarks.length !== REQUIRED_LANDMARK_COUNT ||
+    !Number.isFinite(weight) ||
+    weight <= 0
+  ) {
+    return null
+  }
+
+  const localPoints = sameUnitLandmarks.map((landmark, index) => {
+    const hints = hintsByLandmark[index] ?? []
+
+    return {
+      index,
+      x: landmark.x,
+      y: landmark.y,
+      z: getWeightedAverageZ(hints),
+    }
+  })
+  const canonicalPoints = localPoints.map((point) => ({
+    index: point.index,
+    ...inverseRotatePoseAwarePoint3D(point, frame.pose),
+  }))
+
+  return {
+    localPoints,
+    canonicalPoints,
+    weight,
+  }
+}
+
+function buildPoseAwareCanonicalLandmarksFromFrames(
+  observationFrames: PoseAwareInferenceFrame[],
+  basePoints: PoseAwareBasePoint[],
+  dataset: PoseAwareInferenceDataset,
+): {
+  landmarks: IdealLandmark3DCandidate[]
+  localPoints: Array<Point3D & { index: number }>
+  canonicalFramePoints: Array<Point3D & { index: number }>
+  weightTotal: number
+} | null {
+  const canonicalFrames = observationFrames
+    .map((frame) => buildPoseAwareFrameLocalAndCanonicalPoints(frame, basePoints))
+    .filter(
+      (
+        frame,
+      ): frame is {
+        localPoints: Array<Point3D & { index: number }>
+        canonicalPoints: Array<Point3D & { index: number }>
+        weight: number
+      } => frame !== null,
+    )
+
+  if (canonicalFrames.length === 0) {
+    return null
+  }
+
+  const hintsByLandmark = mergePoseAwareZHints(observationFrames, basePoints)
+  const uncenteredLandmarks = Array.from(
+    { length: REQUIRED_LANDMARK_COUNT },
+    (_, index) => {
+      const points = canonicalFrames
+        .map((frame) => ({
+          point: frame.canonicalPoints[index],
+          weight: frame.weight,
+        }))
+        .filter(
+          (
+            item,
+          ): item is {
+            point: Point3D & { index: number }
+            weight: number
+          } =>
+            Boolean(item.point) &&
+            Number.isFinite(item.point.x) &&
+            Number.isFinite(item.point.y) &&
+            Number.isFinite(item.point.z) &&
+            Number.isFinite(item.weight) &&
+            item.weight > 0,
+        )
+      const weightTotal = points.reduce((sum, item) => sum + item.weight, 0)
+      const hints = hintsByLandmark[index] ?? []
+      const confidence = inferPoseAwareLandmarkConfidence(
+        hints,
+        dataset,
+        getWeightedAverageZ(hints),
+      )
+
+      if (weightTotal <= 0) {
+        return {
+          index,
+          x: 0,
+          y: 0,
+          z: 0,
+          confidence,
+          source: "pose_aware_canonical_3d_v1" as const,
+        }
+      }
+
+      return {
+        index,
+        x: Number(
+          (
+            points.reduce((sum, item) => sum + item.point.x * item.weight, 0) /
+            weightTotal
+          ).toFixed(4),
+        ),
+        y: Number(
+          (
+            points.reduce((sum, item) => sum + item.point.y * item.weight, 0) /
+            weightTotal
+          ).toFixed(4),
+        ),
+        z: Number(
+          (
+            points.reduce((sum, item) => sum + item.point.z * item.weight, 0) /
+            weightTotal
+          ).toFixed(4),
+        ),
+        confidence,
+        source: "pose_aware_canonical_3d_v1" as const,
+      }
+    },
+  )
+
+  return {
+    landmarks: centerPoseAwareCanonicalLandmarks(uncenteredLandmarks),
+    localPoints: canonicalFrames.flatMap((frame) => frame.localPoints),
+    canonicalFramePoints: canonicalFrames.flatMap(
+      (frame) => frame.canonicalPoints,
+    ),
+    weightTotal: roundDebugNumber(
+      canonicalFrames.reduce((sum, frame) => sum + frame.weight, 0),
+    ),
+  }
+}
+
+function buildPoseAwarePartialCanonicalCandidateSummary(
+  observationFrames: PoseAwareInferenceFrame[],
+  basePoints: PoseAwareBasePoint[],
+  dataset: PoseAwareInferenceDataset,
+): PoseAwarePartialCandidateSummary {
+  const partial = buildPoseAwareCanonicalLandmarksFromFrames(
+    observationFrames,
+    basePoints,
+    dataset,
+  )
+
+  if (!partial) {
+    return buildEmptyPoseAwarePartialCandidateSummary()
+  }
+
+  return {
+    frameCount: observationFrames.length,
+    weightTotal: partial.weightTotal,
+    spatial: buildLandmarkSpatialSummary(partial.landmarks),
+    representative: getPoseAwareRepresentativePointSummary(partial.landmarks),
+  }
+}
+
+function buildPoseAwareCandidateComparisonDebug(
+  oldResult: IdealLandmarks3DCandidateResult | null,
+  newLandmarks: IdealLandmark3DCandidate[],
+): PoseAwareCandidateComparisonDebug | undefined {
+  if (
+    !oldResult ||
+    oldResult.status !== "generated" ||
+    oldResult.generationMethod !== "pose_aware_weighted_z_v1"
+  ) {
+    return undefined
+  }
+
+  const oldSpatial = buildLandmarkSpatialSummary(oldResult.landmarks)
+  const newSpatial = buildLandmarkSpatialSummary(newLandmarks)
+  const oldRepresentative = getPoseAwareRepresentativePointSummary(
+    oldResult.landmarks,
+  )
+  const newRepresentative = getPoseAwareRepresentativePointSummary(newLandmarks)
+
+  return {
+    oldGenerationMethod: "pose_aware_weighted_z_v1",
+    newGenerationMethod: "pose_aware_canonical_3d_v1",
+    oldCandidate: {
+      spatial: oldSpatial,
+      representative: oldRepresentative,
+    },
+    newCandidate: {
+      spatial: newSpatial,
+      representative: newRepresentative,
+    },
+    noseOffsetDelta:
+      oldRepresentative.noseOffsetFromBoundsCenterX === null ||
+      newRepresentative.noseOffsetFromBoundsCenterX === null
+        ? null
+        : roundDebugNumber(
+            newRepresentative.noseOffsetFromBoundsCenterX -
+              oldRepresentative.noseOffsetFromBoundsCenterX,
+          ),
+    boundsCenterOffset:
+      oldSpatial.boundsCenter === null || newSpatial.boundsCenter === null
+        ? null
+        : {
+            x: roundDebugNumber(
+              newSpatial.boundsCenter.x - oldSpatial.boundsCenter.x,
+            ),
+            y: roundDebugNumber(
+              newSpatial.boundsCenter.y - oldSpatial.boundsCenter.y,
+            ),
+            z: roundDebugNumber(
+              newSpatial.boundsCenter.z - oldSpatial.boundsCenter.z,
+            ),
+          },
+  }
+}
+
+function buildPoseAwareCanonicalWarnings(
+  observationSummary: PoseAwareObservationFrameDebugSummary,
+  canonicalAverage: LandmarkSpatialSummary,
+  comparison: PoseAwareCandidateComparisonDebug | undefined,
+): string[] {
+  const warnings: string[] = []
+  const total = observationSummary.totalObservationFrameCount
+  const yawImbalance =
+    total === 0
+      ? 0
+      : Math.abs(
+          observationSummary.positiveYawCount -
+            observationSummary.negativeYawCount,
+        ) / total
+
+  if (yawImbalance >= POSE_AWARE_CANONICAL_YAW_IMBALANCE_WARNING_RATIO) {
+    warnings.push("yaw distribution is one-sided; compare old/new centers.")
+  }
+
+  if (
+    observationSummary.nearFrontCount < POSE_AWARE_CANONICAL_MIN_NEAR_FRONT_COUNT
+  ) {
+    warnings.push("near-front observation frames are low.")
+  }
+
+  const zRange = canonicalAverage.bounds?.zRange
+
+  if (
+    zRange !== undefined &&
+    (zRange < POSE_AWARE_CANONICAL_Z_RANGE_WARNING_MIN ||
+      zRange > POSE_AWARE_CANONICAL_Z_RANGE_WARNING_MAX)
+  ) {
+    warnings.push("canonical z range is outside the prototype debug range.")
+  }
+
+  if (
+    comparison?.boundsCenterOffset &&
+    Math.abs(comparison.boundsCenterOffset.x) >=
+      POSE_AWARE_CANONICAL_CENTER_OFFSET_WARNING
+  ) {
+    warnings.push("old/new candidate bounds center x differs noticeably.")
+  }
+
+  return warnings
+}
+
+function buildPoseAwareCanonical3DCandidateDebug(
+  dataset: PoseAwareInferenceDataset,
+  basePoints: PoseAwareBasePoint[],
+  canonicalResult: {
+    landmarks: IdealLandmark3DCandidate[]
+    localPoints: Array<Point3D & { index: number }>
+    canonicalFramePoints: Array<Point3D & { index: number }>
+  },
+  oldResult: IdealLandmarks3DCandidateResult | null,
+): PoseAwareCanonical3DDebug {
+  const observationFrames = dataset.observationFrames
+  const observationSummary =
+    buildPoseAwareObservationFrameDebugSummary(observationFrames)
+  const canonicalAverage = buildLandmarkSpatialSummary(canonicalResult.landmarks)
+  const comparison = buildPoseAwareCandidateComparisonDebug(
+    oldResult,
+    canonicalResult.landmarks,
+  )
+  const debugWithoutWarnings = {
+    generationMethod: "pose_aware_canonical_3d_v1" as const,
+    observationFrames: observationSummary,
+    canonicalization: {
+      frameLocal3DBounds: buildLandmarkBoundsSummary(
+        canonicalResult.localPoints,
+      ),
+      inversePoseCanonical3DBounds: buildLandmarkBoundsSummary(
+        canonicalResult.canonicalFramePoints,
+      ),
+      canonicalAverage,
+    },
+    comparison,
+    partialCandidates: {
+      rightYawOnly: buildPoseAwarePartialCanonicalCandidateSummary(
+        observationFrames.filter((frame) => frame.pose.yaw > 0),
+        basePoints,
+        dataset,
+      ),
+      leftYawOnly: buildPoseAwarePartialCanonicalCandidateSummary(
+        observationFrames.filter((frame) => frame.pose.yaw < 0),
+        basePoints,
+        dataset,
+      ),
+      nearFrontOnly: buildPoseAwarePartialCanonicalCandidateSummary(
+        observationFrames.filter(
+          (frame) =>
+            Math.abs(frame.pose.yaw) <=
+            POSE_AWARE_CANONICAL_NEAR_FRONT_YAW_DEG,
+        ),
+        basePoints,
+        dataset,
+      ),
+    },
+  }
+
+  return {
+    ...debugWithoutWarnings,
+    warnings: buildPoseAwareCanonicalWarnings(
+      observationSummary,
+      canonicalAverage,
+      comparison,
+    ),
+  }
 }
 
 function buildPoseAwareIdealLandmarks3DCandidateResult(
@@ -4173,29 +4863,140 @@ function buildPoseAwareIdealLandmarks3DCandidateResult(
   }
 }
 
-function toPoseAwareCandidatePreview(): unknown {
-  const result = idealLandmarks3DCandidateResult
-  const isCurrentPoseAwareCandidate =
-    result.generationMethod === "pose_aware_weighted_z_v1"
-
-  if (!isCurrentPoseAwareCandidate) {
+function buildPoseAwareCanonical3DIdealLandmarks3DCandidateResult(
+  dataset: PoseAwareInferenceDataset,
+  oldResult: IdealLandmarks3DCandidateResult | null,
+): IdealLandmarks3DCandidateResult {
+  if (dataset.status === "missing_front_reference") {
     return {
-      status: "not_generated",
-      generationMethod: "pose_aware_weighted_z_v1",
-      sameAsCurrentCandidate: false,
+      ...createInitialIdealLandmarks3DCandidateResult(),
+      status: "insufficient_data",
+      generationMethod: "pose_aware_canonical_3d_v1",
+      message:
+        "手動選択された正面基準がないため、pose-aware canonical 3D候補を生成できません。",
     }
   }
+
+  if (dataset.observationFrames.length === 0) {
+    return {
+      ...createInitialIdealLandmarks3DCandidateResult(),
+      status: "insufficient_data",
+      generationMethod: "pose_aware_canonical_3d_v1",
+      message:
+        "IdealFace形状生成に使う observation frame がないため、pose-aware canonical 3D候補を生成できません。",
+    }
+  }
+
+  const basePoints = buildPoseAwareBasePoints(dataset.frontReferenceFrames)
+
+  if (!basePoints || basePoints.length !== REQUIRED_LANDMARK_COUNT) {
+    return {
+      ...createInitialIdealLandmarks3DCandidateResult(),
+      status: "insufficient_data",
+      generationMethod: "pose_aware_canonical_3d_v1",
+      message:
+        "手動選択された正面基準の 478 landmarks を参照できないため、pose-aware canonical 3D候補を生成できません。",
+    }
+  }
+
+  const canonicalResult = buildPoseAwareCanonicalLandmarksFromFrames(
+    dataset.observationFrames,
+    basePoints,
+    dataset,
+  )
+
+  if (!canonicalResult || canonicalResult.landmarks.length !== REQUIRED_LANDMARK_COUNT) {
+    return {
+      ...createInitialIdealLandmarks3DCandidateResult(),
+      status: "insufficient_data",
+      generationMethod: "pose_aware_canonical_3d_v1",
+      message:
+        "observation frame から canonical 3D landmarks を生成できませんでした。",
+    }
+  }
+
+  const landmarks = canonicalResult.landmarks
+  const debug = buildPoseAwareCanonical3DCandidateDebug(
+    dataset,
+    basePoints,
+    canonicalResult,
+    oldResult,
+  )
+
+  return {
+    status: "generated",
+    generationMethod: "pose_aware_canonical_3d_v1",
+    landmarkCount: landmarks.length,
+    landmarks,
+    landmarksPreview: landmarks.slice(0, IDEAL_LANDMARKS_3D_PREVIEW_COUNT),
+    summary: buildIdealLandmarks3DCandidateSummary(landmarks, {
+      frontReferenceFrameCount: dataset.frontReferenceFrames.length,
+      observationFrameCount: dataset.observationFrames.length,
+      excludedFrameCount: dataset.excludedFrameCount,
+    }),
+    message:
+      "Step 2-I-B dataset から、observation frame ごとに仮 3D 化し、pose 逆回転で正面 canonical 3D 空間へ戻してから weighted average した prototype 候補です。",
+    debug,
+  }
+}
+
+function buildPoseAwareCandidateResult(
+  dataset: PoseAwareInferenceDataset,
+  generationMethod: IdealLandmarks3DGenerationMethod,
+  oldResult: IdealLandmarks3DCandidateResult | null,
+): IdealLandmarks3DCandidateResult {
+  if (generationMethod === "pose_aware_canonical_3d_v1") {
+    return buildPoseAwareCanonical3DIdealLandmarks3DCandidateResult(
+      dataset,
+      oldResult,
+    )
+  }
+
+  return buildPoseAwareIdealLandmarks3DCandidateResult(dataset)
+}
+
+function toPoseAwareCandidatePreview(): unknown {
+  const result = idealLandmarks3DCandidateResult
+  const cachedCandidates = Object.fromEntries(
+    (
+      [
+        "pose_aware_weighted_z_v1",
+        "pose_aware_canonical_3d_v1",
+      ] as IdealLandmarks3DGenerationMethod[]
+    ).map((generationMethod) => {
+      const cachedResult = idealLandmarks3DCandidateResults[generationMethod]
+
+      return [
+        generationMethod,
+        cachedResult
+          ? {
+              status: cachedResult.status,
+              landmarkCount: cachedResult.landmarkCount,
+              summary: cachedResult.summary,
+              debug: cachedResult.debug ?? null,
+            }
+          : {
+              status: "not_generated",
+              landmarkCount: 0,
+            },
+      ]
+    }),
+  )
 
   return {
     status: result.status,
     generationMethod: result.generationMethod,
+    selectedGenerationMethod: selectedIdealLandmarks3DGenerationMethod,
     landmarkCount: result.landmarkCount,
     frontReferenceFrameCount: result.summary.frontReferenceFrameCount,
     observationFrameCount: result.summary.observationFrameCount,
     excludedFrameCount: result.summary.excludedFrameCount,
+    cachedCandidates,
+    debug: result.debug ?? null,
     sameAsCurrentCandidate: true,
     notes: [
       "frontReference frames are used as reference basis. Only useForInference frames contribute to IdealFace shape inference.",
+      "pose_aware_canonical_3d_v1 inverse-rotates provisional frame-local 3D points into canonical space before averaging.",
     ],
   }
 }
@@ -4321,12 +5122,67 @@ function renderPoseAwareInferenceDatasetSummary(
   `
 }
 
+function renderGenerationMethodOption(
+  generationMethod: IdealLandmarks3DGenerationMethod,
+): string {
+  return `
+    <option
+      value="${generationMethod}"
+      ${selectedIdealLandmarks3DGenerationMethod === generationMethod ? "selected" : ""}
+    >
+      ${generationMethod}
+    </option>
+  `
+}
+
+function renderPoseAwareCandidateMethodControls(): string {
+  return `
+    <div class="pose-aware-method-controls">
+      <label>
+        generationMethod
+        <select data-pose-aware-generation-method-select="true">
+          ${renderGenerationMethodOption("pose_aware_weighted_z_v1")}
+          ${renderGenerationMethodOption("pose_aware_canonical_3d_v1")}
+        </select>
+      </label>
+    </div>
+  `
+}
+
+function renderPoseAwareCachedCandidateSwitches(): string {
+  const methods: IdealLandmarks3DGenerationMethod[] = [
+    "pose_aware_weighted_z_v1",
+    "pose_aware_canonical_3d_v1",
+  ]
+
+  return `
+    <div class="pose-aware-method-switches">
+      ${methods
+        .map((method) => {
+          const result = idealLandmarks3DCandidateResults[method]
+          const active = idealLandmarks3DCandidateResult.generationMethod === method
+
+          return `
+            <button
+              class="candidate-label-button${active ? " candidate-label-button-active" : ""}"
+              type="button"
+              data-use-pose-aware-candidate-method="${method}"
+              ${result?.status === "generated" ? "" : "disabled"}
+            >
+              ${method}
+            </button>
+          `
+        })
+        .join("")}
+    </div>
+  `
+}
+
 function renderPoseAwareIdealLandmarks3DCandidatePanel(
   dataset: PoseAwareInferenceDataset,
 ): string {
   const result = idealLandmarks3DCandidateResult
-  const isPoseAwareCandidate =
-    result.generationMethod === "pose_aware_weighted_z_v1"
+  const isPoseAwareCandidate = result.generationMethod !== null
   const disabled =
     dataset.status === "missing_front_reference" ||
     dataset.observationFrames.length === 0
@@ -4342,6 +5198,7 @@ function renderPoseAwareIdealLandmarks3DCandidatePanel(
           <h4>Step 2-I-C: pose-aware 3D候補</h4>
           <p>Step 2-I-B dataset を使い、「IdealFace生成に使う」が ON の observation だけから 478点候補を生成します。正面基準 frame は基準合わせに使います。</p>
         </div>
+        ${renderPoseAwareCandidateMethodControls()}
         <button
           class="candidate-generate-button"
           type="button"
@@ -4351,6 +5208,7 @@ function renderPoseAwareIdealLandmarks3DCandidatePanel(
           pose-aware 3D候補を生成
         </button>
       </div>
+      ${renderPoseAwareCachedCandidateSwitches()}
       ${
         disabled
           ? `<p class="pose-aware-warning-text">${disabledMessage}</p>`
@@ -4462,9 +5320,132 @@ function renderGeneratedPoseAwareCandidateSummary(
       <dl class="pose-aware-summary-list">
         ${renderCoordinateAspectComparisonRows(aspectComparison)}
       </dl>
+      ${renderPoseAwareCanonicalDebugBlock(result.debug)}
     </div>
     <p class="candidate-result-note">${escapeHtml(result.message ?? "")}</p>
     ${renderIdealLandmarks3DCandidatePreview(result.landmarksPreview)}
+  `
+}
+
+function renderPoseAwareCanonicalDebugBlock(
+  debug: IdealLandmarks3DCandidateDebug | undefined,
+): string {
+  if (!debug) {
+    return ""
+  }
+
+  return `
+    <h5>canonical 3D prototype debug</h5>
+    <dl class="pose-aware-summary-list">
+      <div>
+        <dt>generation method</dt>
+        <dd>${debug.generationMethod}</dd>
+      </div>
+      <div>
+        <dt>observation frames</dt>
+        <dd>${debug.observationFrames.totalObservationFrameCount}</dd>
+      </div>
+      <div>
+        <dt>yaw negative / positive / near front</dt>
+        <dd>${debug.observationFrames.negativeYawCount} / ${debug.observationFrames.positiveYawCount} / ${debug.observationFrames.nearFrontCount}</dd>
+      </div>
+    </dl>
+    <div class="pose-aware-coverage">
+      <strong>yaw bins</strong>
+      <ul>
+        ${debug.observationFrames.yawBins
+          .map(
+            (bin) =>
+              `<li>${bin.id}: count ${bin.count} / weight ${formatNumber(bin.weightTotal)}</li>`,
+          )
+          .join("")}
+      </ul>
+    </div>
+    <h5>frame local 3D bounds</h5>
+    <dl class="pose-aware-summary-list">
+      ${renderBoundsSummaryRows(debug.canonicalization.frameLocal3DBounds)}
+    </dl>
+    <h5>inverse-pose canonical 3D bounds</h5>
+    <dl class="pose-aware-summary-list">
+      ${renderBoundsSummaryRows(debug.canonicalization.inversePoseCanonical3DBounds)}
+    </dl>
+    <h5>canonical average summary</h5>
+    <dl class="pose-aware-summary-list">
+      ${renderSpatialSummaryRows(debug.canonicalization.canonicalAverage)}
+    </dl>
+    ${renderPoseAwareCandidateComparisonDebug(debug.comparison)}
+    <h5>partial candidates</h5>
+    ${renderPoseAwarePartialCandidateDebug(
+      "rightYawOnly",
+      debug.partialCandidates.rightYawOnly,
+    )}
+    ${renderPoseAwarePartialCandidateDebug(
+      "leftYawOnly",
+      debug.partialCandidates.leftYawOnly,
+    )}
+    ${renderPoseAwarePartialCandidateDebug(
+      "nearFrontOnly",
+      debug.partialCandidates.nearFrontOnly,
+    )}
+    <div class="pose-aware-coverage">
+      <strong>canonical warnings</strong>
+      ${
+        debug.warnings.length === 0
+          ? `<p class="pose-aware-ready-text">none</p>`
+          : `<ul class="pose-aware-warning-list">
+              ${debug.warnings
+                .map((warning) => `<li>${escapeHtml(warning)}</li>`)
+                .join("")}
+            </ul>`
+      }
+    </div>
+  `
+}
+
+function renderPoseAwareCandidateComparisonDebug(
+  comparison: PoseAwareCandidateComparisonDebug | undefined,
+): string {
+  if (!comparison) {
+    return ""
+  }
+
+  return `
+    <h5>old vs new comparison</h5>
+    <dl class="pose-aware-summary-list">
+      <div>
+        <dt>bounds center offset</dt>
+        <dd>${formatPoint3D(comparison.boundsCenterOffset)}</dd>
+      </div>
+      <div>
+        <dt>nose offset delta</dt>
+        <dd>${formatNullableDebugNumber(comparison.noseOffsetDelta)}</dd>
+      </div>
+    </dl>
+    <h5>old representative</h5>
+    <dl class="pose-aware-summary-list">
+      ${renderRepresentativeSummaryRows(comparison.oldCandidate.representative)}
+    </dl>
+    <h5>new representative</h5>
+    <dl class="pose-aware-summary-list">
+      ${renderRepresentativeSummaryRows(comparison.newCandidate.representative)}
+    </dl>
+  `
+}
+
+function renderPoseAwarePartialCandidateDebug(
+  label: string,
+  summary: PoseAwarePartialCandidateSummary,
+): string {
+  return `
+    <h6>${label}</h6>
+    <dl class="pose-aware-summary-list">
+      <div>
+        <dt>frames / weight</dt>
+        <dd>${summary.frameCount} / ${formatNumber(summary.weightTotal)}</dd>
+      </div>
+      ${renderRepresentativeSummaryRows(summary.representative)}
+      ${renderSpatialSummaryRows(summary.spatial)}
+    </dl>
   `
 }
 
@@ -6412,16 +7393,78 @@ function attachPoseAwareFrameSelectionHandler(): void {
 
 function attachIdealLandmarks3DCandidateHandler(): void {
   document
+    .querySelector<HTMLSelectElement>(
+      "[data-pose-aware-generation-method-select]",
+    )
+    ?.addEventListener("change", (event) => {
+      const value = (event.currentTarget as HTMLSelectElement).value
+
+      if (!isIdealLandmarks3DGenerationMethod(value)) {
+        return
+      }
+
+      selectedIdealLandmarks3DGenerationMethod = value
+
+      const cachedResult = idealLandmarks3DCandidateResults[value]
+
+      if (cachedResult) {
+        idealLandmarks3DCandidateResult = cachedResult
+        pointCloudPreviewCamera = createPointCloudPreviewCamera()
+      }
+
+      render()
+    })
+
+  document
     .querySelector<HTMLButtonElement>(
       "[data-generate-pose-aware-ideal-landmarks-3d-candidate]",
     )
     ?.addEventListener("click", () => {
       const dataset = getPoseAwareInferenceDataset()
+      const weightedResult = buildPoseAwareCandidateResult(
+        dataset,
+        "pose_aware_weighted_z_v1",
+        null,
+      )
+      const canonicalResult = buildPoseAwareCandidateResult(
+        dataset,
+        "pose_aware_canonical_3d_v1",
+        weightedResult,
+      )
 
+      idealLandmarks3DCandidateResults = {
+        pose_aware_weighted_z_v1: weightedResult,
+        pose_aware_canonical_3d_v1: canonicalResult,
+      }
       idealLandmarks3DCandidateResult =
-        buildPoseAwareIdealLandmarks3DCandidateResult(dataset)
+        idealLandmarks3DCandidateResults[
+          selectedIdealLandmarks3DGenerationMethod
+        ] ?? canonicalResult
       pointCloudPreviewCamera = createPointCloudPreviewCamera()
       render()
+    })
+
+  document
+    .querySelectorAll<HTMLButtonElement>("[data-use-pose-aware-candidate-method]")
+    .forEach((button) => {
+      button.addEventListener("click", () => {
+        const method = button.dataset.usePoseAwareCandidateMethod
+
+        if (!isIdealLandmarks3DGenerationMethod(method)) {
+          return
+        }
+
+        const result = idealLandmarks3DCandidateResults[method]
+
+        if (!result) {
+          return
+        }
+
+        selectedIdealLandmarks3DGenerationMethod = method
+        idealLandmarks3DCandidateResult = result
+        pointCloudPreviewCamera = createPointCloudPreviewCamera()
+        render()
+      })
     })
 
   document
