@@ -39,7 +39,7 @@ beauty_filter_asset_v1
 理由:
 
 - IdealFace と landmarkGroups の対応を保つため
-- correctionProfile が参照する `affectedLandmarkGroups` の整合性を保つため
+- correctionProfile の `expressionFollow` / `expressionAttenuation` が参照する `affectedLandmarkGroups` の整合性を保つため
 - colorLayers が参照する `skin` / `lip` / `cheek` などの group の整合性を保つため
 - サービス側では 1つの filter asset を選択するだけでよくなるため
 - Engine は 1つの asset を読み込んで shape / color の両方を実行できるため
@@ -56,7 +56,7 @@ landmarkGroups:
   landmark index の意味領域
 
 correctionProfile:
-  shape correction の強度と safety attenuation
+  shape correction の強度と expressionFollow による表情時の追従制御
 
 shapeWarpSettings:
   warp renderer / smoothing / boundary の設定
@@ -96,7 +96,7 @@ idealFace:
 landmarkGroups:
   MediaPipe landmark index 群に意味を与える定義
   mouth / left_eye / right_eye / face_boundary / skin / lip / cheek など
-  expressionAttenuation や colorLayers が参照する
+  expressionFollow / expressionAttenuation / colorLayers が参照する
   Authoring Tool で将来編集できるようにする
 ```
 
@@ -118,9 +118,9 @@ cheek
 eye_area
 ```
 
-`landmarkGroups` は個別パーツ加工の命令ではありません。`expressionAttenuation` が補正を弱める領域を参照したり、`colorLayers` が mask 対象の意味領域を参照したりするための index group 定義です。
+`landmarkGroups` は個別パーツ加工の命令ではありません。`expressionFollow` が表情時の追従制御を適用する対象範囲を参照したり、既存 `expressionAttenuation` が補正を弱める領域を参照したり、`colorLayers` が mask 対象の意味領域を参照したりするための index group 定義です。
 
-詳細仕様、JSON 例、Engine fallback、validation、Landmark Group Editor 方針は [landmarkGroups v1](landmark-groups-v1.md) に整理します。`expressionAttenuation` が group 内でどれくらい効くかは、v1 では Engine が falloff weight を自動計算する方針です。詳細は [expressionAttenuation falloff v1](expression-attenuation-falloff-v1.md) に整理します。Engine landmarkGroups asset loading foundation、Authoring Tool Landmark Group Editor、`ideal_face_asset_v1` optional `landmarkGroups` export は実装済みですが、`beauty_filter_asset_v1` foundation、Color Processing、Layer System は未実装です。
+詳細仕様、JSON 例、Engine fallback、validation、Landmark Group Editor 方針は [landmarkGroups v1](landmark-groups-v1.md) に整理します。`expressionFollow v1` では `affectedLandmarkGroups` が対象範囲、`landmarkFollowStrengths` が landmark ごとの追従率です。詳細は [expressionFollow v1](expression-follow-v1.md) に整理します。`expressionAttenuation falloff v1` は fallback / 参考案です。Engine landmarkGroups asset loading foundation、Authoring Tool Landmark Group Editor、`ideal_face_asset_v1` optional `landmarkGroups` export は実装済みですが、`expressionFollow v1` 実装、`beauty_filter_asset_v1` foundation、Color Processing、Layer System は未実装です。
 
 ### correctionProfile
 
@@ -132,22 +132,24 @@ correctionProfile:
   defaultStrength
   landmarkStrengths
   maxCorrectionDistance
+  expressionFollow
   expressionAttenuation
 ```
 
-`expressionAttenuation` は、`landmarkGroups` の group id を参照します。
+`expressionFollow` は、`landmarkGroups` の group id を対象範囲として参照し、表情ごとに landmark が ideal へどれだけ追従するかを定義します。
 
 例:
 
 ```text
-jawOpen が高い
+mouthPucker が高い
   -> affectedLandmarkGroups: ["mouth"]
-  -> mouth group の strengthScale を下げる
+  -> mouth group 内の landmarkFollowStrengths で idealFollowStrength を下げる
+  -> neutral ideal に戻しすぎず current / camera の表情を優先する
 ```
 
 `correctionProfile` は個別パーツ加工命令セットではありません。current 478 landmarks と projected ideal 478 landmarks の差分に対して、どれくらい安全に寄せるかを決める設定です。
 
-`expressionAttenuation falloff v1` では、`groupScale` を group 内の全 landmark に二値適用するのではなく、中心ほど強く、境界ほど 1.0 に戻る per-landmark scale として扱う方針です。`beauty_filter_asset_v1` の `landmarkGroups` JSON は当面 `indices` のまま維持し、explicit per-index weights は将来候補とします。
+`expressionAttenuation` は既存 Engine foundation として残りますが、今後の中心仕様ではありません。`expressionAttenuation falloff v1` は、旧方針の group 境界の二値変化を滑らかにする fallback / 参考案として扱います。
 
 ### shapeWarpSettings
 
@@ -244,19 +246,31 @@ Layer System は shape warp 用ではなく、color processing 用です。`jaw_
     "maxStrength": 1.0,
     "maxCorrectionDistance": 0.015,
     "landmarkStrengths": [],
-    "expressionAttenuation": {
-      "schemaVersion": "expression_attenuation_v1",
+    "expressionFollow": {
+      "schemaVersion": "expression_follow_v1",
       "smoothing": {
         "enabled": true,
         "halfLifeMs": 120
       },
       "rules": [
         {
-          "id": "jaw_open_reduce_mouth",
-          "blendshape": "jawOpen",
+          "id": "mouth_pucker_follow",
+          "blendshape": "mouthPucker",
           "affectedLandmarkGroups": ["mouth"],
-          "inputRange": [0.15, 0.6],
-          "strengthScaleRange": [1.0, 0.2]
+          "inputRange": [0.2, 0.8],
+          "defaultIdealFollowStrengthRange": [1.0, 0.35],
+          "landmarkFollowStrengths": [
+            {
+              "index": 13,
+              "idealFollowStrength": 0.1
+            }
+          ],
+          "source": {
+            "type": "authoring_mp4_expression_3d_analysis",
+            "neutralFrameGroup": "neutral",
+            "expressionFrameGroup": "mouthPucker",
+            "comparisonSpace": "bae_ar_ideal_landmarks3d_v1"
+          }
         }
       ]
     }
@@ -320,7 +334,8 @@ Engine Runtime:
   MediaPipe landmarks / blendshapes / pose を取得する
   IdealFace を現在姿勢へ Projection する
   current-vs-ideal difference を計算する
-  expressionAttenuation を評価する
+  expressionFollow を評価する
+  既存 expressionAttenuation fallback を評価する
   smoothing された scale を計算する
   CorrectionPlan を生成する
   WebGL mesh warp を適用する
@@ -349,6 +364,7 @@ IdealFace Authoring Tool:
   idealFace を作成する
   landmarkGroups を作成・編集する
   correctionProfile を作成・編集する
+  MP4 の neutral 3D 478 / expression 3D 478 比較から landmarkFollowStrengths を生成する
   shapeWarpSettings の一部を確認・調整する可能性がある
   beauty_filter_asset_v1 の shape 部分を export する可能性がある
 ```
@@ -376,7 +392,7 @@ Step 1: landmarkGroups v1 docs specification
   -> 実装済み
 
 Step 2: Engine landmarkGroups foundation
-  asset の landmarkGroups を読み込み、expressionAttenuation が参照できるようにする
+  asset の landmarkGroups を読み込み、expressionFollow / expressionAttenuation が参照できるようにする
   asset にない場合は Engine fallback group を使う
   -> 実装済み
 
@@ -385,12 +401,13 @@ Step 3: Authoring Tool landmark group editor
   rectangle selection / index highlight / bulk add / bulk remove を含む
   -> prototype 実装済み
 
-Step 4: expressionAttenuation falloff v1 docs direction
-  group 内の center distance による falloff 方針を整理する
+Step 4: expressionFollow v1 docs direction
+  表情ごとの idealFollowStrength / landmarkFollowStrengths 方針を整理する
+  MP4 の neutral 3D 478 / expression 3D 478 比較による自動生成方針を整理する
   -> 実装済み
 
-Step 5: expressionAttenuation falloff v1 Engine foundation
-  Engine 側で per-landmark falloff weight を自動計算する
+Step 5: expressionFollow v1 foundation
+  Engine 側で expressionFollow を読み込み、landmark ごとの idealFollowStrength を CorrectionPlan に反映する
 
 Step 6: shapeWarpSettings v1 docs / foundation
   WebGL mesh warp / smoothing / boundary / debug 設定を整理する
@@ -420,10 +437,14 @@ Step 8: beauty_filter_asset_v1 foundation
 - rectangle selection / index highlight / bulk add / bulk remove
 - ideal_face_asset_v1 optional landmarkGroups export
 - expressionAttenuation falloff v1 docs direction
+- expressionFollow v1 docs direction
 
 まだ未実装:
 
-- expressionAttenuation falloff v1 Engine implementation
+- expressionFollow v1 Engine implementation
+- MP4 expression 3D analysis implementation
+- landmarkFollowStrengths auto generation implementation
+- expressionAttenuation falloff v1 fallback / reference handling
 - shapeWarpSettings v1
 - colorLayers v1
 - beauty_filter_asset_v1

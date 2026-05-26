@@ -8,7 +8,7 @@
 landmarkGroups:
   MediaPipe landmark index 群に意味を与える定義
   mouth / left_eye / right_eye / face_boundary / skin / lip / cheek など
-  expressionAttenuation や colorLayers が参照する
+  expressionFollow / expressionAttenuation / colorLayers が参照する
   Authoring Tool で将来編集できるようにする
 ```
 
@@ -21,13 +21,13 @@ NG:
   nose group で鼻だけ細くする
 
 OK:
-  mouth group を jawOpen 時に弱める
-  eye group を blink / squint 時に弱める
+  mouth group を mouthPucker / jawOpen 時の expressionFollow 対象範囲にする
+  eye group を blink / squint 時の expressionFollow 対象範囲にする
   skin group を colorLayers の mask 対象にする
   lip group を lip tint の対象にする
 ```
 
-現在は `expressionAttenuation` v1 foundation が Engine 側に実装済みで、`mouth` / `left_eye` / `right_eye` / `face_boundary` などの group id を参照します。`landmarkGroups v1` の Engine asset loading foundation、fallback groups、asset / fallback group source handling、Studio debug / Copy Debug summary、Authoring Tool Landmark Group Editor、矩形範囲選択、index highlight、`ideal_face_asset_v1` optional `landmarkGroups` export も実装済みです。`expressionAttenuation falloff v1` は docs direction のみで Engine implementation は未実装です。`beauty_filter_asset_v1` foundation、Color Processing、Layer System はまだ未実装です。
+現在は `expressionAttenuation` v1 foundation が Engine 側に実装済みで、`mouth` / `left_eye` / `right_eye` / `face_boundary` などの group id を参照します。今後の中心仕様では `expressionFollow v1` が同じ group id を対象範囲として参照し、`landmarkFollowStrengths` で landmark ごとの追従率を定義します。`landmarkGroups v1` の Engine asset loading foundation、fallback groups、asset / fallback group source handling、Studio debug / Copy Debug summary、Authoring Tool Landmark Group Editor、矩形範囲選択、index highlight、`ideal_face_asset_v1` optional `landmarkGroups` export も実装済みです。`expressionFollow v1` と `landmarkFollowStrengths` 自動生成、`beauty_filter_asset_v1` foundation、Color Processing、Layer System はまだ未実装です。
 
 ## JSON 仕様案
 
@@ -103,7 +103,7 @@ groups:
 
 group.id:
   group を参照するための安定した ID
-  expressionAttenuation.affectedLandmarkGroups や colorLayers.targetGroup から参照される
+  expressionFollow.affectedLandmarkGroups / expressionAttenuation.affectedLandmarkGroups / colorLayers.targetGroup から参照される
 
 group.label:
   UI 表示用の名前
@@ -116,7 +116,7 @@ group.indices:
   MediaPipe landmark index の配列
 ```
 
-`group.id` は asset 内で安定した参照 ID として扱います。UI 表示名の変更や index 調整があっても、`expressionAttenuation` / `colorLayers` から参照される ID は簡単に変えない方針です。
+`group.id` は asset 内で安定した参照 ID として扱います。UI 表示名の変更や index 調整があっても、`expressionFollow` / `expressionAttenuation` / `colorLayers` から参照される ID は簡単に変えない方針です。
 
 ## v1 の group 候補
 
@@ -154,6 +154,40 @@ eye_area:
 
 `skin` / `lip` / `cheek` / `eye_area` は、現時点では Color Processing / Layer System が未実装なので将来候補として扱います。
 
+## expressionFollow との関係
+
+今後の中心仕様では、`expressionFollow` が `affectedLandmarkGroups` で `landmarkGroups.groups[].id` を参照します。
+
+```json
+{
+  "id": "mouth_pucker_follow",
+  "blendshape": "mouthPucker",
+  "affectedLandmarkGroups": ["mouth"],
+  "inputRange": [0.2, 0.8],
+  "defaultIdealFollowStrengthRange": [1.0, 0.35],
+  "landmarkFollowStrengths": [
+    {
+      "index": 13,
+      "idealFollowStrength": 0.1
+    }
+  ]
+}
+```
+
+意味:
+
+```text
+affectedLandmarkGroups:
+  expressionFollow rule を適用する対象範囲
+
+landmarkFollowStrengths:
+  その group 内で、表情ごとに各 landmark が ideal へどれだけ追従するか
+```
+
+`landmarkGroups` は範囲指定、`landmarkFollowStrengths` は landmark ごとの追従率です。`landmarkGroups` は個別パーツ変形命令ではなく、`expressionFollow` rule の対象範囲を安定して参照するための index group 定義です。
+
+`landmarkFollowStrengths` は手作業だけでなく、IdealFace Authoring Tool が MP4 の neutral 3D 478 / expression 3D 478 を同じ `comparisonSpace` で比較し、3D 差分から自動生成する方針です。詳細は [expressionFollow v1](expression-follow-v1.md) に整理します。
+
 ## expressionAttenuation との関係
 
 `expressionAttenuation` は、`affectedLandmarkGroups` で `landmarkGroups.groups[].id` を参照します。
@@ -176,9 +210,9 @@ jawOpen が高い
   -> mouth group に含まれる landmark の finalStrength を弱める
 ```
 
-`expressionAttenuation` は group id を参照するだけです。group の index 定義自体は `landmarkGroups` が持ちます。
+`expressionAttenuation` は現在の Engine foundation / 旧方針です。group id を参照するだけで、group の index 定義自体は `landmarkGroups` が持ちます。
 
-`landmarkGroups` は、どの landmark が group に属するかを定義します。group 内でどの landmark にどれくらい attenuation を効かせるかは、次の方針として Engine が `expressionAttenuation falloff` を自動計算します。v1 では `landmarkGroups` JSON に per-index weight を保存せず、`indices` を維持します。詳細は [expressionAttenuation falloff v1](expression-attenuation-falloff-v1.md) に整理します。
+`expressionAttenuation falloff v1` は、group 内外の二値適用を滑らかにする旧方針の改善案です。今後の中心仕様ではなく、`landmarkFollowStrengths` が未指定のときの fallback または参考案として扱います。詳細は [expressionAttenuation falloff v1](expression-attenuation-falloff-v1.md) に整理します。
 
 ## colorLayers との関係
 
@@ -225,7 +259,7 @@ beauty_filter_asset_v1
 理由:
 
 ```text
-- correctionProfile.expressionAttenuation が参照する group の整合性を保つため
+- correctionProfile.expressionFollow / correctionProfile.expressionAttenuation が参照する group の整合性を保つため
 - colorLayers が参照する group の整合性を保つため
 - IdealFace と group 定義の対応を保つため
 - 1つの filter asset 内で shape / color の参照を完結させるため
@@ -296,6 +330,7 @@ landmarkGroups:
 - `group.indices` は配列
 - `indices` の各値は 0〜477 の整数
 - `indices` は group 内で重複しない
+- `expressionFollow.affectedLandmarkGroups` が参照する group id は存在すること
 - `expressionAttenuation.affectedLandmarkGroups` が参照する group id は存在すること
 - 将来の `colorLayers.targetGroup` / `colorLayers.mask.group` が参照する group id は存在すること
 

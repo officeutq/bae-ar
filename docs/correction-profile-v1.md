@@ -13,7 +13,7 @@
 - 形状データと補正設定は意味が違うため分ける
 - 将来、profile だけ差し替える余地を残す
 
-このドキュメントは correctionProfile v1 の仕様を定義します。現在は Engine 側 foundation、validation / fallback、expressionAttenuation v1 foundation、Studio debug summary、CorrectionPlan v1 debug foundation、Studio 向け Shape Warp v1 debug prototype、Studio processed preview 限定 WebGL mesh warp v1 prototype まで実装済みです。Authoring Tool 編集 UI、correctionProfile / expressionAttenuation export 変更、`beauty_filter_asset_v1`、Production Shape Warp はまだ実装しません。
+このドキュメントは correctionProfile v1 の仕様を定義します。現在は Engine 側 foundation、validation / fallback、expressionAttenuation v1 foundation、Studio debug summary、CorrectionPlan v1 debug foundation、Studio 向け Shape Warp v1 debug prototype、Studio processed preview 限定 WebGL mesh warp v1 prototype まで実装済みです。`expressionFollow v1` は今後の中心仕様として docs 方針のみ追加し、Authoring Tool 編集 UI、correctionProfile / expressionFollow export 変更、`beauty_filter_asset_v1`、Production Shape Warp はまだ実装しません。
 
 ## JSON 例
 
@@ -116,28 +116,47 @@
 - `maxCorrectionDistance` は image-normalized coordinate 基準
 - `correctionProfile` には dx / dy を保存しない
 
-## optional extension: expressionAttenuation
+## optional extension: expressionFollow
 
-`correctionProfile` は、optional extension として `expressionAttenuation` を扱える Engine foundation 実装済みです。`jawOpen` / `eyeBlink` / `eyeSquint` による group `strengthScale`、`halfLifeMs` smoothing、CorrectionPlan `finalStrength` 反映は実装済みです。Authoring Tool UI / export 連携、expression-specific IdealFace、expression target offset は未実装です。
+今後の中心仕様では、`correctionProfile` の optional extension として `expressionFollow` を扱います。`expressionFollow` は、表情時に各 landmark が neutral な projected ideal へどれだけ追従するかを定義します。
 
-`expressionAttenuation` は、MediaPipe blendshape score を入力にし、`mouth` / `left_eye` / `right_eye` / `face_boundary` などの `affectedLandmarkGroups` ごとに `strengthScale` を変える safety attenuation です。`strengthScale` は 0.0 から 1.0 の値で、1.0 は通常どおり、0.0 はその group の補正なしを意味します。
+```text
+idealFollowStrength:
+  0.0 = current / camera を優先
+  1.0 = projected ideal を優先
+```
 
-`affectedLandmarkGroups` は、将来 `beauty_filter_asset_v1.landmarkGroups` の group id を参照します。v1 ではまず `mouth` / `left_eye` / `right_eye` / `face_boundary` を想定し、将来の color processing では `skin` / `lip` / `cheek` / `eye_area` などを追加する可能性があります。`landmarkGroups v1` の詳細は [landmarkGroups v1](landmark-groups-v1.md) に整理します。
+`expressionFollow` は、表情時に単純に group の補正強度を下げるための仕組みではありません。`mouthPucker` や `jawOpen`、`mouthSmile`、`eyeBlink`、`eyeSquint` などで neutral ideal から自然に外れてよい landmark を定義し、戻しすぎを避けるための追従率です。
 
-group membership を二値のまま使うと、広めに取った `mouth` / `left_eye` / `right_eye` の境界で `strengthScale` が急に変わる可能性があります。次の方針では、Engine が group 内の center distance などから per-landmark `falloffWeight` を自動計算し、中心ほど強く、境界ほど弱く attenuation する方向です。詳細は [expressionAttenuation falloff v1](expression-attenuation-falloff-v1.md) に整理します。
+```ts
+rawDelta = projectedIdeal - current
+baseStrength = correctionProfile.defaultStrength または landmarkStrength override
+expressionFollowStrength = landmarkFollowStrengths の idealFollowStrength または defaultIdealFollowStrengthRange 由来の値
+finalStrength = baseStrength * expressionFollowStrength
+correctionDelta = clampLength(rawDelta * finalStrength, maxCorrectionDistance)
+```
 
-目的:
+`landmarkFollowStrengths` は、表情ごとの landmark 追従率を個別に指定します。指定がある landmark はその `idealFollowStrength` を優先し、指定がない landmark は `defaultIdealFollowStrengthRange` から計算した fallback 値を使います。
 
-- 口が大きく開いているとき、口周りの warp を弱める
-- 目を閉じている / 細めているとき、目周りの warp を弱める
-- 顔外周など破綻しやすい領域の補正を安全側に倒す
-- 表情変化による急な切り替わりを smoothing で抑える
+詳細な JSON 仕様案、MP4 の表情別 3D 478 比較による自動生成方針、座標系方針は [expressionFollow v1](expression-follow-v1.md) に整理します。
 
-`expressionAttenuation` は、目だけ大きくする、鼻だけ細くする、顎だけ削るための機能ではありません。表情や可動部位によって破綻しやすい領域の補正を弱める safety attenuation として扱います。
+## expressionAttenuation との関係
 
-詳細な JSON 仕様案、`jawOpen` / `eyeBlink` / `eyeSquint` の例、smoothing 方針、expression-specific IdealFace との関係は [expression-aware correctionProfile](expression-aware-correction-profile.md) に整理します。
+`expressionAttenuation` v1 foundation は Engine 側に実装済みです。これは MediaPipe blendshape score に応じて `mouth` / `left_eye` / `right_eye` / `face_boundary` などの `affectedLandmarkGroups` ごとに `strengthScale` を下げる safety attenuation です。
 
-最終的な filter asset の束ね方は [beauty_filter_asset_v1 direction](beauty-filter-asset-v1.md) に整理します。`correctionProfile` は shape correction の強度と safety attenuation を担当し、`idealLandmarks3D` の形状データや `colorLayers` の色加工設定とは混ぜません。
+既存 foundation:
+
+- `jawOpen` による `mouth` group strengthScale
+- `eyeBlinkLeft` / `eyeBlinkRight` による `left_eye` / `right_eye` group strengthScale
+- `eyeSquintLeft` / `eyeSquintRight` による `left_eye` / `right_eye` group strengthScale
+- `halfLifeMs` smoothing
+- CorrectionVector の `baseStrength` / `expressionStrengthScale` / `finalStrength`
+
+この foundation は残します。ただし、今後の仕様方針としては `expressionFollow v1` を優先します。`expressionAttenuation falloff v1` は、旧方針の group 境界の二値変化を滑らかにする案であり、`landmarkFollowStrengths` が未指定のときの fallback または参考案として扱います。
+
+`affectedLandmarkGroups` は、将来 `beauty_filter_asset_v1.landmarkGroups` の group id を参照します。`landmarkGroups v1` の詳細は [landmarkGroups v1](landmark-groups-v1.md) に整理します。
+
+最終的な filter asset の束ね方は [beauty_filter_asset_v1 direction](beauty-filter-asset-v1.md) に整理します。`correctionProfile` は shape correction の強度と表情時の追従制御を担当し、`idealLandmarks3D` の形状データや `colorLayers` の色加工設定とは混ぜません。
 
 ## dx / dy を保存しない理由
 
@@ -232,7 +251,8 @@ CorrectionPlan:
   Engine が毎フレーム生成する実行計画
   current landmarks と projected ideal imageLandmarks の dx / dy を計算する
   correctionProfile の baseStrength を決める
-  expressionAttenuation がある場合は group strengthScale を掛ける
+  expressionFollow がある場合は idealFollowStrength を掛ける
+  既存 expressionAttenuation foundation がある場合は group strengthScale を掛ける
   maxCorrectionDistance で clamp する
   Shape Warp へ渡す correction vectors を持つ
 ```
@@ -243,7 +263,8 @@ CorrectionPlan は姿勢補正を担当しません。姿勢への対応は Idea
 
 - 個別パーツ加工はしない
 - `correctionProfile` は「目だけ大きくする」「鼻だけ細くする」「顎だけ削る」ための命令セットではない
-- `expressionAttenuation` も個別パーツ加工ではなく、破綻しやすい領域の補正を弱める安全制御である
+- `expressionFollow` は表情ごとに landmark が ideal へどれだけ追従するかを定義する安全制御であり、個別パーツ加工命令ではない
+- `expressionAttenuation` は既存 foundation として残るが、今後の中心仕様ではなく fallback / 参考扱いである
 - 478 点それぞれに `strength` を持つことは許容する
 - ただし意味としては、current から projected ideal へ全体として自然に少し寄せるための補正率である
 - shape warp では最終的に pixel coordinate を使う
@@ -275,6 +296,11 @@ CorrectionPlan は姿勢補正を担当しません。姿勢への対応は Idea
 - `ideal_face_asset_v1` export 処理変更
 - correctionProfile / expressionAttenuation Authoring Tool UI
 - correctionProfile / expressionAttenuation asset export 変更
+- expressionFollow v1 実装
+- MP4 expression 3D analysis 実装
+- landmarkFollowStrengths 自動生成実装
+- correctionProfile / expressionFollow Authoring Tool UI
+- correctionProfile / expressionFollow asset export 変更
 - expression-specific IdealFace
 - expression target offset
 - Layer System

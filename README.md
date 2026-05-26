@@ -53,23 +53,29 @@ Projection debug also reports bounds and aspect ratios for the source asset, rot
 
 See [correctionProfile v1](docs/correction-profile-v1.md). Authoring Tool editing UI, correctionProfile export authoring, production Shape Warp, and production renderer integration remain outside this step.
 
+## expressionFollow v1 direction
+
+今後の表情制御は、単純に group の補正強度を下げる `expressionAttenuation` ではなく、表情ごとに landmark が neutral な projected ideal へどれだけ追従するかを定義する `expressionFollow v1` を中心に整理します。
+
+`idealFollowStrength` は `0.0 = current / camera を優先`、`1.0 = projected ideal を優先` です。`landmarkGroups` は rule の対象範囲、`landmarkFollowStrengths` は landmark ごとの追従率です。`landmarkFollowStrengths` は MP4 の表情別 frame group から neutral 3D 478 / expression 3D 478 を生成し、同じ `comparisonSpace` で 3D 差分を比較して自動生成する方針です。
+
+See [expressionFollow v1](docs/expression-follow-v1.md). This is documentation direction only. TypeScript implementation, Engine implementation, Studio implementation, Authoring Tool UI, JSON export changes, validator changes, MP4 expression 3D analysis, landmarkFollowStrengths auto generation, Production Shape Warp, and Runtime renderer integration are not included in this step.
+
 ## expression-aware correctionProfile direction
 
-`correctionProfile` supports optional `expressionAttenuation` rules in the Engine foundation. These rules use MediaPipe blendshape scores such as `jawOpen`, `eyeBlinkLeft`, `eyeBlinkRight`, `eyeSquintLeft`, and `eyeSquintRight` to reduce `strengthScale` for affected landmark groups such as `mouth`, `left_eye`, `right_eye`, and `face_boundary`.
+`correctionProfile` currently supports optional `expressionAttenuation` rules in the Engine foundation. These rules use MediaPipe blendshape scores such as `jawOpen`, `eyeBlinkLeft`, `eyeBlinkRight`, `eyeSquintLeft`, and `eyeSquintRight` to reduce `strengthScale` for affected landmark groups such as `mouth`, `left_eye`, `right_eye`, and `face_boundary`.
 
-This is safety attenuation, not individual part editing. The Engine foundation includes fallback rules, validation, `halfLifeMs` smoothing, and CorrectionPlan `finalStrength` integration. Studio debug / Copy Debug can show expression attenuation summary. Authoring Tool UI, correctionProfile / expressionAttenuation export changes, expression target offsets, expression-specific IdealFace assets, and production renderer integration remain later work.
-
-See [expression-aware correctionProfile](docs/expression-aware-correction-profile.md). Engine foundation and Studio debug / Copy Debug display are implemented. Authoring Tool UI, correctionProfile / expressionAttenuation export changes, WebGL changes, expression target offsets, expression-specific IdealFace assets, and production renderer integration remain later work.
+This is the existing safety attenuation foundation, not the future center specification. See [expression-aware correctionProfile](docs/expression-aware-correction-profile.md). Engine foundation and Studio debug / Copy Debug display are implemented. Future expression work should prioritize [expressionFollow v1](docs/expression-follow-v1.md).
 
 ## expressionAttenuation falloff v1 direction
 
-`expressionAttenuation` currently applies group `strengthScale` by binary group membership. As `mouth` / `left_eye` / `right_eye` groups become wider, this can create abrupt strength changes near group boundaries.
+`expressionAttenuation falloff v1` is now positioned as a fallback / reference idea for the old `expressionAttenuation` direction. It is not the center expression control specification.
 
-See [expressionAttenuation falloff v1](docs/expression-attenuation-falloff-v1.md). The direction is for Engine to compute per-landmark falloff weights automatically inside each group, strongest near the group center and smoothly returning to 1.0 near the outer boundary. `landmarkGroups` JSON remains an index group definition; explicit per-index weights are only a future option. This is documentation only; Engine / Studio / Authoring Tool / validator implementation is not included in this step.
+See [expressionAttenuation falloff v1](docs/expression-attenuation-falloff-v1.md). The main direction is [expressionFollow v1](docs/expression-follow-v1.md), where `landmarkFollowStrengths` defines per-landmark ideal follow strength. Falloff may be used only when `landmarkFollowStrengths` is missing or as a debug/reference fallback.
 
 ## landmarkGroups v1 direction
 
-`landmarkGroups` defines meaningful MediaPipe landmark index groups such as `mouth`, `left_eye`, `right_eye`, and `face_boundary` for expression safety, and future `skin`, `lip`, `cheek`, and `eye_area` groups for color masks. It is referenced by `expressionAttenuation` and future `colorLayers`, but it is not an individual part editing command set.
+`landmarkGroups` defines meaningful MediaPipe landmark index groups such as `mouth`, `left_eye`, `right_eye`, and `face_boundary` for expression safety, and future `skin`, `lip`, `cheek`, and `eye_area` groups for color masks. It is referenced by `expressionFollow`, existing `expressionAttenuation`, and future `colorLayers`, but it is not an individual part editing command set.
 
 See [landmarkGroups v1](docs/landmark-groups-v1.md). Engine landmarkGroups asset loading, fallback groups, Studio debug / Copy Debug summary, Authoring Tool Landmark Group Editor v1 prototype, rectangle selection, index highlight, bulk add / remove, and `ideal_face_asset_v1` optional `landmarkGroups` export are implemented. Color Processing, Layer System, and `beauty_filter_asset_v1` foundation remain unimplemented.
 
@@ -85,7 +91,7 @@ See [Shape Warp production direction](docs/shape-warp-production-direction.md). 
 
 最終的なフィルター / プリセットの配布単位は、`IdealFace + landmarkGroups + correctionProfile + shapeWarpSettings + colorLayers` を束ねた 1つの `beauty_filter_asset_v1` JSON として整理します。
 
-ただし、内部では `idealFace`、`landmarkGroups`、`correctionProfile`、`shapeWarpSettings`、`colorLayers` を責務ごとに分離します。`landmarkGroups` は `expressionAttenuation` と将来の `colorLayers` が参照する group id の整合性を保つための定義です。Layer System は shape warp 用ではなく color processing 用です。
+ただし、内部では `idealFace`、`landmarkGroups`、`correctionProfile`、`shapeWarpSettings`、`colorLayers` を責務ごとに分離します。`landmarkGroups` は `expressionFollow` / `expressionAttenuation` と将来の `colorLayers` が参照する group id の整合性を保つための定義です。Layer System は shape warp 用ではなく color processing 用です。
 
 See [beauty_filter_asset_v1 direction](docs/beauty-filter-asset-v1.md). This is a documentation direction only. TypeScript implementation, Engine implementation, Studio implementation, Authoring Tool UI, JSON export changes, validator implementation, Color Processing, Layer System, Production Shape Warp, and Runtime renderer integration are not included in this step.
 
@@ -297,6 +303,7 @@ debug
 - [開発フロー](docs/development-flow.md)
 - [リポジトリ構成](docs/repository-structure.md)
 - [correctionProfile v1](docs/correction-profile-v1.md)
+- [expressionFollow v1](docs/expression-follow-v1.md)
 - [expression-aware correctionProfile](docs/expression-aware-correction-profile.md)
 - [expressionAttenuation falloff v1](docs/expression-attenuation-falloff-v1.md)
 - [landmarkGroups v1](docs/landmark-groups-v1.md)
