@@ -613,6 +613,81 @@ interface PoseAwareRepresentativePointSummary {
   noseOffsetFromBoundsCenterX: number | null
 }
 
+type SemanticCenterAlignmentMode =
+  | "eyes_nose_mouth"
+  | "nose_mouth_chin"
+  | "eyes_nose_mouth_chin"
+
+interface SemanticCenterAlignmentPointDebug {
+  x: number | null
+  y: number | null
+}
+
+interface SemanticCenterAlignmentFrameDebug {
+  frameId: string
+  yaw: number
+  pitch: number
+  semanticCenterBefore: SemanticCenterAlignmentPointDebug
+  offset: SemanticCenterAlignmentPointDebug
+  semanticCenterAfter: SemanticCenterAlignmentPointDebug
+}
+
+interface SemanticCenterAlignmentSummaryDebug {
+  frameCount: number
+  averageOffsetX: number | null
+  averageOffsetY: number | null
+  minOffsetX: number | null
+  maxOffsetX: number | null
+  minOffsetY: number | null
+  maxOffsetY: number | null
+  averageOffsetLength: number | null
+  maxOffsetLength: number | null
+}
+
+interface SemanticCenterAlignmentByYawDebug {
+  yawPositiveAverageOffsetX: number | null
+  yawNegativeAverageOffsetX: number | null
+  nearFrontAverageOffsetX: number | null
+  yawPositiveAverageOffsetY: number | null
+  yawNegativeAverageOffsetY: number | null
+  nearFrontAverageOffsetY: number | null
+}
+
+interface CandidateSemanticAlignmentMetricDebug {
+  boundsCenterX: number | null
+  boundsCenterY: number | null
+  centroidX: number | null
+  centroidY: number | null
+  noseTipX: number | null
+  mouthCenterX: number | null
+  chinX: number | null
+  noseOffsetFromBoundsCenterX: number | null
+  zRange: number | null
+  topViewAsymmetryScore: number | null
+  leftRightZAverageDelta: number | null
+  leftRightZRangeDelta: number | null
+}
+
+interface SemanticCenterAlignmentDebug {
+  enabled: true
+  stage: "before_canonical_average"
+  mode: SemanticCenterAlignmentMode
+  source: "frontReferenceBase"
+  targetGenerationMethod: "pose_aware_mediapipe_mesh_average_v1"
+  frontReferenceSemanticCenter: SemanticCenterAlignmentPointDebug
+  availableModeCenters: Record<
+    SemanticCenterAlignmentMode,
+    SemanticCenterAlignmentPointDebug
+  >
+  frameAlignmentSummary: SemanticCenterAlignmentSummaryDebug
+  frameAlignmentByYaw: SemanticCenterAlignmentByYawDebug
+  representativeFrameAlignmentPreview: SemanticCenterAlignmentFrameDebug[]
+  candidateComparison: {
+    beforePerFrameSemanticAlignment: CandidateSemanticAlignmentMetricDebug
+    afterPerFrameSemanticAlignment: CandidateSemanticAlignmentMetricDebug
+  }
+}
+
 interface PoseAwarePartialCandidateSummary {
   frameCount: number
   weightTotal: number
@@ -745,7 +820,9 @@ interface MediaPipeMeshAverageCandidateComparisonDebug {
   canonical3D: CandidateDebugComparisonItem | null
   canonicalStableZ: CandidateDebugComparisonItem | null
   balancedFrameZ: CandidateDebugComparisonItem | null
-  mediaPipeMeshAverage: CandidateDebugComparisonItem
+  mediaPipeMeshAverage: CandidateDebugComparisonItem & {
+    semanticCenterAlignmentEnabled: boolean
+  }
 }
 
 interface CenterAlignmentPointDebug {
@@ -779,6 +856,15 @@ interface FrontReferenceCenterAlignmentDebug {
   }
 }
 
+interface PostBoundsCenterAlignmentDebug {
+  enabled: false
+  mode: "bounds_center_xy"
+  source: "frontReferenceBase"
+  targetGenerationMethod: "pose_aware_mediapipe_mesh_average_v1"
+  stage: "post_candidate_generation"
+  disabledReason: string
+}
+
 interface PoseAwareMediaPipeMeshAverageDebug {
   generationMethod: "pose_aware_mediapipe_mesh_average_v1"
   settings: MediaPipeMeshAverageSettingsDebug
@@ -803,6 +889,8 @@ interface PoseAwareMediaPipeMeshAverageDebug {
   comparison?: PoseAwareCandidateComparisonDebug
   multiCandidateComparison: MediaPipeMeshAverageCandidateComparisonDebug
   frontReferenceCenterAlignment: FrontReferenceCenterAlignmentDebug | null
+  postBoundsCenterAlignment: PostBoundsCenterAlignmentDebug
+  semanticCenterAlignment: SemanticCenterAlignmentDebug | null
   topView: TopViewZAsymmetrySummary
   warnings: string[]
 }
@@ -5339,6 +5427,134 @@ function getPoseAwareRepresentativePointSummary(
   }
 }
 
+const SEMANTIC_CENTER_ALIGNMENT_MODE: SemanticCenterAlignmentMode =
+  "eyes_nose_mouth"
+const SEMANTIC_CENTER_ALIGNMENT_MODES: SemanticCenterAlignmentMode[] = [
+  "eyes_nose_mouth",
+  "nose_mouth_chin",
+  "eyes_nose_mouth_chin",
+]
+
+function toSemanticCenterAlignmentPointDebug(
+  point: Point2D | null,
+): SemanticCenterAlignmentPointDebug {
+  return {
+    x: point === null ? null : roundDebugNumber(point.x),
+    y: point === null ? null : roundDebugNumber(point.y),
+  }
+}
+
+function averagePoints2D(points: Point2D[]): Point2D | null {
+  if (points.length === 0) {
+    return null
+  }
+
+  return {
+    x: averageNumbers(points.map((point) => point.x)),
+    y: averageNumbers(points.map((point) => point.y)),
+  }
+}
+
+function getIndexedPoint2D(
+  points: Array<{ index: number; x: number; y: number }>,
+  index: number,
+): Point2D | null {
+  const point = points.find(
+    (candidate) =>
+      candidate.index === index &&
+      Number.isFinite(candidate.x) &&
+      Number.isFinite(candidate.y),
+  )
+
+  return point ? { x: point.x, y: point.y } : null
+}
+
+function getSemanticCenterComponentPoints(
+  points: Array<{ index: number; x: number; y: number }>,
+): {
+  eyeCenter: Point2D | null
+  noseTip: Point2D | null
+  mouthCenter: Point2D | null
+  chin: Point2D | null
+} {
+  const leftEyeOuter = getIndexedPoint2D(points, LEFT_EYE_OUTER_INDEX)
+  const rightEyeOuter = getIndexedPoint2D(points, RIGHT_EYE_OUTER_INDEX)
+  const mouthPoints = MOUTH_CENTER_INDICES.map((index) =>
+    getIndexedPoint2D(points, index),
+  ).filter((point): point is Point2D => point !== null)
+
+  return {
+    eyeCenter:
+      leftEyeOuter === null || rightEyeOuter === null
+        ? null
+        : averagePoints2D([leftEyeOuter, rightEyeOuter]),
+    noseTip: getIndexedPoint2D(points, NOSE_TIP_INDEX),
+    mouthCenter: averagePoints2D(mouthPoints),
+    chin: getIndexedPoint2D(points, CHIN_INDEX),
+  }
+}
+
+function calculateSemanticCenter(
+  points: Array<{ index: number; x: number; y: number }>,
+  mode: SemanticCenterAlignmentMode,
+): Point2D | null {
+  const components = getSemanticCenterComponentPoints(points)
+  const semanticPoints =
+    mode === "eyes_nose_mouth"
+      ? [components.eyeCenter, components.noseTip, components.mouthCenter]
+      : mode === "nose_mouth_chin"
+        ? [components.noseTip, components.mouthCenter, components.chin]
+        : [
+            components.eyeCenter,
+            components.noseTip,
+            components.mouthCenter,
+            components.chin,
+          ]
+  const availablePoints = semanticPoints.filter(
+    (point): point is Point2D => point !== null,
+  )
+
+  return availablePoints.length === semanticPoints.length
+    ? averagePoints2D(availablePoints)
+    : null
+}
+
+function calculateSemanticCenterByModeDebug(
+  points: Array<{ index: number; x: number; y: number }>,
+): Record<SemanticCenterAlignmentMode, SemanticCenterAlignmentPointDebug> {
+  return Object.fromEntries(
+    SEMANTIC_CENTER_ALIGNMENT_MODES.map((mode) => [
+      mode,
+      toSemanticCenterAlignmentPointDebug(
+        calculateSemanticCenter(points, mode),
+      ),
+    ]),
+  ) as Record<SemanticCenterAlignmentMode, SemanticCenterAlignmentPointDebug>
+}
+
+function buildCandidateSemanticAlignmentMetricDebug(
+  landmarks: IdealLandmark3DCandidate[],
+): CandidateSemanticAlignmentMetricDebug {
+  const spatial = buildLandmarkSpatialSummary(landmarks)
+  const representative = getPoseAwareRepresentativePointSummary(landmarks)
+  const topView = buildTopViewZAsymmetrySummary(landmarks)
+
+  return {
+    boundsCenterX: spatial.boundsCenter?.x ?? null,
+    boundsCenterY: spatial.boundsCenter?.y ?? null,
+    centroidX: spatial.centroid?.x ?? null,
+    centroidY: spatial.centroid?.y ?? null,
+    noseTipX: representative.noseTipX,
+    mouthCenterX: representative.mouthCenterX,
+    chinX: representative.chinX,
+    noseOffsetFromBoundsCenterX: representative.noseOffsetFromBoundsCenterX,
+    zRange: getZRange(landmarks.map((landmark) => landmark.z)),
+    topViewAsymmetryScore: topView.topViewAsymmetryScore,
+    leftRightZAverageDelta: topView.leftRightZAverageDelta,
+    leftRightZRangeDelta: topView.leftRightZRangeDelta,
+  }
+}
+
 function getZRange(values: number[]): number | null {
   if (values.length === 0) {
     return null
@@ -6562,19 +6778,135 @@ function inferMediaPipeMeshAverageLandmarkConfidence(
   return Number((supportScore * 0.65 + weightScore * 0.35).toFixed(4))
 }
 
+function averageFrameAlignmentOffset(
+  frames: SemanticCenterAlignmentFrameDebug[],
+  axis: "x" | "y",
+): number | null {
+  const values = frames
+    .map((frame) => frame.offset[axis])
+    .filter((value): value is number => value !== null)
+
+  return values.length === 0 ? null : roundDebugNumber(averageNumbers(values))
+}
+
+function buildSemanticCenterAlignmentSummary(
+  frames: SemanticCenterAlignmentFrameDebug[],
+): SemanticCenterAlignmentSummaryDebug {
+  const offsetXValues = frames
+    .map((frame) => frame.offset.x)
+    .filter((value): value is number => value !== null)
+  const offsetYValues = frames
+    .map((frame) => frame.offset.y)
+    .filter((value): value is number => value !== null)
+  const offsetLengths = frames
+    .map((frame) =>
+      frame.offset.x === null || frame.offset.y === null
+        ? null
+        : Math.hypot(frame.offset.x, frame.offset.y),
+    )
+    .filter((value): value is number => value !== null)
+
+  return {
+    frameCount: frames.length,
+    averageOffsetX:
+      offsetXValues.length === 0
+        ? null
+        : roundDebugNumber(averageNumbers(offsetXValues)),
+    averageOffsetY:
+      offsetYValues.length === 0
+        ? null
+        : roundDebugNumber(averageNumbers(offsetYValues)),
+    minOffsetX:
+      offsetXValues.length === 0
+        ? null
+        : roundDebugNumber(Math.min(...offsetXValues)),
+    maxOffsetX:
+      offsetXValues.length === 0
+        ? null
+        : roundDebugNumber(Math.max(...offsetXValues)),
+    minOffsetY:
+      offsetYValues.length === 0
+        ? null
+        : roundDebugNumber(Math.min(...offsetYValues)),
+    maxOffsetY:
+      offsetYValues.length === 0
+        ? null
+        : roundDebugNumber(Math.max(...offsetYValues)),
+    averageOffsetLength:
+      offsetLengths.length === 0
+        ? null
+        : roundDebugNumber(averageNumbers(offsetLengths)),
+    maxOffsetLength:
+      offsetLengths.length === 0
+        ? null
+        : roundDebugNumber(Math.max(...offsetLengths)),
+  }
+}
+
+function buildSemanticCenterAlignmentByYaw(
+  frames: SemanticCenterAlignmentFrameDebug[],
+): SemanticCenterAlignmentByYawDebug {
+  const yawPositiveFrames = frames.filter(
+    (frame) => frame.yaw > POSE_AWARE_CANONICAL_NEAR_FRONT_YAW_DEG,
+  )
+  const yawNegativeFrames = frames.filter(
+    (frame) => frame.yaw < -POSE_AWARE_CANONICAL_NEAR_FRONT_YAW_DEG,
+  )
+  const nearFrontFrames = frames.filter(
+    (frame) =>
+      Math.abs(frame.yaw) <= POSE_AWARE_CANONICAL_NEAR_FRONT_YAW_DEG,
+  )
+
+  return {
+    yawPositiveAverageOffsetX: averageFrameAlignmentOffset(
+      yawPositiveFrames,
+      "x",
+    ),
+    yawNegativeAverageOffsetX: averageFrameAlignmentOffset(
+      yawNegativeFrames,
+      "x",
+    ),
+    nearFrontAverageOffsetX: averageFrameAlignmentOffset(
+      nearFrontFrames,
+      "x",
+    ),
+    yawPositiveAverageOffsetY: averageFrameAlignmentOffset(
+      yawPositiveFrames,
+      "y",
+    ),
+    yawNegativeAverageOffsetY: averageFrameAlignmentOffset(
+      yawNegativeFrames,
+      "y",
+    ),
+    nearFrontAverageOffsetY: averageFrameAlignmentOffset(
+      nearFrontFrames,
+      "y",
+    ),
+  }
+}
+
 function buildPoseAwareMediaPipeMeshAverageLandmarksFromFrames(
   observationFrames: PoseAwareInferenceFrame[],
   frameWeights: FrameStableZWeightDebug[],
-  frontReferenceBaseBounds: LandmarkBoundsSummary | null,
+  frontReferenceBasePoints: PoseAwareBasePoint[],
 ): {
   landmarks: IdealLandmark3DCandidate[]
+  landmarksBeforeSemanticAlignment: IdealLandmark3DCandidate[]
   localPoints: Array<Point3D & { index: number }>
+  canonicalFramePointsBeforeSemanticAlignment: Array<Point3D & { index: number }>
   canonicalFramePoints: Array<Point3D & { index: number }>
+  semanticCenterAlignment: SemanticCenterAlignmentDebug | null
   rawZValues: number[]
   normalizedZValues: number[]
   scaledZValues: number[]
   weightTotal: number
 } | null {
+  const frontReferenceBaseBounds =
+    buildLandmarkBoundsSummary(frontReferenceBasePoints)
+  const frontReferenceSemanticCenter = calculateSemanticCenter(
+    frontReferenceBasePoints,
+    SEMANTIC_CENTER_ALIGNMENT_MODE,
+  )
   const frameWeightById = new Map(
     frameWeights.map((frameWeight) => [frameWeight.frameId, frameWeight]),
   )
@@ -6586,22 +6918,83 @@ function buildPoseAwareMediaPipeMeshAverageLandmarksFromFrames(
         return null
       }
 
-      return buildPoseAwareMediaPipeMeshFrameLocalAndCanonicalPoints(
-        frame,
-        frameWeight,
-        frontReferenceBaseBounds,
+      const canonicalFrame =
+        buildPoseAwareMediaPipeMeshFrameLocalAndCanonicalPoints(
+          frame,
+          frameWeight,
+          frontReferenceBaseBounds,
+        )
+
+      if (!canonicalFrame) {
+        return null
+      }
+
+      const semanticCenterBefore = calculateSemanticCenter(
+        canonicalFrame.canonicalPoints,
+        SEMANTIC_CENTER_ALIGNMENT_MODE,
       )
+      const offsetX =
+        frontReferenceSemanticCenter === null || semanticCenterBefore === null
+          ? 0
+          : frontReferenceSemanticCenter.x - semanticCenterBefore.x
+      const offsetY =
+        frontReferenceSemanticCenter === null || semanticCenterBefore === null
+          ? 0
+          : frontReferenceSemanticCenter.y - semanticCenterBefore.y
+      const alignedCanonicalPoints = canonicalFrame.canonicalPoints.map(
+        (point) => ({
+          index: point.index,
+          x: Number((point.x + offsetX).toFixed(4)),
+          y: Number((point.y + offsetY).toFixed(4)),
+          z: point.z,
+        }),
+      )
+      const semanticCenterAfter = calculateSemanticCenter(
+        alignedCanonicalPoints,
+        SEMANTIC_CENTER_ALIGNMENT_MODE,
+      )
+      const semanticAlignment: SemanticCenterAlignmentFrameDebug = {
+        frameId: frame.frameId,
+        yaw: roundDebugNumber(frame.pose.yaw),
+        pitch: roundDebugNumber(frame.pose.pitch),
+        semanticCenterBefore:
+          toSemanticCenterAlignmentPointDebug(semanticCenterBefore),
+        offset: {
+          x: roundDebugNumber(offsetX),
+          y: roundDebugNumber(offsetY),
+        },
+        semanticCenterAfter:
+          toSemanticCenterAlignmentPointDebug(semanticCenterAfter),
+      }
+
+      return {
+        ...canonicalFrame,
+        frameId: frame.frameId,
+        yaw: frame.pose.yaw,
+        pitch: frame.pose.pitch,
+        canonicalPointsBeforeSemanticAlignment:
+          canonicalFrame.canonicalPoints,
+        canonicalPoints: alignedCanonicalPoints,
+        semanticAlignment,
+      }
     })
     .filter(
       (
         frame,
       ): frame is {
+        frameId: string
+        yaw: number
+        pitch: number
         localPoints: Array<Point3D & { index: number }>
+        canonicalPointsBeforeSemanticAlignment: Array<
+          Point3D & { index: number }
+        >
         canonicalPoints: Array<Point3D & { index: number }>
         weight: number
         rawValues: number[]
         normalizedValues: number[]
         scaledValues: number[]
+        semanticAlignment: SemanticCenterAlignmentFrameDebug
       } => frame !== null,
     )
 
@@ -6609,12 +7002,17 @@ function buildPoseAwareMediaPipeMeshAverageLandmarksFromFrames(
     return null
   }
 
-  const uncenteredLandmarks = Array.from(
+  const buildAveragedLandmarks = (
+    getFramePoints: (
+      frame: (typeof canonicalFrames)[number],
+    ) => Array<Point3D & { index: number }>,
+  ): IdealLandmark3DCandidate[] => {
+    const uncenteredLandmarks = Array.from(
     { length: REQUIRED_LANDMARK_COUNT },
     (_, index) => {
       const points = canonicalFrames
         .map((frame) => ({
-          point: frame.canonicalPoints[index],
+          point: getFramePoints(frame)[index],
           weight: frame.weight,
         }))
         .filter(
@@ -6673,14 +7071,56 @@ function buildPoseAwareMediaPipeMeshAverageLandmarksFromFrames(
         source: "pose_aware_mediapipe_mesh_average_v1" as const,
       }
     },
+    )
+
+    return centerPoseAwareCanonicalLandmarks(uncenteredLandmarks)
+  }
+
+  const landmarksBeforeSemanticAlignment = buildAveragedLandmarks(
+    (frame) => frame.canonicalPointsBeforeSemanticAlignment,
   )
+  const landmarks = buildAveragedLandmarks((frame) => frame.canonicalPoints)
+  const representativeFrameAlignmentPreview = canonicalFrames
+    .map((frame) => frame.semanticAlignment)
+    .slice(0, POSE_AWARE_STABLE_Z_FRAME_DEBUG_COUNT)
+  const semanticCenterAlignment: SemanticCenterAlignmentDebug = {
+    enabled: true,
+    stage: "before_canonical_average",
+    mode: SEMANTIC_CENTER_ALIGNMENT_MODE,
+    source: "frontReferenceBase",
+    targetGenerationMethod: "pose_aware_mediapipe_mesh_average_v1",
+    frontReferenceSemanticCenter:
+      toSemanticCenterAlignmentPointDebug(frontReferenceSemanticCenter),
+    availableModeCenters:
+      calculateSemanticCenterByModeDebug(frontReferenceBasePoints),
+    frameAlignmentSummary: buildSemanticCenterAlignmentSummary(
+      canonicalFrames.map((frame) => frame.semanticAlignment),
+    ),
+    frameAlignmentByYaw: buildSemanticCenterAlignmentByYaw(
+      canonicalFrames.map((frame) => frame.semanticAlignment),
+    ),
+    representativeFrameAlignmentPreview,
+    candidateComparison: {
+      beforePerFrameSemanticAlignment:
+        buildCandidateSemanticAlignmentMetricDebug(
+          landmarksBeforeSemanticAlignment,
+        ),
+      afterPerFrameSemanticAlignment:
+        buildCandidateSemanticAlignmentMetricDebug(landmarks),
+    },
+  }
 
   return {
-    landmarks: centerPoseAwareCanonicalLandmarks(uncenteredLandmarks),
+    landmarks,
+    landmarksBeforeSemanticAlignment,
     localPoints: canonicalFrames.flatMap((frame) => frame.localPoints),
+    canonicalFramePointsBeforeSemanticAlignment: canonicalFrames.flatMap(
+      (frame) => frame.canonicalPointsBeforeSemanticAlignment,
+    ),
     canonicalFramePoints: canonicalFrames.flatMap(
       (frame) => frame.canonicalPoints,
     ),
+    semanticCenterAlignment,
     rawZValues: canonicalFrames.flatMap((frame) => frame.rawValues),
     normalizedZValues: canonicalFrames.flatMap(
       (frame) => frame.normalizedValues,
@@ -7301,7 +7741,11 @@ function buildPoseAwareMediaPipeMeshAverageCandidateDebug(
     landmarks: IdealLandmark3DCandidate[]
     frontReferenceCenterAlignment?: FrontReferenceCenterAlignmentDebug
     localPoints: Array<Point3D & { index: number }>
+    canonicalFramePointsBeforeSemanticAlignment: Array<
+      Point3D & { index: number }
+    >
     canonicalFramePoints: Array<Point3D & { index: number }>
+    semanticCenterAlignment: SemanticCenterAlignmentDebug | null
     rawZValues: number[]
     normalizedZValues: number[]
     scaledZValues: number[]
@@ -7341,10 +7785,14 @@ function buildPoseAwareMediaPipeMeshAverageCandidateDebug(
     balancedFrameZ: balancedFrameZResult
       ? buildCandidateDebugComparisonItem(balancedFrameZResult)
       : null,
-    mediaPipeMeshAverage: buildCandidateDebugComparisonItemFromLandmarks(
-      "pose_aware_mediapipe_mesh_average_v1",
-      canonicalResult.landmarks,
-    ),
+    mediaPipeMeshAverage: {
+      ...buildCandidateDebugComparisonItemFromLandmarks(
+        "pose_aware_mediapipe_mesh_average_v1",
+        canonicalResult.landmarks,
+      ),
+      semanticCenterAlignmentEnabled:
+        canonicalResult.semanticCenterAlignment?.enabled ?? false,
+    },
   }
   const debugWithoutWarnings = {
     generationMethod: "pose_aware_mediapipe_mesh_average_v1" as const,
@@ -7378,6 +7826,17 @@ function buildPoseAwareMediaPipeMeshAverageCandidateDebug(
     multiCandidateComparison,
     frontReferenceCenterAlignment:
       canonicalResult.frontReferenceCenterAlignment ?? null,
+    postBoundsCenterAlignment: {
+      enabled: false as const,
+      mode: "bounds_center_xy" as const,
+      source: "frontReferenceBase" as const,
+      targetGenerationMethod:
+        "pose_aware_mediapipe_mesh_average_v1" as const,
+      stage: "post_candidate_generation" as const,
+      disabledReason:
+        "Final candidate boundsCenter post alignment is disabled; per-frame semantic center alignment runs before canonical average.",
+    },
+    semanticCenterAlignment: canonicalResult.semanticCenterAlignment,
     topView,
   }
 
@@ -7818,13 +8277,25 @@ function buildPoseAwareMediaPipeMeshAverageIdealLandmarks3DCandidateResult(
           balancedFrameZ: balancedFrameZResult
             ? buildCandidateDebugComparisonItem(balancedFrameZResult)
             : null,
-          mediaPipeMeshAverage:
-            buildCandidateDebugComparisonItemFromLandmarks(
+          mediaPipeMeshAverage: {
+            ...buildCandidateDebugComparisonItemFromLandmarks(
               "pose_aware_mediapipe_mesh_average_v1",
               [],
             ),
+            semanticCenterAlignmentEnabled: false,
+          },
         },
         frontReferenceCenterAlignment: null,
+        postBoundsCenterAlignment: {
+          enabled: false,
+          mode: "bounds_center_xy",
+          source: "frontReferenceBase",
+          targetGenerationMethod: "pose_aware_mediapipe_mesh_average_v1",
+          stage: "post_candidate_generation",
+          disabledReason:
+            "Final candidate boundsCenter post alignment is disabled; MediaPipe landmark.z was unavailable before per-frame semantic alignment could run.",
+        },
+        semanticCenterAlignment: null,
         topView: buildTopViewZAsymmetrySummary([]),
         warnings: ["MediaPipe landmark.z is unavailable."],
       },
@@ -7837,7 +8308,7 @@ function buildPoseAwareMediaPipeMeshAverageIdealLandmarks3DCandidateResult(
   const canonicalResult = buildPoseAwareMediaPipeMeshAverageLandmarksFromFrames(
     dataset.observationFrames,
     frameWeights,
-    buildLandmarkBoundsSummary(basePoints),
+    basePoints,
   )
 
   if (!canonicalResult || canonicalResult.landmarks.length !== REQUIRED_LANDMARK_COUNT) {
@@ -7850,19 +8321,10 @@ function buildPoseAwareMediaPipeMeshAverageIdealLandmarks3DCandidateResult(
     }
   }
 
-  const centerAlignedCandidate = alignCandidateToFrontReferenceBoundsCenter(
-    canonicalResult.landmarks,
-    basePoints,
-  )
-  const alignedCanonicalResult = {
-    ...canonicalResult,
-    landmarks: centerAlignedCandidate.landmarks,
-    frontReferenceCenterAlignment: centerAlignedCandidate.alignment,
-  }
-  const landmarks = alignedCanonicalResult.landmarks
+  const landmarks = canonicalResult.landmarks
   const debug = buildPoseAwareMediaPipeMeshAverageCandidateDebug(
     dataset,
-    alignedCanonicalResult,
+    canonicalResult,
     directionBalance,
     frameWeights,
     canonical3DResult,
@@ -8466,6 +8928,47 @@ function renderPoseAwareMediaPipeMeshAverageDebugBlock(
         <dd>${formatNumber(debug.settings.mediaPipeZScale)} / ${debug.settings.mediaPipeZInvertSign ? "true" : "false"} / ${debug.settings.mediaPipeZCenteringMode}</dd>
       </div>
     </dl>
+    <h5>semantic center alignment</h5>
+    <dl class="pose-aware-summary-list">
+      <div>
+        <dt>enabled / stage / mode</dt>
+        <dd>${debug.semanticCenterAlignment?.enabled ? "true" : "false"} / ${debug.semanticCenterAlignment?.stage ?? "none"} / ${debug.semanticCenterAlignment?.mode ?? "none"}</dd>
+      </div>
+      <div>
+        <dt>frontReference semantic center x / y</dt>
+        <dd>${formatNullableDebugNumber(debug.semanticCenterAlignment?.frontReferenceSemanticCenter.x ?? null)} / ${formatNullableDebugNumber(debug.semanticCenterAlignment?.frontReferenceSemanticCenter.y ?? null)}</dd>
+      </div>
+      <div>
+        <dt>post boundsCenter alignment</dt>
+        <dd>${debug.postBoundsCenterAlignment.enabled ? "true" : "false"} / ${debug.postBoundsCenterAlignment.stage}</dd>
+      </div>
+      <div>
+        <dt>frame offset avg x / y</dt>
+        <dd>${formatNullableDebugNumber(debug.semanticCenterAlignment?.frameAlignmentSummary.averageOffsetX ?? null)} / ${formatNullableDebugNumber(debug.semanticCenterAlignment?.frameAlignmentSummary.averageOffsetY ?? null)}</dd>
+      </div>
+      <div>
+        <dt>frame offset min/max x</dt>
+        <dd>${formatNullableDebugNumber(debug.semanticCenterAlignment?.frameAlignmentSummary.minOffsetX ?? null)} / ${formatNullableDebugNumber(debug.semanticCenterAlignment?.frameAlignmentSummary.maxOffsetX ?? null)}</dd>
+      </div>
+      <div>
+        <dt>frame offset min/max y</dt>
+        <dd>${formatNullableDebugNumber(debug.semanticCenterAlignment?.frameAlignmentSummary.minOffsetY ?? null)} / ${formatNullableDebugNumber(debug.semanticCenterAlignment?.frameAlignmentSummary.maxOffsetY ?? null)}</dd>
+      </div>
+      <div>
+        <dt>offset length avg / max</dt>
+        <dd>${formatNullableDebugNumber(debug.semanticCenterAlignment?.frameAlignmentSummary.averageOffsetLength ?? null)} / ${formatNullableDebugNumber(debug.semanticCenterAlignment?.frameAlignmentSummary.maxOffsetLength ?? null)}</dd>
+      </div>
+      <div>
+        <dt>yaw + / - / front avg offset x</dt>
+        <dd>${formatNullableDebugNumber(debug.semanticCenterAlignment?.frameAlignmentByYaw.yawPositiveAverageOffsetX ?? null)} / ${formatNullableDebugNumber(debug.semanticCenterAlignment?.frameAlignmentByYaw.yawNegativeAverageOffsetX ?? null)} / ${formatNullableDebugNumber(debug.semanticCenterAlignment?.frameAlignmentByYaw.nearFrontAverageOffsetX ?? null)}</dd>
+      </div>
+      <div>
+        <dt>yaw + / - / front avg offset y</dt>
+        <dd>${formatNullableDebugNumber(debug.semanticCenterAlignment?.frameAlignmentByYaw.yawPositiveAverageOffsetY ?? null)} / ${formatNullableDebugNumber(debug.semanticCenterAlignment?.frameAlignmentByYaw.yawNegativeAverageOffsetY ?? null)} / ${formatNullableDebugNumber(debug.semanticCenterAlignment?.frameAlignmentByYaw.nearFrontAverageOffsetY ?? null)}</dd>
+      </div>
+    </dl>
+    ${renderSemanticCenterCandidateComparison(debug.semanticCenterAlignment)}
+    ${renderSemanticCenterFrameAlignmentPreview(debug.semanticCenterAlignment)}
     <h5>MediaPipe z availability</h5>
     <dl class="pose-aware-summary-list">
       <div>
@@ -8837,7 +9340,100 @@ function renderBalancedFrameZCandidateComparisonItem(
         <dt>top view asymmetry</dt>
         <dd>${formatNullableDebugNumber(item.topViewAsymmetryScore)}</dd>
       </div>
+      ${
+        "semanticCenterAlignmentEnabled" in item
+          ? `<div>
+              <dt>semantic center alignment</dt>
+              <dd>${item.semanticCenterAlignmentEnabled ? "true" : "false"}</dd>
+            </div>`
+          : ""
+      }
     </dl>
+  `
+}
+
+function renderSemanticCenterCandidateComparisonMetric(
+  label: string,
+  metric: CandidateSemanticAlignmentMetricDebug,
+): string {
+  return `
+    <h6>${label}</h6>
+    <dl class="pose-aware-summary-list">
+      <div>
+        <dt>bounds center x / y</dt>
+        <dd>${formatNullableDebugNumber(metric.boundsCenterX)} / ${formatNullableDebugNumber(metric.boundsCenterY)}</dd>
+      </div>
+      <div>
+        <dt>centroid x / y</dt>
+        <dd>${formatNullableDebugNumber(metric.centroidX)} / ${formatNullableDebugNumber(metric.centroidY)}</dd>
+      </div>
+      <div>
+        <dt>nose / mouth / chin x</dt>
+        <dd>${formatNullableDebugNumber(metric.noseTipX)} / ${formatNullableDebugNumber(metric.mouthCenterX)} / ${formatNullableDebugNumber(metric.chinX)}</dd>
+      </div>
+      <div>
+        <dt>nose offset from bounds center x</dt>
+        <dd>${formatNullableDebugNumber(metric.noseOffsetFromBoundsCenterX)}</dd>
+      </div>
+      <div>
+        <dt>z range</dt>
+        <dd>${formatNullableDebugNumber(metric.zRange)}</dd>
+      </div>
+      <div>
+        <dt>top view asymmetry</dt>
+        <dd>${formatNullableDebugNumber(metric.topViewAsymmetryScore)}</dd>
+      </div>
+      <div>
+        <dt>left-right avg / range delta</dt>
+        <dd>${formatNullableDebugNumber(metric.leftRightZAverageDelta)} / ${formatNullableDebugNumber(metric.leftRightZRangeDelta)}</dd>
+      </div>
+    </dl>
+  `
+}
+
+function renderSemanticCenterCandidateComparison(
+  alignment: SemanticCenterAlignmentDebug | null,
+): string {
+  if (!alignment) {
+    return ""
+  }
+
+  return `
+    <h5>semantic alignment candidate comparison</h5>
+    ${renderSemanticCenterCandidateComparisonMetric(
+      "before per-frame semantic alignment",
+      alignment.candidateComparison.beforePerFrameSemanticAlignment,
+    )}
+    ${renderSemanticCenterCandidateComparisonMetric(
+      "after per-frame semantic alignment",
+      alignment.candidateComparison.afterPerFrameSemanticAlignment,
+    )}
+  `
+}
+
+function renderSemanticCenterFrameAlignmentPreview(
+  alignment: SemanticCenterAlignmentDebug | null,
+): string {
+  if (!alignment) {
+    return ""
+  }
+
+  return `
+    <h5>semantic alignment frame preview</h5>
+    <div class="pose-aware-coverage">
+      ${
+        alignment.representativeFrameAlignmentPreview.length === 0
+          ? `<p class="pose-aware-ready-text">none</p>`
+          : `<ul>
+              ${alignment.representativeFrameAlignmentPreview
+                .map(
+                  (frame) =>
+                    `<li>${escapeHtml(frame.frameId)}: yaw ${formatNumber(frame.yaw)} / pitch ${formatNumber(frame.pitch)} / before ${formatNullableDebugNumber(frame.semanticCenterBefore.x)}, ${formatNullableDebugNumber(frame.semanticCenterBefore.y)} / offset ${formatNullableDebugNumber(frame.offset.x)}, ${formatNullableDebugNumber(frame.offset.y)} / after ${formatNullableDebugNumber(frame.semanticCenterAfter.x)}, ${formatNullableDebugNumber(frame.semanticCenterAfter.y)}</li>`,
+                )
+                .join("")}
+            </ul>`
+      }
+    </div>
   `
 }
 
