@@ -108,6 +108,8 @@ MP4 input
 
 今後の新機能は、旧方式ではなく Step 2-I active workflow 側に追加します。`currentCandidate` は Step 2-H preview に表示される現在の candidate で、`generationMethod` は `pose_aware_weighted_z_v1` です。`natural_v1` の 6 controlPoints は reference / projection debug 用であり、IdealFace 本体は `idealLandmarks3D` 478点です。
 
+Step 2-I-A の frame usage では、`frontReference` / `useForInference` / `expressionGroup` は重複可能な用途タグで、`excluded` だけを排他的な除外タグとして扱います。`poseOutOfRange` は自動除外ではなく注意タグです。正面基準には不向きですが、pose-aware 3D 推定の observation frame として z hint / 奥行き推定に使える可能性があるため、`useForInference` の対象に残せます。`noFace` / `invalidLandmarks` / `manual` は除外理由、`mixedExpression` / `pending` / `missingBlendshapes` は注意タグとして扱います。
+
 ## IdealFace Projection / 座標系方針
 
 - `idealLandmarks3D` は same-unit coordinate として保存します。
@@ -159,6 +161,7 @@ MP4 input
 - detailed scan frames の blendshape score から expression dropdown の自動初期値を作ります。
 - `frontReference` / `useForInference` / `expressionGroup` は用途タグであり、重複可能です。
 - `excluded` だけは排他的で、除外済み frame は正面基準 / 推定 / 表情解析の処理対象から外れます。
+- `poseOutOfRange` / `mixedExpression` / `pending` / `missingBlendshapes` は注意タグとして扱い、自動除外にはしません。
 - JSON preview に `expressionAnalysis` summary を表示します。
 - JSON preview に `frameUsage` summary を表示します。
 - neutral 3D 478 / expression 3D 478 の生成、3D 比較、`landmarkFollowStrengths` 自動生成、`expressionFollow` export はまだ未実装です。

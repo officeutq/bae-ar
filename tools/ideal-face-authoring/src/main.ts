@@ -108,8 +108,11 @@ const EXCLUDED_REASON_IDS = [
   "manual",
   "noFace",
   "invalidLandmarks",
+] as const
+const WARNING_REASON_IDS = [
   "missingBlendshapes",
   "poseOutOfRange",
+  "mixedExpression",
   "pending",
 ] as const
 const EXPRESSION_GROUPING_THRESHOLDS = {
@@ -183,6 +186,8 @@ type FrameExpressionGroup = (typeof FRAME_EXPRESSION_GROUP_IDS)[number]
 
 type ExcludedReason = (typeof EXCLUDED_REASON_IDS)[number]
 
+type WarningReason = (typeof WARNING_REASON_IDS)[number]
+
 interface AuthoringFrameUsage {
   frameId: string
   frontReference: boolean
@@ -191,6 +196,7 @@ interface AuthoringFrameUsage {
   autoExpressionGroup: FrameExpressionGroup
   excluded: boolean
   excludedReason?: ExcludedReason
+  warningReasons: WarningReason[]
 }
 
 type PoseAwareInferenceDatasetStatus =
@@ -557,9 +563,12 @@ interface ExpressionGroupingSummary {
   excludedBreakdown: {
     noFaceFrameCount: number
     invalidLandmarkFrameCount: number
+  }
+  warningBreakdown: {
     missingBlendshapeFrameCount: number
     extremePoseFrameCount: number
     pendingFrameCount: number
+    mixedExpressionFrameCount: number
   }
   step2IExcludedFrameCount: number
   warnings: string[]
@@ -572,6 +581,7 @@ interface FrameUsageSummary {
   expressionGroupCounts: Record<FrameExpressionGroup, number>
   excludedCount: number
   excludedReasonCounts: Record<ExcludedReason, number>
+  warningReasonCounts: Record<WarningReason, number>
   framePreview: Array<{
     frameId: string
     frontReference: boolean
@@ -580,6 +590,7 @@ interface FrameUsageSummary {
     autoExpressionGroup: FrameExpressionGroup
     excluded: boolean
     excludedReason?: ExcludedReason
+    warningReasons: WarningReason[]
   }>
 }
 
@@ -2247,7 +2258,7 @@ function getAutoExcludedReason(
   const analysis = frame.analysis
 
   if (frame.status === "pending" || frame.status === "analyzing") {
-    return "pending"
+    return null
   }
 
   if (frame.status !== "analyzed" || analysis?.detected !== true) {
@@ -2258,15 +2269,39 @@ function getAutoExcludedReason(
     return "invalidLandmarks"
   }
 
-  if (analysis.blendshapes.length === 0) {
-    return "missingBlendshapes"
-  }
-
-  if (!hasCompletePose(analysis.pose) || !isPoseInAuthoringUsageRange(analysis.pose)) {
-    return "poseOutOfRange"
-  }
-
   return null
+}
+
+function getFrameWarningReasons(frame: ExtractedVideoFrame): WarningReason[] {
+  const analysis = frame.analysis
+  const warningReasons: WarningReason[] = []
+
+  if (frame.status === "pending" || frame.status === "analyzing") {
+    warningReasons.push("pending")
+  }
+
+  if (
+    analysis?.detected === true &&
+    analysis.landmarks.length === REQUIRED_LANDMARK_COUNT &&
+    analysis.blendshapes.length === 0
+  ) {
+    warningReasons.push("missingBlendshapes")
+  }
+
+  if (
+    analysis?.detected === true &&
+    analysis.landmarks.length === REQUIRED_LANDMARK_COUNT &&
+    (!hasCompletePose(analysis.pose) ||
+      !isPoseInAuthoringUsageRange(analysis.pose))
+  ) {
+    warningReasons.push("poseOutOfRange")
+  }
+
+  if (getAutoExpressionGroup(frame) === "mixedExpression") {
+    warningReasons.push("mixedExpression")
+  }
+
+  return warningReasons
 }
 
 function createDefaultAuthoringFrameUsage(
@@ -2275,6 +2310,7 @@ function createDefaultAuthoringFrameUsage(
   const excludedReason = getAutoExcludedReason(frame) ?? undefined
   const excluded = excludedReason !== undefined
   const autoExpressionGroup = getAutoExpressionGroup(frame)
+  const warningReasons = getFrameWarningReasons(frame)
 
   return {
     frameId: getFrameIdFromFrame(frame),
@@ -2284,6 +2320,7 @@ function createDefaultAuthoringFrameUsage(
     autoExpressionGroup,
     excluded,
     excludedReason,
+    warningReasons,
   }
 }
 
@@ -2402,6 +2439,7 @@ function restoreAuthoringFrame(frameId: string): void {
     expressionGroup: usage.autoExpressionGroup,
     excluded: false,
     excludedReason: undefined,
+    warningReasons: usage.warningReasons,
   })
 }
 
@@ -2460,16 +2498,31 @@ function createExcludedReasonCountRecord(): Record<ExcludedReason, number> {
   )
 }
 
+function createWarningReasonCountRecord(): Record<WarningReason, number> {
+  return WARNING_REASON_IDS.reduce(
+    (record, reason) => ({
+      ...record,
+      [reason]: 0,
+    }),
+    {} as Record<WarningReason, number>,
+  )
+}
+
 function getFrameUsageSummary(): FrameUsageSummary {
   const frames = getDetailedScanFrames()
   const expressionGroupCounts = createFrameExpressionGroupCountRecord()
   const excludedReasonCounts = createExcludedReasonCountRecord()
+  const warningReasonCounts = createWarningReasonCountRecord()
   let frontReferenceCount = 0
   let useForInferenceCount = 0
   let excludedCount = 0
 
   frames.forEach((frame) => {
     const usage = getAuthoringFrameUsage(frame)
+
+    usage.warningReasons.forEach((reason) => {
+      warningReasonCounts[reason] += 1
+    })
 
     if (usage.excluded) {
       excludedCount += 1
@@ -2495,6 +2548,7 @@ function getFrameUsageSummary(): FrameUsageSummary {
     expressionGroupCounts,
     excludedCount,
     excludedReasonCounts,
+    warningReasonCounts,
     framePreview: frames.slice(0, EXPRESSION_FRAME_PREVIEW_COUNT).map((frame) => {
       const usage = getAuthoringFrameUsage(frame)
 
@@ -2506,6 +2560,7 @@ function getFrameUsageSummary(): FrameUsageSummary {
         autoExpressionGroup: usage.autoExpressionGroup,
         excluded: usage.excluded,
         excludedReason: usage.excludedReason,
+        warningReasons: usage.warningReasons,
       }
     }),
   }
@@ -2557,15 +2612,15 @@ function buildExpressionGroupingWarnings(
     warnings.push("mixedExpression が source frames の 30%以上です。")
   }
 
-  if (summary.excludedBreakdown.extremePoseFrameCount > 0) {
+  if (summary.warningBreakdown.extremePoseFrameCount > 0) {
     warnings.push(
-      `pose が極端な frame が ${summary.excludedBreakdown.extremePoseFrameCount}件あります。`,
+      `pose が極端な frame が ${summary.warningBreakdown.extremePoseFrameCount}件あります。`,
     )
   }
 
-  if (summary.excludedBreakdown.missingBlendshapeFrameCount > 0) {
+  if (summary.warningBreakdown.missingBlendshapeFrameCount > 0) {
     warnings.push(
-      `blendshapes がない frame が ${summary.excludedBreakdown.missingBlendshapeFrameCount}件あります。`,
+      `blendshapes がない frame が ${summary.warningBreakdown.missingBlendshapeFrameCount}件あります。`,
     )
   }
 
@@ -2591,9 +2646,12 @@ function getExpressionGroupingSummary(): ExpressionGroupingSummary {
     excludedBreakdown: {
       noFaceFrameCount: 0,
       invalidLandmarkFrameCount: 0,
+    },
+    warningBreakdown: {
       missingBlendshapeFrameCount: 0,
       extremePoseFrameCount: 0,
       pendingFrameCount: 0,
+      mixedExpressionFrameCount: 0,
     },
     step2IExcludedFrameCount:
       getIdealLandmarks3DFrameSelection().excludedFrameIds.length,
@@ -2609,8 +2667,9 @@ function getExpressionGroupingSummary(): ExpressionGroupingSummary {
     }
 
     if (frame.status === "pending" || frame.status === "analyzing") {
-      summaryWithoutWarnings.excludedBreakdown.pendingFrameCount += 1
-      addExcludedFrame()
+      summaryWithoutWarnings.warningBreakdown.pendingFrameCount += 1
+      summaryWithoutWarnings.noneExpressionFrameCount += 1
+      summaryWithoutWarnings.noneExpressionFrames.push(framePreview)
       return
     }
 
@@ -2627,18 +2686,14 @@ function getExpressionGroupingSummary(): ExpressionGroupingSummary {
     }
 
     if (analysis.blendshapes.length === 0) {
-      summaryWithoutWarnings.excludedBreakdown.missingBlendshapeFrameCount += 1
-      addExcludedFrame()
-      return
+      summaryWithoutWarnings.warningBreakdown.missingBlendshapeFrameCount += 1
     }
 
     if (
       !hasCompletePose(analysis.pose) ||
       !isExpressionGroupingPoseInRange(analysis.pose)
     ) {
-      summaryWithoutWarnings.excludedBreakdown.extremePoseFrameCount += 1
-      addExcludedFrame()
-      return
+      summaryWithoutWarnings.warningBreakdown.extremePoseFrameCount += 1
     }
 
     const autoExpressionGroup = getAutoExpressionGroup(frame)
@@ -2652,6 +2707,7 @@ function getExpressionGroupingSummary(): ExpressionGroupingSummary {
     if (autoExpressionGroup === "mixedExpression") {
       summaryWithoutWarnings.mixedExpressionFrameCount += 1
       summaryWithoutWarnings.mixedExpressionFrames.push(framePreview)
+      summaryWithoutWarnings.warningBreakdown.mixedExpressionFrameCount += 1
       return
     }
 
@@ -4229,6 +4285,11 @@ function renderAuthoringFrameCard(frame: ExtractedVideoFrame): string {
   const pose = analysis?.pose ?? EMPTY_FACE_POSE
   const landmarksCount = analysis?.landmarks.length ?? 0
   const frameId = getFrameIdFromFrame(frame)
+  const warningText = usage.warningReasons.join(", ")
+  const frontReferenceWarning =
+    usage.frontReference && usage.warningReasons.includes("poseOutOfRange")
+      ? "正面基準には不向きな pose です。"
+      : null
 
   return `
     <article class="frame-usage-card">
@@ -4275,6 +4336,16 @@ function renderAuthoringFrameCard(frame: ExtractedVideoFrame): string {
           除外する
         </button>
         <div class="frame-usage-meta">
+          ${
+            warningText
+              ? `<span class="frame-usage-warning">warning: ${escapeHtml(warningText)}</span>`
+              : ""
+          }
+          ${
+            frontReferenceWarning
+              ? `<span class="frame-usage-warning">${escapeHtml(frontReferenceWarning)}</span>`
+              : ""
+          }
           <span>自動判定: ${escapeHtml(usage.autoExpressionGroup)}</span>
           <span>pose: yaw ${formatNumber(pose.yaw)} / pitch ${formatNumber(pose.pitch)} / roll ${formatNumber(pose.roll)}</span>
           <span>landmarks 数: ${landmarksCount}</span>
@@ -4296,6 +4367,11 @@ function renderExcludedAuthoringFrameCard(frame: ExtractedVideoFrame): string {
         <h4>Frame ${escapeHtml(frameId)} / ${frame.timestamp.toFixed(3)}s</h4>
         <div class="frame-usage-meta">
           <span>除外理由: ${escapeHtml(usage.excludedReason ?? "manual")}</span>
+          ${
+            usage.warningReasons.length > 0
+              ? `<span class="frame-usage-warning">warning: ${escapeHtml(usage.warningReasons.join(", "))}</span>`
+              : ""
+          }
           <span>自動判定: ${escapeHtml(usage.autoExpressionGroup)}</span>
         </div>
         <button
@@ -4329,11 +4405,18 @@ function renderFrameUsageSummaryPanel(): string {
             `<li>${groupId}: ${summary.expressionGroupCounts[groupId]}件</li>`,
         ).join("")}
       </ul>
-      <strong>excluded reason counts</strong>
+      <strong>除外理由</strong>
       <ul>
         ${EXCLUDED_REASON_IDS.map(
           (reason) =>
             `<li>${reason}: ${summary.excludedReasonCounts[reason]}件</li>`,
+        ).join("")}
+      </ul>
+      <strong>注意タグ</strong>
+      <ul>
+        ${WARNING_REASON_IDS.map(
+          (reason) =>
+            `<li>${reason}: ${summary.warningReasonCounts[reason]}件</li>`,
         ).join("")}
       </ul>
     </div>
@@ -4988,13 +5071,17 @@ function renderExpressionGroupingPanel(): string {
         </article>
       </div>
       <div class="pose-aware-coverage">
-        <strong>除外内訳</strong>
+        <strong>除外理由</strong>
         <ul>
           <li>顔検出なし: ${summary.excludedBreakdown.noFaceFrameCount}件</li>
           <li>landmarks 不正: ${summary.excludedBreakdown.invalidLandmarkFrameCount}件</li>
-          <li>blendshapes なし: ${summary.excludedBreakdown.missingBlendshapeFrameCount}件</li>
-          <li>pose 範囲外: ${summary.excludedBreakdown.extremePoseFrameCount}件</li>
-          <li>判定保留: ${summary.excludedBreakdown.pendingFrameCount}件</li>
+        </ul>
+        <strong>注意タグ</strong>
+        <ul>
+          <li>poseOutOfRange: ${summary.warningBreakdown.extremePoseFrameCount}件</li>
+          <li>mixedExpression: ${summary.warningBreakdown.mixedExpressionFrameCount}件</li>
+          <li>pending: ${summary.warningBreakdown.pendingFrameCount}件</li>
+          <li>missingBlendshapes: ${summary.warningBreakdown.missingBlendshapeFrameCount}件</li>
         </ul>
       </div>
       <div class="pose-aware-coverage">
@@ -5081,6 +5168,7 @@ function toExpressionAnalysisPreview(): unknown {
         summary.excludedFrames,
       ),
       excludedBreakdown: summary.excludedBreakdown,
+      warningBreakdown: summary.warningBreakdown,
       step2IExcludedFrameCount: summary.step2IExcludedFrameCount,
     },
     warnings: summary.warnings,
@@ -6863,6 +6951,10 @@ style.textContent = `
 
   .frame-usage-meta {
     gap: 3px;
+  }
+
+  .frame-usage-warning {
+    color: #8a5a11;
   }
 
   .frame-usage-card h4 {
