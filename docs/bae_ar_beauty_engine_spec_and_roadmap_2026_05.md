@@ -1135,7 +1135,7 @@ MP4 input
   -> Step 2-H currentCandidate point cloud preview
 ```
 
-Step 2-I-A keeps the frame selection state in `frontReferenceFrameIds` and `excludedFrameIds`. Usable observation frames are derived from detailed scan frames that have a detected face, 478 landmarks, and `FacePose`, and are not excluded.
+Step 2-I-A keeps frame usage as tags. `frontReference`, `useForInference`, and `expressionGroup` can overlap; `excluded` is the only exclusive tag. Usable observation frames are derived from detailed scan frames that have a detected face, 478 landmarks, `FacePose`, `useForInference = true`, and `excluded = false`.
 
 Step 2-I-B builds `poseAwareInferenceDataset` from front reference frames and observation frames. It does not use fixed five-pose labels.
 

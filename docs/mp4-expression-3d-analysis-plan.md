@@ -4,7 +4,9 @@
 
 このドキュメントは、`expressionFollow v1` の次段として、IdealFace Authoring Tool が MP4 を解析し、表情別 frame group から neutral 3D 478 / expression 3D 478 を生成し、3D 差分から `landmarkFollowStrengths` を自動生成する方針を整理します。
 
-2026-05 時点では、最初の prototype として IdealFace Authoring Tool に Expression frame grouping summary を追加済みです。detailed scan frames の blendshape score から neutral / expression / mixed / excluded frame group 候補の count と warning を UI / JSON preview で確認できます。
+2026-05 時点では、最初の prototype として IdealFace Authoring Tool に Expression frame grouping summary と frame usage card UI を追加済みです。detailed scan frames の blendshape score から expression dropdown の自動初期値を作り、frame ごとに `frontReference` / `useForInference` / `expressionGroup` / `excluded` を設定できます。
+
+`frontReference` / `useForInference` / `expressionGroup` は用途タグであり、重複可能です。`excluded` だけは排他的で、除外済み frame は正面基準 / 推定 / 表情解析の処理対象から外れます。neutral 自動分類は主導線から外し、neutralFrames は将来 `frontReferenceFrames` の中から表情が少ないものを選ぶ方針です。
 
 neutral 3D 478 / expression 3D 478 の生成、3D 比較、`landmarkFollowStrengths` 自動生成、`expressionFollow` export、Engine 実装、Studio 実装、validator 変更はまだ行いません。
 
@@ -41,6 +43,7 @@ landmarkFollowStrengths:
 - `ideal_face_asset_v1` optional `landmarkGroups` export
 - expressionFollow v1 docs direction
 - Expression frame grouping summary prototype
+- Frame usage card UI prototype
 
 未実装:
 
@@ -60,8 +63,8 @@ landmarkFollowStrengths:
 ```text
 1. MP4 を detailed scan する
 2. 各 frame の landmarks / pose / blendshape score / confidence を取得する
-3. neutral frame group を抽出する
-4. expression frame group を分類する
+3. frame ごとに frontReference / useForInference / expressionGroup / excluded を設定する
+4. blendshape score から expressionGroup dropdown の自動初期値を作る
 5. neutral 3D 478 を生成する
 6. expression group ごとに expression 3D 478 を生成する
 7. neutral 3D 478 と expression 3D 478 を同じ comparisonSpace で比較する
@@ -72,9 +75,31 @@ landmarkFollowStrengths:
 12. ideal_face_asset_v1 の optional correctionProfile.expressionFollow、または将来 beauty_filter_asset_v1 に export する
 ```
 
+## frame usage tags
+
+Step 2-I-A では、frame を単一カテゴリへ分類せず、用途タグとして扱います。
+
+```text
+frontReference:
+  正面姿勢・座標正規化・default face の土台に使う frame
+
+useForInference:
+  pose-aware 3D 推定の observation frame として使う
+
+expressionGroup:
+  expressionFollow 用の表情解析に使う group
+
+excluded:
+  今回の処理には使わない frame
+```
+
+`frontReference` / `useForInference` / `expressionGroup` は重複可能です。`excluded` だけは排他的で、`excluded = true` の frame は他用途の処理対象に含めません。
+
+Expression grouping は、`mouthPucker` / `jawOpen` / `mouthSmile` / `eyeBlink` / `eyeSquint` / `mixedExpression` などの自動判定を行い、`expressionGroup` dropdown の初期値として使います。
+
 ## neutral frame group
 
-neutral frame group は、表情なし / 基準顔として扱う frame 群です。初期条件は確定値ではなく候補として扱い、MediaPipe blendshape score の実測分布を見ながら調整します。
+neutral frame group は、表情なし / 基準顔として扱う frame 群です。現在の主導線では neutral 自動分類は行わず、将来 `frontReferenceFrames` の中から表情が少ないものを neutralFrames 候補として選びます。
 
 条件候補:
 

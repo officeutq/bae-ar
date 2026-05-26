@@ -99,17 +99,20 @@ const EXPRESSION_GROUP_IDS = [
   "eyeSquintLeft",
   "eyeSquintRight",
 ] as const
+const FRAME_EXPRESSION_GROUP_IDS = [
+  "none",
+  ...EXPRESSION_GROUP_IDS,
+  "mixedExpression",
+] as const
+const EXCLUDED_REASON_IDS = [
+  "manual",
+  "noFace",
+  "invalidLandmarks",
+  "missingBlendshapes",
+  "poseOutOfRange",
+  "pending",
+] as const
 const EXPRESSION_GROUPING_THRESHOLDS = {
-  neutral: {
-    mouthPuckerMax: 0.2,
-    jawOpenMax: 0.15,
-    mouthSmileMax: 0.25,
-    mouthFrownMax: 0.25,
-    mouthStretchMax: 0.25,
-    eyeBlinkMax: 0.2,
-    eyeSquintMax: 0.25,
-    eyeWideMax: 0.25,
-  },
   expression: {
     mouthPuckerMin: 0.5,
     jawOpenMin: 0.5,
@@ -124,7 +127,6 @@ const EXPRESSION_GROUPING_THRESHOLDS = {
   },
 } as const
 const EXPRESSION_GROUPING_MIXED_WARNING_RATIO = 0.3
-const EXPRESSION_GROUPING_MIN_NEUTRAL_FRAME_COUNT = 3
 const DEFAULT_POINT_CLOUD_CAMERA: PointCloudPreviewCamera = {
   yaw: 0,
   pitch: 0,
@@ -177,6 +179,20 @@ interface IdealLandmarks3DFrameSelection {
   excludedFrameIds: string[]
 }
 
+type FrameExpressionGroup = (typeof FRAME_EXPRESSION_GROUP_IDS)[number]
+
+type ExcludedReason = (typeof EXCLUDED_REASON_IDS)[number]
+
+interface AuthoringFrameUsage {
+  frameId: string
+  frontReference: boolean
+  useForInference: boolean
+  expressionGroup: FrameExpressionGroup
+  autoExpressionGroup: FrameExpressionGroup
+  excluded: boolean
+  excludedReason?: ExcludedReason
+}
+
 type PoseAwareInferenceDatasetStatus =
   | "missing_front_reference"
   | "warning"
@@ -193,7 +209,7 @@ interface PoseAwareObservationFrame {
   score: number | null
   thumbnailUrl: string
   role: "front_reference" | "observation"
-  excluded: boolean
+  usage: AuthoringFrameUsage
 }
 
 type PoseAwareCoverageStatus = "insufficient" | "ok"
@@ -531,8 +547,8 @@ interface ExpressionGroupingSummary {
   status: ExpressionGroupingStatus
   source: "detailed_scan_frames"
   sourceFrameCount: number
-  neutralFrameCount: number
-  neutralFrames: ExpressionFramePreview[]
+  noneExpressionFrameCount: number
+  noneExpressionFrames: ExpressionFramePreview[]
   expressionGroups: ExpressionGroupFrameSummary[]
   mixedExpressionFrameCount: number
   mixedExpressionFrames: ExpressionFramePreview[]
@@ -543,11 +559,28 @@ interface ExpressionGroupingSummary {
     invalidLandmarkFrameCount: number
     missingBlendshapeFrameCount: number
     extremePoseFrameCount: number
-    mixedExpressionFrameCount: number
-    unclearExpressionFrameCount: number
+    pendingFrameCount: number
   }
   step2IExcludedFrameCount: number
   warnings: string[]
+}
+
+interface FrameUsageSummary {
+  sourceFrameCount: number
+  frontReferenceCount: number
+  useForInferenceCount: number
+  expressionGroupCounts: Record<FrameExpressionGroup, number>
+  excludedCount: number
+  excludedReasonCounts: Record<ExcludedReason, number>
+  framePreview: Array<{
+    frameId: string
+    frontReference: boolean
+    useForInference: boolean
+    expressionGroup: FrameExpressionGroup
+    autoExpressionGroup: FrameExpressionGroup
+    excluded: boolean
+    excludedReason?: ExcludedReason
+  }>
 }
 
 interface VideoSourceState {
@@ -568,8 +601,7 @@ interface VideoSourceState {
 let videoSource: VideoSourceState | null = null
 let faceLandmarker: FaceLandmarker | null = null
 let faceLandmarkerInitialization: Promise<FaceLandmarker> | null = null
-let idealLandmarks3DFrameSelection: IdealLandmarks3DFrameSelection =
-  createEmptyIdealLandmarks3DFrameSelection()
+let authoringFrameUsages: Record<string, AuthoringFrameUsage> = {}
 let idealLandmarks3DCandidateResult: IdealLandmarks3DCandidateResult =
   createInitialIdealLandmarks3DCandidateResult()
 let landmarkGroupEditorState: LandmarkGroupEditorState =
@@ -906,11 +938,8 @@ function scoreDirectionalCandidate(
   return primaryScore * 0.7 + secondaryScore * 0.18 + rollScore * 0.12
 }
 
-function createEmptyIdealLandmarks3DFrameSelection(): IdealLandmarks3DFrameSelection {
-  return {
-    frontReferenceFrameIds: [],
-    excludedFrameIds: [],
-  }
+function resetAuthoringFrameUsages(): void {
+  authoringFrameUsages = {}
 }
 
 function buildLandmarkPreview(
@@ -2093,84 +2122,6 @@ function getFrameIdFromFrame(frame: ExtractedVideoFrame): string {
   return getFrameId(frame.index)
 }
 
-function addUniqueId(ids: string[], id: string): string[] {
-  return ids.includes(id) ? ids : [...ids, id]
-}
-
-function removeId(ids: string[], id: string): string[] {
-  return ids.filter((value) => value !== id)
-}
-
-function isFrameExcludedForPoseAware(frameIndex: number): boolean {
-  return idealLandmarks3DFrameSelection.excludedFrameIds.includes(
-    getFrameId(frameIndex),
-  )
-}
-
-function isFrameFrontReferenceForPoseAware(frameIndex: number): boolean {
-  return idealLandmarks3DFrameSelection.frontReferenceFrameIds.includes(
-    getFrameId(frameIndex),
-  )
-}
-
-function addPoseAwareFrontReferenceFrame(frameIndex: number): void {
-  const frameId = getFrameId(frameIndex)
-
-  idealLandmarks3DFrameSelection = {
-    frontReferenceFrameIds: addUniqueId(
-      idealLandmarks3DFrameSelection.frontReferenceFrameIds,
-      frameId,
-    ),
-    excludedFrameIds: removeId(
-      idealLandmarks3DFrameSelection.excludedFrameIds,
-      frameId,
-    ),
-  }
-}
-
-function removePoseAwareFrontReferenceFrame(frameIndex: number): void {
-  const frameId = getFrameId(frameIndex)
-
-  idealLandmarks3DFrameSelection = {
-    ...idealLandmarks3DFrameSelection,
-    frontReferenceFrameIds: removeId(
-      idealLandmarks3DFrameSelection.frontReferenceFrameIds,
-      frameId,
-    ),
-  }
-}
-
-function addPoseAwareExcludedFrame(frameIndex: number): void {
-  const frameId = getFrameId(frameIndex)
-
-  idealLandmarks3DFrameSelection = {
-    frontReferenceFrameIds: removeId(
-      idealLandmarks3DFrameSelection.frontReferenceFrameIds,
-      frameId,
-    ),
-    excludedFrameIds: addUniqueId(
-      idealLandmarks3DFrameSelection.excludedFrameIds,
-      frameId,
-    ),
-  }
-}
-
-function excludePoseAwareFrame(frameIndex: number): void {
-  addPoseAwareExcludedFrame(frameIndex)
-}
-
-function removePoseAwareExcludedFrame(frameIndex: number): void {
-  const frameId = getFrameId(frameIndex)
-
-  idealLandmarks3DFrameSelection = {
-    ...idealLandmarks3DFrameSelection,
-    excludedFrameIds: removeId(
-      idealLandmarks3DFrameSelection.excludedFrameIds,
-      frameId,
-    ),
-  }
-}
-
 function getDetailedScanFrames(): ExtractedVideoFrame[] {
   return videoSource?.detailedScanFrames ?? []
 }
@@ -2194,26 +2145,6 @@ function getBlendshapeScore(
   )
 }
 
-function hasBlendshapeScore(
-  blendshapes: BlendshapeScore[],
-  categoryName: string,
-): boolean {
-  return blendshapes.some(
-    (blendshape) => blendshape.categoryName === categoryName,
-  )
-}
-
-function isLowBlendshapeIfPresent(
-  blendshapes: BlendshapeScore[],
-  categoryName: string,
-  maxScore: number,
-): boolean {
-  return (
-    !hasBlendshapeScore(blendshapes, categoryName) ||
-    getBlendshapeScore(blendshapes, categoryName) < maxScore
-  )
-}
-
 function isExpressionGroupingPoseInRange(pose: FacePose): boolean {
   const { pose: thresholds } = EXPRESSION_GROUPING_THRESHOLDS
 
@@ -2221,60 +2152,6 @@ function isExpressionGroupingPoseInRange(pose: FacePose): boolean {
     Math.abs(pose.yaw) <= thresholds.maxAbsYaw &&
     Math.abs(pose.pitch) <= thresholds.maxAbsPitch &&
     Math.abs(pose.roll) <= thresholds.maxAbsRoll
-  )
-}
-
-function isNeutralExpressionFrame(
-  blendshapes: BlendshapeScore[],
-): boolean {
-  const { neutral } = EXPRESSION_GROUPING_THRESHOLDS
-
-  return (
-    getBlendshapeScore(blendshapes, "mouthPucker") <
-      neutral.mouthPuckerMax &&
-    getBlendshapeScore(blendshapes, "jawOpen") < neutral.jawOpenMax &&
-    getBlendshapeScore(blendshapes, "mouthSmileLeft") <
-      neutral.mouthSmileMax &&
-    getBlendshapeScore(blendshapes, "mouthSmileRight") <
-      neutral.mouthSmileMax &&
-    getBlendshapeScore(blendshapes, "eyeBlinkLeft") <
-      neutral.eyeBlinkMax &&
-    getBlendshapeScore(blendshapes, "eyeBlinkRight") <
-      neutral.eyeBlinkMax &&
-    getBlendshapeScore(blendshapes, "eyeSquintLeft") <
-      neutral.eyeSquintMax &&
-    getBlendshapeScore(blendshapes, "eyeSquintRight") <
-      neutral.eyeSquintMax &&
-    isLowBlendshapeIfPresent(
-      blendshapes,
-      "mouthFrownLeft",
-      neutral.mouthFrownMax,
-    ) &&
-    isLowBlendshapeIfPresent(
-      blendshapes,
-      "mouthFrownRight",
-      neutral.mouthFrownMax,
-    ) &&
-    isLowBlendshapeIfPresent(
-      blendshapes,
-      "mouthStretchLeft",
-      neutral.mouthStretchMax,
-    ) &&
-    isLowBlendshapeIfPresent(
-      blendshapes,
-      "mouthStretchRight",
-      neutral.mouthStretchMax,
-    ) &&
-    isLowBlendshapeIfPresent(
-      blendshapes,
-      "eyeWideLeft",
-      neutral.eyeWideMax,
-    ) &&
-    isLowBlendshapeIfPresent(
-      blendshapes,
-      "eyeWideRight",
-      neutral.eyeWideMax,
-    )
   )
 }
 
@@ -2334,6 +2211,306 @@ function getActiveExpressionGroupIds(
   return activeGroupIds
 }
 
+function getAutoExpressionGroup(
+  frame: ExtractedVideoFrame,
+): FrameExpressionGroup {
+  const blendshapes = frame.analysis?.blendshapes ?? []
+
+  if (blendshapes.length === 0) {
+    return "none"
+  }
+
+  const activeGroupIds = getActiveExpressionGroupIds(blendshapes)
+
+  if (activeGroupIds.length === 1) {
+    return activeGroupIds[0]
+  }
+
+  if (activeGroupIds.length >= 2) {
+    return "mixedExpression"
+  }
+
+  return "none"
+}
+
+function isPoseInAuthoringUsageRange(pose: FacePose): boolean {
+  return (
+    Math.abs(pose.yaw) <= DIRECTIONAL_POSE_LIMIT.yaw &&
+    Math.abs(pose.pitch) <= DIRECTIONAL_POSE_LIMIT.pitch &&
+    Math.abs(pose.roll) <= DIRECTIONAL_POSE_LIMIT.roll
+  )
+}
+
+function getAutoExcludedReason(
+  frame: ExtractedVideoFrame,
+): ExcludedReason | null {
+  const analysis = frame.analysis
+
+  if (frame.status === "pending" || frame.status === "analyzing") {
+    return "pending"
+  }
+
+  if (frame.status !== "analyzed" || analysis?.detected !== true) {
+    return "noFace"
+  }
+
+  if (analysis.landmarks.length !== REQUIRED_LANDMARK_COUNT) {
+    return "invalidLandmarks"
+  }
+
+  if (analysis.blendshapes.length === 0) {
+    return "missingBlendshapes"
+  }
+
+  if (!hasCompletePose(analysis.pose) || !isPoseInAuthoringUsageRange(analysis.pose)) {
+    return "poseOutOfRange"
+  }
+
+  return null
+}
+
+function createDefaultAuthoringFrameUsage(
+  frame: ExtractedVideoFrame,
+): AuthoringFrameUsage {
+  const excludedReason = getAutoExcludedReason(frame) ?? undefined
+  const excluded = excludedReason !== undefined
+  const autoExpressionGroup = getAutoExpressionGroup(frame)
+
+  return {
+    frameId: getFrameIdFromFrame(frame),
+    frontReference: false,
+    useForInference: !excluded,
+    expressionGroup: excluded ? "none" : autoExpressionGroup,
+    autoExpressionGroup,
+    excluded,
+    excludedReason,
+  }
+}
+
+function getAuthoringFrameUsage(
+  frame: ExtractedVideoFrame,
+): AuthoringFrameUsage {
+  const frameId = getFrameIdFromFrame(frame)
+  const existingUsage = authoringFrameUsages[frameId]
+
+  if (existingUsage) {
+    return existingUsage
+  }
+
+  const usage = createDefaultAuthoringFrameUsage(frame)
+  authoringFrameUsages = {
+    ...authoringFrameUsages,
+    [frameId]: usage,
+  }
+
+  return usage
+}
+
+function getAuthoringFrameUsageById(
+  frameId: string,
+): AuthoringFrameUsage | null {
+  const frame = findPoseAwareFrameById(frameId)
+
+  return frame ? getAuthoringFrameUsage(frame) : null
+}
+
+function setAuthoringFrameUsage(
+  frameId: string,
+  patch: Partial<AuthoringFrameUsage>,
+): void {
+  const usage = getAuthoringFrameUsageById(frameId)
+
+  if (!usage) {
+    return
+  }
+
+  authoringFrameUsages = {
+    ...authoringFrameUsages,
+    [frameId]: {
+      ...usage,
+      ...patch,
+      frameId,
+    },
+  }
+}
+
+function setAuthoringFrameFrontReference(
+  frameId: string,
+  frontReference: boolean,
+): void {
+  const usage = getAuthoringFrameUsageById(frameId)
+
+  if (!usage || usage.excluded) {
+    return
+  }
+
+  setAuthoringFrameUsage(frameId, { frontReference })
+}
+
+function setAuthoringFrameUseForInference(
+  frameId: string,
+  useForInference: boolean,
+): void {
+  const usage = getAuthoringFrameUsageById(frameId)
+
+  if (!usage || usage.excluded) {
+    return
+  }
+
+  setAuthoringFrameUsage(frameId, { useForInference })
+}
+
+function isFrameExpressionGroup(
+  value: string | undefined,
+): value is FrameExpressionGroup {
+  return FRAME_EXPRESSION_GROUP_IDS.includes(value as FrameExpressionGroup)
+}
+
+function setAuthoringFrameExpressionGroup(
+  frameId: string,
+  expressionGroup: string | undefined,
+): void {
+  const usage = getAuthoringFrameUsageById(frameId)
+
+  if (!usage || usage.excluded || !isFrameExpressionGroup(expressionGroup)) {
+    return
+  }
+
+  setAuthoringFrameUsage(frameId, { expressionGroup })
+}
+
+function excludeAuthoringFrame(frameId: string): void {
+  setAuthoringFrameUsage(frameId, {
+    frontReference: false,
+    useForInference: false,
+    expressionGroup: "none",
+    excluded: true,
+    excludedReason: "manual",
+  })
+}
+
+function restoreAuthoringFrame(frameId: string): void {
+  const usage = getAuthoringFrameUsageById(frameId)
+
+  if (!usage) {
+    return
+  }
+
+  setAuthoringFrameUsage(frameId, {
+    frontReference: false,
+    useForInference: true,
+    expressionGroup: usage.autoExpressionGroup,
+    excluded: false,
+    excludedReason: undefined,
+  })
+}
+
+function isFrameExcludedForPoseAware(frameIndex: number): boolean {
+  const usage = getAuthoringFrameUsageById(getFrameId(frameIndex))
+
+  return usage?.excluded ?? false
+}
+
+function isFrameFrontReferenceForPoseAware(frameIndex: number): boolean {
+  const usage = getAuthoringFrameUsageById(getFrameId(frameIndex))
+
+  return usage?.frontReference === true && usage.excluded === false
+}
+
+function isFrameUsedForPoseAwareInference(frameIndex: number): boolean {
+  const usage = getAuthoringFrameUsageById(getFrameId(frameIndex))
+
+  return usage?.useForInference === true && usage.excluded === false
+}
+
+function getIdealLandmarks3DFrameSelection(): IdealLandmarks3DFrameSelection {
+  const frames = getDetailedScanFrames()
+
+  return {
+    frontReferenceFrameIds: frames
+      .filter((frame) => getAuthoringFrameUsage(frame).frontReference)
+      .filter((frame) => !getAuthoringFrameUsage(frame).excluded)
+      .map(getFrameIdFromFrame),
+    excludedFrameIds: frames
+      .filter((frame) => getAuthoringFrameUsage(frame).excluded)
+      .map(getFrameIdFromFrame),
+  }
+}
+
+function createFrameExpressionGroupCountRecord(): Record<
+  FrameExpressionGroup,
+  number
+> {
+  return FRAME_EXPRESSION_GROUP_IDS.reduce(
+    (record, groupId) => ({
+      ...record,
+      [groupId]: 0,
+    }),
+    {} as Record<FrameExpressionGroup, number>,
+  )
+}
+
+function createExcludedReasonCountRecord(): Record<ExcludedReason, number> {
+  return EXCLUDED_REASON_IDS.reduce(
+    (record, reason) => ({
+      ...record,
+      [reason]: 0,
+    }),
+    {} as Record<ExcludedReason, number>,
+  )
+}
+
+function getFrameUsageSummary(): FrameUsageSummary {
+  const frames = getDetailedScanFrames()
+  const expressionGroupCounts = createFrameExpressionGroupCountRecord()
+  const excludedReasonCounts = createExcludedReasonCountRecord()
+  let frontReferenceCount = 0
+  let useForInferenceCount = 0
+  let excludedCount = 0
+
+  frames.forEach((frame) => {
+    const usage = getAuthoringFrameUsage(frame)
+
+    if (usage.excluded) {
+      excludedCount += 1
+      excludedReasonCounts[usage.excludedReason ?? "manual"] += 1
+      return
+    }
+
+    if (usage.frontReference) {
+      frontReferenceCount += 1
+    }
+
+    if (usage.useForInference) {
+      useForInferenceCount += 1
+    }
+
+    expressionGroupCounts[usage.expressionGroup] += 1
+  })
+
+  return {
+    sourceFrameCount: frames.length,
+    frontReferenceCount,
+    useForInferenceCount,
+    expressionGroupCounts,
+    excludedCount,
+    excludedReasonCounts,
+    framePreview: frames.slice(0, EXPRESSION_FRAME_PREVIEW_COUNT).map((frame) => {
+      const usage = getAuthoringFrameUsage(frame)
+
+      return {
+        frameId: usage.frameId,
+        frontReference: usage.frontReference,
+        useForInference: usage.useForInference,
+        expressionGroup: usage.expressionGroup,
+        autoExpressionGroup: usage.autoExpressionGroup,
+        excluded: usage.excluded,
+        excludedReason: usage.excludedReason,
+      }
+    }),
+  }
+}
+
 function createEmptyExpressionGroupFrameSummary(
   id: ExpressionGroupId,
 ): ExpressionGroupFrameSummary {
@@ -2364,12 +2541,6 @@ function buildExpressionGroupingWarnings(
 
   if (summary.status !== "ready") {
     return warnings
-  }
-
-  if (summary.neutralFrameCount < EXPRESSION_GROUPING_MIN_NEUTRAL_FRAME_COUNT) {
-    warnings.push(
-      `neutral frame group が少なすぎます（${summary.neutralFrameCount}件）。`,
-    )
   }
 
   summary.expressionGroups.forEach((group) => {
@@ -2410,8 +2581,8 @@ function getExpressionGroupingSummary(): ExpressionGroupingSummary {
     status: frames.length > 0 ? "ready" : "not_available",
     source: "detailed_scan_frames",
     sourceFrameCount: frames.length,
-    neutralFrameCount: 0,
-    neutralFrames: [],
+    noneExpressionFrameCount: 0,
+    noneExpressionFrames: [],
     expressionGroups,
     mixedExpressionFrameCount: 0,
     mixedExpressionFrames: [],
@@ -2422,11 +2593,10 @@ function getExpressionGroupingSummary(): ExpressionGroupingSummary {
       invalidLandmarkFrameCount: 0,
       missingBlendshapeFrameCount: 0,
       extremePoseFrameCount: 0,
-      mixedExpressionFrameCount: 0,
-      unclearExpressionFrameCount: 0,
+      pendingFrameCount: 0,
     },
     step2IExcludedFrameCount:
-      idealLandmarks3DFrameSelection.excludedFrameIds.length,
+      getIdealLandmarks3DFrameSelection().excludedFrameIds.length,
   }
 
   frames.forEach((frame) => {
@@ -2436,6 +2606,12 @@ function getExpressionGroupingSummary(): ExpressionGroupingSummary {
     const addExcludedFrame = (): void => {
       summaryWithoutWarnings.excludedFrameCount += 1
       summaryWithoutWarnings.excludedFrames.push(framePreview)
+    }
+
+    if (frame.status === "pending" || frame.status === "analyzing") {
+      summaryWithoutWarnings.excludedBreakdown.pendingFrameCount += 1
+      addExcludedFrame()
+      return
     }
 
     if (frame.status !== "analyzed" || analysis?.detected !== true) {
@@ -2465,34 +2641,28 @@ function getExpressionGroupingSummary(): ExpressionGroupingSummary {
       return
     }
 
-    if (isNeutralExpressionFrame(analysis.blendshapes)) {
-      summaryWithoutWarnings.neutralFrameCount += 1
-      summaryWithoutWarnings.neutralFrames.push(framePreview)
+    const autoExpressionGroup = getAutoExpressionGroup(frame)
+
+    if (autoExpressionGroup === "none") {
+      summaryWithoutWarnings.noneExpressionFrameCount += 1
+      summaryWithoutWarnings.noneExpressionFrames.push(framePreview)
       return
     }
 
-    const activeGroupIds = getActiveExpressionGroupIds(analysis.blendshapes)
+    if (autoExpressionGroup === "mixedExpression") {
+      summaryWithoutWarnings.mixedExpressionFrameCount += 1
+      summaryWithoutWarnings.mixedExpressionFrames.push(framePreview)
+      return
+    }
 
-    if (activeGroupIds.length === 1) {
+    if (EXPRESSION_GROUP_IDS.includes(autoExpressionGroup)) {
       const group = getExpressionGroupFrameSummary(
         expressionGroups,
-        activeGroupIds[0],
+        autoExpressionGroup,
       )
       group.frameCount += 1
       group.frames.push(framePreview)
-      return
     }
-
-    if (activeGroupIds.length >= 2) {
-      summaryWithoutWarnings.mixedExpressionFrameCount += 1
-      summaryWithoutWarnings.mixedExpressionFrames.push(framePreview)
-      summaryWithoutWarnings.excludedBreakdown.mixedExpressionFrameCount += 1
-      addExcludedFrame()
-      return
-    }
-
-    summaryWithoutWarnings.excludedBreakdown.unclearExpressionFrameCount += 1
-    addExcludedFrame()
   })
 
   return {
@@ -2570,19 +2740,18 @@ function buildPoseAwareObservationFrame(
     score: getPoseAwareCandidateScore(frame.index),
     thumbnailUrl: frame.thumbnailUrl,
     role,
-    excluded: isFrameExcludedForPoseAware(frame.index),
+    usage: getAuthoringFrameUsage(frame),
   }
 }
 
 function getPoseAwareFrontReferenceFrames(): PoseAwareObservationFrame[] {
-  return idealLandmarks3DFrameSelection.frontReferenceFrameIds
-    .map((frameId) => {
-      const frame = findPoseAwareFrameById(frameId)
-
-      return frame
-        ? buildPoseAwareObservationFrame(frame, "front_reference")
-        : null
-    })
+  return getDetailedScanFrames()
+    .filter(
+      (frame) =>
+        isUsableObservationSourceFrame(frame) &&
+        isFrameFrontReferenceForPoseAware(frame.index),
+    )
+    .map((frame) => buildPoseAwareObservationFrame(frame, "front_reference"))
     .filter(
       (frame): frame is PoseAwareObservationFrame =>
         frame !== null &&
@@ -2593,13 +2762,7 @@ function getPoseAwareFrontReferenceFrames(): PoseAwareObservationFrame[] {
 }
 
 function getActivePoseAwareFrontReferenceFrames(): PoseAwareObservationFrame[] {
-  return getUsableObservationFrames()
-    .filter((frame) => isFrameFrontReferenceForPoseAware(frame.frameIndex))
-    .map((frame) => ({
-      ...frame,
-      role: "front_reference" as const,
-    }))
-    .sort((a, b) => a.frameIndex - b.frameIndex)
+  return getPoseAwareFrontReferenceFrames()
 }
 
 function getUsableObservationFrames(): PoseAwareObservationFrame[] {
@@ -2607,7 +2770,7 @@ function getUsableObservationFrames(): PoseAwareObservationFrame[] {
     .filter(
       (frame) =>
         isUsableObservationSourceFrame(frame) &&
-        !isFrameExcludedForPoseAware(frame.index),
+        isFrameUsedForPoseAwareInference(frame.index),
     )
     .map((frame) => buildPoseAwareObservationFrame(frame, "observation"))
     .filter(
@@ -2616,18 +2779,13 @@ function getUsableObservationFrames(): PoseAwareObservationFrame[] {
 }
 
 function getVisibleUsableObservationFrames(): PoseAwareObservationFrame[] {
-  return getUsableObservationFrames().filter(
-    (frame) => !isFrameFrontReferenceForPoseAware(frame.frameIndex),
-  )
+  return getUsableObservationFrames()
 }
 
 function getPoseAwareExcludedFrames(): PoseAwareObservationFrame[] {
-  return idealLandmarks3DFrameSelection.excludedFrameIds
-    .map((frameId) => {
-      const frame = findPoseAwareFrameById(frameId)
-
-      return frame ? buildPoseAwareObservationFrame(frame, "observation") : null
-    })
+  return getDetailedScanFrames()
+    .filter((frame) => getAuthoringFrameUsage(frame).excluded)
+    .map((frame) => buildPoseAwareObservationFrame(frame, "observation"))
     .filter(
       (frame): frame is PoseAwareObservationFrame => frame !== null,
     )
@@ -2699,18 +2857,13 @@ function buildPoseAwareInferenceFrame(
 }
 
 function getPoseAwareDatasetFrontReferenceFrames(): PoseAwareInferenceFrame[] {
-  return idealLandmarks3DFrameSelection.frontReferenceFrameIds
-    .map((frameId) => {
-      if (idealLandmarks3DFrameSelection.excludedFrameIds.includes(frameId)) {
-        return null
-      }
-
-      const frame = findPoseAwareFrameById(frameId)
-
-      return frame
-        ? buildPoseAwareInferenceFrame(frame, "front_reference")
-        : null
-    })
+  return getDetailedScanFrames()
+    .filter(
+      (frame) =>
+        isUsableObservationSourceFrame(frame) &&
+        isFrameFrontReferenceForPoseAware(frame.index),
+    )
+    .map((frame) => buildPoseAwareInferenceFrame(frame, "front_reference"))
     .filter(
       (frame): frame is PoseAwareInferenceFrame =>
         frame !== null && frame.landmarkCount === REQUIRED_LANDMARK_COUNT,
@@ -2723,8 +2876,7 @@ function getPoseAwareDatasetObservationFrames(): PoseAwareInferenceFrame[] {
     .filter(
       (frame) =>
         isUsableObservationSourceFrame(frame) &&
-        !isFrameExcludedForPoseAware(frame.index) &&
-        !isFrameFrontReferenceForPoseAware(frame.index),
+        isFrameUsedForPoseAwareInference(frame.index),
     )
     .map((frame) => buildPoseAwareInferenceFrame(frame, "observation"))
     .filter(
@@ -2831,7 +2983,8 @@ function getPoseAwareInferenceDataset(): PoseAwareInferenceDataset {
     status,
     frontReferenceFrames,
     observationFrames,
-    excludedFrameCount: idealLandmarks3DFrameSelection.excludedFrameIds.length,
+    excludedFrameCount:
+      getIdealLandmarks3DFrameSelection().excludedFrameIds.length,
     poseCoverage,
     warnings,
   }
@@ -2891,7 +3044,8 @@ function getPoseAwareMultiFrameSummary(): PoseAwareMultiFrameSummary {
     frontReferenceFrameCount: frontReferenceFrames.length,
     selectedFrontReferenceFrameCount: selectedFrontReferenceFrames.length,
     usableObservationFrameCount: visibleUsableObservationFrames.length,
-    excludedFrameCount: idealLandmarks3DFrameSelection.excludedFrameIds.length,
+    excludedFrameCount:
+      getIdealLandmarks3DFrameSelection().excludedFrameIds.length,
     poseRange: {
       yaw: yawRange,
       pitch: pitchRange,
@@ -2899,9 +3053,9 @@ function getPoseAwareMultiFrameSummary(): PoseAwareMultiFrameSummary {
     },
     warnings,
     frontReferenceFrameIds: [
-      ...idealLandmarks3DFrameSelection.frontReferenceFrameIds,
+      ...getIdealLandmarks3DFrameSelection().frontReferenceFrameIds,
     ],
-    excludedFrameIds: [...idealLandmarks3DFrameSelection.excludedFrameIds],
+    excludedFrameIds: [...getIdealLandmarks3DFrameSelection().excludedFrameIds],
   }
 }
 
@@ -3443,44 +3597,26 @@ function formatPoseAwareScore(score: number | null): string {
 function renderPoseAwareMultiFramePanel(): string {
   const summary = getPoseAwareMultiFrameSummary()
   const dataset = getPoseAwareInferenceDataset()
-  const frontReferenceFrames = getActivePoseAwareFrontReferenceFrames()
-  const visibleUsableObservationFrames = getVisibleUsableObservationFrames()
-  const excludedFrames = getPoseAwareExcludedFrames()
+  const activeFrames = getDetailedScanFrames().filter(
+    (frame) => !getAuthoringFrameUsage(frame).excluded,
+  )
+  const excludedFrames = getDetailedScanFrames().filter(
+    (frame) => getAuthoringFrameUsage(frame).excluded,
+  )
 
   return `
     <div class="pose-aware-panel" aria-label="Step 2-I pose-aware multi-frame inference 準備">
       <div class="pose-aware-heading">
         <div>
           <h3>Step 2-I: pose-aware multi-frame inference 準備</h3>
-          <p>正面基準候補は自動では選択されません。推定に使うフレームの中から、正面に近く、ブレや表情崩れの少ないフレームを「正面基準に追加」してください。使いたくないフレームは「除外」してください。Step 2-I-C では、この dataset から pose-aware 3D候補を生成できます。</p>
+          <p>フレームごとに正面基準 / 表情 / 推定に使う用途を設定できます。正面基準、表情、推定用途は重複できますが、除外だけは排他的です。Step 2-I-C では、この用途タグから pose-aware 3D候補を生成できます。</p>
         </div>
       </div>
       ${renderPoseAwareSummary(summary)}
+      ${renderFrameUsageSummaryPanel()}
       ${renderPoseAwareInferenceDatasetSummary(dataset)}
       ${renderPoseAwareIdealLandmarks3DCandidatePanel(dataset)}
-      <div class="pose-aware-columns">
-        ${renderPoseAwareFrameGroup(
-          "正面基準候補",
-          frontReferenceFrames,
-          "正面基準候補は複数選択できます。除外されたものは使用対象から外れます。",
-          "正面基準候補はまだ選択されていません。",
-          "front_reference",
-        )}
-        ${renderPoseAwareFrameGroup(
-          "推定に使うフレーム",
-          visibleUsableObservationFrames,
-          "除外されていない解析成功フレームです。全件から正面基準への追加や除外を操作できます。",
-          "推定に使える解析成功フレームはまだありません。",
-          "observation",
-        )}
-        ${renderPoseAwareFrameGroup(
-          "除外フレーム",
-          excludedFrames,
-          "3D 推定に使わないフレームです。pose に関係なく除外できます。",
-          "除外フレームはありません。",
-          "excluded",
-        )}
-      </div>
+      ${renderAuthoringFrameUsagePanel(activeFrames, excludedFrames)}
     </div>
   `
 }
@@ -4055,114 +4191,152 @@ function renderPoseAwareSummary(
   `
 }
 
-function renderPoseAwareFrameGroup(
-  title: string,
-  frames: PoseAwareObservationFrame[],
-  note: string,
-  emptyText: string,
-  groupRole: "front_reference" | "observation" | "excluded",
+function renderAuthoringFrameUsagePanel(
+  activeFrames: ExtractedVideoFrame[],
+  excludedFrames: ExtractedVideoFrame[],
 ): string {
   return `
-    <article class="pose-aware-frame-group">
-      <h4>${escapeHtml(title)}（${frames.length}件）</h4>
-      <p>${escapeHtml(note)}</p>
-      ${
-        frames.length === 0
-          ? `<p class="pose-aware-empty">${escapeHtml(emptyText)}</p>`
-          : `<div class="pose-aware-frame-list">
-              ${frames
-                .map((frame) => renderPoseAwareFrameItem(frame, groupRole))
-                .join("")}
-            </div>`
-      }
+    <div class="frame-usage-panel">
+      <section class="frame-usage-section" aria-label="フレーム一覧">
+        <h4>フレーム一覧（${activeFrames.length}件）</h4>
+        <p>1フレーム1カードで、正面基準 / 表情 / 推定に使う用途を設定します。</p>
+        ${
+          activeFrames.length === 0
+            ? `<p class="pose-aware-empty">detailed scan 済みの有効フレームはまだありません。</p>`
+            : `<div class="frame-usage-grid">
+                ${activeFrames.map(renderAuthoringFrameCard).join("")}
+              </div>`
+        }
+      </section>
+      <section class="frame-usage-section" aria-label="除外フレーム">
+        <h4>除外フレーム（${excludedFrames.length}件）</h4>
+        <p>除外済み frame は正面基準 / 推定 / 表情解析の処理対象から外れます。</p>
+        ${
+          excludedFrames.length === 0
+            ? `<p class="pose-aware-empty">除外フレームはありません。</p>`
+            : `<div class="frame-usage-grid">
+                ${excludedFrames.map(renderExcludedAuthoringFrameCard).join("")}
+              </div>`
+        }
+      </section>
+    </div>
+  `
+}
+
+function renderAuthoringFrameCard(frame: ExtractedVideoFrame): string {
+  const usage = getAuthoringFrameUsage(frame)
+  const analysis = frame.analysis
+  const pose = analysis?.pose ?? EMPTY_FACE_POSE
+  const landmarksCount = analysis?.landmarks.length ?? 0
+  const frameId = getFrameIdFromFrame(frame)
+
+  return `
+    <article class="frame-usage-card">
+      <img src="${escapeHtml(frame.thumbnailUrl)}" alt="Frame ${String(frame.index).padStart(3, "0")} / ${frame.timestamp.toFixed(3)}s" />
+      <div class="frame-usage-card-body">
+        <h4>Frame ${escapeHtml(frameId)} / ${frame.timestamp.toFixed(3)}s</h4>
+        <div class="frame-usage-controls">
+          <label>
+            <input
+              type="checkbox"
+              data-frame-usage-front-reference="${escapeHtml(frameId)}"
+              ${usage.frontReference ? "checked" : ""}
+            />
+            正面基準
+          </label>
+          <label class="frame-usage-expression-control">
+            <span>表情</span>
+            <select data-frame-usage-expression="${escapeHtml(frameId)}">
+              ${FRAME_EXPRESSION_GROUP_IDS.map(
+                (groupId) => `
+                  <option value="${groupId}" ${
+                    usage.expressionGroup === groupId ? "selected" : ""
+                  }>
+                    ${groupId}
+                  </option>
+                `,
+              ).join("")}
+            </select>
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              data-frame-usage-inference="${escapeHtml(frameId)}"
+              ${usage.useForInference ? "checked" : ""}
+            />
+            推定に使う
+          </label>
+        </div>
+        <button
+          class="candidate-label-button pose-aware-inline-action"
+          type="button"
+          data-frame-usage-exclude="${escapeHtml(frameId)}"
+        >
+          除外する
+        </button>
+        <div class="frame-usage-meta">
+          <span>自動判定: ${escapeHtml(usage.autoExpressionGroup)}</span>
+          <span>pose: yaw ${formatNumber(pose.yaw)} / pitch ${formatNumber(pose.pitch)} / roll ${formatNumber(pose.roll)}</span>
+          <span>landmarks 数: ${landmarksCount}</span>
+          <span>score: ${formatPoseAwareScore(getPoseAwareCandidateScore(frame.index))}</span>
+        </div>
+      </div>
     </article>
   `
 }
 
-function renderPoseAwareFrameItem(
-  frame: PoseAwareObservationFrame,
-  groupRole: "front_reference" | "observation" | "excluded",
-): string {
+function renderExcludedAuthoringFrameCard(frame: ExtractedVideoFrame): string {
+  const usage = getAuthoringFrameUsage(frame)
+  const frameId = getFrameIdFromFrame(frame)
+
   return `
-    <div class="pose-aware-frame-item${frame.excluded ? " pose-aware-frame-item-excluded" : ""}">
-      <img src="${escapeHtml(frame.thumbnailUrl)}" alt="Frame ${String(frame.frameIndex).padStart(3, "0")} / ${frame.timestamp.toFixed(1)}s" />
-      <div>
-        <strong>Frame ${String(frame.frameIndex).padStart(3, "0")} / ${frame.timestamp.toFixed(1)}s</strong>
-        <span>yaw: ${formatNumber(frame.pose.yaw)} / pitch: ${formatNumber(frame.pose.pitch)} / roll: ${formatNumber(frame.pose.roll)}</span>
-        <span>score: ${formatPoseAwareScore(frame.score)}</span>
-        <span>landmarks 数: ${frame.landmarksCount}</span>
-        <span>role: ${frame.role}</span>
-        ${isFrameFrontReferenceForPoseAware(frame.frameIndex) ? "<span>正面基準に追加済み</span>" : ""}
-        ${frame.excluded ? "<span>Step 2-I 除外中</span>" : ""}
-        ${renderPoseAwareFrameActions(frame, groupRole)}
+    <article class="frame-usage-card frame-usage-card-excluded">
+      <img src="${escapeHtml(frame.thumbnailUrl)}" alt="Frame ${String(frame.index).padStart(3, "0")} / ${frame.timestamp.toFixed(3)}s" />
+      <div class="frame-usage-card-body">
+        <h4>Frame ${escapeHtml(frameId)} / ${frame.timestamp.toFixed(3)}s</h4>
+        <div class="frame-usage-meta">
+          <span>除外理由: ${escapeHtml(usage.excludedReason ?? "manual")}</span>
+          <span>自動判定: ${escapeHtml(usage.autoExpressionGroup)}</span>
+        </div>
+        <button
+          class="candidate-label-button pose-aware-inline-action"
+          type="button"
+          data-frame-usage-restore="${escapeHtml(frameId)}"
+        >
+          復元する
+        </button>
       </div>
-    </div>
+    </article>
   `
 }
 
-function renderPoseAwareFrameActions(
-  frame: PoseAwareObservationFrame,
-  groupRole: "front_reference" | "observation" | "excluded",
-): string {
-  if (groupRole === "excluded") {
-    return `
-      <div class="pose-aware-frame-actions">
-        ${renderPoseAwareFrameActionButton(frame, "excluded_remove", "除外解除")}
-      </div>
-    `
-  }
-
-  if (groupRole === "front_reference") {
-    return `
-      <div class="pose-aware-frame-actions">
-        ${renderPoseAwareFrameActionButton(
-          frame,
-          "front_reference_remove",
-          "正面基準から外す",
-        )}
-        ${renderPoseAwareFrameActionButton(frame, "excluded_add", "除外")}
-      </div>
-    `
-  }
-
-  const frontReferenceAction = isFrameFrontReferenceForPoseAware(frame.frameIndex)
-    ? renderPoseAwareFrameActionButton(
-        frame,
-        "front_reference_remove",
-        "正面基準から外す",
-      )
-    : renderPoseAwareFrameActionButton(
-        frame,
-        "front_reference_add",
-        "正面基準に追加",
-      )
+function renderFrameUsageSummaryPanel(): string {
+  const summary = getFrameUsageSummary()
 
   return `
-    <div class="pose-aware-frame-actions">
-      ${frontReferenceAction}
-      ${renderPoseAwareFrameActionButton(frame, "excluded_add", "除外")}
+    <div class="pose-aware-coverage">
+      <strong>frame usage summary</strong>
+      <ul>
+        <li>source frames: ${summary.sourceFrameCount}件</li>
+        <li>frontReference: ${summary.frontReferenceCount}件</li>
+        <li>useForInference: ${summary.useForInferenceCount}件</li>
+        <li>excluded: ${summary.excludedCount}件</li>
+      </ul>
+      <strong>expressionGroup counts</strong>
+      <ul>
+        ${FRAME_EXPRESSION_GROUP_IDS.map(
+          (groupId) =>
+            `<li>${groupId}: ${summary.expressionGroupCounts[groupId]}件</li>`,
+        ).join("")}
+      </ul>
+      <strong>excluded reason counts</strong>
+      <ul>
+        ${EXCLUDED_REASON_IDS.map(
+          (reason) =>
+            `<li>${reason}: ${summary.excludedReasonCounts[reason]}件</li>`,
+        ).join("")}
+      </ul>
     </div>
-  `
-}
-
-function renderPoseAwareFrameActionButton(
-  frame: PoseAwareObservationFrame,
-  action:
-    | "front_reference_add"
-    | "front_reference_remove"
-    | "excluded_add"
-    | "excluded_remove",
-  label: string,
-): string {
-  return `
-    <button
-      class="candidate-label-button pose-aware-inline-action"
-      type="button"
-      data-pose-aware-action="${action}"
-      data-frame-index="${frame.frameIndex}"
-    >
-      ${label}
-    </button>
   `
 }
 
@@ -4760,8 +4934,8 @@ function renderExpressionGroupingPanel(): string {
     <section class="expression-grouping-panel" aria-label="表情フレーム分類">
       <div class="panel-heading">
         <div>
-          <h2>表情フレーム分類</h2>
-          <p>detailed scan 済み frames の blendshape score から、neutral / expression / mixed / excluded の候補数を集計します。3D生成や landmarkFollowStrengths 生成はまだ行いません。</p>
+          <h2>自動表情判定</h2>
+          <p>detailed scan 済み frames の blendshape score から、表情 dropdown の初期値を作ります。3D生成や landmarkFollowStrengths 生成はまだ行いません。</p>
         </div>
       </div>
       <dl class="pose-aware-summary-list expression-grouping-summary-list">
@@ -4774,8 +4948,8 @@ function renderExpressionGroupingPanel(): string {
           <dd>${summary.sourceFrameCount}件</dd>
         </div>
         <div>
-          <dt>neutral</dt>
-          <dd>${summary.neutralFrameCount}件</dd>
+          <dt>none</dt>
+          <dd>${summary.noneExpressionFrameCount}件</dd>
         </div>
         <div>
           <dt>mixedExpression</dt>
@@ -4791,11 +4965,6 @@ function renderExpressionGroupingPanel(): string {
         </div>
       </dl>
       <div class="expression-grouping-grid">
-        <article class="expression-group-card">
-          <h3>neutral</h3>
-          <strong>${summary.neutralFrameCount}件</strong>
-          <p>frame ids: ${renderExpressionFramePreviewList(summary.neutralFrames)}</p>
-        </article>
         ${summary.expressionGroups
           .map(
             (group) => `
@@ -4825,8 +4994,7 @@ function renderExpressionGroupingPanel(): string {
           <li>landmarks 不正: ${summary.excludedBreakdown.invalidLandmarkFrameCount}件</li>
           <li>blendshapes なし: ${summary.excludedBreakdown.missingBlendshapeFrameCount}件</li>
           <li>pose 範囲外: ${summary.excludedBreakdown.extremePoseFrameCount}件</li>
-          <li>mixedExpression: ${summary.excludedBreakdown.mixedExpressionFrameCount}件</li>
-          <li>判定保留: ${summary.excludedBreakdown.unclearExpressionFrameCount}件</li>
+          <li>判定保留: ${summary.excludedBreakdown.pendingFrameCount}件</li>
         </ul>
       </div>
       <div class="pose-aware-coverage">
@@ -4893,12 +5061,15 @@ function toExpressionAnalysisPreview(): unknown {
   return {
     status: summary.status,
     source: summary.source,
-    thresholds: EXPRESSION_GROUPING_THRESHOLDS,
+    thresholds: {
+      expression: EXPRESSION_GROUPING_THRESHOLDS.expression,
+      pose: EXPRESSION_GROUPING_THRESHOLDS.pose,
+    },
     summary: {
       sourceFrameCount: summary.sourceFrameCount,
-      neutralFrameCount: summary.neutralFrameCount,
-      neutralFrameIdPreview: toExpressionFrameIdPreview(
-        summary.neutralFrames,
+      noneExpressionFrameCount: summary.noneExpressionFrameCount,
+      noneExpressionFrameIdPreview: toExpressionFrameIdPreview(
+        summary.noneExpressionFrames,
       ),
       expressionGroups: summary.expressionGroups.map(toExpressionGroupPreview),
       mixedExpressionFrameCount: summary.mixedExpressionFrameCount,
@@ -5041,6 +5212,7 @@ function buildAuthoringDebugPreview(): unknown {
       candidate: toPoseAwareCandidatePreview(),
     },
     expressionAnalysis: toExpressionAnalysisPreview(),
+    frameUsage: getFrameUsageSummary(),
     currentCandidate: toCurrentCandidatePreview(currentCandidate),
     landmarkGroups: toLandmarkGroupsPreview(),
     coordinateDebug: toCoordinateDebugPreview(
@@ -5082,38 +5254,56 @@ function attachAnalysisHandler(): void {
 
 function attachPoseAwareFrameSelectionHandler(): void {
   document
-    .querySelectorAll<HTMLButtonElement>("[data-pose-aware-action]")
+    .querySelectorAll<HTMLInputElement>("[data-frame-usage-front-reference]")
+    .forEach((input) => {
+      input.addEventListener("change", () => {
+        setAuthoringFrameFrontReference(
+          input.dataset.frameUsageFrontReference ?? "",
+          input.checked,
+        )
+        render()
+      })
+    })
+
+  document
+    .querySelectorAll<HTMLInputElement>("[data-frame-usage-inference]")
+    .forEach((input) => {
+      input.addEventListener("change", () => {
+        setAuthoringFrameUseForInference(
+          input.dataset.frameUsageInference ?? "",
+          input.checked,
+        )
+        render()
+      })
+    })
+
+  document
+    .querySelectorAll<HTMLSelectElement>("[data-frame-usage-expression]")
+    .forEach((select) => {
+      select.addEventListener("change", () => {
+        setAuthoringFrameExpressionGroup(
+          select.dataset.frameUsageExpression ?? "",
+          select.value,
+        )
+        render()
+      })
+    })
+
+  document
+    .querySelectorAll<HTMLButtonElement>("[data-frame-usage-exclude]")
     .forEach((button) => {
       button.addEventListener("click", () => {
-        const action = button.dataset.poseAwareAction
-        const frameIndex = Number(button.dataset.frameIndex)
+        excludeAuthoringFrame(button.dataset.frameUsageExclude ?? "")
+        render()
+      })
+    })
 
-        if (!Number.isFinite(frameIndex)) {
-          return
-        }
-
-        if (action === "front_reference_add") {
-          addPoseAwareFrontReferenceFrame(frameIndex)
-          render()
-          return
-        }
-
-        if (action === "front_reference_remove") {
-          removePoseAwareFrontReferenceFrame(frameIndex)
-          render()
-          return
-        }
-
-        if (action === "excluded_add") {
-          excludePoseAwareFrame(frameIndex)
-          render()
-          return
-        }
-
-        if (action === "excluded_remove") {
-          removePoseAwareExcludedFrame(frameIndex)
-          render()
-        }
+  document
+    .querySelectorAll<HTMLButtonElement>("[data-frame-usage-restore]")
+    .forEach((button) => {
+      button.addEventListener("click", () => {
+        restoreAuthoringFrame(button.dataset.frameUsageRestore ?? "")
+        render()
       })
     })
 }
@@ -5493,7 +5683,7 @@ async function analyzeExtractedFrames(): Promise<void> {
     return
   }
 
-  idealLandmarks3DFrameSelection = createEmptyIdealLandmarks3DFrameSelection()
+  resetAuthoringFrameUsages()
   resetIdealLandmarks3DCandidateResult()
   updateVideoSource({
     isAnalyzing: true,
@@ -5848,7 +6038,7 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 async function handleVideoFileSelection(file: File): Promise<void> {
-  idealLandmarks3DFrameSelection = createEmptyIdealLandmarks3DFrameSelection()
+  resetAuthoringFrameUsages()
   resetIdealLandmarks3DCandidateResult()
 
   if (file.type !== "video/mp4" && !file.name.toLowerCase().endsWith(".mp4")) {
@@ -6564,6 +6754,124 @@ style.textContent = `
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 10px;
+  }
+
+  .frame-usage-panel {
+    display: grid;
+    gap: 12px;
+  }
+
+  .frame-usage-section {
+    display: grid;
+    gap: 10px;
+    min-width: 0;
+    border: 1px solid #dde6e2;
+    border-radius: 8px;
+    background: #fbfdfc;
+    padding: 12px;
+  }
+
+  .frame-usage-section h4,
+  .frame-usage-section p {
+    margin: 0;
+  }
+
+  .frame-usage-section p {
+    color: #5d675f;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.45;
+  }
+
+  .frame-usage-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 10px;
+  }
+
+  .frame-usage-card {
+    display: grid;
+    grid-template-columns: 104px minmax(0, 1fr);
+    gap: 10px;
+    min-width: 0;
+    border: 1px solid #ccd8d3;
+    border-radius: 8px;
+    background: #ffffff;
+    padding: 10px;
+  }
+
+  .frame-usage-card-excluded {
+    border-color: #d69a94;
+    background: #fff7f6;
+  }
+
+  .frame-usage-card img {
+    display: block;
+    width: 104px;
+    aspect-ratio: 16 / 9;
+    border-radius: 6px;
+    object-fit: contain;
+    background: #1f2824;
+  }
+
+  .frame-usage-card-body,
+  .frame-usage-controls,
+  .frame-usage-meta {
+    display: grid;
+    min-width: 0;
+  }
+
+  .frame-usage-card-body {
+    gap: 8px;
+    align-content: start;
+  }
+
+  .frame-usage-controls {
+    gap: 7px;
+  }
+
+  .frame-usage-controls label,
+  .frame-usage-meta span {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    color: #5d675f;
+    font-size: 12px;
+    font-weight: 800;
+    line-height: 1.35;
+  }
+
+  .frame-usage-controls label {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    color: #25342e;
+  }
+
+  .frame-usage-expression-control select {
+    min-height: 30px;
+    max-width: 100%;
+    border: 1px solid #b7c7c2;
+    border-radius: 6px;
+    background: #ffffff;
+    color: #25342e;
+    padding: 4px 8px;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 800;
+  }
+
+  .frame-usage-meta {
+    gap: 3px;
+  }
+
+  .frame-usage-card h4 {
+    min-width: 0;
+    margin: 0;
+    overflow-wrap: anywhere;
+    color: #17201b;
+    font-size: 13px;
+    line-height: 1.35;
   }
 
   .pose-aware-frame-group {
@@ -7382,12 +7690,14 @@ style.textContent = `
   @media (max-width: 520px) {
     .candidate-item,
     .dataset-entry-card,
+    .frame-usage-card,
     .pose-aware-frame-item {
       grid-template-columns: 1fr;
     }
 
     .candidate-item img,
     .dataset-entry-card img,
+    .frame-usage-card img,
     .pose-aware-frame-item img,
     .dataset-thumbnail-empty {
       width: 100%;

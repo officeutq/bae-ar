@@ -9,6 +9,7 @@ BAE AR は、Engine Runtime、Beauty Studio、IdealFace Authoring Tool、Layer M
 - Studio は Engine Runtime の公開 API のみを使います。
 - Studio から Engine Runtime の内部実装へ直接依存しません。
 - IdealFace Authoring Tool は Step 2-I-A/B/C と Step 2-H まで実装済みです。
+- IdealFace Authoring Tool の Step 2-I-A では、`frontReference` / `useForInference` / `expressionGroup` を重複可能な用途タグとして扱い、`excluded` だけを排他的に扱います。
 - Layer Mask Authoring Tool は将来予定です。
 - Authoring Tool の処理を Runtime に混ぜません。
 - 1 つの Issue では目的を絞って小さく実装します。
