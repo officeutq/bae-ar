@@ -57,7 +57,7 @@ See [correctionProfile v1](docs/correction-profile-v1.md). Authoring Tool editin
 
 今後の表情制御は、単純に group の補正強度を下げる `expressionAttenuation` ではなく、表情ごとに landmark が neutral な projected ideal へどれだけ追従するかを定義する `expressionFollow v1` を中心に整理します。
 
-`idealFollowStrength` は `0.0 = current / camera を優先`、`1.0 = projected ideal を優先` です。`landmarkGroups` は rule の対象範囲、`landmarkFollowStrengths` は landmark ごとの追従率です。`landmarkFollowStrengths` は MP4 の表情別 frame group から neutral 3D 478 / expression 3D 478 を生成し、同じ `comparisonSpace` で 3D 差分を比較して自動生成する方針です。
+`idealFollowStrength` は `0.0 = current / camera を優先`、`1.0 = projected ideal を優先` です。`landmarkGroups` は rule の対象範囲、`landmarkFollowStrengths` は landmark ごとの追従率です。`landmarkFollowStrengths[].idealFollowStrength` は rule 最大時の target value であり、実行時は blendshape score と `inputRange` から `ruleAmount` を計算して、`1.0` から target へ補間した `effectiveIdealFollowStrength` を使います。`landmarkFollowStrengths` は MP4 の表情別 frame group から neutral 3D 478 / expression 3D 478 を生成し、同じ `comparisonSpace` で 3D 差分を比較して自動生成する方針です。
 
 See [expressionFollow v1](docs/expression-follow-v1.md). This is documentation direction only. TypeScript implementation, Engine implementation, Studio implementation, Authoring Tool UI, JSON export changes, validator changes, MP4 expression 3D analysis, landmarkFollowStrengths auto generation, Production Shape Warp, and Runtime renderer integration are not included in this step.
 

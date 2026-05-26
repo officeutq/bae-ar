@@ -82,13 +82,29 @@ idealFollowStrength:
   1.0 = projected ideal を優先
 
 defaultIdealFollowStrengthRange:
-  blendshape score に応じて group 全体の fallback idealFollowStrength を決める
+  group 全体の fallback idealFollowStrength range
+  [0] は通常時の idealFollowStrength
+  [1] は rule が最大に効いた時の default target idealFollowStrength
 
 landmarkFollowStrengths:
-  表情時に特定 landmark が ideal へどれだけ追従するかを個別指定する
+  表情 rule が最大に効いた時に、特定 landmark が ideal へどれだけ追従するかを個別指定する
 ```
 
-`idealFollowStrength` は既存の `correctionProfile.strength` と同じ 0.0 から 1.0 の直感に揃えます。指定がある landmark は `landmarkFollowStrengths` の値を優先し、指定がない landmark は `defaultIdealFollowStrengthRange` から計算した値を使います。
+`idealFollowStrength` は既存の `correctionProfile.strength` と同じ 0.0 から 1.0 の直感に揃えます。
+
+`landmarkFollowStrengths[].idealFollowStrength` は、その表情 rule が最大に効いたときの target idealFollowStrength です。常に即時適用する固定値ではありません。実行時には blendshape score から `ruleAmount` を計算し、通常時の `1.0` から target idealFollowStrength へ補間した `effectiveIdealFollowStrength` を使います。
+
+`defaultIdealFollowStrengthRange[0]` は通常時の idealFollowStrength です。v1 では基本的に `1.0` を推奨します。`defaultIdealFollowStrengthRange[1]` は rule が最大に効いた時の default target idealFollowStrength です。
+
+既存例の `defaultIdealFollowStrengthRange: [1.0, 0.35]` は、次の意味です。
+
+```text
+ruleAmount = 0.0 の時:
+  default effectiveIdealFollowStrength = 1.0
+
+ruleAmount = 1.0 の時:
+  default effectiveIdealFollowStrength = 0.35
+```
 
 ## 計算イメージ
 
@@ -99,12 +115,21 @@ baseStrength =
   correctionProfile.defaultStrength
   または landmarkStrength override
 
-expressionFollowStrength =
-  landmarkFollowStrengths に index があればその idealFollowStrength
-  なければ defaultIdealFollowStrengthRange から計算した値
+ruleAmount = clamp(
+  (score - inputRange[0]) / (inputRange[1] - inputRange[0]),
+  0,
+  1
+)
+
+targetIdealFollowStrength =
+  landmarkFollowStrengths に index があれば、その idealFollowStrength
+  なければ defaultIdealFollowStrengthRange[1]
+
+effectiveIdealFollowStrength =
+  lerp(1.0, targetIdealFollowStrength, ruleAmount)
 
 finalStrength =
-  baseStrength * expressionFollowStrength
+  baseStrength * effectiveIdealFollowStrength
 
 correctionDelta =
   rawDelta * finalStrength
@@ -114,12 +139,94 @@ correctionDelta =
 ```
 
 ```text
-idealFollowStrength が低い:
+ruleAmount = 0.0:
+  expressionFollow rule は効いていない
+  effectiveIdealFollowStrength は 1.0
+  通常どおり neutral ideal へ追従する
+
+ruleAmount = 1.0:
+  expressionFollow rule が最大に効いている
+  effectiveIdealFollowStrength は target value
+
+0.0〜1.0:
+  1.0 から target value へ滑らかに補間する
+
+effectiveIdealFollowStrength が低い:
   表情による current の状態を優先する
 
-idealFollowStrength が高い:
+effectiveIdealFollowStrength が高い:
   neutral ideal へ追従する
 ```
+
+landmark override と default の関係:
+
+```text
+landmarkFollowStrengths に index がある場合:
+  その landmark の target idealFollowStrength を使う
+
+landmarkFollowStrengths に index がない場合:
+  defaultIdealFollowStrengthRange[1] を target idealFollowStrength として使う
+
+どちらの場合も:
+  blendshape score による ruleAmount で 1.0 から target へ補間する
+```
+
+## interpolation 例
+
+```json
+{
+  "id": "mouth_pucker_follow",
+  "blendshape": "mouthPucker",
+  "affectedLandmarkGroups": ["mouth"],
+  "inputRange": [0.2, 0.8],
+  "defaultIdealFollowStrengthRange": [1.0, 0.35],
+  "landmarkFollowStrengths": [
+    {
+      "index": 13,
+      "idealFollowStrength": 0.1
+    }
+  ]
+}
+```
+
+Landmark[13] は `landmarkFollowStrengths` に指定があるため、rule 最大時の target idealFollowStrength は `0.1` です。
+
+```text
+mouthPucker score <= 0.2:
+  ruleAmount = 0
+  Landmark[13] effectiveIdealFollowStrength = 1.0
+
+mouthPucker score = 0.5:
+  ruleAmount = 0.5
+  Landmark[13] effectiveIdealFollowStrength = lerp(1.0, 0.1, 0.5) = 0.55
+
+mouthPucker score >= 0.8:
+  ruleAmount = 1
+  Landmark[13] effectiveIdealFollowStrength = 0.1
+```
+
+Landmark[202] は `landmarkFollowStrengths` に指定がないため、rule 最大時の default target idealFollowStrength は `defaultIdealFollowStrengthRange[1]` の `0.35` です。
+
+```text
+mouthPucker score <= 0.2:
+  Landmark[202] effectiveIdealFollowStrength = 1.0
+
+mouthPucker score >= 0.8:
+  Landmark[202] effectiveIdealFollowStrength = 0.35
+```
+
+## smoothing との関係
+
+`ruleAmount` から計算した `effectiveIdealFollowStrength` は frame ごとに変化します。急に切り替えるとカクつくため、Engine 実装時には `smoothing.halfLifeMs` を使った smoothing を適用する方針です。
+
+```json
+"smoothing": {
+  "enabled": true,
+  "halfLifeMs": 120
+}
+```
+
+具体的な smoothing 実装は後段で扱います。
 
 ## landmarkGroups との関係
 

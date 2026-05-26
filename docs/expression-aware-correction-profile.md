@@ -63,12 +63,18 @@ baseStrength =
   correctionProfile.defaultStrength
   または landmarkStrength override
 
-expressionFollowStrength =
-  landmarkFollowStrengths に index があればその idealFollowStrength
-  なければ defaultIdealFollowStrengthRange から計算した値
+targetIdealFollowStrength =
+  landmarkFollowStrengths に index があれば、その target idealFollowStrength
+  なければ defaultIdealFollowStrengthRange[1]
+
+ruleAmount =
+  inputRange と blendshape score から 0.0〜1.0 に正規化した値
+
+effectiveIdealFollowStrength =
+  lerp(1.0, targetIdealFollowStrength, ruleAmount)
 
 finalStrength =
-  baseStrength * expressionFollowStrength
+  baseStrength * effectiveIdealFollowStrength
 
 correctionDelta =
   rawDelta * finalStrength
@@ -77,7 +83,7 @@ correctionDelta =
   clampLength(correctionDelta, maxCorrectionDistance)
 ```
 
-`idealFollowStrength` が低い landmark は current / camera の表情状態を優先し、`idealFollowStrength` が高い landmark は neutral な projected ideal に追従します。
+`landmarkFollowStrengths[].idealFollowStrength` は rule 最大時の target value であり、常に即時適用する固定値ではありません。blendshape score が `inputRange` の低い側にあるときは `effectiveIdealFollowStrength` は `1.0` に近く、通常どおり neutral ideal へ追従します。score が高くなり `ruleAmount` が `1.0` に近づくほど、`effectiveIdealFollowStrength` は target value へ近づき、current / camera の表情状態を優先します。詳細は [expressionFollow v1](expression-follow-v1.md) の interpolation rule に整理します。
 
 ## landmarkGroups との関係
 
