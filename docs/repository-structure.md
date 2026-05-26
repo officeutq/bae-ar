@@ -202,6 +202,7 @@ Layer Mask Authoring Tool を置く想定の場所です。
 
 - `correction-profile-v1.md`: `ideal_face_asset_v1` の optional `correctionProfile` 仕様、fallback、validation、`expressionFollow` / `expressionAttenuation`、CorrectionPlan との関係
 - `expression-follow-v1.md`: 表情ごとの `idealFollowStrength` / `landmarkFollowStrengths` と MP4 由来 3D 478 比較による自動生成方針
+- `mp4-expression-3d-analysis-plan.md`: IdealFace Authoring Tool が MP4 から neutral / expression 3D 478 を生成し、`landmarkFollowStrengths` を自動生成する計画
 - `landmark-groups-v1.md`: `ideal_face_asset_v1` / `beauty_filter_asset_v1` で使う optional `landmarkGroups` 仕様、Engine fallback、validation、Landmark Group Editor 方針
 - `shape-warp-production-direction.md`: Shape Warp v1 debug prototype と production candidate の違い、WebGL mesh warp 方針、段階分け
 - `beauty-filter-asset-v1.md`: 最終フィルター / プリセットを `idealFace` / `landmarkGroups` / `correctionProfile` / `shapeWarpSettings` / `colorLayers` に分けつつ、1つの `beauty_filter_asset_v1` JSON として配布する方向性
@@ -240,7 +241,7 @@ MP4 input
 
 ## 今後の構成変更
 
-IdealFace v1、Runtime 側の idealLandmarks3D 478点読み込み / 投影、current 478 landmarks と projected ideal 478 landmarks の difference debug、`correctionProfile` v1 foundation、`expressionAttenuation` v1 foundation、CorrectionPlan v1 debug foundation、Studio 向け Shape Warp v1 debug prototype、WebGL mesh warp v1 prototype は実装済みです。`landmarkGroups` v1 は docs specification、Engine foundation、asset / fallback group source handling、Studio debug / Copy Debug summary、Authoring Tool Landmark Group Editor v1 prototype、`ideal_face_asset_v1` optional `landmarkGroups` export まで実装済みです。`expressionFollow v1` は docs direction のみで、Engine implementation、MP4 expression 3D analysis、landmarkFollowStrengths 自動生成は未実装です。`expressionAttenuation falloff v1` は fallback / 参考案です。`shapeWarpSettings` v1、`colorLayers` v1、`beauty_filter_asset_v1`、Production Shape Warp、Layer System、LayerMaskSpec、Color Processing、Runtime renderer integration も未実装です。追加する場合も、Engine Runtime の責務と Authoring Tool の責務を分け、Studio からは公開 API 経由で確認できるようにします。
+IdealFace v1、Runtime 側の idealLandmarks3D 478点読み込み / 投影、current 478 landmarks と projected ideal 478 landmarks の difference debug、`correctionProfile` v1 foundation、`expressionAttenuation` v1 foundation、CorrectionPlan v1 debug foundation、Studio 向け Shape Warp v1 debug prototype、WebGL mesh warp v1 prototype は実装済みです。`landmarkGroups` v1 は docs specification、Engine foundation、asset / fallback group source handling、Studio debug / Copy Debug summary、Authoring Tool Landmark Group Editor v1 prototype、`ideal_face_asset_v1` optional `landmarkGroups` export まで実装済みです。`expressionFollow v1` と [MP4 expression 3D analysis plan](mp4-expression-3d-analysis-plan.md) は docs direction のみで、Engine implementation、MP4 expression 3D analysis、landmarkFollowStrengths 自動生成は未実装です。`expressionAttenuation falloff v1` は fallback / 参考案です。`shapeWarpSettings` v1、`colorLayers` v1、`beauty_filter_asset_v1`、Production Shape Warp、Layer System、LayerMaskSpec、Color Processing、Runtime renderer integration も未実装です。追加する場合も、Engine Runtime の責務と Authoring Tool の責務を分け、Studio からは公開 API 経由で確認できるようにします。
 
 ## `tools/ideal-face-authoring` Step 1 / Step 2-A / Step 2-B
 

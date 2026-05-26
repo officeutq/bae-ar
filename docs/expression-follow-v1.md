@@ -244,7 +244,7 @@ expressionFollow:
 
 ## MP4 からの自動生成方針
 
-`landmarkFollowStrengths` は手作業だけで作るのではなく、IdealFace Authoring Tool が MP4 読み込み時に自動生成する方針です。
+`landmarkFollowStrengths` は手作業だけで作るのではなく、IdealFace Authoring Tool が MP4 読み込み時に自動生成する方針です。詳細な frame group 分類、3D 478 生成、distance3D から `idealFollowStrength` への変換、JSON preview / export の段階方針は [MP4 expression 3D analysis plan](mp4-expression-3d-analysis-plan.md) に整理します。
 
 比較は 2D projected / image-normalized ではなく、同じ coordinate space に正規化した 3D 478 landmarks 同士で行います。
 

@@ -258,9 +258,9 @@ current-vs-projected ideal 478点 difference debug v1 は、MediaPipe current im
 
 Engine 側では、`expressionAttenuation` を optional field として扱う v1 foundation も実装済みです。これは MediaPipe blendshape score から `mouth` / `left_eye` / `right_eye` / `face_boundary` などの group ごとの `strengthScale` を計算し、CorrectionPlan の `baseStrength` に掛けて `finalStrength` を決める既存の safety attenuation です。
 
-今後の中心仕様では、表情時に単純に group の補正強度を下げるのではなく、表情ごとに landmark が neutral な projected ideal へどれだけ追従するかを定義する `expressionFollow v1` を優先します。`idealFollowStrength` は `0.0 = current / camera を優先`、`1.0 = projected ideal を優先` です。`landmarkFollowStrengths` は MP4 の neutral 3D 478 / expression 3D 478 を同じ `comparisonSpace` で比較し、3D 差分から自動生成する方針です。
+今後の中心仕様では、表情時に単純に group の補正強度を下げるのではなく、表情ごとに landmark が neutral な projected ideal へどれだけ追従するかを定義する `expressionFollow v1` を優先します。`idealFollowStrength` は `0.0 = current / camera を優先`、`1.0 = projected ideal を優先` です。`landmarkFollowStrengths` は MP4 の neutral 3D 478 / expression 3D 478 を同じ `comparisonSpace` で比較し、3D 差分から自動生成する方針です。frame group 分類と自動生成の詳細は [MP4 expression 3D analysis plan](mp4-expression-3d-analysis-plan.md) に整理します。
 
-詳細仕様、fallback、validation 方針、Runtime / Authoring / Studio の責務分離は [correctionProfile v1](correction-profile-v1.md) に定義します。新方針は [expressionFollow v1](expression-follow-v1.md) に、既存 foundation との関係は [expression-aware correctionProfile](expression-aware-correction-profile.md) に、旧方針の fallback / 参考案は [expressionAttenuation falloff v1](expression-attenuation-falloff-v1.md) に整理します。Authoring Tool 編集 UI、asset export 連携、expressionFollow v1 実装、MP4 expression 3D analysis、Production Shape Warp は未実装です。
+詳細仕様、fallback、validation 方針、Runtime / Authoring / Studio の責務分離は [correctionProfile v1](correction-profile-v1.md) に定義します。新方針は [expressionFollow v1](expression-follow-v1.md) に、MP4 からの自動生成方針は [MP4 expression 3D analysis plan](mp4-expression-3d-analysis-plan.md) に、既存 foundation との関係は [expression-aware correctionProfile](expression-aware-correction-profile.md) に、旧方針の fallback / 参考案は [expressionAttenuation falloff v1](expression-attenuation-falloff-v1.md) に整理します。Authoring Tool 編集 UI、asset export 連携、expressionFollow v1 実装、MP4 expression 3D analysis、Production Shape Warp は未実装です。
 
 ### IdealFace Projection の座標系方針
 
@@ -395,7 +395,7 @@ beauty_filter_asset_v1
 
 Engine Runtime は UI を持たず、将来 `beauty_filter_asset_v1` を読み込んで Projection、current-vs-ideal difference、`expressionFollow`、既存 `expressionAttenuation` fallback、`CorrectionPlan`、WebGL mesh warp、LayerMask 生成、`colorLayers` 合成、temporal smoothing / stability control を実行します。Beauty Studio は公開 API 経由で読み込み・状態確認・debug / overlay / Copy Debug / tuning UI を提供します。Authoring Tool 群は各セクションの作成・編集を担当します。
 
-詳細は [beauty_filter_asset_v1 direction](beauty-filter-asset-v1.md) に整理します。`landmarkGroups v1` は docs specification、Engine foundation、asset / fallback group source handling、Studio debug / Copy Debug summary、Authoring Tool Landmark Group Editor v1 prototype、`ideal_face_asset_v1` optional export まで実装済みです。`expressionFollow v1` と MP4 expression 3D analysis は docs direction のみで未実装です。`expressionAttenuation falloff v1` は fallback / 参考案です。`beauty_filter_asset_v1`、`shapeWarpSettings`、`colorLayers`、Production Shape Warp、Color Processing、Runtime renderer integration はまだ未実装です。
+詳細は [beauty_filter_asset_v1 direction](beauty-filter-asset-v1.md) に整理します。`landmarkGroups v1` は docs specification、Engine foundation、asset / fallback group source handling、Studio debug / Copy Debug summary、Authoring Tool Landmark Group Editor v1 prototype、`ideal_face_asset_v1` optional export まで実装済みです。`expressionFollow v1` と [MP4 expression 3D analysis plan](mp4-expression-3d-analysis-plan.md) は docs direction のみで未実装です。`expressionAttenuation falloff v1` は fallback / 参考案です。`beauty_filter_asset_v1`、`shapeWarpSettings`、`colorLayers`、Production Shape Warp、Color Processing、Runtime renderer integration はまだ未実装です。
 
 ## 配布方針
 

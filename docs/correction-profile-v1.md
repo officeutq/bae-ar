@@ -140,7 +140,7 @@ correctionDelta = clampLength(rawDelta * finalStrength, maxCorrectionDistance)
 
 `landmarkFollowStrengths` は、表情ごとの landmark 追従率を個別に指定します。`landmarkFollowStrengths[].idealFollowStrength` は rule 最大時の target value であり、常に即時適用する固定値ではありません。指定がある landmark はその `idealFollowStrength` を target とし、指定がない landmark は `defaultIdealFollowStrengthRange[1]` を target とします。どちらの場合も、blendshape score から計算した `ruleAmount` で `1.0` から target へ補間します。
 
-詳細な JSON 仕様案、blendshape score interpolation rule、MP4 の表情別 3D 478 比較による自動生成方針、座標系方針は [expressionFollow v1](expression-follow-v1.md) に整理します。
+詳細な JSON 仕様案、blendshape score interpolation rule、座標系方針は [expressionFollow v1](expression-follow-v1.md) に整理します。MP4 の表情別 3D 478 比較による `landmarkFollowStrengths` 自動生成方針は [MP4 expression 3D analysis plan](mp4-expression-3d-analysis-plan.md) に整理します。
 
 ## expressionAttenuation との関係
 
