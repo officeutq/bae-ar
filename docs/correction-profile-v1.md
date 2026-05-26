@@ -131,14 +131,16 @@ idealFollowStrength:
 ```ts
 rawDelta = projectedIdeal - current
 baseStrength = correctionProfile.defaultStrength または landmarkStrength override
-expressionFollowStrength = landmarkFollowStrengths の idealFollowStrength または defaultIdealFollowStrengthRange 由来の値
-finalStrength = baseStrength * expressionFollowStrength
+ruleAmount = inputRange と blendshape score から計算する 0.0〜1.0 の値
+targetIdealFollowStrength = landmarkFollowStrengths の idealFollowStrength または defaultIdealFollowStrengthRange[1]
+effectiveIdealFollowStrength = lerp(1.0, targetIdealFollowStrength, ruleAmount)
+finalStrength = baseStrength * effectiveIdealFollowStrength
 correctionDelta = clampLength(rawDelta * finalStrength, maxCorrectionDistance)
 ```
 
-`landmarkFollowStrengths` は、表情ごとの landmark 追従率を個別に指定します。指定がある landmark はその `idealFollowStrength` を優先し、指定がない landmark は `defaultIdealFollowStrengthRange` から計算した fallback 値を使います。
+`landmarkFollowStrengths` は、表情ごとの landmark 追従率を個別に指定します。`landmarkFollowStrengths[].idealFollowStrength` は rule 最大時の target value であり、常に即時適用する固定値ではありません。指定がある landmark はその `idealFollowStrength` を target とし、指定がない landmark は `defaultIdealFollowStrengthRange[1]` を target とします。どちらの場合も、blendshape score から計算した `ruleAmount` で `1.0` から target へ補間します。
 
-詳細な JSON 仕様案、MP4 の表情別 3D 478 比較による自動生成方針、座標系方針は [expressionFollow v1](expression-follow-v1.md) に整理します。
+詳細な JSON 仕様案、blendshape score interpolation rule、MP4 の表情別 3D 478 比較による自動生成方針、座標系方針は [expressionFollow v1](expression-follow-v1.md) に整理します。
 
 ## expressionAttenuation との関係
 
@@ -251,7 +253,7 @@ CorrectionPlan:
   Engine が毎フレーム生成する実行計画
   current landmarks と projected ideal imageLandmarks の dx / dy を計算する
   correctionProfile の baseStrength を決める
-  expressionFollow がある場合は idealFollowStrength を掛ける
+  expressionFollow がある場合は effectiveIdealFollowStrength を掛ける
   既存 expressionAttenuation foundation がある場合は group strengthScale を掛ける
   maxCorrectionDistance で clamp する
   Shape Warp へ渡す correction vectors を持つ

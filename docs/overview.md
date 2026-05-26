@@ -62,7 +62,7 @@ Engine Runtime では、IdealFace の `idealLandmarks3D` 478点を現在顔の `
 
 Engine 側では、MediaPipe blendshape score に応じて `affectedLandmarkGroups` ごとの `strengthScale` を弱める `expressionAttenuation` v1 foundation も実装済みです。ただし今後の中心仕様では、表情時に単純に group の補正強度を下げるのではなく、表情ごとに landmark が neutral な projected ideal へどれだけ追従するかを定義する `expressionFollow v1` を優先します。
 
-`expressionFollow v1` では、`idealFollowStrength` を `0.0 = current / camera を優先`、`1.0 = projected ideal を優先` と定義します。`landmarkGroups` は rule の対象範囲、`landmarkFollowStrengths` は landmark ごとの追従率です。`landmarkFollowStrengths` は MP4 の表情別 frame group から neutral 3D 478 / expression 3D 478 を同じ `comparisonSpace` で比較し、3D 差分から自動生成する方針です。
+`expressionFollow v1` では、`idealFollowStrength` を `0.0 = current / camera を優先`、`1.0 = projected ideal を優先` と定義します。`landmarkGroups` は rule の対象範囲、`landmarkFollowStrengths` は landmark ごとの追従率です。`landmarkFollowStrengths[].idealFollowStrength` は rule 最大時の target value であり、実行時は blendshape score と `inputRange` から `ruleAmount` を計算して、`1.0` から target へ補間した `effectiveIdealFollowStrength` を使います。`landmarkFollowStrengths` は MP4 の表情別 frame group から neutral 3D 478 / expression 3D 478 を同じ `comparisonSpace` で比較し、3D 差分から自動生成する方針です。
 
 詳細仕様は [correctionProfile v1](correction-profile-v1.md)、[expressionFollow v1](expression-follow-v1.md)、[expression-aware correctionProfile](expression-aware-correction-profile.md) を参照してください。Engine 側 foundation、validation / fallback、expressionAttenuation v1 foundation、Studio debug summary、CorrectionPlan v1 debug foundation、Studio 向け Shape Warp v1 debug prototype は実装済みです。`expressionFollow v1` 実装、MP4 expression 3D analysis、Authoring Tool 編集 UI、asset export 連携、Production Shape Warp は未実装です。
 
@@ -202,7 +202,7 @@ shape processing は、個別パーツを独立して大きく変える方向に
 
 Shape Processing の差分は image-normalized coordinate で計算します。current 478 landmarks は MediaPipe 由来の image-normalized 座標です。projected ideal 478 landmarks は、IdealFace same-unit landmarks を `FacePose` へ投影し、alignment 後に image-normalized 座標へ変換したものです。差分は `deltaX = projectedIdealImageX - currentX`、`deltaY = projectedIdealImageY - currentY` として `CorrectionPlan` に渡します。
 
-CorrectionPlan v1 debug foundation は、`correctionProfile` の `strength` をこの差分に掛け、`maxCorrectionDistance` で clamp した correction vector を生成します。今後の `expressionFollow v1` では、blendshape score に応じて各 landmark の `idealFollowStrength` を決め、`finalStrength = baseStrength * idealFollowStrength` として表情による自然なズレを許容します。既存 `expressionAttenuation` foundation は safety attenuation として残りますが、中心仕様は `expressionFollow v1` です。`correctionProfile` は個別パーツ加工命令ではなく、current から projected ideal へ全体として自然に少し寄せるための補正率です。
+CorrectionPlan v1 debug foundation は、`correctionProfile` の `strength` をこの差分に掛け、`maxCorrectionDistance` で clamp した correction vector を生成します。今後の `expressionFollow v1` では、blendshape score に応じて各 landmark の `effectiveIdealFollowStrength` を決め、`finalStrength = baseStrength * effectiveIdealFollowStrength` として表情による自然なズレを許容します。既存 `expressionAttenuation` foundation は safety attenuation として残りますが、中心仕様は `expressionFollow v1` です。`correctionProfile` は個別パーツ加工命令ではなく、current から projected ideal へ全体として自然に少し寄せるための補正率です。
 
 やらないこと:
 
