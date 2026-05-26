@@ -118,6 +118,19 @@ MP4 detailed scan / Step 2-I-A frame selection では、`frontReferenceCandidate
 
 Step 2-I-A では、一覧カードに加えて Frame Review Carousel で1フレームを大きく確認しながら、`frontReference` / `expressionGroup` / `useForInference` / `excluded` を調整できます。Review 側と一覧カード側は同じ `frameUsage` state を更新し、JSON preview の `frameUsage` summary に反映します。
 
+### frame usage / usage-aware sampling 用語メモ
+
+- `frontReference`: ユーザーが手動選択する正面基準 frame。正面姿勢・座標正規化・reference basis に使い、`useForInference=true` の場合だけ IdealFace 形状生成にも使います。
+- `frontReferenceCandidate`: 自動で正面基準に良さそうと判定された候補。自動 bucket ではなく、最終的な `frontReference` はユーザーが選びます。
+- `useForInference`: frame usage state / UI の boolean。UI 表示名は「IdealFace生成に使う」で、この frame を IdealFace 本体の 3D 478 形状生成に使うかを表します。
+- `idealFaceInference`: usage-aware sampling の bucket id。採用された frame は `useForInference=true` の初期値になります。
+- `observationFrame`: `useForInference=true` かつ `excluded=false` の frame。Step 2-I-B/C に渡る IdealFace 形状生成の observation input です。
+- `expressionGroup` / `autoExpressionGroup`: `expressionGroup` は表情解析用の用途タグで、`autoExpressionGroup` は blendshape score 由来の初期値です。`useForInference` とは独立します。
+- `excluded` / `excludedReason` / `warningReason`: `excluded` だけは排他的です。`excludedReason` は `noFace` / `invalidLandmarks` / `manual` など、`warningReason` は `poseOutOfRange` / `mixedExpression` / `pending` / `missingBlendshapes` などです。
+- `expressionFollow` / `expressionAttenuation` / `landmarkFollowStrengths`: `expressionFollow` は今後の中心仕様、`expressionAttenuation` は既存 Engine foundation、`landmarkFollowStrengths` は expressionFollow rule 内の landmark ごとの target idealFollowStrength です。`expressionFollow` 実装と `landmarkFollowStrengths` 自動生成は未実装です。
+
+詳しい定義は [usage-aware frame sampling v1](docs/usage-aware-frame-sampling-v1.md) と [MP4 expression 3D analysis plan](docs/mp4-expression-3d-analysis-plan.md) を参照してください。
+
 ## IdealFace Projection / 座標系方針
 
 - `idealLandmarks3D` は same-unit coordinate として保存します。

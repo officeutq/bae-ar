@@ -129,6 +129,8 @@ Removed legacy workflow:
 
 この処理は完全自動生成ではなく、自動推定 + 将来の手動補正として扱います。Step 2-I-A の frame usage では、`frontReference` / `useForInference` / `expressionGroup` は重複可能な用途タグ、`excluded` は排他的な除外タグとして扱います。`frontReference` は自動 bucket ではなく、ユーザーが手動選択する正面基準です。`poseOutOfRange` / `mixedExpression` / `pending` / `missingBlendshapes` は自動除外ではなく注意タグとして扱い、landmarks / pose が有効な frame は pose-aware 3D 推定に残せます。Expression grouping は expression dropdown の自動初期値を作るために使い、neutralFrames は将来 `frontReferenceFrames` の中から表情が少ないものを選ぶ方針です。`usage-aware frame sampling v1` では、`frontReferenceCandidate` を自動候補として提示し、`idealFaceInference` / expression groups を用途 bucket として targetCount までバランスよく採用します。動画入力、詳細スキャン、pose-aware dataset 作成、candidate generation、3D point cloud preview は IdealFace Authoring Tool の責務であり、Engine Runtime には含めません。
 
+frame usage / usage-aware sampling の用語は [usage-aware frame sampling v1](usage-aware-frame-sampling-v1.md) に整理します。`useForInference` は UI state、`idealFaceInference` は sampling bucket、`observationFrame` は `useForInference=true` かつ `excluded=false` の実際の推定入力です。
+
 Authoring Tool は `idealLandmarks3D` を same-unit coordinate として生成します。`video_aspect_same_unit_v1` による video aspect 補正、pose-aware generation、将来の manual adjustment UI は Authoring Tool 側の責務です。Runtime は完成済み IdealFace asset を読み込み、same-unit の `idealLandmarks3D` を `FacePose` に投影し、overlay / difference / warp 用に image-normalized / pixel 座標へ変換します。Runtime は Authoring generation logic を持ちません。
 
 ## IdealFace Authoring Tool active workflow
