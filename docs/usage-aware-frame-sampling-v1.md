@@ -34,6 +34,79 @@ frame を単一カテゴリに分類しません。`frontReference` / `useForInf
 
 ある bucket が `targetCount` に達していても、frame 自体を完全に捨てるわけではありません。その用途には採用しないだけで、他の不足している用途に使えるなら採用します。
 
+## 用語表
+
+```text
+frontReference:
+  ユーザーが手動で選択する正面基準 frame。
+  正面姿勢・座標正規化・reference basis に使う。
+  IdealFace 形状生成には、それだけでは混ざらない。
+  useForInference=true の場合のみ shape inference にも使われる。
+
+frontReferenceCandidate:
+  自動で「正面基準に良さそう」と判定された候補 frame。
+  自動 bucket ではない。
+  最終的な frontReference はユーザーが Frame Review Carousel / frame card で手動選択する。
+
+useForInference:
+  frameUsage state / UI で使う boolean。
+  この frame を IdealFace 本体の 3D 478 形状生成に使うかを表す。
+  UI 表示名は「IdealFace生成に使う」。
+
+idealFaceInference:
+  usage-aware sampling の bucket id。
+  この bucket に採用された frame は useForInference=true の初期値になる。
+  useForInference と意味は近いが、UI state ではなく sampling bucket 名。
+
+observationFrame:
+  useForInference=true かつ excluded=false の frame。
+  Step 2-I-B pose-aware inference dataset / Step 2-I-C candidate generation に渡る。
+  IdealFace 形状生成の observation input。
+
+expressionGroup:
+  expressionFollow 用の表情解析に使う group。
+  none / mouthPucker / jawOpen / mouthSmile / eyeBlinkLeft / eyeBlinkRight /
+  eyeSquintLeft / eyeSquintRight / mixedExpression など。
+  useForInference とは独立した用途タグ。
+  表情 frame は IdealFace 形状生成から外しても、将来の expressionFollow /
+  landmarkFollowStrengths 生成には使える。
+
+autoExpressionGroup:
+  blendshape score から自動判定された expressionGroup の初期値。
+  ユーザーは dropdown で expressionGroup を変更できる。
+
+excluded:
+  今回の処理に使わない frame。
+  excluded=true の frame は frontReference / useForInference / expressionGroup の処理対象から外れる。
+  excluded だけは排他的。
+
+excludedReason:
+  excluded=true になった理由。
+  noFace / invalidLandmarks / manual など。
+
+warningReason:
+  除外ではないが注意が必要な理由。
+  poseOutOfRange / mixedExpression / pending / missingBlendshapes など。
+  warningReason があっても、useForInference や expressionGroup に使える場合がある。
+
+expressionFollow:
+  今後の中心仕様。
+  表情時に各 landmark が neutral な projected ideal へどれだけ追従するかを定義する。
+  idealFollowStrength は 0.0=current/camera 優先、1.0=projected ideal 優先。
+  現時点では docs direction のみで Engine implementation / export は未実装。
+
+expressionAttenuation:
+  既存 Engine foundation。
+  blendshape score に応じて affectedLandmarkGroups の strengthScale を下げる safety attenuation。
+  今後の中心仕様ではなく、fallback / 既存互換として残す。
+
+landmarkFollowStrengths:
+  expressionFollow rule 内で、表情ごとに特定 landmark が ideal へどれだけ追従するかを指定する値。
+  rule 最大時の target idealFollowStrength。
+  将来、MP4 の neutral 3D 478 / expression 3D 478 比較から自動生成する方針。
+  現時点では未実装。
+```
+
 ## 正面基準候補と用途 bucket
 
 ```text

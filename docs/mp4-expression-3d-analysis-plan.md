@@ -28,6 +28,21 @@ landmarkFollowStrengths:
 
 `landmarkFollowStrengths` は手作業だけでなく、MP4 の表情別 frame group から自動生成する方針です。比較は 2D projected / image-normalized ではなく、同じ `comparisonSpace` に正規化した 3D 478 landmarks 同士で行います。
 
+## frame usage / expression 用語
+
+frame usage の詳細な用語表は [usage-aware frame sampling v1](usage-aware-frame-sampling-v1.md) を正とします。このドキュメントでは、MP4 expression 3D analysis との関係だけを補足します。
+
+- `useForInference` は frame usage state / UI の boolean で、IdealFace 本体の 3D 478 形状生成に使うかを表します。
+- `idealFaceInference` は usage-aware sampling の bucket id で、採用された frame は `useForInference=true` の初期値になります。
+- `observationFrame` は `useForInference=true` かつ `excluded=false` の frame で、Step 2-I-B/C の IdealFace 形状生成入力です。
+- `expressionGroup` は expressionFollow 用の表情解析 group で、`useForInference` とは独立した用途タグです。
+- `autoExpressionGroup` は blendshape score から自動判定された `expressionGroup` の初期値です。ユーザーは dropdown で変更できます。
+- `excluded=true` の frame は正面基準 / 推定 / 表情解析の処理対象から外れます。`excludedReason` は `noFace` / `invalidLandmarks` / `manual` などです。
+- `warningReason` は除外ではない注意タグです。`poseOutOfRange` / `mixedExpression` / `pending` / `missingBlendshapes` があっても、landmarks / pose が有効なら `useForInference` や `expressionGroup` に使える場合があります。
+- `expressionFollow` は今後の中心仕様で、表情時に各 landmark が neutral な projected ideal へどれだけ追従するかを定義します。Engine implementation / export は未実装です。
+- `expressionAttenuation` は既存 Engine foundation で、blendshape score に応じて affectedLandmarkGroups の strengthScale を下げる safety attenuation です。今後は fallback / 既存互換として残します。
+- `landmarkFollowStrengths` は expressionFollow rule 内の target idealFollowStrength で、将来 neutral 3D 478 / expression 3D 478 比較から自動生成する方針です。現時点では未実装です。
+
 ## 現在実装済み / 未実装
 
 実装済み:
@@ -92,12 +107,31 @@ frontReferenceCandidate:
 
 useForInference:
   pose-aware 3D 推定の observation frame として使う
+  frameUsage state / UI の boolean であり、sampling bucket 名ではない
+
+idealFaceInference:
+  usage-aware sampling の bucket id
+  採用された frame は useForInference=true の初期値になる
+
+observationFrame:
+  useForInference=true かつ excluded=false の frame
+  Step 2-I-B/C の IdealFace 形状生成入力
 
 expressionGroup:
   expressionFollow 用の表情解析に使う group
+  useForInference とは独立した用途タグ
+
+autoExpressionGroup:
+  blendshape score から自動判定された expressionGroup の初期値
 
 excluded:
   今回の処理には使わない frame
+
+excludedReason:
+  excluded=true になった理由
+
+warningReason:
+  除外ではないが注意が必要な理由
 ```
 
 `frontReference` / `useForInference` / `expressionGroup` は重複可能です。`excluded` だけは排他的で、`excluded = true` の frame は他用途の処理対象に含めません。

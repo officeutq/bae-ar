@@ -14,6 +14,7 @@ BAE AR は、Engine Runtime、Beauty Studio、IdealFace Authoring Tool、Layer M
 - Step 2-I-A では、一覧カードに加えて Frame Review Carousel で1フレームを大きく確認しながら、`frontReference` / `expressionGroup` / `useForInference` / `excluded` を調整できます。
 - `poseOutOfRange` は自動除外ではなく注意タグとして扱います。正面基準には不向きですが、pose-aware 3D 推定には使える可能性があるため、`useForInference` の対象に残せます。
 - `noFace` / `invalidLandmarks` / `manual` は除外理由として扱い、`mixedExpression` / `pending` / `missingBlendshapes` は注意タグとして扱います。
+- frame usage / usage-aware sampling の用語は [usage-aware frame sampling v1](usage-aware-frame-sampling-v1.md) を正とします。`useForInference` は UI state、`idealFaceInference` は sampling bucket、`observationFrame` は `useForInference=true` かつ `excluded=false` の実際の推定入力です。
 - Layer Mask Authoring Tool は将来予定です。
 - Authoring Tool の処理を Runtime に混ぜません。
 - 1 つの Issue では目的を絞って小さく実装します。
