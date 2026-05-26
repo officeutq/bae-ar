@@ -113,6 +113,8 @@ Step 2-I-A の frame usage では、`frontReference` / `useForInference` / `expr
 
 MP4 detailed scan / Step 2-I-A frame selection では、用途別 bucket の充足状況を見ながら frame を採用する `usage-aware frame sampling v1` を導入する方針です。これは完全自動確定ではなく、自動初期値 + Frame Review Carousel での手動確認・修正として扱います。詳細は [usage-aware frame sampling v1](docs/usage-aware-frame-sampling-v1.md) を参照してください。
 
+現在の IdealFace Authoring Tool には、`usage-aware frame sampling v1` の最初の prototype として scan preset（quick / standard / detailed）と usage bucket summary を追加しています。完全な adaptive sampling、targetCount に基づく採用制御、early stop はまだ未実装です。
+
 Step 2-I-A では、一覧カードに加えて Frame Review Carousel で1フレームを大きく確認しながら、`frontReference` / `expressionGroup` / `useForInference` / `excluded` を調整できます。Review 側と一覧カード側は同じ `frameUsage` state を更新し、JSON preview の `frameUsage` summary に反映します。
 
 ## IdealFace Projection / 座標系方針
