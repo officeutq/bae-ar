@@ -748,6 +748,37 @@ interface MediaPipeMeshAverageCandidateComparisonDebug {
   mediaPipeMeshAverage: CandidateDebugComparisonItem
 }
 
+interface CenterAlignmentPointDebug {
+  x: number | null
+  y: number | null
+}
+
+interface CenterAlignmentMetricDebug {
+  boundsCenterX: number | null
+  boundsCenterY: number | null
+  noseOffsetFromBoundsCenterX: number | null
+  zRange: number | null
+  topViewAsymmetryScore: number | null
+  leftRightZAverageDelta: number | null
+  leftRightZRangeDelta: number | null
+}
+
+interface FrontReferenceCenterAlignmentDebug {
+  enabled: true
+  mode: "bounds_center_xy"
+  source: "frontReferenceBase"
+  targetGenerationMethod: "pose_aware_mediapipe_mesh_average_v1"
+  frontReferenceBoundsCenter: CenterAlignmentPointDebug
+  candidateBoundsCenterBeforeAlignment: CenterAlignmentPointDebug
+  alignmentOffset: CenterAlignmentPointDebug
+  candidateBoundsCenterAfterAlignment: CenterAlignmentPointDebug
+  zUnchanged: boolean
+  comparison: {
+    beforeAlignment: CenterAlignmentMetricDebug
+    afterAlignment: CenterAlignmentMetricDebug
+  }
+}
+
 interface PoseAwareMediaPipeMeshAverageDebug {
   generationMethod: "pose_aware_mediapipe_mesh_average_v1"
   settings: MediaPipeMeshAverageSettingsDebug
@@ -771,6 +802,7 @@ interface PoseAwareMediaPipeMeshAverageDebug {
   }
   comparison?: PoseAwareCandidateComparisonDebug
   multiCandidateComparison: MediaPipeMeshAverageCandidateComparisonDebug
+  frontReferenceCenterAlignment: FrontReferenceCenterAlignmentDebug | null
   topView: TopViewZAsymmetrySummary
   warnings: string[]
 }
@@ -5626,6 +5658,91 @@ function buildCandidateDebugComparisonItemFromLandmarks(
   }
 }
 
+function toCenterAlignmentPointDebug(
+  point: Point3D | null,
+): CenterAlignmentPointDebug {
+  return {
+    x: point?.x ?? null,
+    y: point?.y ?? null,
+  }
+}
+
+function buildCenterAlignmentMetricDebug(
+  landmarks: IdealLandmark3DCandidate[],
+): CenterAlignmentMetricDebug {
+  const spatial = buildLandmarkSpatialSummary(landmarks)
+  const representative = getPoseAwareRepresentativePointSummary(landmarks)
+  const topView = buildTopViewZAsymmetrySummary(landmarks)
+
+  return {
+    boundsCenterX: spatial.boundsCenter?.x ?? null,
+    boundsCenterY: spatial.boundsCenter?.y ?? null,
+    noseOffsetFromBoundsCenterX: representative.noseOffsetFromBoundsCenterX,
+    zRange: getZRange(landmarks.map((landmark) => landmark.z)),
+    topViewAsymmetryScore: topView.topViewAsymmetryScore,
+    leftRightZAverageDelta: topView.leftRightZAverageDelta,
+    leftRightZRangeDelta: topView.leftRightZRangeDelta,
+  }
+}
+
+function alignCandidateToFrontReferenceBoundsCenter(
+  landmarks: IdealLandmark3DCandidate[],
+  frontReferenceBasePoints: PoseAwareBasePoint[],
+): {
+  landmarks: IdealLandmark3DCandidate[]
+  alignment: FrontReferenceCenterAlignmentDebug
+} {
+  const frontReferenceSpatial = buildLandmarkSpatialSummary(
+    frontReferenceBasePoints,
+  )
+  const candidateSpatialBefore = buildLandmarkSpatialSummary(landmarks)
+  const frontReferenceCenter = frontReferenceSpatial.boundsCenter
+  const candidateCenterBefore = candidateSpatialBefore.boundsCenter
+  const offsetX =
+    frontReferenceCenter === null || candidateCenterBefore === null
+      ? 0
+      : roundDebugNumber(frontReferenceCenter.x - candidateCenterBefore.x)
+  const offsetY =
+    frontReferenceCenter === null || candidateCenterBefore === null
+      ? 0
+      : roundDebugNumber(frontReferenceCenter.y - candidateCenterBefore.y)
+  const alignedLandmarks = landmarks.map((landmark) => ({
+    ...landmark,
+    x: Number((landmark.x + offsetX).toFixed(4)),
+    y: Number((landmark.y + offsetY).toFixed(4)),
+    z: landmark.z,
+  }))
+  const candidateCenterAfter =
+    buildLandmarkSpatialSummary(alignedLandmarks).boundsCenter
+
+  return {
+    landmarks: alignedLandmarks,
+    alignment: {
+      enabled: true,
+      mode: "bounds_center_xy",
+      source: "frontReferenceBase",
+      targetGenerationMethod: "pose_aware_mediapipe_mesh_average_v1",
+      frontReferenceBoundsCenter:
+        toCenterAlignmentPointDebug(frontReferenceCenter),
+      candidateBoundsCenterBeforeAlignment:
+        toCenterAlignmentPointDebug(candidateCenterBefore),
+      alignmentOffset: {
+        x: roundDebugNumber(offsetX),
+        y: roundDebugNumber(offsetY),
+      },
+      candidateBoundsCenterAfterAlignment:
+        toCenterAlignmentPointDebug(candidateCenterAfter),
+      zUnchanged: landmarks.every(
+        (landmark, index) => alignedLandmarks[index]?.z === landmark.z,
+      ),
+      comparison: {
+        beforeAlignment: buildCenterAlignmentMetricDebug(landmarks),
+        afterAlignment: buildCenterAlignmentMetricDebug(alignedLandmarks),
+      },
+    },
+  }
+}
+
 function buildFrameZHintSummary(
   hintsByLandmark: PoseAwareZHint[][],
   frameZValues: number[],
@@ -7182,6 +7299,7 @@ function buildPoseAwareMediaPipeMeshAverageCandidateDebug(
   dataset: PoseAwareInferenceDataset,
   canonicalResult: {
     landmarks: IdealLandmark3DCandidate[]
+    frontReferenceCenterAlignment?: FrontReferenceCenterAlignmentDebug
     localPoints: Array<Point3D & { index: number }>
     canonicalFramePoints: Array<Point3D & { index: number }>
     rawZValues: number[]
@@ -7258,6 +7376,8 @@ function buildPoseAwareMediaPipeMeshAverageCandidateDebug(
     },
     comparison,
     multiCandidateComparison,
+    frontReferenceCenterAlignment:
+      canonicalResult.frontReferenceCenterAlignment ?? null,
     topView,
   }
 
@@ -7704,6 +7824,7 @@ function buildPoseAwareMediaPipeMeshAverageIdealLandmarks3DCandidateResult(
               [],
             ),
         },
+        frontReferenceCenterAlignment: null,
         topView: buildTopViewZAsymmetrySummary([]),
         warnings: ["MediaPipe landmark.z is unavailable."],
       },
@@ -7729,10 +7850,19 @@ function buildPoseAwareMediaPipeMeshAverageIdealLandmarks3DCandidateResult(
     }
   }
 
-  const landmarks = canonicalResult.landmarks
+  const centerAlignedCandidate = alignCandidateToFrontReferenceBoundsCenter(
+    canonicalResult.landmarks,
+    basePoints,
+  )
+  const alignedCanonicalResult = {
+    ...canonicalResult,
+    landmarks: centerAlignedCandidate.landmarks,
+    frontReferenceCenterAlignment: centerAlignedCandidate.alignment,
+  }
+  const landmarks = alignedCanonicalResult.landmarks
   const debug = buildPoseAwareMediaPipeMeshAverageCandidateDebug(
     dataset,
-    canonicalResult,
+    alignedCanonicalResult,
     directionBalance,
     frameWeights,
     canonical3DResult,
