@@ -127,6 +127,7 @@ Beauty Studio:
 - expressionAttenuation falloff v1 docs direction
 - expressionFollow v1 docs direction
 - MP4 expression 3D analysis plan docs direction
+- usage-aware frame sampling v1 docs direction
 
 ### 3.2 未実装
 
@@ -342,7 +343,7 @@ beauty_filter_asset_v1
 
 `landmarkGroups` v1 では、まず `mouth` / `left_eye` / `right_eye` / `face_boundary` を expression safety 用 group として想定します。将来 color processing 向けに `skin` / `lip` / `cheek` / `eye_area` などを追加する可能性があります。Layer System は shape warp 用ではなく、color processing 用です。詳細は [landmarkGroups v1](landmark-groups-v1.md) に整理します。
 
-詳細は [beauty_filter_asset_v1 direction](beauty-filter-asset-v1.md) に整理します。`landmarkGroups v1` は docs specification、Engine foundation、asset / fallback group source handling、Studio debug / Copy Debug summary、Authoring Tool Landmark Group Editor v1 prototype、`ideal_face_asset_v1` optional export まで実装済みです。`expressionFollow v1` と [MP4 expression 3D analysis plan](mp4-expression-3d-analysis-plan.md) は docs direction のみで、Engine implementation、MP4 expression 3D analysis、landmarkFollowStrengths 自動生成は未実装です。`expressionAttenuation falloff v1` は fallback / 参考案です。`beauty_filter_asset_v1`、`shapeWarpSettings` v1、`colorLayers` v1、Production Shape Warp、Color Processing、Runtime renderer integration はまだ未実装です。
+詳細は [beauty_filter_asset_v1 direction](beauty-filter-asset-v1.md) に整理します。`landmarkGroups v1` は docs specification、Engine foundation、asset / fallback group source handling、Studio debug / Copy Debug summary、Authoring Tool Landmark Group Editor v1 prototype、`ideal_face_asset_v1` optional export まで実装済みです。`expressionFollow v1`、[MP4 expression 3D analysis plan](mp4-expression-3d-analysis-plan.md)、[usage-aware frame sampling v1](usage-aware-frame-sampling-v1.md) は docs direction のみで、Engine implementation、MP4 expression 3D analysis、usage-aware sampling implementation、landmarkFollowStrengths 自動生成は未実装です。`expressionAttenuation falloff v1` は fallback / 参考案です。`beauty_filter_asset_v1`、`shapeWarpSettings` v1、`colorLayers` v1、Production Shape Warp、Color Processing、Runtime renderer integration はまだ未実装です。
 
 ## 7. IdealFace
 
@@ -381,7 +382,7 @@ Engine 側では、`expressionAttenuation` v1 foundation も実装済みです�
 
 今後の中心仕様では、表情時に単純に group の補正強度を下げるのではなく、表情ごとに landmark が neutral な projected ideal へどれだけ追従するかを定義する `expressionFollow v1` を優先します。`idealFollowStrength` は `0.0 = current / camera を優先`、`1.0 = projected ideal を優先` です。`landmarkFollowStrengths[].idealFollowStrength` は rule 最大時の target value であり、実行時は blendshape score と `inputRange` から `ruleAmount` を計算して、`1.0` から target へ補間した `effectiveIdealFollowStrength` を使います。`landmarkFollowStrengths` は MP4 の neutral 3D 478 / expression 3D 478 を同じ `comparisonSpace` で比較し、3D 差分から自動生成する方針です。詳細は [MP4 expression 3D analysis plan](mp4-expression-3d-analysis-plan.md) に整理します。
 
-詳細な JSON 例、fallback、validation 方針、Runtime / Authoring / Studio の責務分離は [correctionProfile v1](correction-profile-v1.md) に定義します。新方針は [expressionFollow v1](expression-follow-v1.md) に、MP4 からの自動生成方針は [MP4 expression 3D analysis plan](mp4-expression-3d-analysis-plan.md) に、既存 foundation との関係は [expression-aware correctionProfile](expression-aware-correction-profile.md) に、falloff fallback / 参考案は [expressionAttenuation falloff v1](expression-attenuation-falloff-v1.md) に、参照先 group の仕様は [landmarkGroups v1](landmark-groups-v1.md) に整理します。Engine 側 foundation、validation / fallback、expressionAttenuation v1 foundation、CorrectionPlan v1 debug foundation は実装済みです。Authoring Tool 編集 UI、asset export 連携、expressionFollow v1 実装、MP4 expression 3D analysis、Production Shape Warp は未実装です。
+詳細な JSON 例、fallback、validation 方針、Runtime / Authoring / Studio の責務分離は [correctionProfile v1](correction-profile-v1.md) に定義します。新方針は [expressionFollow v1](expression-follow-v1.md) に、MP4 からの自動生成方針は [MP4 expression 3D analysis plan](mp4-expression-3d-analysis-plan.md) に、用途別 frame 採用方針は [usage-aware frame sampling v1](usage-aware-frame-sampling-v1.md) に、既存 foundation との関係は [expression-aware correctionProfile](expression-aware-correction-profile.md) に、falloff fallback / 参考案は [expressionAttenuation falloff v1](expression-attenuation-falloff-v1.md) に、参照先 group の仕様は [landmarkGroups v1](landmark-groups-v1.md) に整理します。Engine 側 foundation、validation / fallback、expressionAttenuation v1 foundation、CorrectionPlan v1 debug foundation は実装済みです。Authoring Tool 編集 UI、asset export 連携、expressionFollow v1 実装、MP4 expression 3D analysis、Production Shape Warp は未実装です。
 
 ### 7.2 IdealFace Authoring Tool における idealLandmarks3D 作成方針
 
@@ -914,11 +915,15 @@ Step 4: expressionFollow v1 docs direction
 Step 5: MP4 expression 3D analysis docs direction
   -> 実装済み
 
-Step 6: MP4 expression 3D analysis foundation
-Step 7: expressionFollow v1 Engine foundation
-Step 8: shapeWarpSettings v1 docs / foundation
-Step 9: colorLayers v1 docs / foundation
-Step 10: beauty_filter_asset_v1 foundation
+Step 5.5: usage-aware frame sampling v1 docs direction
+  -> 実装済み
+
+Step 6: usage-aware frame sampling foundation
+Step 7: MP4 expression 3D analysis foundation
+Step 8: expressionFollow v1 Engine foundation
+Step 9: shapeWarpSettings v1 docs / foundation
+Step 10: colorLayers v1 docs / foundation
+Step 11: beauty_filter_asset_v1 foundation
 ```
 
 完了条件:
@@ -936,6 +941,7 @@ Step 10: beauty_filter_asset_v1 foundation
 - [landmarkGroups v1](landmark-groups-v1.md)
 - [expressionFollow v1](expression-follow-v1.md)
 - [MP4 expression 3D analysis plan](mp4-expression-3d-analysis-plan.md)
+- [usage-aware frame sampling v1](usage-aware-frame-sampling-v1.md)
 - [expressionAttenuation falloff v1](expression-attenuation-falloff-v1.md)
 
 ### Milestone 7: Color Processing v1
@@ -1136,6 +1142,8 @@ MP4 input
 ```
 
 Step 2-I-A keeps frame usage as tags. `frontReference`, `useForInference`, and `expressionGroup` can overlap; `excluded` is the only exclusive tag. Usable observation frames are derived from detailed scan frames that have a detected face, 478 landmarks, `FacePose`, `useForInference = true`, and `excluded = false`.
+
+`usage-aware frame sampling v1` では、Step 2-I-A の初期 `frameUsage` を、用途 bucket ごとの targetCount を見ながら作る方針です。`frontReference` / `idealFaceInference` / expression groups は重複可能な usage bucket として扱います。ある bucket が `targetCount` に達した場合、その用途には以後採用しませんが、他の不足用途には引き続き採用できます。これは完全自動確定ではなく、自動初期値 + 手動確認・修正の flow です。
 
 Step 2-I-B builds `poseAwareInferenceDataset` from front reference frames and observation frames. It does not use fixed five-pose labels.
 

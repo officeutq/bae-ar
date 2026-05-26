@@ -64,7 +64,7 @@ Engine 側では、MediaPipe blendshape score に応じて `affectedLandmarkGrou
 
 `expressionFollow v1` では、`idealFollowStrength` を `0.0 = current / camera を優先`、`1.0 = projected ideal を優先` と定義します。`landmarkGroups` は rule の対象範囲、`landmarkFollowStrengths` は landmark ごとの追従率です。`landmarkFollowStrengths[].idealFollowStrength` は rule 最大時の target value であり、実行時は blendshape score と `inputRange` から `ruleAmount` を計算して、`1.0` から target へ補間した `effectiveIdealFollowStrength` を使います。`landmarkFollowStrengths` は MP4 の表情別 frame group から neutral 3D 478 / expression 3D 478 を同じ `comparisonSpace` で比較し、3D 差分から自動生成する方針です。詳細は [MP4 expression 3D analysis plan](mp4-expression-3d-analysis-plan.md) に整理します。
 
-詳細仕様は [correctionProfile v1](correction-profile-v1.md)、[expressionFollow v1](expression-follow-v1.md)、[MP4 expression 3D analysis plan](mp4-expression-3d-analysis-plan.md)、[expression-aware correctionProfile](expression-aware-correction-profile.md) を参照してください。Engine 側 foundation、validation / fallback、expressionAttenuation v1 foundation、Studio debug summary、CorrectionPlan v1 debug foundation、Studio 向け Shape Warp v1 debug prototype は実装済みです。`expressionFollow v1` 実装、MP4 expression 3D analysis、Authoring Tool 編集 UI、asset export 連携、Production Shape Warp は未実装です。
+詳細仕様は [correctionProfile v1](correction-profile-v1.md)、[expressionFollow v1](expression-follow-v1.md)、[MP4 expression 3D analysis plan](mp4-expression-3d-analysis-plan.md)、[usage-aware frame sampling v1](usage-aware-frame-sampling-v1.md)、[expression-aware correctionProfile](expression-aware-correction-profile.md) を参照してください。Engine 側 foundation、validation / fallback、expressionAttenuation v1 foundation、Studio debug summary、CorrectionPlan v1 debug foundation、Studio 向け Shape Warp v1 debug prototype は実装済みです。`expressionFollow v1` 実装、MP4 expression 3D analysis、Authoring Tool 編集 UI、asset export 連携、Production Shape Warp は未実装です。
 
 `landmarkGroups v1` は docs specification、Engine foundation、asset / fallback group source handling、Studio debug / Copy Debug summary、IdealFace Authoring Tool Landmark Group Editor v1 prototype、`ideal_face_asset_v1` optional `landmarkGroups` export まで実装済みです。`expressionAttenuation falloff v1` は新方針では主役ではなく、fallback / 参考案として扱います。
 
@@ -127,7 +127,7 @@ Removed legacy workflow:
 - `inferCandidateConfidence()`
 - `generationMethod: "step_2_g_v1"`
 
-この処理は完全自動生成ではなく、自動推定 + 将来の手動補正として扱います。Step 2-I-A の frame usage では、`frontReference` / `useForInference` / `expressionGroup` は重複可能な用途タグ、`excluded` は排他的な除外タグとして扱います。`poseOutOfRange` / `mixedExpression` / `pending` / `missingBlendshapes` は自動除外ではなく注意タグとして扱い、landmarks / pose が有効な frame は pose-aware 3D 推定に残せます。Expression grouping は expression dropdown の自動初期値を作るために使い、neutralFrames は将来 `frontReferenceFrames` の中から表情が少ないものを選ぶ方針です。動画入力、詳細スキャン、pose-aware dataset 作成、candidate generation、3D point cloud preview は IdealFace Authoring Tool の責務であり、Engine Runtime には含めません。
+この処理は完全自動生成ではなく、自動推定 + 将来の手動補正として扱います。Step 2-I-A の frame usage では、`frontReference` / `useForInference` / `expressionGroup` は重複可能な用途タグ、`excluded` は排他的な除外タグとして扱います。`poseOutOfRange` / `mixedExpression` / `pending` / `missingBlendshapes` は自動除外ではなく注意タグとして扱い、landmarks / pose が有効な frame は pose-aware 3D 推定に残せます。Expression grouping は expression dropdown の自動初期値を作るために使い、neutralFrames は将来 `frontReferenceFrames` の中から表情が少ないものを選ぶ方針です。`usage-aware frame sampling v1` では、`frontReference` / `idealFaceInference` / expression groups を用途 bucket として扱い、targetCount までバランスよく採用します。動画入力、詳細スキャン、pose-aware dataset 作成、candidate generation、3D point cloud preview は IdealFace Authoring Tool の責務であり、Engine Runtime には含めません。
 
 Authoring Tool は `idealLandmarks3D` を same-unit coordinate として生成します。`video_aspect_same_unit_v1` による video aspect 補正、pose-aware generation、将来の manual adjustment UI は Authoring Tool 側の責務です。Runtime は完成済み IdealFace asset を読み込み、same-unit の `idealLandmarks3D` を `FacePose` に投影し、overlay / difference / warp 用に image-normalized / pixel 座標へ変換します。Runtime は Authoring generation logic を持ちません。
 
@@ -267,6 +267,8 @@ beauty_filter_asset_v1
 詳細スキャンは Step 2-I-A の frame selection に渡す observation source です。表示用の粗いフレーム抽出は debug / metadata 確認用であり、pose-aware inference の中心データではありません。
 
 現在は detailed scan の結果を Step 2-I-A の frame selection へ渡し、Step 2-I-B の pose-aware dataset、Step 2-I-C の pose-aware weighted z inference v1 へ進みます。
+
+`usage-aware frame sampling v1` では、単純な `maxScanFrames` だけでなく bucket の充足状況を見ながら scan を続けます。ただし無制限にはせず、`maxScanFrames` または `maxScanSeconds` は残します。詳細は [usage-aware frame sampling v1](usage-aware-frame-sampling-v1.md) を参照してください。
 
 ## Runtime と Authoring の分離
 

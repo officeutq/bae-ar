@@ -62,6 +62,7 @@ Engine Runtime に Studio / Authoring 用 UI や生成・編集処理は入れ�
 - `ideal_face_asset_v1` optional `landmarkGroups` export
 - `expressionFollow v1` docs 方針
 - MP4 expression 3D analysis plan docs 方針
+- usage-aware frame sampling v1 docs 方針
 - IdealFace Authoring Tool Expression frame grouping summary prototype
 - IdealFace Authoring Tool frame usage card UI prototype
 
@@ -109,6 +110,8 @@ MP4 input
 今後の新機能は、旧方式ではなく Step 2-I active workflow 側に追加します。`currentCandidate` は Step 2-H preview に表示される現在の candidate で、`generationMethod` は `pose_aware_weighted_z_v1` です。`natural_v1` の 6 controlPoints は reference / projection debug 用であり、IdealFace 本体は `idealLandmarks3D` 478点です。
 
 Step 2-I-A の frame usage では、`frontReference` / `useForInference` / `expressionGroup` は重複可能な用途タグで、`excluded` だけを排他的な除外タグとして扱います。`poseOutOfRange` は自動除外ではなく注意タグです。正面基準には不向きですが、pose-aware 3D 推定の observation frame として z hint / 奥行き推定に使える可能性があるため、`useForInference` の対象に残せます。`noFace` / `invalidLandmarks` / `manual` は除外理由、`mixedExpression` / `pending` / `missingBlendshapes` は注意タグとして扱います。
+
+MP4 detailed scan / Step 2-I-A frame selection では、用途別 bucket の充足状況を見ながら frame を採用する `usage-aware frame sampling v1` を導入する方針です。これは完全自動確定ではなく、自動初期値 + Frame Review Carousel での手動確認・修正として扱います。詳細は [usage-aware frame sampling v1](docs/usage-aware-frame-sampling-v1.md) を参照してください。
 
 Step 2-I-A では、一覧カードに加えて Frame Review Carousel で1フレームを大きく確認しながら、`frontReference` / `expressionGroup` / `useForInference` / `excluded` を調整できます。Review 側と一覧カード側は同じ `frameUsage` state を更新し、JSON preview の `frameUsage` summary に反映します。
 
@@ -164,6 +167,7 @@ Step 2-I-A では、一覧カードに加えて Frame Review Carousel で1フレ
 - `frontReference` / `useForInference` / `expressionGroup` は用途タグであり、重複可能です。
 - `excluded` だけは排他的で、除外済み frame は正面基準 / 推定 / 表情解析の処理対象から外れます。
 - `poseOutOfRange` / `mixedExpression` / `pending` / `missingBlendshapes` は注意タグとして扱い、自動除外にはしません。
+- `usage-aware frame sampling v1` では、`frontReference` / `idealFaceInference` / expression groups を用途 bucket として扱い、targetCount までバランスよく採用します。
 - JSON preview に `expressionAnalysis` summary を表示します。
 - JSON preview に `frameUsage` summary を表示します。
 - neutral 3D 478 / expression 3D 478 の生成、3D 比較、`landmarkFollowStrengths` 自動生成、`expressionFollow` export はまだ未実装です。
@@ -183,6 +187,8 @@ Step 2-I-A では、一覧カードに加えて Frame Review Carousel で1フレ
 これは docs 方針のみで、MP4 expression 3D analysis 実装と `landmarkFollowStrengths` 自動生成は未実装です。
 
 詳細は [MP4 expression 3D analysis plan](docs/mp4-expression-3d-analysis-plan.md) を参照してください。
+
+用途別 frame 採用の方針は [usage-aware frame sampling v1](docs/usage-aware-frame-sampling-v1.md) を参照してください。
 
 ## landmarkGroups v1
 
@@ -252,6 +258,7 @@ npm run start:ideal-face-authoring
 - [correctionProfile v1](docs/correction-profile-v1.md)
 - [expressionFollow v1](docs/expression-follow-v1.md)
 - [MP4 expression 3D analysis plan](docs/mp4-expression-3d-analysis-plan.md)
+- [usage-aware frame sampling v1](docs/usage-aware-frame-sampling-v1.md)
 - [expression-aware correctionProfile](docs/expression-aware-correction-profile.md)
 - [expressionAttenuation falloff v1](docs/expression-attenuation-falloff-v1.md)
 - [landmarkGroups v1](docs/landmark-groups-v1.md)
