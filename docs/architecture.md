@@ -57,7 +57,9 @@ Engine Runtime は UI を持たない中核 SDK です。
 
 将来予定:
 
-- expressionAttenuation falloff v1 Engine implementation
+- expressionFollow v1 Engine implementation
+- MP4 expression 3D analysis 由来の landmarkFollowStrengths 読み込み
+- expressionAttenuation falloff v1 fallback / reference handling
 - shapeWarpSettings v1
 - colorLayers v1
 - beauty_filter_asset_v1 foundation / validator / parser / converter
@@ -254,11 +256,11 @@ current-vs-projected ideal 478点 difference debug v1 は、MediaPipe current im
 
 `correctionProfile` は per-landmark `strength`、`defaultStrength`、`maxCorrectionDistance` を持ちます。dx / dy は現在顔の姿勢、位置、表情、projection 結果によって毎フレーム変わるため JSON には保存せず、Engine Runtime が current landmarks と projected ideal `imageLandmarks` から計算します。
 
-Engine 側では、`expressionAttenuation` を optional field として扱う v1 foundation も実装済みです。MediaPipe blendshape score から `mouth` / `left_eye` / `right_eye` / `face_boundary` などの group ごとの `strengthScale` を計算し、CorrectionPlan の `baseStrength` に掛けて `finalStrength` を決めます。急な切り替わりを避けるため、target scale と smoothed scale を分け、`halfLifeMs` を使った smoothing を行います。
+Engine 側では、`expressionAttenuation` を optional field として扱う v1 foundation も実装済みです。これは MediaPipe blendshape score から `mouth` / `left_eye` / `right_eye` / `face_boundary` などの group ごとの `strengthScale` を計算し、CorrectionPlan の `baseStrength` に掛けて `finalStrength` を決める既存の safety attenuation です。
 
-group membership を二値のまま扱うと、広めの `mouth` / `left_eye` / `right_eye` group 境界で `strengthScale` が急に変わる可能性があります。次の方針では、Engine が group 内の中心から外側への距離に応じた per-landmark falloff weight を自動計算し、中心ほど強く、境界ほど弱く attenuation します。
+今後の中心仕様では、表情時に単純に group の補正強度を下げるのではなく、表情ごとに landmark が neutral な projected ideal へどれだけ追従するかを定義する `expressionFollow v1` を優先します。`idealFollowStrength` は `0.0 = current / camera を優先`、`1.0 = projected ideal を優先` です。`landmarkFollowStrengths` は MP4 の neutral 3D 478 / expression 3D 478 を同じ `comparisonSpace` で比較し、3D 差分から自動生成する方針です。
 
-詳細仕様、fallback、validation 方針、Runtime / Authoring / Studio の責務分離は [correctionProfile v1](correction-profile-v1.md) に定義します。`expressionAttenuation` の方針は [expression-aware correctionProfile](expression-aware-correction-profile.md) に、falloff 方針は [expressionAttenuation falloff v1](expression-attenuation-falloff-v1.md) に整理します。Authoring Tool 編集 UI、asset export 連携、expression-specific IdealFace、expression target offset、Production Shape Warp は未実装です。
+詳細仕様、fallback、validation 方針、Runtime / Authoring / Studio の責務分離は [correctionProfile v1](correction-profile-v1.md) に定義します。新方針は [expressionFollow v1](expression-follow-v1.md) に、既存 foundation との関係は [expression-aware correctionProfile](expression-aware-correction-profile.md) に、旧方針の fallback / 参考案は [expressionAttenuation falloff v1](expression-attenuation-falloff-v1.md) に整理します。Authoring Tool 編集 UI、asset export 連携、expressionFollow v1 実装、MP4 expression 3D analysis、Production Shape Warp は未実装です。
 
 ### IdealFace Projection の座標系方針
 
@@ -311,14 +313,15 @@ CorrectionPlan の責務:
 
 - current image-normalized landmarks と projected ideal image-normalized landmarks の差分を受け取る
 - `correctionProfile` の baseStrength を決める
-- expression-aware attenuation がある場合は group strengthScale を掛ける
+- expressionFollow がある場合は idealFollowStrength を掛ける
+- 既存 expression-aware attenuation がある場合は group strengthScale を掛ける
 - `maxCorrectionDistance` で correction vector を clamp する
 - 実際に warp へ渡す安全な補正量を決める
 - 補正強度、移動量上限、滑らかさ、過補正防止、信頼度などを扱う
 
 CorrectionPlan は same-unit projection 後、image-normalized に変換された current-vs-ideal 差分を受け取ります。CorrectionPlan は `FacePose` の推定や IdealFace projection を担当しません。
 
-CorrectionPlan は個別パーツ加工命令セットにはしません。`expressionAttenuation` も、目だけ大きくする、鼻だけ細くする、顎だけ削るための機能ではなく、表情や可動部位によって破綻しやすい領域の補正を弱める safety attenuation です。
+CorrectionPlan は個別パーツ加工命令セットにはしません。`expressionFollow` は、目だけ大きくする、鼻だけ細くする、顎だけ削るための機能ではなく、表情として自然に neutral ideal から外れてよい landmark の追従率を定義する safety control です。`expressionAttenuation` は既存 foundation として残りますが、今後の中心仕様ではありません。
 
 ## Shape Processing
 
@@ -386,13 +389,13 @@ beauty_filter_asset_v1
   └─ colorLayers
 ```
 
-1つの JSON に束ねる理由は、`idealFace` と `landmarkGroups` の対応、`correctionProfile.expressionAttenuation.affectedLandmarkGroups` の参照、`colorLayers` が参照する `skin` / `lip` / `cheek` などの group の整合性を保つためです。サービス側では 1つの filter asset を選択するだけでよくなり、Engine Runtime は 1つの asset から shape / color の両方を実行できます。
+1つの JSON に束ねる理由は、`idealFace` と `landmarkGroups` の対応、`correctionProfile.expressionFollow.affectedLandmarkGroups` / `correctionProfile.expressionAttenuation.affectedLandmarkGroups` の参照、`colorLayers` が参照する `skin` / `lip` / `cheek` などの group の整合性を保つためです。サービス側では 1つの filter asset を選択するだけでよくなり、Engine Runtime は 1つの asset から shape / color の両方を実行できます。
 
-ただし、内部では責務を混ぜません。`idealFace` は理想顔の形状、`landmarkGroups` は landmark index の意味領域、`correctionProfile` は shape correction の強度と safety attenuation、`shapeWarpSettings` は warp renderer / smoothing / boundary の設定、`colorLayers` は色加工、mask、合成順、opacity を扱います。`landmarkGroups v1` の仕様は [landmarkGroups v1](landmark-groups-v1.md) に整理します。
+ただし、内部では責務を混ぜません。`idealFace` は理想顔の形状、`landmarkGroups` は landmark index の意味領域、`correctionProfile` は shape correction の強度と `expressionFollow` による表情時の追従制御、`shapeWarpSettings` は warp renderer / smoothing / boundary の設定、`colorLayers` は色加工、mask、合成順、opacity を扱います。`landmarkGroups v1` の仕様は [landmarkGroups v1](landmark-groups-v1.md) に整理します。
 
-Engine Runtime は UI を持たず、将来 `beauty_filter_asset_v1` を読み込んで Projection、current-vs-ideal difference、`expressionAttenuation`、`CorrectionPlan`、WebGL mesh warp、LayerMask 生成、`colorLayers` 合成、temporal smoothing / stability control を実行します。Beauty Studio は公開 API 経由で読み込み・状態確認・debug / overlay / Copy Debug / tuning UI を提供します。Authoring Tool 群は各セクションの作成・編集を担当します。
+Engine Runtime は UI を持たず、将来 `beauty_filter_asset_v1` を読み込んで Projection、current-vs-ideal difference、`expressionFollow`、既存 `expressionAttenuation` fallback、`CorrectionPlan`、WebGL mesh warp、LayerMask 生成、`colorLayers` 合成、temporal smoothing / stability control を実行します。Beauty Studio は公開 API 経由で読み込み・状態確認・debug / overlay / Copy Debug / tuning UI を提供します。Authoring Tool 群は各セクションの作成・編集を担当します。
 
-詳細は [beauty_filter_asset_v1 direction](beauty-filter-asset-v1.md) に整理します。`landmarkGroups v1` は docs specification、Engine foundation、asset / fallback group source handling、Studio debug / Copy Debug summary、Authoring Tool Landmark Group Editor v1 prototype、`ideal_face_asset_v1` optional export まで実装済みです。`expressionAttenuation falloff v1` は docs direction のみで、Engine implementation は未実装です。`beauty_filter_asset_v1`、`shapeWarpSettings`、`colorLayers`、Production Shape Warp、Color Processing、Runtime renderer integration はまだ未実装です。
+詳細は [beauty_filter_asset_v1 direction](beauty-filter-asset-v1.md) に整理します。`landmarkGroups v1` は docs specification、Engine foundation、asset / fallback group source handling、Studio debug / Copy Debug summary、Authoring Tool Landmark Group Editor v1 prototype、`ideal_face_asset_v1` optional export まで実装済みです。`expressionFollow v1` と MP4 expression 3D analysis は docs direction のみで未実装です。`expressionAttenuation falloff v1` は fallback / 参考案です。`beauty_filter_asset_v1`、`shapeWarpSettings`、`colorLayers`、Production Shape Warp、Color Processing、Runtime renderer integration はまだ未実装です。
 
 ## 配布方針
 
