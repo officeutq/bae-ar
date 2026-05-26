@@ -127,7 +127,7 @@ Removed legacy workflow:
 - `inferCandidateConfidence()`
 - `generationMethod: "step_2_g_v1"`
 
-この処理は完全自動生成ではなく、自動推定 + 将来の手動補正として扱います。Step 2-I-A の frame usage では、`frontReference` / `useForInference` / `expressionGroup` は重複可能な用途タグ、`excluded` は排他的な除外タグとして扱います。Expression grouping は expression dropdown の自動初期値を作るために使い、neutralFrames は将来 `frontReferenceFrames` の中から表情が少ないものを選ぶ方針です。動画入力、詳細スキャン、pose-aware dataset 作成、candidate generation、3D point cloud preview は IdealFace Authoring Tool の責務であり、Engine Runtime には含めません。
+この処理は完全自動生成ではなく、自動推定 + 将来の手動補正として扱います。Step 2-I-A の frame usage では、`frontReference` / `useForInference` / `expressionGroup` は重複可能な用途タグ、`excluded` は排他的な除外タグとして扱います。`poseOutOfRange` / `mixedExpression` / `pending` / `missingBlendshapes` は自動除外ではなく注意タグとして扱い、landmarks / pose が有効な frame は pose-aware 3D 推定に残せます。Expression grouping は expression dropdown の自動初期値を作るために使い、neutralFrames は将来 `frontReferenceFrames` の中から表情が少ないものを選ぶ方針です。動画入力、詳細スキャン、pose-aware dataset 作成、candidate generation、3D point cloud preview は IdealFace Authoring Tool の責務であり、Engine Runtime には含めません。
 
 Authoring Tool は `idealLandmarks3D` を same-unit coordinate として生成します。`video_aspect_same_unit_v1` による video aspect 補正、pose-aware generation、将来の manual adjustment UI は Authoring Tool 側の責務です。Runtime は完成済み IdealFace asset を読み込み、same-unit の `idealLandmarks3D` を `FacePose` に投影し、overlay / difference / warp 用に image-normalized / pixel 座標へ変換します。Runtime は Authoring generation logic を持ちません。
 
@@ -347,6 +347,8 @@ MP4 input
 ```
 
 Step 2-I-A keeps frame usage as tags. `frontReference`, `useForInference`, and `expressionGroup` can overlap; `excluded` is the only exclusive tag. Usable observation frames are derived from detailed scan frames that have a detected face, 478 landmarks, `FacePose`, `useForInference = true`, and `excluded = false`.
+
+`poseOutOfRange` is treated as a warning tag, not an automatic exclusion reason. It is not suitable for `frontReference`, but it can still be useful for pose-aware 3D estimation as a z hint / depth observation. `noFace`, `invalidLandmarks`, and `manual` remain exclusion reasons. `mixedExpression`, `pending`, and `missingBlendshapes` are warning tags because they are weak inputs for single-expression rule generation but may still be usable for pose-aware 3D estimation when landmarks and pose are valid.
 
 Step 2-I-B builds `poseAwareInferenceDataset` from front reference frames and observation frames. It does not use fixed five-pose labels.
 
