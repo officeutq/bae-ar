@@ -120,6 +120,14 @@ const POSE_AWARE_TOP_VIEW_ASYMMETRY_WARNING_SCORE = 0.08
 const POSE_AWARE_LOW_CONFIDENCE_THRESHOLD = 0.45
 const POSE_AWARE_SHAPE_FRAME_POSE_PENALTY_DEG = 45
 const POSE_AWARE_MIN_SHAPE_FRAME_WEIGHT = 0.25
+const MEDIA_PIPE_Z_SOURCE = "mediapipe_landmark_z"
+const MEDIA_PIPE_Z_DEFAULT_NORMALIZE_MODE = "faceWidthScaled"
+const MEDIA_PIPE_Z_DEFAULT_SCALE = 1
+const MEDIA_PIPE_Z_DEFAULT_INVERT_SIGN = true
+const MEDIA_PIPE_Z_FRONT_REFERENCE_MATCH_RANGE_RATIO = 0.35
+const MEDIA_PIPE_Z_EXTREME_RANGE_WARNING_MAX = 1
+const MEDIA_PIPE_Z_THIN_RANGE_WARNING_RATIO = 0.03
+const MEDIA_PIPE_Z_THICK_RANGE_WARNING_RATIO = 1.2
 const EXPRESSION_FRAME_PREVIEW_COUNT = 8
 const EXPRESSION_GROUP_IDS = [
   "mouthPucker",
@@ -203,6 +211,7 @@ interface FrameAnalysisResult {
   landmarks: FaceLandmark[]
   blendshapes: BlendshapeScore[]
   pose: FacePose
+  facialTransformationMatrix: FaceTransformationMatrixSummary | null
   errorMessage: string | null
   analyzedAt: number
 }
@@ -211,6 +220,12 @@ interface BlendshapeScore {
   categoryName: string
   displayName: string
   score: number
+}
+
+interface FaceTransformationMatrixSummary {
+  rows: number
+  columns: number
+  finiteValueCount: number
 }
 
 interface ExtractedVideoFrame {
@@ -318,6 +333,7 @@ interface PoseAwareInferenceFrame {
   landmarkCount: number
   landmarkPreview: LandmarkPreviewPoint[]
   landmarks: FaceLandmark[]
+  hasFacialTransformationMatrix: boolean
 }
 
 interface PoseAwareInferenceDataset {
@@ -684,10 +700,86 @@ interface PoseAwareCanonicalBalancedFrameZDebug {
   warnings: string[]
 }
 
+type MediaPipeZNormalizeMode =
+  | "raw"
+  | "centered"
+  | "faceWidthScaled"
+  | "frontReferenceMatched"
+
+interface MediaPipeMeshAverageSettingsDebug {
+  mediaPipeZSource: typeof MEDIA_PIPE_Z_SOURCE
+  mediaPipeZScale: number
+  mediaPipeZCenteringMode: "none" | "frame_mean"
+  mediaPipeZInvertSign: boolean
+  mediaPipeZNormalizeMode: MediaPipeZNormalizeMode
+  frontReferenceMatchRangeRatio: number
+}
+
+interface MediaPipeZAvailabilityDebug {
+  hasLandmarkZ: boolean
+  landmarkZFiniteCount: number
+  landmarkZMissingCount: number
+  frameCountWithZ: number
+  frameCountWithoutZ: number
+  hasTransformMatrix: boolean
+  transformMatrixAvailableCount: number
+}
+
+interface MediaPipeZRangeDebug {
+  rawMediaPipeZMin: number | null
+  rawMediaPipeZMax: number | null
+  rawMediaPipeZAverage: number | null
+  rawMediaPipeZRange: number | null
+  normalizedMediaPipeZMin: number | null
+  normalizedMediaPipeZMax: number | null
+  normalizedMediaPipeZAverage: number | null
+  normalizedMediaPipeZRange: number | null
+  mediaPipeZRangeBeforeScale: number | null
+  mediaPipeZRangeAfterScale: number | null
+  finalCandidateZMin: number | null
+  finalCandidateZMax: number | null
+  finalCandidateZRange: number | null
+}
+
+interface MediaPipeMeshAverageCandidateComparisonDebug {
+  canonical3D: CandidateDebugComparisonItem | null
+  canonicalStableZ: CandidateDebugComparisonItem | null
+  balancedFrameZ: CandidateDebugComparisonItem | null
+  mediaPipeMeshAverage: CandidateDebugComparisonItem
+}
+
+interface PoseAwareMediaPipeMeshAverageDebug {
+  generationMethod: "pose_aware_mediapipe_mesh_average_v1"
+  settings: MediaPipeMeshAverageSettingsDebug
+  generationSummary: {
+    observationFrameCount: number
+    frontReferenceFrameCount: number
+    nearFrontObservationFrameCount: number
+    useForInferenceFrontReferenceFrameCount: number
+  }
+  observationFrames: PoseAwareObservationFrameDebugSummary
+  mediaPipeZAvailability: MediaPipeZAvailabilityDebug
+  mediaPipeZRange: MediaPipeZRangeDebug
+  directionBalance: DirectionBalanceSummary
+  canonicalAverageWeights: CanonicalAverageWeightDebugSummary
+  frameWeights: FrameStableZWeightDebugSummary
+  nearFrontObservation: NearFrontObservationDebugSummary
+  canonicalization: {
+    frameLocal3DBounds: LandmarkBoundsSummary | null
+    inversePoseCanonical3DBounds: LandmarkBoundsSummary | null
+    canonicalAverage: LandmarkSpatialSummary
+  }
+  comparison?: PoseAwareCandidateComparisonDebug
+  multiCandidateComparison: MediaPipeMeshAverageCandidateComparisonDebug
+  topView: TopViewZAsymmetrySummary
+  warnings: string[]
+}
+
 type IdealLandmarks3DCandidateDebug =
   | PoseAwareCanonical3DDebug
   | PoseAwareCanonicalStableZDebug
   | PoseAwareCanonicalBalancedFrameZDebug
+  | PoseAwareMediaPipeMeshAverageDebug
 
 interface PoseAwareMultiFrameSummary {
   status: PoseAwareInferenceStatus
@@ -716,6 +808,7 @@ type IdealLandmarks3DGenerationMethod =
   | "pose_aware_canonical_3d_v1"
   | "pose_aware_canonical_stable_z_v1"
   | "pose_aware_canonical_balanced_frame_z_v1"
+  | "pose_aware_mediapipe_mesh_average_v1"
 
 type PointCloudPreviewPreset = "front" | "side" | "top" | "reset"
 
@@ -1029,6 +1122,10 @@ let idealLandmarks3DCandidateResults: Partial<
 > = {}
 let selectedIdealLandmarks3DGenerationMethod: IdealLandmarks3DGenerationMethod =
   "pose_aware_weighted_z_v1"
+let mediaPipeZNormalizeMode: MediaPipeZNormalizeMode =
+  MEDIA_PIPE_Z_DEFAULT_NORMALIZE_MODE
+let mediaPipeZScale = MEDIA_PIPE_Z_DEFAULT_SCALE
+let mediaPipeZInvertSign = MEDIA_PIPE_Z_DEFAULT_INVERT_SIGN
 let landmarkGroupEditorState: LandmarkGroupEditorState =
   createInitialLandmarkGroupEditorState()
 let landmarkGroupEditorDragState: LandmarkGroupEditorDragState | null = null
@@ -1452,6 +1549,21 @@ function buildLandmarkPreview(
     }))
 }
 
+function summarizeFacialTransformationMatrix(
+  matrix: Matrix | undefined,
+): FaceTransformationMatrixSummary | null {
+  if (!matrix) {
+    return null
+  }
+
+  return {
+    rows: matrix.rows,
+    columns: matrix.columns,
+    finiteValueCount: matrix.data.filter((value) => Number.isFinite(value))
+      .length,
+  }
+}
+
 function createInitialIdealLandmarks3DCandidateResult(): IdealLandmarks3DCandidateResult {
   return {
     status: "not_ready",
@@ -1483,7 +1595,19 @@ function isIdealLandmarks3DGenerationMethod(
     value === "pose_aware_weighted_z_v1" ||
     value === "pose_aware_canonical_3d_v1" ||
     value === "pose_aware_canonical_stable_z_v1" ||
-    value === "pose_aware_canonical_balanced_frame_z_v1"
+    value === "pose_aware_canonical_balanced_frame_z_v1" ||
+    value === "pose_aware_mediapipe_mesh_average_v1"
+  )
+}
+
+function isMediaPipeZNormalizeMode(
+  value: string | undefined,
+): value is MediaPipeZNormalizeMode {
+  return (
+    value === "raw" ||
+    value === "centered" ||
+    value === "faceWidthScaled" ||
+    value === "frontReferenceMatched"
   )
 }
 
@@ -3796,6 +3920,7 @@ function buildPoseAwareInferenceFrame(
     landmarkCount: analysis.landmarks.length,
     landmarkPreview: buildLandmarkPreview(analysis.landmarks),
     landmarks: analysis.landmarks,
+    hasFacialTransformationMatrix: analysis.facialTransformationMatrix != null,
   }
 }
 
@@ -6104,6 +6229,352 @@ function buildPoseAwareCanonicalBalancedFrameZLandmarksFromFrames(
   }
 }
 
+function getMediaPipeZSettingsDebug(): MediaPipeMeshAverageSettingsDebug {
+  return {
+    mediaPipeZSource: MEDIA_PIPE_Z_SOURCE,
+    mediaPipeZScale: roundDebugNumber(mediaPipeZScale),
+    mediaPipeZCenteringMode:
+      mediaPipeZNormalizeMode === "raw" ? "none" : "frame_mean",
+    mediaPipeZInvertSign,
+    mediaPipeZNormalizeMode,
+    frontReferenceMatchRangeRatio:
+      MEDIA_PIPE_Z_FRONT_REFERENCE_MATCH_RANGE_RATIO,
+  }
+}
+
+function buildMediaPipeZAvailabilityDebug(
+  observationFrames: PoseAwareInferenceFrame[],
+): MediaPipeZAvailabilityDebug {
+  const zValues = observationFrames.flatMap((frame) =>
+    frame.landmarks.map((landmark) => landmark.z),
+  )
+  const finiteCount = zValues.filter((value) => Number.isFinite(value)).length
+  const frameCountWithZ = observationFrames.filter(
+    (frame) =>
+      frame.landmarks.length === REQUIRED_LANDMARK_COUNT &&
+      frame.landmarks.every((landmark) => Number.isFinite(landmark.z)),
+  ).length
+  const transformMatrixAvailableCount = observationFrames.filter(
+    (frame) => frame.hasFacialTransformationMatrix,
+  ).length
+
+  return {
+    hasLandmarkZ: finiteCount > 0,
+    landmarkZFiniteCount: finiteCount,
+    landmarkZMissingCount: zValues.length - finiteCount,
+    frameCountWithZ,
+    frameCountWithoutZ: observationFrames.length - frameCountWithZ,
+    hasTransformMatrix: transformMatrixAvailableCount > 0,
+    transformMatrixAvailableCount,
+  }
+}
+
+function summarizeMediaPipeZRange(
+  rawValues: number[],
+  normalizedValues: number[],
+  scaledValues: number[],
+  landmarks: IdealLandmark3DCandidate[],
+): MediaPipeZRangeDebug {
+  const summarize = (
+    values: number[],
+  ): {
+    min: number | null
+    max: number | null
+    average: number | null
+    range: number | null
+  } => {
+    const finiteValues = values.filter((value) => Number.isFinite(value))
+
+    if (finiteValues.length === 0) {
+      return { min: null, max: null, average: null, range: null }
+    }
+
+    const min = Math.min(...finiteValues)
+    const max = Math.max(...finiteValues)
+
+    return {
+      min: roundDebugNumber(min),
+      max: roundDebugNumber(max),
+      average: roundDebugNumber(averageNumbers(finiteValues)),
+      range: roundDebugNumber(max - min),
+    }
+  }
+  const raw = summarize(rawValues)
+  const normalized = summarize(normalizedValues)
+  const scaled = summarize(scaledValues)
+  const final = summarize(landmarks.map((landmark) => landmark.z))
+
+  return {
+    rawMediaPipeZMin: raw.min,
+    rawMediaPipeZMax: raw.max,
+    rawMediaPipeZAverage: raw.average,
+    rawMediaPipeZRange: raw.range,
+    normalizedMediaPipeZMin: normalized.min,
+    normalizedMediaPipeZMax: normalized.max,
+    normalizedMediaPipeZAverage: normalized.average,
+    normalizedMediaPipeZRange: normalized.range,
+    mediaPipeZRangeBeforeScale: normalized.range,
+    mediaPipeZRangeAfterScale: scaled.range,
+    finalCandidateZMin: final.min,
+    finalCandidateZMax: final.max,
+    finalCandidateZRange: final.range,
+  }
+}
+
+function normalizeMediaPipeFrameZValues(
+  frame: PoseAwareInferenceFrame,
+  sameUnitLandmarks: PoseAwareCorrectedLandmark2D[],
+  frontReferenceBaseBounds: LandmarkBoundsSummary | null,
+): {
+  normalizedByIndex: number[]
+  scaledByIndex: number[]
+  rawValues: number[]
+  normalizedValues: number[]
+  scaledValues: number[]
+} {
+  const rawValues = frame.landmarks.map((landmark) => landmark.z)
+  const finiteRawValues = rawValues.filter((value) => Number.isFinite(value))
+  const rawAverage = averageNumbers(finiteRawValues)
+  const rawRange = getZRange(finiteRawValues) ?? 0
+  const sameUnitBounds = buildLandmarkBoundsSummary(sameUnitLandmarks)
+  const sameUnitFaceWidth = sameUnitBounds?.width ?? 1
+  const frontReferenceWidth = frontReferenceBaseBounds?.width ?? sameUnitFaceWidth
+  const targetFrontReferenceRange =
+    frontReferenceWidth * MEDIA_PIPE_Z_FRONT_REFERENCE_MATCH_RANGE_RATIO
+
+  const normalizeValue = (rawZ: number): number => {
+    if (!Number.isFinite(rawZ)) {
+      return 0
+    }
+
+    const centered = rawZ - rawAverage
+
+    if (mediaPipeZNormalizeMode === "raw") {
+      return rawZ
+    }
+
+    if (mediaPipeZNormalizeMode === "centered") {
+      return centered
+    }
+
+    if (mediaPipeZNormalizeMode === "faceWidthScaled") {
+      return centered * sameUnitFaceWidth
+    }
+
+    if (rawRange <= 0 || !Number.isFinite(targetFrontReferenceRange)) {
+      return 0
+    }
+
+    return (centered / rawRange) * targetFrontReferenceRange
+  }
+
+  const normalizedByIndex = rawValues.map(normalizeValue)
+  const scaledByIndex = normalizedByIndex.map((value) =>
+    (mediaPipeZInvertSign ? -value : value) * mediaPipeZScale,
+  )
+
+  return {
+    normalizedByIndex,
+    scaledByIndex,
+    rawValues: finiteRawValues,
+    normalizedValues: normalizedByIndex.filter((value) =>
+      Number.isFinite(value),
+    ),
+    scaledValues: scaledByIndex.filter((value) => Number.isFinite(value)),
+  }
+}
+
+function buildPoseAwareMediaPipeMeshFrameLocalAndCanonicalPoints(
+  frame: PoseAwareInferenceFrame,
+  frameWeight: FrameStableZWeightDebug,
+  frontReferenceBaseBounds: LandmarkBoundsSummary | null,
+): {
+  localPoints: Array<Point3D & { index: number }>
+  canonicalPoints: Array<Point3D & { index: number }>
+  weight: number
+  rawValues: number[]
+  normalizedValues: number[]
+  scaledValues: number[]
+} | null {
+  const sameUnitLandmarks = getSameUnitLandmarks2D(frame)
+  const weight = frameWeight.finalCanonicalAverageWeight
+
+  if (
+    !sameUnitLandmarks ||
+    sameUnitLandmarks.length !== REQUIRED_LANDMARK_COUNT ||
+    !Number.isFinite(weight) ||
+    weight <= 0
+  ) {
+    return null
+  }
+
+  const zValues = normalizeMediaPipeFrameZValues(
+    frame,
+    sameUnitLandmarks,
+    frontReferenceBaseBounds,
+  )
+  const localPoints = sameUnitLandmarks.map((landmark, index) => ({
+    index,
+    x: landmark.x,
+    y: landmark.y,
+    z: Number((zValues.scaledByIndex[index] ?? 0).toFixed(4)),
+  }))
+  const canonicalPoints = localPoints.map((point) => ({
+    index: point.index,
+    ...inverseRotatePoseAwarePoint3D(point, frame.pose),
+  }))
+
+  return {
+    localPoints,
+    canonicalPoints,
+    weight,
+    rawValues: zValues.rawValues,
+    normalizedValues: zValues.normalizedValues,
+    scaledValues: zValues.scaledValues,
+  }
+}
+
+function inferMediaPipeMeshAverageLandmarkConfidence(
+  pointCount: number,
+  frameCount: number,
+  weightTotal: number,
+): number {
+  const supportScore = frameCount <= 0 ? 0 : clamp(pointCount / frameCount, 0, 1)
+  const weightScore = clamp(weightTotal / Math.max(frameCount * 0.5, 1), 0, 1)
+
+  return Number((supportScore * 0.65 + weightScore * 0.35).toFixed(4))
+}
+
+function buildPoseAwareMediaPipeMeshAverageLandmarksFromFrames(
+  observationFrames: PoseAwareInferenceFrame[],
+  frameWeights: FrameStableZWeightDebug[],
+  frontReferenceBaseBounds: LandmarkBoundsSummary | null,
+): {
+  landmarks: IdealLandmark3DCandidate[]
+  localPoints: Array<Point3D & { index: number }>
+  canonicalFramePoints: Array<Point3D & { index: number }>
+  rawZValues: number[]
+  normalizedZValues: number[]
+  scaledZValues: number[]
+  weightTotal: number
+} | null {
+  const frameWeightById = new Map(
+    frameWeights.map((frameWeight) => [frameWeight.frameId, frameWeight]),
+  )
+  const canonicalFrames = observationFrames
+    .map((frame) => {
+      const frameWeight = frameWeightById.get(frame.frameId)
+
+      if (!frameWeight) {
+        return null
+      }
+
+      return buildPoseAwareMediaPipeMeshFrameLocalAndCanonicalPoints(
+        frame,
+        frameWeight,
+        frontReferenceBaseBounds,
+      )
+    })
+    .filter(
+      (
+        frame,
+      ): frame is {
+        localPoints: Array<Point3D & { index: number }>
+        canonicalPoints: Array<Point3D & { index: number }>
+        weight: number
+        rawValues: number[]
+        normalizedValues: number[]
+        scaledValues: number[]
+      } => frame !== null,
+    )
+
+  if (canonicalFrames.length === 0) {
+    return null
+  }
+
+  const uncenteredLandmarks = Array.from(
+    { length: REQUIRED_LANDMARK_COUNT },
+    (_, index) => {
+      const points = canonicalFrames
+        .map((frame) => ({
+          point: frame.canonicalPoints[index],
+          weight: frame.weight,
+        }))
+        .filter(
+          (
+            item,
+          ): item is {
+            point: Point3D & { index: number }
+            weight: number
+          } =>
+            Boolean(item.point) &&
+            Number.isFinite(item.point.x) &&
+            Number.isFinite(item.point.y) &&
+            Number.isFinite(item.point.z) &&
+            Number.isFinite(item.weight) &&
+            item.weight > 0,
+        )
+      const weightTotal = points.reduce((sum, item) => sum + item.weight, 0)
+      const confidence = inferMediaPipeMeshAverageLandmarkConfidence(
+        points.length,
+        observationFrames.length,
+        weightTotal,
+      )
+
+      if (weightTotal <= 0) {
+        return {
+          index,
+          x: 0,
+          y: 0,
+          z: 0,
+          confidence,
+          source: "pose_aware_mediapipe_mesh_average_v1" as const,
+        }
+      }
+
+      return {
+        index,
+        x: Number(
+          (
+            points.reduce((sum, item) => sum + item.point.x * item.weight, 0) /
+            weightTotal
+          ).toFixed(4),
+        ),
+        y: Number(
+          (
+            points.reduce((sum, item) => sum + item.point.y * item.weight, 0) /
+            weightTotal
+          ).toFixed(4),
+        ),
+        z: Number(
+          (
+            points.reduce((sum, item) => sum + item.point.z * item.weight, 0) /
+            weightTotal
+          ).toFixed(4),
+        ),
+        confidence,
+        source: "pose_aware_mediapipe_mesh_average_v1" as const,
+      }
+    },
+  )
+
+  return {
+    landmarks: centerPoseAwareCanonicalLandmarks(uncenteredLandmarks),
+    localPoints: canonicalFrames.flatMap((frame) => frame.localPoints),
+    canonicalFramePoints: canonicalFrames.flatMap(
+      (frame) => frame.canonicalPoints,
+    ),
+    rawZValues: canonicalFrames.flatMap((frame) => frame.rawValues),
+    normalizedZValues: canonicalFrames.flatMap(
+      (frame) => frame.normalizedValues,
+    ),
+    scaledZValues: canonicalFrames.flatMap((frame) => frame.scaledValues),
+    weightTotal: roundDebugNumber(
+      canonicalFrames.reduce((sum, frame) => sum + frame.weight, 0),
+    ),
+  }
+}
+
 function buildPoseAwarePartialCanonicalCandidateSummary(
   observationFrames: PoseAwareInferenceFrame[],
   basePoints: PoseAwareBasePoint[],
@@ -6632,6 +7103,177 @@ function buildPoseAwareCanonicalBalancedFrameZCandidateDebug(
   }
 }
 
+function buildPoseAwareMediaPipeMeshAverageWarnings(
+  zAvailability: MediaPipeZAvailabilityDebug,
+  zRange: MediaPipeZRangeDebug,
+  nearFrontObservation: NearFrontObservationDebugSummary,
+  topView: TopViewZAsymmetrySummary,
+  comparison: MediaPipeMeshAverageCandidateComparisonDebug,
+  canonicalAverage: LandmarkSpatialSummary,
+): string[] {
+  const warnings: string[] = []
+
+  if (zAvailability.frameCountWithoutZ > 0) {
+    warnings.push("MediaPipe landmark.z is unavailable for some frames.")
+  }
+
+  if (
+    zRange.rawMediaPipeZRange !== null &&
+    zRange.rawMediaPipeZRange > MEDIA_PIPE_Z_EXTREME_RANGE_WARNING_MAX
+  ) {
+    warnings.push("MediaPipe raw z range is extreme.")
+  }
+
+  const candidateBounds = canonicalAverage.bounds
+  const finalZRange = zRange.finalCandidateZRange
+  const xySize =
+    candidateBounds === null
+      ? null
+      : Math.max(candidateBounds.width, candidateBounds.height)
+
+  if (finalZRange !== null && xySize !== null && xySize > 0) {
+    const zToXyRatio = finalZRange / xySize
+
+    if (
+      zToXyRatio < MEDIA_PIPE_Z_THIN_RANGE_WARNING_RATIO ||
+      zToXyRatio > MEDIA_PIPE_Z_THICK_RANGE_WARNING_RATIO
+    ) {
+      warnings.push(
+        "MediaPipe z scale may not match x/y same-unit scale.",
+      )
+    }
+  }
+
+  if (nearFrontObservation.warning) {
+    warnings.push(nearFrontObservation.warning)
+  }
+
+  if (nearFrontObservation.useForInferenceFrontReferenceFrameCount === 0) {
+    warnings.push("useForInference frontReference count is 0.")
+  }
+
+  warnings.push(topView.warning)
+
+  const balancedFrameZ = comparison.balancedFrameZ
+
+  if (
+    balancedFrameZ &&
+    comparison.mediaPipeMeshAverage.zRange > balancedFrameZ.zRange
+  ) {
+    warnings.push("new method worsens zRange versus balanced_frame_z.")
+  }
+
+  if (
+    balancedFrameZ?.topViewAsymmetryScore !== null &&
+    balancedFrameZ?.topViewAsymmetryScore !== undefined &&
+    comparison.mediaPipeMeshAverage.topViewAsymmetryScore !== null &&
+    comparison.mediaPipeMeshAverage.topViewAsymmetryScore >
+      balancedFrameZ.topViewAsymmetryScore
+  ) {
+    warnings.push(
+      "new method worsens topViewAsymmetry versus balanced_frame_z.",
+    )
+  }
+
+  return warnings
+}
+
+function buildPoseAwareMediaPipeMeshAverageCandidateDebug(
+  dataset: PoseAwareInferenceDataset,
+  canonicalResult: {
+    landmarks: IdealLandmark3DCandidate[]
+    localPoints: Array<Point3D & { index: number }>
+    canonicalFramePoints: Array<Point3D & { index: number }>
+    rawZValues: number[]
+    normalizedZValues: number[]
+    scaledZValues: number[]
+  },
+  directionBalance: DirectionBalanceSummary,
+  frameWeights: FrameStableZWeightDebug[],
+  canonical3DResult: IdealLandmarks3DCandidateResult | null,
+  stableZResult: IdealLandmarks3DCandidateResult | null,
+  balancedFrameZResult: IdealLandmarks3DCandidateResult | null,
+): PoseAwareMediaPipeMeshAverageDebug {
+  const observationFrames = dataset.observationFrames
+  const observationSummary =
+    buildPoseAwareObservationFrameDebugSummary(observationFrames)
+  const topView = buildTopViewZAsymmetrySummary(canonicalResult.landmarks)
+  const nearFrontObservation = buildNearFrontObservationDebugSummary(dataset)
+  const canonicalAverage = buildLandmarkSpatialSummary(canonicalResult.landmarks)
+  const mediaPipeZAvailability =
+    buildMediaPipeZAvailabilityDebug(observationFrames)
+  const mediaPipeZRange = summarizeMediaPipeZRange(
+    canonicalResult.rawZValues,
+    canonicalResult.normalizedZValues,
+    canonicalResult.scaledZValues,
+    canonicalResult.landmarks,
+  )
+  const comparison = buildPoseAwareCandidateComparisonDebug(
+    balancedFrameZResult,
+    canonicalResult.landmarks,
+    "pose_aware_mediapipe_mesh_average_v1",
+  )
+  const multiCandidateComparison: MediaPipeMeshAverageCandidateComparisonDebug = {
+    canonical3D: canonical3DResult
+      ? buildCandidateDebugComparisonItem(canonical3DResult)
+      : null,
+    canonicalStableZ: stableZResult
+      ? buildCandidateDebugComparisonItem(stableZResult)
+      : null,
+    balancedFrameZ: balancedFrameZResult
+      ? buildCandidateDebugComparisonItem(balancedFrameZResult)
+      : null,
+    mediaPipeMeshAverage: buildCandidateDebugComparisonItemFromLandmarks(
+      "pose_aware_mediapipe_mesh_average_v1",
+      canonicalResult.landmarks,
+    ),
+  }
+  const debugWithoutWarnings = {
+    generationMethod: "pose_aware_mediapipe_mesh_average_v1" as const,
+    settings: getMediaPipeZSettingsDebug(),
+    generationSummary: {
+      observationFrameCount: dataset.observationFrames.length,
+      frontReferenceFrameCount: dataset.frontReferenceFrames.length,
+      nearFrontObservationFrameCount:
+        nearFrontObservation.nearFrontObservationFrameCount,
+      useForInferenceFrontReferenceFrameCount:
+        nearFrontObservation.useForInferenceFrontReferenceFrameCount,
+    },
+    observationFrames: observationSummary,
+    mediaPipeZAvailability,
+    mediaPipeZRange,
+    directionBalance,
+    canonicalAverageWeights:
+      buildCanonicalAverageWeightDebugSummary(frameWeights),
+    frameWeights: buildFrameStableZWeightDebugSummary(frameWeights),
+    nearFrontObservation,
+    canonicalization: {
+      frameLocal3DBounds: buildLandmarkBoundsSummary(
+        canonicalResult.localPoints,
+      ),
+      inversePoseCanonical3DBounds: buildLandmarkBoundsSummary(
+        canonicalResult.canonicalFramePoints,
+      ),
+      canonicalAverage,
+    },
+    comparison,
+    multiCandidateComparison,
+    topView,
+  }
+
+  return {
+    ...debugWithoutWarnings,
+    warnings: buildPoseAwareMediaPipeMeshAverageWarnings(
+      mediaPipeZAvailability,
+      mediaPipeZRange,
+      nearFrontObservation,
+      topView,
+      multiCandidateComparison,
+      canonicalAverage,
+    ),
+  }
+}
+
 function buildPoseAwareIdealLandmarks3DCandidateResult(
   dataset: PoseAwareInferenceDataset,
 ): IdealLandmarks3DCandidateResult {
@@ -6972,12 +7614,164 @@ function buildPoseAwareCanonicalBalancedFrameZIdealLandmarks3DCandidateResult(
   }
 }
 
+function buildPoseAwareMediaPipeMeshAverageIdealLandmarks3DCandidateResult(
+  dataset: PoseAwareInferenceDataset,
+  canonical3DResult: IdealLandmarks3DCandidateResult | null,
+  stableZResult: IdealLandmarks3DCandidateResult | null,
+  balancedFrameZResult: IdealLandmarks3DCandidateResult | null,
+): IdealLandmarks3DCandidateResult {
+  if (dataset.status === "missing_front_reference") {
+    return {
+      ...createInitialIdealLandmarks3DCandidateResult(),
+      status: "insufficient_data",
+      generationMethod: "pose_aware_mediapipe_mesh_average_v1",
+      message:
+        "frontReference frame is missing, so pose-aware MediaPipe mesh average candidate generation cannot run.",
+    }
+  }
+
+  if (dataset.observationFrames.length === 0) {
+    return {
+      ...createInitialIdealLandmarks3DCandidateResult(),
+      status: "insufficient_data",
+      generationMethod: "pose_aware_mediapipe_mesh_average_v1",
+      message:
+        "useForInference observation frames are missing, so pose-aware MediaPipe mesh average candidate generation cannot run.",
+    }
+  }
+
+  const basePoints = buildPoseAwareBasePoints(dataset.frontReferenceFrames)
+
+  if (!basePoints || basePoints.length !== REQUIRED_LANDMARK_COUNT) {
+    return {
+      ...createInitialIdealLandmarks3DCandidateResult(),
+      status: "insufficient_data",
+      generationMethod: "pose_aware_mediapipe_mesh_average_v1",
+      message:
+        "frontReference base 478 landmarks are unavailable, so pose-aware MediaPipe mesh average candidate generation cannot run.",
+    }
+  }
+
+  const zAvailability = buildMediaPipeZAvailabilityDebug(
+    dataset.observationFrames,
+  )
+
+  if (!zAvailability.hasLandmarkZ || zAvailability.frameCountWithZ === 0) {
+    return {
+      ...createInitialIdealLandmarks3DCandidateResult(),
+      status: "insufficient_data",
+      generationMethod: "pose_aware_mediapipe_mesh_average_v1",
+      message:
+        "MediaPipe landmark.z is unavailable in detailed scan observation frames, so MediaPipe mesh average candidate generation cannot run.",
+      debug: {
+        generationMethod: "pose_aware_mediapipe_mesh_average_v1",
+        settings: getMediaPipeZSettingsDebug(),
+        generationSummary: {
+          observationFrameCount: dataset.observationFrames.length,
+          frontReferenceFrameCount: dataset.frontReferenceFrames.length,
+          nearFrontObservationFrameCount: 0,
+          useForInferenceFrontReferenceFrameCount: 0,
+        },
+        observationFrames: buildPoseAwareObservationFrameDebugSummary(
+          dataset.observationFrames,
+        ),
+        mediaPipeZAvailability: zAvailability,
+        mediaPipeZRange: summarizeMediaPipeZRange([], [], [], []),
+        directionBalance: buildFrameStableZWeightDebug(dataset.observationFrames)
+          .directionBalance,
+        canonicalAverageWeights: buildCanonicalAverageWeightDebugSummary([]),
+        frameWeights: buildFrameStableZWeightDebugSummary([]),
+        nearFrontObservation: buildNearFrontObservationDebugSummary(dataset),
+        canonicalization: {
+          frameLocal3DBounds: null,
+          inversePoseCanonical3DBounds: null,
+          canonicalAverage: buildLandmarkSpatialSummary([]),
+        },
+        comparison: undefined,
+        multiCandidateComparison: {
+          canonical3D: canonical3DResult
+            ? buildCandidateDebugComparisonItem(canonical3DResult)
+            : null,
+          canonicalStableZ: stableZResult
+            ? buildCandidateDebugComparisonItem(stableZResult)
+            : null,
+          balancedFrameZ: balancedFrameZResult
+            ? buildCandidateDebugComparisonItem(balancedFrameZResult)
+            : null,
+          mediaPipeMeshAverage:
+            buildCandidateDebugComparisonItemFromLandmarks(
+              "pose_aware_mediapipe_mesh_average_v1",
+              [],
+            ),
+        },
+        topView: buildTopViewZAsymmetrySummary([]),
+        warnings: ["MediaPipe landmark.z is unavailable."],
+      },
+    }
+  }
+
+  const { frameWeights, directionBalance } = buildFrameStableZWeightDebug(
+    dataset.observationFrames,
+  )
+  const canonicalResult = buildPoseAwareMediaPipeMeshAverageLandmarksFromFrames(
+    dataset.observationFrames,
+    frameWeights,
+    buildLandmarkBoundsSummary(basePoints),
+  )
+
+  if (!canonicalResult || canonicalResult.landmarks.length !== REQUIRED_LANDMARK_COUNT) {
+    return {
+      ...createInitialIdealLandmarks3DCandidateResult(),
+      status: "insufficient_data",
+      generationMethod: "pose_aware_mediapipe_mesh_average_v1",
+      message:
+        "observation frames could not be inverse-rotated into MediaPipe mesh average canonical 3D landmarks.",
+    }
+  }
+
+  const landmarks = canonicalResult.landmarks
+  const debug = buildPoseAwareMediaPipeMeshAverageCandidateDebug(
+    dataset,
+    canonicalResult,
+    directionBalance,
+    frameWeights,
+    canonical3DResult,
+    stableZResult,
+    balancedFrameZResult,
+  )
+
+  return {
+    status: "generated",
+    generationMethod: "pose_aware_mediapipe_mesh_average_v1",
+    landmarkCount: landmarks.length,
+    landmarks,
+    landmarksPreview: landmarks.slice(0, IDEAL_LANDMARKS_3D_PREVIEW_COUNT),
+    summary: buildIdealLandmarks3DCandidateSummary(landmarks, {
+      frontReferenceFrameCount: dataset.frontReferenceFrames.length,
+      observationFrameCount: dataset.observationFrames.length,
+      excludedFrameCount: dataset.excludedFrameCount,
+    }),
+    message:
+      "Step 2-I-B dataset observations used MediaPipe landmark.z for frame-local 3D, then inverse pose rotation and direction-balanced canonical weighted average. dx / sin(yaw) zHint is not used.",
+    debug,
+  }
+}
+
 function buildPoseAwareCandidateResult(
   dataset: PoseAwareInferenceDataset,
   generationMethod: IdealLandmarks3DGenerationMethod,
   oldResult: IdealLandmarks3DCandidateResult | null,
   comparisonResult: IdealLandmarks3DCandidateResult | null = null,
 ): IdealLandmarks3DCandidateResult {
+  if (generationMethod === "pose_aware_mediapipe_mesh_average_v1") {
+    return buildPoseAwareMediaPipeMeshAverageIdealLandmarks3DCandidateResult(
+      dataset,
+      comparisonResult,
+      null,
+      oldResult,
+    )
+  }
+
   if (generationMethod === "pose_aware_canonical_balanced_frame_z_v1") {
     return buildPoseAwareCanonicalBalancedFrameZIdealLandmarks3DCandidateResult(
       dataset,
@@ -7012,6 +7806,7 @@ function toPoseAwareCandidatePreview(): unknown {
         "pose_aware_canonical_3d_v1",
         "pose_aware_canonical_stable_z_v1",
         "pose_aware_canonical_balanced_frame_z_v1",
+        "pose_aware_mediapipe_mesh_average_v1",
       ] as IdealLandmarks3DGenerationMethod[]
     ).map((generationMethod) => {
       const cachedResult = idealLandmarks3DCandidateResults[generationMethod]
@@ -7049,6 +7844,7 @@ function toPoseAwareCandidatePreview(): unknown {
       "pose_aware_canonical_3d_v1 inverse-rotates provisional frame-local 3D points into canonical space before averaging.",
       "pose_aware_canonical_stable_z_v1 builds direction-balanced stableZ before frame-local 3D and canonical averaging.",
       "pose_aware_canonical_balanced_frame_z_v1 uses each frame's own zHint for frame-local 3D, then direction-balances canonical averaging.",
+      "pose_aware_mediapipe_mesh_average_v1 uses MediaPipe landmark.z for frame-local 3D and does not use dx / sin(yaw) zHint.",
     ],
   }
 }
@@ -7197,9 +7993,50 @@ function renderPoseAwareCandidateMethodControls(): string {
           ${renderGenerationMethodOption("pose_aware_canonical_3d_v1")}
           ${renderGenerationMethodOption("pose_aware_canonical_stable_z_v1")}
           ${renderGenerationMethodOption("pose_aware_canonical_balanced_frame_z_v1")}
+          ${renderGenerationMethodOption("pose_aware_mediapipe_mesh_average_v1")}
         </select>
       </label>
+      <label>
+        MediaPipe z normalize
+        <select data-mediapipe-z-normalize-mode-select="true">
+          ${renderMediaPipeZNormalizeModeOption("raw")}
+          ${renderMediaPipeZNormalizeModeOption("centered")}
+          ${renderMediaPipeZNormalizeModeOption("faceWidthScaled")}
+          ${renderMediaPipeZNormalizeModeOption("frontReferenceMatched")}
+        </select>
+      </label>
+      <label>
+        MediaPipe z scale
+        <input
+          type="number"
+          min="0"
+          step="0.05"
+          value="${mediaPipeZScale}"
+          data-mediapipe-z-scale-input="true"
+        />
+      </label>
+      <label>
+        <input
+          type="checkbox"
+          data-mediapipe-z-invert-sign-checkbox="true"
+          ${mediaPipeZInvertSign ? "checked" : ""}
+        />
+        MediaPipe z invert
+      </label>
     </div>
+  `
+}
+
+function renderMediaPipeZNormalizeModeOption(
+  mode: MediaPipeZNormalizeMode,
+): string {
+  return `
+    <option
+      value="${mode}"
+      ${mediaPipeZNormalizeMode === mode ? "selected" : ""}
+    >
+      ${mode}
+    </option>
   `
 }
 
@@ -7209,6 +8046,7 @@ function renderPoseAwareCachedCandidateSwitches(): string {
     "pose_aware_canonical_3d_v1",
     "pose_aware_canonical_stable_z_v1",
     "pose_aware_canonical_balanced_frame_z_v1",
+    "pose_aware_mediapipe_mesh_average_v1",
   ]
 
   return `
@@ -7408,6 +8246,7 @@ function renderPoseAwareCanonicalDebugBlock(
     </dl>
     ${renderPoseAwareStableZDebugBlock(debug)}
     ${renderPoseAwareBalancedFrameZDebugBlock(debug)}
+    ${renderPoseAwareMediaPipeMeshAverageDebugBlock(debug)}
     <div class="pose-aware-coverage">
       <strong>yaw bins</strong>
       <ul>
@@ -7463,6 +8302,121 @@ function renderPoseAwareCanonicalDebugBlock(
             </ul>`
       }
     </div>
+  `
+}
+
+function renderPoseAwareMediaPipeMeshAverageDebugBlock(
+  debug: IdealLandmarks3DCandidateDebug,
+): string {
+  if (debug.generationMethod !== "pose_aware_mediapipe_mesh_average_v1") {
+    return ""
+  }
+
+  return `
+    <h5>MediaPipe mesh average summary</h5>
+    <dl class="pose-aware-summary-list">
+      <div>
+        <dt>observation / frontReference</dt>
+        <dd>${debug.generationSummary.observationFrameCount} / ${debug.generationSummary.frontReferenceFrameCount}</dd>
+      </div>
+      <div>
+        <dt>nearFront observation</dt>
+        <dd>${debug.generationSummary.nearFrontObservationFrameCount}</dd>
+      </div>
+      <div>
+        <dt>useForInference frontReference</dt>
+        <dd>${debug.generationSummary.useForInferenceFrontReferenceFrameCount}</dd>
+      </div>
+      <div>
+        <dt>z source / mode</dt>
+        <dd>${debug.settings.mediaPipeZSource} / ${debug.settings.mediaPipeZNormalizeMode}</dd>
+      </div>
+      <div>
+        <dt>z scale / invert / centering</dt>
+        <dd>${formatNumber(debug.settings.mediaPipeZScale)} / ${debug.settings.mediaPipeZInvertSign ? "true" : "false"} / ${debug.settings.mediaPipeZCenteringMode}</dd>
+      </div>
+    </dl>
+    <h5>MediaPipe z availability</h5>
+    <dl class="pose-aware-summary-list">
+      <div>
+        <dt>has landmark z</dt>
+        <dd>${debug.mediaPipeZAvailability.hasLandmarkZ ? "true" : "false"}</dd>
+      </div>
+      <div>
+        <dt>z finite / missing</dt>
+        <dd>${debug.mediaPipeZAvailability.landmarkZFiniteCount} / ${debug.mediaPipeZAvailability.landmarkZMissingCount}</dd>
+      </div>
+      <div>
+        <dt>frames with / without z</dt>
+        <dd>${debug.mediaPipeZAvailability.frameCountWithZ} / ${debug.mediaPipeZAvailability.frameCountWithoutZ}</dd>
+      </div>
+      <div>
+        <dt>has transform matrix / count</dt>
+        <dd>${debug.mediaPipeZAvailability.hasTransformMatrix ? "true" : "false"} / ${debug.mediaPipeZAvailability.transformMatrixAvailableCount}</dd>
+      </div>
+    </dl>
+    <h5>MediaPipe z range</h5>
+    <dl class="pose-aware-summary-list">
+      <div>
+        <dt>raw z min / max / avg / range</dt>
+        <dd>${formatNullableDebugNumber(debug.mediaPipeZRange.rawMediaPipeZMin)} / ${formatNullableDebugNumber(debug.mediaPipeZRange.rawMediaPipeZMax)} / ${formatNullableDebugNumber(debug.mediaPipeZRange.rawMediaPipeZAverage)} / ${formatNullableDebugNumber(debug.mediaPipeZRange.rawMediaPipeZRange)}</dd>
+      </div>
+      <div>
+        <dt>normalized z min / max / avg / range</dt>
+        <dd>${formatNullableDebugNumber(debug.mediaPipeZRange.normalizedMediaPipeZMin)} / ${formatNullableDebugNumber(debug.mediaPipeZRange.normalizedMediaPipeZMax)} / ${formatNullableDebugNumber(debug.mediaPipeZRange.normalizedMediaPipeZAverage)} / ${formatNullableDebugNumber(debug.mediaPipeZRange.normalizedMediaPipeZRange)}</dd>
+      </div>
+      <div>
+        <dt>z range before / after scale</dt>
+        <dd>${formatNullableDebugNumber(debug.mediaPipeZRange.mediaPipeZRangeBeforeScale)} / ${formatNullableDebugNumber(debug.mediaPipeZRange.mediaPipeZRangeAfterScale)}</dd>
+      </div>
+      <div>
+        <dt>final candidate z min / max / range</dt>
+        <dd>${formatNullableDebugNumber(debug.mediaPipeZRange.finalCandidateZMin)} / ${formatNullableDebugNumber(debug.mediaPipeZRange.finalCandidateZMax)} / ${formatNullableDebugNumber(debug.mediaPipeZRange.finalCandidateZRange)}</dd>
+      </div>
+    </dl>
+    <h5>canonical average weights</h5>
+    <dl class="pose-aware-summary-list">
+      <div>
+        <dt>yaw canonical weight + / -</dt>
+        <dd>${formatNumber(debug.canonicalAverageWeights.yawPositiveCanonicalAverageWeightTotal)} / ${formatNumber(debug.canonicalAverageWeights.yawNegativeCanonicalAverageWeightTotal)}</dd>
+      </div>
+      <div>
+        <dt>pitch canonical weight + / -</dt>
+        <dd>${formatNumber(debug.canonicalAverageWeights.pitchPositiveCanonicalAverageWeightTotal)} / ${formatNumber(debug.canonicalAverageWeights.pitchNegativeCanonicalAverageWeightTotal)}</dd>
+      </div>
+      <div>
+        <dt>yaw canonical frame count + / -</dt>
+        <dd>${debug.canonicalAverageWeights.yawPositiveCanonicalAverageFrameCount} / ${debug.canonicalAverageWeights.yawNegativeCanonicalAverageFrameCount}</dd>
+      </div>
+      <div>
+        <dt>canonical balance avg / min / max</dt>
+        <dd>${formatNumber(debug.canonicalAverageWeights.averageCanonicalAverageDirectionBalanceWeight)} / ${formatNumber(debug.canonicalAverageWeights.minCanonicalAverageDirectionBalanceWeight)} / ${formatNumber(debug.canonicalAverageWeights.maxCanonicalAverageDirectionBalanceWeight)}</dd>
+      </div>
+    </dl>
+    <h5>four-method comparison</h5>
+    ${renderBalancedFrameZCandidateComparisonItem(
+      "pose_aware_canonical_3d_v1",
+      debug.multiCandidateComparison.canonical3D,
+    )}
+    ${renderBalancedFrameZCandidateComparisonItem(
+      "pose_aware_canonical_stable_z_v1",
+      debug.multiCandidateComparison.canonicalStableZ,
+    )}
+    ${renderBalancedFrameZCandidateComparisonItem(
+      "pose_aware_canonical_balanced_frame_z_v1",
+      debug.multiCandidateComparison.balancedFrameZ,
+    )}
+    ${renderBalancedFrameZCandidateComparisonItem(
+      "pose_aware_mediapipe_mesh_average_v1",
+      debug.multiCandidateComparison.mediaPipeMeshAverage,
+    )}
+    <h5>frame weight debug</h5>
+    ${renderFrameStableZWeightList("top weighted frames", debug.frameWeights.topWeightedFrames)}
+    ${renderFrameStableZWeightList("lowest weighted frames", debug.frameWeights.lowestWeightedFrames)}
+    <h5>top view debug</h5>
+    <dl class="pose-aware-summary-list">
+      ${renderTopViewZAsymmetryRows(debug.topView)}
+    </dl>
   `
 }
 
@@ -9877,6 +10831,42 @@ function attachIdealLandmarks3DCandidateHandler(): void {
     })
 
   document
+    .querySelector<HTMLSelectElement>(
+      "[data-mediapipe-z-normalize-mode-select]",
+    )
+    ?.addEventListener("change", (event) => {
+      const value = (event.currentTarget as HTMLSelectElement).value
+
+      if (!isMediaPipeZNormalizeMode(value)) {
+        return
+      }
+
+      mediaPipeZNormalizeMode = value
+      resetIdealLandmarks3DCandidateResult()
+      render()
+    })
+
+  document
+    .querySelector<HTMLInputElement>("[data-mediapipe-z-scale-input]")
+    ?.addEventListener("change", (event) => {
+      const value = Number((event.currentTarget as HTMLInputElement).value)
+
+      mediaPipeZScale = Number.isFinite(value) && value >= 0 ? value : 1
+      resetIdealLandmarks3DCandidateResult()
+      render()
+    })
+
+  document
+    .querySelector<HTMLInputElement>(
+      "[data-mediapipe-z-invert-sign-checkbox]",
+    )
+    ?.addEventListener("change", (event) => {
+      mediaPipeZInvertSign = (event.currentTarget as HTMLInputElement).checked
+      resetIdealLandmarks3DCandidateResult()
+      render()
+    })
+
+  document
     .querySelector<HTMLButtonElement>(
       "[data-generate-pose-aware-ideal-landmarks-3d-candidate]",
     )
@@ -9903,12 +10893,20 @@ function attachIdealLandmarks3DCandidateHandler(): void {
         stableZResult,
         canonicalResult,
       )
+      const mediaPipeMeshAverageResult =
+        buildPoseAwareMediaPipeMeshAverageIdealLandmarks3DCandidateResult(
+          dataset,
+          canonicalResult,
+          stableZResult,
+          balancedFrameZResult,
+        )
 
       idealLandmarks3DCandidateResults = {
         pose_aware_weighted_z_v1: weightedResult,
         pose_aware_canonical_3d_v1: canonicalResult,
         pose_aware_canonical_stable_z_v1: stableZResult,
         pose_aware_canonical_balanced_frame_z_v1: balancedFrameZResult,
+        pose_aware_mediapipe_mesh_average_v1: mediaPipeMeshAverageResult,
       }
       idealLandmarks3DCandidateResult =
         idealLandmarks3DCandidateResults[
@@ -10493,6 +11491,7 @@ function analyzeScannedCanvasFrame(
 ): ExtractedVideoFrame {
   try {
     const result = landmarker.detect(analysisCanvas)
+    const facialTransformationMatrix = result.facialTransformationMatrixes[0]
     const landmarks = (result.faceLandmarks[0] ?? []).map((landmark) => ({
       x: landmark.x,
       y: landmark.y,
@@ -10519,8 +11518,11 @@ function analyzeScannedCanvasFrame(
         landmarks,
         blendshapes,
         pose: detected
-          ? estimateFacePose(landmarks, result.facialTransformationMatrixes[0])
+          ? estimateFacePose(landmarks, facialTransformationMatrix)
           : { ...EMPTY_FACE_POSE },
+        facialTransformationMatrix: summarizeFacialTransformationMatrix(
+          facialTransformationMatrix,
+        ),
         errorMessage: null,
         analyzedAt: Date.now(),
       },
@@ -10538,6 +11540,7 @@ function analyzeScannedCanvasFrame(
         landmarks: [],
         blendshapes: [],
         pose: { ...EMPTY_FACE_POSE },
+        facialTransformationMatrix: null,
         errorMessage: error instanceof Error ? error.message : String(error),
         analyzedAt: Date.now(),
       },
