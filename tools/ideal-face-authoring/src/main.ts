@@ -103,8 +103,17 @@ const EXPRESSION_GROUP_IDS = [
   "eyeSquintLeft",
   "eyeSquintRight",
 ] as const
+const FRONT_REFERENCE_RECOMMENDED_COUNT = {
+  min: 5,
+  max: 10,
+} as const
+const FRONT_REFERENCE_CANDIDATE_POSE_LIMIT = {
+  yaw: 15,
+  pitch: 20,
+  roll: 10,
+} as const
+const FRONT_REFERENCE_CANDIDATE_PREVIEW_COUNT = 8
 const USAGE_BUCKET_TARGETS = {
-  frontReference: 10,
   idealFaceInference: 80,
   mouthPucker: 20,
   jawOpen: 20,
@@ -614,6 +623,15 @@ interface FrameUsageSummary {
     excludedReason?: ExcludedReason
     warningReasons: WarningReason[]
   }>
+}
+
+interface FrontReferenceSummary {
+  selectedCount: number
+  candidateCount: number
+  recommendedMin: number
+  recommendedMax: number
+  status: UsageBucketStatus
+  candidateFrameIdPreview: string[]
 }
 
 interface UsageBucketSummary {
@@ -2618,19 +2636,77 @@ function getFrameUsageSummary(): FrameUsageSummary {
   }
 }
 
+function isFrontReferenceCandidatePose(pose: FacePose): boolean {
+  return (
+    Math.abs(pose.yaw) <= FRONT_REFERENCE_CANDIDATE_POSE_LIMIT.yaw &&
+    Math.abs(pose.pitch) <= FRONT_REFERENCE_CANDIDATE_POSE_LIMIT.pitch &&
+    Math.abs(pose.roll) <= FRONT_REFERENCE_CANDIDATE_POSE_LIMIT.roll
+  )
+}
+
+function hasNoStrongExpressionForFrontReference(
+  frame: ExtractedVideoFrame,
+): boolean {
+  const blendshapes = frame.analysis?.blendshapes ?? []
+
+  if (blendshapes.length === 0) {
+    return true
+  }
+
+  return getActiveExpressionGroupIds(blendshapes).length === 0
+}
+
+function isFrontReferenceCandidate(frame: ExtractedVideoFrame): boolean {
+  const analysis = frame.analysis
+  const usage = getAuthoringFrameUsage(frame)
+
+  return (
+    !usage.excluded &&
+    frame.status === "analyzed" &&
+    analysis?.detected === true &&
+    analysis.landmarks.length === REQUIRED_LANDMARK_COUNT &&
+    hasCompletePose(analysis.pose) &&
+    isFrontReferenceCandidatePose(analysis.pose) &&
+    hasNoStrongExpressionForFrontReference(frame)
+  )
+}
+
+function getFrontReferenceSummary(): FrontReferenceSummary {
+  const frames = getDetailedScanFrames()
+  const selectedCount = frames.filter((frame) => {
+    const usage = getAuthoringFrameUsage(frame)
+
+    return usage.frontReference && !usage.excluded
+  }).length
+  const candidateFrameIds = frames
+    .filter(isFrontReferenceCandidate)
+    .map(getFrameIdFromFrame)
+
+  return {
+    selectedCount,
+    candidateCount: candidateFrameIds.length,
+    recommendedMin: FRONT_REFERENCE_RECOMMENDED_COUNT.min,
+    recommendedMax: FRONT_REFERENCE_RECOMMENDED_COUNT.max,
+    status:
+      selectedCount >= FRONT_REFERENCE_RECOMMENDED_COUNT.min
+        ? "ok"
+        : "insufficient",
+    candidateFrameIdPreview: candidateFrameIds.slice(
+      0,
+      FRONT_REFERENCE_CANDIDATE_PREVIEW_COUNT,
+    ),
+  }
+}
+
 function getUsageBucketSelectedCount(
   id: UsageBucketId,
   frameUsageSummary: FrameUsageSummary,
 ): number {
-  if (id === "frontReference") {
-    return frameUsageSummary.frontReferenceCount
-  }
-
   if (id === "idealFaceInference") {
     return frameUsageSummary.useForInferenceCount
   }
 
-  return frameUsageSummary.expressionGroupCounts[id]
+  return frameUsageSummary.expressionGroupCounts[id as ExpressionGroupId]
 }
 
 function getUsageBucketSummary(): UsageBucketSummary[] {
@@ -2645,12 +2721,30 @@ function getUsageBucketSummary(): UsageBucketSummary[] {
       targetCount,
       selectedCount,
       status: selectedCount >= targetCount ? "ok" : "insufficient",
-      priority:
-        id === "frontReference" || id === "idealFaceInference"
-          ? "required"
-          : "optional",
+      priority: id === "idealFaceInference" ? "required" : "optional",
     }
   })
+}
+
+function buildFrontReferenceWarnings(
+  summary: FrontReferenceSummary,
+): string[] {
+  const warnings: string[] = []
+  const recommendedLabel = `${summary.recommendedMin}〜${summary.recommendedMax}`
+
+  if (summary.selectedCount < summary.recommendedMin) {
+    warnings.push(
+      `正面基準が少なめです。Frame Review で正面に近い frame を追加してください（${summary.selectedCount} / 推奨 ${recommendedLabel}）。`,
+    )
+  }
+
+  if (summary.candidateCount === 0) {
+    warnings.push(
+      "正面基準候補が見つかりません。動画内に正面に近い frame が少ない可能性があります。",
+    )
+  }
+
+  return warnings
 }
 
 function buildUsageBucketWarnings(
@@ -3097,7 +3191,7 @@ function getPoseAwareInferenceDataset(): PoseAwareInferenceDataset {
   const warnings: string[] = []
 
   if (frontReferenceFrames.length === 0) {
-    warnings.push("正面基準候補を1件以上選んでください。")
+    warnings.push("正面基準を1件以上手動選択してください。")
   }
 
   if (observationFrames.length < POSE_AWARE_MIN_OBSERVATION_FRAME_COUNT) {
@@ -3164,7 +3258,7 @@ function getPoseAwareMultiFrameSummary(): PoseAwareMultiFrameSummary {
   const warnings: string[] = []
 
   if (frontReferenceFrames.length === 0) {
-    warnings.push("正面基準候補を1件以上選んでください。")
+    warnings.push("正面基準を1件以上手動選択してください。")
   }
 
   if (
@@ -3659,7 +3753,7 @@ function buildPoseAwareIdealLandmarks3DCandidateResult(
       status: "insufficient_data",
       generationMethod: "pose_aware_weighted_z_v1",
       message:
-        "正面基準候補がないため、pose-aware 3D候補を生成できません。",
+        "手動選択された正面基準がないため、pose-aware 3D候補を生成できません。",
     }
   }
 
@@ -3671,7 +3765,7 @@ function buildPoseAwareIdealLandmarks3DCandidateResult(
       status: "insufficient_data",
       generationMethod: "pose_aware_weighted_z_v1",
       message:
-        "正面基準候補の 478 landmarks を参照できないため、pose-aware 3D候補を生成できません。",
+        "手動選択された正面基準の 478 landmarks を参照できないため、pose-aware 3D候補を生成できません。",
     }
   }
 
@@ -3863,7 +3957,7 @@ function renderPoseAwareIdealLandmarks3DCandidatePanel(
     result.generationMethod === "pose_aware_weighted_z_v1"
   const disabled = dataset.status === "missing_front_reference"
   const disabledMessage =
-    "正面基準候補がないため、pose-aware 3D候補を生成できません。"
+    "手動選択された正面基準がないため、pose-aware 3D候補を生成できません。"
 
   return `
     <div class="pose-aware-candidate-summary">
@@ -4305,7 +4399,7 @@ function renderPoseAwareSummary(
     <div class="pose-aware-summary">
       <dl class="pose-aware-summary-list">
         <div>
-          <dt>正面基準候補</dt>
+          <dt>手動選択された正面基準</dt>
           <dd>${summary.frontReferenceFrameCount}件</dd>
         </div>
         <div>
@@ -4645,12 +4739,25 @@ function renderExcludedAuthoringFrameCard(frame: ExtractedVideoFrame): string {
 }
 
 function renderUsageBucketSummaryPanel(): string {
+  const frontReference = getFrontReferenceSummary()
   const buckets = getUsageBucketSummary()
-  const warnings = buildUsageBucketWarnings(buckets)
+  const warnings = [
+    ...buildFrontReferenceWarnings(frontReference),
+    ...buildUsageBucketWarnings(buckets),
+  ]
+  const recommendedLabel = `${frontReference.recommendedMin}〜${frontReference.recommendedMax}`
 
   return `
     <div class="usage-bucket-summary">
-      <strong>usage bucket summary</strong>
+      <strong>usage-aware sampling summary</strong>
+      <div class="usage-bucket-grid">
+        <div class="usage-bucket-item usage-bucket-item-${frontReference.status} usage-bucket-item-required">
+          <span>正面基準</span>
+          <strong>選択 ${frontReference.selectedCount} / 候補 ${frontReference.candidateCount}</strong>
+          <em>推奨 ${recommendedLabel} / ${frontReference.status}</em>
+        </div>
+      </div>
+      <strong>自動 bucket</strong>
       <div class="usage-bucket-grid">
         ${buckets
           .map(
@@ -5304,7 +5411,7 @@ function renderAnalysisPanel(): string {
           <dd>${summary.candidateSourceFrameCount}</dd>
         </div>
       </dl>
-      <p class="candidate-note">詳細スキャン済みの有効フレームは Step 2-I の正面基準候補 / 推定に使うフレーム / 除外フレームとして扱います。</p>
+      <p class="candidate-note">詳細スキャン済みの有効フレームは Step 2-I の正面基準の手動選択 / 推定に使うフレーム / 除外フレームとして扱います。</p>
     </section>
   `
 }
@@ -5440,6 +5547,7 @@ function toScanSummaryPreview(scanSummary: DetailedScanSummary): unknown {
 
 function toUsageAwareSamplingPreview(): unknown {
   const scanSummary = getDetailedScanSummary()
+  const frontReference = getFrontReferenceSummary()
 
   return {
     status: "summary_only",
@@ -5447,6 +5555,14 @@ function toUsageAwareSamplingPreview(): unknown {
     maxScanFrames: scanSummary.maxScanFrames,
     adaptiveSamplingImplemented: false,
     earlyStopped: false,
+    frontReference: {
+      selectedCount: frontReference.selectedCount,
+      candidateCount: frontReference.candidateCount,
+      recommendedMin: frontReference.recommendedMin,
+      recommendedMax: frontReference.recommendedMax,
+      status: frontReference.status,
+      candidateFrameIdPreview: frontReference.candidateFrameIdPreview,
+    },
     buckets: getUsageBucketSummary().map((bucket) => ({
       id: bucket.id,
       targetCount: bucket.targetCount,

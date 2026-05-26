@@ -127,7 +127,7 @@ Removed legacy workflow:
 - `inferCandidateConfidence()`
 - `generationMethod: "step_2_g_v1"`
 
-この処理は完全自動生成ではなく、自動推定 + 将来の手動補正として扱います。Step 2-I-A の frame usage では、`frontReference` / `useForInference` / `expressionGroup` は重複可能な用途タグ、`excluded` は排他的な除外タグとして扱います。`poseOutOfRange` / `mixedExpression` / `pending` / `missingBlendshapes` は自動除外ではなく注意タグとして扱い、landmarks / pose が有効な frame は pose-aware 3D 推定に残せます。Expression grouping は expression dropdown の自動初期値を作るために使い、neutralFrames は将来 `frontReferenceFrames` の中から表情が少ないものを選ぶ方針です。`usage-aware frame sampling v1` では、`frontReference` / `idealFaceInference` / expression groups を用途 bucket として扱い、targetCount までバランスよく採用します。動画入力、詳細スキャン、pose-aware dataset 作成、candidate generation、3D point cloud preview は IdealFace Authoring Tool の責務であり、Engine Runtime には含めません。
+この処理は完全自動生成ではなく、自動推定 + 将来の手動補正として扱います。Step 2-I-A の frame usage では、`frontReference` / `useForInference` / `expressionGroup` は重複可能な用途タグ、`excluded` は排他的な除外タグとして扱います。`frontReference` は自動 bucket ではなく、ユーザーが手動選択する正面基準です。`poseOutOfRange` / `mixedExpression` / `pending` / `missingBlendshapes` は自動除外ではなく注意タグとして扱い、landmarks / pose が有効な frame は pose-aware 3D 推定に残せます。Expression grouping は expression dropdown の自動初期値を作るために使い、neutralFrames は将来 `frontReferenceFrames` の中から表情が少ないものを選ぶ方針です。`usage-aware frame sampling v1` では、`frontReferenceCandidate` を自動候補として提示し、`idealFaceInference` / expression groups を用途 bucket として targetCount までバランスよく採用します。動画入力、詳細スキャン、pose-aware dataset 作成、candidate generation、3D point cloud preview は IdealFace Authoring Tool の責務であり、Engine Runtime には含めません。
 
 Authoring Tool は `idealLandmarks3D` を same-unit coordinate として生成します。`video_aspect_same_unit_v1` による video aspect 補正、pose-aware generation、将来の manual adjustment UI は Authoring Tool 側の責務です。Runtime は完成済み IdealFace asset を読み込み、same-unit の `idealLandmarks3D` を `FacePose` に投影し、overlay / difference / warp 用に image-normalized / pixel 座標へ変換します。Runtime は Authoring generation logic を持ちません。
 
@@ -268,7 +268,7 @@ beauty_filter_asset_v1
 
 現在は detailed scan の結果を Step 2-I-A の frame selection へ渡し、Step 2-I-B の pose-aware dataset、Step 2-I-C の pose-aware weighted z inference v1 へ進みます。
 
-`usage-aware frame sampling v1` では、単純な `maxScanFrames` だけでなく bucket の充足状況を見ながら scan を続けます。ただし無制限にはせず、`maxScanFrames` または `maxScanSeconds` は残します。詳細は [usage-aware frame sampling v1](usage-aware-frame-sampling-v1.md) を参照してください。
+`usage-aware frame sampling v1` では、単純な `maxScanFrames` だけでなく bucket の充足状況を見ながら scan を続けます。ただし `frontReference` は bucket target ではなく手動選択される正面基準として扱い、`frontReferenceCandidate` を自動候補として提示します。無制限にはせず、`maxScanFrames` または `maxScanSeconds` は残します。詳細は [usage-aware frame sampling v1](usage-aware-frame-sampling-v1.md) を参照してください。
 
 ## Runtime と Authoring の分離
 
@@ -339,7 +339,7 @@ Current active workflow:
 MP4 input
   -> detailed scan
   -> Step 2-I-A frame selection
-       正面基準候補 / 推定に使うフレーム / 除外フレーム
+       正面基準の手動選択 / 推定に使うフレーム / 除外フレーム
   -> Step 2-I-B pose-aware inference dataset
   -> Step 2-I-C pose_aware_weighted_z_v1 candidate generation
        roll 補正

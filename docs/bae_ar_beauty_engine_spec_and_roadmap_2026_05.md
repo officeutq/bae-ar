@@ -394,7 +394,7 @@ Current active workflow:
 MP4 input
   -> detailed scan
   -> Step 2-I-A frame selection
-       正面基準候補 / 推定に使うフレーム / 除外フレーム
+       正面基準の手動選択 / 推定に使うフレーム / 除外フレーム
   -> Step 2-I-B pose-aware inference dataset
   -> Step 2-I-C pose_aware_weighted_z_v1 candidate generation
        roll 補正
@@ -1132,7 +1132,7 @@ Current active workflow:
 MP4 input
   -> detailed scan
   -> Step 2-I-A frame selection
-       正面基準候補 / 推定に使うフレーム / 除外フレーム
+       正面基準の手動選択 / 推定に使うフレーム / 除外フレーム
   -> Step 2-I-B pose-aware inference dataset
   -> Step 2-I-C pose_aware_weighted_z_v1 candidate generation
        roll 補正
@@ -1143,7 +1143,7 @@ MP4 input
 
 Step 2-I-A keeps frame usage as tags. `frontReference`, `useForInference`, and `expressionGroup` can overlap; `excluded` is the only exclusive tag. Usable observation frames are derived from detailed scan frames that have a detected face, 478 landmarks, `FacePose`, `useForInference = true`, and `excluded = false`.
 
-`usage-aware frame sampling v1` では、Step 2-I-A の初期 `frameUsage` を、用途 bucket ごとの targetCount を見ながら作る方針です。`frontReference` / `idealFaceInference` / expression groups は重複可能な usage bucket として扱います。ある bucket が `targetCount` に達した場合、その用途には以後採用しませんが、他の不足用途には引き続き採用できます。これは完全自動確定ではなく、自動初期値 + 手動確認・修正の flow です。
+`usage-aware frame sampling v1` では、Step 2-I-A の初期 `frameUsage` を、用途 bucket ごとの targetCount を見ながら作る方針です。`frontReferenceCandidate` は自動で正面基準候補として提示し、`frontReference` はユーザーが手動選択する正面基準として扱います。`idealFaceInference` / expression groups は重複可能な usage bucket として扱います。ある bucket が `targetCount` に達した場合、その用途には以後採用しませんが、他の不足用途には引き続き採用できます。これは完全自動確定ではなく、自動初期値 + 手動確認・修正の flow です。
 
 Step 2-I-B builds `poseAwareInferenceDataset` from front reference frames and observation frames. It does not use fixed five-pose labels.
 
