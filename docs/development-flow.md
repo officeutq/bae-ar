@@ -308,11 +308,13 @@ PR 本文には、変更内容と確認結果を記載します。
 
 旧 Step 2-C〜2-G v1 の 5ポーズ方式は current code から削除済みのため、通常確認項目に含めません。
 
-## IdealFace Authoring Tool Cleanup Status
+## IdealFace Authoring Tool の整理状況
 
-The old Step 2-G v1 five-pose generation helper path has been removed. New IdealFace Authoring Tool feature work should target Step 2-I-A/B/C: frame selection, pose-aware inference dataset, and `pose_aware_weighted_z_v1` candidate generation. Legacy/debug paths should not receive new feature work.
+旧 Step 2-G v1 の 5ポーズ生成 helper 経路は削除済みです。
+今後の IdealFace Authoring Tool の新機能は、Step 2-I-A/B/C、つまり frame selection、pose-aware inference dataset、pose_aware_weighted_z_v1 candidate generation を対象にします。
+legacy / debug 経路には新機能を追加しません。
 
-## Shape Warp production direction flow
+## Shape Warp 本番方針の流れ
 
 Shape Warp v1 debug prototype は、CorrectionPlan の補正ベクトルを画像へ接続するための Studio processed preview 限定 prototype として扱います。本番候補は WebGL mesh warp です。
 
