@@ -93,6 +93,8 @@ const POSE_AWARE_DATASET_FRAME_PREVIEW_COUNT = 3
 const POSE_AWARE_Z_MIN_COMPONENT_DEG = 5
 const POSE_AWARE_Z_HINT_CLAMP = 0.35
 const POSE_AWARE_LOW_CONFIDENCE_THRESHOLD = 0.45
+const POSE_AWARE_SHAPE_FRAME_POSE_PENALTY_DEG = 45
+const POSE_AWARE_MIN_SHAPE_FRAME_WEIGHT = 0.25
 const EXPRESSION_FRAME_PREVIEW_COUNT = 8
 const EXPRESSION_GROUP_IDS = [
   "mouthPucker",
@@ -1772,7 +1774,7 @@ function toCoordinateDebugPreview(
     },
     notes: [
       "MediaPipe image-normalized x/y are converted to video-aspect same-unit coordinates before roll correction.",
-      "frontReference base x/y, observation dx/dy, and yaw/pitch z hints use the same normalized coordinate space.",
+      "frontReference base x/y provides the reference basis; only useForInference observation frames contribute to IdealFace shape x/y and z hints.",
       "Export keeps schemaVersion and coordinateSpace unchanged while idealLandmarks3D values use same-unit normalization.",
     ],
   }
@@ -3380,6 +3382,9 @@ function toPoseAwareInferenceDatasetPreview(): unknown {
     observationFramePreview: dataset.observationFrames
       .slice(0, POSE_AWARE_DATASET_FRAME_PREVIEW_COUNT)
       .map(toPoseAwareInferenceFramePreview),
+    notes: [
+      "正面基準フレームは基準合わせに使います。IdealFace 形状生成には「IdealFace生成に使う」が ON のフレームのみを使います。",
+    ],
     warnings: dataset.warnings,
   }
 }
@@ -3557,6 +3562,104 @@ function buildPoseAwareBasePoints(
     frontReferenceFrames,
     getRollCorrectedLandmarks2D,
   )
+}
+
+function calculatePoseAwareShapeFrameWeight(
+  frame: PoseAwareInferenceFrame,
+): number {
+  const posePenalty = clamp(
+    1 -
+      frame.poseStrength / POSE_AWARE_SHAPE_FRAME_POSE_PENALTY_DEG,
+    POSE_AWARE_MIN_SHAPE_FRAME_WEIGHT,
+    1,
+  )
+  const rollPenalty = clamp(
+    1 - Math.abs(frame.pose.roll) / POSE_AWARE_WEIGHT_ROLL_PENALTY_DEG,
+    POSE_AWARE_MIN_SHAPE_FRAME_WEIGHT,
+    1,
+  )
+  const scoreWeight =
+    frame.score !== undefined
+      ? clamp(frame.score, POSE_AWARE_MIN_SCORE_WEIGHT, 1)
+      : 1
+
+  return Number((posePenalty * rollPenalty * scoreWeight).toFixed(4))
+}
+
+function buildPoseAwareShapePoints(
+  observationFrames: PoseAwareInferenceFrame[],
+): PoseAwareBasePoint[] | null {
+  const correctedObservationFrames = observationFrames
+    .map((frame) => ({
+      landmarks: getRollCorrectedLandmarks2D(frame),
+      weight: calculatePoseAwareShapeFrameWeight(frame),
+    }))
+    .filter(
+      (
+        frame,
+      ): frame is {
+        landmarks: PoseAwareCorrectedLandmark2D[]
+        weight: number
+      } =>
+        frame.landmarks !== null &&
+        frame.landmarks.length === REQUIRED_LANDMARK_COUNT &&
+        Number.isFinite(frame.weight) &&
+        frame.weight > 0,
+    )
+
+  if (correctedObservationFrames.length === 0) {
+    return null
+  }
+
+  return Array.from({ length: REQUIRED_LANDMARK_COUNT }, (_, index) => {
+    const points = correctedObservationFrames
+      .map((frame) => ({
+        point: frame.landmarks[index],
+        weight: frame.weight,
+      }))
+      .filter(
+        (
+          item,
+        ): item is {
+          point: PoseAwareCorrectedLandmark2D
+          weight: number
+        } =>
+          Boolean(item.point) &&
+          Number.isFinite(item.point.x) &&
+          Number.isFinite(item.point.y) &&
+          Number.isFinite(item.weight) &&
+          item.weight > 0,
+      )
+    const weightTotal = points.reduce((sum, item) => sum + item.weight, 0)
+
+    if (weightTotal <= 0) {
+      return {
+        index,
+        x: 0,
+        y: 0,
+      }
+    }
+
+    return {
+      index,
+      x: Number(
+        (
+          points.reduce(
+            (sum, item) => sum + item.point.x * item.weight,
+            0,
+          ) / weightTotal
+        ).toFixed(4),
+      ),
+      y: Number(
+        (
+          points.reduce(
+            (sum, item) => sum + item.point.y * item.weight,
+            0,
+          ) / weightTotal
+        ).toFixed(4),
+      ),
+    }
+  })
 }
 
 function createPoseAwareZHint(
@@ -3757,6 +3860,16 @@ function buildPoseAwareIdealLandmarks3DCandidateResult(
     }
   }
 
+  if (dataset.observationFrames.length === 0) {
+    return {
+      ...createInitialIdealLandmarks3DCandidateResult(),
+      status: "insufficient_data",
+      generationMethod: "pose_aware_weighted_z_v1",
+      message:
+        "IdealFace 形状生成に使う observation frame がないため、pose-aware 3D候補を生成できません。「IdealFace生成に使う」を ON にしてください。",
+    }
+  }
+
   const basePoints = buildPoseAwareBasePoints(dataset.frontReferenceFrames)
 
   if (!basePoints || basePoints.length !== REQUIRED_LANDMARK_COUNT) {
@@ -3769,19 +3882,31 @@ function buildPoseAwareIdealLandmarks3DCandidateResult(
     }
   }
 
+  const shapePoints = buildPoseAwareShapePoints(dataset.observationFrames)
+
+  if (!shapePoints || shapePoints.length !== REQUIRED_LANDMARK_COUNT) {
+    return {
+      ...createInitialIdealLandmarks3DCandidateResult(),
+      status: "insufficient_data",
+      generationMethod: "pose_aware_weighted_z_v1",
+      message:
+        "IdealFace 形状生成に使う observation frame の 478 landmarks を参照できないため、pose-aware 3D候補を生成できません。",
+    }
+  }
+
   const hintsByLandmark = mergePoseAwareZHints(
     dataset.observationFrames,
     basePoints,
   )
-  const uncenteredLandmarks = basePoints.map((basePoint, index) => {
+  const uncenteredLandmarks = shapePoints.map((shapePoint, index) => {
     const hints = hintsByLandmark[index] ?? []
     const z = getWeightedAverageZ(hints)
     const confidence = inferPoseAwareLandmarkConfidence(hints, dataset, z)
 
     return {
       index,
-      x: basePoint.x,
-      y: basePoint.y,
+      x: shapePoint.x,
+      y: shapePoint.y,
       z: Number(z.toFixed(4)),
       confidence,
       source: "pose_aware_weighted_z_v1" as const,
@@ -3801,7 +3926,7 @@ function buildPoseAwareIdealLandmarks3DCandidateResult(
       excludedFrameCount: dataset.excludedFrameCount,
     }),
     message:
-      "Step 2-I-B dataset から、roll 補正済み observation の yaw / pitch z hint を weighted average して生成した pose-aware 3D候補です。",
+      "Step 2-I-B dataset から、useForInference の observation だけで x/y 形状平均と yaw / pitch z hint を集計して生成した pose-aware 3D候補です。正面基準 frame は基準合わせにのみ使います。",
   }
 }
 
@@ -3826,6 +3951,9 @@ function toPoseAwareCandidatePreview(): unknown {
     observationFrameCount: result.summary.observationFrameCount,
     excludedFrameCount: result.summary.excludedFrameCount,
     sameAsCurrentCandidate: true,
+    notes: [
+      "frontReference frames are used as reference basis. Only useForInference frames contribute to IdealFace shape inference.",
+    ],
   }
 }
 
@@ -3944,6 +4072,7 @@ function renderPoseAwareInferenceDatasetSummary(
               </ul>`
         }
       </div>
+      <p class="pose-aware-dataset-note">正面基準フレームは基準合わせに使います。IdealFace 形状生成には「IdealFace生成に使う」が ON の observation frame のみを使います。</p>
       <p class="pose-aware-dataset-note">この dataset は Step 2-I-C の入力です。Step 2-G v1 の旧簡易推定は別方式として残しています。</p>
     </div>
   `
@@ -3955,16 +4084,20 @@ function renderPoseAwareIdealLandmarks3DCandidatePanel(
   const result = idealLandmarks3DCandidateResult
   const isPoseAwareCandidate =
     result.generationMethod === "pose_aware_weighted_z_v1"
-  const disabled = dataset.status === "missing_front_reference"
+  const disabled =
+    dataset.status === "missing_front_reference" ||
+    dataset.observationFrames.length === 0
   const disabledMessage =
-    "手動選択された正面基準がないため、pose-aware 3D候補を生成できません。"
+    dataset.status === "missing_front_reference"
+      ? "手動選択された正面基準がないため、pose-aware 3D候補を生成できません。"
+      : "IdealFace 形状生成に使う observation frame がないため、pose-aware 3D候補を生成できません。「IdealFace生成に使う」を ON にしてください。"
 
   return `
     <div class="pose-aware-candidate-summary">
       <div class="pose-aware-candidate-heading">
         <div>
           <h4>Step 2-I-C: pose-aware 3D候補</h4>
-          <p>Step 2-I-B dataset を使い、roll 補正後の yaw / pitch z hint から 478点候補を生成します。</p>
+          <p>Step 2-I-B dataset を使い、「IdealFace生成に使う」が ON の observation だけから 478点候補を生成します。正面基準 frame は基準合わせに使います。</p>
         </div>
         <button
           class="candidate-generate-button"
@@ -4677,7 +4810,7 @@ function renderAuthoringFrameCard(frame: ExtractedVideoFrame): string {
               data-frame-usage-inference="${escapeHtml(frameId)}"
               ${usage.useForInference ? "checked" : ""}
             />
-            推定に使う
+            IdealFace生成に使う
           </label>
         </div>
         <button
@@ -4798,6 +4931,7 @@ function renderFrameUsageSummaryPanel(): string {
         <li>useForInference: ${summary.useForInferenceCount}件</li>
         <li>excluded: ${summary.excludedCount}件</li>
       </ul>
+      <p class="usage-bucket-note">「IdealFace生成に使う」が ON のフレームだけが IdealFace 本体の 3D 478 生成に使われます。正面基準だけ ON のフレームは、基準合わせには使いますが、形状生成には混ぜません。</p>
       <strong>expressionGroup counts</strong>
       <ul>
         ${FRAME_EXPRESSION_GROUP_IDS.map(
