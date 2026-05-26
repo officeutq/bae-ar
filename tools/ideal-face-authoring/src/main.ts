@@ -21,6 +21,7 @@ const SCAN_PRESET_MAX_SCAN_FRAMES = {
   standard: 300,
   detailed: 500,
 } as const
+const ADAPTIVE_MAX_SCAN_FRAMES = 1500
 const THUMBNAIL_WIDTH = 180
 const ANALYSIS_MAX_WIDTH = 640
 const EMPTY_FACE_POSE: FacePose = {
@@ -567,6 +568,9 @@ interface DetailedScanSummary {
   scanPreset: ScanPreset
   scanIntervalSec: number
   maxScanFrames: number
+  presetMaxScanFrames: number
+  adaptiveMaxScanFrames: number
+  effectiveMaxScanFrames: number
   scannedFrameCount: number
   analyzedFrameCount: number
   detectedFrameCount: number
@@ -621,6 +625,7 @@ interface FrameUsageSummary {
   frontReferenceCount: number
   useForInferenceCount: number
   expressionGroupCounts: Record<FrameExpressionGroup, number>
+  autoExpressionGroupCounts: Record<FrameExpressionGroup, number>
   adaptiveBucketAdoptionCounts: Record<UsageBucketId, number>
   excludedCount: number
   excludedReasonCounts: Record<ExcludedReason, number>
@@ -652,6 +657,7 @@ interface UsageBucketSummary {
   id: UsageBucketId
   targetCount: number
   selectedCount: number
+  autoDetectedCount: number
   status: UsageBucketStatus
   priority: "required" | "optional"
   skippedAfterTargetCount: number
@@ -913,8 +919,21 @@ function createAdaptiveScanMetrics(
   }
 }
 
+function getEffectiveMaxScanFrames(
+  presetMaxScanFrames: number,
+  enabled: boolean = adaptiveSamplingEnabled,
+): number {
+  return enabled ? ADAPTIVE_MAX_SCAN_FRAMES : presetMaxScanFrames
+}
+
 function getSkippedAfterTargetCount(id: UsageBucketId): number {
   return lastAdaptiveScanMetrics?.skippedAfterTargetCount[id] ?? 0
+}
+
+function formatEarlyStopReason(reason: EarlyStopReason | null): string {
+  return reason === "required_buckets_satisfied"
+    ? "required buckets satisfied"
+    : "なし"
 }
 
 function isScanPreset(value: string | undefined): value is ScanPreset {
@@ -940,11 +959,17 @@ function getCandidateSourceFramesFromFrames(
 
 function createEmptyDetailedScanSummary(): DetailedScanSummary {
   const scanSettings = getScanSettings()
+  const effectiveMaxScanFrames = getEffectiveMaxScanFrames(
+    scanSettings.maxScanFrames,
+  )
 
   return {
     scanPreset: scanSettings.preset,
     scanIntervalSec: DETAILED_SCAN_INTERVAL_SEC,
-    maxScanFrames: scanSettings.maxScanFrames,
+    maxScanFrames: effectiveMaxScanFrames,
+    presetMaxScanFrames: scanSettings.maxScanFrames,
+    adaptiveMaxScanFrames: ADAPTIVE_MAX_SCAN_FRAMES,
+    effectiveMaxScanFrames,
     scannedFrameCount: 0,
     analyzedFrameCount: 0,
     detectedFrameCount: 0,
@@ -2777,6 +2802,7 @@ function createWarningReasonCountRecord(): Record<WarningReason, number> {
 function getFrameUsageSummary(): FrameUsageSummary {
   const frames = getDetailedScanFrames()
   const expressionGroupCounts = createFrameExpressionGroupCountRecord()
+  const autoExpressionGroupCounts = createFrameExpressionGroupCountRecord()
   const adaptiveBucketAdoptionCounts = createUsageBucketCountRecord()
   const excludedReasonCounts = createExcludedReasonCountRecord()
   const warningReasonCounts = createWarningReasonCountRecord()
@@ -2806,6 +2832,7 @@ function getFrameUsageSummary(): FrameUsageSummary {
     }
 
     expressionGroupCounts[usage.expressionGroup] += 1
+    autoExpressionGroupCounts[usage.autoExpressionGroup] += 1
     usage.adaptiveBucketAdoptions.forEach((id) => {
       adaptiveBucketAdoptionCounts[id] += 1
     })
@@ -2816,6 +2843,7 @@ function getFrameUsageSummary(): FrameUsageSummary {
     frontReferenceCount,
     useForInferenceCount,
     expressionGroupCounts,
+    autoExpressionGroupCounts,
     adaptiveBucketAdoptionCounts,
     excludedCount,
     excludedReasonCounts,
@@ -2922,11 +2950,16 @@ function getUsageBucketSummary(): UsageBucketSummary[] {
   return (Object.keys(USAGE_BUCKET_TARGETS) as UsageBucketId[]).map((id) => {
     const targetCount = USAGE_BUCKET_TARGETS[id]
     const selectedCount = getUsageBucketSelectedCount(id, frameUsageSummary)
+    const autoDetectedCount =
+      id === "idealFaceInference"
+        ? frameUsageSummary.useForInferenceCount
+        : frameUsageSummary.autoExpressionGroupCounts[id as ExpressionGroupId]
 
     return {
       id,
       targetCount,
       selectedCount,
+      autoDetectedCount,
       status: selectedCount >= targetCount ? "ok" : "insufficient",
       priority: id === "idealFaceInference" ? "required" : "optional",
       skippedAfterTargetCount: getSkippedAfterTargetCount(id),
@@ -5116,11 +5149,23 @@ function renderUsageBucketSummaryPanel(): string {
         </div>
         <div>
           <dt>scanned</dt>
-          <dd>${scanSummary.scannedFrameCount} / ${scanSummary.maxScanFrames}</dd>
+          <dd>${scanSummary.scannedFrameCount} / ${scanSummary.effectiveMaxScanFrames}</dd>
         </div>
         <div>
           <dt>adaptive sampling</dt>
           <dd>${scanSummary.adaptiveSamplingEnabled ? "enabled" : "disabled"}</dd>
+        </div>
+        <div>
+          <dt>preset max</dt>
+          <dd>${scanSummary.presetMaxScanFrames}</dd>
+        </div>
+        <div>
+          <dt>adaptive max</dt>
+          <dd>${scanSummary.adaptiveMaxScanFrames}</dd>
+        </div>
+        <div>
+          <dt>effective max</dt>
+          <dd>${scanSummary.effectiveMaxScanFrames}</dd>
         </div>
         <div>
           <dt>early stopped</dt>
@@ -5128,7 +5173,7 @@ function renderUsageBucketSummaryPanel(): string {
         </div>
         <div>
           <dt>reason</dt>
-          <dd>${scanSummary.earlyStopReason ?? "なし"}</dd>
+          <dd>${formatEarlyStopReason(scanSummary.earlyStopReason)}</dd>
         </div>
       </dl>
       <div class="usage-bucket-grid">
@@ -5145,8 +5190,8 @@ function renderUsageBucketSummaryPanel(): string {
             (bucket) => `
               <div class="usage-bucket-item usage-bucket-item-${bucket.status} usage-bucket-item-${bucket.priority}">
                 <span>${bucket.id}</span>
-                <strong>${bucket.selectedCount} / ${bucket.targetCount}</strong>
-                <em>${bucket.status} / skipped ${bucket.skippedAfterTargetCount}</em>
+                <strong>selected ${bucket.selectedCount} / ${bucket.targetCount}</strong>
+                <em>${bucket.status} / auto detected ${bucket.autoDetectedCount} / skipped after target ${bucket.skippedAfterTargetCount}</em>
               </div>
             `,
           )
@@ -5709,6 +5754,9 @@ function drawPointCloudPreviewGuide(
 function renderScanPresetControl(disabled: boolean): string {
   const scanSettings = getScanSettings()
   const modeLabel = adaptiveSamplingEnabled ? "adaptive" : "preset"
+  const effectiveMaxScanFrames = getEffectiveMaxScanFrames(
+    scanSettings.maxScanFrames,
+  )
 
   return `
     <div class="scan-controls">
@@ -5731,7 +5779,7 @@ function renderScanPresetControl(disabled: boolean): string {
             `,
           )
           .join("")}
-        <strong>maxScanFrames: ${scanSettings.maxScanFrames}</strong>
+        <strong>preset max: ${scanSettings.maxScanFrames}</strong>
       </div>
       <label class="adaptive-sampling-toggle">
         <input
@@ -5742,6 +5790,8 @@ function renderScanPresetControl(disabled: boolean): string {
         />
         用途がそろったら早期終了する
         <strong>mode: ${modeLabel}</strong>
+        <strong>adaptive max: ${ADAPTIVE_MAX_SCAN_FRAMES}</strong>
+        <strong>effective max: ${effectiveMaxScanFrames}</strong>
       </label>
     </div>
   `
@@ -5786,8 +5836,16 @@ function renderAnalysisPanel(): string {
           <dd>${summary.scanIntervalSec.toFixed(3)}s</dd>
         </div>
         <div>
-          <dt>最大スキャン数</dt>
-          <dd>${summary.maxScanFrames}</dd>
+          <dt>preset max</dt>
+          <dd>${summary.presetMaxScanFrames}</dd>
+        </div>
+        <div>
+          <dt>adaptive max</dt>
+          <dd>${summary.adaptiveMaxScanFrames}</dd>
+        </div>
+        <div>
+          <dt>effective max</dt>
+          <dd>${summary.effectiveMaxScanFrames}</dd>
         </div>
         <div>
           <dt>解析対象フレーム数</dt>
@@ -5815,7 +5873,7 @@ function renderAnalysisPanel(): string {
         </div>
         <div>
           <dt>early stop reason</dt>
-          <dd>${summary.earlyStopReason ?? "なし"}</dd>
+          <dd>${formatEarlyStopReason(summary.earlyStopReason)}</dd>
         </div>
       </dl>
       <p class="candidate-note">詳細スキャン済みの有効フレームは Step 2-I の正面基準の手動選択 / 推定に使うフレーム / 除外フレームとして扱います。</p>
@@ -5945,6 +6003,9 @@ function toScanSummaryPreview(scanSummary: DetailedScanSummary): unknown {
     preset: scanSummary.scanPreset,
     scanIntervalSec: scanSummary.scanIntervalSec,
     maxScanFrames: scanSummary.maxScanFrames,
+    presetMaxScanFrames: scanSummary.presetMaxScanFrames,
+    adaptiveMaxScanFrames: scanSummary.adaptiveMaxScanFrames,
+    effectiveMaxScanFrames: scanSummary.effectiveMaxScanFrames,
     scannedFrameCount: scanSummary.scannedFrameCount,
     analyzedFrameCount: scanSummary.analyzedFrameCount,
     detectedFrameCount: scanSummary.detectedFrameCount,
@@ -5964,7 +6025,11 @@ function toUsageAwareSamplingPreview(): unknown {
     preset: scanSummary.scanPreset,
     mode: scanSummary.adaptiveSamplingEnabled ? "adaptive" : "preset",
     maxScanFrames: scanSummary.maxScanFrames,
+    presetMaxScanFrames: scanSummary.presetMaxScanFrames,
+    adaptiveMaxScanFrames: scanSummary.adaptiveMaxScanFrames,
+    effectiveMaxScanFrames: scanSummary.effectiveMaxScanFrames,
     scannedFrameCount: scanSummary.scannedFrameCount,
+    detectedFrameCount: scanSummary.detectedFrameCount,
     adaptiveSamplingImplemented: true,
     adaptiveSamplingEnabled: scanSummary.adaptiveSamplingEnabled,
     earlyStopped: scanSummary.earlyStopped,
@@ -5981,9 +6046,10 @@ function toUsageAwareSamplingPreview(): unknown {
       id: bucket.id,
       targetCount: bucket.targetCount,
       selectedCount: bucket.selectedCount,
+      autoDetectedCount: bucket.autoDetectedCount,
+      skippedAfterTargetCount: bucket.skippedAfterTargetCount,
       status: bucket.status,
       priority: bucket.priority,
-      skippedAfterTargetCount: bucket.skippedAfterTargetCount,
     })),
     requiredBuckets: [...REQUIRED_USAGE_BUCKET_IDS],
     optionalBuckets: [...OPTIONAL_USAGE_BUCKET_IDS],
@@ -6194,6 +6260,9 @@ function buildAuthoringDebugPreview(): unknown {
       scanSettings: {
         preset: scanSummary.scanPreset,
         maxScanFrames: scanSummary.maxScanFrames,
+        presetMaxScanFrames: scanSummary.presetMaxScanFrames,
+        adaptiveMaxScanFrames: scanSummary.adaptiveMaxScanFrames,
+        effectiveMaxScanFrames: scanSummary.effectiveMaxScanFrames,
         adaptiveSamplingEnabled: scanSummary.adaptiveSamplingEnabled,
       },
       videoSource: toVideoSourceDebugPreview(analysisSummary),
@@ -6764,10 +6833,15 @@ function buildDetailedScanSummary(
   detectedFrameCount: number,
   metrics: AdaptiveScanMetrics,
 ): DetailedScanSummary {
+  const effectiveMaxScanFrames = metrics.maxScanFrames
+
   return {
     scanPreset: scanSettings.preset,
     scanIntervalSec: intervalSec,
-    maxScanFrames: scanSettings.maxScanFrames,
+    maxScanFrames: effectiveMaxScanFrames,
+    presetMaxScanFrames: scanSettings.maxScanFrames,
+    adaptiveMaxScanFrames: ADAPTIVE_MAX_SCAN_FRAMES,
+    effectiveMaxScanFrames,
     scannedFrameCount: scannedFrames.length,
     analyzedFrameCount: scannedFrames.length,
     detectedFrameCount,
@@ -6784,14 +6858,17 @@ async function scanVideoForPoseAwareFrames(
   landmarker: FaceLandmarker,
 ): Promise<DetailedScanResult> {
   const scanSettings = getScanSettings()
+  const effectiveMaxScanFrames = getEffectiveMaxScanFrames(
+    scanSettings.maxScanFrames,
+  )
   const adaptiveMetrics = createAdaptiveScanMetrics(
     adaptiveSamplingEnabled,
-    scanSettings.maxScanFrames,
+    effectiveMaxScanFrames,
   )
   lastAdaptiveScanMetrics = adaptiveMetrics
   const scanPlan = getDetailedScanPlan(
     video.duration,
-    scanSettings.maxScanFrames,
+    effectiveMaxScanFrames,
   )
   const analysisContext = analysisCanvas.getContext("2d")
   const thumbnailContext = thumbnailCanvas.getContext("2d")
