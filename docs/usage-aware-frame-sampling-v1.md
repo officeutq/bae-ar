@@ -358,14 +358,10 @@ Beauty Studio:
 
 ## 今回やらないこと
 
-- TypeScript 実装
-- Authoring Tool UI 実装
 - Engine 実装
 - Studio 実装
-- JSON export 変更
 - validator 変更
 - usage-aware sampling implementation
-- scan preset implementation
 - adaptive scan implementation
 - inferenceWeight implementation
 - neutral 3D 478 generation
@@ -377,3 +373,12 @@ Beauty Studio:
 - Runtime renderer integration
 - Color Processing
 - Layer System
+
+## Prototype implementation note
+
+IdealFace Authoring Tool には、`usage-aware frame sampling v1` の最初の prototype として scan preset と usage bucket summary を追加済みです。
+
+- `quick` / `standard` / `detailed` で `maxScanFrames` を切り替えます。
+- `frontReference` / `idealFaceInference` / expression groups の `selectedCount` / `targetCount` / `status` を summary 表示します。
+- JSON preview に `usageAwareSampling` summary を表示します。
+- 完全な adaptive sampling、bucket target に基づく採用制御、early stop、3D比較、`landmarkFollowStrengths` 自動生成は未実装です。
