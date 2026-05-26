@@ -62,11 +62,12 @@ Engine Runtime に Studio / Authoring 用 UI や生成・編集処理は入れ�
 - `ideal_face_asset_v1` optional `landmarkGroups` export
 - `expressionFollow v1` docs 方針
 - MP4 expression 3D analysis plan docs 方針
+- IdealFace Authoring Tool Expression frame grouping summary prototype
 
 ### 未実装 / 後段
 
 - `expressionFollow v1` Engine 実装
-- MP4 expression 3D analysis 実装
+- MP4 expression 3D analysis の 3D生成 / 比較 / export 実装
 - `landmarkFollowStrengths` 自動生成
 - expressionFollow Authoring UI
 - correctionProfile / expressionFollow export
@@ -150,6 +151,13 @@ MP4 input
 詳細は [expressionFollow v1](docs/expression-follow-v1.md)、[expression-aware correctionProfile](docs/expression-aware-correction-profile.md)、[expressionAttenuation falloff v1](docs/expression-attenuation-falloff-v1.md) を参照してください。
 
 ## MP4 expression 3D analysis plan
+
+2026-05 update:
+
+- IdealFace Authoring Tool に Expression frame grouping summary prototype を追加済みです。
+- detailed scan frames の blendshape score から neutral / expression / mixed / excluded frame group 候補の count を確認できます。
+- JSON preview に `expressionAnalysis` summary を表示します。
+- neutral 3D 478 / expression 3D 478 の生成、3D 比較、`landmarkFollowStrengths` 自動生成、`expressionFollow` export はまだ未実装です。
 
 `landmarkFollowStrengths` は手作業だけでなく、IdealFace Authoring Tool が MP4 の表情別 frame group から自動生成する方針です。
 

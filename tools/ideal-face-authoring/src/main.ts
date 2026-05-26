@@ -89,6 +89,42 @@ const POSE_AWARE_DATASET_FRAME_PREVIEW_COUNT = 3
 const POSE_AWARE_Z_MIN_COMPONENT_DEG = 5
 const POSE_AWARE_Z_HINT_CLAMP = 0.35
 const POSE_AWARE_LOW_CONFIDENCE_THRESHOLD = 0.45
+const EXPRESSION_FRAME_PREVIEW_COUNT = 8
+const EXPRESSION_GROUP_IDS = [
+  "mouthPucker",
+  "jawOpen",
+  "mouthSmile",
+  "eyeBlinkLeft",
+  "eyeBlinkRight",
+  "eyeSquintLeft",
+  "eyeSquintRight",
+] as const
+const EXPRESSION_GROUPING_THRESHOLDS = {
+  neutral: {
+    mouthPuckerMax: 0.2,
+    jawOpenMax: 0.15,
+    mouthSmileMax: 0.25,
+    mouthFrownMax: 0.25,
+    mouthStretchMax: 0.25,
+    eyeBlinkMax: 0.2,
+    eyeSquintMax: 0.25,
+    eyeWideMax: 0.25,
+  },
+  expression: {
+    mouthPuckerMin: 0.5,
+    jawOpenMin: 0.5,
+    mouthSmileMin: 0.5,
+    eyeBlinkMin: 0.5,
+    eyeSquintMin: 0.5,
+  },
+  pose: {
+    maxAbsYaw: 15,
+    maxAbsPitch: 20,
+    maxAbsRoll: 10,
+  },
+} as const
+const EXPRESSION_GROUPING_MIXED_WARNING_RATIO = 0.3
+const EXPRESSION_GROUPING_MIN_NEUTRAL_FRAME_COUNT = 3
 const DEFAULT_POINT_CLOUD_CAMERA: PointCloudPreviewCamera = {
   yaw: 0,
   pitch: 0,
@@ -107,9 +143,16 @@ type FrameAnalysisStatus =
 interface FrameAnalysisResult {
   detected: boolean
   landmarks: FaceLandmark[]
+  blendshapes: BlendshapeScore[]
   pose: FacePose
   errorMessage: string | null
   analyzedAt: number
+}
+
+interface BlendshapeScore {
+  categoryName: string
+  displayName: string
+  score: number
 }
 
 interface ExtractedVideoFrame {
@@ -467,6 +510,44 @@ interface DetailedScanSummary {
   analyzedFrameCount: number
   detectedFrameCount: number
   candidateSourceFrameCount: number
+}
+
+type ExpressionGroupId = (typeof EXPRESSION_GROUP_IDS)[number]
+
+type ExpressionGroupingStatus = "ready" | "not_available"
+
+interface ExpressionFramePreview {
+  frameId: string
+  timestamp: number
+}
+
+interface ExpressionGroupFrameSummary {
+  id: ExpressionGroupId
+  frameCount: number
+  frames: ExpressionFramePreview[]
+}
+
+interface ExpressionGroupingSummary {
+  status: ExpressionGroupingStatus
+  source: "detailed_scan_frames"
+  sourceFrameCount: number
+  neutralFrameCount: number
+  neutralFrames: ExpressionFramePreview[]
+  expressionGroups: ExpressionGroupFrameSummary[]
+  mixedExpressionFrameCount: number
+  mixedExpressionFrames: ExpressionFramePreview[]
+  excludedFrameCount: number
+  excludedFrames: ExpressionFramePreview[]
+  excludedBreakdown: {
+    noFaceFrameCount: number
+    invalidLandmarkFrameCount: number
+    missingBlendshapeFrameCount: number
+    extremePoseFrameCount: number
+    mixedExpressionFrameCount: number
+    unclearExpressionFrameCount: number
+  }
+  step2IExcludedFrameCount: number
+  warnings: string[]
 }
 
 interface VideoSourceState {
@@ -2092,6 +2173,332 @@ function removePoseAwareExcludedFrame(frameIndex: number): void {
 
 function getDetailedScanFrames(): ExtractedVideoFrame[] {
   return videoSource?.detailedScanFrames ?? []
+}
+
+function buildExpressionFramePreview(
+  frame: ExtractedVideoFrame,
+): ExpressionFramePreview {
+  return {
+    frameId: getFrameIdFromFrame(frame),
+    timestamp: Number(frame.timestamp.toFixed(3)),
+  }
+}
+
+function getBlendshapeScore(
+  blendshapes: BlendshapeScore[],
+  categoryName: string,
+): number {
+  return (
+    blendshapes.find((blendshape) => blendshape.categoryName === categoryName)
+      ?.score ?? 0
+  )
+}
+
+function hasBlendshapeScore(
+  blendshapes: BlendshapeScore[],
+  categoryName: string,
+): boolean {
+  return blendshapes.some(
+    (blendshape) => blendshape.categoryName === categoryName,
+  )
+}
+
+function isLowBlendshapeIfPresent(
+  blendshapes: BlendshapeScore[],
+  categoryName: string,
+  maxScore: number,
+): boolean {
+  return (
+    !hasBlendshapeScore(blendshapes, categoryName) ||
+    getBlendshapeScore(blendshapes, categoryName) < maxScore
+  )
+}
+
+function isExpressionGroupingPoseInRange(pose: FacePose): boolean {
+  const { pose: thresholds } = EXPRESSION_GROUPING_THRESHOLDS
+
+  return (
+    Math.abs(pose.yaw) <= thresholds.maxAbsYaw &&
+    Math.abs(pose.pitch) <= thresholds.maxAbsPitch &&
+    Math.abs(pose.roll) <= thresholds.maxAbsRoll
+  )
+}
+
+function isNeutralExpressionFrame(
+  blendshapes: BlendshapeScore[],
+): boolean {
+  const { neutral } = EXPRESSION_GROUPING_THRESHOLDS
+
+  return (
+    getBlendshapeScore(blendshapes, "mouthPucker") <
+      neutral.mouthPuckerMax &&
+    getBlendshapeScore(blendshapes, "jawOpen") < neutral.jawOpenMax &&
+    getBlendshapeScore(blendshapes, "mouthSmileLeft") <
+      neutral.mouthSmileMax &&
+    getBlendshapeScore(blendshapes, "mouthSmileRight") <
+      neutral.mouthSmileMax &&
+    getBlendshapeScore(blendshapes, "eyeBlinkLeft") <
+      neutral.eyeBlinkMax &&
+    getBlendshapeScore(blendshapes, "eyeBlinkRight") <
+      neutral.eyeBlinkMax &&
+    getBlendshapeScore(blendshapes, "eyeSquintLeft") <
+      neutral.eyeSquintMax &&
+    getBlendshapeScore(blendshapes, "eyeSquintRight") <
+      neutral.eyeSquintMax &&
+    isLowBlendshapeIfPresent(
+      blendshapes,
+      "mouthFrownLeft",
+      neutral.mouthFrownMax,
+    ) &&
+    isLowBlendshapeIfPresent(
+      blendshapes,
+      "mouthFrownRight",
+      neutral.mouthFrownMax,
+    ) &&
+    isLowBlendshapeIfPresent(
+      blendshapes,
+      "mouthStretchLeft",
+      neutral.mouthStretchMax,
+    ) &&
+    isLowBlendshapeIfPresent(
+      blendshapes,
+      "mouthStretchRight",
+      neutral.mouthStretchMax,
+    ) &&
+    isLowBlendshapeIfPresent(
+      blendshapes,
+      "eyeWideLeft",
+      neutral.eyeWideMax,
+    ) &&
+    isLowBlendshapeIfPresent(
+      blendshapes,
+      "eyeWideRight",
+      neutral.eyeWideMax,
+    )
+  )
+}
+
+function getActiveExpressionGroupIds(
+  blendshapes: BlendshapeScore[],
+): ExpressionGroupId[] {
+  const { expression } = EXPRESSION_GROUPING_THRESHOLDS
+  const activeGroupIds: ExpressionGroupId[] = []
+  const mouthSmileScore = Math.max(
+    getBlendshapeScore(blendshapes, "mouthSmileLeft"),
+    getBlendshapeScore(blendshapes, "mouthSmileRight"),
+  )
+
+  if (
+    getBlendshapeScore(blendshapes, "mouthPucker") >=
+    expression.mouthPuckerMin
+  ) {
+    activeGroupIds.push("mouthPucker")
+  }
+
+  if (getBlendshapeScore(blendshapes, "jawOpen") >= expression.jawOpenMin) {
+    activeGroupIds.push("jawOpen")
+  }
+
+  if (mouthSmileScore >= expression.mouthSmileMin) {
+    activeGroupIds.push("mouthSmile")
+  }
+
+  if (
+    getBlendshapeScore(blendshapes, "eyeBlinkLeft") >=
+    expression.eyeBlinkMin
+  ) {
+    activeGroupIds.push("eyeBlinkLeft")
+  }
+
+  if (
+    getBlendshapeScore(blendshapes, "eyeBlinkRight") >=
+    expression.eyeBlinkMin
+  ) {
+    activeGroupIds.push("eyeBlinkRight")
+  }
+
+  if (
+    getBlendshapeScore(blendshapes, "eyeSquintLeft") >=
+    expression.eyeSquintMin
+  ) {
+    activeGroupIds.push("eyeSquintLeft")
+  }
+
+  if (
+    getBlendshapeScore(blendshapes, "eyeSquintRight") >=
+    expression.eyeSquintMin
+  ) {
+    activeGroupIds.push("eyeSquintRight")
+  }
+
+  return activeGroupIds
+}
+
+function createEmptyExpressionGroupFrameSummary(
+  id: ExpressionGroupId,
+): ExpressionGroupFrameSummary {
+  return {
+    id,
+    frameCount: 0,
+    frames: [],
+  }
+}
+
+function getExpressionGroupFrameSummary(
+  groups: ExpressionGroupFrameSummary[],
+  id: ExpressionGroupId,
+): ExpressionGroupFrameSummary {
+  const group = groups.find((candidate) => candidate.id === id)
+
+  if (!group) {
+    throw new Error(`Expression group was not found: ${id}`)
+  }
+
+  return group
+}
+
+function buildExpressionGroupingWarnings(
+  summary: Omit<ExpressionGroupingSummary, "warnings">,
+): string[] {
+  const warnings: string[] = []
+
+  if (summary.status !== "ready") {
+    return warnings
+  }
+
+  if (summary.neutralFrameCount < EXPRESSION_GROUPING_MIN_NEUTRAL_FRAME_COUNT) {
+    warnings.push(
+      `neutral frame group が少なすぎます（${summary.neutralFrameCount}件）。`,
+    )
+  }
+
+  summary.expressionGroups.forEach((group) => {
+    if (group.frameCount === 0) {
+      warnings.push(`${group.id} frame group がありません。`)
+    }
+  })
+
+  if (
+    summary.sourceFrameCount > 0 &&
+    summary.mixedExpressionFrameCount / summary.sourceFrameCount >=
+      EXPRESSION_GROUPING_MIXED_WARNING_RATIO
+  ) {
+    warnings.push("mixedExpression が source frames の 30%以上です。")
+  }
+
+  if (summary.excludedBreakdown.extremePoseFrameCount > 0) {
+    warnings.push(
+      `pose が極端な frame が ${summary.excludedBreakdown.extremePoseFrameCount}件あります。`,
+    )
+  }
+
+  if (summary.excludedBreakdown.missingBlendshapeFrameCount > 0) {
+    warnings.push(
+      `blendshapes がない frame が ${summary.excludedBreakdown.missingBlendshapeFrameCount}件あります。`,
+    )
+  }
+
+  return warnings
+}
+
+function getExpressionGroupingSummary(): ExpressionGroupingSummary {
+  const frames = getDetailedScanFrames()
+  const expressionGroups = EXPRESSION_GROUP_IDS.map(
+    createEmptyExpressionGroupFrameSummary,
+  )
+  const summaryWithoutWarnings: Omit<ExpressionGroupingSummary, "warnings"> = {
+    status: frames.length > 0 ? "ready" : "not_available",
+    source: "detailed_scan_frames",
+    sourceFrameCount: frames.length,
+    neutralFrameCount: 0,
+    neutralFrames: [],
+    expressionGroups,
+    mixedExpressionFrameCount: 0,
+    mixedExpressionFrames: [],
+    excludedFrameCount: 0,
+    excludedFrames: [],
+    excludedBreakdown: {
+      noFaceFrameCount: 0,
+      invalidLandmarkFrameCount: 0,
+      missingBlendshapeFrameCount: 0,
+      extremePoseFrameCount: 0,
+      mixedExpressionFrameCount: 0,
+      unclearExpressionFrameCount: 0,
+    },
+    step2IExcludedFrameCount:
+      idealLandmarks3DFrameSelection.excludedFrameIds.length,
+  }
+
+  frames.forEach((frame) => {
+    const analysis = frame.analysis
+    const framePreview = buildExpressionFramePreview(frame)
+
+    const addExcludedFrame = (): void => {
+      summaryWithoutWarnings.excludedFrameCount += 1
+      summaryWithoutWarnings.excludedFrames.push(framePreview)
+    }
+
+    if (frame.status !== "analyzed" || analysis?.detected !== true) {
+      summaryWithoutWarnings.excludedBreakdown.noFaceFrameCount += 1
+      addExcludedFrame()
+      return
+    }
+
+    if (analysis.landmarks.length !== REQUIRED_LANDMARK_COUNT) {
+      summaryWithoutWarnings.excludedBreakdown.invalidLandmarkFrameCount += 1
+      addExcludedFrame()
+      return
+    }
+
+    if (analysis.blendshapes.length === 0) {
+      summaryWithoutWarnings.excludedBreakdown.missingBlendshapeFrameCount += 1
+      addExcludedFrame()
+      return
+    }
+
+    if (
+      !hasCompletePose(analysis.pose) ||
+      !isExpressionGroupingPoseInRange(analysis.pose)
+    ) {
+      summaryWithoutWarnings.excludedBreakdown.extremePoseFrameCount += 1
+      addExcludedFrame()
+      return
+    }
+
+    if (isNeutralExpressionFrame(analysis.blendshapes)) {
+      summaryWithoutWarnings.neutralFrameCount += 1
+      summaryWithoutWarnings.neutralFrames.push(framePreview)
+      return
+    }
+
+    const activeGroupIds = getActiveExpressionGroupIds(analysis.blendshapes)
+
+    if (activeGroupIds.length === 1) {
+      const group = getExpressionGroupFrameSummary(
+        expressionGroups,
+        activeGroupIds[0],
+      )
+      group.frameCount += 1
+      group.frames.push(framePreview)
+      return
+    }
+
+    if (activeGroupIds.length >= 2) {
+      summaryWithoutWarnings.mixedExpressionFrameCount += 1
+      summaryWithoutWarnings.mixedExpressionFrames.push(framePreview)
+      summaryWithoutWarnings.excludedBreakdown.mixedExpressionFrameCount += 1
+      addExcludedFrame()
+      return
+    }
+
+    summaryWithoutWarnings.excludedBreakdown.unclearExpressionFrameCount += 1
+    addExcludedFrame()
+  })
+
+  return {
+    ...summaryWithoutWarnings,
+    warnings: buildExpressionGroupingWarnings(summaryWithoutWarnings),
+  }
 }
 
 function findPoseAwareFrameById(frameId: string): ExtractedVideoFrame | null {
@@ -4319,6 +4726,125 @@ function renderAnalysisPanel(): string {
   `
 }
 
+function formatExpressionGroupingStatus(
+  status: ExpressionGroupingStatus,
+): string {
+  return status
+}
+
+function renderExpressionFramePreviewList(
+  frames: ExpressionFramePreview[],
+): string {
+  const previewFrames = frames.slice(0, EXPRESSION_FRAME_PREVIEW_COUNT)
+  const omittedCount = Math.max(
+    0,
+    frames.length - EXPRESSION_FRAME_PREVIEW_COUNT,
+  )
+
+  if (previewFrames.length === 0) {
+    return `<span class="expression-frame-preview-empty">なし</span>`
+  }
+
+  return `
+    <span class="expression-frame-preview">
+      ${previewFrames.map((frame) => escapeHtml(frame.frameId)).join(", ")}
+      ${omittedCount > 0 ? ` / 他 ${omittedCount}件` : ""}
+    </span>
+  `
+}
+
+function renderExpressionGroupingPanel(): string {
+  const summary = getExpressionGroupingSummary()
+
+  return `
+    <section class="expression-grouping-panel" aria-label="表情フレーム分類">
+      <div class="panel-heading">
+        <div>
+          <h2>表情フレーム分類</h2>
+          <p>detailed scan 済み frames の blendshape score から、neutral / expression / mixed / excluded の候補数を集計します。3D生成や landmarkFollowStrengths 生成はまだ行いません。</p>
+        </div>
+      </div>
+      <dl class="pose-aware-summary-list expression-grouping-summary-list">
+        <div>
+          <dt>状態</dt>
+          <dd>${formatExpressionGroupingStatus(summary.status)}</dd>
+        </div>
+        <div>
+          <dt>source frames</dt>
+          <dd>${summary.sourceFrameCount}件</dd>
+        </div>
+        <div>
+          <dt>neutral</dt>
+          <dd>${summary.neutralFrameCount}件</dd>
+        </div>
+        <div>
+          <dt>mixedExpression</dt>
+          <dd>${summary.mixedExpressionFrameCount}件</dd>
+        </div>
+        <div>
+          <dt>表情分類除外</dt>
+          <dd>${summary.excludedFrameCount}件</dd>
+        </div>
+        <div>
+          <dt>Step 2-I 除外</dt>
+          <dd>${summary.step2IExcludedFrameCount}件</dd>
+        </div>
+      </dl>
+      <div class="expression-grouping-grid">
+        <article class="expression-group-card">
+          <h3>neutral</h3>
+          <strong>${summary.neutralFrameCount}件</strong>
+          <p>frame ids: ${renderExpressionFramePreviewList(summary.neutralFrames)}</p>
+        </article>
+        ${summary.expressionGroups
+          .map(
+            (group) => `
+              <article class="expression-group-card">
+                <h3>${escapeHtml(group.id)}</h3>
+                <strong>${group.frameCount}件</strong>
+                <p>frame ids: ${renderExpressionFramePreviewList(group.frames)}</p>
+              </article>
+            `,
+          )
+          .join("")}
+        <article class="expression-group-card">
+          <h3>mixedExpression</h3>
+          <strong>${summary.mixedExpressionFrameCount}件</strong>
+          <p>frame ids: ${renderExpressionFramePreviewList(summary.mixedExpressionFrames)}</p>
+        </article>
+        <article class="expression-group-card expression-group-card-excluded">
+          <h3>excluded</h3>
+          <strong>${summary.excludedFrameCount}件</strong>
+          <p>frame ids: ${renderExpressionFramePreviewList(summary.excludedFrames)}</p>
+        </article>
+      </div>
+      <div class="pose-aware-coverage">
+        <strong>除外内訳</strong>
+        <ul>
+          <li>顔検出なし: ${summary.excludedBreakdown.noFaceFrameCount}件</li>
+          <li>landmarks 不正: ${summary.excludedBreakdown.invalidLandmarkFrameCount}件</li>
+          <li>blendshapes なし: ${summary.excludedBreakdown.missingBlendshapeFrameCount}件</li>
+          <li>pose 範囲外: ${summary.excludedBreakdown.extremePoseFrameCount}件</li>
+          <li>mixedExpression: ${summary.excludedBreakdown.mixedExpressionFrameCount}件</li>
+          <li>判定保留: ${summary.excludedBreakdown.unclearExpressionFrameCount}件</li>
+        </ul>
+      </div>
+      <div class="pose-aware-coverage">
+        <strong>警告</strong>
+        ${
+          summary.warnings.length === 0
+            ? `<p class="pose-aware-ready-text">なし</p>`
+            : `<ul class="pose-aware-warning-list">
+                ${summary.warnings
+                  .map((warning) => `<li>${escapeHtml(warning)}</li>`)
+                  .join("")}
+              </ul>`
+        }
+      </div>
+    </section>
+  `
+}
+
 function toScanSummaryPreview(scanSummary: DetailedScanSummary): unknown {
   return {
     scanIntervalSec: scanSummary.scanIntervalSec,
@@ -4327,6 +4853,70 @@ function toScanSummaryPreview(scanSummary: DetailedScanSummary): unknown {
     analyzedFrameCount: scanSummary.analyzedFrameCount,
     detectedFrameCount: scanSummary.detectedFrameCount,
     candidateSourceFrameCount: scanSummary.candidateSourceFrameCount,
+  }
+}
+
+function toExpressionFrameIdPreview(
+  frames: ExpressionFramePreview[],
+): string[] {
+  return frames
+    .slice(0, EXPRESSION_FRAME_PREVIEW_COUNT)
+    .map((frame) => frame.frameId)
+}
+
+function toExpressionFrameTimestampPreview(
+  frames: ExpressionFramePreview[],
+): number[] {
+  return frames
+    .slice(0, EXPRESSION_FRAME_PREVIEW_COUNT)
+    .map((frame) => frame.timestamp)
+}
+
+function toExpressionGroupPreview(
+  group: ExpressionGroupFrameSummary,
+): unknown {
+  return {
+    id: group.id,
+    frameCount: group.frameCount,
+    frameIdPreview: toExpressionFrameIdPreview(group.frames),
+    timestampPreview: toExpressionFrameTimestampPreview(group.frames),
+    omittedFrameCount: Math.max(
+      0,
+      group.frames.length - EXPRESSION_FRAME_PREVIEW_COUNT,
+    ),
+  }
+}
+
+function toExpressionAnalysisPreview(): unknown {
+  const summary = getExpressionGroupingSummary()
+
+  return {
+    status: summary.status,
+    source: summary.source,
+    thresholds: EXPRESSION_GROUPING_THRESHOLDS,
+    summary: {
+      sourceFrameCount: summary.sourceFrameCount,
+      neutralFrameCount: summary.neutralFrameCount,
+      neutralFrameIdPreview: toExpressionFrameIdPreview(
+        summary.neutralFrames,
+      ),
+      expressionGroups: summary.expressionGroups.map(toExpressionGroupPreview),
+      mixedExpressionFrameCount: summary.mixedExpressionFrameCount,
+      mixedExpressionFrameIdPreview: toExpressionFrameIdPreview(
+        summary.mixedExpressionFrames,
+      ),
+      excludedFrameCount: summary.excludedFrameCount,
+      excludedFrameIdPreview: toExpressionFrameIdPreview(
+        summary.excludedFrames,
+      ),
+      excludedBreakdown: summary.excludedBreakdown,
+      step2IExcludedFrameCount: summary.step2IExcludedFrameCount,
+    },
+    warnings: summary.warnings,
+    notes: [
+      "JSON preview omits thumbnail data URLs and frame images.",
+      "neutral 3D 478 generation, expression 3D 478 generation, 3D comparison, landmarkFollowStrengths auto generation, and expressionFollow export are not implemented in this prototype.",
+    ],
   }
 }
 
@@ -4405,6 +4995,12 @@ function toVideoSourceDebugPreview(
       status: frame.status,
       detected: frame.analysis?.detected ?? false,
       landmarksCount: frame.analysis?.landmarks.length ?? 0,
+      blendshapeCount: frame.analysis?.blendshapes.length ?? 0,
+      blendshapePreview:
+        frame.analysis?.blendshapes.slice(0, 5).map((blendshape) => ({
+          categoryName: blendshape.categoryName,
+          score: Number(blendshape.score.toFixed(4)),
+        })) ?? [],
       posePreview: frame.analysis
         ? {
             pitch: frame.analysis.pose.pitch,
@@ -4444,6 +5040,7 @@ function buildAuthoringDebugPreview(): unknown {
       inferenceDataset: toPoseAwareInferenceDatasetPreview(),
       candidate: toPoseAwareCandidatePreview(),
     },
+    expressionAnalysis: toExpressionAnalysisPreview(),
     currentCandidate: toCurrentCandidatePreview(currentCandidate),
     landmarkGroups: toLandmarkGroupsPreview(),
     coordinateDebug: toCoordinateDebugPreview(
@@ -5046,6 +5643,13 @@ function analyzeScannedCanvasFrame(
       y: landmark.y,
       z: landmark.z,
     }))
+    const blendshapes = (result.faceBlendshapes[0]?.categories ?? []).map(
+      (category) => ({
+        categoryName: category.categoryName,
+        displayName: category.displayName,
+        score: category.score,
+      }),
+    )
     const detected = result.faceLandmarks.length > 0
 
     return {
@@ -5058,6 +5662,7 @@ function analyzeScannedCanvasFrame(
       analysis: {
         detected,
         landmarks,
+        blendshapes,
         pose: detected
           ? estimateFacePose(landmarks, result.facialTransformationMatrixes[0])
           : { ...EMPTY_FACE_POSE },
@@ -5076,6 +5681,7 @@ function analyzeScannedCanvasFrame(
       analysis: {
         detected: false,
         landmarks: [],
+        blendshapes: [],
         pose: { ...EMPTY_FACE_POSE },
         errorMessage: error instanceof Error ? error.message : String(error),
         analyzedAt: Date.now(),
@@ -5110,7 +5716,7 @@ async function initializeFaceLandmarker(): Promise<FaceLandmarker> {
     },
     runningMode: "IMAGE",
     numFaces: 1,
-    outputFaceBlendshapes: false,
+    outputFaceBlendshapes: true,
     outputFacialTransformationMatrixes: true,
   })
 }
@@ -5524,6 +6130,8 @@ function render(): void {
 
       ${renderAnalysisPanel()}
 
+      ${renderExpressionGroupingPanel()}
+
       ${renderPoseAwareMultiFramePanel()}
 
       ${renderIdealLandmarks3DPointCloudPreviewPanel()}
@@ -5640,6 +6248,7 @@ style.textContent = `
 
   .video-panel,
   .analysis-panel,
+  .expression-grouping-panel,
   .representative-panel,
   .frames-panel {
     margin-bottom: 24px;
@@ -5801,12 +6410,14 @@ style.textContent = `
   }
 
   .selected-representative-panel,
+  .expression-grouping-panel,
   .pose-aware-panel,
   .readiness-panel,
   .inference-dataset-panel {
     margin-bottom: 14px;
   }
 
+  .expression-grouping-panel,
   .pose-aware-panel {
     display: grid;
     gap: 12px;
@@ -5814,6 +6425,64 @@ style.textContent = `
     border-radius: 8px;
     background: #ffffff;
     padding: 14px;
+  }
+
+  .expression-grouping-panel .panel-heading {
+    margin-bottom: 0;
+  }
+
+  .expression-grouping-summary-list {
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  }
+
+  .expression-grouping-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 10px;
+  }
+
+  .expression-group-card {
+    display: grid;
+    min-width: 0;
+    gap: 6px;
+    border: 1px solid #dde6e2;
+    border-radius: 8px;
+    background: #fbfdfc;
+    padding: 11px;
+  }
+
+  .expression-group-card-excluded {
+    border-color: #d69a94;
+    background: #fff7f6;
+  }
+
+  .expression-group-card h3,
+  .expression-group-card strong,
+  .expression-group-card p,
+  .expression-frame-preview,
+  .expression-frame-preview-empty {
+    min-width: 0;
+    margin: 0;
+    overflow-wrap: anywhere;
+    line-height: 1.35;
+  }
+
+  .expression-group-card h3 {
+    color: #17201b;
+    font-size: 13px;
+  }
+
+  .expression-group-card strong {
+    color: #25342e;
+    font-size: 16px;
+  }
+
+  .expression-group-card p,
+  .expression-frame-preview,
+  .expression-frame-preview-empty {
+    color: #5d675f;
+    font-size: 12px;
+    font-weight: 700;
   }
 
   .pose-aware-heading p,
