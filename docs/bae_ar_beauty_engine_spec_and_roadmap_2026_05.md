@@ -128,12 +128,21 @@ Beauty Studio:
 - expressionFollow v1 docs direction
 - MP4 expression 3D analysis plan docs direction
 - usage-aware frame sampling v1 docs direction
+- usage-aware frame sampling v1 prototype
+- scan preset
+- usage bucket summary
+- adaptive scan / early stop prototype
 
 ### 3.2 未実装
 
 - expressionFollow v1 Engine implementation
 - MP4 expression 3D analysis implementation
+- neutral 3D 478 generation
+- expression 3D 478 generation
+- neutral vs expression 3D comparison
 - landmarkFollowStrengths auto generation implementation
+- expressionFollow export
+- production-quality adaptive sampling / tuning
 - expressionAttenuation falloff v1 fallback / reference handling
 - shapeWarpSettings v1
 - colorLayers v1
@@ -343,7 +352,7 @@ beauty_filter_asset_v1
 
 `landmarkGroups` v1 では、まず `mouth` / `left_eye` / `right_eye` / `face_boundary` を expression safety 用 group として想定します。将来 color processing 向けに `skin` / `lip` / `cheek` / `eye_area` などを追加する可能性があります。Layer System は shape warp 用ではなく、color processing 用です。詳細は [landmarkGroups v1](landmark-groups-v1.md) に整理します。
 
-詳細は [beauty_filter_asset_v1 direction](beauty-filter-asset-v1.md) に整理します。`landmarkGroups v1` は docs specification、Engine foundation、asset / fallback group source handling、Studio debug / Copy Debug summary、Authoring Tool Landmark Group Editor v1 prototype、`ideal_face_asset_v1` optional export まで実装済みです。`expressionFollow v1`、[MP4 expression 3D analysis plan](mp4-expression-3d-analysis-plan.md)、[usage-aware frame sampling v1](usage-aware-frame-sampling-v1.md) は docs direction のみで、Engine implementation、MP4 expression 3D analysis、usage-aware sampling implementation、landmarkFollowStrengths 自動生成は未実装です。`expressionAttenuation falloff v1` は fallback / 参考案です。`beauty_filter_asset_v1`、`shapeWarpSettings` v1、`colorLayers` v1、Production Shape Warp、Color Processing、Runtime renderer integration はまだ未実装です。
+詳細は [beauty_filter_asset_v1 direction](beauty-filter-asset-v1.md) に整理します。`landmarkGroups v1` は docs specification、Engine foundation、asset / fallback group source handling、Studio debug / Copy Debug summary、Authoring Tool Landmark Group Editor v1 prototype、`ideal_face_asset_v1` optional export まで実装済みです。`usage-aware frame sampling v1` は docs direction に加えて、scan preset、usage bucket summary、adaptive scan / early stop prototype まで実装済みです。`expressionFollow v1` と [MP4 expression 3D analysis plan](mp4-expression-3d-analysis-plan.md) は docs direction のみで、Engine implementation、MP4 expression 3D analysis 3D generation、landmarkFollowStrengths 自動生成、expressionFollow export は未実装です。`usage-aware frame sampling v1` も production-quality adaptive sampling / tuning は未実装です。`expressionAttenuation falloff v1` は fallback / 参考案です。`beauty_filter_asset_v1`、`shapeWarpSettings` v1、`colorLayers` v1、Production Shape Warp、Color Processing、Runtime renderer integration はまだ未実装です。
 
 ## 7. IdealFace
 
@@ -919,6 +928,9 @@ Step 5.5: usage-aware frame sampling v1 docs direction
   -> 実装済み
 
 Step 6: usage-aware frame sampling foundation
+  -> scan preset / usage bucket summary / adaptive scan / early stop prototype は実装済み
+  -> production-quality adaptive sampling / tuning は未実装
+
 Step 7: MP4 expression 3D analysis foundation
 Step 8: expressionFollow v1 Engine foundation
 Step 9: shapeWarpSettings v1 docs / foundation

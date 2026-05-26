@@ -4316,7 +4316,7 @@ function renderPoseAwareInferenceDatasetSummary(
         }
       </div>
       <p class="pose-aware-dataset-note">正面基準フレームは基準合わせに使います。IdealFace 形状生成には「IdealFace生成に使う」が ON の observation frame のみを使います。</p>
-      <p class="pose-aware-dataset-note">この dataset は Step 2-I-C の入力です。Step 2-G v1 の旧簡易推定は別方式として残しています。</p>
+      <p class="pose-aware-dataset-note">この dataset は Step 2-I-C の入力です。旧 Step 2-C〜2-G v1 の5ポーズ方式は削除済みで、現在は pose_aware_weighted_z_v1 を使用します。</p>
     </div>
   `
 }
