@@ -94,7 +94,7 @@ Engine Runtime に Studio / Authoring 用 UI や生成・編集処理は入れ�
 MP4 input
   -> detailed scan
   -> Step 2-I-A frame selection
-       1フレーム1カードで frontReference / useForInference / expressionGroup / excluded を設定
+       1フレーム1カードと Frame Review Carousel で frontReference / useForInference / expressionGroup / excluded を設定
   -> Step 2-I-B pose-aware inference dataset
   -> Step 2-I-C pose_aware_weighted_z_v1 candidate generation
        roll 補正
@@ -109,6 +109,8 @@ MP4 input
 今後の新機能は、旧方式ではなく Step 2-I active workflow 側に追加します。`currentCandidate` は Step 2-H preview に表示される現在の candidate で、`generationMethod` は `pose_aware_weighted_z_v1` です。`natural_v1` の 6 controlPoints は reference / projection debug 用であり、IdealFace 本体は `idealLandmarks3D` 478点です。
 
 Step 2-I-A の frame usage では、`frontReference` / `useForInference` / `expressionGroup` は重複可能な用途タグで、`excluded` だけを排他的な除外タグとして扱います。`poseOutOfRange` は自動除外ではなく注意タグです。正面基準には不向きですが、pose-aware 3D 推定の observation frame として z hint / 奥行き推定に使える可能性があるため、`useForInference` の対象に残せます。`noFace` / `invalidLandmarks` / `manual` は除外理由、`mixedExpression` / `pending` / `missingBlendshapes` は注意タグとして扱います。
+
+Step 2-I-A では、一覧カードに加えて Frame Review Carousel で1フレームを大きく確認しながら、`frontReference` / `expressionGroup` / `useForInference` / `excluded` を調整できます。Review 側と一覧カード側は同じ `frameUsage` state を更新し、JSON preview の `frameUsage` summary に反映します。
 
 ## IdealFace Projection / 座標系方針
 
