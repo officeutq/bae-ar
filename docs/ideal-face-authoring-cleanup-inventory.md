@@ -25,7 +25,7 @@ MP4 input
 
 | Area | Item | Reason | Notes |
 |---|---|---|---|
-| Step 2-I-A | `frontReferenceFrameIds` / `excludedFrameIds` | 正面基準候補、推定に使うフレーム、除外フレームを管理する現在の主導線 | 3分類は排他的に扱う |
+| Step 2-I-A | frame usage tags | `frontReference` / `useForInference` / `expressionGroup` / `excluded` を管理する現在の主導線 | `frontReference` / `useForInference` / `expressionGroup` は重複可能、`excluded` のみ排他的 |
 | Step 2-I-B | `poseAwareInferenceDataset` | pose-aware multi-frame inference の入力 dataset | detailed scan frames 由来の observation を使う |
 | Step 2-I-C | `pose_aware_weighted_z_v1` | 現在唯一の 3D candidate generation path | roll 補正、yaw / pitch / weight による z hint を使う |
 | Step 2-H | `currentCandidate` point cloud preview | 現在生成された candidate の確認表示 | preview camera は表示専用で candidate data を変更しない |

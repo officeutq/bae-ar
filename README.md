@@ -63,6 +63,7 @@ Engine Runtime に Studio / Authoring 用 UI や生成・編集処理は入れ�
 - `expressionFollow v1` docs 方針
 - MP4 expression 3D analysis plan docs 方針
 - IdealFace Authoring Tool Expression frame grouping summary prototype
+- IdealFace Authoring Tool frame usage card UI prototype
 
 ### 未実装 / 後段
 
@@ -93,7 +94,7 @@ Engine Runtime に Studio / Authoring 用 UI や生成・編集処理は入れ�
 MP4 input
   -> detailed scan
   -> Step 2-I-A frame selection
-       正面基準候補 / 推定に使うフレーム / 除外フレーム
+       1フレーム1カードで frontReference / useForInference / expressionGroup / excluded を設定
   -> Step 2-I-B pose-aware inference dataset
   -> Step 2-I-C pose_aware_weighted_z_v1 candidate generation
        roll 補正
@@ -154,16 +155,19 @@ MP4 input
 
 2026-05 update:
 
-- IdealFace Authoring Tool に Expression frame grouping summary prototype を追加済みです。
-- detailed scan frames の blendshape score から neutral / expression / mixed / excluded frame group 候補の count を確認できます。
+- IdealFace Authoring Tool に Expression frame grouping summary prototype と frame usage card UI prototype を追加済みです。
+- detailed scan frames の blendshape score から expression dropdown の自動初期値を作ります。
+- `frontReference` / `useForInference` / `expressionGroup` は用途タグであり、重複可能です。
+- `excluded` だけは排他的で、除外済み frame は正面基準 / 推定 / 表情解析の処理対象から外れます。
 - JSON preview に `expressionAnalysis` summary を表示します。
+- JSON preview に `frameUsage` summary を表示します。
 - neutral 3D 478 / expression 3D 478 の生成、3D 比較、`landmarkFollowStrengths` 自動生成、`expressionFollow` export はまだ未実装です。
 
 `landmarkFollowStrengths` は手作業だけでなく、IdealFace Authoring Tool が MP4 の表情別 frame group から自動生成する方針です。
 
 要点:
 
-- neutral frame group から neutral 3D 478 を生成します。
+- neutralFrames は将来、frontReferenceFrames の中から表情が少ないものを選びます。
 - mouthPucker / jawOpen / mouthSmile / eyeBlink / eyeSquint などの expression frame group から expression 3D 478 を生成します。
 - 比較は projected 2D / image-normalized ではなく、same-unit 3D 478 同士で行います。
 - `comparisonSpace` は `bae_ar_ideal_landmarks3d_v1` を推奨します。
