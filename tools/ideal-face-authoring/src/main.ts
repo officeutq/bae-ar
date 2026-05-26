@@ -412,9 +412,16 @@ interface FrameStableZWeightDebug {
   pitchNegativeSignal: number
   qualityWeight: number
   poseUsefulnessWeight: number
+  zHintDirectionBalanceWeight: number
   directionBalanceWeight: number
+  actualYawZHintWeight: number
+  actualPitchZHintWeight: number
+  debugFinalZHintWeight: number
   finalZHintWeight: number
   directionBalanceClamped: boolean
+  canonicalAverageDirectionBalanceWeight: number
+  finalCanonicalAverageWeight: number
+  canonicalAverageDirectionBalanceClamped: boolean
 }
 
 interface StableZLandmarkValue {
@@ -457,6 +464,35 @@ interface DirectionBalanceSummary {
   clampedDirectionBalanceWeightCount: number
 }
 
+interface ZHintSourceWeightSummary {
+  count: number
+  weightTotal: number
+  zAverage: number | null
+  zRange: number | null
+}
+
+interface StableZWeightDebugSummary {
+  yawPositiveZHintWeightTotal: number
+  yawNegativeZHintWeightTotal: number
+  pitchPositiveZHintWeightTotal: number
+  pitchNegativeZHintWeightTotal: number
+  yawDerived: ZHintSourceWeightSummary
+  pitchDerived: ZHintSourceWeightSummary
+}
+
+interface CanonicalAverageWeightDebugSummary {
+  yawPositiveCanonicalAverageWeightTotal: number
+  yawNegativeCanonicalAverageWeightTotal: number
+  pitchPositiveCanonicalAverageWeightTotal: number
+  pitchNegativeCanonicalAverageWeightTotal: number
+  yawPositiveCanonicalAverageFrameCount: number
+  yawNegativeCanonicalAverageFrameCount: number
+  averageCanonicalAverageDirectionBalanceWeight: number
+  minCanonicalAverageDirectionBalanceWeight: number
+  maxCanonicalAverageDirectionBalanceWeight: number
+  clampedCanonicalAverageDirectionBalanceWeightCount: number
+}
+
 interface FrameStableZWeightDebugSummary {
   topWeightedFrames: FrameStableZWeightDebug[]
   lowestWeightedFrames: FrameStableZWeightDebug[]
@@ -467,6 +503,7 @@ interface FrameStableZWeightDebugSummary {
 }
 
 interface TopViewZAsymmetrySummary {
+  basis: "x_center_split"
   leftSidePointCount: number
   rightSidePointCount: number
   leftSideZAverage: number | null
@@ -476,6 +513,14 @@ interface TopViewZAsymmetrySummary {
   rightSideZRange: number | null
   leftRightZRangeDelta: number | null
   topViewAsymmetryScore: number | null
+  warning: string
+}
+
+interface NearFrontObservationDebugSummary {
+  nearFrontObservationFrameCount: number
+  frontReferenceFrameCount: number
+  useForInferenceFrontReferenceFrameCount: number
+  warning: string | null
 }
 
 interface PoseAwareYawBinSummary {
@@ -556,7 +601,10 @@ interface PoseAwareCanonicalStableZDebug {
   observationFrames: PoseAwareObservationFrameDebugSummary
   stableZ: StableZSummary
   directionBalance: DirectionBalanceSummary
+  stableZWeights: StableZWeightDebugSummary
+  canonicalAverageWeights: CanonicalAverageWeightDebugSummary
   frameWeights: FrameStableZWeightDebugSummary
+  nearFrontObservation: NearFrontObservationDebugSummary
   canonicalization: {
     frameLocal3DBounds: LandmarkBoundsSummary | null
     inversePoseCanonical3DBounds: LandmarkBoundsSummary | null
@@ -4473,9 +4521,16 @@ function calculateStableZPoseSignal(angleDeg: number): number {
 
 function buildStableZFrameSignalBase(frame: PoseAwareInferenceFrame): Omit<
   FrameStableZWeightDebug,
+  | "zHintDirectionBalanceWeight"
   | "directionBalanceWeight"
+  | "actualYawZHintWeight"
+  | "actualPitchZHintWeight"
+  | "debugFinalZHintWeight"
   | "finalZHintWeight"
   | "directionBalanceClamped"
+  | "canonicalAverageDirectionBalanceWeight"
+  | "finalCanonicalAverageWeight"
+  | "canonicalAverageDirectionBalanceClamped"
 > {
   const yawSignal = calculateStableZPoseSignal(frame.pose.yaw)
   const pitchSignal = calculateStableZPoseSignal(frame.pose.pitch)
@@ -4603,7 +4658,7 @@ function buildFrameStableZWeightDebug(
       (sum, item) => sum + item.signal,
       0,
     )
-    const directionBalanceWeight =
+    const zHintDirectionBalanceWeight =
       signalTotal <= 0
         ? 1
         : weightedFactors.reduce(
@@ -4613,16 +4668,41 @@ function buildFrameStableZWeightDebug(
     const directionBalanceClamped = weightedFactors.some(
       (item) => item.factor.clamped,
     )
-    const finalZHintWeight =
+    const canonicalAverageDirectionBalanceWeight = zHintDirectionBalanceWeight
+    const canonicalAverageDirectionBalanceClamped = directionBalanceClamped
+    const actualYawZHintWeight =
+      frame.qualityWeight *
+      zHintDirectionBalanceWeight *
+      (frame.yawPositiveSignal + frame.yawNegativeSignal)
+    const actualPitchZHintWeight =
+      frame.qualityWeight *
+      zHintDirectionBalanceWeight *
+      (frame.pitchPositiveSignal + frame.pitchNegativeSignal)
+    const debugFinalZHintWeight =
       frame.qualityWeight *
       frame.poseUsefulnessWeight *
-      directionBalanceWeight
+      zHintDirectionBalanceWeight
+    const finalCanonicalAverageWeight =
+      frame.qualityWeight * canonicalAverageDirectionBalanceWeight
 
     return {
       ...frame,
-      directionBalanceWeight: roundDebugNumber(directionBalanceWeight),
-      finalZHintWeight: roundDebugNumber(finalZHintWeight),
+      zHintDirectionBalanceWeight: roundDebugNumber(
+        zHintDirectionBalanceWeight,
+      ),
+      directionBalanceWeight: roundDebugNumber(zHintDirectionBalanceWeight),
+      actualYawZHintWeight: roundDebugNumber(actualYawZHintWeight),
+      actualPitchZHintWeight: roundDebugNumber(actualPitchZHintWeight),
+      debugFinalZHintWeight: roundDebugNumber(debugFinalZHintWeight),
+      finalZHintWeight: roundDebugNumber(debugFinalZHintWeight),
       directionBalanceClamped,
+      canonicalAverageDirectionBalanceWeight: roundDebugNumber(
+        canonicalAverageDirectionBalanceWeight,
+      ),
+      finalCanonicalAverageWeight: roundDebugNumber(
+        finalCanonicalAverageWeight,
+      ),
+      canonicalAverageDirectionBalanceClamped,
     }
   })
   const directionBalanceWeights = frameWeights.map(
@@ -4743,18 +4823,8 @@ function collectPoseAwareStableZHintsForFrame(
   const useYaw = Math.abs(frame.pose.yaw) >= POSE_AWARE_Z_MIN_COMPONENT_DEG
   const usePitch =
     Math.abs(frame.pose.pitch) >= POSE_AWARE_Z_MIN_COMPONENT_DEG
-  const yawSignal =
-    frameWeight.yawPositiveSignal + frameWeight.yawNegativeSignal
-  const pitchSignal =
-    frameWeight.pitchPositiveSignal + frameWeight.pitchNegativeSignal
-  const yawWeight =
-    frameWeight.qualityWeight *
-    frameWeight.directionBalanceWeight *
-    yawSignal
-  const pitchWeight =
-    frameWeight.qualityWeight *
-    frameWeight.directionBalanceWeight *
-    pitchSignal
+  const yawWeight = frameWeight.actualYawZHintWeight
+  const pitchWeight = frameWeight.actualPitchZHintWeight
 
   correctedLandmarks.forEach((landmark, index) => {
     const basePoint = basePoints[index]
@@ -5082,6 +5152,7 @@ function buildTopViewZAsymmetrySummary(
       : roundDebugNumber(leftSideZRange - rightSideZRange)
 
   return {
+    basis: "x_center_split",
     leftSidePointCount: leftZValues.length,
     rightSidePointCount: rightZValues.length,
     leftSideZAverage,
@@ -5097,6 +5168,8 @@ function buildTopViewZAsymmetrySummary(
             Math.abs(leftRightZAverageDelta) +
               Math.abs(leftRightZRangeDelta) * 0.5,
           ),
+    warning:
+      "topViewAsymmetry uses x-center split and may differ from semantic left/right.",
   }
 }
 
@@ -5140,6 +5213,156 @@ function buildStableZSummary(
     zHintCandidateCountAverage: roundDebugNumber(
       averageNumbers(candidateCounts),
     ),
+  }
+}
+
+function buildZHintSourceWeightSummary(
+  hints: PoseAwareZHint[],
+): ZHintSourceWeightSummary {
+  const weightTotal = hints.reduce((sum, hint) => sum + hint.weight, 0)
+  const zValues = hints.map((hint) => hint.value)
+
+  return {
+    count: hints.length,
+    weightTotal: roundDebugNumber(weightTotal),
+    zAverage:
+      hints.length === 0 || weightTotal <= 0
+        ? null
+        : roundDebugNumber(getWeightedAverageZ(hints)),
+    zRange: getZRange(zValues),
+  }
+}
+
+function buildStableZWeightDebugSummary(
+  stableZHintsByLandmark: PoseAwareZHint[][],
+  frameWeights: FrameStableZWeightDebug[],
+): StableZWeightDebugSummary {
+  const frameWeightById = new Map(
+    frameWeights.map((frameWeight) => [frameWeight.frameId, frameWeight]),
+  )
+  const allHints = stableZHintsByLandmark.flat()
+  const yawHints = allHints.filter((hint) => hint.source === "yaw")
+  const pitchHints = allHints.filter((hint) => hint.source === "pitch")
+  const sumHintWeights = (
+    source: PoseAwareZHint["source"],
+    direction: "positive" | "negative",
+  ): number => {
+    const total = allHints
+      .filter((hint) => {
+        if (hint.source !== source) {
+          return false
+        }
+
+        const frameWeight = frameWeightById.get(hint.frameId)
+
+        if (!frameWeight) {
+          return false
+        }
+
+        if (source === "yaw") {
+          return direction === "positive"
+            ? frameWeight.yawPositiveSignal > 0
+            : frameWeight.yawNegativeSignal > 0
+        }
+
+        return direction === "positive"
+          ? frameWeight.pitchPositiveSignal > 0
+          : frameWeight.pitchNegativeSignal > 0
+      })
+      .reduce((sum, hint) => sum + hint.weight, 0)
+
+    return roundDebugNumber(total)
+  }
+
+  return {
+    yawPositiveZHintWeightTotal: sumHintWeights("yaw", "positive"),
+    yawNegativeZHintWeightTotal: sumHintWeights("yaw", "negative"),
+    pitchPositiveZHintWeightTotal: sumHintWeights("pitch", "positive"),
+    pitchNegativeZHintWeightTotal: sumHintWeights("pitch", "negative"),
+    yawDerived: buildZHintSourceWeightSummary(yawHints),
+    pitchDerived: buildZHintSourceWeightSummary(pitchHints),
+  }
+}
+
+function buildCanonicalAverageWeightDebugSummary(
+  frameWeights: FrameStableZWeightDebug[],
+): CanonicalAverageWeightDebugSummary {
+  const canonicalAverageDirectionBalanceWeights = frameWeights.map(
+    (frame) => frame.canonicalAverageDirectionBalanceWeight,
+  )
+  const sumFrameWeights = (
+    predicate: (frame: FrameStableZWeightDebug) => boolean,
+  ): number =>
+    roundDebugNumber(
+      frameWeights
+        .filter(predicate)
+        .reduce((sum, frame) => sum + frame.finalCanonicalAverageWeight, 0),
+    )
+
+  return {
+    yawPositiveCanonicalAverageWeightTotal: sumFrameWeights(
+      (frame) => frame.yawPositiveSignal > 0,
+    ),
+    yawNegativeCanonicalAverageWeightTotal: sumFrameWeights(
+      (frame) => frame.yawNegativeSignal > 0,
+    ),
+    pitchPositiveCanonicalAverageWeightTotal: sumFrameWeights(
+      (frame) => frame.pitchPositiveSignal > 0,
+    ),
+    pitchNegativeCanonicalAverageWeightTotal: sumFrameWeights(
+      (frame) => frame.pitchNegativeSignal > 0,
+    ),
+    yawPositiveCanonicalAverageFrameCount: frameWeights.filter(
+      (frame) => frame.yawPositiveSignal > 0,
+    ).length,
+    yawNegativeCanonicalAverageFrameCount: frameWeights.filter(
+      (frame) => frame.yawNegativeSignal > 0,
+    ).length,
+    averageCanonicalAverageDirectionBalanceWeight: roundDebugNumber(
+      averageNumbers(canonicalAverageDirectionBalanceWeights),
+    ),
+    minCanonicalAverageDirectionBalanceWeight:
+      canonicalAverageDirectionBalanceWeights.length === 0
+        ? 0
+        : roundDebugNumber(
+            Math.min(...canonicalAverageDirectionBalanceWeights),
+          ),
+    maxCanonicalAverageDirectionBalanceWeight:
+      canonicalAverageDirectionBalanceWeights.length === 0
+        ? 0
+        : roundDebugNumber(
+            Math.max(...canonicalAverageDirectionBalanceWeights),
+          ),
+    clampedCanonicalAverageDirectionBalanceWeightCount: frameWeights.filter(
+      (frame) => frame.canonicalAverageDirectionBalanceClamped,
+    ).length,
+  }
+}
+
+function buildNearFrontObservationDebugSummary(
+  dataset: PoseAwareInferenceDataset,
+): NearFrontObservationDebugSummary {
+  const frontReferenceFrameIds = new Set(
+    dataset.frontReferenceFrames.map((frame) => frame.frameId),
+  )
+  const nearFrontObservationFrameCount = dataset.observationFrames.filter(
+    (frame) =>
+      Math.abs(frame.pose.yaw) <= POSE_AWARE_CANONICAL_NEAR_FRONT_YAW_DEG,
+  ).length
+  const useForInferenceFrontReferenceFrameCount =
+    dataset.observationFrames.filter((frame) =>
+      frontReferenceFrameIds.has(frame.frameId),
+    ).length
+  const warning =
+    nearFrontObservationFrameCount < POSE_AWARE_CANONICAL_MIN_NEAR_FRONT_COUNT
+      ? "nearFront observation is low; pass2 canonical average may be dominated by side-pose frames."
+      : null
+
+  return {
+    nearFrontObservationFrameCount,
+    frontReferenceFrameCount: dataset.frontReferenceFrames.length,
+    useForInferenceFrontReferenceFrameCount,
+    warning,
   }
 }
 
@@ -5340,13 +5563,14 @@ function buildPoseAwareCanonicalLandmarksFromFrames(
 function buildPoseAwareStableZFrameLocalAndCanonicalPoints(
   frame: PoseAwareInferenceFrame,
   stableZValues: StableZLandmarkValue[],
+  frameWeight: FrameStableZWeightDebug,
 ): {
   localPoints: Array<Point3D & { index: number }>
   canonicalPoints: Array<Point3D & { index: number }>
   weight: number
 } | null {
   const sameUnitLandmarks = getSameUnitLandmarks2D(frame)
-  const weight = calculatePoseAwareShapeFrameWeight(frame)
+  const weight = frameWeight.finalCanonicalAverageWeight
 
   if (
     !sameUnitLandmarks ||
@@ -5378,16 +5602,30 @@ function buildPoseAwareStableZFrameLocalAndCanonicalPoints(
 function buildPoseAwareCanonicalStableZLandmarksFromFrames(
   observationFrames: PoseAwareInferenceFrame[],
   stableZValues: StableZLandmarkValue[],
+  frameWeights: FrameStableZWeightDebug[],
 ): {
   landmarks: IdealLandmark3DCandidate[]
   localPoints: Array<Point3D & { index: number }>
   canonicalFramePoints: Array<Point3D & { index: number }>
   weightTotal: number
 } | null {
+  const frameWeightById = new Map(
+    frameWeights.map((frameWeight) => [frameWeight.frameId, frameWeight]),
+  )
   const canonicalFrames = observationFrames
-    .map((frame) =>
-      buildPoseAwareStableZFrameLocalAndCanonicalPoints(frame, stableZValues),
-    )
+    .map((frame) => {
+      const frameWeight = frameWeightById.get(frame.frameId)
+
+      if (!frameWeight) {
+        return null
+      }
+
+      return buildPoseAwareStableZFrameLocalAndCanonicalPoints(
+        frame,
+        stableZValues,
+        frameWeight,
+      )
+    })
     .filter(
       (
         frame,
@@ -5715,6 +5953,7 @@ function buildPoseAwareCanonicalStableZWarnings(
   frameCount: number,
   comparison: PoseAwareCandidateComparisonDebug | undefined,
   topView: TopViewZAsymmetrySummary,
+  nearFrontObservation: NearFrontObservationDebugSummary,
 ): string[] {
   const warnings: string[] = []
 
@@ -5775,6 +6014,12 @@ function buildPoseAwareCanonicalStableZWarnings(
     warnings.push("top view asymmetry is still large.")
   }
 
+  warnings.push(topView.warning)
+
+  if (nearFrontObservation.warning) {
+    warnings.push(nearFrontObservation.warning)
+  }
+
   return warnings
 }
 
@@ -5786,6 +6031,7 @@ function buildPoseAwareCanonicalStableZCandidateDebug(
     canonicalFramePoints: Array<Point3D & { index: number }>
   },
   stableZValues: StableZLandmarkValue[],
+  stableZHintsByLandmark: PoseAwareZHint[][],
   directionBalance: DirectionBalanceSummary,
   frameWeights: FrameStableZWeightDebug[],
   oldResult: IdealLandmarks3DCandidateResult | null,
@@ -5800,12 +6046,20 @@ function buildPoseAwareCanonicalStableZCandidateDebug(
     "pose_aware_canonical_stable_z_v1",
   )
   const topView = buildTopViewZAsymmetrySummary(canonicalResult.landmarks)
+  const nearFrontObservation = buildNearFrontObservationDebugSummary(dataset)
   const debugWithoutWarnings = {
     generationMethod: "pose_aware_canonical_stable_z_v1" as const,
     observationFrames: observationSummary,
     stableZ,
     directionBalance,
+    stableZWeights: buildStableZWeightDebugSummary(
+      stableZHintsByLandmark,
+      frameWeights,
+    ),
+    canonicalAverageWeights:
+      buildCanonicalAverageWeightDebugSummary(frameWeights),
     frameWeights: buildFrameStableZWeightDebugSummary(frameWeights),
+    nearFrontObservation,
     canonicalization: {
       frameLocal3DBounds: buildLandmarkBoundsSummary(
         canonicalResult.localPoints,
@@ -5827,6 +6081,7 @@ function buildPoseAwareCanonicalStableZCandidateDebug(
       observationFrames.length,
       comparison,
       topView,
+      nearFrontObservation,
     ),
   }
 }
@@ -6039,6 +6294,7 @@ function buildPoseAwareCanonicalStableZIdealLandmarks3DCandidateResult(
   const canonicalResult = buildPoseAwareCanonicalStableZLandmarksFromFrames(
     dataset.observationFrames,
     stableZValues,
+    frameWeights,
   )
 
   if (!canonicalResult || canonicalResult.landmarks.length !== REQUIRED_LANDMARK_COUNT) {
@@ -6056,6 +6312,7 @@ function buildPoseAwareCanonicalStableZIdealLandmarks3DCandidateResult(
     dataset,
     canonicalResult,
     stableZValues,
+    stableZHintsByLandmark,
     directionBalance,
     frameWeights,
     oldResult,
@@ -6612,6 +6869,57 @@ function renderPoseAwareStableZDebugBlock(
         <dd>${debug.directionBalance.clampedDirectionBalanceWeightCount}</dd>
       </div>
     </dl>
+    <h5>stableZ actual zHint weights</h5>
+    <dl class="pose-aware-summary-list">
+      <div>
+        <dt>yaw zHint weight + / -</dt>
+        <dd>${formatNumber(debug.stableZWeights.yawPositiveZHintWeightTotal)} / ${formatNumber(debug.stableZWeights.yawNegativeZHintWeightTotal)}</dd>
+      </div>
+      <div>
+        <dt>pitch zHint weight + / -</dt>
+        <dd>${formatNumber(debug.stableZWeights.pitchPositiveZHintWeightTotal)} / ${formatNumber(debug.stableZWeights.pitchNegativeZHintWeightTotal)}</dd>
+      </div>
+      ${renderZHintSourceWeightSummaryRows("yaw-derived zHint", debug.stableZWeights.yawDerived)}
+      ${renderZHintSourceWeightSummaryRows("pitch-derived zHint", debug.stableZWeights.pitchDerived)}
+    </dl>
+    <h5>canonical average weights</h5>
+    <dl class="pose-aware-summary-list">
+      <div>
+        <dt>yaw canonical weight + / -</dt>
+        <dd>${formatNumber(debug.canonicalAverageWeights.yawPositiveCanonicalAverageWeightTotal)} / ${formatNumber(debug.canonicalAverageWeights.yawNegativeCanonicalAverageWeightTotal)}</dd>
+      </div>
+      <div>
+        <dt>pitch canonical weight + / -</dt>
+        <dd>${formatNumber(debug.canonicalAverageWeights.pitchPositiveCanonicalAverageWeightTotal)} / ${formatNumber(debug.canonicalAverageWeights.pitchNegativeCanonicalAverageWeightTotal)}</dd>
+      </div>
+      <div>
+        <dt>yaw canonical frame count + / -</dt>
+        <dd>${debug.canonicalAverageWeights.yawPositiveCanonicalAverageFrameCount} / ${debug.canonicalAverageWeights.yawNegativeCanonicalAverageFrameCount}</dd>
+      </div>
+      <div>
+        <dt>canonical balance avg / min / max</dt>
+        <dd>${formatNumber(debug.canonicalAverageWeights.averageCanonicalAverageDirectionBalanceWeight)} / ${formatNumber(debug.canonicalAverageWeights.minCanonicalAverageDirectionBalanceWeight)} / ${formatNumber(debug.canonicalAverageWeights.maxCanonicalAverageDirectionBalanceWeight)}</dd>
+      </div>
+      <div>
+        <dt>canonical balance clamped frames</dt>
+        <dd>${debug.canonicalAverageWeights.clampedCanonicalAverageDirectionBalanceWeightCount}</dd>
+      </div>
+    </dl>
+    <h5>near-front observation</h5>
+    <dl class="pose-aware-summary-list">
+      <div>
+        <dt>nearFront observation frames</dt>
+        <dd>${debug.nearFrontObservation.nearFrontObservationFrameCount}</dd>
+      </div>
+      <div>
+        <dt>frontReference frames</dt>
+        <dd>${debug.nearFrontObservation.frontReferenceFrameCount}</dd>
+      </div>
+      <div>
+        <dt>useForInference frontReference frames</dt>
+        <dd>${debug.nearFrontObservation.useForInferenceFrontReferenceFrameCount}</dd>
+      </div>
+    </dl>
     <h5>frame weight debug</h5>
     <dl class="pose-aware-summary-list">
       <div>
@@ -6632,6 +6940,22 @@ function renderPoseAwareStableZDebugBlock(
   `
 }
 
+function renderZHintSourceWeightSummaryRows(
+  label: string,
+  summary: ZHintSourceWeightSummary,
+): string {
+  return `
+    <div>
+      <dt>${label} count / weight</dt>
+      <dd>${summary.count} / ${formatNumber(summary.weightTotal)}</dd>
+    </div>
+    <div>
+      <dt>${label} z avg / range</dt>
+      <dd>${formatNullableDebugNumber(summary.zAverage)} / ${formatNullableDebugNumber(summary.zRange)}</dd>
+    </div>
+  `
+}
+
 function renderFrameStableZWeightList(
   label: string,
   frames: FrameStableZWeightDebug[],
@@ -6646,7 +6970,7 @@ function renderFrameStableZWeightList(
               ${frames
                 .map(
                   (frame) =>
-                    `<li>${escapeHtml(frame.frameId)}: final ${formatNumber(frame.finalZHintWeight)} / balance ${formatNumber(frame.directionBalanceWeight)} / yaw ${formatNumber(frame.yaw)} / pitch ${formatNumber(frame.pitch)}</li>`,
+                    `<li>${escapeHtml(frame.frameId)}: z debug ${formatNumber(frame.debugFinalZHintWeight)} / yaw z ${formatNumber(frame.actualYawZHintWeight)} / pitch z ${formatNumber(frame.actualPitchZHintWeight)} / canonical ${formatNumber(frame.finalCanonicalAverageWeight)} / balance ${formatNumber(frame.canonicalAverageDirectionBalanceWeight)} / yaw ${formatNumber(frame.yaw)} / pitch ${formatNumber(frame.pitch)}</li>`,
                 )
                 .join("")}
             </ul>`
@@ -6659,6 +6983,10 @@ function renderTopViewZAsymmetryRows(
   summary: TopViewZAsymmetrySummary,
 ): string {
   return `
+    <div>
+      <dt>basis</dt>
+      <dd>${summary.basis}</dd>
+    </div>
     <div>
       <dt>left / right point count</dt>
       <dd>${summary.leftSidePointCount} / ${summary.rightSidePointCount}</dd>
@@ -6682,6 +7010,10 @@ function renderTopViewZAsymmetryRows(
     <div>
       <dt>top view asymmetry score</dt>
       <dd>${formatNullableDebugNumber(summary.topViewAsymmetryScore)}</dd>
+    </div>
+    <div>
+      <dt>basis warning</dt>
+      <dd>${escapeHtml(summary.warning)}</dd>
     </div>
   `
 }
