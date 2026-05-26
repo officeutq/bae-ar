@@ -4,7 +4,9 @@
 
 このドキュメントは、`expressionFollow v1` の次段として、IdealFace Authoring Tool が MP4 を解析し、表情別 frame group から neutral 3D 478 / expression 3D 478 を生成し、3D 差分から `landmarkFollowStrengths` を自動生成する方針を整理します。
 
-今回は docs 方針整理のみです。TypeScript 実装、Engine 実装、Studio 実装、Authoring Tool UI 実装、JSON export 変更、validator 変更はまだ行いません。
+2026-05 時点では、最初の prototype として IdealFace Authoring Tool に Expression frame grouping summary を追加済みです。detailed scan frames の blendshape score から neutral / expression / mixed / excluded frame group 候補の count と warning を UI / JSON preview で確認できます。
+
+neutral 3D 478 / expression 3D 478 の生成、3D 比較、`landmarkFollowStrengths` 自動生成、`expressionFollow` export、Engine 実装、Studio 実装、validator 変更はまだ行いません。
 
 ## 背景
 
@@ -38,11 +40,12 @@ landmarkFollowStrengths:
 - Landmark Group Editor rectangle selection / index highlight / bulk add / bulk remove
 - `ideal_face_asset_v1` optional `landmarkGroups` export
 - expressionFollow v1 docs direction
+- Expression frame grouping summary prototype
 
 未実装:
 
 - expressionFollow v1 Engine implementation
-- MP4 expression 3D analysis implementation
+- MP4 expression 3D analysis 3D generation / comparison / export implementation
 - landmarkFollowStrengths auto generation implementation
 - expressionFollow Authoring UI
 - correctionProfile / expressionFollow export
