@@ -442,7 +442,9 @@ reference
 debug
 ```
 
-`currentCandidate` は Step 2-H preview に表示される現在の candidate です。推奨 `generationMethod` は `pose_aware_mediapipe_mesh_pca_residual_yaw_v1` で、478 landmarks 全文は出さず、summary と先頭数点 preview に留めます。`pose_aware_mediapipe_mesh_semantic_origin_v1` は PCA residual yaw correction なしの baseline、`pose_aware_weighted_z_v1` は historical zHint comparison として残します。`pose_aware_canonical_3d_v1` / `pose_aware_canonical_stable_z_v1` / `pose_aware_canonical_balanced_frame_z_v1` / `pose_aware_mediapipe_mesh_average_v1` は legacy / debug-only prototype です。`natural_v1` の 6 controlPoints は reference / projection debug 用であり、IdealFace 本体は `idealLandmarks3D` 478点です。
+`currentCandidate` は Step 2-H preview に表示される現在の candidate です。推奨 `generationMethod` は `pose_aware_mediapipe_mesh_pca_residual_yaw_v1` で、478 landmarks 全文は出さず、summary と先頭数点 preview に留めます。`pose_aware_mediapipe_mesh_semantic_origin_v1` は PCA residual yaw correction なしの baseline、`pose_aware_weighted_z_v1` は historical comparison として残します。`pose_aware_canonical_3d_v1` / `pose_aware_canonical_stable_z_v1` / `pose_aware_canonical_balanced_frame_z_v1` / `pose_aware_mediapipe_mesh_average_v1` は legacy / debug-only prototype です。`natural_v1` の 6 controlPoints は reference / projection debug 用であり、IdealFace 本体は `idealLandmarks3D` 478点です。
+
+MediaPipe z normalize は Step 2-I 時点では `raw` を現時点の推奨 default とします。実データ確認では `raw` が最も自然に見え、`faceWidthScaled` は奥行きが平べったくなりやすかったためです。MediaPipe z scale は `1`、MediaPipe z invert は ON を基本値として扱います。PCA residual yaw correction により x-z の残留傾きは別途補正できるため、z normalize 側で過度にスケール調整しない方が自然でした。ただし `faceWidthScaled` / `centered` / `frontReferenceMatched` は比較 option として残し、動画・端末・MediaPipe z の出方によって将来 dataset 別に z normalize / z scale を調整可能にする可能性があります。
 
 この処理は完全自動生成ではなく、自動推定 + 将来の手動補正として扱います。動画入力、詳細スキャン、pose-aware dataset 作成、candidate generation、3D point cloud preview は IdealFace Authoring Tool の責務であり、Engine Runtime には含めません。
 
@@ -1136,7 +1138,7 @@ reference
 debug
 ```
 
-`currentCandidate` は Step 2-H preview に表示される現在の candidate です。推奨 `generationMethod` は `pose_aware_mediapipe_mesh_pca_residual_yaw_v1` で、478 landmarks 全文は出さず、summary と先頭数点 preview に留めます。`pose_aware_mediapipe_mesh_semantic_origin_v1` は PCA residual yaw correction なしの baseline、`pose_aware_weighted_z_v1` は historical zHint comparison として残します。`natural_v1` の 6 controlPoints は reference / projection debug 用であり、IdealFace 本体は `idealLandmarks3D` 478点です。
+`currentCandidate` は Step 2-H preview に表示される現在の candidate です。推奨 `generationMethod` は `pose_aware_mediapipe_mesh_pca_residual_yaw_v1` で、478 landmarks 全文は出さず、summary と先頭数点 preview に留めます。`pose_aware_mediapipe_mesh_semantic_origin_v1` は PCA residual yaw correction なしの baseline、`pose_aware_weighted_z_v1` は historical comparison として残します。`pose_aware_canonical_3d_v1` / `pose_aware_canonical_stable_z_v1` / `pose_aware_canonical_balanced_frame_z_v1` / `pose_aware_mediapipe_mesh_average_v1` は legacy / debug-only prototype です。`natural_v1` の 6 controlPoints は reference / projection debug 用であり、IdealFace 本体は `idealLandmarks3D` 478点です。
 
 ## 18-I. IdealFace Authoring Tool Step 2-I
 
@@ -1168,6 +1170,48 @@ Step 2-I-A keeps frame usage as tags. `frontReference`, `useForInference`, and `
 Step 2-I-B builds `poseAwareInferenceDataset` from front reference frames and observation frames. It does not use fixed five-pose labels.
 
 Step 2-I-C generates the current recommended 3D candidate with `pose_aware_mediapipe_mesh_pca_residual_yaw_v1`. It uses MediaPipe landmark.z for frame-local 3D478, inverse-rotates each observation by FacePose yaw / pitch / roll, applies one shared x-z PCA residual yaw correction to all 478 points, performs per-frame semantic center alignment, averages with direction balance, and then applies semantic origin centering. It does not apply per-part deformation, per-landmark correction, or x/y/z scaling.
+
+PCA residual yaw correction:
+
+```text
+FacePose inverse rotation 後の canonical 3D478 を x-z 平面で PCA し、
+残った x-z 主軸傾きを打ち消す同一 yaw 回転を全478点に適用する。
+
+これは個別パーツ変形ではない。
+landmark ごとの個別補正ではない。
+x/y/z scale ではない。
+顔全体の frame-level residual pose correction である。
+```
+
+MediaPipe z normalize:
+
+```text
+raw を現時点の推奨 default とする
+```
+
+MediaPipe z scale:
+
+```text
+1 を基本値とする
+```
+
+MediaPipe z invert:
+
+```text
+ON を基本とする
+```
+
+実データ確認では `raw` が最も自然に見え、`faceWidthScaled` は奥行きが平べったくなりやすかったためです。PCA residual yaw correction により x-z の残留傾きは別途補正できるため、z normalize 側で過度にスケール調整しない方が自然でした。ただし `raw` は現時点の推奨 default であり、`faceWidthScaled` / `centered` / `frontReferenceMatched` は比較 option として残します。動画・端末・MediaPipe z の出方によって変わる可能性があり、将来 dataset 別に z normalize / z scale を調整可能にする可能性があります。
+
+semantic origin centering:
+
+```text
+final candidate の semantic center x/y を asset origin に置く。
+z は average 0 にする。
+Runtime alignment のためではなく、Engine が asset origin を回転中心として使うための authoring center policy。
+```
+
+Runtime alignment は引き続き projected ideal bounds center -> current face bounds center です。semantic center は Runtime 表示位置合わせ用ではなく、asset rotation origin 用です。
 
 Step 2-H displays that candidate as `currentCandidate` in the point cloud preview.
 
@@ -1218,7 +1262,12 @@ Shape Processing
 
 ## IdealFace Authoring Tool Current Generation Path
 
-Step 2-G v1 five-pose candidate generation has been removed from the current code. The active path is Step 2-I-C `pose_aware_mediapipe_mesh_pca_residual_yaw_v1`, with Step 2-H `currentCandidate` point cloud preview and asset_origin preview. `pose_aware_mediapipe_mesh_semantic_origin_v1` remains as the visible baseline without PCA residual yaw correction, and `pose_aware_weighted_z_v1` remains only as historical zHint comparison. The canonical / stableZ / balancedFrameZ / MediaPipe average prototypes are legacy / debug-only.
+Step 2-G v1 five-pose candidate generation has been removed from the current code. The active path is Step 2-I-C `pose_aware_mediapipe_mesh_pca_residual_yaw_v1`, with Step 2-H `currentCandidate` point cloud preview and asset_origin preview. generationMethod は以下に分類します。
+
+- recommended: `pose_aware_mediapipe_mesh_pca_residual_yaw_v1`
+- baseline: `pose_aware_mediapipe_mesh_semantic_origin_v1`
+- historical: `pose_aware_weighted_z_v1`
+- legacy / debug-only: `pose_aware_canonical_3d_v1` / `pose_aware_canonical_stable_z_v1` / `pose_aware_canonical_balanced_frame_z_v1` / `pose_aware_mediapipe_mesh_average_v1`
 
 Current representative debug values:
 
@@ -1237,13 +1286,24 @@ Implementation notes:
 
 Next steps:
 
-1. Allow `pose_aware_mediapipe_mesh_pca_residual_yaw_v1` in Engine validator / schema.
-2. Load the exported asset in Engine Runtime.
-3. Compare projected ideal 478 against current pose in Studio Projection debug.
-4. Inspect projected ideal 478 vs current 478 difference debug.
-5. Proceed to Shape Warp / CorrectionPlan.
-6. If needed, make `residualYawCorrectionStrength` / `maxCorrectionDeg` dataset-configurable.
-7. Improve sampling to collect more near-front observations.
+1. MediaPipe z normalize の実装 default を `raw` に変更するか検討 / 実装する。
+2. Engine validator / schema に `pose_aware_mediapipe_mesh_pca_residual_yaw_v1` を許可する。
+3. export asset を Engine Runtime で読み込めるようにする。
+4. Studio Projection debug で current pose へ投影比較する。
+5. projected ideal 478 と current 478 の差分 debug を見る。
+6. Shape Warp / CorrectionPlan へ進む。
+7. 必要なら `residualYawCorrectionStrength` / `maxCorrectionDeg` / z scale を dataset 別に調整可能にする。
+8. sampling 側で near-front observation を増やす改善を検討する。
+
+今回やらないこと:
+
+- TypeScript 実装変更
+- UI default 変更
+- Engine validator / schema 変更
+- Runtime integration
+- Projection 実装変更
+- Shape Warp 実装変更
+- export JSON 仕様変更
 
 ## 20. Shape Warp production direction
 
