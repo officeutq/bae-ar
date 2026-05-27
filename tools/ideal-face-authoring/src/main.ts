@@ -1267,6 +1267,9 @@ interface IdealFaceAssetV1 {
   }
 }
 
+type IdealFaceAssetLandmark3D =
+  IdealFaceAssetV1["model"]["idealLandmarks3D"][number]
+
 type LandmarkGroupEditorGroupId =
   (typeof LANDMARK_GROUP_EDITOR_GROUP_IDS)[number]
 
@@ -2867,6 +2870,46 @@ function roundIdealFaceAssetNumber(value: number): number {
   return Number(value.toFixed(6))
 }
 
+function shouldFlipZForRuntimeExport(
+  generationMethod: IdealLandmarks3DGenerationMethod,
+): boolean {
+  return generationMethod === "pose_aware_mediapipe_mesh_pca_residual_yaw_v1"
+}
+
+function toRuntimeIdealLandmarks3DForExport(
+  result: IdealLandmarks3DCandidateResult & {
+    generationMethod: IdealLandmarks3DGenerationMethod
+  },
+): IdealFaceAssetLandmark3D[] {
+  const flipZ = shouldFlipZForRuntimeExport(result.generationMethod)
+
+  return result.landmarks.map((landmark) => ({
+    index: landmark.index,
+    x: roundIdealFaceAssetNumber(landmark.x),
+    y: roundIdealFaceAssetNumber(landmark.y),
+    z: roundIdealFaceAssetNumber(flipZ ? -landmark.z : landmark.z),
+    confidence: roundIdealFaceAssetNumber(landmark.confidence),
+  }))
+}
+
+function summarizeExportIdealLandmarks3DZ(
+  landmarks: IdealFaceAssetLandmark3D[],
+): { min: number; max: number; average: number } {
+  const zValues = landmarks.map((landmark) => landmark.z)
+
+  return {
+    min:
+      zValues.length === 0
+        ? 0
+        : roundIdealFaceAssetNumber(Math.min(...zValues)),
+    max:
+      zValues.length === 0
+        ? 0
+        : roundIdealFaceAssetNumber(Math.max(...zValues)),
+    average: roundIdealFaceAssetNumber(averageNumbers(zValues)),
+  }
+}
+
 function buildIdealFaceAssetExportSummary(
   result: IdealLandmarks3DCandidateResult,
   date: Date,
@@ -2893,6 +2936,9 @@ function buildIdealFaceAssetV1(
     throw new Error("Exportable IdealFace candidate was not found")
   }
 
+  const exportLandmarks = toRuntimeIdealLandmarks3DForExport(result)
+  const exportZSummary = summarizeExportIdealLandmarks3DZ(exportLandmarks)
+
   return {
     schemaVersion: IDEAL_FACE_ASSET_SCHEMA_VERSION,
     id: buildIdealFaceAssetId(createdAtDate),
@@ -2906,13 +2952,7 @@ function buildIdealFaceAssetV1(
     model: {
       landmarkTopology: IDEAL_FACE_ASSET_LANDMARK_TOPOLOGY,
       coordinateSpace: IDEAL_FACE_ASSET_COORDINATE_SPACE,
-      idealLandmarks3D: result.landmarks.map((landmark) => ({
-        index: landmark.index,
-        x: roundIdealFaceAssetNumber(landmark.x),
-        y: roundIdealFaceAssetNumber(landmark.y),
-        z: roundIdealFaceAssetNumber(landmark.z),
-        confidence: roundIdealFaceAssetNumber(landmark.confidence),
-      })),
+      idealLandmarks3D: exportLandmarks,
     },
     landmarkGroups: buildLandmarkGroupsForExport(),
     metadata: {
@@ -2920,9 +2960,9 @@ function buildIdealFaceAssetV1(
       observationFrameCount: result.summary.observationFrameCount,
       excludedFrameCount: result.summary.excludedFrameCount,
       z: {
-        min: result.summary.zMin,
-        max: result.summary.zMax,
-        average: result.summary.zAverage,
+        min: exportZSummary.min,
+        max: exportZSummary.max,
+        average: exportZSummary.average,
       },
       confidence: {
         average: result.summary.averageConfidence,
