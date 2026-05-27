@@ -13,7 +13,7 @@ MP4 input
   -> detailed scan
   -> Step 2-I-A frame selection
   -> Step 2-I-B pose-aware inference dataset
-  -> Step 2-I-C pose_aware_weighted_z_v1 candidate generation
+  -> Step 2-I-C pose_aware_mediapipe_mesh_pca_residual_yaw_v1 candidate generation
   -> Step 2-H currentCandidate point cloud preview
 ```
 
@@ -57,9 +57,9 @@ The old Step 2-G v1 generation helper path has been removed from the current cod
 - `inferCandidateConfidence()`
 - `generationMethod: "step_2_g_v1"`
 
-3D candidate generation is now centered on Step 2-I-C `pose_aware_weighted_z_v1`. The old five-pose path is available from Git history when needed.
+3D candidate generation is now centered on Step 2-I-C `pose_aware_mediapipe_mesh_pca_residual_yaw_v1`. The old five-pose path is available from Git history when needed.
 
-`pose_aware_weighted_z_v1` outputs `idealLandmarks3D` as same-unit coordinate data. Runtime / Studio must not reintroduce authoring generation logic; they load finished assets, project same-unit landmarks, and convert projected landmarks to image-normalized / pixel coordinates for overlay, difference, and future Shape Warp.
+`pose_aware_mediapipe_mesh_pca_residual_yaw_v1` outputs `idealLandmarks3D` as same-unit coordinate data. It uses MediaPipe landmark.z, FacePose inverse rotation, shared x-z PCA residual yaw correction, direction-balanced averaging, and semantic origin centering. Runtime / Studio must not reintroduce authoring generation logic; they load finished assets, project same-unit landmarks, and convert projected landmarks to image-normalized / pixel coordinates for overlay, difference, and future Shape Warp.
 
 ## Rule
 

@@ -336,12 +336,16 @@ Frame Review Carousel / frame card:
 
 最終 frameUsage:
   Step 2-I-B pose-aware inference dataset
-  Step 2-I-C candidate generation
+  Step 2-I-C pose_aware_mediapipe_mesh_pca_residual_yaw_v1 candidate generation
   将来の MP4 expression 3D analysis
   に使う
 ```
 
 usage-aware sampling は完全自動確定ではありません。自動初期値 + 手動確認・修正として扱います。
+
+Step 2-I-C の現在の推奨方式は `pose_aware_mediapipe_mesh_pca_residual_yaw_v1` です。`idealFaceInference` / `useForInference` の observation frame から MediaPipe landmark.z を含む frame-local 3D478 を作り、FacePose inverse rotation、x-z PCA residual yaw correction、per-frame semantic center alignment、direction balance 付き weighted average、semantic origin centering の順で `idealLandmarks3D` candidate を生成します。`frontReference` は reference basis / semantic center の基準として使い、現時点では `useForInference` frontReference を shape aggregation に混ぜません。
+
+sampling 側の今後の改善候補は、PCA residual yaw correction 後の確認に必要な near-front observation を増やすことです。near-front observation が少ない dataset では warning を出し、Step 2-H の asset_origin preview と top view axis debug で確認します。
 
 ## JSON preview 方針
 

@@ -14,7 +14,7 @@ MP4 input
   -> Step 2-I-A frame selection
        正面基準の手動選択 / 推定に使うフレーム / 除外フレーム
   -> Step 2-I-B pose-aware inference dataset
-  -> Step 2-I-C pose_aware_weighted_z_v1 candidate generation
+  -> Step 2-I-C pose_aware_mediapipe_mesh_pca_residual_yaw_v1 candidate generation
        roll 補正
        yaw / pitch / weight による z hint
        idealLandmarks3D 478点候補生成
@@ -27,10 +27,10 @@ MP4 input
 |---|---|---|---|
 | Step 2-I-A | frame usage tags | `frontReference` / `useForInference` / `expressionGroup` / `excluded` を管理する現在の主導線 | `frontReference` / `useForInference` / `expressionGroup` は重複可能、`excluded` のみ排他的 |
 | Step 2-I-B | `poseAwareInferenceDataset` | pose-aware multi-frame inference の入力 dataset | detailed scan frames 由来の observation を使う |
-| Step 2-I-C | `pose_aware_weighted_z_v1` | 現在唯一の 3D candidate generation path | roll 補正、yaw / pitch / weight による z hint を使う |
+| Step 2-I-C | `pose_aware_mediapipe_mesh_pca_residual_yaw_v1` | 現在の推奨 3D candidate generation path | MediaPipe landmark.z、FacePose inverse rotation、x-z PCA residual yaw correction、semantic origin centering を使う |
 | Step 2-H | `currentCandidate` point cloud preview | 現在生成された candidate の確認表示 | preview camera は表示専用で candidate data を変更しない |
 
-`pose_aware_weighted_z_v1` が生成する `idealLandmarks3D` は same-unit coordinate として扱います。`video_aspect_same_unit_v1` による video aspect 補正、pose-aware generation、将来の manual adjustment UI は Authoring Tool の責務です。Runtime / Studio は完成済み asset を読み込み、Projection 後に overlay / difference / warp 用の image-normalized / pixel 座標へ変換します。Authoring generation logic は Runtime / Studio に混ぜません。
+`pose_aware_mediapipe_mesh_pca_residual_yaw_v1` が生成する `idealLandmarks3D` は same-unit coordinate として扱います。`pose_aware_mediapipe_mesh_semantic_origin_v1` は baseline、`pose_aware_weighted_z_v1` は historical comparison、canonical / stableZ / balancedFrameZ / MediaPipe average prototypes は legacy / debug-only です。`video_aspect_same_unit_v1` による video aspect 補正、pose-aware generation、将来の manual adjustment UI は Authoring Tool の責務です。Runtime / Studio は完成済み asset を読み込み、Projection 後に overlay / difference / warp 用の image-normalized / pixel 座標へ変換します。Authoring generation logic は Runtime / Studio に混ぜません。
 
 ## Reference / Debug
 
@@ -63,7 +63,7 @@ MP4 input
 |---|---|---|---|
 | `activeSummary` | active | 現在の workflow 状態概要 | active workflow と current candidate の有無を確認する |
 | `poseAware` | active | Step 2-I-A/B/C の frame selection / dataset / candidate summary | observationFrames 全文は出さない |
-| `currentCandidate` | active | Step 2-H preview に表示される candidate | `generationMethod` は `pose_aware_weighted_z_v1`。478 landmarks 全文は出さない |
+| `currentCandidate` | active | Step 2-H preview に表示される candidate | 推奨 `generationMethod` は `pose_aware_mediapipe_mesh_pca_residual_yaw_v1`。478 landmarks 全文は出さない |
 | `reference` | reference | `natural_v1` / 6 controlPoints | IdealFace 本体ではない |
 | `debug` | debug | video metadata / scanSummary など | data URL 全文は出さない |
 

@@ -25,7 +25,7 @@
   "id": "custom_ideal_face_2026_05_24_182653",
   "name": "Custom IdealFace",
   "version": "0.1.0",
-  "generationMethod": "pose_aware_weighted_z_v1",
+  "generationMethod": "pose_aware_mediapipe_mesh_pca_residual_yaw_v1",
   "landmarkTopology": "mediapipe_face_landmarker_478",
   "coordinateSpace": "bae_ar_ideal_landmarks3d_v1",
   "idealLandmarks3D": [
@@ -68,7 +68,7 @@
   "createdAt": "2026-05-24T18:26:53.000Z",
   "source": {
     "tool": "ideal-face-authoring",
-    "generationMethod": "pose_aware_weighted_z_v1"
+    "generationMethod": "pose_aware_mediapipe_mesh_pca_residual_yaw_v1"
   },
   "model": {
     "landmarkTopology": "mediapipe_face_landmarker_478",
