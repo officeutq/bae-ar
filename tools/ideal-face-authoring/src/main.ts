@@ -2505,6 +2505,9 @@ function toPointCloudPreviewDisplayDebug(
   centeredBeforeRotation: boolean
   autoFitToCanvas: boolean
   worldOriginMappedToCanvasCenter: boolean
+  yAxisInvertedForCanvas: true
+  assetOriginUsesYAxisInversion: boolean
+  canvasYMapping: "canvasCenterY - rotatedY * scale"
   rotationCenter: Point3D
   note: string
 } {
@@ -2519,6 +2522,10 @@ function toPointCloudPreviewDisplayDebug(
     autoFitToCanvas: true,
     worldOriginMappedToCanvasCenter:
       pointCloudRotationCenterMode === "asset_origin",
+    yAxisInvertedForCanvas: true,
+    assetOriginUsesYAxisInversion:
+      pointCloudRotationCenterMode === "asset_origin",
+    canvasYMapping: "canvasCenterY - rotatedY * scale",
     rotationCenter: {
       x: roundDebugNumber(rotationCenter.x),
       y: roundDebugNumber(rotationCenter.y),
@@ -2566,7 +2573,6 @@ function toCoordinateDebugPreview(
     aspectComparison,
     previewDisplay: {
       ...toPointCloudPreviewDisplayDebug(currentCandidate.landmarks),
-      yAxisInvertedForCanvas: true,
       zDisplayScale: POINT_CLOUD_DEPTH_DISPLAY_SCALE,
       dataMutation: false,
     },
@@ -3025,7 +3031,7 @@ function toPointCloudPreviewLocalPoint(
   if (rotationCenterMode === "asset_origin") {
     return {
       x: point.x,
-      y: point.y,
+      y: -point.y,
       z: point.z * POINT_CLOUD_DEPTH_DISPLAY_SCALE,
     }
   }
