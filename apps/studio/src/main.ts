@@ -2350,12 +2350,26 @@ Camera:
 
   function formatProcessedPreviewLabel(): string {
     if (!shapeWarpDebugSettings.enabled) {
-      return "original"
+      return "original（元映像）"
     }
 
     return shapeWarpDebugSettings.mode === "webgl_mesh_debug"
-      ? `WebGL mesh debug / ${shapeWarpDebugSettings.preset}`
-      : `CPU radial debug / ${shapeWarpDebugSettings.preset}`
+      ? `WebGL mesh debug（WebGLメッシュデバッグ） / ${formatShapeWarpPresetLabel(shapeWarpDebugSettings.preset)}`
+      : `CPU radial debug（CPU放射状デバッグ） / ${formatShapeWarpPresetLabel(shapeWarpDebugSettings.preset)}`
+  }
+
+  function formatShapeWarpPresetLabel(
+    preset: ShapeWarpDebugPreset,
+  ): string {
+    const labels: Record<ShapeWarpDebugPreset, string> = {
+      off: "off（無効）",
+      weak: "weak（弱）",
+      normal: "normal（標準）",
+      strong: "strong（強）",
+      custom: "custom（手動設定）",
+    }
+
+    return labels[preset]
   }
 
   async function importIdealFaceAssetFile(file: File): Promise<void> {
@@ -2499,33 +2513,33 @@ Camera:
       lastEngineState = currentState
     }
 
-    const statusSummary = `Engine: ${formatEngineState(currentState)}
-Camera: ${formatCameraState(camera.getState())}
-Detection: ${formatDetection(frame)}
-Landmarks: ${frame?.landmarks.length ?? 0}
+    const statusSummary = `Engine（エンジン）: ${formatEngineState(currentState)}
+Camera（カメラ）: ${formatCameraState(camera.getState())}
+Detection（検出）: ${formatDetection(frame)}
+Landmarks（ランドマーク）: ${frame?.landmarks.length ?? 0}
 顔姿勢: yaw ${frame ? formatNumber(frame.pose.yaw) : "なし"} / pitch ${frame ? formatNumber(frame.pose.pitch) : "なし"} / roll ${frame ? formatNumber(frame.pose.roll) : "なし"}
 IdealFace: ${idealFace.metadata.name} (${idealFace.metadata.id}) / ${idealFace.metadata.version} / controlPoints ${idealFace.model.controlPoints.length} 点 / idealLandmarks3D ${idealFace.model.idealLandmarks3D?.length ?? 0} 点
-IdealFace 478 Projection: ${idealLandmarks3DProjection.status} / ${idealLandmarks3DProjection.landmarkCount} 点
-Alignment: ${idealLandmarks3DProjection.alignment?.mode ?? "none"} / scale basis ${idealLandmarks3DProjection.alignment?.scaleBasis?.mode ?? "none"} / scale ${formatNullableNumber(idealLandmarks3DProjection.alignment?.scale)} / limiting axis ${idealLandmarks3DProjection.alignment?.scaleBasis?.limitingAxis ?? "none"} / aspectDiff ${formatNullableNumber(idealLandmarks3DProjection.alignment?.aspectRatioDifference)}
-Aspect debug: asset ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectRatio.asset)} / rotated ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectRatio.rotated)} / aligned ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectRatio.aligned)} / image ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectRatio.image)} / current ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectRatio.current)} / overlay ${formatNullableNumber(overlayProjectedIdealPixelBounds?.aspectRatioPx)}
-Coordinate conversion: ${idealLandmarks3DProjection.debug?.coordinate?.conversionMode ?? "なし"} / videoAspect ${formatNullableNumber(idealLandmarks3DProjection.debug?.coordinate?.videoAspectRatio)} / fallback ${idealLandmarks3DProjection.debug?.coordinate ? String(idealLandmarks3DProjection.debug.coordinate.fallbackUsed) : "なし"}
+IdealFace 478 Projection（理想顔の投影）: ${idealLandmarks3DProjection.status} / ${idealLandmarks3DProjection.landmarkCount} 点
+Alignment（位置合わせ）: ${idealLandmarks3DProjection.alignment?.mode ?? "none"} / scale basis ${idealLandmarks3DProjection.alignment?.scaleBasis?.mode ?? "none"} / scale ${formatNullableNumber(idealLandmarks3DProjection.alignment?.scale)} / limiting axis ${idealLandmarks3DProjection.alignment?.scaleBasis?.limitingAxis ?? "none"} / aspectDiff ${formatNullableNumber(idealLandmarks3DProjection.alignment?.aspectRatioDifference)}
+Aspect debug（縦横比デバッグ）: asset ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectRatio.asset)} / rotated ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectRatio.rotated)} / aligned ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectRatio.aligned)} / image ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectRatio.image)} / current ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectRatio.current)} / overlay ${formatNullableNumber(overlayProjectedIdealPixelBounds?.aspectRatioPx)}
+Coordinate conversion（座標変換）: ${idealLandmarks3DProjection.debug?.coordinate?.conversionMode ?? "なし"} / videoAspect ${formatNullableNumber(idealLandmarks3DProjection.debug?.coordinate?.videoAspectRatio)} / fallback ${idealLandmarks3DProjection.debug?.coordinate ? String(idealLandmarks3DProjection.debug.coordinate.fallbackUsed) : "なし"}
 478点差分: ${idealLandmarksDifference.status} / matched ${idealLandmarksDifference.matchedLandmarkCount} / 平均 ${formatNullableNumber(idealLandmarksDifference.averageDistance)} / 最大 ${formatNullableNumber(idealLandmarksDifference.maxDistance)} / 最大index ${idealLandmarksDifference.maxDistanceLandmarkIndex ?? "なし"}
 correctionProfile: ${correctionProfileSource} / ${correctionProfile.schemaVersion} / ${correctionProfile.mode} / default ${formatNumber(correctionProfile.defaultStrength)} / maxDistance ${formatNumber(correctionProfile.maxCorrectionDistance)} / landmarkStrengths ${correctionProfile.landmarkStrengths.length}
 landmarkGroups: ${correctionPlan.landmarkGroups.status} / ${correctionPlan.landmarkGroups.source ?? "none"} / groups ${correctionPlan.landmarkGroups.groupCount}
-Expression attenuation: ${correctionPlan.expressionAttenuation.status} / ${correctionPlan.expressionAttenuation.source} / mouth ${formatExpressionGroupScale(correctionPlan, "mouth")} / left_eye ${formatExpressionGroupScale(correctionPlan, "left_eye")} / right_eye ${formatExpressionGroupScale(correctionPlan, "right_eye")} / face_boundary ${formatExpressionGroupScale(correctionPlan, "face_boundary")}
-CorrectionPlan: ${correctionPlan.status} / points ${correctionPlan.pointCount} / avgCorrection ${formatNullableNumber(correctionPlan.summary.averageCorrectionDistance)} / maxCorrection ${formatNullableNumber(correctionPlan.summary.maxCorrectionDistance)} / clamped ${correctionPlan.summary.clampedCount} / avgBaseStrength ${formatNullableNumber(correctionPlan.summary.averageBaseStrength)} / avgFinalStrength ${formatNullableNumber(correctionPlan.summary.averageFinalStrength)} / minExpressionScale ${formatNullableNumber(correctionPlan.summary.minExpressionScale)}
-Shape Warp v1 debug: ${latestShapeWarpDebugSummary.status} / mode ${latestShapeWarpDebugSummary.mode} / preset ${latestShapeWarpDebugSummary.preset} / enabled ${String(latestShapeWarpDebugSummary.enabled)} / candidates ${latestShapeWarpDebugSummary.candidateVectorCount} / used ${latestShapeWarpDebugSummary.usedVectorCount} / skipped ${latestShapeWarpDebugSummary.skippedByDistanceCount} / meshStrength ${formatNumber(latestShapeWarpDebugSummary.meshWarpStrength)} / textureFiltering ${latestShapeWarpDebugSummary.textureFiltering} / wireframe ${String(latestShapeWarpDebugSummary.showWireframe)} / meshVertices ${latestShapeWarpDebugSummary.usedMeshVertexCount ?? "なし"} / triangles ${latestShapeWarpDebugSummary.triangleCount ?? "なし"} / webgl ${latestShapeWarpDebugSummary.webgl ?? "なし"} / radius ${formatNumber(latestShapeWarpDebugSummary.radiusPx)} / strength ${formatNumber(latestShapeWarpDebugSummary.globalWarpStrength)} / minDistance ${formatNumber(latestShapeWarpDebugSummary.minCorrectionDistance)} / sampling ${latestShapeWarpDebugSummary.sampling} / render ${formatNullableNumber(latestShapeWarpDebugSummary.renderTimeMs)} ms / avg ${formatNullableNumber(latestShapeWarpDebugSummary.averageRenderTimeMs)} ms
-Production Shape Warp: not_implemented
+Expression attenuation（表情時の補正抑制）: ${correctionPlan.expressionAttenuation.status} / ${correctionPlan.expressionAttenuation.source} / mouth ${formatExpressionGroupScale(correctionPlan, "mouth")} / left_eye ${formatExpressionGroupScale(correctionPlan, "left_eye")} / right_eye ${formatExpressionGroupScale(correctionPlan, "right_eye")} / face_boundary ${formatExpressionGroupScale(correctionPlan, "face_boundary")}
+CorrectionPlan（補正計画）: ${correctionPlan.status} / points ${correctionPlan.pointCount} / avgCorrection ${formatNullableNumber(correctionPlan.summary.averageCorrectionDistance)} / maxCorrection ${formatNullableNumber(correctionPlan.summary.maxCorrectionDistance)} / clamped ${correctionPlan.summary.clampedCount} / avgBaseStrength ${formatNullableNumber(correctionPlan.summary.averageBaseStrength)} / avgFinalStrength ${formatNullableNumber(correctionPlan.summary.averageFinalStrength)} / minExpressionScale ${formatNullableNumber(correctionPlan.summary.minExpressionScale)}
+Shape Warp v1 debug（変形デバッグ）: ${latestShapeWarpDebugSummary.status} / mode ${latestShapeWarpDebugSummary.mode} / preset ${latestShapeWarpDebugSummary.preset} / enabled ${String(latestShapeWarpDebugSummary.enabled)} / candidates ${latestShapeWarpDebugSummary.candidateVectorCount} / used ${latestShapeWarpDebugSummary.usedVectorCount} / skipped ${latestShapeWarpDebugSummary.skippedByDistanceCount} / meshStrength ${formatNumber(latestShapeWarpDebugSummary.meshWarpStrength)} / textureFiltering ${latestShapeWarpDebugSummary.textureFiltering} / wireframe ${String(latestShapeWarpDebugSummary.showWireframe)} / meshVertices ${latestShapeWarpDebugSummary.usedMeshVertexCount ?? "なし"} / triangles ${latestShapeWarpDebugSummary.triangleCount ?? "なし"} / webgl ${latestShapeWarpDebugSummary.webgl ?? "なし"} / radius ${formatNumber(latestShapeWarpDebugSummary.radiusPx)} / strength ${formatNumber(latestShapeWarpDebugSummary.globalWarpStrength)} / minDistance ${formatNumber(latestShapeWarpDebugSummary.minCorrectionDistance)} / sampling ${latestShapeWarpDebugSummary.sampling} / render ${formatNullableNumber(latestShapeWarpDebugSummary.renderTimeMs)} ms / avg ${formatNullableNumber(latestShapeWarpDebugSummary.averageRenderTimeMs)} ms
+Production Shape Warp（本番用変形処理）: not_implemented
 利用可能IdealFace: ${availableIdealFaces.length}
 FPS: ${formatFps(faceFrameFps)}
-Loop: ${faceFrameLoopDebug.running ? "実行中" : "停止中"}
-Detect: ${faceFrameLoopDebug.detectCallCount}/${mediaPipeDebug?.detectSuccessCount ?? 0}`
+Loop（ループ）: ${faceFrameLoopDebug.running ? "実行中" : "停止中"}
+Detect（検出回数）: ${faceFrameLoopDebug.detectCallCount}/${mediaPipeDebug?.detectSuccessCount ?? 0}`
 
     appRoot.innerHTML = `
       <section class="studio-layout">
         <header>
           <h2>操作</h2>
-          <button id="copy-debug" type="button">Copy Debug</button>
+          <button id="copy-debug" type="button">Copy Debug（デバッグをコピー）</button>
           <span aria-live="polite">${copyStatus}</span>
         </header>
         <style>
@@ -2672,7 +2686,7 @@ Detect: ${faceFrameLoopDebug.detectCallCount}/${mediaPipeDebug?.detectSuccessCou
             }
           }
         </style>
-        <h2 class="debug-heading">Debug values</h2>
+        <h2 class="debug-heading">Debug values（デバッグ値）</h2>
         <pre>${escapeHtml(statusSummary)}</pre>
         <div class="studio-top-grid">
           <section class="realtime-panel">
@@ -2690,63 +2704,63 @@ Detect: ${faceFrameLoopDebug.detectCallCount}/${mediaPipeDebug?.detectSuccessCou
           Shape Warp使用ベクトルを表示
         </label>
         <fieldset data-shape-warp-debug-controls="true">
-          <legend>Shape Warp Debug</legend>
+          <legend>Shape Warp Debug（変形デバッグ）</legend>
           <p>Shape Warp Debug は CorrectionPlan の補正ベクトルを画像に仮反映する検証用です。本番品質の warp 方式ではありません。</p>
           <fieldset>
-            <legend>Shape Warp mode</legend>
-            <label><input type="radio" name="shape-warp-mode" value="cpu_radial_debug" ${shapeWarpDebugSettings.mode === "cpu_radial_debug" ? "checked" : ""} /> CPU radial debug</label>
-            <label><input type="radio" name="shape-warp-mode" value="webgl_mesh_debug" ${shapeWarpDebugSettings.mode === "webgl_mesh_debug" ? "checked" : ""} /> WebGL mesh debug</label>
+            <legend>Shape Warp mode（変形方式）</legend>
+            <label><input type="radio" name="shape-warp-mode" value="cpu_radial_debug" ${shapeWarpDebugSettings.mode === "cpu_radial_debug" ? "checked" : ""} /> CPU radial debug（CPU放射状デバッグ）</label>
+            <label><input type="radio" name="shape-warp-mode" value="webgl_mesh_debug" ${shapeWarpDebugSettings.mode === "webgl_mesh_debug" ? "checked" : ""} /> WebGL mesh debug（WebGLメッシュデバッグ）</label>
           </fieldset>
           <fieldset>
-            <legend>preset</legend>
-            <label><input type="radio" name="shape-warp-preset" value="off" ${shapeWarpDebugSettings.preset === "off" ? "checked" : ""} /> off</label>
-            <label><input type="radio" name="shape-warp-preset" value="weak" ${shapeWarpDebugSettings.preset === "weak" ? "checked" : ""} /> weak</label>
-            <label><input type="radio" name="shape-warp-preset" value="normal" ${shapeWarpDebugSettings.preset === "normal" ? "checked" : ""} /> normal</label>
-            <label><input type="radio" name="shape-warp-preset" value="strong" ${shapeWarpDebugSettings.preset === "strong" ? "checked" : ""} /> strong</label>
-            <label><input type="radio" name="shape-warp-preset" value="custom" ${shapeWarpDebugSettings.preset === "custom" ? "checked" : ""} /> custom</label>
+            <legend>preset（プリセット）</legend>
+            <label><input type="radio" name="shape-warp-preset" value="off" ${shapeWarpDebugSettings.preset === "off" ? "checked" : ""} /> off（無効）</label>
+            <label><input type="radio" name="shape-warp-preset" value="weak" ${shapeWarpDebugSettings.preset === "weak" ? "checked" : ""} /> weak（弱）</label>
+            <label><input type="radio" name="shape-warp-preset" value="normal" ${shapeWarpDebugSettings.preset === "normal" ? "checked" : ""} /> normal（標準）</label>
+            <label><input type="radio" name="shape-warp-preset" value="strong" ${shapeWarpDebugSettings.preset === "strong" ? "checked" : ""} /> strong（強）</label>
+            <label><input type="radio" name="shape-warp-preset" value="custom" ${shapeWarpDebugSettings.preset === "custom" ? "checked" : ""} /> custom（手動設定）</label>
           </fieldset>
           <label>
             <input id="shape-warp-debug-enabled" type="checkbox" ${shapeWarpDebugSettings.enabled ? "checked" : ""} />
-            Processed previewでShape Warp debugを有効化
+            Processed Preview（加工結果）でShape Warp Debug（変形デバッグ）を有効化
           </label>
           <fieldset>
-            <legend>CPU radial debug settings</legend>
+            <legend>CPU radial debug settings（CPU放射状デバッグ設定）</legend>
             <label>
-              radiusPx
+              radiusPx（影響半径px）
               <input id="shape-warp-radius-px" type="number" min="1" max="128" step="1" value="${shapeWarpDebugSettings.radiusPx}" />
             </label>
             <label>
-              globalWarpStrength
+              globalWarpStrength（全体の変形強度）
               <input id="shape-warp-global-strength" type="number" min="0" max="2" step="0.1" value="${shapeWarpDebugSettings.globalWarpStrength}" />
             </label>
             <label>
-              maxVectors
+              maxVectors（使用する補正ベクトル上限）
               <input id="shape-warp-max-vectors" type="number" min="1" max="478" step="1" value="${shapeWarpDebugSettings.maxVectors}" />
             </label>
             <label>
-              minCorrectionDistance
+              minCorrectionDistance（使う最小補正距離）
               <input id="shape-warp-min-correction-distance" type="number" min="0" max="0.05" step="0.001" value="${shapeWarpDebugSettings.minCorrectionDistance}" />
             </label>
             <fieldset>
-              <legend>sampling</legend>
-              <label><input type="radio" name="shape-warp-sampling" value="bilinear" ${shapeWarpDebugSettings.sampling === "bilinear" ? "checked" : ""} /> bilinear</label>
-              <label><input type="radio" name="shape-warp-sampling" value="nearest" ${shapeWarpDebugSettings.sampling === "nearest" ? "checked" : ""} /> nearest</label>
+              <legend>sampling（サンプリング方式）</legend>
+              <label><input type="radio" name="shape-warp-sampling" value="bilinear" ${shapeWarpDebugSettings.sampling === "bilinear" ? "checked" : ""} /> bilinear（なめらか）</label>
+              <label><input type="radio" name="shape-warp-sampling" value="nearest" ${shapeWarpDebugSettings.sampling === "nearest" ? "checked" : ""} /> nearest（最近傍）</label>
             </fieldset>
           </fieldset>
           <fieldset>
-            <legend>WebGL mesh debug settings</legend>
+            <legend>WebGL mesh debug settings（WebGLメッシュデバッグ設定）</legend>
             <label>
-              meshWarpStrength
+              meshWarpStrength（メッシュ変形強度）
               <input id="shape-warp-mesh-strength" type="number" min="0" max="3" step="0.05" value="${shapeWarpDebugSettings.meshWarpStrength}" />
             </label>
             <fieldset>
-              <legend>texture filtering</legend>
-              <label><input type="radio" name="shape-warp-texture-filtering" value="linear" ${shapeWarpDebugSettings.textureFiltering === "linear" ? "checked" : ""} /> linear</label>
-              <label><input type="radio" name="shape-warp-texture-filtering" value="nearest" ${shapeWarpDebugSettings.textureFiltering === "nearest" ? "checked" : ""} /> nearest</label>
+              <legend>texture filtering（テクスチャ補間）</legend>
+              <label><input type="radio" name="shape-warp-texture-filtering" value="linear" ${shapeWarpDebugSettings.textureFiltering === "linear" ? "checked" : ""} /> linear（なめらか）</label>
+              <label><input type="radio" name="shape-warp-texture-filtering" value="nearest" ${shapeWarpDebugSettings.textureFiltering === "nearest" ? "checked" : ""} /> nearest（最近傍）</label>
             </fieldset>
             <label>
               <input id="shape-warp-webgl-wireframe" type="checkbox" ${showWebglMeshWireframe ? "checked" : ""} />
-              WebGL mesh wireframeを表示
+              WebGL mesh wireframe（メッシュ線）を表示
             </label>
             <p>topologyLandmarkCount: ${MEDIAPIPE_FACE_MESH_TOPOLOGY_LANDMARK_COUNT} / triangleCount: ${MEDIAPIPE_FACE_MESH_TRIANGLE_COUNT}</p>
           </fieldset>
@@ -2754,11 +2768,11 @@ Detect: ${faceFrameLoopDebug.detectCallCount}/${mediaPipeDebug?.detectSuccessCou
           </section>
         <div class="preview-grid">
           <section>
-            <h3>Source Preview</h3>
+            <h3>Source Preview（元映像）</h3>
             <div id="source-preview" class="preview-container">${camera.getVideo() ? "" : "利用できません"}</div>
           </section>
           <section>
-            <h3>Processed Preview: ${formatProcessedPreviewLabel()}</h3>
+            <h3>Processed Preview（加工結果）: ${formatProcessedPreviewLabel()}</h3>
             <div id="processed-preview" class="preview-container">${camera.getVideo() ? "" : "利用できません"}</div>
           </section>
         </div>
@@ -2774,7 +2788,7 @@ Detect: ${faceFrameLoopDebug.detectCallCount}/${mediaPipeDebug?.detectSuccessCou
           <pre>${escapeHtml(formatIdealFaceAssetImportState(idealFaceAssetImportState))}</pre>
         </section>
         <details data-debug-section="faceFrame"${detailsOpenAttribute("faceFrame")}>
-          <summary>FaceFrame Debug</summary>
+          <summary>FaceFrame Debug（顔フレーム）</summary>
           <pre>${escapeHtml(`Frame timestamp: ${frame?.timestamp ?? "なし"}
 顔検出: ${formatDetection(frame)}
 ランドマーク数: ${frame?.landmarks.length ?? 0}
@@ -2790,7 +2804,7 @@ FacePose:
 ${formatPosePreview(frame)}`)}</pre>
         </details>
         <details data-debug-section="faceGeometry"${detailsOpenAttribute("faceGeometry")}>
-          <summary>FaceGeometry Debug</summary>
+          <summary>FaceGeometry Debug（顔の代表点・サイズ）</summary>
           <pre>${escapeHtml(formatFaceGeometryPreview(geometry))}</pre>
         </details>
         <details data-debug-section="idealFace"${detailsOpenAttribute("idealFace")}>
@@ -2806,15 +2820,15 @@ ${formatPosePreview(frame)}`)}</pre>
           <pre>${escapeHtml(formatIdealLandmarksDifferencePreview(idealLandmarksDifference))}</pre>
         </details>
         <details data-debug-section="correctionPlan"${detailsOpenAttribute("correctionPlan")}>
-          <summary>CorrectionPlan v1 Debug</summary>
+          <summary>CorrectionPlan v1 Debug（補正計画）</summary>
           <pre>${escapeHtml(formatCorrectionPlanPreview(correctionPlan))}</pre>
         </details>
         <details data-debug-section="shapeWarpDebug"${detailsOpenAttribute("shapeWarpDebug")}>
-          <summary>Shape Warp v1 Debug</summary>
+          <summary>Shape Warp v1 Debug（変形デバッグ）</summary>
           <pre>${escapeHtml(formatShapeWarpDebugPreview(latestShapeWarpDebugSummary))}</pre>
         </details>
         <details data-debug-section="mediaPipe"${detailsOpenAttribute("mediaPipe")}>
-          <summary>MediaPipe Debug</summary>
+          <summary>MediaPipe Debug（顔検出器）</summary>
           <pre>${escapeHtml(`initialized: ${String(mediaPipeDebug?.initialized ?? false)}
 FaceLandmarker: ${mediaPipeDebug?.hasFaceLandmarker ? "あり" : "なし"}
 debugInstanceId: ${mediaPipeDebug?.debugInstanceId ?? "なし"}
@@ -2827,7 +2841,7 @@ video: ${mediaPipeDebug?.videoWidth ?? 0}x${mediaPipeDebug?.videoHeight ?? 0}
 lastDetectionTime: ${mediaPipeDebug?.lastDetectionTime ?? "なし"}`)}</pre>
         </details>
         <details data-debug-section="loopTiming"${detailsOpenAttribute("loopTiming")}>
-          <summary>Loop / Timing Debug</summary>
+          <summary>Loop / Timing Debug（ループ・処理時間）</summary>
           <pre>${escapeHtml(`FaceFrameループ: ${faceFrameLoopDebug.running ? "実行中" : "停止中"}
 ループ回数: ${faceFrameLoopDebug.tickCount}
 Engine detect呼び出し回数: ${faceFrameLoopDebug.detectCallCount}
@@ -2844,7 +2858,7 @@ Video paused: ${faceFrameLoopDebug.video ? String(faceFrameLoopDebug.video.pause
 Video srcObject: ${faceFrameLoopDebug.video?.hasSrcObject ? "あり" : "なし"}`)}</pre>
         </details>
         <details data-debug-section="fullDebugText"${detailsOpenAttribute("fullDebugText")}>
-          <summary>Full Debug Text</summary>
+          <summary>Full Debug Text（全文デバッグ）</summary>
           <textarea readonly rows="18">${escapeHtml(debugText)}</textarea>
         </details>
       </section>
