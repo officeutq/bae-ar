@@ -105,8 +105,12 @@ MP4 input
        frontReference / useForInference / expressionGroup / excluded を 1フレーム1カードで設定
   -> Step 2-I-B pose-aware inference dataset
   -> Step 2-I-C pose_aware_mediapipe_mesh_pca_residual_yaw_v1 candidate generation
-       roll 補正
-       yaw / pitch / weight による z hint
+       MediaPipe landmark.z による frame-local 3D478
+       FacePose inverse rotation
+       x-z PCA residual yaw correction
+       per-frame semantic center alignment
+       direction balance 付き weighted average
+       semantic origin centering
        idealLandmarks3D 478点候補生成
   -> Step 2-H currentCandidate point cloud preview
 ```
@@ -144,8 +148,12 @@ MP4 input
        frontReference / useForInference / expressionGroup / excluded を 1フレーム1カードで設定
   -> Step 2-I-B pose-aware inference dataset
   -> Step 2-I-C pose_aware_mediapipe_mesh_pca_residual_yaw_v1 candidate generation
-       roll 補正
-       yaw / pitch / weight による z hint
+       MediaPipe landmark.z による frame-local 3D478
+       FacePose inverse rotation
+       x-z PCA residual yaw correction
+       per-frame semantic center alignment
+       direction balance 付き weighted average
+       semantic origin centering
        idealLandmarks3D 478点候補生成
   -> Step 2-H currentCandidate point cloud preview
 ```
@@ -176,9 +184,9 @@ reference
 debug
 ```
 
-`currentCandidate` は Step 2-H preview に表示される現在の candidate です。推奨 `generationMethod` は `pose_aware_mediapipe_mesh_pca_residual_yaw_v1` で、478 landmarks 全文は出さず、summary と先頭数点 preview に留めます。`pose_aware_mediapipe_mesh_semantic_origin_v1` は baseline、`pose_aware_weighted_z_v1` は historical comparison です。`natural_v1` の 6 controlPoints は reference / projection debug 用であり、IdealFace 本体は `idealLandmarks3D` 478点です。
+`currentCandidate` は Step 2-H preview に表示される現在の candidate です。推奨 `generationMethod` は `pose_aware_mediapipe_mesh_pca_residual_yaw_v1` で、478 landmarks 全文は出さず、summary と先頭数点 preview に留めます。`pose_aware_mediapipe_mesh_semantic_origin_v1` は PCA residual yaw correction なしの baseline、`pose_aware_weighted_z_v1` は historical comparison です。`pose_aware_canonical_3d_v1` / `pose_aware_canonical_stable_z_v1` / `pose_aware_canonical_balanced_frame_z_v1` / `pose_aware_mediapipe_mesh_average_v1` は legacy / debug-only です。`natural_v1` の 6 controlPoints は reference / projection debug 用であり、IdealFace 本体は `idealLandmarks3D` 478点です。
 
-legacy / debug と分類した helper には、今後の新機能を追加しません。旧 Step 2-C〜2-G v1 の 5ポーズ方式は削除済みで、現在の UI では Step 2-I-C `pose_aware_mediapipe_mesh_pca_residual_yaw_v1` を推奨 3D candidate generation として扱います。`pose_aware_mediapipe_mesh_semantic_origin_v1` は baseline、`pose_aware_weighted_z_v1` は historical comparison です。confidence debug、手動微調整 UI、保存 / import、correctionProfile / beauty_filter_asset_v1 export は Step 2-I active workflow 側で扱います。
+legacy / debug と分類した helper には、今後の新機能を追加しません。旧 Step 2-C〜2-G v1 の 5ポーズ方式は削除済みで、現在の UI では Step 2-I-C `pose_aware_mediapipe_mesh_pca_residual_yaw_v1` を推奨 3D candidate generation として扱います。confidence debug、手動微調整 UI、保存 / import、correctionProfile / beauty_filter_asset_v1 export は Step 2-I active workflow 側で扱います。
 
 Still planned:
 
@@ -268,7 +276,7 @@ beauty_filter_asset_v1
 
 詳細スキャンは Step 2-I-A の frame selection に渡す observation source です。表示用の粗いフレーム抽出は debug / metadata 確認用であり、pose-aware inference の中心データではありません。
 
-現在は detailed scan の結果を Step 2-I-A の frame selection へ渡し、Step 2-I-B の pose-aware dataset、Step 2-I-C の pose-aware weighted z inference v1 へ進みます。
+現在は detailed scan の結果を Step 2-I-A の frame selection へ渡し、Step 2-I-B の pose-aware dataset、Step 2-I-C の `pose_aware_mediapipe_mesh_pca_residual_yaw_v1` candidate generation へ進みます。
 
 `usage-aware frame sampling v1` では、単純な `maxScanFrames` だけでなく bucket の充足状況を見ながら scan を続けます。ただし `frontReference` は bucket target ではなく手動選択される正面基準として扱い、`frontReferenceCandidate` を自動候補として提示します。無制限にはせず、`maxScanFrames` または `maxScanSeconds` は残します。詳細は [usage-aware frame sampling v1](usage-aware-frame-sampling-v1.md) を参照してください。
 
@@ -329,7 +337,7 @@ reference
 debug
 ```
 
-`currentCandidate` は Step 2-H preview に表示される現在の candidate です。推奨 `generationMethod` は `pose_aware_mediapipe_mesh_pca_residual_yaw_v1` で、478 landmarks 全文は出さず、summary と先頭数点 preview に留めます。`pose_aware_mediapipe_mesh_semantic_origin_v1` は baseline、`pose_aware_weighted_z_v1` は historical comparison です。`natural_v1` の 6 controlPoints は reference / projection debug 用であり、IdealFace 本体は `idealLandmarks3D` 478点です。
+`currentCandidate` は Step 2-H preview に表示される現在の candidate です。推奨 `generationMethod` は `pose_aware_mediapipe_mesh_pca_residual_yaw_v1` で、478 landmarks 全文は出さず、summary と先頭数点 preview に留めます。`pose_aware_mediapipe_mesh_semantic_origin_v1` は PCA residual yaw correction なしの baseline、`pose_aware_weighted_z_v1` は historical comparison です。`pose_aware_canonical_3d_v1` / `pose_aware_canonical_stable_z_v1` / `pose_aware_canonical_balanced_frame_z_v1` / `pose_aware_mediapipe_mesh_average_v1` は legacy / debug-only です。`natural_v1` の 6 controlPoints は reference / projection debug 用であり、IdealFace 本体は `idealLandmarks3D` 478点です。
 
 ## IdealFace Authoring Tool Step 2-I
 
@@ -344,19 +352,29 @@ MP4 input
        正面基準の手動選択 / 推定に使うフレーム / 除外フレーム
   -> Step 2-I-B pose-aware inference dataset
   -> Step 2-I-C pose_aware_mediapipe_mesh_pca_residual_yaw_v1 candidate generation
-       roll 補正
-       yaw / pitch / weight による z hint
+       MediaPipe landmark.z による frame-local 3D478
+       FacePose inverse rotation
+       x-z PCA residual yaw correction
+       per-frame semantic center alignment
+       direction balance 付き weighted average
+       semantic origin centering
        idealLandmarks3D 478点候補生成
   -> Step 2-H currentCandidate point cloud preview
 ```
 
 Step 2-I-A keeps frame usage as tags. `frontReference`, `useForInference`, and `expressionGroup` can overlap; `excluded` is the only exclusive tag. Usable observation frames are derived from detailed scan frames that have a detected face, 478 landmarks, `FacePose`, `useForInference = true`, and `excluded = false`.
 
-`poseOutOfRange` is treated as a warning tag, not an automatic exclusion reason. It is not suitable for `frontReference`, but it can still be useful for pose-aware 3D estimation as a z hint / depth observation. `noFace`, `invalidLandmarks`, and `manual` remain exclusion reasons. `mixedExpression`, `pending`, and `missingBlendshapes` are warning tags because they are weak inputs for single-expression rule generation but may still be usable for pose-aware 3D estimation when landmarks and pose are valid.
+`poseOutOfRange` is treated as a warning tag, not an automatic exclusion reason. It is not suitable for `frontReference`, but it can still be useful as a depth observation for pose-aware 3D estimation. `noFace`, `invalidLandmarks`, and `manual` remain exclusion reasons. `mixedExpression`, `pending`, and `missingBlendshapes` are warning tags because they are weak inputs for single-expression rule generation but may still be usable for pose-aware 3D estimation when landmarks and pose are valid.
 
 Step 2-I-B builds `poseAwareInferenceDataset` from front reference frames and observation frames. It does not use fixed five-pose labels.
 
-Step 2-I-C generates the current recommended 3D candidate with `pose_aware_mediapipe_mesh_pca_residual_yaw_v1`. It uses MediaPipe landmark.z for frame-local 3D478, inverse-rotates each observation by FacePose, applies shared x-z PCA residual yaw correction, performs per-frame semantic center alignment, averages with direction balance, and applies semantic origin centering.
+Step 2-I-C generates the current recommended 3D candidate with `pose_aware_mediapipe_mesh_pca_residual_yaw_v1`. It uses MediaPipe landmark.z for frame-local 3D478, inverse-rotates each observation by FacePose yaw / pitch / roll, applies one shared x-z PCA residual yaw correction to all 478 points, performs per-frame semantic center alignment, averages with direction balance, and applies semantic origin centering.
+
+PCA residual yaw correction is frame-level residual pose correction. After FacePose inverse rotation, the canonical 3D478 is analyzed by PCA in the x-z plane, and the same yaw rotation is applied to all 478 points to cancel the remaining x-z principal-axis tilt. It is not per-part deformation, per-landmark correction, or x/y/z scaling.
+
+MediaPipe z normalize uses `raw` as the current recommended default for Step 2-I. MediaPipe z scale uses `1`, and MediaPipe z invert is treated as ON. Real data looked most natural with `raw`, while `faceWidthScaled` tended to flatten depth; because PCA residual yaw correction handles the remaining x-z tilt separately, z normalize should not over-scale depth at this stage. `faceWidthScaled` / `centered` / `frontReferenceMatched` remain comparison options, and z normalize / z scale may become dataset-configurable later.
+
+Semantic origin centering places the final candidate's semantic center x/y at the asset origin and makes z average 0. This is not for Runtime display alignment; it is the authoring center policy because Engine uses the asset origin as the rotation center. Runtime alignment remains projected ideal bounds center -> current face bounds center.
 
 Step 2-H displays that candidate as `currentCandidate` in the point cloud preview.
 

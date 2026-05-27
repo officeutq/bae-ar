@@ -136,7 +136,7 @@ warningReason:
 
 `frontReference` / `useForInference` / `expressionGroup` は重複可能です。`excluded` だけは排他的で、`excluded = true` の frame は他用途の処理対象に含めません。
 
-自動で `excluded = true` にする理由は、`noFace` / `invalidLandmarks` / `manual` を基本とします。`poseOutOfRange` は自動除外ではなく注意タグとして扱います。正面基準には不向きですが、pose-aware 3D 推定の z hint / 奥行き推定には使える可能性があるため、`useForInference` の対象に残せます。
+自動で `excluded = true` にする理由は、`noFace` / `invalidLandmarks` / `manual` を基本とします。`poseOutOfRange` は自動除外ではなく注意タグとして扱います。正面基準には不向きですが、pose-aware 3D 推定の奥行き観測には使える可能性があるため、`useForInference` の対象に残せます。
 
 Expression grouping は、`mouthPucker` / `jawOpen` / `mouthSmile` / `eyeBlink` / `eyeSquint` / `mixedExpression` などの自動判定を行い、`expressionGroup` dropdown の初期値として使います。`mixedExpression` / `pending` / `missingBlendshapes` は expressionFollow の単一表情 rule 生成には不向きですが、landmarks / pose が有効な frame は pose-aware 3D 推定に使える可能性があるため、自動除外にはしません。
 

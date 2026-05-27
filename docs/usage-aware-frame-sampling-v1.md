@@ -345,6 +345,8 @@ usage-aware sampling は完全自動確定ではありません。自動初期�
 
 Step 2-I-C の現在の推奨方式は `pose_aware_mediapipe_mesh_pca_residual_yaw_v1` です。`idealFaceInference` / `useForInference` の observation frame から MediaPipe landmark.z を含む frame-local 3D478 を作り、FacePose inverse rotation、x-z PCA residual yaw correction、per-frame semantic center alignment、direction balance 付き weighted average、semantic origin centering の順で `idealLandmarks3D` candidate を生成します。`frontReference` は reference basis / semantic center の基準として使い、現時点では `useForInference` frontReference を shape aggregation に混ぜません。
 
+MediaPipe z normalize は Step 2-I 時点では `raw` を現時点の推奨 default とします。MediaPipe z scale は `1`、MediaPipe z invert は ON を基本値として扱います。実データ確認では `raw` が最も自然に見え、`faceWidthScaled` は奥行きが平べったくなりやすかったためです。PCA residual yaw correction により x-z の残留傾きは別途補正できるため、z normalize 側で過度にスケール調整しない方が自然でした。`faceWidthScaled` / `centered` / `frontReferenceMatched` は比較 option として残し、将来 dataset 別に z normalize / z scale を調整可能にする可能性があります。
+
 sampling 側の今後の改善候補は、PCA residual yaw correction 後の確認に必要な near-front observation を増やすことです。near-front observation が少ない dataset では warning を出し、Step 2-H の asset_origin preview と top view axis debug で確認します。
 
 ## JSON preview 方針

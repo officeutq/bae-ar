@@ -388,7 +388,7 @@ projected 2D landmarks で比較しない
 camera frame 上の位置・スケール・姿勢差を混ぜない
 ```
 
-Authoring Tool 側で、video aspect 補正、roll 補正、pose-aware generation を通し、same-unit coordinate / ideal landmarks 3D 空間に正規化したうえで比較します。
+Authoring Tool 側で、video aspect 補正、pose-aware generation、PCA residual yaw correction、semantic origin centering を通し、same-unit coordinate / ideal landmarks 3D 空間に正規化したうえで比較します。
 
 ## expressionAttenuation / falloff との関係
 

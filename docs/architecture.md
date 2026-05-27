@@ -118,8 +118,12 @@ MP4 input
        正面基準の手動選択 / 推定に使うフレーム / 除外フレーム
   -> Step 2-I-B pose-aware inference dataset
   -> Step 2-I-C pose_aware_mediapipe_mesh_pca_residual_yaw_v1 candidate generation
-       roll 補正
-       yaw / pitch / weight による z hint
+       MediaPipe landmark.z による frame-local 3D478
+       FacePose inverse rotation
+       x-z PCA residual yaw correction
+       per-frame semantic center alignment
+       direction balance 付き weighted average
+       semantic origin centering
        idealLandmarks3D 478点候補生成
   -> Step 2-H currentCandidate point cloud preview
 ```
@@ -423,8 +427,12 @@ MP4 input
        正面基準の手動選択 / 推定に使うフレーム / 除外フレーム
   -> Step 2-I-B pose-aware inference dataset
   -> Step 2-I-C pose_aware_mediapipe_mesh_pca_residual_yaw_v1 candidate generation
-       roll 補正
-       yaw / pitch / weight による z hint
+       MediaPipe landmark.z による frame-local 3D478
+       FacePose inverse rotation
+       x-z PCA residual yaw correction
+       per-frame semantic center alignment
+       direction balance 付き weighted average
+       semantic origin centering
        idealLandmarks3D 478点候補生成
   -> Step 2-H currentCandidate point cloud preview
 ```
@@ -507,7 +515,18 @@ projected ideal 478 landmarks
 
 ## IdealFace Authoring Tool Current Generation Path
 
-Step 2-G v1 five-pose candidate generation has been removed from the current code. The active 3D candidate generation path is Step 2-I-C `pose_aware_mediapipe_mesh_pca_residual_yaw_v1`, and the JSON preview remains centered on `activeSummary`, `poseAware`, `currentCandidate`, `reference`, and `debug`. `pose_aware_mediapipe_mesh_semantic_origin_v1` remains as baseline, `pose_aware_weighted_z_v1` remains historical, and older canonical / stableZ / balancedFrameZ / MediaPipe average prototypes are legacy / debug-only. Runtime and Beauty Studio do not include authoring generation logic.
+Step 2-G v1 five-pose candidate generation has been removed from the current code. The active 3D candidate generation path is Step 2-I-C `pose_aware_mediapipe_mesh_pca_residual_yaw_v1`, and the JSON preview remains centered on `activeSummary`, `poseAware`, `currentCandidate`, `reference`, and `debug`.
+
+generationMethod classification:
+
+- recommended: `pose_aware_mediapipe_mesh_pca_residual_yaw_v1`
+- baseline: `pose_aware_mediapipe_mesh_semantic_origin_v1`
+- historical: `pose_aware_weighted_z_v1`
+- legacy / debug-only: `pose_aware_canonical_3d_v1` / `pose_aware_canonical_stable_z_v1` / `pose_aware_canonical_balanced_frame_z_v1` / `pose_aware_mediapipe_mesh_average_v1`
+
+`pose_aware_mediapipe_mesh_pca_residual_yaw_v1` uses MediaPipe landmark.z for frame-local 3D478, FacePose inverse rotation, x-z PCA residual yaw correction, per-frame semantic center alignment, direction-balanced weighted average, and semantic origin centering. PCA residual yaw correction is a frame-level residual pose correction: after FacePose inverse rotation, the canonical 3D478 is analyzed by PCA in the x-z plane, and one shared yaw rotation that cancels the remaining x-z principal-axis tilt is applied to all 478 points. It is not per-part deformation, per-landmark correction, or x/y/z scaling.
+
+MediaPipe z normalize uses `raw` as the current recommended default for Step 2-I because real data looked more natural with `raw`; `faceWidthScaled` tended to flatten depth. MediaPipe z scale uses `1`, and MediaPipe z invert is treated as ON. `faceWidthScaled` / `centered` / `frontReferenceMatched` remain comparison options, and z normalize / z scale may become dataset-configurable later. Runtime and Beauty Studio do not include authoring generation logic.
 
 ## Shape Warp production direction
 

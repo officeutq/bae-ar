@@ -15,8 +15,12 @@ MP4 input
        正面基準の手動選択 / 推定に使うフレーム / 除外フレーム
   -> Step 2-I-B pose-aware inference dataset
   -> Step 2-I-C pose_aware_mediapipe_mesh_pca_residual_yaw_v1 candidate generation
-       roll 補正
-       yaw / pitch / weight による z hint
+       MediaPipe landmark.z による frame-local 3D478
+       FacePose inverse rotation
+       x-z PCA residual yaw correction
+       per-frame semantic center alignment
+       direction balance 付き weighted average
+       semantic origin centering
        idealLandmarks3D 478点候補生成
   -> Step 2-H currentCandidate point cloud preview
 ```
@@ -27,10 +31,12 @@ MP4 input
 |---|---|---|---|
 | Step 2-I-A | frame usage tags | `frontReference` / `useForInference` / `expressionGroup` / `excluded` を管理する現在の主導線 | `frontReference` / `useForInference` / `expressionGroup` は重複可能、`excluded` のみ排他的 |
 | Step 2-I-B | `poseAwareInferenceDataset` | pose-aware multi-frame inference の入力 dataset | detailed scan frames 由来の observation を使う |
-| Step 2-I-C | `pose_aware_mediapipe_mesh_pca_residual_yaw_v1` | 現在の推奨 3D candidate generation path | MediaPipe landmark.z、FacePose inverse rotation、x-z PCA residual yaw correction、semantic origin centering を使う |
+| Step 2-I-C | `pose_aware_mediapipe_mesh_pca_residual_yaw_v1` | 現時点の推奨 3D candidate generation path | MediaPipe landmark.z、FacePose inverse rotation、x-z PCA residual yaw correction、per-frame semantic center alignment、direction balance 付き weighted average、semantic origin centering を使う |
 | Step 2-H | `currentCandidate` point cloud preview | 現在生成された candidate の確認表示 | preview camera は表示専用で candidate data を変更しない |
 
-`pose_aware_mediapipe_mesh_pca_residual_yaw_v1` が生成する `idealLandmarks3D` は same-unit coordinate として扱います。`pose_aware_mediapipe_mesh_semantic_origin_v1` は baseline、`pose_aware_weighted_z_v1` は historical comparison、canonical / stableZ / balancedFrameZ / MediaPipe average prototypes は legacy / debug-only です。`video_aspect_same_unit_v1` による video aspect 補正、pose-aware generation、将来の manual adjustment UI は Authoring Tool の責務です。Runtime / Studio は完成済み asset を読み込み、Projection 後に overlay / difference / warp 用の image-normalized / pixel 座標へ変換します。Authoring generation logic は Runtime / Studio に混ぜません。
+`pose_aware_mediapipe_mesh_pca_residual_yaw_v1` が生成する `idealLandmarks3D` は same-unit coordinate として扱います。generationMethod は、recommended: `pose_aware_mediapipe_mesh_pca_residual_yaw_v1`、baseline: `pose_aware_mediapipe_mesh_semantic_origin_v1`、historical: `pose_aware_weighted_z_v1`、legacy / debug-only: `pose_aware_canonical_3d_v1` / `pose_aware_canonical_stable_z_v1` / `pose_aware_canonical_balanced_frame_z_v1` / `pose_aware_mediapipe_mesh_average_v1` に分類します。`video_aspect_same_unit_v1` による video aspect 補正、pose-aware generation、将来の manual adjustment UI は Authoring Tool の責務です。Runtime / Studio は完成済み asset を読み込み、Projection 後に overlay / difference / warp 用の image-normalized / pixel 座標へ変換します。Authoring generation logic は Runtime / Studio に混ぜません。
+
+MediaPipe z normalize は Step 2-I 時点では `raw` を現時点の推奨 default とします。MediaPipe z scale は `1`、MediaPipe z invert は ON を基本値として扱います。`faceWidthScaled` / `centered` / `frontReferenceMatched` は比較 option として残します。
 
 ## Reference / Debug
 
