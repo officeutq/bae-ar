@@ -2034,9 +2034,12 @@ Camera:
       textarea.value = debugText
       textarea.readOnly = true
       textarea.style.position = "fixed"
+      textarea.style.left = "-9999px"
       textarea.style.opacity = "0"
       document.body.append(textarea)
+      textarea.focus()
       textarea.select()
+      textarea.setSelectionRange(0, textarea.value.length)
 
       const copied = document.execCommand("copy")
 
@@ -2496,42 +2499,7 @@ Camera:
       lastEngineState = currentState
     }
 
-    appRoot.innerHTML = `
-      <section>
-        <header>
-          <h2>Debug summary</h2>
-          <button id="copy-debug" type="button">Copy Debug</button>
-          <span aria-live="polite">${copyStatus}</span>
-        </header>
-        <style>
-          .preview-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 16px;
-          }
-
-          .preview-container {
-            position: relative;
-            display: inline-block;
-            max-width: 100%;
-          }
-
-          .preview-container video,
-          .preview-container canvas.processed-canvas {
-            display: block;
-            max-width: 100%;
-            height: auto;
-          }
-
-          .preview-container .overlay {
-            position: absolute;
-            inset: 0;
-            width: 100%;
-            height: 100%;
-            pointer-events: none;
-          }
-        </style>
-        <pre>Engine: ${formatEngineState(currentState)}
+    const statusSummary = `Engine: ${formatEngineState(currentState)}
 Camera: ${formatCameraState(camera.getState())}
 Detection: ${formatDetection(frame)}
 Landmarks: ${frame?.landmarks.length ?? 0}
@@ -2551,8 +2519,122 @@ Production Shape Warp: not_implemented
 利用可能IdealFace: ${availableIdealFaces.length}
 FPS: ${formatFps(faceFrameFps)}
 Loop: ${faceFrameLoopDebug.running ? "実行中" : "停止中"}
-Detect: ${faceFrameLoopDebug.detectCallCount}/${mediaPipeDebug?.detectSuccessCount ?? 0}</pre>
-        <h2>プレビュー</h2>
+Detect: ${faceFrameLoopDebug.detectCallCount}/${mediaPipeDebug?.detectSuccessCount ?? 0}`
+
+    appRoot.innerHTML = `
+      <section class="studio-layout">
+        <header>
+          <h2>操作</h2>
+          <button id="copy-debug" type="button">Copy Debug</button>
+          <span aria-live="polite">${copyStatus}</span>
+        </header>
+        <style>
+          .studio-layout {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+          }
+
+          .studio-layout > header {
+            order: 3;
+          }
+
+          .studio-layout > .preview-heading {
+            order: 0;
+          }
+
+          .studio-layout > .preview-grid {
+            order: 1;
+          }
+
+          .studio-layout > .realtime-heading,
+          .studio-layout > label,
+          .studio-layout > fieldset[data-shape-warp-debug-controls] {
+            order: 2;
+          }
+
+          .studio-layout > section {
+            order: 3;
+          }
+
+          .studio-layout > .debug-heading,
+          .studio-layout > pre {
+            order: 4;
+          }
+
+          .studio-layout > details {
+            order: 5;
+          }
+
+          .studio-layout h2,
+          .studio-layout h3 {
+            margin-bottom: 0;
+          }
+
+          .preview-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 16px;
+            align-items: start;
+          }
+
+          .preview-container {
+            position: relative;
+            display: block;
+            max-width: 100%;
+            min-width: 0;
+            overflow: hidden;
+            background: #111827;
+          }
+
+          .preview-container video,
+          .preview-container canvas.processed-canvas {
+            display: block;
+            width: 100%;
+            max-width: none;
+            height: auto;
+          }
+
+          .preview-container .overlay {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+          }
+
+          .studio-layout > header,
+          .studio-layout > label,
+          .studio-layout > fieldset,
+          .studio-layout > section,
+          .studio-layout > details {
+            min-width: 0;
+          }
+
+          .studio-layout > header {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            align-items: center;
+          }
+
+          .studio-layout > pre,
+          .studio-layout textarea,
+          .studio-layout section pre {
+            max-width: 100%;
+            overflow: auto;
+          }
+
+          @media (max-width: 760px) {
+            .preview-grid {
+              grid-template-columns: 1fr;
+            }
+          }
+        </style>
+        <h2 class="debug-heading">Debug values</h2>
+        <pre>${escapeHtml(statusSummary)}</pre>
+        <h2 class="preview-heading">プレビュー</h2>
+        <h2 class="realtime-heading">リアルタイム調整</h2>
         <label>
           <input id="ideal-landmark-difference-lines" type="checkbox" ${showIdealLandmarkDifferenceLines ? "checked" : ""} />
           478点差分線を表示
@@ -2629,11 +2711,11 @@ Detect: ${faceFrameLoopDebug.detectCallCount}/${mediaPipeDebug?.detectSuccessCou
         </fieldset>
         <div class="preview-grid">
           <section>
-            <h3>Source preview</h3>
+            <h3>Source Preview</h3>
             <div id="source-preview" class="preview-container">${camera.getVideo() ? "" : "利用できません"}</div>
           </section>
           <section>
-            <h3>Processed preview: ${formatProcessedPreviewLabel()}</h3>
+            <h3>Processed Preview: ${formatProcessedPreviewLabel()}</h3>
             <div id="processed-preview" class="preview-container">${camera.getVideo() ? "" : "利用できません"}</div>
           </section>
         </div>
