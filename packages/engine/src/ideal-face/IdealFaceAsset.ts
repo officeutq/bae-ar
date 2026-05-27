@@ -14,7 +14,14 @@ import {
 
 export type IdealFaceAssetSchemaVersion = "ideal_face_asset_v1"
 
-export type IdealFaceAssetGenerationMethod = "pose_aware_weighted_z_v1"
+export const IDEAL_FACE_ASSET_GENERATION_METHODS = [
+  "pose_aware_weighted_z_v1",
+  "pose_aware_mediapipe_mesh_semantic_origin_v1",
+  "pose_aware_mediapipe_mesh_pca_residual_yaw_v1",
+] as const
+
+export type IdealFaceAssetGenerationMethod =
+  (typeof IDEAL_FACE_ASSET_GENERATION_METHODS)[number]
 
 export type IdealFaceAssetLandmarkTopology = "mediapipe_face_landmarker_478"
 
@@ -90,10 +97,10 @@ export function validateIdealFaceAssetV1(
       "ideal-face-authoring",
       errors,
     )
-    validateStringLiteral(
+    validateStringUnion(
       input.source.generationMethod,
       "source.generationMethod",
-      "pose_aware_weighted_z_v1",
+      IDEAL_FACE_ASSET_GENERATION_METHODS,
       errors,
     )
   }
@@ -719,6 +726,17 @@ function validateStringLiteral<T extends string>(
 ): void {
   if (input !== expected) {
     errors.push(`${path} must be "${expected}"`)
+  }
+}
+
+function validateStringUnion<T extends readonly string[]>(
+  input: unknown,
+  path: string,
+  expectedValues: T,
+  errors: string[],
+): void {
+  if (!expectedValues.includes(input as T[number])) {
+    errors.push(`${path} must be one of: ${expectedValues.join(", ")}`)
   }
 }
 
