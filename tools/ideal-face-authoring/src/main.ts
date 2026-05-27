@@ -542,6 +542,99 @@ interface TopViewZAsymmetrySummary {
   warning: string
 }
 
+interface PointXZDebug {
+  x: number | null
+  z: number | null
+}
+
+interface TopViewAxisDebug {
+  generationMethod: IdealLandmarks3DGenerationMethod
+  basis: "x_z_plane"
+  pointCount: number
+  xzCentroid: PointXZDebug
+  xzBoundsCenter: PointXZDebug
+  xzPrincipalAxisAngleDeg: number | null
+  xzLinearFitSlope: number | null
+  xzCorrelation: number | null
+  xzCovariance: number | null
+  xVariance: number | null
+  zVariance: number | null
+  warning: string
+}
+
+interface SemanticTopViewAxisDebug {
+  noseTip: PointXZDebug
+  mouthCenter: PointXZDebug
+  chin: PointXZDebug
+  eyeCenter: PointXZDebug
+  cheekCenterLeft: PointXZDebug
+  cheekCenterRight: PointXZDebug
+  noseToMouthAxisAngleDeg: number | null
+  noseToChinAxisAngleDeg: number | null
+  cheekPairDepthDelta: number | null
+  contourPairDepthDelta: number | null
+}
+
+interface PerFrameCanonicalTopViewAxisFrameDebug {
+  frameId: string
+  yaw: number
+  pitch: number
+  roll: number
+  angleDeg: number | null
+  finalCanonicalAverageWeight: number
+}
+
+interface PerFrameCanonicalTopViewAxisDebug {
+  frameCount: number
+  averageAngleDeg: number | null
+  minAngleDeg: number | null
+  maxAngleDeg: number | null
+  averageAbsAngleDeg: number | null
+  weightedAverageAngleDeg: number | null
+  weightedAverageAbsAngleDeg: number | null
+  topPositiveAngleFrames: PerFrameCanonicalTopViewAxisFrameDebug[]
+  topNegativeAngleFrames: PerFrameCanonicalTopViewAxisFrameDebug[]
+}
+
+interface YawGroupTopViewAxisGroupDebug {
+  frameCount: number
+  weightTotal: number
+  averageAngleDeg: number | null
+  weightedAverageAngleDeg: number | null
+  partialCandidateAngleDeg: number | null
+}
+
+interface YawGroupTopViewAxisDebug {
+  yawPositive: YawGroupTopViewAxisGroupDebug
+  yawNegative: YawGroupTopViewAxisGroupDebug
+  nearFront: YawGroupTopViewAxisGroupDebug
+}
+
+interface AxisComparisonItemDebug {
+  xzPrincipalAxisAngleDeg: number | null
+  xzLinearFitSlope: number | null
+  xzCorrelation: number | null
+  topViewAsymmetryScore: number | null
+  leftRightZAverageDelta: number | null
+  leftRightZRangeDelta: number | null
+  zRange: number | null
+  semanticCenterX: number | null
+  semanticCenterY: number | null
+  centroidX: number | null
+  centroidY: number | null
+  centroidZ: number | null
+  boundsCenterX: number | null
+  boundsCenterZ: number | null
+}
+
+interface AxisComparisonDebug {
+  canonical3D: AxisComparisonItemDebug | null
+  canonicalStableZ: AxisComparisonItemDebug | null
+  balancedFrameZ: AxisComparisonItemDebug | null
+  mediaPipeMeshAverage: AxisComparisonItemDebug | null
+  mediaPipeMeshSemanticOrigin: AxisComparisonItemDebug | null
+}
+
 interface NearFrontObservationDebugSummary {
   nearFrontObservationFrameCount: number
   frontReferenceFrameCount: number
@@ -591,6 +684,9 @@ interface CandidateDebugComparisonItem {
   leftRightZAverageDelta: number | null
   leftRightZRangeDelta: number | null
   topViewAsymmetryScore: number | null
+  xzPrincipalAxisAngleDeg: number | null
+  xzLinearFitSlope: number | null
+  xzCorrelation: number | null
 }
 
 interface BalancedFrameZCandidateComparisonDebug {
@@ -946,6 +1042,11 @@ interface PoseAwareMediaPipeMeshAverageDebug {
   semanticOriginCentering?: SemanticOriginCenteringDebug
   runtimeProjectionAssumption?: RuntimeProjectionAssumptionDebug
   topView: TopViewZAsymmetrySummary
+  topViewAxisDebug: TopViewAxisDebug
+  semanticTopViewAxisDebug: SemanticTopViewAxisDebug
+  perFrameCanonicalTopViewAxisDebug: PerFrameCanonicalTopViewAxisDebug
+  yawGroupTopViewAxisDebug: YawGroupTopViewAxisDebug
+  axisComparison: AxisComparisonDebug
   warnings: string[]
 }
 
@@ -2500,8 +2601,11 @@ function buildFrontReferenceCoordinateDebug(
 
 function toPointCloudPreviewDisplayDebug(
   landmarks: IdealLandmark3DCandidate[],
+  generationMethod: IdealLandmarks3DGenerationMethod | null,
 ): {
   rotationCenterMode: PointCloudRotationCenterMode
+  viewPreset: PointCloudPreviewPreset | "custom"
+  xzAxisAngleDegForDisplayedCandidate: number | null
   centeredBeforeRotation: boolean
   autoFitToCanvas: boolean
   worldOriginMappedToCanvasCenter: boolean
@@ -2518,6 +2622,11 @@ function toPointCloudPreviewDisplayDebug(
 
   return {
     rotationCenterMode: pointCloudRotationCenterMode,
+    viewPreset: getPointCloudPreviewViewPreset(),
+    xzAxisAngleDegForDisplayedCandidate: buildTopViewAxisDebug(
+      generationMethod ?? "pose_aware_weighted_z_v1",
+      landmarks,
+    ).xzPrincipalAxisAngleDeg,
     centeredBeforeRotation: pointCloudRotationCenterMode === "auto_center",
     autoFitToCanvas: true,
     worldOriginMappedToCanvasCenter:
@@ -2572,7 +2681,10 @@ function toCoordinateDebugPreview(
     },
     aspectComparison,
     previewDisplay: {
-      ...toPointCloudPreviewDisplayDebug(currentCandidate.landmarks),
+      ...toPointCloudPreviewDisplayDebug(
+        currentCandidate.landmarks,
+        currentCandidate.generationMethod,
+      ),
       zDisplayScale: POINT_CLOUD_DEPTH_DISPLAY_SCALE,
       dataMutation: false,
     },
@@ -5834,6 +5946,193 @@ function buildTopViewZAsymmetrySummary(
   }
 }
 
+function normalizeAxisAngleDeg(angleDeg: number): number {
+  let normalized = angleDeg
+
+  while (normalized > 90) {
+    normalized -= 180
+  }
+
+  while (normalized < -90) {
+    normalized += 180
+  }
+
+  return roundDebugNumber(normalized)
+}
+
+function buildTopViewAxisDebug(
+  generationMethod: IdealLandmarks3DGenerationMethod,
+  landmarks: Array<{ x: number; y?: number; z?: number }>,
+): TopViewAxisDebug {
+  const finitePoints = landmarks.filter(
+    (landmark) =>
+      Number.isFinite(landmark.x) && Number.isFinite(landmark.z ?? 0),
+  )
+
+  if (finitePoints.length === 0) {
+    return {
+      generationMethod,
+      basis: "x_z_plane",
+      pointCount: 0,
+      xzCentroid: { x: null, z: null },
+      xzBoundsCenter: { x: null, z: null },
+      xzPrincipalAxisAngleDeg: null,
+      xzLinearFitSlope: null,
+      xzCorrelation: null,
+      xzCovariance: null,
+      xVariance: null,
+      zVariance: null,
+      warning: "No finite x-z points for top-view axis debug.",
+    }
+  }
+
+  const xValues = finitePoints.map((point) => point.x)
+  const zValues = finitePoints.map((point) => point.z ?? 0)
+  const xAverage = averageNumbers(xValues)
+  const zAverage = averageNumbers(zValues)
+  const covariance = averageNumbers(
+    finitePoints.map((point) => (point.x - xAverage) * ((point.z ?? 0) - zAverage)),
+  )
+  const xVariance = averageNumbers(xValues.map((value) => (value - xAverage) ** 2))
+  const zVariance = averageNumbers(zValues.map((value) => (value - zAverage) ** 2))
+  const principalAngleDeg = normalizeAxisAngleDeg(
+    (0.5 * Math.atan2(2 * covariance, xVariance - zVariance) * 180) /
+      Math.PI,
+  )
+  const xMin = Math.min(...xValues)
+  const xMax = Math.max(...xValues)
+  const zMin = Math.min(...zValues)
+  const zMax = Math.max(...zValues)
+  const correlationDenominator = Math.sqrt(xVariance * zVariance)
+
+  return {
+    generationMethod,
+    basis: "x_z_plane",
+    pointCount: finitePoints.length,
+    xzCentroid: {
+      x: roundDebugNumber(xAverage),
+      z: roundDebugNumber(zAverage),
+    },
+    xzBoundsCenter: {
+      x: roundDebugNumber((xMin + xMax) / 2),
+      z: roundDebugNumber((zMin + zMax) / 2),
+    },
+    xzPrincipalAxisAngleDeg: principalAngleDeg,
+    xzLinearFitSlope:
+      xVariance <= 0 ? null : roundDebugNumber(covariance / xVariance),
+    xzCorrelation:
+      correlationDenominator <= 0
+        ? null
+        : roundDebugNumber(covariance / correlationDenominator),
+    xzCovariance: roundDebugNumber(covariance),
+    xVariance: roundDebugNumber(xVariance),
+    zVariance: roundDebugNumber(zVariance),
+    warning:
+      "xzPrincipalAxisAngleDeg is PCA angle in x-z plane; 0 means the broad top-view axis is aligned with x.",
+  }
+}
+
+function toPointXZDebug(point: { x: number; z?: number } | null): PointXZDebug {
+  return {
+    x: point === null ? null : roundDebugNumber(point.x),
+    z: point === null ? null : roundDebugNumber(point.z ?? 0),
+  }
+}
+
+function getIndexedPoint3D(
+  points: Array<{ index: number; x: number; y?: number; z?: number }>,
+  index: number,
+): (Point3D & { index: number }) | null {
+  const point = points.find(
+    (candidate) =>
+      candidate.index === index &&
+      Number.isFinite(candidate.x) &&
+      Number.isFinite(candidate.z ?? 0),
+  )
+
+  return point
+    ? { index, x: point.x, y: point.y ?? 0, z: point.z ?? 0 }
+    : null
+}
+
+function averagePoint3D(
+  points: Array<(Point3D & { index?: number }) | null>,
+): Point3D | null {
+  const finitePoints = points.filter(
+    (point): point is Point3D & { index?: number } =>
+      point !== null &&
+      Number.isFinite(point.x) &&
+      Number.isFinite(point.y) &&
+      Number.isFinite(point.z),
+  )
+
+  return finitePoints.length === 0
+    ? null
+    : {
+        x: averageNumbers(finitePoints.map((point) => point.x)),
+        y: averageNumbers(finitePoints.map((point) => point.y)),
+        z: averageNumbers(finitePoints.map((point) => point.z)),
+      }
+}
+
+function calculateTopViewDepthAxisAngleDeg(
+  from: Point3D | null,
+  to: Point3D | null,
+): number | null {
+  if (from === null || to === null) {
+    return null
+  }
+
+  const deltaX = to.x - from.x
+  const deltaZ = to.z - from.z
+
+  if (!Number.isFinite(deltaX) || !Number.isFinite(deltaZ)) {
+    return null
+  }
+
+  return normalizeAxisAngleDeg((Math.atan2(deltaX, deltaZ) * 180) / Math.PI)
+}
+
+function buildSemanticTopViewAxisDebug(
+  landmarks: Array<{ index: number; x: number; y?: number; z?: number }>,
+): SemanticTopViewAxisDebug {
+  const noseTip = getIndexedPoint3D(landmarks, NOSE_TIP_INDEX)
+  const mouthCenter = averagePoint3D(
+    MOUTH_CENTER_INDICES.map((index) => getIndexedPoint3D(landmarks, index)),
+  )
+  const chin = getIndexedPoint3D(landmarks, CHIN_INDEX)
+  const eyeCenter = averagePoint3D([
+    getIndexedPoint3D(landmarks, LEFT_EYE_OUTER_INDEX),
+    getIndexedPoint3D(landmarks, RIGHT_EYE_OUTER_INDEX),
+  ])
+  const leftCheek = getIndexedPoint3D(landmarks, LEFT_CHEEK_INDEX)
+  const rightCheek = getIndexedPoint3D(landmarks, RIGHT_CHEEK_INDEX)
+  const leftContour = getIndexedPoint3D(landmarks, LEFT_CONTOUR_INDEX)
+  const rightContour = getIndexedPoint3D(landmarks, RIGHT_CONTOUR_INDEX)
+
+  return {
+    noseTip: toPointXZDebug(noseTip),
+    mouthCenter: toPointXZDebug(mouthCenter),
+    chin: toPointXZDebug(chin),
+    eyeCenter: toPointXZDebug(eyeCenter),
+    cheekCenterLeft: toPointXZDebug(leftCheek),
+    cheekCenterRight: toPointXZDebug(rightCheek),
+    noseToMouthAxisAngleDeg: calculateTopViewDepthAxisAngleDeg(
+      noseTip,
+      mouthCenter,
+    ),
+    noseToChinAxisAngleDeg: calculateTopViewDepthAxisAngleDeg(noseTip, chin),
+    cheekPairDepthDelta:
+      leftCheek === null || rightCheek === null
+        ? null
+        : roundDebugNumber(leftCheek.z - rightCheek.z),
+    contourPairDepthDelta:
+      leftContour === null || rightContour === null
+        ? null
+        : roundDebugNumber(leftContour.z - rightContour.z),
+  }
+}
+
 function buildStableZSummary(
   stableZValues: StableZLandmarkValue[],
   generationMethod: StableZSummary["generationMethod"] =
@@ -6063,6 +6362,7 @@ function buildCandidateDebugComparisonItemFromLandmarks(
   const spatial = buildLandmarkSpatialSummary(landmarks)
   const representative = getPoseAwareRepresentativePointSummary(landmarks)
   const topView = buildTopViewZAsymmetrySummary(landmarks)
+  const topViewAxis = buildTopViewAxisDebug(generationMethod, landmarks)
   const semanticCenter = calculateSemanticCenter(
     landmarks,
     SEMANTIC_CENTER_ALIGNMENT_MODE,
@@ -6102,6 +6402,51 @@ function buildCandidateDebugComparisonItemFromLandmarks(
     leftRightZAverageDelta: topView.leftRightZAverageDelta,
     leftRightZRangeDelta: topView.leftRightZRangeDelta,
     topViewAsymmetryScore: topView.topViewAsymmetryScore,
+    xzPrincipalAxisAngleDeg: topViewAxis.xzPrincipalAxisAngleDeg,
+    xzLinearFitSlope: topViewAxis.xzLinearFitSlope,
+    xzCorrelation: topViewAxis.xzCorrelation,
+  }
+}
+
+function buildAxisComparisonItem(
+  result: IdealLandmarks3DCandidateResult | null,
+  fallbackGenerationMethod?: IdealLandmarks3DGenerationMethod,
+  fallbackLandmarks?: IdealLandmark3DCandidate[],
+): AxisComparisonItemDebug | null {
+  const generationMethod =
+    result?.generationMethod ?? fallbackGenerationMethod ?? null
+  const landmarks =
+    result && result.status === "generated" ? result.landmarks : fallbackLandmarks
+
+  if (!generationMethod || !landmarks) {
+    return null
+  }
+
+  const spatial = buildLandmarkSpatialSummary(landmarks)
+  const topView = buildTopViewZAsymmetrySummary(landmarks)
+  const topViewAxis = buildTopViewAxisDebug(generationMethod, landmarks)
+  const semanticCenter = calculateSemanticCenter(
+    landmarks,
+    SEMANTIC_CENTER_ALIGNMENT_MODE,
+  )
+
+  return {
+    xzPrincipalAxisAngleDeg: topViewAxis.xzPrincipalAxisAngleDeg,
+    xzLinearFitSlope: topViewAxis.xzLinearFitSlope,
+    xzCorrelation: topViewAxis.xzCorrelation,
+    topViewAsymmetryScore: topView.topViewAsymmetryScore,
+    leftRightZAverageDelta: topView.leftRightZAverageDelta,
+    leftRightZRangeDelta: topView.leftRightZRangeDelta,
+    zRange: spatial.bounds?.zRange ?? null,
+    semanticCenterX:
+      semanticCenter === null ? null : roundDebugNumber(semanticCenter.x),
+    semanticCenterY:
+      semanticCenter === null ? null : roundDebugNumber(semanticCenter.y),
+    centroidX: spatial.centroid?.x ?? null,
+    centroidY: spatial.centroid?.y ?? null,
+    centroidZ: spatial.centroid?.z ?? null,
+    boundsCenterX: spatial.boundsCenter?.x ?? null,
+    boundsCenterZ: spatial.boundsCenter?.z ?? null,
   }
 }
 
@@ -6253,6 +6598,235 @@ function buildFrameStableZWeightDebugSummary(
     ),
     pitchNegativeFramesAverageWeight: averageFinalWeight(
       frameWeights.filter((frame) => frame.pitchNegativeSignal > 0),
+    ),
+  }
+}
+
+interface CanonicalFrameTopViewAxisSource {
+  frameId: string
+  yaw: number
+  pitch: number
+  roll: number
+  canonicalPoints: Array<Point3D & { index: number }>
+  weight: number
+}
+
+function buildPerFrameCanonicalTopViewAxisFrameDebug(
+  frame: CanonicalFrameTopViewAxisSource,
+  generationMethod: IdealLandmarks3DGenerationMethod,
+): PerFrameCanonicalTopViewAxisFrameDebug {
+  return {
+    frameId: frame.frameId,
+    yaw: roundDebugNumber(frame.yaw),
+    pitch: roundDebugNumber(frame.pitch),
+    roll: roundDebugNumber(frame.roll),
+    angleDeg: buildTopViewAxisDebug(generationMethod, frame.canonicalPoints)
+      .xzPrincipalAxisAngleDeg,
+    finalCanonicalAverageWeight: roundDebugNumber(frame.weight),
+  }
+}
+
+function averageNullableNumbers(values: Array<number | null>): number | null {
+  const finiteValues = values.filter(
+    (value): value is number => value !== null && Number.isFinite(value),
+  )
+
+  return finiteValues.length === 0
+    ? null
+    : roundDebugNumber(averageNumbers(finiteValues))
+}
+
+function weightedAverageFrameAngles(
+  frames: PerFrameCanonicalTopViewAxisFrameDebug[],
+  useAbsolute: boolean,
+): number | null {
+  const weightedFrames = frames.filter(
+    (frame) =>
+      frame.angleDeg !== null &&
+      Number.isFinite(frame.finalCanonicalAverageWeight) &&
+      frame.finalCanonicalAverageWeight > 0,
+  )
+  const weightTotal = weightedFrames.reduce(
+    (sum, frame) => sum + frame.finalCanonicalAverageWeight,
+    0,
+  )
+
+  if (weightTotal <= 0) {
+    return null
+  }
+
+  return roundDebugNumber(
+    weightedFrames.reduce((sum, frame) => {
+      const angle = frame.angleDeg ?? 0
+
+      return (
+        sum +
+        (useAbsolute ? Math.abs(angle) : angle) *
+          frame.finalCanonicalAverageWeight
+      )
+    }, 0) / weightTotal,
+  )
+}
+
+function buildPerFrameCanonicalTopViewAxisDebug(
+  frames: CanonicalFrameTopViewAxisSource[],
+  generationMethod: IdealLandmarks3DGenerationMethod,
+): PerFrameCanonicalTopViewAxisDebug {
+  const frameAngles = frames.map((frame) =>
+    buildPerFrameCanonicalTopViewAxisFrameDebug(frame, generationMethod),
+  )
+  const angleValues = frameAngles
+    .map((frame) => frame.angleDeg)
+    .filter((value): value is number => value !== null)
+  const byAngleDesc = [...frameAngles]
+    .filter((frame) => frame.angleDeg !== null)
+    .sort((a, b) => (b.angleDeg ?? 0) - (a.angleDeg ?? 0))
+
+  return {
+    frameCount: frameAngles.length,
+    averageAngleDeg: averageNullableNumbers(
+      frameAngles.map((frame) => frame.angleDeg),
+    ),
+    minAngleDeg:
+      angleValues.length === 0 ? null : roundDebugNumber(Math.min(...angleValues)),
+    maxAngleDeg:
+      angleValues.length === 0 ? null : roundDebugNumber(Math.max(...angleValues)),
+    averageAbsAngleDeg: averageNullableNumbers(
+      frameAngles.map((frame) =>
+        frame.angleDeg === null ? null : Math.abs(frame.angleDeg),
+      ),
+    ),
+    weightedAverageAngleDeg: weightedAverageFrameAngles(frameAngles, false),
+    weightedAverageAbsAngleDeg: weightedAverageFrameAngles(frameAngles, true),
+    topPositiveAngleFrames: byAngleDesc.slice(
+      0,
+      POSE_AWARE_STABLE_Z_FRAME_DEBUG_COUNT,
+    ),
+    topNegativeAngleFrames: byAngleDesc
+      .reverse()
+      .slice(0, POSE_AWARE_STABLE_Z_FRAME_DEBUG_COUNT),
+  }
+}
+
+function buildWeightedAverageLandmarksFromCanonicalFrames(
+  frames: CanonicalFrameTopViewAxisSource[],
+  generationMethod: IdealLandmarks3DGenerationMethod,
+): IdealLandmark3DCandidate[] {
+  return Array.from({ length: REQUIRED_LANDMARK_COUNT }, (_, index) => {
+    const points = frames
+      .map((frame) => ({
+        point: frame.canonicalPoints[index],
+        weight: frame.weight,
+      }))
+      .filter(
+        (
+          item,
+        ): item is {
+          point: Point3D & { index: number }
+          weight: number
+        } =>
+          Boolean(item.point) &&
+          Number.isFinite(item.point.x) &&
+          Number.isFinite(item.point.y) &&
+          Number.isFinite(item.point.z) &&
+          Number.isFinite(item.weight) &&
+          item.weight > 0,
+      )
+    const weightTotal = points.reduce((sum, item) => sum + item.weight, 0)
+
+    if (weightTotal <= 0) {
+      return {
+        index,
+        x: 0,
+        y: 0,
+        z: 0,
+        confidence: 0,
+        source: generationMethod,
+      }
+    }
+
+    return {
+      index,
+      x: Number(
+        (
+          points.reduce((sum, item) => sum + item.point.x * item.weight, 0) /
+          weightTotal
+        ).toFixed(4),
+      ),
+      y: Number(
+        (
+          points.reduce((sum, item) => sum + item.point.y * item.weight, 0) /
+          weightTotal
+        ).toFixed(4),
+      ),
+      z: Number(
+        (
+          points.reduce((sum, item) => sum + item.point.z * item.weight, 0) /
+          weightTotal
+        ).toFixed(4),
+      ),
+      confidence: inferMediaPipeMeshAverageLandmarkConfidence(
+        points.length,
+        frames.length,
+        weightTotal,
+      ),
+      source: generationMethod,
+    }
+  })
+}
+
+function buildYawGroupTopViewAxisGroupDebug(
+  frames: CanonicalFrameTopViewAxisSource[],
+  generationMethod: IdealLandmarks3DGenerationMethod,
+): YawGroupTopViewAxisGroupDebug {
+  const frameAngles = frames.map((frame) =>
+    buildPerFrameCanonicalTopViewAxisFrameDebug(frame, generationMethod),
+  )
+  const partialCandidate = buildWeightedAverageLandmarksFromCanonicalFrames(
+    frames,
+    generationMethod,
+  )
+
+  return {
+    frameCount: frames.length,
+    weightTotal: roundDebugNumber(
+      frames.reduce((sum, frame) => sum + frame.weight, 0),
+    ),
+    averageAngleDeg: averageNullableNumbers(
+      frameAngles.map((frame) => frame.angleDeg),
+    ),
+    weightedAverageAngleDeg: weightedAverageFrameAngles(frameAngles, false),
+    partialCandidateAngleDeg:
+      frames.length === 0
+        ? null
+        : buildTopViewAxisDebug(generationMethod, partialCandidate)
+            .xzPrincipalAxisAngleDeg,
+  }
+}
+
+function buildYawGroupTopViewAxisDebug(
+  frames: CanonicalFrameTopViewAxisSource[],
+  generationMethod: IdealLandmarks3DGenerationMethod,
+): YawGroupTopViewAxisDebug {
+  return {
+    yawPositive: buildYawGroupTopViewAxisGroupDebug(
+      frames.filter(
+        (frame) => frame.yaw > POSE_AWARE_CANONICAL_NEAR_FRONT_YAW_DEG,
+      ),
+      generationMethod,
+    ),
+    yawNegative: buildYawGroupTopViewAxisGroupDebug(
+      frames.filter(
+        (frame) => frame.yaw < -POSE_AWARE_CANONICAL_NEAR_FRONT_YAW_DEG,
+      ),
+      generationMethod,
+    ),
+    nearFront: buildYawGroupTopViewAxisGroupDebug(
+      frames.filter(
+        (frame) =>
+          Math.abs(frame.yaw) <= POSE_AWARE_CANONICAL_NEAR_FRONT_YAW_DEG,
+      ),
+      generationMethod,
     ),
   }
 }
@@ -7128,6 +7702,7 @@ function buildPoseAwareMediaPipeMeshAverageLandmarksFromFrames(
   localPoints: Array<Point3D & { index: number }>
   canonicalFramePointsBeforeSemanticAlignment: Array<Point3D & { index: number }>
   canonicalFramePoints: Array<Point3D & { index: number }>
+  canonicalFramesForTopViewAxis: CanonicalFrameTopViewAxisSource[]
   semanticCenterAlignment: SemanticCenterAlignmentDebug | null
   semanticOriginCentering?: SemanticOriginCenteringDebug
   rawZValues: number[]
@@ -7206,6 +7781,7 @@ function buildPoseAwareMediaPipeMeshAverageLandmarksFromFrames(
         frameId: frame.frameId,
         yaw: frame.pose.yaw,
         pitch: frame.pose.pitch,
+        roll: frame.pose.roll,
         canonicalPointsBeforeSemanticAlignment:
           canonicalFrame.canonicalPoints,
         canonicalPoints: alignedCanonicalPoints,
@@ -7219,6 +7795,7 @@ function buildPoseAwareMediaPipeMeshAverageLandmarksFromFrames(
         frameId: string
         yaw: number
         pitch: number
+        roll: number
         localPoints: Array<Point3D & { index: number }>
         canonicalPointsBeforeSemanticAlignment: Array<
           Point3D & { index: number }
@@ -7372,6 +7949,14 @@ function buildPoseAwareMediaPipeMeshAverageLandmarksFromFrames(
     canonicalFramePoints: canonicalFrames.flatMap(
       (frame) => frame.canonicalPoints,
     ),
+    canonicalFramesForTopViewAxis: canonicalFrames.map((frame) => ({
+      frameId: frame.frameId,
+      yaw: frame.yaw,
+      pitch: frame.pitch,
+      roll: frame.roll,
+      canonicalPoints: frame.canonicalPoints,
+      weight: frame.weight,
+    })),
     semanticCenterAlignment,
     semanticOriginCentering: centeredResult.semanticOriginCentering,
     rawZValues: canonicalFrames.flatMap((frame) => frame.rawValues),
@@ -8004,6 +8589,7 @@ function buildPoseAwareMediaPipeMeshAverageCandidateDebug(
       Point3D & { index: number }
     >
     canonicalFramePoints: Array<Point3D & { index: number }>
+    canonicalFramesForTopViewAxis: CanonicalFrameTopViewAxisSource[]
     semanticCenterAlignment: SemanticCenterAlignmentDebug | null
     semanticOriginCentering?: SemanticOriginCenteringDebug
     rawZValues: number[]
@@ -8024,6 +8610,22 @@ function buildPoseAwareMediaPipeMeshAverageCandidateDebug(
   const observationSummary =
     buildPoseAwareObservationFrameDebugSummary(observationFrames)
   const topView = buildTopViewZAsymmetrySummary(canonicalResult.landmarks)
+  const topViewAxisDebug = buildTopViewAxisDebug(
+    generationMethod,
+    canonicalResult.landmarks,
+  )
+  const semanticTopViewAxisDebug = buildSemanticTopViewAxisDebug(
+    canonicalResult.landmarks,
+  )
+  const perFrameCanonicalTopViewAxisDebug =
+    buildPerFrameCanonicalTopViewAxisDebug(
+      canonicalResult.canonicalFramesForTopViewAxis,
+      generationMethod,
+    )
+  const yawGroupTopViewAxisDebug = buildYawGroupTopViewAxisDebug(
+    canonicalResult.canonicalFramesForTopViewAxis,
+    generationMethod,
+  )
   const nearFrontObservation = buildNearFrontObservationDebugSummary(dataset)
   const canonicalAverage = buildLandmarkSpatialSummary(canonicalResult.landmarks)
   const mediaPipeZAvailability =
@@ -8100,6 +8702,25 @@ function buildPoseAwareMediaPipeMeshAverageCandidateDebug(
         }
       : null,
   }
+  const axisComparison: AxisComparisonDebug = {
+    canonical3D: buildAxisComparisonItem(canonical3DResult),
+    canonicalStableZ: buildAxisComparisonItem(stableZResult),
+    balancedFrameZ: buildAxisComparisonItem(balancedFrameZResult),
+    mediaPipeMeshAverage: buildAxisComparisonItem(
+      mediaPipeMeshAverageResult,
+      "pose_aware_mediapipe_mesh_average_v1",
+      generationMethod === "pose_aware_mediapipe_mesh_average_v1"
+        ? canonicalResult.landmarks
+        : undefined,
+    ),
+    mediaPipeMeshSemanticOrigin: buildAxisComparisonItem(
+      mediaPipeMeshSemanticOriginResult,
+      "pose_aware_mediapipe_mesh_semantic_origin_v1",
+      generationMethod === "pose_aware_mediapipe_mesh_semantic_origin_v1"
+        ? canonicalResult.landmarks
+        : undefined,
+    ),
+  }
   const debugWithoutWarnings = {
     generationMethod,
     settings: getMediaPipeZSettingsDebug(),
@@ -8156,6 +8777,11 @@ function buildPoseAwareMediaPipeMeshAverageCandidateDebug(
         }
       : {}),
     topView,
+    topViewAxisDebug,
+    semanticTopViewAxisDebug,
+    perFrameCanonicalTopViewAxisDebug,
+    yawGroupTopViewAxisDebug,
+    axisComparison,
   }
 
   return {
@@ -8635,6 +9261,32 @@ function buildPoseAwareMediaPipeMeshAverageIdealLandmarks3DCandidateResult(
             }
           : {}),
         topView: buildTopViewZAsymmetrySummary([]),
+        topViewAxisDebug: buildTopViewAxisDebug(generationMethod, []),
+        semanticTopViewAxisDebug: buildSemanticTopViewAxisDebug([]),
+        perFrameCanonicalTopViewAxisDebug:
+          buildPerFrameCanonicalTopViewAxisDebug([], generationMethod),
+        yawGroupTopViewAxisDebug: buildYawGroupTopViewAxisDebug(
+          [],
+          generationMethod,
+        ),
+        axisComparison: {
+          canonical3D: buildAxisComparisonItem(canonical3DResult),
+          canonicalStableZ: buildAxisComparisonItem(stableZResult),
+          balancedFrameZ: buildAxisComparisonItem(balancedFrameZResult),
+          mediaPipeMeshAverage: buildAxisComparisonItem(
+            null,
+            "pose_aware_mediapipe_mesh_average_v1",
+            [],
+          ),
+          mediaPipeMeshSemanticOrigin:
+            generationMethod === "pose_aware_mediapipe_mesh_semantic_origin_v1"
+              ? buildAxisComparisonItem(
+                  null,
+                  "pose_aware_mediapipe_mesh_semantic_origin_v1",
+                  [],
+                )
+              : null,
+        },
         warnings: ["MediaPipe landmark.z is unavailable."],
       },
     }
@@ -9335,6 +9987,24 @@ function renderPoseAwareMediaPipeMeshAverageDebugBlock(
     ${renderSemanticCenterFrameAlignmentPreview(debug.semanticCenterAlignment)}
     ${renderSemanticOriginCenteringDebug(debug.semanticOriginCentering ?? null)}
     ${renderRuntimeProjectionAssumptionDebug(debug.runtimeProjectionAssumption ?? null)}
+    <h5>top-view x-z axis debug</h5>
+    <dl class="pose-aware-summary-list">
+      ${renderTopViewAxisDebugRows(debug.topViewAxisDebug)}
+    </dl>
+    <h5>semantic top-view axis debug</h5>
+    <dl class="pose-aware-summary-list">
+      ${renderSemanticTopViewAxisDebugRows(debug.semanticTopViewAxisDebug)}
+    </dl>
+    <h5>per-frame canonical x-z axis debug</h5>
+    <dl class="pose-aware-summary-list">
+      ${renderPerFrameCanonicalTopViewAxisSummaryRows(debug.perFrameCanonicalTopViewAxisDebug)}
+    </dl>
+    ${renderPerFrameCanonicalTopViewAxisFrameList("top positive angle frames", debug.perFrameCanonicalTopViewAxisDebug.topPositiveAngleFrames)}
+    ${renderPerFrameCanonicalTopViewAxisFrameList("top negative angle frames", debug.perFrameCanonicalTopViewAxisDebug.topNegativeAngleFrames)}
+    <h5>yaw-group x-z axis debug</h5>
+    ${renderYawGroupTopViewAxisDebug(debug.yawGroupTopViewAxisDebug)}
+    <h5>axis comparison</h5>
+    ${renderAxisComparisonDebug(debug.axisComparison)}
     <h5>MediaPipe z availability</h5>
     <dl class="pose-aware-summary-list">
       <div>
@@ -9722,6 +10392,10 @@ function renderBalancedFrameZCandidateComparisonItem(
         <dt>top view asymmetry</dt>
         <dd>${formatNullableDebugNumber(item.topViewAsymmetryScore)}</dd>
       </div>
+      <div>
+        <dt>x-z angle / slope / correlation</dt>
+        <dd>${formatNullableDebugNumber(item.xzPrincipalAxisAngleDeg)} / ${formatNullableDebugNumber(item.xzLinearFitSlope)} / ${formatNullableDebugNumber(item.xzCorrelation)}</dd>
+      </div>
       ${
         "semanticCenterAlignmentEnabled" in item
           ? `<div>
@@ -9835,6 +10509,197 @@ function renderRuntimeProjectionAssumptionDebug(
         <dd>${assumption.note}</dd>
       </div>
     </dl>
+  `
+}
+
+function renderPointXZDebug(point: PointXZDebug): string {
+  return `${formatNullableDebugNumber(point.x)} / ${formatNullableDebugNumber(point.z)}`
+}
+
+function renderTopViewAxisDebugRows(axis: TopViewAxisDebug): string {
+  return `
+    <div>
+      <dt>basis / point count</dt>
+      <dd>${axis.basis} / ${axis.pointCount}</dd>
+    </div>
+    <div>
+      <dt>x-z centroid</dt>
+      <dd>${renderPointXZDebug(axis.xzCentroid)}</dd>
+    </div>
+    <div>
+      <dt>x-z bounds center</dt>
+      <dd>${renderPointXZDebug(axis.xzBoundsCenter)}</dd>
+    </div>
+    <div>
+      <dt>principal angle / slope / correlation</dt>
+      <dd>${formatNullableDebugNumber(axis.xzPrincipalAxisAngleDeg)} / ${formatNullableDebugNumber(axis.xzLinearFitSlope)} / ${formatNullableDebugNumber(axis.xzCorrelation)}</dd>
+    </div>
+    <div>
+      <dt>covariance / x variance / z variance</dt>
+      <dd>${formatNullableDebugNumber(axis.xzCovariance)} / ${formatNullableDebugNumber(axis.xVariance)} / ${formatNullableDebugNumber(axis.zVariance)}</dd>
+    </div>
+    <div>
+      <dt>warning</dt>
+      <dd>${escapeHtml(axis.warning)}</dd>
+    </div>
+  `
+}
+
+function renderSemanticTopViewAxisDebugRows(
+  axis: SemanticTopViewAxisDebug,
+): string {
+  return `
+    <div>
+      <dt>nose / mouth / chin x-z</dt>
+      <dd>${renderPointXZDebug(axis.noseTip)} / ${renderPointXZDebug(axis.mouthCenter)} / ${renderPointXZDebug(axis.chin)}</dd>
+    </div>
+    <div>
+      <dt>eye center x-z</dt>
+      <dd>${renderPointXZDebug(axis.eyeCenter)}</dd>
+    </div>
+    <div>
+      <dt>left / right cheek x-z</dt>
+      <dd>${renderPointXZDebug(axis.cheekCenterLeft)} / ${renderPointXZDebug(axis.cheekCenterRight)}</dd>
+    </div>
+    <div>
+      <dt>nose-mouth / nose-chin angle</dt>
+      <dd>${formatNullableDebugNumber(axis.noseToMouthAxisAngleDeg)} / ${formatNullableDebugNumber(axis.noseToChinAxisAngleDeg)}</dd>
+    </div>
+    <div>
+      <dt>cheek / contour depth delta</dt>
+      <dd>${formatNullableDebugNumber(axis.cheekPairDepthDelta)} / ${formatNullableDebugNumber(axis.contourPairDepthDelta)}</dd>
+    </div>
+  `
+}
+
+function renderPerFrameCanonicalTopViewAxisSummaryRows(
+  axis: PerFrameCanonicalTopViewAxisDebug,
+): string {
+  return `
+    <div>
+      <dt>frame count</dt>
+      <dd>${axis.frameCount}</dd>
+    </div>
+    <div>
+      <dt>angle avg / min / max</dt>
+      <dd>${formatNullableDebugNumber(axis.averageAngleDeg)} / ${formatNullableDebugNumber(axis.minAngleDeg)} / ${formatNullableDebugNumber(axis.maxAngleDeg)}</dd>
+    </div>
+    <div>
+      <dt>abs angle avg</dt>
+      <dd>${formatNullableDebugNumber(axis.averageAbsAngleDeg)}</dd>
+    </div>
+    <div>
+      <dt>weighted angle avg / abs avg</dt>
+      <dd>${formatNullableDebugNumber(axis.weightedAverageAngleDeg)} / ${formatNullableDebugNumber(axis.weightedAverageAbsAngleDeg)}</dd>
+    </div>
+  `
+}
+
+function renderPerFrameCanonicalTopViewAxisFrameList(
+  label: string,
+  frames: PerFrameCanonicalTopViewAxisFrameDebug[],
+): string {
+  return `
+    <div class="pose-aware-coverage">
+      <strong>${label}</strong>
+      ${
+        frames.length === 0
+          ? `<p class="pose-aware-ready-text">none</p>`
+          : `<ul>
+              ${frames
+                .map(
+                  (frame) =>
+                    `<li>${escapeHtml(frame.frameId)}: angle ${formatNullableDebugNumber(frame.angleDeg)} / weight ${formatNumber(frame.finalCanonicalAverageWeight)} / yaw ${formatNumber(frame.yaw)} / pitch ${formatNumber(frame.pitch)} / roll ${formatNumber(frame.roll)}</li>`,
+                )
+                .join("")}
+            </ul>`
+      }
+    </div>
+  `
+}
+
+function renderYawGroupTopViewAxisGroupDebug(
+  label: string,
+  group: YawGroupTopViewAxisGroupDebug,
+): string {
+  return `
+    <h6>${label}</h6>
+    <dl class="pose-aware-summary-list">
+      <div>
+        <dt>frame count / weight total</dt>
+        <dd>${group.frameCount} / ${formatNumber(group.weightTotal)}</dd>
+      </div>
+      <div>
+        <dt>average / weighted angle</dt>
+        <dd>${formatNullableDebugNumber(group.averageAngleDeg)} / ${formatNullableDebugNumber(group.weightedAverageAngleDeg)}</dd>
+      </div>
+      <div>
+        <dt>partial candidate angle</dt>
+        <dd>${formatNullableDebugNumber(group.partialCandidateAngleDeg)}</dd>
+      </div>
+    </dl>
+  `
+}
+
+function renderYawGroupTopViewAxisDebug(
+  debug: YawGroupTopViewAxisDebug,
+): string {
+  return `
+    ${renderYawGroupTopViewAxisGroupDebug("yawPositive", debug.yawPositive)}
+    ${renderYawGroupTopViewAxisGroupDebug("yawNegative", debug.yawNegative)}
+    ${renderYawGroupTopViewAxisGroupDebug("nearFront", debug.nearFront)}
+  `
+}
+
+function renderAxisComparisonItemDebug(
+  label: string,
+  item: AxisComparisonItemDebug | null,
+): string {
+  if (!item) {
+    return `
+      <h6>${label}</h6>
+      <p class="pose-aware-ready-text">not generated</p>
+    `
+  }
+
+  return `
+    <h6>${label}</h6>
+    <dl class="pose-aware-summary-list">
+      <div>
+        <dt>x-z angle / slope / correlation</dt>
+        <dd>${formatNullableDebugNumber(item.xzPrincipalAxisAngleDeg)} / ${formatNullableDebugNumber(item.xzLinearFitSlope)} / ${formatNullableDebugNumber(item.xzCorrelation)}</dd>
+      </div>
+      <div>
+        <dt>top asymmetry / z avg delta / z range delta</dt>
+        <dd>${formatNullableDebugNumber(item.topViewAsymmetryScore)} / ${formatNullableDebugNumber(item.leftRightZAverageDelta)} / ${formatNullableDebugNumber(item.leftRightZRangeDelta)}</dd>
+      </div>
+      <div>
+        <dt>z range</dt>
+        <dd>${formatNullableDebugNumber(item.zRange)}</dd>
+      </div>
+      <div>
+        <dt>semantic center x / y</dt>
+        <dd>${formatNullableDebugNumber(item.semanticCenterX)} / ${formatNullableDebugNumber(item.semanticCenterY)}</dd>
+      </div>
+      <div>
+        <dt>centroid x / y / z</dt>
+        <dd>${formatNullableDebugNumber(item.centroidX)} / ${formatNullableDebugNumber(item.centroidY)} / ${formatNullableDebugNumber(item.centroidZ)}</dd>
+      </div>
+      <div>
+        <dt>bounds center x / z</dt>
+        <dd>${formatNullableDebugNumber(item.boundsCenterX)} / ${formatNullableDebugNumber(item.boundsCenterZ)}</dd>
+      </div>
+    </dl>
+  `
+}
+
+function renderAxisComparisonDebug(debug: AxisComparisonDebug): string {
+  return `
+    ${renderAxisComparisonItemDebug("canonical3D", debug.canonical3D)}
+    ${renderAxisComparisonItemDebug("canonicalStableZ", debug.canonicalStableZ)}
+    ${renderAxisComparisonItemDebug("balancedFrameZ", debug.balancedFrameZ)}
+    ${renderAxisComparisonItemDebug("mediaPipeMeshAverage", debug.mediaPipeMeshAverage)}
+    ${renderAxisComparisonItemDebug("mediaPipeMeshSemanticOrigin", debug.mediaPipeMeshSemanticOrigin)}
   `
 }
 
@@ -10929,6 +11794,22 @@ function isPointCloudPresetActive(preset: PointCloudPreviewPreset): boolean {
     pointCloudPreviewCamera.panX === 0 &&
     pointCloudPreviewCamera.panY === 0
   )
+}
+
+function getPointCloudPreviewViewPreset(): PointCloudPreviewPreset | "custom" {
+  if (isPointCloudPresetActive("front")) {
+    return "front"
+  }
+
+  if (isPointCloudPresetActive("side")) {
+    return "side"
+  }
+
+  if (isPointCloudPresetActive("top")) {
+    return "top"
+  }
+
+  return "custom"
 }
 
 function renderIdealLandmarks3DPointCloudPreviewPanel(): string {
