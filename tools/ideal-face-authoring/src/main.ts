@@ -130,6 +130,8 @@ const MEDIA_PIPE_Z_FRONT_REFERENCE_MATCH_RANGE_RATIO = 0.35
 const MEDIA_PIPE_Z_EXTREME_RANGE_WARNING_MAX = 1
 const MEDIA_PIPE_Z_THIN_RANGE_WARNING_RATIO = 0.03
 const MEDIA_PIPE_Z_THICK_RANGE_WARNING_RATIO = 1.2
+const PCA_RESIDUAL_YAW_CORRECTION_STRENGTH = 1.0
+const PCA_RESIDUAL_YAW_MAX_CORRECTION_DEG = 999
 const EXPRESSION_FRAME_PREVIEW_COUNT = 8
 const EXPRESSION_GROUP_IDS = [
   "mouthPucker",
@@ -625,6 +627,7 @@ interface AxisComparisonItemDebug {
   centroidZ: number | null
   boundsCenterX: number | null
   boundsCenterZ: number | null
+  noseOffsetFromBoundsCenterX: number | null
 }
 
 interface AxisComparisonDebug {
@@ -633,6 +636,7 @@ interface AxisComparisonDebug {
   balancedFrameZ: AxisComparisonItemDebug | null
   mediaPipeMeshAverage: AxisComparisonItemDebug | null
   mediaPipeMeshSemanticOrigin: AxisComparisonItemDebug | null
+  mediaPipeMeshPcaResidualYaw: AxisComparisonItemDebug | null
 }
 
 interface NearFrontObservationDebugSummary {
@@ -783,6 +787,7 @@ interface CandidateSemanticAlignmentMetricDebug {
 type PoseAwareMediaPipeMeshGenerationMethod =
   | "pose_aware_mediapipe_mesh_average_v1"
   | "pose_aware_mediapipe_mesh_semantic_origin_v1"
+  | "pose_aware_mediapipe_mesh_pca_residual_yaw_v1"
 
 interface SemanticCenterAlignmentDebug {
   enabled: true
@@ -807,7 +812,9 @@ interface SemanticCenterAlignmentDebug {
 
 interface SemanticOriginCenteringDebug {
   enabled: true
-  generationMethod: "pose_aware_mediapipe_mesh_semantic_origin_v1"
+  generationMethod:
+    | "pose_aware_mediapipe_mesh_semantic_origin_v1"
+    | "pose_aware_mediapipe_mesh_pca_residual_yaw_v1"
   mode: "eyes_nose_mouth"
   stage: "after_canonical_average"
   purpose: "asset_rotation_origin"
@@ -830,6 +837,57 @@ interface RuntimeProjectionAssumptionDebug {
   runtimeAlignment: "projected_bounds_center_to_current_bounds_center"
   authoringOriginPolicy: "semantic_center_xy_z_average"
   note: "Runtime alignment remains bounds-center based; semantic center is used only to place the asset rotation origin."
+}
+
+interface ResidualYawCorrectionFrameDebug {
+  frameId: string
+  yaw: number
+  pitch: number
+  roll: number
+  residualYawAngleDegBefore: number | null
+  appliedCorrectionDeg: number | null
+  residualYawAngleDegAfter: number | null
+  finalCanonicalAverageWeight: number
+}
+
+interface ResidualYawCorrectionDebug {
+  enabled: true
+  generationMethod: "pose_aware_mediapipe_mesh_pca_residual_yaw_v1"
+  stage: "after_inverse_pose_rotation_before_semantic_alignment_and_average"
+  basis: "x_z_pca"
+  rotationCenter: "asset_origin_0_0_0"
+  note: "candidate data is rotated around asset origin; semantic center alignment runs after residual yaw correction"
+  strength: number
+  maxCorrectionDeg: number
+  frameCount: number
+  averageResidualYawAngleDegBefore: number | null
+  averageAbsResidualYawAngleDegBefore: number | null
+  weightedAverageResidualYawAngleDegBefore: number | null
+  weightedAverageAbsResidualYawAngleDegBefore: number | null
+  averageAppliedCorrectionDeg: number | null
+  averageAbsAppliedCorrectionDeg: number | null
+  minAppliedCorrectionDeg: number | null
+  maxAppliedCorrectionDeg: number | null
+  averageResidualYawAngleDegAfter: number | null
+  averageAbsResidualYawAngleDegAfter: number | null
+  weightedAverageResidualYawAngleDegAfter: number | null
+  weightedAverageAbsResidualYawAngleDegAfter: number | null
+  representativeFrames: ResidualYawCorrectionFrameDebug[]
+}
+
+interface ResidualYawCorrectionYawGroupDebug {
+  frameCount: number
+  weightTotal: number
+  weightedAverageAngleBefore: number | null
+  weightedAverageAngleAfter: number | null
+  partialCandidateAngleBefore: number | null
+  partialCandidateAngleAfter: number | null
+}
+
+interface ResidualYawCorrectionByYawDebug {
+  yawPositive: ResidualYawCorrectionYawGroupDebug
+  yawNegative: ResidualYawCorrectionYawGroupDebug
+  nearFront: ResidualYawCorrectionYawGroupDebug
 }
 
 interface PoseAwarePartialCandidateSummary {
@@ -971,6 +1029,11 @@ interface MediaPipeMeshAverageCandidateComparisonDebug {
     semanticCenterAlignmentEnabled: boolean
     semanticOriginCenteringEnabled: boolean
   }) | null
+  mediaPipeMeshPcaResidualYaw: (CandidateDebugComparisonItem & {
+    semanticCenterAlignmentEnabled: boolean
+    semanticOriginCenteringEnabled: boolean
+    residualYawCorrectionEnabled: boolean
+  }) | null
 }
 
 interface CenterAlignmentPointDebug {
@@ -1041,6 +1104,8 @@ interface PoseAwareMediaPipeMeshAverageDebug {
   semanticCenterAlignment: SemanticCenterAlignmentDebug | null
   semanticOriginCentering?: SemanticOriginCenteringDebug
   runtimeProjectionAssumption?: RuntimeProjectionAssumptionDebug
+  residualYawCorrection?: ResidualYawCorrectionDebug
+  residualYawCorrectionByYaw?: ResidualYawCorrectionByYawDebug
   topView: TopViewZAsymmetrySummary
   topViewAxisDebug: TopViewAxisDebug
   semanticTopViewAxisDebug: SemanticTopViewAxisDebug
@@ -1085,6 +1150,7 @@ type IdealLandmarks3DGenerationMethod =
   | "pose_aware_canonical_balanced_frame_z_v1"
   | "pose_aware_mediapipe_mesh_average_v1"
   | "pose_aware_mediapipe_mesh_semantic_origin_v1"
+  | "pose_aware_mediapipe_mesh_pca_residual_yaw_v1"
 
 type PointCloudPreviewPreset = "front" | "side" | "top" | "reset"
 
@@ -1877,7 +1943,8 @@ function isIdealLandmarks3DGenerationMethod(
     value === "pose_aware_canonical_stable_z_v1" ||
     value === "pose_aware_canonical_balanced_frame_z_v1" ||
     value === "pose_aware_mediapipe_mesh_average_v1" ||
-    value === "pose_aware_mediapipe_mesh_semantic_origin_v1"
+    value === "pose_aware_mediapipe_mesh_semantic_origin_v1" ||
+    value === "pose_aware_mediapipe_mesh_pca_residual_yaw_v1"
   )
 }
 
@@ -5563,6 +5630,10 @@ function centerPoseAwareCanonicalLandmarks(
 
 function centerPoseAwareCanonicalLandmarksToSemanticOrigin(
   landmarks: IdealLandmark3DCandidate[],
+  generationMethod:
+    | "pose_aware_mediapipe_mesh_semantic_origin_v1"
+    | "pose_aware_mediapipe_mesh_pca_residual_yaw_v1" =
+    "pose_aware_mediapipe_mesh_semantic_origin_v1",
 ): {
   landmarks: IdealLandmark3DCandidate[]
   semanticOriginCentering: SemanticOriginCenteringDebug
@@ -5580,7 +5651,7 @@ function centerPoseAwareCanonicalLandmarksToSemanticOrigin(
     x: Number((landmark.x - semanticOriginX).toFixed(4)),
     y: Number((landmark.y - semanticOriginY).toFixed(4)),
     z: Number((landmark.z - zAverageBefore).toFixed(4)),
-    source: "pose_aware_mediapipe_mesh_semantic_origin_v1" as const,
+    source: generationMethod,
   }))
   const spatialAfter = buildLandmarkSpatialSummary(centeredLandmarks)
   const semanticCenterAfter = calculateSemanticCenter(
@@ -5592,7 +5663,7 @@ function centerPoseAwareCanonicalLandmarksToSemanticOrigin(
     landmarks: centeredLandmarks,
     semanticOriginCentering: {
       enabled: true,
-      generationMethod: "pose_aware_mediapipe_mesh_semantic_origin_v1",
+      generationMethod,
       mode: "eyes_nose_mouth",
       stage: "after_canonical_average",
       purpose: "asset_rotation_origin",
@@ -6032,6 +6103,64 @@ function buildTopViewAxisDebug(
   }
 }
 
+function calculateResidualYawAngleDeg(
+  landmarks: Array<{ x: number; y?: number; z?: number }>,
+): number | null {
+  return buildTopViewAxisDebug(
+    "pose_aware_mediapipe_mesh_pca_residual_yaw_v1",
+    landmarks,
+  ).xzPrincipalAxisAngleDeg
+}
+
+function rotatePointCloudYawAroundAssetOrigin(
+  points: Array<Point3D & { index: number }>,
+  correctionDeg: number,
+): Array<Point3D & { index: number }> {
+  const radians = (correctionDeg * Math.PI) / 180
+  const cos = Math.cos(radians)
+  const sin = Math.sin(radians)
+
+  return points.map((point) => ({
+    index: point.index,
+    x: Number((point.x * cos + point.z * sin).toFixed(4)),
+    y: point.y,
+    z: Number((-point.x * sin + point.z * cos).toFixed(4)),
+  }))
+}
+
+function buildResidualYawCorrectionFrameDebug(
+  frame: {
+    frameId: string
+    yaw: number
+    pitch: number
+    roll: number
+    residualYawAngleDegBefore: number | null
+    appliedCorrectionDeg: number | null
+    residualYawAngleDegAfter: number | null
+    weight: number
+  },
+): ResidualYawCorrectionFrameDebug {
+  return {
+    frameId: frame.frameId,
+    yaw: roundDebugNumber(frame.yaw),
+    pitch: roundDebugNumber(frame.pitch),
+    roll: roundDebugNumber(frame.roll),
+    residualYawAngleDegBefore:
+      frame.residualYawAngleDegBefore === null
+        ? null
+        : roundDebugNumber(frame.residualYawAngleDegBefore),
+    appliedCorrectionDeg:
+      frame.appliedCorrectionDeg === null
+        ? null
+        : roundDebugNumber(frame.appliedCorrectionDeg),
+    residualYawAngleDegAfter:
+      frame.residualYawAngleDegAfter === null
+        ? null
+        : roundDebugNumber(frame.residualYawAngleDegAfter),
+    finalCanonicalAverageWeight: roundDebugNumber(frame.weight),
+  }
+}
+
 function toPointXZDebug(point: { x: number; z?: number } | null): PointXZDebug {
   return {
     x: point === null ? null : roundDebugNumber(point.x),
@@ -6423,6 +6552,7 @@ function buildAxisComparisonItem(
   }
 
   const spatial = buildLandmarkSpatialSummary(landmarks)
+  const representative = getPoseAwareRepresentativePointSummary(landmarks)
   const topView = buildTopViewZAsymmetrySummary(landmarks)
   const topViewAxis = buildTopViewAxisDebug(generationMethod, landmarks)
   const semanticCenter = calculateSemanticCenter(
@@ -6447,6 +6577,7 @@ function buildAxisComparisonItem(
     centroidZ: spatial.centroid?.z ?? null,
     boundsCenterX: spatial.boundsCenter?.x ?? null,
     boundsCenterZ: spatial.boundsCenter?.z ?? null,
+    noseOffsetFromBoundsCenterX: representative.noseOffsetFromBoundsCenterX,
   }
 }
 
@@ -6668,6 +6799,117 @@ function weightedAverageFrameAngles(
   )
 }
 
+function weightedAverageResidualYawAngles(
+  frames: ResidualYawCorrectionFrameDebug[],
+  angleKey: "residualYawAngleDegBefore" | "residualYawAngleDegAfter",
+  useAbsolute: boolean,
+): number | null {
+  const weightedFrames = frames.filter(
+    (frame) =>
+      frame[angleKey] !== null &&
+      Number.isFinite(frame.finalCanonicalAverageWeight) &&
+      frame.finalCanonicalAverageWeight > 0,
+  )
+  const weightTotal = weightedFrames.reduce(
+    (sum, frame) => sum + frame.finalCanonicalAverageWeight,
+    0,
+  )
+
+  if (weightTotal <= 0) {
+    return null
+  }
+
+  return roundDebugNumber(
+    weightedFrames.reduce((sum, frame) => {
+      const angle = frame[angleKey] ?? 0
+
+      return (
+        sum +
+        (useAbsolute ? Math.abs(angle) : angle) *
+          frame.finalCanonicalAverageWeight
+      )
+    }, 0) / weightTotal,
+  )
+}
+
+function buildResidualYawCorrectionDebug(
+  frames: ResidualYawCorrectionFrameDebug[],
+): ResidualYawCorrectionDebug {
+  const beforeAngles = frames.map((frame) => frame.residualYawAngleDegBefore)
+  const afterAngles = frames.map((frame) => frame.residualYawAngleDegAfter)
+  const appliedCorrections = frames
+    .map((frame) => frame.appliedCorrectionDeg)
+    .filter((value): value is number => value !== null)
+
+  return {
+    enabled: true,
+    generationMethod: "pose_aware_mediapipe_mesh_pca_residual_yaw_v1",
+    stage: "after_inverse_pose_rotation_before_semantic_alignment_and_average",
+    basis: "x_z_pca",
+    rotationCenter: "asset_origin_0_0_0",
+    note:
+      "candidate data is rotated around asset origin; semantic center alignment runs after residual yaw correction",
+    strength: PCA_RESIDUAL_YAW_CORRECTION_STRENGTH,
+    maxCorrectionDeg: PCA_RESIDUAL_YAW_MAX_CORRECTION_DEG,
+    frameCount: frames.length,
+    averageResidualYawAngleDegBefore: averageNullableNumbers(beforeAngles),
+    averageAbsResidualYawAngleDegBefore: averageNullableNumbers(
+      beforeAngles.map((angle) => (angle === null ? null : Math.abs(angle))),
+    ),
+    weightedAverageResidualYawAngleDegBefore:
+      weightedAverageResidualYawAngles(
+        frames,
+        "residualYawAngleDegBefore",
+        false,
+      ),
+    weightedAverageAbsResidualYawAngleDegBefore:
+      weightedAverageResidualYawAngles(
+        frames,
+        "residualYawAngleDegBefore",
+        true,
+      ),
+    averageAppliedCorrectionDeg: averageNullableNumbers(
+      frames.map((frame) => frame.appliedCorrectionDeg),
+    ),
+    averageAbsAppliedCorrectionDeg: averageNullableNumbers(
+      frames.map((frame) =>
+        frame.appliedCorrectionDeg === null
+          ? null
+          : Math.abs(frame.appliedCorrectionDeg),
+      ),
+    ),
+    minAppliedCorrectionDeg:
+      appliedCorrections.length === 0
+        ? null
+        : roundDebugNumber(Math.min(...appliedCorrections)),
+    maxAppliedCorrectionDeg:
+      appliedCorrections.length === 0
+        ? null
+        : roundDebugNumber(Math.max(...appliedCorrections)),
+    averageResidualYawAngleDegAfter: averageNullableNumbers(afterAngles),
+    averageAbsResidualYawAngleDegAfter: averageNullableNumbers(
+      afterAngles.map((angle) => (angle === null ? null : Math.abs(angle))),
+    ),
+    weightedAverageResidualYawAngleDegAfter: weightedAverageResidualYawAngles(
+      frames,
+      "residualYawAngleDegAfter",
+      false,
+    ),
+    weightedAverageAbsResidualYawAngleDegAfter:
+      weightedAverageResidualYawAngles(
+        frames,
+        "residualYawAngleDegAfter",
+        true,
+      ),
+    representativeFrames: [...frames]
+      .sort(
+        (a, b) =>
+          b.finalCanonicalAverageWeight - a.finalCanonicalAverageWeight,
+      )
+      .slice(0, POSE_AWARE_STABLE_Z_FRAME_DEBUG_COUNT),
+  }
+}
+
 function buildPerFrameCanonicalTopViewAxisDebug(
   frames: CanonicalFrameTopViewAxisSource[],
   generationMethod: IdealLandmarks3DGenerationMethod,
@@ -6827,6 +7069,79 @@ function buildYawGroupTopViewAxisDebug(
           Math.abs(frame.yaw) <= POSE_AWARE_CANONICAL_NEAR_FRONT_YAW_DEG,
       ),
       generationMethod,
+    ),
+  }
+}
+
+function buildResidualYawCorrectionYawGroupDebug(
+  beforeFrames: CanonicalFrameTopViewAxisSource[],
+  afterFrames: CanonicalFrameTopViewAxisSource[],
+  correctionFrames: ResidualYawCorrectionFrameDebug[],
+  generationMethod: IdealLandmarks3DGenerationMethod,
+): ResidualYawCorrectionYawGroupDebug {
+  const beforePartialCandidate = buildWeightedAverageLandmarksFromCanonicalFrames(
+    beforeFrames,
+    generationMethod,
+  )
+  const afterPartialCandidate = buildWeightedAverageLandmarksFromCanonicalFrames(
+    afterFrames,
+    generationMethod,
+  )
+
+  return {
+    frameCount: correctionFrames.length,
+    weightTotal: roundDebugNumber(
+      correctionFrames.reduce(
+        (sum, frame) => sum + frame.finalCanonicalAverageWeight,
+        0,
+      ),
+    ),
+    weightedAverageAngleBefore: weightedAverageResidualYawAngles(
+      correctionFrames,
+      "residualYawAngleDegBefore",
+      false,
+    ),
+    weightedAverageAngleAfter: weightedAverageResidualYawAngles(
+      correctionFrames,
+      "residualYawAngleDegAfter",
+      false,
+    ),
+    partialCandidateAngleBefore:
+      beforeFrames.length === 0
+        ? null
+        : buildTopViewAxisDebug(generationMethod, beforePartialCandidate)
+            .xzPrincipalAxisAngleDeg,
+    partialCandidateAngleAfter:
+      afterFrames.length === 0
+        ? null
+        : buildTopViewAxisDebug(generationMethod, afterPartialCandidate)
+            .xzPrincipalAxisAngleDeg,
+  }
+}
+
+function buildResidualYawCorrectionByYawDebug(
+  beforeFrames: CanonicalFrameTopViewAxisSource[],
+  afterFrames: CanonicalFrameTopViewAxisSource[],
+  correctionFrames: ResidualYawCorrectionFrameDebug[],
+  generationMethod: IdealLandmarks3DGenerationMethod,
+): ResidualYawCorrectionByYawDebug {
+  const buildGroup = (predicate: (yaw: number) => boolean) =>
+    buildResidualYawCorrectionYawGroupDebug(
+      beforeFrames.filter((frame) => predicate(frame.yaw)),
+      afterFrames.filter((frame) => predicate(frame.yaw)),
+      correctionFrames.filter((frame) => predicate(frame.yaw)),
+      generationMethod,
+    )
+
+  return {
+    yawPositive: buildGroup(
+      (yaw) => yaw > POSE_AWARE_CANONICAL_NEAR_FRONT_YAW_DEG,
+    ),
+    yawNegative: buildGroup(
+      (yaw) => yaw < -POSE_AWARE_CANONICAL_NEAR_FRONT_YAW_DEG,
+    ),
+    nearFront: buildGroup(
+      (yaw) => Math.abs(yaw) <= POSE_AWARE_CANONICAL_NEAR_FRONT_YAW_DEG,
     ),
   }
 }
@@ -7700,11 +8015,16 @@ function buildPoseAwareMediaPipeMeshAverageLandmarksFromFrames(
   landmarks: IdealLandmark3DCandidate[]
   landmarksBeforeSemanticAlignment: IdealLandmark3DCandidate[]
   localPoints: Array<Point3D & { index: number }>
+  canonicalFramePointsBeforeResidualYawCorrection: Array<
+    Point3D & { index: number }
+  >
   canonicalFramePointsBeforeSemanticAlignment: Array<Point3D & { index: number }>
   canonicalFramePoints: Array<Point3D & { index: number }>
   canonicalFramesForTopViewAxis: CanonicalFrameTopViewAxisSource[]
   semanticCenterAlignment: SemanticCenterAlignmentDebug | null
   semanticOriginCentering?: SemanticOriginCenteringDebug
+  residualYawCorrection?: ResidualYawCorrectionDebug
+  residualYawCorrectionByYaw?: ResidualYawCorrectionByYawDebug
   rawZValues: number[]
   normalizedZValues: number[]
   scaledZValues: number[]
@@ -7738,8 +8058,32 @@ function buildPoseAwareMediaPipeMeshAverageLandmarksFromFrames(
         return null
       }
 
+      const residualYawAngleDegBefore =
+        generationMethod === "pose_aware_mediapipe_mesh_pca_residual_yaw_v1"
+          ? calculateResidualYawAngleDeg(canonicalFrame.canonicalPoints)
+          : null
+      const appliedCorrectionDeg =
+        residualYawAngleDegBefore === null
+          ? null
+          : clamp(
+              -residualYawAngleDegBefore *
+                PCA_RESIDUAL_YAW_CORRECTION_STRENGTH,
+              -PCA_RESIDUAL_YAW_MAX_CORRECTION_DEG,
+              PCA_RESIDUAL_YAW_MAX_CORRECTION_DEG,
+            )
+      const residualYawCorrectedCanonicalPoints =
+        appliedCorrectionDeg === null
+          ? canonicalFrame.canonicalPoints
+          : rotatePointCloudYawAroundAssetOrigin(
+              canonicalFrame.canonicalPoints,
+              appliedCorrectionDeg,
+            )
+      const residualYawAngleDegAfter =
+        generationMethod === "pose_aware_mediapipe_mesh_pca_residual_yaw_v1"
+          ? calculateResidualYawAngleDeg(residualYawCorrectedCanonicalPoints)
+          : null
       const semanticCenterBefore = calculateSemanticCenter(
-        canonicalFrame.canonicalPoints,
+        residualYawCorrectedCanonicalPoints,
         SEMANTIC_CENTER_ALIGNMENT_MODE,
       )
       const offsetX =
@@ -7750,7 +8094,7 @@ function buildPoseAwareMediaPipeMeshAverageLandmarksFromFrames(
         frontReferenceSemanticCenter === null || semanticCenterBefore === null
           ? 0
           : frontReferenceSemanticCenter.y - semanticCenterBefore.y
-      const alignedCanonicalPoints = canonicalFrame.canonicalPoints.map(
+      const alignedCanonicalPoints = residualYawCorrectedCanonicalPoints.map(
         (point) => ({
           index: point.index,
           x: Number((point.x + offsetX).toFixed(4)),
@@ -7783,8 +8127,20 @@ function buildPoseAwareMediaPipeMeshAverageLandmarksFromFrames(
         pitch: frame.pose.pitch,
         roll: frame.pose.roll,
         canonicalPointsBeforeSemanticAlignment:
-          canonicalFrame.canonicalPoints,
+          residualYawCorrectedCanonicalPoints,
         canonicalPoints: alignedCanonicalPoints,
+        canonicalPointsBeforeResidualYawCorrection:
+          canonicalFrame.canonicalPoints,
+        residualYawCorrectionFrame: buildResidualYawCorrectionFrameDebug({
+          frameId: frame.frameId,
+          yaw: frame.pose.yaw,
+          pitch: frame.pose.pitch,
+          roll: frame.pose.roll,
+          residualYawAngleDegBefore,
+          appliedCorrectionDeg,
+          residualYawAngleDegAfter,
+          weight: canonicalFrame.weight,
+        }),
         semanticAlignment,
       }
     })
@@ -7801,10 +8157,14 @@ function buildPoseAwareMediaPipeMeshAverageLandmarksFromFrames(
           Point3D & { index: number }
         >
         canonicalPoints: Array<Point3D & { index: number }>
+        canonicalPointsBeforeResidualYawCorrection: Array<
+          Point3D & { index: number }
+        >
         weight: number
         rawValues: number[]
         normalizedValues: number[]
         scaledValues: number[]
+        residualYawCorrectionFrame: ResidualYawCorrectionFrameDebug
         semanticAlignment: SemanticCenterAlignmentFrameDebug
       } => frame !== null,
     )
@@ -7888,9 +8248,13 @@ function buildPoseAwareMediaPipeMeshAverageLandmarksFromFrames(
     landmarks: IdealLandmark3DCandidate[]
     semanticOriginCentering?: SemanticOriginCenteringDebug
   } => {
-    if (generationMethod === "pose_aware_mediapipe_mesh_semantic_origin_v1") {
+    if (
+      generationMethod === "pose_aware_mediapipe_mesh_semantic_origin_v1" ||
+      generationMethod === "pose_aware_mediapipe_mesh_pca_residual_yaw_v1"
+    ) {
       return centerPoseAwareCanonicalLandmarksToSemanticOrigin(
         uncenteredLandmarks,
+        generationMethod,
       )
     }
 
@@ -7911,6 +8275,29 @@ function buildPoseAwareMediaPipeMeshAverageLandmarksFromFrames(
   const representativeFrameAlignmentPreview = canonicalFrames
     .map((frame) => frame.semanticAlignment)
     .slice(0, POSE_AWARE_STABLE_Z_FRAME_DEBUG_COUNT)
+  const residualYawCorrectionFrames = canonicalFrames.map(
+    (frame) => frame.residualYawCorrectionFrame,
+  )
+  const canonicalFramesBeforeResidualYawCorrection = canonicalFrames.map(
+    (frame) => ({
+      frameId: frame.frameId,
+      yaw: frame.yaw,
+      pitch: frame.pitch,
+      roll: frame.roll,
+      canonicalPoints: frame.canonicalPointsBeforeResidualYawCorrection,
+      weight: frame.weight,
+    }),
+  )
+  const canonicalFramesAfterResidualYawCorrection = canonicalFrames.map(
+    (frame) => ({
+      frameId: frame.frameId,
+      yaw: frame.yaw,
+      pitch: frame.pitch,
+      roll: frame.roll,
+      canonicalPoints: frame.canonicalPointsBeforeSemanticAlignment,
+      weight: frame.weight,
+    }),
+  )
   const semanticCenterAlignment: SemanticCenterAlignmentDebug = {
     enabled: true,
     stage: "before_canonical_average",
@@ -7943,6 +8330,9 @@ function buildPoseAwareMediaPipeMeshAverageLandmarksFromFrames(
     landmarks,
     landmarksBeforeSemanticAlignment,
     localPoints: canonicalFrames.flatMap((frame) => frame.localPoints),
+    canonicalFramePointsBeforeResidualYawCorrection: canonicalFrames.flatMap(
+      (frame) => frame.canonicalPointsBeforeResidualYawCorrection,
+    ),
     canonicalFramePointsBeforeSemanticAlignment: canonicalFrames.flatMap(
       (frame) => frame.canonicalPointsBeforeSemanticAlignment,
     ),
@@ -7959,6 +8349,19 @@ function buildPoseAwareMediaPipeMeshAverageLandmarksFromFrames(
     })),
     semanticCenterAlignment,
     semanticOriginCentering: centeredResult.semanticOriginCentering,
+    ...(generationMethod === "pose_aware_mediapipe_mesh_pca_residual_yaw_v1"
+      ? {
+          residualYawCorrection: buildResidualYawCorrectionDebug(
+            residualYawCorrectionFrames,
+          ),
+          residualYawCorrectionByYaw: buildResidualYawCorrectionByYawDebug(
+            canonicalFramesBeforeResidualYawCorrection,
+            canonicalFramesAfterResidualYawCorrection,
+            residualYawCorrectionFrames,
+            generationMethod,
+          ),
+        }
+      : {}),
     rawZValues: canonicalFrames.flatMap((frame) => frame.rawValues),
     normalizedZValues: canonicalFrames.flatMap(
       (frame) => frame.normalizedValues,
@@ -8552,10 +8955,14 @@ function buildPoseAwareMediaPipeMeshAverageWarnings(
 
   const balancedFrameZ = comparison.balancedFrameZ
   const targetComparisonItem =
-    targetGenerationMethod === "pose_aware_mediapipe_mesh_semantic_origin_v1"
-      ? (comparison.mediaPipeMeshSemanticOrigin ??
+    targetGenerationMethod === "pose_aware_mediapipe_mesh_pca_residual_yaw_v1"
+      ? (comparison.mediaPipeMeshPcaResidualYaw ??
+        comparison.mediaPipeMeshSemanticOrigin ??
         comparison.mediaPipeMeshAverage)
-      : comparison.mediaPipeMeshAverage
+      : targetGenerationMethod === "pose_aware_mediapipe_mesh_semantic_origin_v1"
+        ? (comparison.mediaPipeMeshSemanticOrigin ??
+          comparison.mediaPipeMeshAverage)
+        : comparison.mediaPipeMeshAverage
 
   if (
     balancedFrameZ &&
@@ -8585,6 +8992,9 @@ function buildPoseAwareMediaPipeMeshAverageCandidateDebug(
     landmarks: IdealLandmark3DCandidate[]
     frontReferenceCenterAlignment?: FrontReferenceCenterAlignmentDebug
     localPoints: Array<Point3D & { index: number }>
+    canonicalFramePointsBeforeResidualYawCorrection: Array<
+      Point3D & { index: number }
+    >
     canonicalFramePointsBeforeSemanticAlignment: Array<
       Point3D & { index: number }
     >
@@ -8592,6 +9002,8 @@ function buildPoseAwareMediaPipeMeshAverageCandidateDebug(
     canonicalFramesForTopViewAxis: CanonicalFrameTopViewAxisSource[]
     semanticCenterAlignment: SemanticCenterAlignmentDebug | null
     semanticOriginCentering?: SemanticOriginCenteringDebug
+    residualYawCorrection?: ResidualYawCorrectionDebug
+    residualYawCorrectionByYaw?: ResidualYawCorrectionByYawDebug
     rawZValues: number[]
     normalizedZValues: number[]
     scaledZValues: number[]
@@ -8603,6 +9015,7 @@ function buildPoseAwareMediaPipeMeshAverageCandidateDebug(
   balancedFrameZResult: IdealLandmarks3DCandidateResult | null,
   mediaPipeMeshAverageResult: IdealLandmarks3DCandidateResult | null,
   mediaPipeMeshSemanticOriginResult: IdealLandmarks3DCandidateResult | null,
+  mediaPipeMeshPcaResidualYawResult: IdealLandmarks3DCandidateResult | null,
   generationMethod: PoseAwareMediaPipeMeshGenerationMethod =
     "pose_aware_mediapipe_mesh_average_v1",
 ): PoseAwareMediaPipeMeshAverageDebug {
@@ -8663,6 +9076,13 @@ function buildPoseAwareMediaPipeMeshAverageCandidateDebug(
       : generationMethod === "pose_aware_mediapipe_mesh_semantic_origin_v1"
         ? canonicalResult
         : null
+  const pcaResidualYawDebug =
+    mediaPipeMeshPcaResidualYawResult?.debug?.generationMethod ===
+    "pose_aware_mediapipe_mesh_pca_residual_yaw_v1"
+      ? mediaPipeMeshPcaResidualYawResult.debug
+      : generationMethod === "pose_aware_mediapipe_mesh_pca_residual_yaw_v1"
+        ? canonicalResult
+        : null
   const mediaPipeMeshSemanticOriginComparison =
     mediaPipeMeshSemanticOriginResult !== null
       ? buildCandidateDebugComparisonItemFromLandmarks(
@@ -8672,6 +9092,18 @@ function buildPoseAwareMediaPipeMeshAverageCandidateDebug(
       : generationMethod === "pose_aware_mediapipe_mesh_semantic_origin_v1"
         ? buildCandidateDebugComparisonItemFromLandmarks(
             "pose_aware_mediapipe_mesh_semantic_origin_v1",
+            canonicalResult.landmarks,
+          )
+        : null
+  const mediaPipeMeshPcaResidualYawComparison =
+    mediaPipeMeshPcaResidualYawResult !== null
+      ? buildCandidateDebugComparisonItemFromLandmarks(
+          "pose_aware_mediapipe_mesh_pca_residual_yaw_v1",
+          mediaPipeMeshPcaResidualYawResult.landmarks,
+        )
+      : generationMethod === "pose_aware_mediapipe_mesh_pca_residual_yaw_v1"
+        ? buildCandidateDebugComparisonItemFromLandmarks(
+            "pose_aware_mediapipe_mesh_pca_residual_yaw_v1",
             canonicalResult.landmarks,
           )
         : null
@@ -8701,6 +9133,17 @@ function buildPoseAwareMediaPipeMeshAverageCandidateDebug(
             semanticOriginDebug?.semanticOriginCentering?.enabled ?? false,
         }
       : null,
+    mediaPipeMeshPcaResidualYaw: mediaPipeMeshPcaResidualYawComparison
+      ? {
+          ...mediaPipeMeshPcaResidualYawComparison,
+          semanticCenterAlignmentEnabled:
+            pcaResidualYawDebug?.semanticCenterAlignment?.enabled ?? false,
+          semanticOriginCenteringEnabled:
+            pcaResidualYawDebug?.semanticOriginCentering?.enabled ?? false,
+          residualYawCorrectionEnabled:
+            pcaResidualYawDebug?.residualYawCorrection?.enabled ?? false,
+        }
+      : null,
   }
   const axisComparison: AxisComparisonDebug = {
     canonical3D: buildAxisComparisonItem(canonical3DResult),
@@ -8717,6 +9160,13 @@ function buildPoseAwareMediaPipeMeshAverageCandidateDebug(
       mediaPipeMeshSemanticOriginResult,
       "pose_aware_mediapipe_mesh_semantic_origin_v1",
       generationMethod === "pose_aware_mediapipe_mesh_semantic_origin_v1"
+        ? canonicalResult.landmarks
+        : undefined,
+    ),
+    mediaPipeMeshPcaResidualYaw: buildAxisComparisonItem(
+      mediaPipeMeshPcaResidualYawResult,
+      "pose_aware_mediapipe_mesh_pca_residual_yaw_v1",
+      generationMethod === "pose_aware_mediapipe_mesh_pca_residual_yaw_v1"
         ? canonicalResult.landmarks
         : undefined,
     ),
@@ -8763,7 +9213,8 @@ function buildPoseAwareMediaPipeMeshAverageCandidateDebug(
         "Final candidate boundsCenter post alignment is disabled; per-frame semantic center alignment runs before canonical average.",
     },
     semanticCenterAlignment: canonicalResult.semanticCenterAlignment,
-    ...(generationMethod === "pose_aware_mediapipe_mesh_semantic_origin_v1"
+    ...(generationMethod === "pose_aware_mediapipe_mesh_semantic_origin_v1" ||
+    generationMethod === "pose_aware_mediapipe_mesh_pca_residual_yaw_v1"
       ? {
           semanticOriginCentering: canonicalResult.semanticOriginCentering,
           runtimeProjectionAssumption: {
@@ -8774,6 +9225,12 @@ function buildPoseAwareMediaPipeMeshAverageCandidateDebug(
             note:
               "Runtime alignment remains bounds-center based; semantic center is used only to place the asset rotation origin." as const,
           },
+        }
+      : {}),
+    ...(generationMethod === "pose_aware_mediapipe_mesh_pca_residual_yaw_v1"
+      ? {
+          residualYawCorrection: canonicalResult.residualYawCorrection,
+          residualYawCorrectionByYaw: canonicalResult.residualYawCorrectionByYaw,
         }
       : {}),
     topView,
@@ -9235,6 +9692,7 @@ function buildPoseAwareMediaPipeMeshAverageIdealLandmarks3DCandidateResult(
             semanticCenterAlignmentEnabled: false,
           },
           mediaPipeMeshSemanticOrigin: null,
+          mediaPipeMeshPcaResidualYaw: null,
         },
         frontReferenceCenterAlignment: null,
         postBoundsCenterAlignment: {
@@ -9247,7 +9705,8 @@ function buildPoseAwareMediaPipeMeshAverageIdealLandmarks3DCandidateResult(
             "Final candidate boundsCenter post alignment is disabled; MediaPipe landmark.z was unavailable before per-frame semantic alignment could run.",
         },
         semanticCenterAlignment: null,
-        ...(generationMethod === "pose_aware_mediapipe_mesh_semantic_origin_v1"
+        ...(generationMethod === "pose_aware_mediapipe_mesh_semantic_origin_v1" ||
+        generationMethod === "pose_aware_mediapipe_mesh_pca_residual_yaw_v1"
           ? {
               runtimeProjectionAssumption: {
                 rotationCenter: "asset_origin_0_0_0" as const,
@@ -9283,6 +9742,14 @@ function buildPoseAwareMediaPipeMeshAverageIdealLandmarks3DCandidateResult(
               ? buildAxisComparisonItem(
                   null,
                   "pose_aware_mediapipe_mesh_semantic_origin_v1",
+                  [],
+                )
+              : null,
+          mediaPipeMeshPcaResidualYaw:
+            generationMethod === "pose_aware_mediapipe_mesh_pca_residual_yaw_v1"
+              ? buildAxisComparisonItem(
+                  null,
+                  "pose_aware_mediapipe_mesh_pca_residual_yaw_v1",
                   [],
                 )
               : null,
@@ -9323,6 +9790,7 @@ function buildPoseAwareMediaPipeMeshAverageIdealLandmarks3DCandidateResult(
     balancedFrameZResult,
     mediaPipeMeshAverageResult,
     mediaPipeMeshSemanticOriginResult,
+    null,
     generationMethod,
   )
 
@@ -9338,7 +9806,9 @@ function buildPoseAwareMediaPipeMeshAverageIdealLandmarks3DCandidateResult(
       excludedFrameCount: dataset.excludedFrameCount,
     }),
     message:
-      generationMethod === "pose_aware_mediapipe_mesh_semantic_origin_v1"
+      generationMethod === "pose_aware_mediapipe_mesh_pca_residual_yaw_v1"
+        ? "Step 2-I-B dataset observations used MediaPipe landmark.z for frame-local 3D, then inverse pose rotation, x-z PCA residual yaw correction around asset origin, per-frame semantic registration, direction-balanced canonical weighted average, and semantic-origin x/y plus z-average centering. dx / sin(yaw) zHint is not used."
+        : generationMethod === "pose_aware_mediapipe_mesh_semantic_origin_v1"
         ? "Step 2-I-B dataset observations used MediaPipe landmark.z for frame-local 3D, then inverse pose rotation, per-frame semantic registration, direction-balanced canonical weighted average, and semantic-origin x/y plus z-average centering. dx / sin(yaw) zHint is not used."
         : "Step 2-I-B dataset observations used MediaPipe landmark.z for frame-local 3D, then inverse pose rotation and direction-balanced canonical weighted average. dx / sin(yaw) zHint is not used.",
     debug,
@@ -9367,6 +9837,16 @@ function buildPoseAwareCandidateResult(
       null,
       oldResult,
       "pose_aware_mediapipe_mesh_semantic_origin_v1",
+    )
+  }
+
+  if (generationMethod === "pose_aware_mediapipe_mesh_pca_residual_yaw_v1") {
+    return buildPoseAwareMediaPipeMeshAverageIdealLandmarks3DCandidateResult(
+      dataset,
+      comparisonResult,
+      null,
+      oldResult,
+      "pose_aware_mediapipe_mesh_pca_residual_yaw_v1",
     )
   }
 
@@ -9406,6 +9886,7 @@ function toPoseAwareCandidatePreview(): unknown {
         "pose_aware_canonical_balanced_frame_z_v1",
         "pose_aware_mediapipe_mesh_average_v1",
         "pose_aware_mediapipe_mesh_semantic_origin_v1",
+        "pose_aware_mediapipe_mesh_pca_residual_yaw_v1",
       ] as IdealLandmarks3DGenerationMethod[]
     ).map((generationMethod) => {
       const cachedResult = idealLandmarks3DCandidateResults[generationMethod]
@@ -9444,6 +9925,7 @@ function toPoseAwareCandidatePreview(): unknown {
       "pose_aware_canonical_stable_z_v1 builds direction-balanced stableZ before frame-local 3D and canonical averaging.",
       "pose_aware_canonical_balanced_frame_z_v1 uses each frame's own zHint for frame-local 3D, then direction-balances canonical averaging.",
       "pose_aware_mediapipe_mesh_average_v1 uses MediaPipe landmark.z for frame-local 3D and does not use dx / sin(yaw) zHint.",
+      "pose_aware_mediapipe_mesh_pca_residual_yaw_v1 applies x-z PCA residual yaw correction after inverse pose rotation and before semantic alignment.",
     ],
   }
 }
@@ -9594,7 +10076,24 @@ function renderPoseAwareCandidateMethodControls(): string {
           ${renderGenerationMethodOption("pose_aware_canonical_balanced_frame_z_v1")}
           ${renderGenerationMethodOption("pose_aware_mediapipe_mesh_average_v1")}
           ${renderGenerationMethodOption("pose_aware_mediapipe_mesh_semantic_origin_v1")}
+          ${renderGenerationMethodOption("pose_aware_mediapipe_mesh_pca_residual_yaw_v1")}
         </select>
+      </label>
+      <label>
+        PCA residual yaw strength
+        <input
+          type="number"
+          value="${PCA_RESIDUAL_YAW_CORRECTION_STRENGTH}"
+          readonly
+        />
+      </label>
+      <label>
+        PCA residual yaw max deg
+        <input
+          type="number"
+          value="${PCA_RESIDUAL_YAW_MAX_CORRECTION_DEG}"
+          readonly
+        />
       </label>
       <label>
         MediaPipe z normalize
@@ -9648,6 +10147,7 @@ function renderPoseAwareCachedCandidateSwitches(): string {
     "pose_aware_canonical_balanced_frame_z_v1",
     "pose_aware_mediapipe_mesh_average_v1",
     "pose_aware_mediapipe_mesh_semantic_origin_v1",
+    "pose_aware_mediapipe_mesh_pca_residual_yaw_v1",
   ]
 
   return `
@@ -9911,7 +10411,8 @@ function renderPoseAwareMediaPipeMeshAverageDebugBlock(
 ): string {
   if (
     debug.generationMethod !== "pose_aware_mediapipe_mesh_average_v1" &&
-    debug.generationMethod !== "pose_aware_mediapipe_mesh_semantic_origin_v1"
+    debug.generationMethod !== "pose_aware_mediapipe_mesh_semantic_origin_v1" &&
+    debug.generationMethod !== "pose_aware_mediapipe_mesh_pca_residual_yaw_v1"
   ) {
     return ""
   }
@@ -9987,6 +10488,8 @@ function renderPoseAwareMediaPipeMeshAverageDebugBlock(
     ${renderSemanticCenterFrameAlignmentPreview(debug.semanticCenterAlignment)}
     ${renderSemanticOriginCenteringDebug(debug.semanticOriginCentering ?? null)}
     ${renderRuntimeProjectionAssumptionDebug(debug.runtimeProjectionAssumption ?? null)}
+    ${renderResidualYawCorrectionDebug(debug.residualYawCorrection)}
+    ${renderResidualYawCorrectionByYawDebug(debug.residualYawCorrectionByYaw)}
     <h5>top-view x-z axis debug</h5>
     <dl class="pose-aware-summary-list">
       ${renderTopViewAxisDebugRows(debug.topViewAxisDebug)}
@@ -10082,6 +10585,10 @@ function renderPoseAwareMediaPipeMeshAverageDebugBlock(
     ${renderBalancedFrameZCandidateComparisonItem(
       "pose_aware_mediapipe_mesh_semantic_origin_v1",
       debug.multiCandidateComparison.mediaPipeMeshSemanticOrigin,
+    )}
+    ${renderBalancedFrameZCandidateComparisonItem(
+      "pose_aware_mediapipe_mesh_pca_residual_yaw_v1",
+      debug.multiCandidateComparison.mediaPipeMeshPcaResidualYaw,
     )}
     <h5>frame weight debug</h5>
     ${renderFrameStableZWeightList("top weighted frames", debug.frameWeights.topWeightedFrames)}
@@ -10689,7 +11196,114 @@ function renderAxisComparisonItemDebug(
         <dt>bounds center x / z</dt>
         <dd>${formatNullableDebugNumber(item.boundsCenterX)} / ${formatNullableDebugNumber(item.boundsCenterZ)}</dd>
       </div>
+      <div>
+        <dt>nose offset from bounds center x</dt>
+        <dd>${formatNullableDebugNumber(item.noseOffsetFromBoundsCenterX)}</dd>
+      </div>
     </dl>
+  `
+}
+
+function renderResidualYawCorrectionDebug(
+  debug: ResidualYawCorrectionDebug | undefined,
+): string {
+  if (!debug) {
+    return ""
+  }
+
+  return `
+    <h5>PCA residual yaw correction</h5>
+    <dl class="pose-aware-summary-list">
+      <div>
+        <dt>enabled / stage / basis</dt>
+        <dd>${debug.enabled ? "true" : "false"} / ${debug.stage} / ${debug.basis}</dd>
+      </div>
+      <div>
+        <dt>rotation center</dt>
+        <dd>${debug.rotationCenter}</dd>
+      </div>
+      <div>
+        <dt>strength / max correction deg</dt>
+        <dd>${formatNumber(debug.strength)} / ${formatNumber(debug.maxCorrectionDeg)}</dd>
+      </div>
+      <div>
+        <dt>frame count</dt>
+        <dd>${debug.frameCount}</dd>
+      </div>
+      <div>
+        <dt>before avg / abs / weighted / weighted abs</dt>
+        <dd>${formatNullableDebugNumber(debug.averageResidualYawAngleDegBefore)} / ${formatNullableDebugNumber(debug.averageAbsResidualYawAngleDegBefore)} / ${formatNullableDebugNumber(debug.weightedAverageResidualYawAngleDegBefore)} / ${formatNullableDebugNumber(debug.weightedAverageAbsResidualYawAngleDegBefore)}</dd>
+      </div>
+      <div>
+        <dt>applied avg / abs / min / max</dt>
+        <dd>${formatNullableDebugNumber(debug.averageAppliedCorrectionDeg)} / ${formatNullableDebugNumber(debug.averageAbsAppliedCorrectionDeg)} / ${formatNullableDebugNumber(debug.minAppliedCorrectionDeg)} / ${formatNullableDebugNumber(debug.maxAppliedCorrectionDeg)}</dd>
+      </div>
+      <div>
+        <dt>after avg / abs / weighted / weighted abs</dt>
+        <dd>${formatNullableDebugNumber(debug.averageResidualYawAngleDegAfter)} / ${formatNullableDebugNumber(debug.averageAbsResidualYawAngleDegAfter)} / ${formatNullableDebugNumber(debug.weightedAverageResidualYawAngleDegAfter)} / ${formatNullableDebugNumber(debug.weightedAverageAbsResidualYawAngleDegAfter)}</dd>
+      </div>
+      <div>
+        <dt>note</dt>
+        <dd>${debug.note}</dd>
+      </div>
+    </dl>
+    <h6>representative frames</h6>
+    <ul class="pose-aware-frame-list">
+      ${debug.representativeFrames
+        .map(
+          (frame) => `
+            <li>
+              ${escapeHtml(frame.frameId)}:
+              yaw ${formatNumber(frame.yaw)} /
+              pitch ${formatNumber(frame.pitch)} /
+              roll ${formatNumber(frame.roll)} /
+              before ${formatNullableDebugNumber(frame.residualYawAngleDegBefore)} /
+              correction ${formatNullableDebugNumber(frame.appliedCorrectionDeg)} /
+              after ${formatNullableDebugNumber(frame.residualYawAngleDegAfter)} /
+              weight ${formatNumber(frame.finalCanonicalAverageWeight)}
+            </li>
+          `,
+        )
+        .join("")}
+    </ul>
+  `
+}
+
+function renderResidualYawCorrectionYawGroupDebug(
+  label: string,
+  group: ResidualYawCorrectionYawGroupDebug,
+): string {
+  return `
+    <h6>${label}</h6>
+    <dl class="pose-aware-summary-list">
+      <div>
+        <dt>frame count / weight total</dt>
+        <dd>${group.frameCount} / ${formatNumber(group.weightTotal)}</dd>
+      </div>
+      <div>
+        <dt>weighted angle before / after</dt>
+        <dd>${formatNullableDebugNumber(group.weightedAverageAngleBefore)} / ${formatNullableDebugNumber(group.weightedAverageAngleAfter)}</dd>
+      </div>
+      <div>
+        <dt>partial candidate angle before / after</dt>
+        <dd>${formatNullableDebugNumber(group.partialCandidateAngleBefore)} / ${formatNullableDebugNumber(group.partialCandidateAngleAfter)}</dd>
+      </div>
+    </dl>
+  `
+}
+
+function renderResidualYawCorrectionByYawDebug(
+  debug: ResidualYawCorrectionByYawDebug | undefined,
+): string {
+  if (!debug) {
+    return ""
+  }
+
+  return `
+    <h5>residual yaw correction by yaw</h5>
+    ${renderResidualYawCorrectionYawGroupDebug("yawPositive", debug.yawPositive)}
+    ${renderResidualYawCorrectionYawGroupDebug("yawNegative", debug.yawNegative)}
+    ${renderResidualYawCorrectionYawGroupDebug("nearFront", debug.nearFront)}
   `
 }
 
@@ -10700,6 +11314,7 @@ function renderAxisComparisonDebug(debug: AxisComparisonDebug): string {
     ${renderAxisComparisonItemDebug("balancedFrameZ", debug.balancedFrameZ)}
     ${renderAxisComparisonItemDebug("mediaPipeMeshAverage", debug.mediaPipeMeshAverage)}
     ${renderAxisComparisonItemDebug("mediaPipeMeshSemanticOrigin", debug.mediaPipeMeshSemanticOrigin)}
+    ${renderAxisComparisonItemDebug("mediaPipeMeshPcaResidualYaw", debug.mediaPipeMeshPcaResidualYaw)}
   `
 }
 
@@ -13126,6 +13741,16 @@ function attachIdealLandmarks3DCandidateHandler(): void {
           "pose_aware_mediapipe_mesh_semantic_origin_v1",
           mediaPipeMeshAverageResult,
         )
+      const mediaPipeMeshPcaResidualYawResult =
+        buildPoseAwareMediaPipeMeshAverageIdealLandmarks3DCandidateResult(
+          dataset,
+          canonicalResult,
+          stableZResult,
+          balancedFrameZResult,
+          "pose_aware_mediapipe_mesh_pca_residual_yaw_v1",
+          mediaPipeMeshAverageResult,
+          mediaPipeMeshSemanticOriginResult,
+        )
 
       idealLandmarks3DCandidateResults = {
         pose_aware_weighted_z_v1: weightedResult,
@@ -13135,6 +13760,8 @@ function attachIdealLandmarks3DCandidateHandler(): void {
         pose_aware_mediapipe_mesh_average_v1: mediaPipeMeshAverageResult,
         pose_aware_mediapipe_mesh_semantic_origin_v1:
           mediaPipeMeshSemanticOriginResult,
+        pose_aware_mediapipe_mesh_pca_residual_yaw_v1:
+          mediaPipeMeshPcaResidualYawResult,
       }
       idealLandmarks3DCandidateResult =
         idealLandmarks3DCandidateResults[
