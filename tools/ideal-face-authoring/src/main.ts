@@ -70,6 +70,8 @@ const POINT_CLOUD_MAX_ZOOM = 5
 const POINT_CLOUD_ROTATION_SENSITIVITY = 0.01
 const POINT_CLOUD_ZOOM_SENSITIVITY = 0.001
 const POINT_CLOUD_MAX_PITCH = (Math.PI * 89) / 180
+const DEFAULT_POINT_CLOUD_ROTATION_CENTER_MODE: PointCloudRotationCenterMode =
+  "auto_center"
 const LANDMARK_GROUP_EDITOR_GROUP_IDS = [
   "mouth",
   "left_eye",
@@ -985,6 +987,8 @@ type IdealLandmarks3DGenerationMethod =
 
 type PointCloudPreviewPreset = "front" | "side" | "top" | "reset"
 
+type PointCloudRotationCenterMode = "auto_center" | "asset_origin"
+
 type PointCloudDragMode = "rotate" | "pan"
 
 type PointCloudPreviewCamera = {
@@ -1305,6 +1309,8 @@ let landmarkGroupEditorDragState: LandmarkGroupEditorDragState | null = null
 let pointCloudPreviewCamera: PointCloudPreviewCamera = {
   ...DEFAULT_POINT_CLOUD_CAMERA,
 }
+let pointCloudRotationCenterMode: PointCloudRotationCenterMode =
+  DEFAULT_POINT_CLOUD_ROTATION_CENTER_MODE
 let pointCloudDragState: PointCloudDragState | null = null
 const extractionVideo = document.createElement("video")
 const analysisCanvas = document.createElement("canvas")
@@ -2492,6 +2498,46 @@ function buildFrontReferenceCoordinateDebug(
   }
 }
 
+function toPointCloudPreviewDisplayDebug(
+  landmarks: IdealLandmark3DCandidate[],
+): {
+  rotationCenterMode: PointCloudRotationCenterMode
+  centeredBeforeRotation: boolean
+  autoFitToCanvas: boolean
+  worldOriginMappedToCanvasCenter: boolean
+  yAxisInvertedForCanvas: true
+  assetOriginUsesYAxisInversion: boolean
+  canvasYMapping: "canvasCenterY - rotatedY * scale"
+  rotationCenter: Point3D
+  note: string
+} {
+  const assetOrigin = { x: 0, y: 0, z: 0 }
+  const autoCenter = getPointCloudPreviewDataCenter(landmarks)
+  const rotationCenter =
+    pointCloudRotationCenterMode === "asset_origin" ? assetOrigin : autoCenter
+
+  return {
+    rotationCenterMode: pointCloudRotationCenterMode,
+    centeredBeforeRotation: pointCloudRotationCenterMode === "auto_center",
+    autoFitToCanvas: true,
+    worldOriginMappedToCanvasCenter:
+      pointCloudRotationCenterMode === "asset_origin",
+    yAxisInvertedForCanvas: true,
+    assetOriginUsesYAxisInversion:
+      pointCloudRotationCenterMode === "asset_origin",
+    canvasYMapping: "canvasCenterY - rotatedY * scale",
+    rotationCenter: {
+      x: roundDebugNumber(rotationCenter.x),
+      y: roundDebugNumber(rotationCenter.y),
+      z: roundDebugNumber(rotationCenter.z),
+    },
+    note:
+      pointCloudRotationCenterMode === "asset_origin"
+        ? "Preview rotates same-unit candidate points around asset origin (0,0,0); auto fit changes display scale only."
+        : "Preview keeps the existing display behavior: candidate centroid is subtracted before rotation and rotated bounds are centered in the viewport.",
+  }
+}
+
 function toCoordinateDebugPreview(
   poseAwareDataset: PoseAwareInferenceDataset,
   currentCandidate: IdealLandmarks3DCandidateResult,
@@ -2526,12 +2572,9 @@ function toCoordinateDebugPreview(
     },
     aspectComparison,
     previewDisplay: {
-      centeredBeforeRotation: true,
-      yAxisInvertedForCanvas: true,
+      ...toPointCloudPreviewDisplayDebug(currentCandidate.landmarks),
       zDisplayScale: POINT_CLOUD_DEPTH_DISPLAY_SCALE,
-      autoFitToCanvas: true,
-      note:
-        "Point cloud preview display transforms do not mutate candidate data.",
+      dataMutation: false,
     },
     export: {
       schemaVersion: IDEAL_FACE_ASSET_SCHEMA_VERSION,
@@ -2928,6 +2971,12 @@ function getPointCloudPreviewPresetCamera(
   return createPointCloudPreviewCamera()
 }
 
+function isPointCloudRotationCenterMode(
+  value: string | undefined,
+): value is PointCloudRotationCenterMode {
+  return value === "auto_center" || value === "asset_origin"
+}
+
 function formatPointCloudPreviewPreset(preset: PointCloudPreviewPreset): string {
   const labels: Record<PointCloudPreviewPreset, string> = {
     front: "正面に戻す",
@@ -2937,6 +2986,17 @@ function formatPointCloudPreviewPreset(preset: PointCloudPreviewPreset): string 
   }
 
   return labels[preset]
+}
+
+function formatPointCloudRotationCenterMode(
+  mode: PointCloudRotationCenterMode,
+): string {
+  const labels: Record<PointCloudRotationCenterMode, string> = {
+    auto_center: "自動中央寄せ",
+    asset_origin: "asset原点(0,0,0)中心",
+  }
+
+  return labels[mode]
 }
 
 function formatPointCloudCamera(camera: PointCloudPreviewCamera): string {
@@ -2966,7 +3026,16 @@ function getPointCloudPreviewDataCenter(
 function toPointCloudPreviewLocalPoint(
   point: IdealLandmark3DCandidate,
   center: PointCloudPreviewPoint,
+  rotationCenterMode: PointCloudRotationCenterMode,
 ): PointCloudPreviewPoint {
+  if (rotationCenterMode === "asset_origin") {
+    return {
+      x: point.x,
+      y: -point.y,
+      z: point.z * POINT_CLOUD_DEPTH_DISPLAY_SCALE,
+    }
+  }
+
   return {
     x: point.x - center.x,
     y: -(point.y - center.y),
@@ -3021,6 +3090,21 @@ function getRotatedPointCloudBounds(
     centerY: (yRange.min + yRange.max) / 2,
     scale: 1 / Math.max(horizontalSpan, verticalSpan),
   }
+}
+
+function getOriginCenteredPointCloudScale(
+  rotatedPoints: PointCloudPreviewPoint[],
+): number {
+  const maxAbsX = Math.max(
+    ...rotatedPoints.map((point) => Math.abs(point.x)),
+    0.001,
+  )
+  const maxAbsY = Math.max(
+    ...rotatedPoints.map((point) => Math.abs(point.y)),
+    0.001,
+  )
+
+  return 1 / Math.max(maxAbsX * 2, maxAbsY * 2)
 }
 
 function getConfidenceOpacity(confidence: number): string {
@@ -10814,6 +10898,23 @@ function renderPointCloudPresetButton(
   `
 }
 
+function renderPointCloudRotationCenterModeButton(
+  mode: PointCloudRotationCenterMode,
+): string {
+  const isActive = pointCloudRotationCenterMode === mode
+
+  return `
+    <button
+      class="point-cloud-mode-button${isActive ? " point-cloud-mode-button-active" : ""}"
+      type="button"
+      data-point-cloud-rotation-center-mode="${mode}"
+      aria-pressed="${isActive ? "true" : "false"}"
+    >
+      ${formatPointCloudRotationCenterMode(mode)}
+    </button>
+  `
+}
+
 function isPointCloudPresetActive(preset: PointCloudPreviewPreset): boolean {
   if (preset === "reset") {
     return false
@@ -10854,6 +10955,11 @@ function renderIdealLandmarks3DPointCloudPreviewPanel(): string {
         ${renderPointCloudPresetButton("top")}
         ${renderPointCloudPresetButton("reset")}
       </div>
+      <div class="point-cloud-controls" aria-label="rotation center">
+        <span>回転中心:</span>
+        ${renderPointCloudRotationCenterModeButton("auto_center")}
+        ${renderPointCloudRotationCenterModeButton("asset_origin")}
+      </div>
       <p class="point-cloud-preview-note">この preview は確認用表示です。マウス操作で視点を変更できますが、生成済み 3D 候補データ自体は変更していません。</p>
       ${
         hasGeneratedLandmarks
@@ -10882,6 +10988,10 @@ function renderIdealLandmarks3DPointCloudPreviewPanel(): string {
         <div>
           <dt>視点</dt>
           <dd data-point-cloud-camera-label>${formatPointCloudCamera(pointCloudPreviewCamera)}</dd>
+        </div>
+        <div>
+          <dt>回転中心</dt>
+          <dd>${formatPointCloudRotationCenterMode(pointCloudRotationCenterMode)}</dd>
         </div>
         <div>
           <dt>x min / max</dt>
@@ -10945,6 +11055,20 @@ function updatePointCloudCameraLabel(): void {
       button.classList.toggle("point-cloud-preset-button-active", isActive)
       button.setAttribute("aria-pressed", isActive ? "true" : "false")
     })
+
+  document
+    .querySelectorAll<HTMLButtonElement>(
+      "[data-point-cloud-rotation-center-mode]",
+    )
+    .forEach((button) => {
+      const mode = button.dataset.pointCloudRotationCenterMode
+      const isActive =
+        isPointCloudRotationCenterMode(mode) &&
+        pointCloudRotationCenterMode === mode
+
+      button.classList.toggle("point-cloud-mode-button-active", isActive)
+      button.setAttribute("aria-pressed", isActive ? "true" : "false")
+    })
 }
 
 function drawPointCloudPreviewCanvas(): void {
@@ -10983,16 +11107,28 @@ function drawPointCloudPreviewCanvas(): void {
   const previewCenter = getPointCloudPreviewDataCenter(result.landmarks)
   const rotatedPoints = result.landmarks.map((landmark) =>
     rotatePointForPointCloudPreview(
-      toPointCloudPreviewLocalPoint(landmark, previewCenter),
+      toPointCloudPreviewLocalPoint(
+        landmark,
+        previewCenter,
+        pointCloudRotationCenterMode,
+      ),
       pointCloudPreviewCamera,
     ),
   )
   const bounds = getRotatedPointCloudBounds(rotatedPoints)
   const drawableSize =
     Math.min(width, height) - POINT_CLOUD_PREVIEW_PADDING * 2
-  const scale = drawableSize * bounds.scale * pointCloudPreviewCamera.zoom
+  const fitScale =
+    pointCloudRotationCenterMode === "asset_origin"
+      ? getOriginCenteredPointCloudScale(rotatedPoints)
+      : bounds.scale
+  const scale = drawableSize * fitScale * pointCloudPreviewCamera.zoom
   const centerX = width / 2 + pointCloudPreviewCamera.panX
   const centerY = height / 2 + pointCloudPreviewCamera.panY
+  const drawCenterX =
+    pointCloudRotationCenterMode === "asset_origin" ? 0 : bounds.centerX
+  const drawCenterY =
+    pointCloudRotationCenterMode === "asset_origin" ? 0 : bounds.centerY
   const pointsToDraw = result.landmarks
     .map((landmark, index) => {
       const rotated = rotatedPoints[index]
@@ -11000,8 +11136,8 @@ function drawPointCloudPreviewCanvas(): void {
       return {
         landmark,
         depth: rotated.z,
-        x: centerX + (rotated.x - bounds.centerX) * scale,
-        y: centerY - (rotated.y - bounds.centerY) * scale,
+        x: centerX + (rotated.x - drawCenterX) * scale,
+        y: centerY - (rotated.y - drawCenterY) * scale,
       }
     })
     .sort((a, b) => a.depth - b.depth)
@@ -11013,6 +11149,16 @@ function drawPointCloudPreviewCanvas(): void {
       point.landmark.confidence,
     )})`
     context.fill()
+  }
+
+  if (pointCloudRotationCenterMode === "asset_origin") {
+    drawPointCloudAssetOriginMarker(
+      context,
+      centerX,
+      centerY,
+      scale,
+      pointCloudPreviewCamera,
+    )
   }
 
   updatePointCloudCameraLabel()
@@ -11273,6 +11419,68 @@ function drawPointCloudPreviewGuide(
     POINT_CLOUD_PREVIEW_PADDING,
     height - POINT_CLOUD_PREVIEW_PADDING,
   )
+}
+
+function drawPointCloudAssetOriginMarker(
+  context: CanvasRenderingContext2D,
+  centerX: number,
+  centerY: number,
+  scale: number,
+  camera: PointCloudPreviewCamera,
+): void {
+  const axisLength = 28 / Math.max(scale, 0.001)
+  const xAxis = rotatePointForPointCloudPreview(
+    { x: axisLength, y: 0, z: 0 },
+    camera,
+  )
+  const yAxis = rotatePointForPointCloudPreview(
+    { x: 0, y: axisLength, z: 0 },
+    camera,
+  )
+  const xAxisEnd = {
+    x: centerX + xAxis.x * scale,
+    y: centerY - xAxis.y * scale,
+  }
+  const yAxisEnd = {
+    x: centerX + yAxis.x * scale,
+    y: centerY - yAxis.y * scale,
+  }
+
+  context.save()
+  context.lineWidth = 2
+  context.strokeStyle = "#2f78c4"
+  context.beginPath()
+  context.moveTo(centerX - 7, centerY)
+  context.lineTo(centerX + 7, centerY)
+  context.moveTo(centerX, centerY - 7)
+  context.lineTo(centerX, centerY + 7)
+  context.stroke()
+
+  context.strokeStyle = "#d94f45"
+  context.beginPath()
+  context.moveTo(centerX, centerY)
+  context.lineTo(xAxisEnd.x, xAxisEnd.y)
+  context.stroke()
+
+  context.strokeStyle = "#27594c"
+  context.beginPath()
+  context.moveTo(centerX, centerY)
+  context.lineTo(yAxisEnd.x, yAxisEnd.y)
+  context.stroke()
+
+  context.fillStyle = "#2f78c4"
+  context.beginPath()
+  context.arc(centerX, centerY, 4, 0, Math.PI * 2)
+  context.fill()
+
+  context.font = "700 12px system-ui, -apple-system, BlinkMacSystemFont, sans-serif"
+  context.fillStyle = "#25342e"
+  context.fillText("asset origin", centerX + 10, centerY - 10)
+  context.fillStyle = "#d94f45"
+  context.fillText("x", xAxisEnd.x + 4, xAxisEnd.y + 4)
+  context.fillStyle = "#27594c"
+  context.fillText("y", yAxisEnd.x + 4, yAxisEnd.y + 4)
+  context.restore()
 }
 
 function renderScanPresetControl(disabled: boolean): string {
@@ -12097,6 +12305,23 @@ function attachIdealLandmarks3DCandidateHandler(): void {
         }
 
         pointCloudPreviewCamera = getPointCloudPreviewPresetCamera(preset)
+        render()
+      })
+    })
+
+  document
+    .querySelectorAll<HTMLButtonElement>(
+      "[data-point-cloud-rotation-center-mode]",
+    )
+    .forEach((button) => {
+      button.addEventListener("click", () => {
+        const mode = button.dataset.pointCloudRotationCenterMode
+
+        if (!isPointCloudRotationCenterMode(mode)) {
+          return
+        }
+
+        pointCloudRotationCenterMode = mode
         render()
       })
     })
@@ -14215,7 +14440,8 @@ style.textContent = `
     line-height: 1.5;
   }
 
-  .point-cloud-preset-button {
+  .point-cloud-preset-button,
+  .point-cloud-mode-button {
     min-height: 34px;
     border: 1px solid #b7c7c2;
     background: #edf4f1;
@@ -14224,7 +14450,8 @@ style.textContent = `
     font-size: 13px;
   }
 
-  .point-cloud-preset-button-active {
+  .point-cloud-preset-button-active,
+  .point-cloud-mode-button-active {
     border-color: #27594c;
     background: #27594c;
     color: #ffffff;
