@@ -8066,7 +8066,7 @@ function buildPoseAwareMediaPipeMeshAverageLandmarksFromFrames(
         residualYawAngleDegBefore === null
           ? null
           : clamp(
-              -residualYawAngleDegBefore *
+              residualYawAngleDegBefore *
                 PCA_RESIDUAL_YAW_CORRECTION_STRENGTH,
               -PCA_RESIDUAL_YAW_MAX_CORRECTION_DEG,
               PCA_RESIDUAL_YAW_MAX_CORRECTION_DEG,
