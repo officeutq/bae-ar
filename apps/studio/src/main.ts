@@ -2539,18 +2539,8 @@ Detect: ${faceFrameLoopDebug.detectCallCount}/${mediaPipeDebug?.detectSuccessCou
             order: 3;
           }
 
-          .studio-layout > .preview-heading {
+          .studio-layout > .studio-top-grid {
             order: 0;
-          }
-
-          .studio-layout > .preview-grid {
-            order: 1;
-          }
-
-          .studio-layout > .realtime-heading,
-          .studio-layout > label,
-          .studio-layout > fieldset[data-shape-warp-debug-controls] {
-            order: 2;
           }
 
           .studio-layout > section {
@@ -2571,11 +2561,51 @@ Detect: ${faceFrameLoopDebug.detectCallCount}/${mediaPipeDebug?.detectSuccessCou
             margin-bottom: 0;
           }
 
+          .studio-top-grid {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(280px, 0.9fr);
+            gap: 12px;
+            align-items: start;
+          }
+
           .preview-grid {
             display: grid;
+            grid-column: 1 / span 2;
+            grid-row: 1;
             grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 16px;
+            gap: 12px;
             align-items: start;
+          }
+
+          .preview-grid > section,
+          .realtime-panel {
+            min-width: 0;
+            box-sizing: border-box;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            padding: 12px;
+            background: #ffffff;
+          }
+
+          .realtime-panel {
+            grid-column: 3;
+            grid-row: 1;
+            max-height: calc(100vh - 112px);
+            overflow: auto;
+          }
+
+          .realtime-panel > label {
+            display: block;
+            margin: 8px 0;
+          }
+
+          .realtime-panel fieldset {
+            min-width: 0;
+            margin: 8px 0;
+          }
+
+          .realtime-panel input[type="number"] {
+            max-width: 100%;
           }
 
           .preview-container {
@@ -2604,10 +2634,10 @@ Detect: ${faceFrameLoopDebug.detectCallCount}/${mediaPipeDebug?.detectSuccessCou
           }
 
           .studio-layout > header,
-          .studio-layout > label,
           .studio-layout > fieldset,
           .studio-layout > section,
-          .studio-layout > details {
+          .studio-layout > details,
+          .studio-top-grid {
             min-width: 0;
           }
 
@@ -2625,6 +2655,17 @@ Detect: ${faceFrameLoopDebug.detectCallCount}/${mediaPipeDebug?.detectSuccessCou
             overflow: auto;
           }
 
+          @media (max-width: 960px) {
+            .studio-top-grid {
+              grid-template-columns: 1fr;
+            }
+
+            .preview-grid,
+            .realtime-panel {
+              grid-column: 1;
+            }
+          }
+
           @media (max-width: 760px) {
             .preview-grid {
               grid-template-columns: 1fr;
@@ -2633,8 +2674,9 @@ Detect: ${faceFrameLoopDebug.detectCallCount}/${mediaPipeDebug?.detectSuccessCou
         </style>
         <h2 class="debug-heading">Debug values</h2>
         <pre>${escapeHtml(statusSummary)}</pre>
-        <h2 class="preview-heading">プレビュー</h2>
-        <h2 class="realtime-heading">リアルタイム調整</h2>
+        <div class="studio-top-grid">
+          <section class="realtime-panel">
+            <h2 class="realtime-heading">リアルタイム調整</h2>
         <label>
           <input id="ideal-landmark-difference-lines" type="checkbox" ${showIdealLandmarkDifferenceLines ? "checked" : ""} />
           478点差分線を表示
@@ -2709,6 +2751,7 @@ Detect: ${faceFrameLoopDebug.detectCallCount}/${mediaPipeDebug?.detectSuccessCou
             <p>topologyLandmarkCount: ${MEDIAPIPE_FACE_MESH_TOPOLOGY_LANDMARK_COUNT} / triangleCount: ${MEDIAPIPE_FACE_MESH_TRIANGLE_COUNT}</p>
           </fieldset>
         </fieldset>
+          </section>
         <div class="preview-grid">
           <section>
             <h3>Source Preview</h3>
@@ -2718,6 +2761,7 @@ Detect: ${faceFrameLoopDebug.detectCallCount}/${mediaPipeDebug?.detectSuccessCou
             <h3>Processed Preview: ${formatProcessedPreviewLabel()}</h3>
             <div id="processed-preview" class="preview-container">${camera.getVideo() ? "" : "利用できません"}</div>
           </section>
+        </div>
         </div>
         <section>
           <h2>IdealFace JSON 読み込み</h2>
