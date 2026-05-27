@@ -50,7 +50,7 @@ frame usage の詳細な用語表は [usage-aware frame sampling v1](usage-aware
 - IdealFace Authoring Tool Step 2-I-A/B/C
 - detailed scan
 - pose-aware inference dataset
-- `pose_aware_weighted_z_v1` candidate generation
+- `pose_aware_mediapipe_mesh_pca_residual_yaw_v1` candidate generation
 - `idealLandmarks3D` 478点 candidate generation
 - Step 2-H currentCandidate 3D point cloud preview
 - landmarkGroups v1 docs specification
@@ -228,7 +228,7 @@ mixed expression が多い動画では warning を出し、v1 の自動生成で
 
 ## expression 3D 478 生成
 
-既存の `pose_aware_weighted_z_v1` candidate generation と同じ考え方を使い、各 expression frame group から expression 3D 478 を生成する候補とします。
+既存の `pose_aware_mediapipe_mesh_pca_residual_yaw_v1` candidate generation と同じく、MediaPipe landmark.z、FacePose inverse rotation、direction-balanced aggregation を使い、各 expression frame group から expression 3D 478 を生成する候補とします。expression 側で PCA residual yaw correction / semantic origin centering を使うかは別途 debug 比較して決めます。
 
 ```text
 neutral frame group:

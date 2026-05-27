@@ -117,7 +117,7 @@ MP4 input
   -> Step 2-I-A frame selection
        正面基準の手動選択 / 推定に使うフレーム / 除外フレーム
   -> Step 2-I-B pose-aware inference dataset
-  -> Step 2-I-C pose_aware_weighted_z_v1 candidate generation
+  -> Step 2-I-C pose_aware_mediapipe_mesh_pca_residual_yaw_v1 candidate generation
        roll 補正
        yaw / pitch / weight による z hint
        idealLandmarks3D 478点候補生成
@@ -422,7 +422,7 @@ MP4 input
   -> Step 2-I-A frame selection
        正面基準の手動選択 / 推定に使うフレーム / 除外フレーム
   -> Step 2-I-B pose-aware inference dataset
-  -> Step 2-I-C pose_aware_weighted_z_v1 candidate generation
+  -> Step 2-I-C pose_aware_mediapipe_mesh_pca_residual_yaw_v1 candidate generation
        roll 補正
        yaw / pitch / weight による z hint
        idealLandmarks3D 478点候補生成
@@ -507,7 +507,7 @@ projected ideal 478 landmarks
 
 ## IdealFace Authoring Tool Current Generation Path
 
-Step 2-G v1 five-pose candidate generation has been removed from the current code. The active 3D candidate generation path is Step 2-I-C `pose_aware_weighted_z_v1`, and the JSON preview remains centered on `activeSummary`, `poseAware`, `currentCandidate`, `reference`, and `debug`. Runtime and Beauty Studio do not include authoring generation logic.
+Step 2-G v1 five-pose candidate generation has been removed from the current code. The active 3D candidate generation path is Step 2-I-C `pose_aware_mediapipe_mesh_pca_residual_yaw_v1`, and the JSON preview remains centered on `activeSummary`, `poseAware`, `currentCandidate`, `reference`, and `debug`. `pose_aware_mediapipe_mesh_semantic_origin_v1` remains as baseline, `pose_aware_weighted_z_v1` remains historical, and older canonical / stableZ / balancedFrameZ / MediaPipe average prototypes are legacy / debug-only. Runtime and Beauty Studio do not include authoring generation logic.
 
 ## Shape Warp production direction
 

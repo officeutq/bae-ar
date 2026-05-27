@@ -1152,6 +1152,22 @@ type IdealLandmarks3DGenerationMethod =
   | "pose_aware_mediapipe_mesh_semantic_origin_v1"
   | "pose_aware_mediapipe_mesh_pca_residual_yaw_v1"
 
+const RECOMMENDED_IDEAL_LANDMARKS_3D_GENERATION_METHOD =
+  "pose_aware_mediapipe_mesh_pca_residual_yaw_v1" as const
+
+const VISIBLE_IDEAL_LANDMARKS_3D_GENERATION_METHODS = [
+  RECOMMENDED_IDEAL_LANDMARKS_3D_GENERATION_METHOD,
+  "pose_aware_mediapipe_mesh_semantic_origin_v1",
+  "pose_aware_weighted_z_v1",
+] as const satisfies readonly IdealLandmarks3DGenerationMethod[]
+
+const LEGACY_DEBUG_ONLY_IDEAL_LANDMARKS_3D_GENERATION_METHODS = [
+  "pose_aware_canonical_3d_v1",
+  "pose_aware_canonical_stable_z_v1",
+  "pose_aware_canonical_balanced_frame_z_v1",
+  "pose_aware_mediapipe_mesh_average_v1",
+] as const satisfies readonly IdealLandmarks3DGenerationMethod[]
+
 type PointCloudPreviewPreset = "front" | "side" | "top" | "reset"
 
 type PointCloudRotationCenterMode = "auto_center" | "asset_origin"
@@ -1465,7 +1481,7 @@ let idealLandmarks3DCandidateResults: Partial<
   Record<IdealLandmarks3DGenerationMethod, IdealLandmarks3DCandidateResult>
 > = {}
 let selectedIdealLandmarks3DGenerationMethod: IdealLandmarks3DGenerationMethod =
-  "pose_aware_weighted_z_v1"
+  RECOMMENDED_IDEAL_LANDMARKS_3D_GENERATION_METHOD
 let mediaPipeZNormalizeMode: MediaPipeZNormalizeMode =
   MEDIA_PIPE_Z_DEFAULT_NORMALIZE_MODE
 let mediaPipeZScale = MEDIA_PIPE_Z_DEFAULT_SCALE
@@ -1946,6 +1962,32 @@ function isIdealLandmarks3DGenerationMethod(
     value === "pose_aware_mediapipe_mesh_semantic_origin_v1" ||
     value === "pose_aware_mediapipe_mesh_pca_residual_yaw_v1"
   )
+}
+
+function isVisibleIdealLandmarks3DGenerationMethod(
+  value: IdealLandmarks3DGenerationMethod,
+): boolean {
+  return VISIBLE_IDEAL_LANDMARKS_3D_GENERATION_METHODS.includes(
+    value as (typeof VISIBLE_IDEAL_LANDMARKS_3D_GENERATION_METHODS)[number],
+  )
+}
+
+function getGenerationMethodStatusLabel(
+  generationMethod: IdealLandmarks3DGenerationMethod,
+): string {
+  if (generationMethod === RECOMMENDED_IDEAL_LANDMARKS_3D_GENERATION_METHOD) {
+    return "recommended"
+  }
+
+  if (generationMethod === "pose_aware_mediapipe_mesh_semantic_origin_v1") {
+    return "baseline"
+  }
+
+  if (generationMethod === "pose_aware_weighted_z_v1") {
+    return "historical"
+  }
+
+  return "legacy/debug-only"
 }
 
 function isMediaPipeZNormalizeMode(
@@ -2691,7 +2733,7 @@ function toPointCloudPreviewDisplayDebug(
     rotationCenterMode: pointCloudRotationCenterMode,
     viewPreset: getPointCloudPreviewViewPreset(),
     xzAxisAngleDegForDisplayedCandidate: buildTopViewAxisDebug(
-      generationMethod ?? "pose_aware_weighted_z_v1",
+      generationMethod ?? RECOMMENDED_IDEAL_LANDMARKS_3D_GENERATION_METHOD,
       landmarks,
     ).xzPrincipalAxisAngleDeg,
     centeredBeforeRotation: pointCloudRotationCenterMode === "auto_center",
@@ -2831,7 +2873,8 @@ function buildIdealFaceAssetExportSummary(
 ): IdealFaceAssetExportSummary {
   return {
     schemaVersion: IDEAL_FACE_ASSET_SCHEMA_VERSION,
-    generationMethod: result.generationMethod ?? "pose_aware_weighted_z_v1",
+    generationMethod:
+      result.generationMethod ?? RECOMMENDED_IDEAL_LANDMARKS_3D_GENERATION_METHOD,
     landmarkCount: result.landmarkCount,
     canExport: isExportableIdealFaceCandidate(result),
     fileName: buildIdealFaceAssetFileName(date),
@@ -9606,6 +9649,11 @@ function buildPoseAwareMediaPipeMeshAverageIdealLandmarks3DCandidateResult(
   mediaPipeMeshSemanticOriginResult: IdealLandmarks3DCandidateResult | null =
     null,
 ): IdealLandmarks3DCandidateResult {
+  // The recommended Step 2-I-C path is pca_residual_yaw_v1:
+  // frame-local MediaPipe x/y/z -> inverse FacePose rotation -> shared x-z
+  // residual yaw rotation -> per-frame semantic alignment -> direction-balanced
+  // average -> semantic origin centering. It does not apply per-landmark
+  // deformation or x/y/z scaling.
   if (dataset.status === "missing_front_reference") {
     return {
       ...createInitialIdealLandmarks3DCandidateResult(),
@@ -9878,17 +9926,7 @@ function buildPoseAwareCandidateResult(
 function toPoseAwareCandidatePreview(): unknown {
   const result = idealLandmarks3DCandidateResult
   const cachedCandidates = Object.fromEntries(
-    (
-      [
-        "pose_aware_weighted_z_v1",
-        "pose_aware_canonical_3d_v1",
-        "pose_aware_canonical_stable_z_v1",
-        "pose_aware_canonical_balanced_frame_z_v1",
-        "pose_aware_mediapipe_mesh_average_v1",
-        "pose_aware_mediapipe_mesh_semantic_origin_v1",
-        "pose_aware_mediapipe_mesh_pca_residual_yaw_v1",
-      ] as IdealLandmarks3DGenerationMethod[]
-    ).map((generationMethod) => {
+    VISIBLE_IDEAL_LANDMARKS_3D_GENERATION_METHODS.map((generationMethod) => {
       const cachedResult = idealLandmarks3DCandidateResults[generationMethod]
 
       return [
@@ -9907,25 +9945,43 @@ function toPoseAwareCandidatePreview(): unknown {
       ]
     }),
   )
+  const legacyDebugOnlyCandidates = Object.fromEntries(
+    LEGACY_DEBUG_ONLY_IDEAL_LANDMARKS_3D_GENERATION_METHODS.map(
+      (generationMethod) => {
+        const cachedResult = idealLandmarks3DCandidateResults[generationMethod]
+
+        return [
+          generationMethod,
+          {
+            status: cachedResult?.status ?? "hidden",
+            generationMethod,
+            visibility: "legacy/debug-only",
+          },
+        ]
+      },
+    ),
+  )
 
   return {
     status: result.status,
     generationMethod: result.generationMethod,
     selectedGenerationMethod: selectedIdealLandmarks3DGenerationMethod,
+    recommendedGenerationMethod:
+      RECOMMENDED_IDEAL_LANDMARKS_3D_GENERATION_METHOD,
     landmarkCount: result.landmarkCount,
     frontReferenceFrameCount: result.summary.frontReferenceFrameCount,
     observationFrameCount: result.summary.observationFrameCount,
     excludedFrameCount: result.summary.excludedFrameCount,
     cachedCandidates,
+    legacyDebugOnlyCandidates,
     debug: result.debug ?? null,
     sameAsCurrentCandidate: true,
     notes: [
       "frontReference frames are used as reference basis. Only useForInference frames contribute to IdealFace shape inference.",
-      "pose_aware_canonical_3d_v1 inverse-rotates provisional frame-local 3D points into canonical space before averaging.",
-      "pose_aware_canonical_stable_z_v1 builds direction-balanced stableZ before frame-local 3D and canonical averaging.",
-      "pose_aware_canonical_balanced_frame_z_v1 uses each frame's own zHint for frame-local 3D, then direction-balances canonical averaging.",
-      "pose_aware_mediapipe_mesh_average_v1 uses MediaPipe landmark.z for frame-local 3D and does not use dx / sin(yaw) zHint.",
-      "pose_aware_mediapipe_mesh_pca_residual_yaw_v1 applies x-z PCA residual yaw correction after inverse pose rotation and before semantic alignment.",
+      "pose_aware_mediapipe_mesh_pca_residual_yaw_v1 is the current recommended Step 2-I-C candidate generation method.",
+      "pose_aware_mediapipe_mesh_semantic_origin_v1 remains visible as the baseline without PCA residual yaw correction.",
+      "pose_aware_weighted_z_v1 remains visible only as historical zHint comparison.",
+      "canonical_3d / stable_z / balanced_frame_z / mediapipe_mesh_average prototypes are legacy/debug-only and hidden from the normal selector.",
     ],
   }
 }
@@ -10046,7 +10102,7 @@ function renderPoseAwareInferenceDatasetSummary(
         }
       </div>
       <p class="pose-aware-dataset-note">正面基準フレームは基準合わせに使います。IdealFace 形状生成には「IdealFace生成に使う」が ON の observation frame のみを使います。</p>
-      <p class="pose-aware-dataset-note">この dataset は Step 2-I-C の入力です。旧 Step 2-C〜2-G v1 の5ポーズ方式は削除済みで、現在は pose_aware_weighted_z_v1 を使用します。</p>
+      <p class="pose-aware-dataset-note">この dataset は Step 2-I-C の入力です。旧 Step 2-C〜2-G v1 の5ポーズ方式は削除済みで、現在の推奨方式は pose_aware_mediapipe_mesh_pca_residual_yaw_v1 です。</p>
     </div>
   `
 }
@@ -10059,7 +10115,7 @@ function renderGenerationMethodOption(
       value="${generationMethod}"
       ${selectedIdealLandmarks3DGenerationMethod === generationMethod ? "selected" : ""}
     >
-      ${generationMethod}
+      ${generationMethod} (${getGenerationMethodStatusLabel(generationMethod)})
     </option>
   `
 }
@@ -10070,13 +10126,9 @@ function renderPoseAwareCandidateMethodControls(): string {
       <label>
         generationMethod
         <select data-pose-aware-generation-method-select="true">
-          ${renderGenerationMethodOption("pose_aware_weighted_z_v1")}
-          ${renderGenerationMethodOption("pose_aware_canonical_3d_v1")}
-          ${renderGenerationMethodOption("pose_aware_canonical_stable_z_v1")}
-          ${renderGenerationMethodOption("pose_aware_canonical_balanced_frame_z_v1")}
-          ${renderGenerationMethodOption("pose_aware_mediapipe_mesh_average_v1")}
-          ${renderGenerationMethodOption("pose_aware_mediapipe_mesh_semantic_origin_v1")}
-          ${renderGenerationMethodOption("pose_aware_mediapipe_mesh_pca_residual_yaw_v1")}
+          ${VISIBLE_IDEAL_LANDMARKS_3D_GENERATION_METHODS.map(
+            renderGenerationMethodOption,
+          ).join("")}
         </select>
       </label>
       <label>
@@ -10140,15 +10192,7 @@ function renderMediaPipeZNormalizeModeOption(
 }
 
 function renderPoseAwareCachedCandidateSwitches(): string {
-  const methods: IdealLandmarks3DGenerationMethod[] = [
-    "pose_aware_weighted_z_v1",
-    "pose_aware_canonical_3d_v1",
-    "pose_aware_canonical_stable_z_v1",
-    "pose_aware_canonical_balanced_frame_z_v1",
-    "pose_aware_mediapipe_mesh_average_v1",
-    "pose_aware_mediapipe_mesh_semantic_origin_v1",
-    "pose_aware_mediapipe_mesh_pca_residual_yaw_v1",
-  ]
+  const methods = VISIBLE_IDEAL_LANDMARKS_3D_GENERATION_METHODS
 
   return `
     <div class="pose-aware-method-switches">
@@ -10164,7 +10208,7 @@ function renderPoseAwareCachedCandidateSwitches(): string {
               data-use-pose-aware-candidate-method="${method}"
               ${result?.status === "generated" ? "" : "disabled"}
             >
-              ${method}
+              ${method} (${getGenerationMethodStatusLabel(method)})
             </button>
           `
         })
@@ -10508,6 +10552,21 @@ function renderPoseAwareMediaPipeMeshAverageDebugBlock(
     ${renderYawGroupTopViewAxisDebug(debug.yawGroupTopViewAxisDebug)}
     <h5>axis comparison</h5>
     ${renderAxisComparisonDebug(debug.axisComparison)}
+    <h5>direction balance</h5>
+    <dl class="pose-aware-summary-list">
+      <div>
+        <dt>yaw signal + / - / ratio</dt>
+        <dd>${formatNumber(debug.directionBalance.totalYawPositiveSignal)} / ${formatNumber(debug.directionBalance.totalYawNegativeSignal)} / ${formatNullableDebugNumber(debug.directionBalance.yawPositiveNegativeSignalRatio)}</dd>
+      </div>
+      <div>
+        <dt>pitch signal + / - / ratio</dt>
+        <dd>${formatNumber(debug.directionBalance.totalPitchPositiveSignal)} / ${formatNumber(debug.directionBalance.totalPitchNegativeSignal)} / ${formatNullableDebugNumber(debug.directionBalance.pitchPositiveNegativeSignalRatio)}</dd>
+      </div>
+      <div>
+        <dt>direction balance avg / min / max</dt>
+        <dd>${formatNumber(debug.directionBalance.averageDirectionBalanceWeight)} / ${formatNumber(debug.directionBalance.minDirectionBalanceWeight)} / ${formatNumber(debug.directionBalance.maxDirectionBalanceWeight)}</dd>
+      </div>
+    </dl>
     <h5>MediaPipe z availability</h5>
     <dl class="pose-aware-summary-list">
       <div>
@@ -10566,22 +10625,6 @@ function renderPoseAwareMediaPipeMeshAverageDebugBlock(
       </div>
     </dl>
     <h5>method comparison</h5>
-    ${renderBalancedFrameZCandidateComparisonItem(
-      "pose_aware_canonical_3d_v1",
-      debug.multiCandidateComparison.canonical3D,
-    )}
-    ${renderBalancedFrameZCandidateComparisonItem(
-      "pose_aware_canonical_stable_z_v1",
-      debug.multiCandidateComparison.canonicalStableZ,
-    )}
-    ${renderBalancedFrameZCandidateComparisonItem(
-      "pose_aware_canonical_balanced_frame_z_v1",
-      debug.multiCandidateComparison.balancedFrameZ,
-    )}
-    ${renderBalancedFrameZCandidateComparisonItem(
-      "pose_aware_mediapipe_mesh_average_v1",
-      debug.multiCandidateComparison.mediaPipeMeshAverage,
-    )}
     ${renderBalancedFrameZCandidateComparisonItem(
       "pose_aware_mediapipe_mesh_semantic_origin_v1",
       debug.multiCandidateComparison.mediaPipeMeshSemanticOrigin,
@@ -11309,10 +11352,6 @@ function renderResidualYawCorrectionByYawDebug(
 
 function renderAxisComparisonDebug(debug: AxisComparisonDebug): string {
   return `
-    ${renderAxisComparisonItemDebug("canonical3D", debug.canonical3D)}
-    ${renderAxisComparisonItemDebug("canonicalStableZ", debug.canonicalStableZ)}
-    ${renderAxisComparisonItemDebug("balancedFrameZ", debug.balancedFrameZ)}
-    ${renderAxisComparisonItemDebug("mediaPipeMeshAverage", debug.mediaPipeMeshAverage)}
     ${renderAxisComparisonItemDebug("mediaPipeMeshSemanticOrigin", debug.mediaPipeMeshSemanticOrigin)}
     ${renderAxisComparisonItemDebug("mediaPipeMeshPcaResidualYaw", debug.mediaPipeMeshPcaResidualYaw)}
   `
@@ -13650,9 +13689,13 @@ function attachIdealLandmarks3DCandidateHandler(): void {
         return
       }
 
-      selectedIdealLandmarks3DGenerationMethod = value
+      selectedIdealLandmarks3DGenerationMethod =
+        isVisibleIdealLandmarks3DGenerationMethod(value)
+          ? value
+          : RECOMMENDED_IDEAL_LANDMARKS_3D_GENERATION_METHOD
 
-      const cachedResult = idealLandmarks3DCandidateResults[value]
+      const cachedResult =
+        idealLandmarks3DCandidateResults[selectedIdealLandmarks3DGenerationMethod]
 
       if (cachedResult) {
         idealLandmarks3DCandidateResult = cachedResult
@@ -13709,55 +13752,27 @@ function attachIdealLandmarks3DCandidateHandler(): void {
         "pose_aware_weighted_z_v1",
         null,
       )
-      const canonicalResult = buildPoseAwareCandidateResult(
-        dataset,
-        "pose_aware_canonical_3d_v1",
-        weightedResult,
-      )
-      const stableZResult = buildPoseAwareCandidateResult(
-        dataset,
-        "pose_aware_canonical_stable_z_v1",
-        canonicalResult,
-      )
-      const balancedFrameZResult = buildPoseAwareCandidateResult(
-        dataset,
-        "pose_aware_canonical_balanced_frame_z_v1",
-        stableZResult,
-        canonicalResult,
-      )
-      const mediaPipeMeshAverageResult =
-        buildPoseAwareMediaPipeMeshAverageIdealLandmarks3DCandidateResult(
-          dataset,
-          canonicalResult,
-          stableZResult,
-          balancedFrameZResult,
-        )
       const mediaPipeMeshSemanticOriginResult =
         buildPoseAwareMediaPipeMeshAverageIdealLandmarks3DCandidateResult(
           dataset,
-          canonicalResult,
-          stableZResult,
-          balancedFrameZResult,
+          null,
+          null,
+          null,
           "pose_aware_mediapipe_mesh_semantic_origin_v1",
-          mediaPipeMeshAverageResult,
         )
       const mediaPipeMeshPcaResidualYawResult =
         buildPoseAwareMediaPipeMeshAverageIdealLandmarks3DCandidateResult(
           dataset,
-          canonicalResult,
-          stableZResult,
-          balancedFrameZResult,
+          null,
+          null,
+          null,
           "pose_aware_mediapipe_mesh_pca_residual_yaw_v1",
-          mediaPipeMeshAverageResult,
+          null,
           mediaPipeMeshSemanticOriginResult,
         )
 
       idealLandmarks3DCandidateResults = {
         pose_aware_weighted_z_v1: weightedResult,
-        pose_aware_canonical_3d_v1: canonicalResult,
-        pose_aware_canonical_stable_z_v1: stableZResult,
-        pose_aware_canonical_balanced_frame_z_v1: balancedFrameZResult,
-        pose_aware_mediapipe_mesh_average_v1: mediaPipeMeshAverageResult,
         pose_aware_mediapipe_mesh_semantic_origin_v1:
           mediaPipeMeshSemanticOriginResult,
         pose_aware_mediapipe_mesh_pca_residual_yaw_v1:
@@ -13766,7 +13781,7 @@ function attachIdealLandmarks3DCandidateHandler(): void {
       idealLandmarks3DCandidateResult =
         idealLandmarks3DCandidateResults[
           selectedIdealLandmarks3DGenerationMethod
-        ] ?? balancedFrameZResult
+        ] ?? mediaPipeMeshPcaResidualYawResult
       pointCloudPreviewCamera = createPointCloudPreviewCamera()
       render()
     })

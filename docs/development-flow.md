@@ -201,7 +201,7 @@ MP4 input
   -> Step 2-I-A frame selection
        正面基準の手動選択 / 推定に使うフレーム / 除外フレーム
   -> Step 2-I-B pose-aware inference dataset
-  -> Step 2-I-C pose_aware_weighted_z_v1 candidate generation
+  -> Step 2-I-C pose_aware_mediapipe_mesh_pca_residual_yaw_v1 candidate generation
        roll 補正
        yaw / pitch / weight による z hint
        idealLandmarks3D 478点候補生成
@@ -236,7 +236,7 @@ reference
 debug
 ```
 
-`currentCandidate` は Step 2-H preview に表示される現在の candidate です。`generationMethod` は `pose_aware_weighted_z_v1` で、478 landmarks 全文は出さず、summary と先頭数点 preview に留めます。`natural_v1` の 6 controlPoints は reference / projection debug 用であり、IdealFace 本体は `idealLandmarks3D` 478点です。
+`currentCandidate` は Step 2-H preview に表示される現在の candidate です。推奨 `generationMethod` は `pose_aware_mediapipe_mesh_pca_residual_yaw_v1` で、478 landmarks 全文は出さず、summary と先頭数点 preview に留めます。`pose_aware_mediapipe_mesh_semantic_origin_v1` は baseline、`pose_aware_weighted_z_v1` は historical comparison です。`natural_v1` の 6 controlPoints は reference / projection debug 用であり、IdealFace 本体は `idealLandmarks3D` 478点です。
 
 legacy / debug と分類した UI や helper には、今後の新機能を追加しません。confidence debug、手動微調整 UI、保存 / export は Step 2-I active workflow 側に追加します。
 
@@ -306,7 +306,7 @@ PR 本文には、変更内容と確認結果を記載します。
 - 詳細スキャンを実行できる
 - Step 2-I-A で正面基準の手動選択 / 推定に使うフレーム / 除外フレームを操作できる
 - Step 2-I-B の pose-aware inference dataset summary が更新される
-- Step 2-I-C で `pose_aware_weighted_z_v1` candidate を生成できる
+- Step 2-I-C で `pose_aware_mediapipe_mesh_pca_residual_yaw_v1` candidate を生成できる
 - Step 2-H で `currentCandidate` point cloud preview を確認できる
 - JSON preview の top-level が `activeSummary` / `poseAware` / `currentCandidate` / `reference` / `debug` である
 - JSON preview に 478 landmarks 全文、thumbnail data URL 全文、canvas data URL 全文を出さない
@@ -317,7 +317,7 @@ PR 本文には、変更内容と確認結果を記載します。
 ## IdealFace Authoring Tool の整理状況
 
 旧 Step 2-G v1 の 5ポーズ生成 helper 経路は削除済みです。
-今後の IdealFace Authoring Tool の新機能は、Step 2-I-A/B/C、つまり frame selection、pose-aware inference dataset、pose_aware_weighted_z_v1 candidate generation を対象にします。
+今後の IdealFace Authoring Tool の新機能は、Step 2-I-A/B/C、つまり frame selection、pose-aware inference dataset、`pose_aware_mediapipe_mesh_pca_residual_yaw_v1` candidate generation を対象にします。
 legacy / debug 経路には新機能を追加しません。
 
 ## Shape Warp 本番方針の流れ

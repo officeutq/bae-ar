@@ -104,7 +104,7 @@ MP4 input
   -> Step 2-I-A frame selection
        frontReference / useForInference / expressionGroup / excluded を 1フレーム1カードで設定
   -> Step 2-I-B pose-aware inference dataset
-  -> Step 2-I-C pose_aware_weighted_z_v1 candidate generation
+  -> Step 2-I-C pose_aware_mediapipe_mesh_pca_residual_yaw_v1 candidate generation
        roll 補正
        yaw / pitch / weight による z hint
        idealLandmarks3D 478点候補生成
@@ -143,7 +143,7 @@ MP4 input
   -> Step 2-I-A frame selection
        frontReference / useForInference / expressionGroup / excluded を 1フレーム1カードで設定
   -> Step 2-I-B pose-aware inference dataset
-  -> Step 2-I-C pose_aware_weighted_z_v1 candidate generation
+  -> Step 2-I-C pose_aware_mediapipe_mesh_pca_residual_yaw_v1 candidate generation
        roll 補正
        yaw / pitch / weight による z hint
        idealLandmarks3D 478点候補生成
@@ -176,9 +176,9 @@ reference
 debug
 ```
 
-`currentCandidate` は Step 2-H preview に表示される現在の candidate です。`generationMethod` は `pose_aware_weighted_z_v1` で、478 landmarks 全文は出さず、summary と先頭数点 preview に留めます。`natural_v1` の 6 controlPoints は reference / projection debug 用であり、IdealFace 本体は `idealLandmarks3D` 478点です。
+`currentCandidate` は Step 2-H preview に表示される現在の candidate です。推奨 `generationMethod` は `pose_aware_mediapipe_mesh_pca_residual_yaw_v1` で、478 landmarks 全文は出さず、summary と先頭数点 preview に留めます。`pose_aware_mediapipe_mesh_semantic_origin_v1` は baseline、`pose_aware_weighted_z_v1` は historical comparison です。`natural_v1` の 6 controlPoints は reference / projection debug 用であり、IdealFace 本体は `idealLandmarks3D` 478点です。
 
-legacy / debug と分類した helper には、今後の新機能を追加しません。旧 Step 2-C〜2-G v1 の 5ポーズ方式は削除済みで、現在の UI では Step 2-I-C `pose_aware_weighted_z_v1` を現行の 3D candidate generation として扱います。confidence debug、手動微調整 UI、保存 / import、correctionProfile / beauty_filter_asset_v1 export は Step 2-I active workflow 側で扱います。
+legacy / debug と分類した helper には、今後の新機能を追加しません。旧 Step 2-C〜2-G v1 の 5ポーズ方式は削除済みで、現在の UI では Step 2-I-C `pose_aware_mediapipe_mesh_pca_residual_yaw_v1` を推奨 3D candidate generation として扱います。`pose_aware_mediapipe_mesh_semantic_origin_v1` は baseline、`pose_aware_weighted_z_v1` は historical comparison です。confidence debug、手動微調整 UI、保存 / import、correctionProfile / beauty_filter_asset_v1 export は Step 2-I active workflow 側で扱います。
 
 Still planned:
 
@@ -329,7 +329,7 @@ reference
 debug
 ```
 
-`currentCandidate` は Step 2-H preview に表示される現在の candidate です。`generationMethod` は `pose_aware_weighted_z_v1` で、478 landmarks 全文は出さず、summary と先頭数点 preview に留めます。`natural_v1` の 6 controlPoints は reference / projection debug 用であり、IdealFace 本体は `idealLandmarks3D` 478点です。
+`currentCandidate` は Step 2-H preview に表示される現在の candidate です。推奨 `generationMethod` は `pose_aware_mediapipe_mesh_pca_residual_yaw_v1` で、478 landmarks 全文は出さず、summary と先頭数点 preview に留めます。`pose_aware_mediapipe_mesh_semantic_origin_v1` は baseline、`pose_aware_weighted_z_v1` は historical comparison です。`natural_v1` の 6 controlPoints は reference / projection debug 用であり、IdealFace 本体は `idealLandmarks3D` 478点です。
 
 ## IdealFace Authoring Tool Step 2-I
 
@@ -343,7 +343,7 @@ MP4 input
   -> Step 2-I-A frame selection
        正面基準の手動選択 / 推定に使うフレーム / 除外フレーム
   -> Step 2-I-B pose-aware inference dataset
-  -> Step 2-I-C pose_aware_weighted_z_v1 candidate generation
+  -> Step 2-I-C pose_aware_mediapipe_mesh_pca_residual_yaw_v1 candidate generation
        roll 補正
        yaw / pitch / weight による z hint
        idealLandmarks3D 478点候補生成
@@ -356,7 +356,7 @@ Step 2-I-A keeps frame usage as tags. `frontReference`, `useForInference`, and `
 
 Step 2-I-B builds `poseAwareInferenceDataset` from front reference frames and observation frames. It does not use fixed five-pose labels.
 
-Step 2-I-C generates the current 3D candidate with `pose_aware_weighted_z_v1`. It roll-corrects observation landmarks, uses yaw / pitch / weight as z hints, and outputs an `idealLandmarks3D` 478-point candidate.
+Step 2-I-C generates the current recommended 3D candidate with `pose_aware_mediapipe_mesh_pca_residual_yaw_v1`. It uses MediaPipe landmark.z for frame-local 3D478, inverse-rotates each observation by FacePose, applies shared x-z PCA residual yaw correction, performs per-frame semantic center alignment, averages with direction balance, and applies semantic origin centering.
 
 Step 2-H displays that candidate as `currentCandidate` in the point cloud preview.
 
@@ -404,7 +404,7 @@ Shape Processing
 
 ## IdealFace Authoring Tool Current Generation Path
 
-Step 2-G v1 five-pose candidate generation has been removed from the current code. The active 3D candidate generation path is Step 2-I-C `pose_aware_weighted_z_v1`, followed by Step 2-H `currentCandidate` point cloud preview. The old five-pose path is available from Git history when needed. Future confidence debug, manual adjustment, save, and export work should be added to the Step 2-I active workflow.
+Step 2-G v1 five-pose candidate generation has been removed from the current code. The active 3D candidate generation path is Step 2-I-C `pose_aware_mediapipe_mesh_pca_residual_yaw_v1`, followed by Step 2-H `currentCandidate` point cloud preview and asset_origin preview. The old five-pose path is available from Git history when needed. Future confidence debug, manual adjustment, save, and export work should be added to the Step 2-I active workflow.
 
 ## Shape Warp production direction
 

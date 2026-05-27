@@ -98,9 +98,13 @@ MP4 input
   -> Step 2-I-A frame selection
        1フレーム1カードと Frame Review Carousel で frontReference / useForInference / expressionGroup / excluded を設定
   -> Step 2-I-B pose-aware inference dataset
-  -> Step 2-I-C pose_aware_weighted_z_v1 candidate generation
-       roll 補正
-       yaw / pitch / weight による z hint
+  -> Step 2-I-C pose_aware_mediapipe_mesh_pca_residual_yaw_v1 candidate generation
+       MediaPipe landmark.z による frame-local 3D478
+       FacePose inverse rotation
+       x-z PCA residual yaw correction
+       per-frame semantic center alignment
+       direction balance 付き weighted average
+       semantic origin centering
        idealLandmarks3D 478点候補生成
   -> Step 2-H currentCandidate 3D 点群 preview
   -> IdealFace asset JSON export v1
@@ -108,7 +112,13 @@ MP4 input
 
 旧 Step 2-C〜2-G v1 の 5ポーズ方式は削除済みです。現在コードからは UI / state / JSON preview / generation helper を削除しており、必要な場合は Git 履歴を参照します。
 
-今後の新機能は、旧方式ではなく Step 2-I active workflow 側に追加します。`currentCandidate` は Step 2-H preview に表示される現在の candidate で、`generationMethod` は `pose_aware_weighted_z_v1` です。`natural_v1` の 6 controlPoints は reference / projection debug 用であり、IdealFace 本体は `idealLandmarks3D` 478点です。
+今後の新機能は、旧方式ではなく Step 2-I active workflow 側に追加します。`currentCandidate` は Step 2-H preview に表示される現在の candidate で、推奨 `generationMethod` は `pose_aware_mediapipe_mesh_pca_residual_yaw_v1` です。`pose_aware_mediapipe_mesh_semantic_origin_v1` は PCA residual yaw correction なしの baseline、`pose_aware_weighted_z_v1` は historical zHint comparison として扱います。`pose_aware_canonical_3d_v1` / `pose_aware_canonical_stable_z_v1` / `pose_aware_canonical_balanced_frame_z_v1` / `pose_aware_mediapipe_mesh_average_v1` は legacy / debug-only prototype です。`natural_v1` の 6 controlPoints は reference / projection debug 用であり、IdealFace 本体は `idealLandmarks3D` 478点です。
+
+`pose_aware_mediapipe_mesh_pca_residual_yaw_v1` は、observation frame の MediaPipe x/y/z から frame-local 3D478 を作り、FacePose yaw / pitch / roll の inverse rotation で canonical へ戻した後、x-z PCA residual yaw angle を打ち消す同一 yaw 回転を全478点に適用します。その後、per-frame semantic center alignment、direction balance 付き weighted average、semantic origin centering を行います。PCA residual yaw correction は個別パーツ変形ではなく、landmark ごとの個別補正や x/y/z scale は行いません。semantic origin は asset rotation origin 用で、Runtime alignment は projected bounds center -> current bounds center のままです。
+
+代表 debug では `pose_aware_mediapipe_mesh_semantic_origin_v1` の x-z 主軸角 約 5.904° / top view asymmetry 約 0.0163 に対し、`pose_aware_mediapipe_mesh_pca_residual_yaw_v1` は x-z 主軸角 約 -0.2135° / top view asymmetry 約 0.0024 まで改善しています。Step 2-H の asset_origin preview で rotation origin と top view を確認します。
+
+Engine validator / schema、Runtime 読み込み、Projection debug、Studio comparison、Shape Warp / CorrectionPlan への接続は未対応です。export asset を Runtime に渡す前に、validator / projection debug / Studio comparison を追加します。
 
 Step 2-I-A の frame usage では、`frontReference` / `useForInference` / `expressionGroup` は重複可能な用途タグで、`excluded` だけを排他的な除外タグとして扱います。`poseOutOfRange` は自動除外ではなく注意タグです。正面基準には不向きですが、pose-aware 3D 推定の observation frame として z hint / 奥行き推定に使える可能性があるため、`useForInference` の対象に残せます。`noFace` / `invalidLandmarks` / `manual` は除外理由、`mixedExpression` / `pending` / `missingBlendshapes` は注意タグとして扱います。
 
