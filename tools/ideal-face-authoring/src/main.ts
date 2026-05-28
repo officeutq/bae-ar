@@ -1,8 +1,10 @@
 import {
   DEFAULT_LANDMARK_GROUPS_V1,
   NATURAL_IDEAL_FACE_PRESET,
+  projectIdealLandmarks3D,
   type FaceLandmark,
   type FacePose,
+  type IdealFace,
   type LandmarkGroup,
   type LandmarkGroups,
 } from "@bae-ar/engine"
@@ -152,6 +154,40 @@ const FRONT_REFERENCE_CANDIDATE_POSE_LIMIT = {
   roll: 10,
 } as const
 const FRONT_REFERENCE_CANDIDATE_PREVIEW_COUNT = 8
+const PIVOT_Z_ESTIMATION_DEFAULT_RANGE = {
+  min: -1,
+  max: 1,
+  step: 0.05,
+} as const
+const PIVOT_Z_ESTIMATION_STABLE_LANDMARK_COUNT = 80
+const PIVOT_Z_ESTIMATION_MIN_STABLE_LANDMARK_COUNT = 60
+const PIVOT_Z_ESTIMATION_TOP_CANDIDATE_COUNT = 5
+const PIVOT_Z_ESTIMATION_SCORE_SAMPLE_COUNT = 3
+const PIVOT_Z_ESTIMATION_PROBE_LANDMARK_INDICES = [
+  NOSE_TIP_INDEX,
+  CHIN_INDEX,
+  LEFT_CHEEK_INDEX,
+  RIGHT_CHEEK_INDEX,
+  ...MOUTH_CENTER_INDICES,
+] as const
+const PIVOT_Z_ESTIMATION_PROBE_DELTA_EPSILON = 0.00000001
+const PIVOT_Z_ESTIMATION_MIN_BUCKET_FRAME_COUNT = 2
+const PIVOT_Z_ESTIMATION_FLAT_RELATIVE_THRESHOLD = 0.01
+const PIVOT_Z_ESTIMATION_FLAT_ABSOLUTE_THRESHOLD = 0.0002
+const PIVOT_Z_BUCKET_WEIGHTS = {
+  yawPositive: 0.35,
+  yawNegative: 0.35,
+  pitchPositive: 0.1,
+  pitchNegative: 0.1,
+  front: 0.1,
+} as const
+const PIVOT_Z_BUCKET_IDS = [
+  "yawPositive",
+  "yawNegative",
+  "pitchPositive",
+  "pitchNegative",
+  "front",
+] as const
 const USAGE_BUCKET_TARGETS = {
   idealFaceInference: 80,
   mouthPucker: 20,
@@ -1227,6 +1263,139 @@ interface IdealLandmarks3DCandidateResult {
   debug?: IdealLandmarks3DCandidateDebug
 }
 
+type PivotZBucketId = (typeof PIVOT_Z_BUCKET_IDS)[number]
+
+type PivotZEstimationDebugStatus =
+  | "not_run"
+  | "computed"
+  | "insufficient_data"
+  | "error"
+
+type PivotZEstimationWarning =
+  | "insufficientYawPositiveFrames"
+  | "insufficientYawNegativeFrames"
+  | "insufficientPitchPositiveFrames"
+  | "insufficientPitchNegativeFrames"
+  | "scoreLooksFlat"
+  | "unobservableWithBoundsCenterAlignment"
+
+interface PivotZBucketScoreDebug {
+  frameCount: number
+  weightTotal: number
+  averageDistance: number | null
+  averageDx: number | null
+  averageDy: number | null
+  averageAll478Distance: number | null
+}
+
+interface PivotZCandidateScoreDebug {
+  pivotZ: number
+  score: number
+  scoreByBucket: Record<PivotZBucketId, PivotZBucketScoreDebug>
+}
+
+interface PivotZCandidateScoreSampleItemDebug {
+  pivotZ: number
+  score: number
+}
+
+interface PivotZCandidateScoreSampleDebug {
+  head: PivotZCandidateScoreSampleItemDebug[]
+  middle: PivotZCandidateScoreSampleItemDebug[]
+  tail: PivotZCandidateScoreSampleItemDebug[]
+}
+
+interface PivotZEstimationScoreSpreadDebug {
+  min: number | null
+  max: number | null
+  absolute: number | null
+  relativeToBest: number | null
+}
+
+interface PivotZEstimationSettings {
+  min: number
+  max: number
+  step: number
+}
+
+interface PivotZProjectionProbeLandmarkDebug {
+  index: number
+  x: number
+  y: number
+  z: number
+}
+
+interface PivotZProjectionProbeAlignmentDebug {
+  mode: string | null
+  scale: number | null
+  translateX: number | null
+  translateY: number | null
+  currentCenter: Point2D | null
+  projectedCenter: Point2D | null
+}
+
+interface PivotZProjectionProbeSampleDebug {
+  pivotZ: number
+  status: string
+  sameUnitLandmarks: PivotZProjectionProbeLandmarkDebug[]
+  imageLandmarks: PivotZProjectionProbeLandmarkDebug[]
+  alignment: PivotZProjectionProbeAlignmentDebug
+  rotatedBounds: LandmarkBoundsSummary | null
+  alignedBounds: LandmarkBoundsSummary | null
+  imageBounds: LandmarkBoundsSummary | null
+}
+
+interface PivotZProjectionProbeDeltaDebug {
+  sameUnitChanged: boolean
+  imageChanged: boolean
+  alignmentTranslateChanged: boolean
+  rotatedBoundsChanged: boolean
+  alignedBoundsChanged: boolean
+  maxSameUnitDelta: number
+  maxImageDelta: number
+  maxAlignmentTranslateDelta: number
+  maxRotatedBoundsDelta: number
+  maxAlignedBoundsDelta: number
+}
+
+interface PivotZProjectionProbeDebug {
+  frameId: string
+  pose: FacePose
+  pivotZValues: number[]
+  landmarkIndices: number[]
+  samples: PivotZProjectionProbeSampleDebug[]
+  deltas: PivotZProjectionProbeDeltaDebug
+}
+
+interface PivotZEstimationDebugResult {
+  status: PivotZEstimationDebugStatus
+  reason: string | null
+  candidateRange: {
+    min: number
+    max: number
+  }
+  step: number
+  candidateCount: number
+  frameSet: string
+  usedFrameCount: number
+  frameCountByBucket: Record<PivotZBucketId, number>
+  selectedLandmarkCountAverage: number | null
+  bestPivotZ: number | null
+  bestScore: number | null
+  scoreSpread: PivotZEstimationScoreSpreadDebug
+  scoreLooksFlat: boolean
+  firstCandidateScore: number | null
+  lastCandidateScore: number | null
+  zeroPivotScore: number | null
+  scoreByBucket: Record<PivotZBucketId, PivotZBucketScoreDebug>
+  topCandidates: PivotZCandidateScoreDebug[]
+  candidateScoreSample: PivotZCandidateScoreSampleDebug
+  projectionProbe: PivotZProjectionProbeDebug | null
+  warnings: PivotZEstimationWarning[]
+  processingTimeMs: number | null
+  generatedAt: string | null
+}
+
 interface IdealFaceAssetV1 {
   schemaVersion: typeof IDEAL_FACE_ASSET_SCHEMA_VERSION
   id: string
@@ -1483,6 +1652,10 @@ let idealLandmarks3DCandidateResult: IdealLandmarks3DCandidateResult =
 let idealLandmarks3DCandidateResults: Partial<
   Record<IdealLandmarks3DGenerationMethod, IdealLandmarks3DCandidateResult>
 > = {}
+let pivotZEstimationSettings: PivotZEstimationSettings =
+  createDefaultPivotZEstimationSettings()
+let pivotZEstimationDebugResult: PivotZEstimationDebugResult =
+  createInitialPivotZEstimationDebugResult()
 let selectedIdealLandmarks3DGenerationMethod: IdealLandmarks3DGenerationMethod =
   RECOMMENDED_IDEAL_LANDMARKS_3D_GENERATION_METHOD
 let mediaPipeZNormalizeMode: MediaPipeZNormalizeMode =
@@ -1953,6 +2126,85 @@ function createInitialIdealLandmarks3DCandidateResult(): IdealLandmarks3DCandida
   }
 }
 
+function createEmptyPivotZBucketCountRecord(): Record<PivotZBucketId, number> {
+  return Object.fromEntries(
+    PIVOT_Z_BUCKET_IDS.map((bucketId) => [bucketId, 0]),
+  ) as Record<PivotZBucketId, number>
+}
+
+function createEmptyPivotZBucketScoreRecord(): Record<
+  PivotZBucketId,
+  PivotZBucketScoreDebug
+> {
+  return Object.fromEntries(
+    PIVOT_Z_BUCKET_IDS.map((bucketId) => [
+      bucketId,
+      {
+        frameCount: 0,
+        weightTotal: 0,
+        averageDistance: null,
+        averageDx: null,
+        averageDy: null,
+        averageAll478Distance: null,
+      },
+    ]),
+  ) as Record<PivotZBucketId, PivotZBucketScoreDebug>
+}
+
+function createDefaultPivotZEstimationSettings(): PivotZEstimationSettings {
+  return {
+    min: PIVOT_Z_ESTIMATION_DEFAULT_RANGE.min,
+    max: PIVOT_Z_ESTIMATION_DEFAULT_RANGE.max,
+    step: PIVOT_Z_ESTIMATION_DEFAULT_RANGE.step,
+  }
+}
+
+function createEmptyPivotZCandidateScoreSample(): PivotZCandidateScoreSampleDebug {
+  return {
+    head: [],
+    middle: [],
+    tail: [],
+  }
+}
+
+function createInitialPivotZEstimationDebugResult(
+  reason = "pivotZ estimation debug has not been run",
+): PivotZEstimationDebugResult {
+  return {
+    status: "not_run",
+    reason,
+    candidateRange: {
+      min: pivotZEstimationSettings.min,
+      max: pivotZEstimationSettings.max,
+    },
+    step: pivotZEstimationSettings.step,
+    candidateCount: 0,
+    frameSet: "useForInference observation frames",
+    usedFrameCount: 0,
+    frameCountByBucket: createEmptyPivotZBucketCountRecord(),
+    selectedLandmarkCountAverage: null,
+    bestPivotZ: null,
+    bestScore: null,
+    scoreSpread: {
+      min: null,
+      max: null,
+      absolute: null,
+      relativeToBest: null,
+    },
+    scoreLooksFlat: false,
+    firstCandidateScore: null,
+    lastCandidateScore: null,
+    zeroPivotScore: null,
+    scoreByBucket: createEmptyPivotZBucketScoreRecord(),
+    topCandidates: [],
+    candidateScoreSample: createEmptyPivotZCandidateScoreSample(),
+    projectionProbe: null,
+    warnings: ["unobservableWithBoundsCenterAlignment"],
+    processingTimeMs: null,
+    generatedAt: null,
+  }
+}
+
 function isIdealLandmarks3DGenerationMethod(
   value: string | undefined,
 ): value is IdealLandmarks3DGenerationMethod {
@@ -2385,7 +2637,12 @@ function resetIdealLandmarks3DCandidateResult(): void {
   idealLandmarks3DCandidateResult =
     createInitialIdealLandmarks3DCandidateResult()
   idealLandmarks3DCandidateResults = {}
+  resetPivotZEstimationDebugResult("currentCandidate was reset")
   pointCloudPreviewCamera = createPointCloudPreviewCamera()
+}
+
+function resetPivotZEstimationDebugResult(reason: string): void {
+  pivotZEstimationDebugResult = createInitialPivotZEstimationDebugResult(reason)
 }
 
 function isFiniteLandmark(landmark: FaceLandmark | undefined): landmark is FaceLandmark {
@@ -2405,6 +2662,10 @@ function averageNumbers(values: number[]): number {
 
 function roundDebugNumber(value: number): number {
   return Number(value.toFixed(4))
+}
+
+function roundPivotZDebugNumber(value: number): number {
+  return Number(value.toFixed(8))
 }
 
 function buildLandmarkBoundsSummary(
@@ -2907,6 +3168,1125 @@ function summarizeExportIdealLandmarks3DZ(
         ? 0
         : roundIdealFaceAssetNumber(Math.max(...zValues)),
     average: roundIdealFaceAssetNumber(averageNumbers(zValues)),
+  }
+}
+
+interface PivotZExpressionScores {
+  jawOpen: number
+  mouthSmile: number
+  mouthPucker: number
+  eyeBlink: number
+  eyeSquint: number
+  mouthExpression: number
+  eyeExpression: number
+  strongest: number
+}
+
+interface PivotZSelectedLandmark {
+  index: number
+  weight: number
+}
+
+interface PivotZEvaluationFrame {
+  frame: PoseAwareInferenceFrame
+  buckets: PivotZBucketId[]
+  selectedLandmarks: PivotZSelectedLandmark[]
+  frameWeightBase: number
+  expression: PivotZExpressionScores
+}
+
+interface PivotZBucketScoreAccumulator {
+  frameIds: Set<string>
+  weightTotal: number
+  distanceTotal: number
+  dxTotal: number
+  dyTotal: number
+  all478DistanceTotal: number
+}
+
+interface PivotZFrameScore {
+  averageDistance: number
+  averageDx: number
+  averageDy: number
+  averageAll478Distance: number
+}
+
+function getLandmarkGroupIndexSet(groupId: string): Set<number> {
+  const group =
+    landmarkGroupEditorState.groups.groups.find((item) => item.id === groupId) ??
+    DEFAULT_LANDMARK_GROUPS_V1.groups.find((item) => item.id === groupId)
+
+  return new Set(group?.indices ?? [])
+}
+
+function sanitizePivotZEstimationSettings(
+  settings: PivotZEstimationSettings,
+): PivotZEstimationSettings {
+  const defaultSettings = createDefaultPivotZEstimationSettings()
+  const rawMin = Number.isFinite(settings.min) ? settings.min : defaultSettings.min
+  const rawMax = Number.isFinite(settings.max) ? settings.max : defaultSettings.max
+  const min = Math.min(rawMin, rawMax)
+  const max = Math.max(rawMin, rawMax)
+  const step =
+    Number.isFinite(settings.step) && settings.step > 0
+      ? settings.step
+      : defaultSettings.step
+
+  return {
+    min: roundIdealFaceAssetNumber(min),
+    max: roundIdealFaceAssetNumber(max),
+    step: roundIdealFaceAssetNumber(step),
+  }
+}
+
+function readPivotZEstimationSettingsFromControls(): PivotZEstimationSettings {
+  const minInput = document.querySelector<HTMLInputElement>(
+    "[data-pivot-z-estimation-min]",
+  )
+  const maxInput = document.querySelector<HTMLInputElement>(
+    "[data-pivot-z-estimation-max]",
+  )
+  const stepInput = document.querySelector<HTMLInputElement>(
+    "[data-pivot-z-estimation-step]",
+  )
+
+  return sanitizePivotZEstimationSettings({
+    min: Number(minInput?.value),
+    max: Number(maxInput?.value),
+    step: Number(stepInput?.value),
+  })
+}
+
+function getPivotZCandidateValues(
+  settings: PivotZEstimationSettings = pivotZEstimationSettings,
+): number[] {
+  const values: number[] = []
+  const { min, max, step } = sanitizePivotZEstimationSettings(settings)
+
+  for (let value = min; value <= max + step * 0.5; value += step) {
+    values.push(roundIdealFaceAssetNumber(value))
+  }
+
+  return values
+}
+
+function getPivotZFrameBuckets(pose: FacePose): PivotZBucketId[] {
+  const buckets: PivotZBucketId[] = []
+
+  if (pose.yaw >= 10) {
+    buckets.push("yawPositive")
+  }
+
+  if (pose.yaw <= -10) {
+    buckets.push("yawNegative")
+  }
+
+  if (pose.pitch >= 8) {
+    buckets.push("pitchPositive")
+  }
+
+  if (pose.pitch <= -8) {
+    buckets.push("pitchNegative")
+  }
+
+  if (Math.abs(pose.yaw) < 10 && Math.abs(pose.pitch) < 8) {
+    buckets.push("front")
+  }
+
+  return buckets
+}
+
+function calculatePivotZPoseMagnitudeWeight(
+  bucketId: PivotZBucketId,
+  pose: FacePose,
+): number {
+  if (bucketId === "front") {
+    const yawPenalty = clamp(Math.abs(pose.yaw) / 10, 0, 1)
+    const pitchPenalty = clamp(Math.abs(pose.pitch) / 8, 0, 1)
+
+    return roundDebugNumber(1 - Math.max(yawPenalty, pitchPenalty) * 0.5)
+  }
+
+  if (bucketId === "yawPositive" || bucketId === "yawNegative") {
+    return calculatePivotZMagnitudeWeight(Math.abs(pose.yaw), 8, 18, 35, 45)
+  }
+
+  return calculatePivotZMagnitudeWeight(Math.abs(pose.pitch), 6, 12, 25, 35)
+}
+
+function calculatePivotZMagnitudeWeight(
+  value: number,
+  usefulMin: number,
+  bestMin: number,
+  bestMax: number,
+  usefulMax: number,
+): number {
+  if (value < usefulMin || value > usefulMax) {
+    return 0
+  }
+
+  if (value >= bestMin && value <= bestMax) {
+    return 1
+  }
+
+  if (value < bestMin) {
+    return roundDebugNumber((value - usefulMin) / (bestMin - usefulMin))
+  }
+
+  return roundDebugNumber(1 - (value - bestMax) / (usefulMax - bestMax))
+}
+
+function getPivotZExpressionScores(
+  blendshapes: BlendshapeScore[] | undefined,
+): PivotZExpressionScores {
+  const safeBlendshapes = blendshapes ?? []
+  const jawOpen = getBlendshapeScore(safeBlendshapes, "jawOpen")
+  const mouthSmile = Math.max(
+    getBlendshapeScore(safeBlendshapes, "mouthSmileLeft"),
+    getBlendshapeScore(safeBlendshapes, "mouthSmileRight"),
+  )
+  const mouthPucker = getBlendshapeScore(safeBlendshapes, "mouthPucker")
+  const eyeBlink = Math.max(
+    getBlendshapeScore(safeBlendshapes, "eyeBlinkLeft"),
+    getBlendshapeScore(safeBlendshapes, "eyeBlinkRight"),
+  )
+  const eyeSquint = Math.max(
+    getBlendshapeScore(safeBlendshapes, "eyeSquintLeft"),
+    getBlendshapeScore(safeBlendshapes, "eyeSquintRight"),
+  )
+  const mouthExpression = Math.max(jawOpen, mouthSmile, mouthPucker)
+  const eyeExpression = Math.max(eyeBlink, eyeSquint)
+
+  return {
+    jawOpen,
+    mouthSmile,
+    mouthPucker,
+    eyeBlink,
+    eyeSquint,
+    mouthExpression,
+    eyeExpression,
+    strongest: Math.max(mouthExpression, eyeExpression),
+  }
+}
+
+function calculatePivotZExpressionNeutralWeight(
+  expression: PivotZExpressionScores,
+): number {
+  return roundDebugNumber(
+    clamp(
+      1 - expression.mouthExpression * 0.75 - expression.eyeExpression * 0.35,
+      0.2,
+      1,
+    ),
+  )
+}
+
+function calculatePivotZRollQualityWeight(pose: FacePose): number {
+  return roundDebugNumber(clamp(1 - Math.abs(pose.roll) / 30, 0.2, 1))
+}
+
+function calculatePivotZLandmarkQualityWeight(
+  frame: PoseAwareInferenceFrame,
+): number {
+  const finiteRatio =
+    frame.landmarks.length === 0
+      ? 0
+      : frame.landmarks.filter(isFiniteLandmark).length / REQUIRED_LANDMARK_COUNT
+  const matrixWeight = frame.hasFacialTransformationMatrix ? 1 : 0.85
+
+  return roundDebugNumber(clamp(finiteRatio * matrixWeight, 0, 1))
+}
+
+function getPivotZCurrentLandmarkBoundsCenter(
+  landmarks: FaceLandmark[],
+): Point2D | null {
+  const bounds = buildLandmarkBoundsSummary(landmarks)
+
+  if (!bounds) {
+    return null
+  }
+
+  return {
+    x: (bounds.xMin + bounds.xMax) / 2,
+    y: (bounds.yMin + bounds.yMax) / 2,
+  }
+}
+
+function selectPivotZStableCenterLandmarks(
+  frame: PoseAwareInferenceFrame,
+  expression: PivotZExpressionScores,
+): PivotZSelectedLandmark[] {
+  const center = getPivotZCurrentLandmarkBoundsCenter(frame.landmarks)
+
+  if (!center) {
+    return []
+  }
+
+  const videoAspectRatio = getVideoAspectRatioForNormalization()
+  const faceBoundary = getLandmarkGroupIndexSet("face_boundary")
+  const mouth = getLandmarkGroupIndexSet("mouth")
+  const leftEye = getLandmarkGroupIndexSet("left_eye")
+  const rightEye = getLandmarkGroupIndexSet("right_eye")
+  const mouthWeight = clamp(1 - expression.mouthExpression * 0.8, 0.15, 1)
+  const eyeWeight = clamp(1 - expression.eyeExpression * 0.8, 0.15, 1)
+
+  return frame.landmarks
+    .map((landmark, index) => {
+      if (!isFiniteLandmark(landmark) || faceBoundary.has(index)) {
+        return null
+      }
+
+      const groupWeight = mouth.has(index)
+        ? mouthWeight
+        : leftEye.has(index) || rightEye.has(index)
+          ? eyeWeight
+          : 1
+      const dx = (landmark.x - center.x) * videoAspectRatio
+      const dy = landmark.y - center.y
+      const distanceFromCenter = Math.hypot(dx, dy)
+      const effectiveDistance = distanceFromCenter / Math.max(groupWeight, 0.01)
+
+      return {
+        index,
+        weight: groupWeight,
+        effectiveDistance,
+      }
+    })
+    .filter(
+      (
+        item,
+      ): item is PivotZSelectedLandmark & { effectiveDistance: number } =>
+        item !== null,
+    )
+    .sort((a, b) => a.effectiveDistance - b.effectiveDistance)
+    .slice(0, PIVOT_Z_ESTIMATION_STABLE_LANDMARK_COUNT)
+    .map(({ index, weight }) => ({
+      index,
+      weight: roundDebugNumber(weight),
+    }))
+}
+
+function buildPivotZEvaluationFrames(): PivotZEvaluationFrame[] {
+  return getPoseAwareDatasetObservationFrames()
+    .map((frame) => {
+      const sourceFrame = findPoseAwareFrameById(frame.frameId)
+      const expression = getPivotZExpressionScores(
+        sourceFrame?.analysis?.blendshapes,
+      )
+      const selectedLandmarks = selectPivotZStableCenterLandmarks(
+        frame,
+        expression,
+      )
+      const buckets = getPivotZFrameBuckets(frame.pose)
+      const frameWeightBase =
+        calculatePivotZExpressionNeutralWeight(expression) *
+        calculatePivotZRollQualityWeight(frame.pose) *
+        calculatePivotZLandmarkQualityWeight(frame)
+
+      if (
+        buckets.length === 0 ||
+        selectedLandmarks.length < PIVOT_Z_ESTIMATION_MIN_STABLE_LANDMARK_COUNT ||
+        frameWeightBase <= 0
+      ) {
+        return null
+      }
+
+      return {
+        frame,
+        buckets,
+        selectedLandmarks,
+        frameWeightBase: roundDebugNumber(frameWeightBase),
+        expression,
+      }
+    })
+    .filter((frame): frame is PivotZEvaluationFrame => frame !== null)
+}
+
+function buildIdealFaceForPivotZProjection(
+  result: IdealLandmarks3DCandidateResult,
+): IdealFace | null {
+  if (
+    result.status !== "generated" ||
+    !result.generationMethod ||
+    result.landmarks.length !== REQUIRED_LANDMARK_COUNT
+  ) {
+    return null
+  }
+
+  const exportLandmarks = toRuntimeIdealLandmarks3DForExport(
+    result as IdealLandmarks3DCandidateResult & {
+      generationMethod: IdealLandmarks3DGenerationMethod
+    },
+  )
+
+  return {
+    metadata: {
+      id: "pivot-z-estimation-debug",
+      name: "PivotZ Estimation Debug",
+      version: "0.0.0",
+    },
+    model: {
+      coordinateSpace: IDEAL_FACE_ASSET_COORDINATE_SPACE,
+      controlPoints: [],
+      idealLandmarks3D: exportLandmarks,
+    },
+    landmarkTopology: {
+      mediapipeLandmarkCount: REQUIRED_LANDMARK_COUNT,
+      canGenerateIdealLandmarks: true,
+      projectionStatus: "not_implemented",
+    },
+  }
+}
+
+function calculatePivotZFrameScore(
+  frame: PivotZEvaluationFrame,
+  projectedLandmarks: Array<{ index: number; x: number; y: number }>,
+): PivotZFrameScore | null {
+  const projectedByIndex = new Map(
+    projectedLandmarks.map((landmark) => [landmark.index, landmark]),
+  )
+  const selectedDifferences = frame.selectedLandmarks.flatMap((selected) => {
+    const current = frame.frame.landmarks[selected.index]
+    const projected = projectedByIndex.get(selected.index)
+
+    if (!current || !projected || !isFiniteLandmark(current)) {
+      return []
+    }
+
+    const dx = projected.x - current.x
+    const dy = projected.y - current.y
+
+    return [
+      {
+        dx,
+        dy,
+        distance: Math.hypot(dx, dy),
+        weight: selected.weight,
+      },
+    ]
+  })
+  const selectedWeightTotal = selectedDifferences.reduce(
+    (sum, item) => sum + item.weight,
+    0,
+  )
+
+  if (selectedWeightTotal <= 0) {
+    return null
+  }
+
+  const all478Differences = projectedLandmarks.flatMap((projected) => {
+    const current = frame.frame.landmarks[projected.index]
+
+    if (!current || !isFiniteLandmark(current)) {
+      return []
+    }
+
+    return [Math.hypot(projected.x - current.x, projected.y - current.y)]
+  })
+
+  return {
+    averageDistance:
+      selectedDifferences.reduce(
+        (sum, item) => sum + item.distance * item.weight,
+        0,
+      ) / selectedWeightTotal,
+    averageDx:
+      selectedDifferences.reduce((sum, item) => sum + item.dx * item.weight, 0) /
+      selectedWeightTotal,
+    averageDy:
+      selectedDifferences.reduce((sum, item) => sum + item.dy * item.weight, 0) /
+      selectedWeightTotal,
+    averageAll478Distance: averageNumbers(all478Differences),
+  }
+}
+
+function createPivotZBucketScoreAccumulators(): Record<
+  PivotZBucketId,
+  PivotZBucketScoreAccumulator
+> {
+  return Object.fromEntries(
+    PIVOT_Z_BUCKET_IDS.map((bucketId) => [
+      bucketId,
+      {
+        frameIds: new Set<string>(),
+        weightTotal: 0,
+        distanceTotal: 0,
+        dxTotal: 0,
+        dyTotal: 0,
+        all478DistanceTotal: 0,
+      },
+    ]),
+  ) as Record<PivotZBucketId, PivotZBucketScoreAccumulator>
+}
+
+function summarizePivotZBucketScores(
+  accumulators: Record<PivotZBucketId, PivotZBucketScoreAccumulator>,
+): Record<PivotZBucketId, PivotZBucketScoreDebug> {
+  return Object.fromEntries(
+    PIVOT_Z_BUCKET_IDS.map((bucketId) => {
+      const accumulator = accumulators[bucketId]
+      const weightTotal = accumulator.weightTotal
+
+      return [
+        bucketId,
+        {
+          frameCount: accumulator.frameIds.size,
+          weightTotal: roundDebugNumber(weightTotal),
+          averageDistance:
+            weightTotal > 0
+              ? roundPivotZDebugNumber(accumulator.distanceTotal / weightTotal)
+              : null,
+          averageDx:
+            weightTotal > 0
+              ? roundPivotZDebugNumber(accumulator.dxTotal / weightTotal)
+              : null,
+          averageDy:
+            weightTotal > 0
+              ? roundPivotZDebugNumber(accumulator.dyTotal / weightTotal)
+              : null,
+          averageAll478Distance:
+            weightTotal > 0
+              ? roundPivotZDebugNumber(accumulator.all478DistanceTotal / weightTotal)
+              : null,
+        },
+      ]
+    }),
+  ) as Record<PivotZBucketId, PivotZBucketScoreDebug>
+}
+
+function calculatePivotZCandidateScore(
+  idealFaceForProjection: IdealFace,
+  frames: PivotZEvaluationFrame[],
+  pivotZ: number,
+): PivotZCandidateScoreDebug | null {
+  const accumulators = createPivotZBucketScoreAccumulators()
+  const videoWidth = videoSource?.videoWidth ?? undefined
+  const videoHeight = videoSource?.videoHeight ?? undefined
+
+  frames.forEach((frame) => {
+    const projection = projectIdealLandmarks3D(
+      idealFaceForProjection,
+      frame.frame.pose,
+      {
+        detected: true,
+        currentLandmarks: frame.frame.landmarks,
+        videoWidth: videoWidth ?? undefined,
+        videoHeight: videoHeight ?? undefined,
+        debugPivotZ: pivotZ,
+      },
+    )
+
+    if (
+      projection.status !== "projected" ||
+      projection.imageLandmarks.length !== REQUIRED_LANDMARK_COUNT
+    ) {
+      return
+    }
+
+    const frameScore = calculatePivotZFrameScore(
+      frame,
+      projection.imageLandmarks,
+    )
+
+    if (!frameScore) {
+      return
+    }
+
+    frame.buckets.forEach((bucketId) => {
+      const poseMagnitudeWeight = calculatePivotZPoseMagnitudeWeight(
+        bucketId,
+        frame.frame.pose,
+      )
+      const frameWeight = frame.frameWeightBase * poseMagnitudeWeight
+
+      if (frameWeight <= 0) {
+        return
+      }
+
+      const accumulator = accumulators[bucketId]
+      accumulator.frameIds.add(frame.frame.frameId)
+      accumulator.weightTotal += frameWeight
+      accumulator.distanceTotal += frameScore.averageDistance * frameWeight
+      accumulator.dxTotal += frameScore.averageDx * frameWeight
+      accumulator.dyTotal += frameScore.averageDy * frameWeight
+      accumulator.all478DistanceTotal +=
+        frameScore.averageAll478Distance * frameWeight
+    })
+  })
+
+  const scoreByBucket = summarizePivotZBucketScores(accumulators)
+  const weightedBucketScores = PIVOT_Z_BUCKET_IDS.flatMap((bucketId) => {
+    const bucketScore = scoreByBucket[bucketId]
+
+    return bucketScore.averageDistance === null
+      ? []
+      : [
+          {
+            score: bucketScore.averageDistance,
+            weight: PIVOT_Z_BUCKET_WEIGHTS[bucketId],
+          },
+        ]
+  })
+  const bucketWeightTotal = weightedBucketScores.reduce(
+    (sum, item) => sum + item.weight,
+    0,
+  )
+
+  if (bucketWeightTotal <= 0) {
+    return null
+  }
+
+  return {
+    pivotZ: roundIdealFaceAssetNumber(pivotZ),
+    score: roundPivotZDebugNumber(
+      weightedBucketScores.reduce(
+        (sum, item) => sum + item.score * item.weight,
+        0,
+      ) / bucketWeightTotal,
+    ),
+    scoreByBucket,
+  }
+}
+
+function isPivotZScoreLooksFlat(
+  scoreSpread: PivotZEstimationScoreSpreadDebug,
+): boolean {
+  return (
+    scoreSpread.absolute !== null &&
+    scoreSpread.relativeToBest !== null &&
+    (scoreSpread.absolute <= PIVOT_Z_ESTIMATION_FLAT_ABSOLUTE_THRESHOLD ||
+      scoreSpread.relativeToBest <= PIVOT_Z_ESTIMATION_FLAT_RELATIVE_THRESHOLD)
+  )
+}
+
+function buildPivotZCandidateScoreSample(
+  candidateScoresByPivot: PivotZCandidateScoreDebug[],
+): PivotZCandidateScoreSampleDebug {
+  const toItem = (
+    candidate: PivotZCandidateScoreDebug,
+  ): PivotZCandidateScoreSampleItemDebug => ({
+    pivotZ: candidate.pivotZ,
+    score: candidate.score,
+  })
+  const sampleCount = PIVOT_Z_ESTIMATION_SCORE_SAMPLE_COUNT
+  const middleStart = Math.max(
+    0,
+    Math.floor(candidateScoresByPivot.length / 2) - Math.floor(sampleCount / 2),
+  )
+
+  return {
+    head: candidateScoresByPivot.slice(0, sampleCount).map(toItem),
+    middle: candidateScoresByPivot
+      .slice(middleStart, middleStart + sampleCount)
+      .map(toItem),
+    tail: candidateScoresByPivot.slice(-sampleCount).map(toItem),
+  }
+}
+
+function findPivotZCandidateScore(
+  candidateScoresByPivot: PivotZCandidateScoreDebug[],
+  pivotZ: number,
+): number | null {
+  const exact = candidateScoresByPivot.find(
+    (candidate) => Math.abs(candidate.pivotZ - pivotZ) < 0.0000001,
+  )
+
+  return exact?.score ?? null
+}
+
+function toPivotZProbePoint(point: Point2D | undefined): Point2D | null {
+  return point
+    ? {
+        x: roundPivotZDebugNumber(point.x),
+        y: roundPivotZDebugNumber(point.y),
+      }
+    : null
+}
+
+function toPivotZProbeBoundsSummary(
+  bounds:
+    | {
+        xMin: number
+        xMax: number
+        yMin: number
+        yMax: number
+        width: number
+        height: number
+        aspectRatio: number | null
+        zMin?: number
+        zMax?: number
+        zRange?: number
+      }
+    | null
+    | undefined,
+): LandmarkBoundsSummary | null {
+  if (!bounds) {
+    return null
+  }
+
+  const summary: LandmarkBoundsSummary = {
+    pointCount: REQUIRED_LANDMARK_COUNT,
+    xMin: roundPivotZDebugNumber(bounds.xMin),
+    xMax: roundPivotZDebugNumber(bounds.xMax),
+    yMin: roundPivotZDebugNumber(bounds.yMin),
+    yMax: roundPivotZDebugNumber(bounds.yMax),
+    width: roundPivotZDebugNumber(bounds.width),
+    height: roundPivotZDebugNumber(bounds.height),
+    aspectRatio:
+      bounds.aspectRatio === null ? null : roundPivotZDebugNumber(bounds.aspectRatio),
+  }
+
+  if (typeof bounds.zMin === "number") {
+    summary.zMin = roundPivotZDebugNumber(bounds.zMin)
+  }
+
+  if (typeof bounds.zMax === "number") {
+    summary.zMax = roundPivotZDebugNumber(bounds.zMax)
+  }
+
+  if (typeof bounds.zRange === "number") {
+    summary.zRange = roundPivotZDebugNumber(bounds.zRange)
+  }
+
+  return summary
+}
+
+function summarizePivotZProjectionProbeLandmarks(
+  landmarks: Array<{ index: number; x: number; y: number; z: number }>,
+  indices: number[],
+): PivotZProjectionProbeLandmarkDebug[] {
+  const landmarksByIndex = new Map(
+    landmarks.map((landmark) => [landmark.index, landmark]),
+  )
+
+  return indices.flatMap((index) => {
+    const landmark = landmarksByIndex.get(index)
+
+    return landmark
+      ? [
+          {
+            index,
+            x: roundPivotZDebugNumber(landmark.x),
+            y: roundPivotZDebugNumber(landmark.y),
+            z: roundPivotZDebugNumber(landmark.z),
+          },
+        ]
+      : []
+  })
+}
+
+function getPivotZProjectionProbePivotValues(
+  settings: PivotZEstimationSettings,
+): number[] {
+  return Array.from(
+    new Set(
+      [settings.min, 0, settings.max].map((value) =>
+        roundIdealFaceAssetNumber(value),
+      ),
+    ),
+  )
+}
+
+function calculatePivotZProbeLandmarkDelta(
+  samples: PivotZProjectionProbeSampleDebug[],
+  landmarkKey: "sameUnitLandmarks" | "imageLandmarks",
+): number {
+  const baseLandmarks = samples[0]?.[landmarkKey] ?? []
+  const baseByIndex = new Map(
+    baseLandmarks.map((landmark) => [landmark.index, landmark]),
+  )
+
+  return roundPivotZDebugNumber(
+    samples.slice(1).reduce((maxDelta, sample) => {
+      return sample[landmarkKey].reduce((sampleMaxDelta, landmark) => {
+        const base = baseByIndex.get(landmark.index)
+
+        if (!base) {
+          return sampleMaxDelta
+        }
+
+        return Math.max(
+          sampleMaxDelta,
+          Math.abs(landmark.x - base.x),
+          Math.abs(landmark.y - base.y),
+          Math.abs(landmark.z - base.z),
+        )
+      }, maxDelta)
+    }, 0),
+  )
+}
+
+function calculatePivotZProbeAlignmentTranslateDelta(
+  samples: PivotZProjectionProbeSampleDebug[],
+): number {
+  const base = samples[0]?.alignment
+
+  if (!base) {
+    return 0
+  }
+
+  return roundPivotZDebugNumber(
+    samples.slice(1).reduce((maxDelta, sample) => {
+      const translateXDelta =
+        base.translateX === null || sample.alignment.translateX === null
+          ? 0
+          : Math.abs(sample.alignment.translateX - base.translateX)
+      const translateYDelta =
+        base.translateY === null || sample.alignment.translateY === null
+          ? 0
+          : Math.abs(sample.alignment.translateY - base.translateY)
+
+      return Math.max(maxDelta, translateXDelta, translateYDelta)
+    }, 0),
+  )
+}
+
+function calculatePivotZProbeBoundsDelta(
+  samples: PivotZProjectionProbeSampleDebug[],
+  boundsKey: "rotatedBounds" | "alignedBounds",
+): number {
+  const fields = [
+    "xMin",
+    "xMax",
+    "yMin",
+    "yMax",
+    "zMin",
+    "zMax",
+    "width",
+    "height",
+    "zRange",
+    "aspectRatio",
+  ] as const
+  const baseBounds = samples[0]?.[boundsKey]
+
+  if (!baseBounds) {
+    return 0
+  }
+
+  return roundPivotZDebugNumber(
+    samples.slice(1).reduce((maxDelta, sample) => {
+      const bounds = sample[boundsKey]
+
+      if (!bounds) {
+        return maxDelta
+      }
+
+      return fields.reduce((fieldMaxDelta, field) => {
+        const baseValue = baseBounds[field]
+        const value = bounds[field]
+
+        if (
+          typeof baseValue !== "number" ||
+          typeof value !== "number" ||
+          !Number.isFinite(baseValue) ||
+          !Number.isFinite(value)
+        ) {
+          return fieldMaxDelta
+        }
+
+        return Math.max(fieldMaxDelta, Math.abs(value - baseValue))
+      }, maxDelta)
+    }, 0),
+  )
+}
+
+function buildPivotZProjectionProbeDebug(
+  idealFaceForProjection: IdealFace,
+  frames: PivotZEvaluationFrame[],
+  settings: PivotZEstimationSettings,
+): PivotZProjectionProbeDebug | null {
+  const frame = [...frames].sort((a, b) => {
+    const aMagnitude = Math.max(
+      Math.abs(a.frame.pose.yaw),
+      Math.abs(a.frame.pose.pitch),
+    )
+    const bMagnitude = Math.max(
+      Math.abs(b.frame.pose.yaw),
+      Math.abs(b.frame.pose.pitch),
+    )
+
+    return bMagnitude - aMagnitude
+  })[0]
+
+  if (!frame) {
+    return null
+  }
+
+  const pivotZValues = getPivotZProjectionProbePivotValues(settings)
+  const landmarkIndices = Array.from(
+    new Set(PIVOT_Z_ESTIMATION_PROBE_LANDMARK_INDICES),
+  )
+  const videoWidth = videoSource?.videoWidth ?? undefined
+  const videoHeight = videoSource?.videoHeight ?? undefined
+  const samples = pivotZValues.map((pivotZ) => {
+    const projection = projectIdealLandmarks3D(
+      idealFaceForProjection,
+      frame.frame.pose,
+      {
+        detected: true,
+        currentLandmarks: frame.frame.landmarks,
+        videoWidth: videoWidth ?? undefined,
+        videoHeight: videoHeight ?? undefined,
+        debugPivotZ: pivotZ,
+      },
+    )
+
+    return {
+      pivotZ,
+      status: projection.status,
+      sameUnitLandmarks: summarizePivotZProjectionProbeLandmarks(
+        projection.sameUnitLandmarks,
+        landmarkIndices,
+      ),
+      imageLandmarks: summarizePivotZProjectionProbeLandmarks(
+        projection.imageLandmarks,
+        landmarkIndices,
+      ),
+      alignment: {
+        mode: projection.alignment?.mode ?? null,
+        scale:
+          typeof projection.alignment?.scale === "number"
+            ? roundPivotZDebugNumber(projection.alignment.scale)
+            : null,
+        translateX:
+          typeof projection.alignment?.translateX === "number"
+            ? roundPivotZDebugNumber(projection.alignment.translateX)
+            : null,
+        translateY:
+          typeof projection.alignment?.translateY === "number"
+            ? roundPivotZDebugNumber(projection.alignment.translateY)
+            : null,
+        currentCenter: toPivotZProbePoint(projection.alignment?.currentCenter),
+        projectedCenter: toPivotZProbePoint(
+          projection.alignment?.projectedCenter,
+        ),
+      },
+      rotatedBounds: toPivotZProbeBoundsSummary(
+        projection.debug?.rotatedBounds,
+      ),
+      alignedBounds: toPivotZProbeBoundsSummary(
+        projection.debug?.alignedBounds,
+      ),
+      imageBounds: toPivotZProbeBoundsSummary(projection.debug?.imageBounds),
+    }
+  })
+  const maxSameUnitDelta = calculatePivotZProbeLandmarkDelta(
+    samples,
+    "sameUnitLandmarks",
+  )
+  const maxImageDelta = calculatePivotZProbeLandmarkDelta(
+    samples,
+    "imageLandmarks",
+  )
+  const maxAlignmentTranslateDelta =
+    calculatePivotZProbeAlignmentTranslateDelta(samples)
+  const maxRotatedBoundsDelta = calculatePivotZProbeBoundsDelta(
+    samples,
+    "rotatedBounds",
+  )
+  const maxAlignedBoundsDelta = calculatePivotZProbeBoundsDelta(
+    samples,
+    "alignedBounds",
+  )
+
+  return {
+    frameId: frame.frame.frameId,
+    pose: {
+      yaw: roundDebugNumber(frame.frame.pose.yaw),
+      pitch: roundDebugNumber(frame.frame.pose.pitch),
+      roll: roundDebugNumber(frame.frame.pose.roll),
+    },
+    pivotZValues,
+    landmarkIndices,
+    samples,
+    deltas: {
+      sameUnitChanged: maxSameUnitDelta > PIVOT_Z_ESTIMATION_PROBE_DELTA_EPSILON,
+      imageChanged: maxImageDelta > PIVOT_Z_ESTIMATION_PROBE_DELTA_EPSILON,
+      alignmentTranslateChanged:
+        maxAlignmentTranslateDelta > PIVOT_Z_ESTIMATION_PROBE_DELTA_EPSILON,
+      rotatedBoundsChanged:
+        maxRotatedBoundsDelta > PIVOT_Z_ESTIMATION_PROBE_DELTA_EPSILON,
+      alignedBoundsChanged:
+        maxAlignedBoundsDelta > PIVOT_Z_ESTIMATION_PROBE_DELTA_EPSILON,
+      maxSameUnitDelta,
+      maxImageDelta,
+      maxAlignmentTranslateDelta,
+      maxRotatedBoundsDelta,
+      maxAlignedBoundsDelta,
+    },
+  }
+}
+
+function buildPivotZEstimationWarnings(
+  frameCountByBucket: Record<PivotZBucketId, number>,
+  scoreSpread: PivotZEstimationScoreSpreadDebug,
+): PivotZEstimationWarning[] {
+  const warnings: PivotZEstimationWarning[] = [
+    "unobservableWithBoundsCenterAlignment",
+  ]
+
+  if (frameCountByBucket.yawPositive < PIVOT_Z_ESTIMATION_MIN_BUCKET_FRAME_COUNT) {
+    warnings.push("insufficientYawPositiveFrames")
+  }
+
+  if (frameCountByBucket.yawNegative < PIVOT_Z_ESTIMATION_MIN_BUCKET_FRAME_COUNT) {
+    warnings.push("insufficientYawNegativeFrames")
+  }
+
+  if (
+    frameCountByBucket.pitchPositive < PIVOT_Z_ESTIMATION_MIN_BUCKET_FRAME_COUNT
+  ) {
+    warnings.push("insufficientPitchPositiveFrames")
+  }
+
+  if (
+    frameCountByBucket.pitchNegative < PIVOT_Z_ESTIMATION_MIN_BUCKET_FRAME_COUNT
+  ) {
+    warnings.push("insufficientPitchNegativeFrames")
+  }
+
+  if (isPivotZScoreLooksFlat(scoreSpread)) {
+    warnings.push("scoreLooksFlat")
+  }
+
+  return warnings
+}
+
+function runPivotZEstimationDebug(): PivotZEstimationDebugResult {
+  const startedAt = performance.now()
+  pivotZEstimationSettings = sanitizePivotZEstimationSettings(
+    pivotZEstimationSettings,
+  )
+  const candidateValues = getPivotZCandidateValues(pivotZEstimationSettings)
+  const idealFaceForProjection = buildIdealFaceForPivotZProjection(
+    idealLandmarks3DCandidateResult,
+  )
+
+  if (!idealFaceForProjection) {
+    return {
+      ...createInitialPivotZEstimationDebugResult(
+        "generated currentCandidate is required",
+      ),
+      status: "insufficient_data",
+      candidateCount: candidateValues.length,
+      processingTimeMs: roundDebugNumber(performance.now() - startedAt),
+      generatedAt: new Date().toISOString(),
+    }
+  }
+
+  const evaluationFrames = buildPivotZEvaluationFrames()
+  const frameCountByBucket = createEmptyPivotZBucketCountRecord()
+
+  evaluationFrames.forEach((frame) => {
+    frame.buckets.forEach((bucketId) => {
+      frameCountByBucket[bucketId] += 1
+    })
+  })
+
+  if (evaluationFrames.length === 0) {
+    return {
+      ...createInitialPivotZEstimationDebugResult(
+        "no usable useForInference observation frames were found",
+      ),
+      status: "insufficient_data",
+      candidateCount: candidateValues.length,
+      frameCountByBucket,
+      processingTimeMs: roundDebugNumber(performance.now() - startedAt),
+      generatedAt: new Date().toISOString(),
+    }
+  }
+
+  const projectionProbe = buildPivotZProjectionProbeDebug(
+    idealFaceForProjection,
+    evaluationFrames,
+    pivotZEstimationSettings,
+  )
+  const candidateScoresByPivot = candidateValues
+    .map((pivotZ) =>
+      calculatePivotZCandidateScore(
+        idealFaceForProjection,
+        evaluationFrames,
+        pivotZ,
+      ),
+    )
+    .filter(
+      (candidate): candidate is PivotZCandidateScoreDebug => candidate !== null,
+    )
+  const candidateScores = [...candidateScoresByPivot].sort(
+    (a, b) => a.score - b.score,
+  )
+
+  if (candidateScores.length === 0) {
+    return {
+      ...createInitialPivotZEstimationDebugResult(
+        "projection produced no candidate scores",
+      ),
+      status: "insufficient_data",
+      candidateCount: candidateValues.length,
+      usedFrameCount: evaluationFrames.length,
+      frameCountByBucket,
+      selectedLandmarkCountAverage: roundDebugNumber(
+        averageNumbers(
+          evaluationFrames.map((frame) => frame.selectedLandmarks.length),
+        ),
+      ),
+      projectionProbe,
+      processingTimeMs: roundDebugNumber(performance.now() - startedAt),
+      generatedAt: new Date().toISOString(),
+    }
+  }
+
+  const bestCandidate = candidateScores[0]
+  const scoreValues = candidateScores.map((candidate) => candidate.score)
+  const scoreMin = Math.min(...scoreValues)
+  const scoreMax = Math.max(...scoreValues)
+  const scoreSpread = {
+    min: roundPivotZDebugNumber(scoreMin),
+    max: roundPivotZDebugNumber(scoreMax),
+    absolute: roundPivotZDebugNumber(scoreMax - scoreMin),
+    relativeToBest:
+      scoreMin > 0
+        ? roundPivotZDebugNumber((scoreMax - scoreMin) / scoreMin)
+        : null,
+  }
+  const scoreLooksFlat = isPivotZScoreLooksFlat(scoreSpread)
+
+  return {
+    status: "computed",
+    reason:
+      "debug prototype uses Runtime Projection with optional debugPivotZ and dynamic center landmark subsets",
+    candidateRange: {
+      min: pivotZEstimationSettings.min,
+      max: pivotZEstimationSettings.max,
+    },
+    step: pivotZEstimationSettings.step,
+    candidateCount: candidateValues.length,
+    frameSet: "useForInference=true and excluded=false observation frames",
+    usedFrameCount: evaluationFrames.length,
+    frameCountByBucket,
+    selectedLandmarkCountAverage: roundDebugNumber(
+      averageNumbers(
+        evaluationFrames.map((frame) => frame.selectedLandmarks.length),
+      ),
+    ),
+    bestPivotZ: bestCandidate.pivotZ,
+    bestScore: bestCandidate.score,
+    scoreSpread,
+    scoreLooksFlat,
+    firstCandidateScore: candidateScoresByPivot[0]?.score ?? null,
+    lastCandidateScore:
+      candidateScoresByPivot[candidateScoresByPivot.length - 1]?.score ?? null,
+    zeroPivotScore: findPivotZCandidateScore(candidateScoresByPivot, 0),
+    scoreByBucket: bestCandidate.scoreByBucket,
+    topCandidates: candidateScores.slice(
+      0,
+      PIVOT_Z_ESTIMATION_TOP_CANDIDATE_COUNT,
+    ),
+    candidateScoreSample: buildPivotZCandidateScoreSample(candidateScoresByPivot),
+    projectionProbe,
+    warnings: buildPivotZEstimationWarnings(frameCountByBucket, scoreSpread),
+    processingTimeMs: roundDebugNumber(performance.now() - startedAt),
+    generatedAt: new Date().toISOString(),
   }
 }
 
@@ -3694,6 +5074,7 @@ function setAuthoringFrameUsage(
       frameId,
     },
   }
+  resetPivotZEstimationDebugResult("frame usage changed")
 }
 
 function addUsageBucketId(
@@ -10298,7 +11679,121 @@ function renderPoseAwareIdealLandmarks3DCandidatePanel(
           ? renderGeneratedPoseAwareCandidateSummary(result)
           : `<p class="pose-aware-dataset-note">pose-aware 3D候補はまだ生成されていません。<br />先に Step 2-I-B dataset を ready にし、生成を実行してください。</p>`
       }
+      ${renderPivotZEstimationDebugPanel(result, dataset)}
       ${renderIdealFaceAssetExportPanel(result)}
+    </div>
+  `
+}
+
+function renderPivotZEstimationDebugPanel(
+  result: IdealLandmarks3DCandidateResult,
+  dataset: PoseAwareInferenceDataset,
+): string {
+  const debug = pivotZEstimationDebugResult
+  const disabled =
+    result.status !== "generated" || dataset.observationFrames.length === 0
+  const warningList =
+    debug.warnings.length === 0
+      ? `<p class="pose-aware-ready-text">none</p>`
+      : `<ul class="pose-aware-warning-list">
+          ${debug.warnings
+            .map((warning) => `<li>${escapeHtml(warning)}</li>`)
+            .join("")}
+        </ul>`
+
+  return `
+    <div class="pose-aware-dataset-summary">
+      <div class="pose-aware-candidate-heading">
+        <div>
+          <h4>pivotZ estimation debug</h4>
+          <p>currentCandidate を固定し、Runtime Projection と dynamic center stable subset で pivotZ 候補を比較します。</p>
+        </div>
+        <button
+          class="candidate-generate-button"
+          type="button"
+          data-run-pivot-z-estimation-debug="true"
+          ${disabled ? "disabled" : ""}
+        >
+          pivotZ debug を実行
+        </button>
+      </div>
+      ${
+        disabled
+          ? `<p class="pose-aware-warning-text">generated currentCandidate と observation frames が必要です。</p>`
+          : ""
+      }
+      <div class="pose-aware-method-controls">
+        <label>
+          pivotZ min
+          <input
+            type="number"
+            step="0.01"
+            value="${pivotZEstimationSettings.min}"
+            data-pivot-z-estimation-min="true"
+          />
+        </label>
+        <label>
+          pivotZ max
+          <input
+            type="number"
+            step="0.01"
+            value="${pivotZEstimationSettings.max}"
+            data-pivot-z-estimation-max="true"
+          />
+        </label>
+        <label>
+          pivotZ step
+          <input
+            type="number"
+            min="0.0001"
+            step="0.005"
+            value="${pivotZEstimationSettings.step}"
+            data-pivot-z-estimation-step="true"
+          />
+        </label>
+      </div>
+      <dl class="pose-aware-summary-list">
+        <div>
+          <dt>status</dt>
+          <dd>${debug.status}</dd>
+        </div>
+        <div>
+          <dt>candidate range</dt>
+          <dd>${formatNumber(debug.candidateRange.min)} / ${formatNumber(debug.candidateRange.max)} / step ${formatNumber(debug.step)}</dd>
+        </div>
+        <div>
+          <dt>candidate / frame count</dt>
+          <dd>${debug.candidateCount} / ${debug.usedFrameCount}</dd>
+        </div>
+        <div>
+          <dt>best pivotZ / score</dt>
+          <dd>${formatNullableDebugNumber(debug.bestPivotZ)} / ${formatNullableDebugNumber(debug.bestScore)}</dd>
+        </div>
+        <div>
+          <dt>score spread</dt>
+          <dd>${formatNullableDebugNumber(debug.scoreSpread.absolute)} / relative ${formatNullableDebugNumber(debug.scoreSpread.relativeToBest)}</dd>
+        </div>
+        <div>
+          <dt>first / zero / last score</dt>
+          <dd>${formatNullableDebugNumber(debug.firstCandidateScore)} / ${formatNullableDebugNumber(debug.zeroPivotScore)} / ${formatNullableDebugNumber(debug.lastCandidateScore)}</dd>
+        </div>
+        <div>
+          <dt>score looks flat</dt>
+          <dd>${debug.scoreLooksFlat ? "true" : "false"}</dd>
+        </div>
+        <div>
+          <dt>selected landmark avg</dt>
+          <dd>${formatNullableDebugNumber(debug.selectedLandmarkCountAverage)}</dd>
+        </div>
+        <div>
+          <dt>processing time</dt>
+          <dd>${formatNullableDebugNumber(debug.processingTimeMs)} ms</dd>
+        </div>
+      </dl>
+      <div class="pose-aware-coverage">
+        <strong>warnings</strong>
+        ${warningList}
+      </div>
     </div>
   `
 }
@@ -13550,6 +15045,7 @@ function buildAuthoringDebugPreview(): unknown {
       frameSelection: toPoseAwareMultiFrameInferencePreview(),
       inferenceDataset: toPoseAwareInferenceDatasetPreview(),
       candidate: toPoseAwareCandidatePreview(),
+      pivotZEstimation: pivotZEstimationDebugResult,
     },
     expressionAnalysis: toExpressionAnalysisPreview(),
     frameUsage: getFrameUsageSummary(),
@@ -13739,6 +15235,7 @@ function attachIdealLandmarks3DCandidateHandler(): void {
 
       if (cachedResult) {
         idealLandmarks3DCandidateResult = cachedResult
+        resetPivotZEstimationDebugResult("selected currentCandidate changed")
         pointCloudPreviewCamera = createPointCloudPreviewCamera()
       }
 
@@ -13822,7 +15319,39 @@ function attachIdealLandmarks3DCandidateHandler(): void {
         idealLandmarks3DCandidateResults[
           selectedIdealLandmarks3DGenerationMethod
         ] ?? mediaPipeMeshPcaResidualYawResult
+      resetPivotZEstimationDebugResult("currentCandidate was regenerated")
       pointCloudPreviewCamera = createPointCloudPreviewCamera()
+      render()
+    })
+
+  document
+    .querySelectorAll<HTMLInputElement>(
+      "[data-pivot-z-estimation-min], [data-pivot-z-estimation-max], [data-pivot-z-estimation-step]",
+    )
+    .forEach((input) => {
+      input.addEventListener("change", () => {
+        pivotZEstimationSettings = readPivotZEstimationSettingsFromControls()
+        resetPivotZEstimationDebugResult("pivotZ estimation settings changed")
+        render()
+      })
+    })
+
+  document
+    .querySelector<HTMLButtonElement>("[data-run-pivot-z-estimation-debug]")
+    ?.addEventListener("click", () => {
+      try {
+        pivotZEstimationSettings = readPivotZEstimationSettingsFromControls()
+        pivotZEstimationDebugResult = runPivotZEstimationDebug()
+      } catch (error) {
+        pivotZEstimationDebugResult = {
+          ...createInitialPivotZEstimationDebugResult(
+            error instanceof Error ? error.message : String(error),
+          ),
+          status: "error",
+          generatedAt: new Date().toISOString(),
+        }
+      }
+
       render()
     })
 
@@ -13844,6 +15373,7 @@ function attachIdealLandmarks3DCandidateHandler(): void {
 
         selectedIdealLandmarks3DGenerationMethod = method
         idealLandmarks3DCandidateResult = result
+        resetPivotZEstimationDebugResult("selected currentCandidate changed")
         pointCloudPreviewCamera = createPointCloudPreviewCamera()
         render()
       })
