@@ -166,6 +166,7 @@ export interface ProjectIdealLandmarks3DOptions {
   faceGeometry?: FaceGeometry
   videoWidth?: number
   videoHeight?: number
+  debugPivotZ?: number
 }
 
 const DEG_TO_RAD = Math.PI / 180
@@ -304,8 +305,9 @@ export function projectIdealLandmarks3D(
     }
   }
 
+  const rotationCenter = getProjectionRotationCenter(options)
   const rotatedLandmarks = idealLandmarks3D.map((landmark) =>
-    projectIdealLandmark3D(landmark, facePose),
+    projectIdealLandmark3D(landmark, facePose, rotationCenter),
   )
   const videoAspectRatio = getVideoAspectRatio(options)
   const currentMetrics = getCurrentFaceProjectionMetrics(
@@ -802,20 +804,34 @@ function createNoAlignment(reason: string): IdealLandmarks3DProjectionAlignment 
 function projectIdealLandmark3D(
   landmark: IdealFaceLandmark3D,
   pose: FacePose,
+  rotationCenter: RotatablePoint3D,
 ): ProjectedIdealLandmarkSameUnit {
   const centered = {
-    x: landmark.x - IDEAL_LANDMARKS_3D_CENTER.x,
-    y: landmark.y - IDEAL_LANDMARKS_3D_CENTER.y,
-    z: landmark.z - IDEAL_LANDMARKS_3D_CENTER.z,
+    x: landmark.x - rotationCenter.x,
+    y: landmark.y - rotationCenter.y,
+    z: landmark.z - rotationCenter.z,
   }
   const rotated = rotatePoint(centered, pose)
 
   return {
     index: landmark.index,
-    x: rotated.x + IDEAL_LANDMARKS_3D_CENTER.x,
-    y: rotated.y + IDEAL_LANDMARKS_3D_CENTER.y,
-    z: rotated.z + IDEAL_LANDMARKS_3D_CENTER.z,
+    x: rotated.x + rotationCenter.x,
+    y: rotated.y + rotationCenter.y,
+    z: rotated.z + rotationCenter.z,
     confidence: landmark.confidence,
+  }
+}
+
+function getProjectionRotationCenter(
+  options: ProjectIdealLandmarks3DOptions,
+): RotatablePoint3D {
+  return {
+    ...IDEAL_LANDMARKS_3D_CENTER,
+    z:
+      typeof options.debugPivotZ === "number" &&
+      Number.isFinite(options.debugPivotZ)
+        ? options.debugPivotZ
+        : IDEAL_LANDMARKS_3D_CENTER.z,
   }
 }
 
