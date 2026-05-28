@@ -1,5 +1,6 @@
 import {
   BeautyEngine,
+  DEFAULT_LANDMARK_GROUPS_V1,
   MEDIAPIPE_FACE_MESH_TOPOLOGY_LANDMARK_COUNT,
   MEDIAPIPE_FACE_MESH_TRIANGLE_COUNT,
   MEDIAPIPE_FACE_MESH_TRIANGLES,
@@ -19,6 +20,7 @@ import type {
   IdealFace,
   IdealLandmarksDifferenceDebug,
   IdealLandmarks3DProjectionResult,
+  LandmarkGroup,
   LandmarkGroupsDebugSummary,
 } from "@bae-ar/engine"
 import type { CameraServiceState } from "./services/CameraService"
@@ -103,7 +105,10 @@ type ShapeWarpSamplingMode = "nearest" | "bilinear"
 
 type ShapeWarpDebugPreset = "off" | "weak" | "normal" | "strong" | "custom"
 
-type ShapeWarpDebugMode = "cpu_radial_debug" | "webgl_mesh_debug"
+type ShapeWarpDebugMode =
+  | "cpu_radial_debug"
+  | "webgl_mesh_debug"
+  | "webgl_extended_grid_mesh_debug"
 
 type ShapeWarpWebglStatus = "available" | "unavailable"
 
@@ -126,13 +131,26 @@ type ShapeWarpDebugSummary = {
   meshWarpStrength: number
   textureFiltering: ShapeWarpTextureFiltering
   showWireframe: boolean
+  gridColumns: number
+  gridRows: number
+  generatedGridPointCount: number
+  removedInsideFaceCount: number
+  removedNearFaceCount: number
+  addedFaceLandmarkCount: number
+  totalVertexCount: number | null
+  fixedGridPointCount: number
+  influencedGridPointCount: number
+  gridInfluence: number
+  gridInnerRadius: number
+  gridOuterRadius: number
+  gridNearFaceRadius: number
   renderTimeMs: number | null
   averageRenderTimeMs: number | null
   canvasWidth: number
   canvasHeight: number
   sampling: ShapeWarpSamplingMode
   usedVectors: CorrectionVector[]
-  topology: "mediapipe_face_mesh" | null
+  topology: "mediapipe_face_mesh" | "extended_grid_mesh" | null
   topologyLandmarkCount: number | null
   triangleCount: number | null
   usedMeshVertexCount: number | null
@@ -154,6 +172,12 @@ type ShapeWarpDebugSettings = {
   sampling: ShapeWarpSamplingMode
   meshWarpStrength: number
   textureFiltering: ShapeWarpTextureFiltering
+  extendedGridColumns: number
+  extendedGridRows: number
+  extendedGridInnerRadius: number
+  extendedGridOuterRadius: number
+  extendedGridInfluence: number
+  extendedGridNearFaceRadius: number
 }
 
 type ShapeWarpVectorSelection = {
@@ -168,6 +192,8 @@ type WebglMeshWarpRenderResult =
       renderTimeMs: number
       usedVectors: CorrectionVector[]
       usedMeshVertexCount: number
+      triangleCount: number
+      extendedGrid?: ExtendedGridMeshDebugStats
       webglStatus: "available"
       webglError: null
     }
@@ -176,8 +202,49 @@ type WebglMeshWarpRenderResult =
       reason: string
       usedVectors: CorrectionVector[]
       usedMeshVertexCount: number
+      triangleCount: number
+      extendedGrid?: ExtendedGridMeshDebugStats
       webglStatus: ShapeWarpWebglStatus
       webglError: string | null
+    }
+
+type MeshWarpPoint = {
+  sourceX: number
+  sourceY: number
+  targetX: number
+  targetY: number
+}
+
+type ExtendedGridMeshDebugStats = {
+  gridColumns: number
+  gridRows: number
+  generatedGridPointCount: number
+  removedInsideFaceCount: number
+  removedNearFaceCount: number
+  addedFaceLandmarkCount: number
+  totalVertexCount: number
+  triangleCount: number
+  fixedGridPointCount: number
+  influencedGridPointCount: number
+  gridInfluence: number
+  gridInnerRadius: number
+  gridOuterRadius: number
+  gridNearFaceRadius: number
+}
+
+type ExtendedGridMeshBuildResult =
+  | {
+      status: "computed"
+      points: MeshWarpPoint[]
+      triangleIndices: number[]
+      usedVectors: CorrectionVector[]
+      stats: ExtendedGridMeshDebugStats
+    }
+  | {
+      status: "not_available"
+      reason: string
+      usedVectors: CorrectionVector[]
+      stats?: ExtendedGridMeshDebugStats
     }
 
 type WebglMeshWarpRenderer = {
@@ -207,6 +274,12 @@ const SHAPE_WARP_NORMAL_SETTINGS: ShapeWarpPresetConfig = {
   sampling: "bilinear",
   meshWarpStrength: 1,
   textureFiltering: "linear",
+  extendedGridColumns: 20,
+  extendedGridRows: 15,
+  extendedGridInnerRadius: 0.03,
+  extendedGridOuterRadius: 0.15,
+  extendedGridInfluence: 0.35,
+  extendedGridNearFaceRadius: 0.012,
 }
 
 const SHAPE_WARP_DEBUG_PRESETS: Record<
@@ -239,6 +312,12 @@ const SHAPE_WARP_DEBUG_PRESETS: Record<
   },
 }
 
+const MEDIAPIPE_FACE_OVAL_ORDERED_INDICES: readonly number[] = [
+  10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379,
+  378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127,
+  162, 21, 54, 103, 67, 109,
+]
+
 async function bootstrap(): Promise<void> {
   const engine = new BeautyEngine()
   const camera = new CameraService()
@@ -258,6 +337,15 @@ async function bootstrap(): Promise<void> {
     sampling: SHAPE_WARP_NORMAL_SETTINGS.sampling,
     meshWarpStrength: SHAPE_WARP_NORMAL_SETTINGS.meshWarpStrength,
     textureFiltering: SHAPE_WARP_NORMAL_SETTINGS.textureFiltering,
+    extendedGridColumns: SHAPE_WARP_NORMAL_SETTINGS.extendedGridColumns,
+    extendedGridRows: SHAPE_WARP_NORMAL_SETTINGS.extendedGridRows,
+    extendedGridInnerRadius:
+      SHAPE_WARP_NORMAL_SETTINGS.extendedGridInnerRadius,
+    extendedGridOuterRadius:
+      SHAPE_WARP_NORMAL_SETTINGS.extendedGridOuterRadius,
+    extendedGridInfluence: SHAPE_WARP_NORMAL_SETTINGS.extendedGridInfluence,
+    extendedGridNearFaceRadius:
+      SHAPE_WARP_NORMAL_SETTINGS.extendedGridNearFaceRadius,
   }
   const stateLog: string[] = []
   let lastEngineState: BeautyEngineState | undefined
@@ -350,7 +438,7 @@ async function bootstrap(): Promise<void> {
     usedVectors?: CorrectionVector[]
     canvasWidth?: number
     canvasHeight?: number
-    topology?: "mediapipe_face_mesh" | null
+    topology?: "mediapipe_face_mesh" | "extended_grid_mesh" | null
     topologyLandmarkCount?: number | null
     triangleCount?: number | null
     usedMeshVertexCount?: number | null
@@ -358,8 +446,11 @@ async function bootstrap(): Promise<void> {
     textureSource?: "video" | "source_canvas" | null
     webgl?: ShapeWarpWebglStatus | null
     webglError?: string | null
+    extendedGrid?: Partial<ExtendedGridMeshDebugStats>
     reason?: string
   }): ShapeWarpDebugSummary {
+    const extendedGrid = input.extendedGrid
+
     return {
       status: input.status,
       preset: shapeWarpDebugSettings.preset,
@@ -377,6 +468,29 @@ async function bootstrap(): Promise<void> {
       meshWarpStrength: shapeWarpDebugSettings.meshWarpStrength,
       textureFiltering: shapeWarpDebugSettings.textureFiltering,
       showWireframe: showWebglMeshWireframe,
+      gridColumns:
+        extendedGrid?.gridColumns ?? shapeWarpDebugSettings.extendedGridColumns,
+      gridRows:
+        extendedGrid?.gridRows ?? shapeWarpDebugSettings.extendedGridRows,
+      generatedGridPointCount: extendedGrid?.generatedGridPointCount ?? 0,
+      removedInsideFaceCount: extendedGrid?.removedInsideFaceCount ?? 0,
+      removedNearFaceCount: extendedGrid?.removedNearFaceCount ?? 0,
+      addedFaceLandmarkCount: extendedGrid?.addedFaceLandmarkCount ?? 0,
+      totalVertexCount: extendedGrid?.totalVertexCount ?? null,
+      fixedGridPointCount: extendedGrid?.fixedGridPointCount ?? 0,
+      influencedGridPointCount: extendedGrid?.influencedGridPointCount ?? 0,
+      gridInfluence:
+        extendedGrid?.gridInfluence ??
+        shapeWarpDebugSettings.extendedGridInfluence,
+      gridInnerRadius:
+        extendedGrid?.gridInnerRadius ??
+        shapeWarpDebugSettings.extendedGridInnerRadius,
+      gridOuterRadius:
+        extendedGrid?.gridOuterRadius ??
+        shapeWarpDebugSettings.extendedGridOuterRadius,
+      gridNearFaceRadius:
+        extendedGrid?.gridNearFaceRadius ??
+        shapeWarpDebugSettings.extendedGridNearFaceRadius,
       renderTimeMs: input.renderTimeMs ?? null,
       averageRenderTimeMs: shapeWarpRenderTimeAverageMs,
       canvasWidth: input.canvasWidth ?? processedCanvas.width,
@@ -928,6 +1042,34 @@ correctionPlanPointCount: ${summary.correctionPlanPointCount ?? "なし"}
 texture source: ${summary.textureSource ?? "なし"}
 webgl: ${summary.webgl ?? "なし"}
 webgl error: ${summary.webglError ?? "none"}`
+    const extendedGridSettings = `Extended grid mesh debug settings:
+meshWarpStrength: ${formatNumber(summary.meshWarpStrength)}
+texture filtering: ${summary.textureFiltering}
+showWireframe: ${String(summary.showWireframe)}
+topology: ${summary.topology ?? "なし"}
+grid columns / rows: ${summary.gridColumns} / ${summary.gridRows}
+generated grid point count: ${summary.generatedGridPointCount}
+removed inside face count: ${summary.removedInsideFaceCount}
+removed near face count: ${summary.removedNearFaceCount}
+added face landmark count: ${summary.addedFaceLandmarkCount}
+total vertex count: ${summary.totalVertexCount ?? "なし"}
+triangle count: ${summary.triangleCount ?? "なし"}
+fixed grid point count: ${summary.fixedGridPointCount}
+influenced grid point count: ${summary.influencedGridPointCount}
+gridInfluence: ${formatNumber(summary.gridInfluence)}
+innerRadius: ${formatNumber(summary.gridInnerRadius)}
+outerRadius: ${formatNumber(summary.gridOuterRadius)}
+nearFaceRadius: ${formatNumber(summary.gridNearFaceRadius)}
+correctionPlanPointCount: ${summary.correctionPlanPointCount ?? "なし"}
+texture source: ${summary.textureSource ?? "なし"}
+webgl: ${summary.webgl ?? "なし"}
+webgl error: ${summary.webglError ?? "none"}`
+    const modeSettings =
+      summary.mode === "webgl_extended_grid_mesh_debug"
+        ? extendedGridSettings
+        : summary.mode === "webgl_mesh_debug"
+          ? webglMeshSettings
+          : cpuRadialSettings
 
     return `Shape Warp v1 debug:
 status: ${summary.status}
@@ -939,7 +1081,7 @@ correctionPlan status: ${summary.correctionPlanStatus}
 candidateVectorCount: ${summary.candidateVectorCount}
 usedVectorCount: ${summary.usedVectorCount}
 skippedByDistanceCount: ${summary.skippedByDistanceCount}
-${summary.mode === "webgl_mesh_debug" ? webglMeshSettings : cpuRadialSettings}
+${modeSettings}
 render time ms: ${formatNullableNumber(summary.renderTimeMs)}
 average render time ms: ${formatNullableNumber(summary.averageRenderTimeMs)}
 canvas size: ${summary.canvasWidth}x${summary.canvasHeight}
@@ -1173,8 +1315,16 @@ Camera:
       return
     }
 
-    if (shapeWarpDebugSettings.mode === "webgl_mesh_debug") {
-      const renderResult = renderWebglMeshWarp(video, context, correctionPlan)
+    if (
+      shapeWarpDebugSettings.mode === "webgl_mesh_debug" ||
+      shapeWarpDebugSettings.mode === "webgl_extended_grid_mesh_debug"
+    ) {
+      const renderResult =
+        shapeWarpDebugSettings.mode === "webgl_extended_grid_mesh_debug"
+          ? renderWebglExtendedGridMeshWarp(video, context, correctionPlan)
+          : renderWebglMeshWarp(video, context, correctionPlan)
+      const isExtendedGrid =
+        shapeWarpDebugSettings.mode === "webgl_extended_grid_mesh_debug"
 
       if (renderResult.status === "computed") {
         recordShapeWarpRenderTime(renderResult.renderTimeMs)
@@ -1183,7 +1333,7 @@ Camera:
       latestShapeWarpDebugSummary = createShapeWarpDebugSummary({
         status: renderResult.status,
         correctionPlanStatus: correctionPlan.status,
-        mode: "webgl_mesh_debug",
+        mode: shapeWarpDebugSettings.mode,
         candidateVectorCount: correctionPlan.vectors.length,
         usedVectorCount: renderResult.usedVectors.length,
         skippedByDistanceCount: 0,
@@ -1192,14 +1342,17 @@ Camera:
         usedVectors: renderResult.usedVectors,
         canvasWidth: processedCanvas.width,
         canvasHeight: processedCanvas.height,
-        topology: "mediapipe_face_mesh",
-        topologyLandmarkCount: MEDIAPIPE_FACE_MESH_TOPOLOGY_LANDMARK_COUNT,
-        triangleCount: MEDIAPIPE_FACE_MESH_TRIANGLE_COUNT,
+        topology: isExtendedGrid ? "extended_grid_mesh" : "mediapipe_face_mesh",
+        topologyLandmarkCount: isExtendedGrid
+          ? correctionPlan.pointCount
+          : MEDIAPIPE_FACE_MESH_TOPOLOGY_LANDMARK_COUNT,
+        triangleCount: renderResult.triangleCount,
         usedMeshVertexCount: renderResult.usedMeshVertexCount,
         correctionPlanPointCount: correctionPlan.pointCount,
         textureSource: "video",
         webgl: renderResult.webglStatus,
         webglError: renderResult.webglError,
+        extendedGrid: renderResult.extendedGrid,
         reason:
           renderResult.status === "computed" ? undefined : renderResult.reason,
       })
@@ -1382,6 +1535,7 @@ Camera:
           reason: `CorrectionVector[${index}] is missing for WebGL mesh topology`,
           usedVectors: meshVectors,
           usedMeshVertexCount: meshVectors.length,
+          triangleCount: MEDIAPIPE_FACE_MESH_TRIANGLE_COUNT,
           webglStatus: "unavailable",
           webglError: `CorrectionVector[${index}] is missing`,
         }
@@ -1415,6 +1569,7 @@ Camera:
           "WebGL mesh warp renderer is not available",
         usedVectors: meshVectors,
         usedMeshVertexCount: meshVectors.length,
+        triangleCount: MEDIAPIPE_FACE_MESH_TRIANGLE_COUNT,
         webglStatus: "unavailable",
         webglError: webglMeshWarpRendererError,
       }
@@ -1428,6 +1583,7 @@ Camera:
       video,
       targetPositions,
       textureCoordinates,
+      MEDIAPIPE_FACE_MESH_TRIANGLES,
     )
 
     if (renderError) {
@@ -1436,6 +1592,7 @@ Camera:
         reason: renderError,
         usedVectors: meshVectors,
         usedMeshVertexCount: meshVectors.length,
+        triangleCount: MEDIAPIPE_FACE_MESH_TRIANGLE_COUNT,
         webglStatus: "unavailable",
         webglError: renderError,
       }
@@ -1458,8 +1615,598 @@ Camera:
       renderTimeMs: performance.now() - startedAt,
       usedVectors: meshVectors,
       usedMeshVertexCount: meshVectors.length,
+      triangleCount: MEDIAPIPE_FACE_MESH_TRIANGLE_COUNT,
       webglStatus: "available",
       webglError: null,
+    }
+  }
+
+  function renderWebglExtendedGridMeshWarp(
+    video: HTMLVideoElement,
+    outputContext: CanvasRenderingContext2D,
+    correctionPlan: CorrectionPlanDebug,
+  ): WebglMeshWarpRenderResult {
+    const buildResult = buildExtendedGridMesh(correctionPlan)
+
+    if (buildResult.status !== "computed") {
+      return {
+        status: "not_available",
+        reason: buildResult.reason,
+        usedVectors: buildResult.usedVectors,
+        usedMeshVertexCount: buildResult.stats?.totalVertexCount ?? 0,
+        triangleCount: buildResult.stats?.triangleCount ?? 0,
+        extendedGrid: buildResult.stats,
+        webglStatus: "unavailable",
+        webglError: buildResult.reason,
+      }
+    }
+
+    const renderer = getWebglMeshWarpRenderer()
+
+    if (!renderer) {
+      return {
+        status: "not_available",
+        reason:
+          webglMeshWarpRendererError ??
+          "WebGL mesh warp renderer is not available",
+        usedVectors: buildResult.usedVectors,
+        usedMeshVertexCount: buildResult.points.length,
+        triangleCount: buildResult.triangleIndices.length / 3,
+        extendedGrid: buildResult.stats,
+        webglStatus: "unavailable",
+        webglError: webglMeshWarpRendererError,
+      }
+    }
+
+    resizeWebglMeshCanvas(renderer.canvas)
+
+    const targetPositions = new Float32Array(buildResult.points.length * 2)
+    const textureCoordinates = new Float32Array(buildResult.points.length * 2)
+
+    buildResult.points.forEach((point, index) => {
+      const offset = index * 2
+      const targetX =
+        point.sourceX +
+        (point.targetX - point.sourceX) *
+          shapeWarpDebugSettings.meshWarpStrength
+      const targetY =
+        point.sourceY +
+        (point.targetY - point.sourceY) *
+          shapeWarpDebugSettings.meshWarpStrength
+
+      targetPositions[offset] = targetX * 2 - 1
+      targetPositions[offset + 1] = 1 - targetY * 2
+      textureCoordinates[offset] = point.sourceX
+      textureCoordinates[offset + 1] = 1 - point.sourceY
+    })
+
+    const startedAt = performance.now()
+    const renderError = drawWebglMeshWarpFrame(
+      renderer,
+      video,
+      targetPositions,
+      textureCoordinates,
+      buildResult.triangleIndices,
+    )
+
+    if (renderError) {
+      return {
+        status: "not_available",
+        reason: renderError,
+        usedVectors: buildResult.usedVectors,
+        usedMeshVertexCount: buildResult.points.length,
+        triangleCount: buildResult.triangleIndices.length / 3,
+        extendedGrid: buildResult.stats,
+        webglStatus: "unavailable",
+        webglError: renderError,
+      }
+    }
+
+    outputContext.drawImage(
+      renderer.canvas,
+      0,
+      0,
+      processedCanvas.width,
+      processedCanvas.height,
+    )
+
+    if (showWebglMeshWireframe) {
+      drawExtendedGridMeshWireframeOverlay(
+        outputContext,
+        buildResult.points,
+        buildResult.triangleIndices,
+      )
+    }
+
+    return {
+      status: "computed",
+      renderTimeMs: performance.now() - startedAt,
+      usedVectors: buildResult.usedVectors,
+      usedMeshVertexCount: buildResult.points.length,
+      triangleCount: buildResult.triangleIndices.length / 3,
+      extendedGrid: buildResult.stats,
+      webglStatus: "available",
+      webglError: null,
+    }
+  }
+
+  function buildExtendedGridMesh(
+    correctionPlan: CorrectionPlanDebug,
+  ): ExtendedGridMeshBuildResult {
+    const indexedVectors = new Map<number, CorrectionVector>()
+
+    correctionPlan.vectors.forEach((vector) => {
+      indexedVectors.set(vector.index, vector)
+    })
+
+    const faceVectors: CorrectionVector[] = []
+
+    for (let index = 0; index < correctionPlan.pointCount; index += 1) {
+      const vector = indexedVectors.get(index)
+
+      if (!vector) {
+        return {
+          status: "not_available",
+          reason: `CorrectionVector[${index}] is missing for extended grid mesh`,
+          usedVectors: faceVectors,
+        }
+      }
+
+      faceVectors.push(vector)
+    }
+
+    const boundaryVectors = getFaceBoundaryVectors(faceVectors)
+
+    if (boundaryVectors.length < 3) {
+      return {
+        status: "not_available",
+        reason: "face_boundary landmarks are not available for extended grid mesh",
+        usedVectors: faceVectors,
+      }
+    }
+
+    const points: MeshWarpPoint[] = faceVectors.map((vector) => ({
+      sourceX: vector.current.x,
+      sourceY: vector.current.y,
+      targetX: vector.target.x,
+      targetY: vector.target.y,
+    }))
+    const facePolygon = boundaryVectors.map((vector) => vector.current)
+    const gridColumns = shapeWarpDebugSettings.extendedGridColumns
+    const gridRows = shapeWarpDebugSettings.extendedGridRows
+    const nearFaceRadius = shapeWarpDebugSettings.extendedGridNearFaceRadius
+    const innerRadius = shapeWarpDebugSettings.extendedGridInnerRadius
+    const outerRadius = shapeWarpDebugSettings.extendedGridOuterRadius
+    const gridInfluence = shapeWarpDebugSettings.extendedGridInfluence
+    let generatedGridPointCount = 0
+    let removedInsideFaceCount = 0
+    let removedNearFaceCount = 0
+    let fixedGridPointCount = 0
+    let influencedGridPointCount = 0
+
+    for (let row = 0; row < gridRows; row += 1) {
+      for (let column = 0; column < gridColumns; column += 1) {
+        generatedGridPointCount += 1
+
+        const sourceX = gridColumns <= 1 ? 0 : column / (gridColumns - 1)
+        const sourceY = gridRows <= 1 ? 0 : row / (gridRows - 1)
+        const isScreenEdge =
+          column === 0 ||
+          row === 0 ||
+          column === gridColumns - 1 ||
+          row === gridRows - 1
+
+        if (!isScreenEdge && isPointInPolygon(sourceX, sourceY, facePolygon)) {
+          removedInsideFaceCount += 1
+          continue
+        }
+
+        if (!isScreenEdge && isNearAnyFaceLandmark(sourceX, sourceY, faceVectors, nearFaceRadius)) {
+          removedNearFaceCount += 1
+          continue
+        }
+
+        let targetX = sourceX
+        let targetY = sourceY
+
+        if (!isScreenEdge) {
+          const nearestBoundary = findNearestBoundaryVector(
+            sourceX,
+            sourceY,
+            boundaryVectors,
+          )
+          const weight = smoothstep(
+            outerRadius,
+            innerRadius,
+            nearestBoundary.distance,
+          )
+
+          if (weight > 0) {
+            targetX =
+              sourceX +
+              nearestBoundary.vector.correctionDeltaX *
+                weight *
+                gridInfluence
+            targetY =
+              sourceY +
+              nearestBoundary.vector.correctionDeltaY *
+                weight *
+                gridInfluence
+            influencedGridPointCount += 1
+          }
+        }
+
+        if (targetX === sourceX && targetY === sourceY) {
+          fixedGridPointCount += 1
+        }
+
+        points.push({ sourceX, sourceY, targetX, targetY })
+      }
+    }
+
+    const triangleIndices = triangulateMeshPoints(points)
+
+    if (triangleIndices.length === 0) {
+      return {
+        status: "not_available",
+        reason: "Delaunay triangulation did not produce triangles",
+        usedVectors: faceVectors,
+      }
+    }
+
+    const stats: ExtendedGridMeshDebugStats = {
+      gridColumns,
+      gridRows,
+      generatedGridPointCount,
+      removedInsideFaceCount,
+      removedNearFaceCount,
+      addedFaceLandmarkCount: faceVectors.length,
+      totalVertexCount: points.length,
+      triangleCount: triangleIndices.length / 3,
+      fixedGridPointCount,
+      influencedGridPointCount,
+      gridInfluence,
+      gridInnerRadius: innerRadius,
+      gridOuterRadius: outerRadius,
+      gridNearFaceRadius: nearFaceRadius,
+    }
+
+    return {
+      status: "computed",
+      points,
+      triangleIndices,
+      usedVectors: faceVectors,
+      stats,
+    }
+  }
+
+  function getFaceBoundaryVectors(
+    faceVectors: CorrectionVector[],
+  ): CorrectionVector[] {
+    const boundaryGroup = getActiveFaceBoundaryGroup()
+    const boundaryIndexSet = new Set(boundaryGroup.indices)
+    const orderedIndices = [
+      ...MEDIAPIPE_FACE_OVAL_ORDERED_INDICES.filter((index) =>
+        boundaryIndexSet.has(index),
+      ),
+      ...boundaryGroup.indices.filter(
+        (index) => !MEDIAPIPE_FACE_OVAL_ORDERED_INDICES.includes(index),
+      ),
+    ]
+    const orderedVectors = orderedIndices
+      .map((index) => faceVectors[index])
+      .filter((vector): vector is CorrectionVector => Boolean(vector))
+
+    if (orderedVectors.length === boundaryGroup.indices.length) {
+      return orderedVectors
+    }
+
+    return [...orderedVectors].sort((current, next) => {
+      const center = getFaceVectorCenter(orderedVectors)
+      const currentAngle = Math.atan2(
+        current.current.y - center.y,
+        current.current.x - center.x,
+      )
+      const nextAngle = Math.atan2(
+        next.current.y - center.y,
+        next.current.x - center.x,
+      )
+
+      return currentAngle - nextAngle
+    })
+  }
+
+  function getActiveFaceBoundaryGroup(): LandmarkGroup {
+    const activeGroup = engine
+      .getIdealFace()
+      .model.landmarkGroups?.groups.find((group) => group.id === "face_boundary")
+
+    return (
+      activeGroup ??
+      DEFAULT_LANDMARK_GROUPS_V1.groups.find(
+        (group) => group.id === "face_boundary",
+      ) ??
+      DEFAULT_LANDMARK_GROUPS_V1.groups[0]
+    )
+  }
+
+  function getFaceVectorCenter(vectors: CorrectionVector[]): {
+    x: number
+    y: number
+  } {
+    if (vectors.length === 0) {
+      return { x: 0.5, y: 0.5 }
+    }
+
+    const total = vectors.reduce(
+      (sum, vector) => ({
+        x: sum.x + vector.current.x,
+        y: sum.y + vector.current.y,
+      }),
+      { x: 0, y: 0 },
+    )
+
+    return {
+      x: total.x / vectors.length,
+      y: total.y / vectors.length,
+    }
+  }
+
+  function isPointInPolygon(
+    x: number,
+    y: number,
+    polygon: readonly { x: number; y: number }[],
+  ): boolean {
+    let isInside = false
+
+    for (
+      let currentIndex = 0, previousIndex = polygon.length - 1;
+      currentIndex < polygon.length;
+      previousIndex = currentIndex, currentIndex += 1
+    ) {
+      const current = polygon[currentIndex]
+      const previous = polygon[previousIndex]
+      const intersects =
+        current.y > y !== previous.y > y &&
+        x <
+          ((previous.x - current.x) * (y - current.y)) /
+            (previous.y - current.y || Number.EPSILON) +
+            current.x
+
+      if (intersects) {
+        isInside = !isInside
+      }
+    }
+
+    return isInside
+  }
+
+  function isNearAnyFaceLandmark(
+    x: number,
+    y: number,
+    faceVectors: CorrectionVector[],
+    radius: number,
+  ): boolean {
+    const radiusSquared = radius * radius
+
+    return faceVectors.some((vector) => {
+      const dx = x - vector.current.x
+      const dy = y - vector.current.y
+
+      return dx * dx + dy * dy <= radiusSquared
+    })
+  }
+
+  function findNearestBoundaryVector(
+    x: number,
+    y: number,
+    boundaryVectors: CorrectionVector[],
+  ): { vector: CorrectionVector; distance: number } {
+    let nearestVector = boundaryVectors[0]
+    let nearestDistanceSquared = Number.POSITIVE_INFINITY
+
+    boundaryVectors.forEach((vector) => {
+      const dx = x - vector.current.x
+      const dy = y - vector.current.y
+      const distanceSquared = dx * dx + dy * dy
+
+      if (distanceSquared < nearestDistanceSquared) {
+        nearestDistanceSquared = distanceSquared
+        nearestVector = vector
+      }
+    })
+
+    return {
+      vector: nearestVector,
+      distance: Math.sqrt(nearestDistanceSquared),
+    }
+  }
+
+  function smoothstep(edge0: number, edge1: number, value: number): number {
+    if (edge0 === edge1) {
+      return value <= edge1 ? 1 : 0
+    }
+
+    const t = clampNumber((value - edge0) / (edge1 - edge0), 0, 1)
+
+    return t * t * (3 - 2 * t)
+  }
+
+  function clampNumber(value: number, min: number, max: number): number {
+    return Math.max(min, Math.min(max, value))
+  }
+
+  function triangulateMeshPoints(points: MeshWarpPoint[]): number[] {
+    type Triangle = [number, number, number]
+    const allPoints = [
+      ...points.map((point) => ({ x: point.sourceX, y: point.sourceY })),
+      { x: -8, y: -8 },
+      { x: 8, y: -8 },
+      { x: 0.5, y: 8 },
+    ]
+    const superFirst = points.length
+    const superSecond = points.length + 1
+    const superThird = points.length + 2
+    let triangles: Triangle[] = [[superFirst, superSecond, superThird]]
+
+    points.forEach((point, pointIndex) => {
+      const badTriangles = triangles.filter((triangle) =>
+        isPointInTriangleCircumcircle(point.sourceX, point.sourceY, triangle, allPoints),
+      )
+      const badTriangleSet = new Set(badTriangles)
+      const edgeUseCounts = new Map<string, { a: number; b: number; count: number }>()
+
+      badTriangles.forEach(([a, b, c]) => {
+        addTriangleEdge(edgeUseCounts, a, b)
+        addTriangleEdge(edgeUseCounts, b, c)
+        addTriangleEdge(edgeUseCounts, c, a)
+      })
+
+      triangles = triangles.filter((triangle) => !badTriangleSet.has(triangle))
+
+      edgeUseCounts.forEach((edge) => {
+        if (edge.count !== 1) {
+          return
+        }
+
+        const triangle: Triangle = [edge.a, edge.b, pointIndex]
+
+        if (!isDegenerateTriangle(triangle, allPoints)) {
+          triangles.push(triangle)
+        }
+      })
+    })
+
+    return triangles
+      .filter(
+        ([a, b, c]) =>
+          a < points.length && b < points.length && c < points.length,
+      )
+      .flat()
+  }
+
+  function addTriangleEdge(
+    edgeUseCounts: Map<string, { a: number; b: number; count: number }>,
+    a: number,
+    b: number,
+  ): void {
+    const edgeKey = a < b ? `${a}:${b}` : `${b}:${a}`
+    const existingEdge = edgeUseCounts.get(edgeKey)
+
+    if (existingEdge) {
+      existingEdge.count += 1
+      return
+    }
+
+    edgeUseCounts.set(edgeKey, { a, b, count: 1 })
+  }
+
+  function isPointInTriangleCircumcircle(
+    x: number,
+    y: number,
+    triangle: [number, number, number],
+    points: readonly { x: number; y: number }[],
+  ): boolean {
+    const [aIndex, bIndex, cIndex] = triangle
+    const a = points[aIndex]
+    const b = points[bIndex]
+    const c = points[cIndex]
+    const ax = a.x - x
+    const ay = a.y - y
+    const bx = b.x - x
+    const by = b.y - y
+    const cx = c.x - x
+    const cy = c.y - y
+    const determinant =
+      (ax * ax + ay * ay) * (bx * cy - cx * by) -
+      (bx * bx + by * by) * (ax * cy - cx * ay) +
+      (cx * cx + cy * cy) * (ax * by - bx * ay)
+    const orientation =
+      (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+
+    return orientation > 0 ? determinant > 1e-12 : determinant < -1e-12
+  }
+
+  function isDegenerateTriangle(
+    triangle: [number, number, number],
+    points: readonly { x: number; y: number }[],
+  ): boolean {
+    const [aIndex, bIndex, cIndex] = triangle
+    const a = points[aIndex]
+    const b = points[bIndex]
+    const c = points[cIndex]
+    const area =
+      (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+
+    return Math.abs(area) < 1e-10
+  }
+
+  function drawExtendedGridMeshWireframeOverlay(
+    context: CanvasRenderingContext2D,
+    points: MeshWarpPoint[],
+    triangleIndices: readonly number[],
+  ): void {
+    context.save()
+    context.strokeStyle = "rgba(34, 211, 238, 0.45)"
+    context.lineWidth = 0.5
+
+    for (let index = 0; index < triangleIndices.length; index += 3) {
+      const first = points[triangleIndices[index]]
+      const second = points[triangleIndices[index + 1]]
+      const third = points[triangleIndices[index + 2]]
+
+      if (!first || !second || !third) {
+        continue
+      }
+
+      context.beginPath()
+      moveToMeshWarpTarget(context, first)
+      lineToMeshWarpTarget(context, second)
+      lineToMeshWarpTarget(context, third)
+      context.closePath()
+      context.stroke()
+    }
+
+    context.restore()
+  }
+
+  function moveToMeshWarpTarget(
+    context: CanvasRenderingContext2D,
+    point: MeshWarpPoint,
+  ): void {
+    const target = getMeshWarpTargetPoint(point)
+
+    context.moveTo(
+      target.x * processedCanvas.width,
+      target.y * processedCanvas.height,
+    )
+  }
+
+  function lineToMeshWarpTarget(
+    context: CanvasRenderingContext2D,
+    point: MeshWarpPoint,
+  ): void {
+    const target = getMeshWarpTargetPoint(point)
+
+    context.lineTo(
+      target.x * processedCanvas.width,
+      target.y * processedCanvas.height,
+    )
+  }
+
+  function getMeshWarpTargetPoint(point: MeshWarpPoint): {
+    x: number
+    y: number
+  } {
+    return {
+      x:
+        point.sourceX +
+        (point.targetX - point.sourceX) *
+          shapeWarpDebugSettings.meshWarpStrength,
+      y:
+        point.sourceY +
+        (point.targetY - point.sourceY) *
+          shapeWarpDebugSettings.meshWarpStrength,
     }
   }
 
@@ -1698,6 +2445,7 @@ Camera:
     video: HTMLVideoElement,
     targetPositions: Float32Array,
     textureCoordinates: Float32Array,
+    triangleIndices: readonly number[],
   ): string | null {
     const { gl } = renderer
 
@@ -1754,9 +2502,14 @@ Camera:
       )
       gl.uniform1i(renderer.textureLocation, 0)
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, renderer.indexBuffer)
+      gl.bufferData(
+        gl.ELEMENT_ARRAY_BUFFER,
+        new Uint16Array(triangleIndices),
+        gl.DYNAMIC_DRAW,
+      )
       gl.drawElements(
         gl.TRIANGLES,
-        MEDIAPIPE_FACE_MESH_TRIANGLES.length,
+        triangleIndices.length,
         gl.UNSIGNED_SHORT,
         0,
       )
@@ -2274,6 +3027,103 @@ Camera:
         render()
         appendCameraPreview()
       })
+
+    document
+      .querySelector<HTMLInputElement>("#shape-warp-extended-grid-columns")
+      ?.addEventListener("change", (event) => {
+        markShapeWarpDebugCustom()
+        shapeWarpDebugSettings.extendedGridColumns = Math.round(
+          parseDebugNumberInput(
+            event.currentTarget,
+            shapeWarpDebugSettings.extendedGridColumns,
+            4,
+            40,
+          ),
+        )
+        render()
+        appendCameraPreview()
+      })
+
+    document
+      .querySelector<HTMLInputElement>("#shape-warp-extended-grid-rows")
+      ?.addEventListener("change", (event) => {
+        markShapeWarpDebugCustom()
+        shapeWarpDebugSettings.extendedGridRows = Math.round(
+          parseDebugNumberInput(
+            event.currentTarget,
+            shapeWarpDebugSettings.extendedGridRows,
+            4,
+            30,
+          ),
+        )
+        render()
+        appendCameraPreview()
+      })
+
+    document
+      .querySelector<HTMLInputElement>(
+        "#shape-warp-extended-grid-inner-radius",
+      )
+      ?.addEventListener("change", (event) => {
+        markShapeWarpDebugCustom()
+        shapeWarpDebugSettings.extendedGridInnerRadius =
+          parseDebugNumberInput(
+            event.currentTarget,
+            shapeWarpDebugSettings.extendedGridInnerRadius,
+            0,
+            0.3,
+          )
+        render()
+        appendCameraPreview()
+      })
+
+    document
+      .querySelector<HTMLInputElement>(
+        "#shape-warp-extended-grid-outer-radius",
+      )
+      ?.addEventListener("change", (event) => {
+        markShapeWarpDebugCustom()
+        shapeWarpDebugSettings.extendedGridOuterRadius =
+          parseDebugNumberInput(
+            event.currentTarget,
+            shapeWarpDebugSettings.extendedGridOuterRadius,
+            0,
+            0.5,
+          )
+        render()
+        appendCameraPreview()
+      })
+
+    document
+      .querySelector<HTMLInputElement>("#shape-warp-extended-grid-influence")
+      ?.addEventListener("change", (event) => {
+        markShapeWarpDebugCustom()
+        shapeWarpDebugSettings.extendedGridInfluence = parseDebugNumberInput(
+          event.currentTarget,
+          shapeWarpDebugSettings.extendedGridInfluence,
+          0,
+          1,
+        )
+        render()
+        appendCameraPreview()
+      })
+
+    document
+      .querySelector<HTMLInputElement>(
+        "#shape-warp-extended-grid-near-face-radius",
+      )
+      ?.addEventListener("change", (event) => {
+        markShapeWarpDebugCustom()
+        shapeWarpDebugSettings.extendedGridNearFaceRadius =
+          parseDebugNumberInput(
+            event.currentTarget,
+            shapeWarpDebugSettings.extendedGridNearFaceRadius,
+            0,
+            0.08,
+          )
+        render()
+        appendCameraPreview()
+      })
   }
 
   function applyShapeWarpDebugPreset(preset: ShapeWarpDebugPreset): void {
@@ -2303,6 +3153,23 @@ Camera:
       presetConfig.meshWarpStrength ?? shapeWarpDebugSettings.meshWarpStrength
     shapeWarpDebugSettings.textureFiltering =
       presetConfig.textureFiltering ?? shapeWarpDebugSettings.textureFiltering
+    shapeWarpDebugSettings.extendedGridColumns =
+      presetConfig.extendedGridColumns ??
+      shapeWarpDebugSettings.extendedGridColumns
+    shapeWarpDebugSettings.extendedGridRows =
+      presetConfig.extendedGridRows ?? shapeWarpDebugSettings.extendedGridRows
+    shapeWarpDebugSettings.extendedGridInnerRadius =
+      presetConfig.extendedGridInnerRadius ??
+      shapeWarpDebugSettings.extendedGridInnerRadius
+    shapeWarpDebugSettings.extendedGridOuterRadius =
+      presetConfig.extendedGridOuterRadius ??
+      shapeWarpDebugSettings.extendedGridOuterRadius
+    shapeWarpDebugSettings.extendedGridInfluence =
+      presetConfig.extendedGridInfluence ??
+      shapeWarpDebugSettings.extendedGridInfluence
+    shapeWarpDebugSettings.extendedGridNearFaceRadius =
+      presetConfig.extendedGridNearFaceRadius ??
+      shapeWarpDebugSettings.extendedGridNearFaceRadius
   }
 
   function markShapeWarpDebugCustom(): void {
@@ -2324,9 +3191,15 @@ Camera:
   }
 
   function parseShapeWarpDebugMode(value: string): ShapeWarpDebugMode {
-    return value === "webgl_mesh_debug"
-      ? "webgl_mesh_debug"
-      : "cpu_radial_debug"
+    if (value === "webgl_extended_grid_mesh_debug") {
+      return "webgl_extended_grid_mesh_debug"
+    }
+
+    if (value === "webgl_mesh_debug") {
+      return "webgl_mesh_debug"
+    }
+
+    return "cpu_radial_debug"
   }
 
   function parseDebugNumberInput(
@@ -2353,9 +3226,15 @@ Camera:
       return "original（元映像）"
     }
 
-    return shapeWarpDebugSettings.mode === "webgl_mesh_debug"
-      ? `WebGL mesh debug（WebGLメッシュデバッグ） / ${formatShapeWarpPresetLabel(shapeWarpDebugSettings.preset)}`
-      : `CPU radial debug（CPU放射状デバッグ） / ${formatShapeWarpPresetLabel(shapeWarpDebugSettings.preset)}`
+    if (shapeWarpDebugSettings.mode === "webgl_extended_grid_mesh_debug") {
+      return `WebGL extended grid mesh debug（WebGL拡張格子メッシュデバッグ） / ${formatShapeWarpPresetLabel(shapeWarpDebugSettings.preset)}`
+    }
+
+    if (shapeWarpDebugSettings.mode === "webgl_mesh_debug") {
+      return `WebGL mesh debug（WebGLメッシュデバッグ） / ${formatShapeWarpPresetLabel(shapeWarpDebugSettings.preset)}`
+    }
+
+    return `CPU radial debug（CPU放射状デバッグ） / ${formatShapeWarpPresetLabel(shapeWarpDebugSettings.preset)}`
   }
 
   function formatShapeWarpPresetLabel(
@@ -2710,6 +3589,7 @@ Detect（検出回数）: ${faceFrameLoopDebug.detectCallCount}/${mediaPipeDebug
             <legend>Shape Warp mode（変形方式）</legend>
             <label><input type="radio" name="shape-warp-mode" value="cpu_radial_debug" ${shapeWarpDebugSettings.mode === "cpu_radial_debug" ? "checked" : ""} /> CPU radial debug（CPU放射状デバッグ）</label>
             <label><input type="radio" name="shape-warp-mode" value="webgl_mesh_debug" ${shapeWarpDebugSettings.mode === "webgl_mesh_debug" ? "checked" : ""} /> WebGL mesh debug（WebGLメッシュデバッグ）</label>
+            <label><input type="radio" name="shape-warp-mode" value="webgl_extended_grid_mesh_debug" ${shapeWarpDebugSettings.mode === "webgl_extended_grid_mesh_debug" ? "checked" : ""} /> WebGL extended grid mesh debug（WebGL拡張格子メッシュデバッグ）</label>
           </fieldset>
           <fieldset>
             <legend>preset（プリセット）</legend>
@@ -2763,6 +3643,33 @@ Detect（検出回数）: ${faceFrameLoopDebug.detectCallCount}/${mediaPipeDebug
               WebGL mesh wireframe（メッシュ線）を表示
             </label>
             <p>topologyLandmarkCount: ${MEDIAPIPE_FACE_MESH_TOPOLOGY_LANDMARK_COUNT} / triangleCount: ${MEDIAPIPE_FACE_MESH_TRIANGLE_COUNT}</p>
+          </fieldset>
+          <fieldset>
+            <legend>Extended grid mesh debug settings（拡張格子メッシュデバッグ設定）</legend>
+            <label>
+              gridColumns（格子列数）
+              <input id="shape-warp-extended-grid-columns" type="number" min="4" max="40" step="1" value="${shapeWarpDebugSettings.extendedGridColumns}" />
+            </label>
+            <label>
+              gridRows（格子行数）
+              <input id="shape-warp-extended-grid-rows" type="number" min="4" max="30" step="1" value="${shapeWarpDebugSettings.extendedGridRows}" />
+            </label>
+            <label>
+              innerRadius（内側追随半径）
+              <input id="shape-warp-extended-grid-inner-radius" type="number" min="0" max="0.3" step="0.005" value="${shapeWarpDebugSettings.extendedGridInnerRadius}" />
+            </label>
+            <label>
+              outerRadius（外側追随半径）
+              <input id="shape-warp-extended-grid-outer-radius" type="number" min="0" max="0.5" step="0.005" value="${shapeWarpDebugSettings.extendedGridOuterRadius}" />
+            </label>
+            <label>
+              gridInfluence（格子追随強度）
+              <input id="shape-warp-extended-grid-influence" type="number" min="0" max="1" step="0.05" value="${shapeWarpDebugSettings.extendedGridInfluence}" />
+            </label>
+            <label>
+              nearFaceRadius（顔点近傍削除半径）
+              <input id="shape-warp-extended-grid-near-face-radius" type="number" min="0" max="0.08" step="0.001" value="${shapeWarpDebugSettings.extendedGridNearFaceRadius}" />
+            </label>
           </fieldset>
         </fieldset>
           </section>
