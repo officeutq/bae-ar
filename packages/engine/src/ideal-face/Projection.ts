@@ -79,15 +79,42 @@ export interface Landmark3DBoundsSummary extends Landmark2DBoundsSummary {
 export interface IdealLandmarks3DProjectionAspectRatioDebug {
   asset?: number | null
   rotated?: number | null
+  projectedBeforeAlignment?: number | null
   aligned?: number | null
   image?: number | null
   current?: number | null
+  currentSameUnit?: number | null
   currentMinusAligned?: number | null
   currentMinusImage?: number | null
 }
 
 export type ProjectionCoordinateConversionMode =
   "same_unit_to_image_normalized_v1"
+
+export type IdealLandmarks3DProjectionMode =
+  | "orthographic"
+  | "simple_perspective"
+
+export interface DebugProjectionOptions {
+  /**
+   * Debug-only experimental projection mode. Production default remains
+   * orthographic unless this option is explicitly supplied.
+   */
+  mode?: IdealLandmarks3DProjectionMode
+  zScale?: number
+  perspectiveStrength?: number
+  cameraDistance?: number
+}
+
+export interface ProjectionModelDebug {
+  mode: IdealLandmarks3DProjectionMode
+  zScale: number
+  perspectiveStrength: number
+  cameraDistance: number
+  perspectiveMin: number
+  perspectiveMax: number
+  experimental: true
+}
 
 export interface ProjectionCoordinateDebug {
   sameUnitBounds?: Landmark3DBoundsSummary
@@ -102,10 +129,21 @@ export interface ProjectionCoordinateDebug {
 export interface IdealLandmarks3DProjectionDebug {
   assetBounds?: Landmark3DBoundsSummary
   rotatedBounds?: Landmark3DBoundsSummary
+  projectedBeforeAlignmentBounds?: Landmark3DBoundsSummary
   alignedBounds?: Landmark3DBoundsSummary
   imageBounds?: Landmark3DBoundsSummary
   currentBounds?: Landmark2DBoundsSummary
+  currentSameUnitBounds?: Landmark2DBoundsSummary
   coordinate?: ProjectionCoordinateDebug
+  projection: ProjectionModelDebug
+  projectionMode: IdealLandmarks3DProjectionMode
+  zScale: number
+  perspectiveStrength: number
+  cameraDistance: number
+  projectedBeforeAlignmentAspect?: number | null
+  aspectErrorBeforeAlignment?: number | null
+  widthRatioBeforeAlignment?: number | null
+  heightRatioBeforeAlignment?: number | null
   aspectRatio: IdealLandmarks3DProjectionAspectRatioDebug
 }
 
@@ -167,10 +205,20 @@ export interface ProjectIdealLandmarks3DOptions {
   videoWidth?: number
   videoHeight?: number
   debugPivotZ?: number
+  projectionMode?: IdealLandmarks3DProjectionMode
+  debugProjection?: DebugProjectionOptions
 }
 
 const DEG_TO_RAD = Math.PI / 180
 const IDEAL_LANDMARKS_3D_COUNT = 478
+const DEBUG_PROJECTION_DEFAULTS = {
+  mode: "orthographic" as const,
+  zScale: 1,
+  perspectiveStrength: 1,
+  cameraDistance: 2,
+}
+const DEBUG_PROJECTION_PERSPECTIVE_MIN = 0.25
+const DEBUG_PROJECTION_PERSPECTIVE_MAX = 4
 const IDEAL_LANDMARKS_3D_CENTER = {
   x: 0,
   y: 0,
@@ -274,6 +322,8 @@ export function projectIdealLandmarks3D(
   const idealLandmarks3D = idealFace.model.idealLandmarks3D
 
   if (!idealLandmarks3D || idealLandmarks3D.length !== IDEAL_LANDMARKS_3D_COUNT) {
+    const projectionOptions = getDebugProjectionOptions(options)
+
     return {
       ...baseResult,
       status: "not_available",
@@ -285,11 +335,14 @@ export function projectIdealLandmarks3D(
       debug: createProjectionDebug({
         assetBounds: summarizeLandmark3DBounds(idealLandmarks3D),
         currentBounds: summarizeLandmark2DBounds(options.currentLandmarks),
+        projection: projectionOptions,
       }),
     }
   }
 
   if (!facePose || options.detected === false) {
+    const projectionOptions = getDebugProjectionOptions(options)
+
     return {
       ...baseResult,
       status: "missing_face_pose",
@@ -301,13 +354,18 @@ export function projectIdealLandmarks3D(
       debug: createProjectionDebug({
         assetBounds: summarizeLandmark3DBounds(idealLandmarks3D),
         currentBounds: summarizeLandmark2DBounds(options.currentLandmarks),
+        projection: projectionOptions,
       }),
     }
   }
 
   const rotationCenter = getProjectionRotationCenter(options)
+  const projectionOptions = getDebugProjectionOptions(options)
   const rotatedLandmarks = idealLandmarks3D.map((landmark) =>
-    projectIdealLandmark3D(landmark, facePose, rotationCenter),
+    rotateIdealLandmark3D(landmark, facePose, rotationCenter),
+  )
+  const projectedBeforeAlignmentLandmarks = rotatedLandmarks.map((landmark) =>
+    projectRotatedIdealLandmark2D(landmark, projectionOptions),
   )
   const videoAspectRatio = getVideoAspectRatio(options)
   const currentMetrics = getCurrentFaceProjectionMetrics(
@@ -315,7 +373,7 @@ export function projectIdealLandmarks3D(
     videoAspectRatio.value,
   )
   const alignmentResult = alignProjectedIdealLandmarks(
-    rotatedLandmarks,
+    projectedBeforeAlignmentLandmarks,
     currentMetrics,
   )
   const imageConversionResult = convertSameUnitLandmarksToImageNormalized(
@@ -329,6 +387,7 @@ export function projectIdealLandmarks3D(
   )
   const imageBounds = summarizeLandmark3DBounds(imageLandmarks)
   const currentBounds = summarizeLandmark2DBounds(options.currentLandmarks)
+  const currentSameUnitBounds = currentMetrics.sameUnit.bounds
 
   return {
     ...baseResult,
@@ -342,9 +401,13 @@ export function projectIdealLandmarks3D(
     debug: createProjectionDebug({
       assetBounds: summarizeLandmark3DBounds(idealLandmarks3D),
       rotatedBounds: summarizeLandmark3DBounds(rotatedLandmarks),
+      projectedBeforeAlignmentBounds: summarizeLandmark3DBounds(
+        projectedBeforeAlignmentLandmarks,
+      ),
       alignedBounds: sameUnitBounds,
       imageBounds,
       currentBounds,
+      currentSameUnitBounds,
       coordinate: {
         sameUnitBounds,
         imageBounds,
@@ -357,6 +420,7 @@ export function projectIdealLandmarks3D(
           .filter((reason): reason is string => Boolean(reason))
           .join("; ") || undefined,
       },
+      projection: projectionOptions,
     }),
   }
 }
@@ -680,24 +744,62 @@ function getVideoAspectRatio(
 function createProjectionDebug(input: {
   assetBounds?: Landmark3DBoundsSummary
   rotatedBounds?: Landmark3DBoundsSummary
+  projectedBeforeAlignmentBounds?: Landmark3DBoundsSummary
   alignedBounds?: Landmark3DBoundsSummary
   imageBounds?: Landmark3DBoundsSummary
   currentBounds?: Landmark2DBoundsSummary
+  currentSameUnitBounds?: Landmark2DBoundsSummary
   coordinate?: ProjectionCoordinateDebug
+  projection: ProjectionModelDebug
 }): IdealLandmarks3DProjectionDebug {
+  const projectedBeforeAlignmentAspect =
+    input.projectedBeforeAlignmentBounds?.aspectRatio ?? null
+  const aspectErrorBeforeAlignment =
+    input.currentSameUnitBounds?.aspectRatio !== null &&
+    input.currentSameUnitBounds?.aspectRatio !== undefined &&
+    projectedBeforeAlignmentAspect !== null &&
+    projectedBeforeAlignmentAspect !== undefined
+      ? input.currentSameUnitBounds.aspectRatio - projectedBeforeAlignmentAspect
+      : null
+  const widthRatioBeforeAlignment =
+    input.currentSameUnitBounds?.width !== undefined &&
+    input.projectedBeforeAlignmentBounds?.width !== undefined &&
+    getPositiveNumber(input.projectedBeforeAlignmentBounds.width)
+      ? input.currentSameUnitBounds.width / input.projectedBeforeAlignmentBounds.width
+      : null
+  const heightRatioBeforeAlignment =
+    input.currentSameUnitBounds?.height !== undefined &&
+    input.projectedBeforeAlignmentBounds?.height !== undefined &&
+    getPositiveNumber(input.projectedBeforeAlignmentBounds.height)
+      ? input.currentSameUnitBounds.height / input.projectedBeforeAlignmentBounds.height
+      : null
+
   return {
     assetBounds: input.assetBounds,
     rotatedBounds: input.rotatedBounds,
+    projectedBeforeAlignmentBounds: input.projectedBeforeAlignmentBounds,
     alignedBounds: input.alignedBounds,
     imageBounds: input.imageBounds,
     currentBounds: input.currentBounds,
+    currentSameUnitBounds: input.currentSameUnitBounds,
     coordinate: input.coordinate,
+    projection: input.projection,
+    projectionMode: input.projection.mode,
+    zScale: input.projection.zScale,
+    perspectiveStrength: input.projection.perspectiveStrength,
+    cameraDistance: input.projection.cameraDistance,
+    projectedBeforeAlignmentAspect,
+    aspectErrorBeforeAlignment,
+    widthRatioBeforeAlignment,
+    heightRatioBeforeAlignment,
     aspectRatio: {
       asset: input.assetBounds?.aspectRatio ?? null,
       rotated: input.rotatedBounds?.aspectRatio ?? null,
+      projectedBeforeAlignment: projectedBeforeAlignmentAspect,
       aligned: input.alignedBounds?.aspectRatio ?? null,
       image: input.imageBounds?.aspectRatio ?? null,
       current: input.currentBounds?.aspectRatio ?? null,
+      currentSameUnit: input.currentSameUnitBounds?.aspectRatio ?? null,
       currentMinusAligned:
         input.currentBounds?.aspectRatio !== null &&
         input.currentBounds?.aspectRatio !== undefined &&
@@ -788,6 +890,49 @@ function getPositiveNumber(value: number | null | undefined): number | undefined
     : undefined
 }
 
+function getFiniteNumber(
+  value: number | null | undefined,
+  fallback: number,
+): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value))
+}
+
+function getDebugProjectionOptions(
+  options: ProjectIdealLandmarks3DOptions,
+): ProjectionModelDebug {
+  const requestedMode =
+    options.debugProjection?.mode ?? options.projectionMode ?? "orthographic"
+  const mode: IdealLandmarks3DProjectionMode =
+    requestedMode === "simple_perspective"
+      ? "simple_perspective"
+      : DEBUG_PROJECTION_DEFAULTS.mode
+  const zScale = getFiniteNumber(
+    options.debugProjection?.zScale,
+    DEBUG_PROJECTION_DEFAULTS.zScale,
+  )
+  const perspectiveStrength = getFiniteNumber(
+    options.debugProjection?.perspectiveStrength,
+    DEBUG_PROJECTION_DEFAULTS.perspectiveStrength,
+  )
+  const cameraDistance =
+    getPositiveNumber(options.debugProjection?.cameraDistance) ??
+    DEBUG_PROJECTION_DEFAULTS.cameraDistance
+
+  return {
+    mode,
+    zScale,
+    perspectiveStrength,
+    cameraDistance,
+    perspectiveMin: DEBUG_PROJECTION_PERSPECTIVE_MIN,
+    perspectiveMax: DEBUG_PROJECTION_PERSPECTIVE_MAX,
+    experimental: true,
+  }
+}
+
 function createNoAlignment(reason: string): IdealLandmarks3DProjectionAlignment {
   return {
     mode: "none",
@@ -801,7 +946,7 @@ function createNoAlignment(reason: string): IdealLandmarks3DProjectionAlignment 
   }
 }
 
-function projectIdealLandmark3D(
+function rotateIdealLandmark3D(
   landmark: IdealFaceLandmark3D,
   pose: FacePose,
   rotationCenter: RotatablePoint3D,
@@ -819,6 +964,33 @@ function projectIdealLandmark3D(
     y: rotated.y + rotationCenter.y,
     z: rotated.z + rotationCenter.z,
     confidence: landmark.confidence,
+  }
+}
+
+function projectRotatedIdealLandmark2D(
+  landmark: ProjectedIdealLandmarkSameUnit,
+  projection: ProjectionModelDebug,
+): ProjectedIdealLandmarkSameUnit {
+  if (projection.mode === "orthographic") {
+    return landmark
+  }
+
+  const z = landmark.z * projection.zScale
+  const depthFactor =
+    1 + (z * projection.perspectiveStrength) / projection.cameraDistance
+  const perspective = clampNumber(
+    Number.isFinite(depthFactor) && depthFactor !== 0
+      ? 1 / depthFactor
+      : 1,
+    projection.perspectiveMin,
+    projection.perspectiveMax,
+  )
+
+  return {
+    ...landmark,
+    x: landmark.x * perspective,
+    y: landmark.y * perspective,
+    z,
   }
 }
 

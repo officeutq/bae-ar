@@ -4,6 +4,7 @@ import {
   projectIdealLandmarks3D,
   type FaceLandmark,
   type FacePose,
+  type IdealLandmarks3DProjectionMode,
   type IdealFace,
   type LandmarkGroup,
   type LandmarkGroups,
@@ -158,6 +159,12 @@ const PIVOT_Z_ESTIMATION_DEFAULT_RANGE = {
   min: -1,
   max: 1,
   step: 0.05,
+} as const
+const PIVOT_Z_ESTIMATION_DEFAULT_PROJECTION = {
+  projectionMode: "orthographic" as const,
+  zScale: 1,
+  perspectiveStrength: 1,
+  cameraDistance: 2,
 } as const
 const PIVOT_Z_ESTIMATION_STABLE_LANDMARK_COUNT = 80
 const PIVOT_Z_ESTIMATION_MIN_STABLE_LANDMARK_COUNT = 60
@@ -1291,6 +1298,12 @@ interface PivotZBucketScoreDebug {
 interface PivotZCandidateScoreDebug {
   pivotZ: number
   score: number
+  projectedBeforeAlignmentAspect: number | null
+  aspectErrorBeforeAlignment: number | null
+  widthRatioBeforeAlignment: number | null
+  heightRatioBeforeAlignment: number | null
+  centerErrorBeforeAlignment: number | null
+  requiredTranslateBeforeAlignment: Point2D | null
   scoreByBucket: Record<PivotZBucketId, PivotZBucketScoreDebug>
 }
 
@@ -1299,10 +1312,25 @@ interface PivotZCandidateScoreSampleItemDebug {
   score: number
 }
 
+interface PivotZCandidateProjectionDebugSampleItem {
+  pivotZ: number
+  projectedBeforeAlignmentAspect: number | null
+  aspectErrorBeforeAlignment: number | null
+  widthRatioBeforeAlignment: number | null
+  heightRatioBeforeAlignment: number | null
+  centerErrorBeforeAlignment: number | null
+}
+
 interface PivotZCandidateScoreSampleDebug {
   head: PivotZCandidateScoreSampleItemDebug[]
   middle: PivotZCandidateScoreSampleItemDebug[]
   tail: PivotZCandidateScoreSampleItemDebug[]
+}
+
+interface PivotZCandidateProjectionDebugSample {
+  head: PivotZCandidateProjectionDebugSampleItem[]
+  middle: PivotZCandidateProjectionDebugSampleItem[]
+  tail: PivotZCandidateProjectionDebugSampleItem[]
 }
 
 interface PivotZEstimationScoreSpreadDebug {
@@ -1316,6 +1344,10 @@ interface PivotZEstimationSettings {
   min: number
   max: number
   step: number
+  projectionMode: IdealLandmarks3DProjectionMode
+  zScale: number
+  perspectiveStrength: number
+  cameraDistance: number
 }
 
 interface PivotZProjectionProbeLandmarkDebug {
@@ -1341,6 +1373,11 @@ interface PivotZProjectionProbeSampleDebug {
   imageLandmarks: PivotZProjectionProbeLandmarkDebug[]
   alignment: PivotZProjectionProbeAlignmentDebug
   rotatedBounds: LandmarkBoundsSummary | null
+  projectedBeforeAlignmentBounds: LandmarkBoundsSummary | null
+  projectedBeforeAlignmentAspect: number | null
+  aspectErrorBeforeAlignment: number | null
+  widthRatioBeforeAlignment: number | null
+  heightRatioBeforeAlignment: number | null
   alignedBounds: LandmarkBoundsSummary | null
   imageBounds: LandmarkBoundsSummary | null
 }
@@ -1375,6 +1412,10 @@ interface PivotZEstimationDebugResult {
     max: number
   }
   step: number
+  projectionMode: IdealLandmarks3DProjectionMode
+  zScale: number
+  perspectiveStrength: number
+  cameraDistance: number
   candidateCount: number
   frameSet: string
   usedFrameCount: number
@@ -1390,6 +1431,7 @@ interface PivotZEstimationDebugResult {
   scoreByBucket: Record<PivotZBucketId, PivotZBucketScoreDebug>
   topCandidates: PivotZCandidateScoreDebug[]
   candidateScoreSample: PivotZCandidateScoreSampleDebug
+  projectedBeforeAlignmentAspectByCandidate: PivotZCandidateProjectionDebugSample
   projectionProbe: PivotZProjectionProbeDebug | null
   warnings: PivotZEstimationWarning[]
   processingTimeMs: number | null
@@ -2156,10 +2198,23 @@ function createDefaultPivotZEstimationSettings(): PivotZEstimationSettings {
     min: PIVOT_Z_ESTIMATION_DEFAULT_RANGE.min,
     max: PIVOT_Z_ESTIMATION_DEFAULT_RANGE.max,
     step: PIVOT_Z_ESTIMATION_DEFAULT_RANGE.step,
+    projectionMode: PIVOT_Z_ESTIMATION_DEFAULT_PROJECTION.projectionMode,
+    zScale: PIVOT_Z_ESTIMATION_DEFAULT_PROJECTION.zScale,
+    perspectiveStrength:
+      PIVOT_Z_ESTIMATION_DEFAULT_PROJECTION.perspectiveStrength,
+    cameraDistance: PIVOT_Z_ESTIMATION_DEFAULT_PROJECTION.cameraDistance,
   }
 }
 
 function createEmptyPivotZCandidateScoreSample(): PivotZCandidateScoreSampleDebug {
+  return {
+    head: [],
+    middle: [],
+    tail: [],
+  }
+}
+
+function createEmptyPivotZCandidateProjectionDebugSample(): PivotZCandidateProjectionDebugSample {
   return {
     head: [],
     middle: [],
@@ -2178,6 +2233,10 @@ function createInitialPivotZEstimationDebugResult(
       max: pivotZEstimationSettings.max,
     },
     step: pivotZEstimationSettings.step,
+    projectionMode: pivotZEstimationSettings.projectionMode,
+    zScale: pivotZEstimationSettings.zScale,
+    perspectiveStrength: pivotZEstimationSettings.perspectiveStrength,
+    cameraDistance: pivotZEstimationSettings.cameraDistance,
     candidateCount: 0,
     frameSet: "useForInference observation frames",
     usedFrameCount: 0,
@@ -2198,6 +2257,8 @@ function createInitialPivotZEstimationDebugResult(
     scoreByBucket: createEmptyPivotZBucketScoreRecord(),
     topCandidates: [],
     candidateScoreSample: createEmptyPivotZCandidateScoreSample(),
+    projectedBeforeAlignmentAspectByCandidate:
+      createEmptyPivotZCandidateProjectionDebugSample(),
     projectionProbe: null,
     warnings: ["unobservableWithBoundsCenterAlignment"],
     processingTimeMs: null,
@@ -3231,11 +3292,29 @@ function sanitizePivotZEstimationSettings(
     Number.isFinite(settings.step) && settings.step > 0
       ? settings.step
       : defaultSettings.step
+  const projectionMode =
+    settings.projectionMode === "simple_perspective"
+      ? "simple_perspective"
+      : defaultSettings.projectionMode
+  const zScale = Number.isFinite(settings.zScale)
+    ? settings.zScale
+    : defaultSettings.zScale
+  const perspectiveStrength = Number.isFinite(settings.perspectiveStrength)
+    ? settings.perspectiveStrength
+    : defaultSettings.perspectiveStrength
+  const cameraDistance =
+    Number.isFinite(settings.cameraDistance) && settings.cameraDistance > 0
+      ? settings.cameraDistance
+      : defaultSettings.cameraDistance
 
   return {
     min: roundIdealFaceAssetNumber(min),
     max: roundIdealFaceAssetNumber(max),
     step: roundIdealFaceAssetNumber(step),
+    projectionMode,
+    zScale: roundIdealFaceAssetNumber(zScale),
+    perspectiveStrength: roundIdealFaceAssetNumber(perspectiveStrength),
+    cameraDistance: roundIdealFaceAssetNumber(cameraDistance),
   }
 }
 
@@ -3249,12 +3328,45 @@ function readPivotZEstimationSettingsFromControls(): PivotZEstimationSettings {
   const stepInput = document.querySelector<HTMLInputElement>(
     "[data-pivot-z-estimation-step]",
   )
+  const projectionModeSelect = document.querySelector<HTMLSelectElement>(
+    "[data-pivot-z-estimation-projection-mode]",
+  )
+  const zScaleInput = document.querySelector<HTMLInputElement>(
+    "[data-pivot-z-estimation-z-scale]",
+  )
+  const perspectiveStrengthInput = document.querySelector<HTMLInputElement>(
+    "[data-pivot-z-estimation-perspective-strength]",
+  )
+  const cameraDistanceInput = document.querySelector<HTMLInputElement>(
+    "[data-pivot-z-estimation-camera-distance]",
+  )
 
   return sanitizePivotZEstimationSettings({
     min: Number(minInput?.value),
     max: Number(maxInput?.value),
     step: Number(stepInput?.value),
+    projectionMode:
+      projectionModeSelect?.value === "simple_perspective"
+        ? "simple_perspective"
+        : "orthographic",
+    zScale: Number(zScaleInput?.value),
+    perspectiveStrength: Number(perspectiveStrengthInput?.value),
+    cameraDistance: Number(cameraDistanceInput?.value),
   })
+}
+
+function getPivotZDebugProjectionOptions(settings: PivotZEstimationSettings): {
+  mode: IdealLandmarks3DProjectionMode
+  zScale: number
+  perspectiveStrength: number
+  cameraDistance: number
+} {
+  return {
+    mode: settings.projectionMode,
+    zScale: settings.zScale,
+    perspectiveStrength: settings.perspectiveStrength,
+    cameraDistance: settings.cameraDistance,
+  }
 }
 
 function getPivotZCandidateValues(
@@ -3658,10 +3770,19 @@ function calculatePivotZCandidateScore(
   idealFaceForProjection: IdealFace,
   frames: PivotZEvaluationFrame[],
   pivotZ: number,
+  settings: PivotZEstimationSettings,
 ): PivotZCandidateScoreDebug | null {
   const accumulators = createPivotZBucketScoreAccumulators()
+  const projectionSettings = getPivotZDebugProjectionOptions(settings)
   const videoWidth = videoSource?.videoWidth ?? undefined
   const videoHeight = videoSource?.videoHeight ?? undefined
+  const projectedBeforeAlignmentAspects: number[] = []
+  const aspectErrorsBeforeAlignment: number[] = []
+  const widthRatiosBeforeAlignment: number[] = []
+  const heightRatiosBeforeAlignment: number[] = []
+  const centerErrorsBeforeAlignment: number[] = []
+  const requiredTranslateBeforeAlignmentX: number[] = []
+  const requiredTranslateBeforeAlignmentY: number[] = []
 
   frames.forEach((frame) => {
     const projection = projectIdealLandmarks3D(
@@ -3673,6 +3794,7 @@ function calculatePivotZCandidateScore(
         videoWidth: videoWidth ?? undefined,
         videoHeight: videoHeight ?? undefined,
         debugPivotZ: pivotZ,
+        debugProjection: projectionSettings,
       },
     )
 
@@ -3690,6 +3812,34 @@ function calculatePivotZCandidateScore(
 
     if (!frameScore) {
       return
+    }
+
+    collectNullableDebugNumber(
+      projectedBeforeAlignmentAspects,
+      projection.debug?.projectedBeforeAlignmentAspect,
+    )
+    collectNullableDebugNumber(
+      aspectErrorsBeforeAlignment,
+      projection.debug?.aspectErrorBeforeAlignment,
+    )
+    collectNullableDebugNumber(
+      widthRatiosBeforeAlignment,
+      projection.debug?.widthRatioBeforeAlignment,
+    )
+    collectNullableDebugNumber(
+      heightRatiosBeforeAlignment,
+      projection.debug?.heightRatioBeforeAlignment,
+    )
+
+    const currentCenter = projection.alignment?.currentCenter
+    const projectedCenter = projection.alignment?.projectedCenter
+
+    if (currentCenter && projectedCenter) {
+      const translateX = currentCenter.x - projectedCenter.x
+      const translateY = currentCenter.y - projectedCenter.y
+      requiredTranslateBeforeAlignmentX.push(translateX)
+      requiredTranslateBeforeAlignmentY.push(translateY)
+      centerErrorsBeforeAlignment.push(Math.hypot(translateX, translateY))
     }
 
     frame.buckets.forEach((bucketId) => {
@@ -3744,8 +3894,52 @@ function calculatePivotZCandidateScore(
         0,
       ) / bucketWeightTotal,
     ),
+    projectedBeforeAlignmentAspect: roundNullablePivotZDebugNumber(
+      averageNumbers(projectedBeforeAlignmentAspects),
+    ),
+    aspectErrorBeforeAlignment: roundNullablePivotZDebugNumber(
+      averageNumbers(aspectErrorsBeforeAlignment),
+    ),
+    widthRatioBeforeAlignment: roundNullablePivotZDebugNumber(
+      averageNumbers(widthRatiosBeforeAlignment),
+    ),
+    heightRatioBeforeAlignment: roundNullablePivotZDebugNumber(
+      averageNumbers(heightRatiosBeforeAlignment),
+    ),
+    centerErrorBeforeAlignment: roundNullablePivotZDebugNumber(
+      averageNumbers(centerErrorsBeforeAlignment),
+    ),
+    requiredTranslateBeforeAlignment:
+      requiredTranslateBeforeAlignmentX.length > 0 &&
+      requiredTranslateBeforeAlignmentY.length > 0
+        ? {
+            x: roundPivotZDebugNumber(
+              averageNumbers(requiredTranslateBeforeAlignmentX),
+            ),
+            y: roundPivotZDebugNumber(
+              averageNumbers(requiredTranslateBeforeAlignmentY),
+            ),
+          }
+        : null,
     scoreByBucket,
   }
+}
+
+function collectNullableDebugNumber(
+  values: number[],
+  value: number | null | undefined,
+): void {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    values.push(value)
+  }
+}
+
+function roundNullablePivotZDebugNumber(
+  value: number | null,
+): number | null {
+  return typeof value === "number" && Number.isFinite(value)
+    ? roundPivotZDebugNumber(value)
+    : null
 }
 
 function isPivotZScoreLooksFlat(
@@ -3767,6 +3961,34 @@ function buildPivotZCandidateScoreSample(
   ): PivotZCandidateScoreSampleItemDebug => ({
     pivotZ: candidate.pivotZ,
     score: candidate.score,
+  })
+  const sampleCount = PIVOT_Z_ESTIMATION_SCORE_SAMPLE_COUNT
+  const middleStart = Math.max(
+    0,
+    Math.floor(candidateScoresByPivot.length / 2) - Math.floor(sampleCount / 2),
+  )
+
+  return {
+    head: candidateScoresByPivot.slice(0, sampleCount).map(toItem),
+    middle: candidateScoresByPivot
+      .slice(middleStart, middleStart + sampleCount)
+      .map(toItem),
+    tail: candidateScoresByPivot.slice(-sampleCount).map(toItem),
+  }
+}
+
+function buildPivotZCandidateProjectionDebugSample(
+  candidateScoresByPivot: PivotZCandidateScoreDebug[],
+): PivotZCandidateProjectionDebugSample {
+  const toItem = (
+    candidate: PivotZCandidateScoreDebug,
+  ): PivotZCandidateProjectionDebugSampleItem => ({
+    pivotZ: candidate.pivotZ,
+    projectedBeforeAlignmentAspect: candidate.projectedBeforeAlignmentAspect,
+    aspectErrorBeforeAlignment: candidate.aspectErrorBeforeAlignment,
+    widthRatioBeforeAlignment: candidate.widthRatioBeforeAlignment,
+    heightRatioBeforeAlignment: candidate.heightRatioBeforeAlignment,
+    centerErrorBeforeAlignment: candidate.centerErrorBeforeAlignment,
   })
   const sampleCount = PIVOT_Z_ESTIMATION_SCORE_SAMPLE_COUNT
   const middleStart = Math.max(
@@ -4016,6 +4238,7 @@ function buildPivotZProjectionProbeDebug(
   const landmarkIndices = Array.from(
     new Set(PIVOT_Z_ESTIMATION_PROBE_LANDMARK_INDICES),
   )
+  const projectionSettings = getPivotZDebugProjectionOptions(settings)
   const videoWidth = videoSource?.videoWidth ?? undefined
   const videoHeight = videoSource?.videoHeight ?? undefined
   const samples = pivotZValues.map((pivotZ) => {
@@ -4028,6 +4251,7 @@ function buildPivotZProjectionProbeDebug(
         videoWidth: videoWidth ?? undefined,
         videoHeight: videoHeight ?? undefined,
         debugPivotZ: pivotZ,
+        debugProjection: projectionSettings,
       },
     )
 
@@ -4063,6 +4287,21 @@ function buildPivotZProjectionProbeDebug(
       },
       rotatedBounds: toPivotZProbeBoundsSummary(
         projection.debug?.rotatedBounds,
+      ),
+      projectedBeforeAlignmentBounds: toPivotZProbeBoundsSummary(
+        projection.debug?.projectedBeforeAlignmentBounds,
+      ),
+      projectedBeforeAlignmentAspect: roundNullablePivotZDebugNumber(
+        projection.debug?.projectedBeforeAlignmentAspect ?? null,
+      ),
+      aspectErrorBeforeAlignment: roundNullablePivotZDebugNumber(
+        projection.debug?.aspectErrorBeforeAlignment ?? null,
+      ),
+      widthRatioBeforeAlignment: roundNullablePivotZDebugNumber(
+        projection.debug?.widthRatioBeforeAlignment ?? null,
+      ),
+      heightRatioBeforeAlignment: roundNullablePivotZDebugNumber(
+        projection.debug?.heightRatioBeforeAlignment ?? null,
       ),
       alignedBounds: toPivotZProbeBoundsSummary(
         projection.debug?.alignedBounds,
@@ -4207,6 +4446,7 @@ function runPivotZEstimationDebug(): PivotZEstimationDebugResult {
         idealFaceForProjection,
         evaluationFrames,
         pivotZ,
+        pivotZEstimationSettings,
       ),
     )
     .filter(
@@ -4260,6 +4500,10 @@ function runPivotZEstimationDebug(): PivotZEstimationDebugResult {
       max: pivotZEstimationSettings.max,
     },
     step: pivotZEstimationSettings.step,
+    projectionMode: pivotZEstimationSettings.projectionMode,
+    zScale: pivotZEstimationSettings.zScale,
+    perspectiveStrength: pivotZEstimationSettings.perspectiveStrength,
+    cameraDistance: pivotZEstimationSettings.cameraDistance,
     candidateCount: candidateValues.length,
     frameSet: "useForInference=true and excluded=false observation frames",
     usedFrameCount: evaluationFrames.length,
@@ -4283,6 +4527,8 @@ function runPivotZEstimationDebug(): PivotZEstimationDebugResult {
       PIVOT_Z_ESTIMATION_TOP_CANDIDATE_COUNT,
     ),
     candidateScoreSample: buildPivotZCandidateScoreSample(candidateScoresByPivot),
+    projectedBeforeAlignmentAspectByCandidate:
+      buildPivotZCandidateProjectionDebugSample(candidateScoresByPivot),
     projectionProbe,
     warnings: buildPivotZEstimationWarnings(frameCountByBucket, scoreSpread),
     processingTimeMs: roundDebugNumber(performance.now() - startedAt),
@@ -11751,6 +11997,41 @@ function renderPivotZEstimationDebugPanel(
             data-pivot-z-estimation-step="true"
           />
         </label>
+        <label>
+          projectionMode
+          <select data-pivot-z-estimation-projection-mode="true">
+            <option value="orthographic"${pivotZEstimationSettings.projectionMode === "orthographic" ? " selected" : ""}>orthographic</option>
+            <option value="simple_perspective"${pivotZEstimationSettings.projectionMode === "simple_perspective" ? " selected" : ""}>simple_perspective</option>
+          </select>
+        </label>
+        <label>
+          zScale
+          <input
+            type="number"
+            step="0.01"
+            value="${pivotZEstimationSettings.zScale}"
+            data-pivot-z-estimation-z-scale="true"
+          />
+        </label>
+        <label>
+          perspectiveStrength
+          <input
+            type="number"
+            step="0.01"
+            value="${pivotZEstimationSettings.perspectiveStrength}"
+            data-pivot-z-estimation-perspective-strength="true"
+          />
+        </label>
+        <label>
+          cameraDistance
+          <input
+            type="number"
+            min="0.0001"
+            step="0.01"
+            value="${pivotZEstimationSettings.cameraDistance}"
+            data-pivot-z-estimation-camera-distance="true"
+          />
+        </label>
       </div>
       <dl class="pose-aware-summary-list">
         <div>
@@ -11764,6 +12045,10 @@ function renderPivotZEstimationDebugPanel(
         <div>
           <dt>candidate / frame count</dt>
           <dd>${debug.candidateCount} / ${debug.usedFrameCount}</dd>
+        </div>
+        <div>
+          <dt>projection</dt>
+          <dd>${debug.projectionMode} / zScale ${formatNumber(debug.zScale)} / strength ${formatNumber(debug.perspectiveStrength)} / camera ${formatNumber(debug.cameraDistance)}</dd>
         </div>
         <div>
           <dt>best pivotZ / score</dt>
@@ -15325,8 +15610,16 @@ function attachIdealLandmarks3DCandidateHandler(): void {
     })
 
   document
-    .querySelectorAll<HTMLInputElement>(
-      "[data-pivot-z-estimation-min], [data-pivot-z-estimation-max], [data-pivot-z-estimation-step]",
+    .querySelectorAll<HTMLInputElement | HTMLSelectElement>(
+      [
+        "[data-pivot-z-estimation-min]",
+        "[data-pivot-z-estimation-max]",
+        "[data-pivot-z-estimation-step]",
+        "[data-pivot-z-estimation-projection-mode]",
+        "[data-pivot-z-estimation-z-scale]",
+        "[data-pivot-z-estimation-perspective-strength]",
+        "[data-pivot-z-estimation-camera-distance]",
+      ].join(", "),
     )
     .forEach((input) => {
       input.addEventListener("change", () => {
