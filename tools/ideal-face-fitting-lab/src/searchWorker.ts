@@ -60,6 +60,7 @@ interface SearchFrame {
 }
 
 interface SearchSettings {
+  searchMode: SearchMode
   zMin: number
   zMax: number
   zStep: number
@@ -68,11 +69,49 @@ interface SearchSettings {
   pivotZStep: number
   topN: number
   focalLength: number
+  localSearchSettings: LocalSearchSettings
 }
 
 interface FittingCandidate8 {
   zByPointId: Record<SemanticPointName, number>
   pivotZ: number
+}
+
+type SearchMode = "fullGrid" | "localOneDimensional" | "coordinateDescent"
+type LocalSearchParameter = "pivotZ" | `${SemanticPointName}.z`
+
+interface LocalSearchRange {
+  min: number
+  max: number
+  step: number
+}
+
+type LocalSearchRanges = Record<LocalSearchParameter, LocalSearchRange>
+
+interface LocalSearchSettings {
+  baseCandidate: FittingCandidate8
+  targetParameter: LocalSearchParameter
+  localMin: number
+  localMax: number
+  localStep: number
+  coordinateDescentIterations: number
+  coordinateDescentParameterOrder: LocalSearchParameter[]
+  coordinateDescentRanges: LocalSearchRanges
+}
+
+interface LocalSearchStepSummary {
+  iteration: number
+  parameter: LocalSearchParameter
+  previousValue: number
+  bestValue: number
+  bestScore: number
+  candidateCount: number
+}
+
+interface LocalSearchSummary {
+  initialCandidate: FittingCandidate8
+  finalCandidate: FittingCandidate8
+  steps: LocalSearchStepSummary[]
 }
 
 interface CandidateDefinition extends FittingCandidate8 {
@@ -99,10 +138,18 @@ interface CandidateResult extends CandidateDefinition {
   weightedSemanticDistance: number
   perPointError: Record<SemanticPointName, number>
   bucketScores: PoseBucketScores
+  scoreDebug: CandidateScoreDebug
   totalScore: number
   sampleCount: number
   warnings: string[]
   perFrameResults: FrameEvaluation[]
+}
+
+interface CandidateScoreDebug {
+  yawAverageScore: number | null
+  pitchAverageScore: number | null
+  maxBucketScore: number | null
+  balancedScore: number
 }
 
 interface RankingEntry {
@@ -110,6 +157,7 @@ interface RankingEntry {
   candidateId: string
   totalScore: number
   bucketScores: PoseBucketScores
+  scoreDebug: CandidateScoreDebug
   candidate: FittingCandidate8
   weightedSemanticDistance: number
   averageSemanticDistance: number
@@ -141,6 +189,7 @@ interface WorkerProgressMessage {
 interface WorkerCompleteMessage extends WorkerProgressMessage {
   type: "complete"
   bestCandidate: CandidateResult | null
+  localSearchSummary?: LocalSearchSummary
   warnings: string[]
 }
 
@@ -215,23 +264,9 @@ self.onmessage = (event: MessageEvent<WorkerInputMessage>): void => {
 }
 
 async function runSearch(message: WorkerStartMessage): Promise<void> {
-  const zCandidates = createNumericCandidates(
-    message.settings.zMin,
-    message.settings.zMax,
-    message.settings.zStep,
-  )
-  const pivotZCandidates = createNumericCandidates(
-    message.settings.pivotZMin,
-    message.settings.pivotZMax,
-    message.settings.pivotZStep,
-  )
-  const estimatedCandidateCount = estimateCandidateCountFromCandidates(
-    zCandidates.length,
-    pivotZCandidates.length,
-  )
+  const candidateSource = createCandidateSource(message.settings)
+  const estimatedCandidateCount = candidateSource.estimatedCandidateCount
   const chunkSize = Math.max(1, Math.floor(message.chunkSize ?? DEFAULT_CHUNK_SIZE))
-  const indices = SEMANTIC_POINT_NAMES.map(() => 0)
-  let pivotIndex = 0
   let processedCandidateCount = 0
   const topResults: CandidateResult[] = []
   const bucketTopResults = emptyBucketResults()
@@ -245,19 +280,17 @@ async function runSearch(message: WorkerStartMessage): Promise<void> {
       processedInChunk < chunkSize &&
       !cancelRequested
     ) {
-      const candidate = createCandidateFromIndices(
-        processedCandidateCount + 1,
-        indices,
-        pivotIndex,
-        zCandidates,
-        pivotZCandidates,
-      )
+      const candidate = candidateSource.next()
+      if (!candidate) {
+        break
+      }
       const result = evaluateCandidate(
         candidate,
         message.basePoints,
         message.frames,
         message.settings,
       )
+      candidateSource.afterEvaluate(result)
       for (const warning of result.warnings) {
         warnings.add(warning)
       }
@@ -266,14 +299,6 @@ async function runSearch(message: WorkerStartMessage): Promise<void> {
 
       processedCandidateCount += 1
       processedInChunk += 1
-      advanceCandidateCursor(indices, zCandidates.length, () => {
-        pivotIndex += 1
-        if (pivotIndex < pivotZCandidates.length) {
-          return false
-        }
-        pivotIndex = 0
-        return true
-      })
     }
 
     if (cancelRequested) {
@@ -301,6 +326,7 @@ async function runSearch(message: WorkerStartMessage): Promise<void> {
         topCandidates: toRankingEntries(topResults),
         bucketRanking: toBucketRanking(bucketTopResults),
         bestCandidate: topResults[0] ?? null,
+        localSearchSummary: candidateSource.localSearchSummary(),
         warnings: Array.from(warnings),
       })
       return
@@ -310,6 +336,231 @@ async function runSearch(message: WorkerStartMessage): Promise<void> {
   }
 
   processChunk()
+}
+
+interface CandidateSource {
+  estimatedCandidateCount: number
+  next: () => CandidateDefinition | null
+  afterEvaluate: (result: CandidateResult) => void
+  localSearchSummary: () => LocalSearchSummary | undefined
+}
+
+function createCandidateSource(settings: SearchSettings): CandidateSource {
+  if (settings.searchMode === "localOneDimensional") {
+    return createLocalOneDimensionalCandidateSource(settings)
+  }
+  if (settings.searchMode === "coordinateDescent") {
+    return createCoordinateDescentCandidateSource(settings)
+  }
+  return createFullGridCandidateSource(settings)
+}
+
+function createFullGridCandidateSource(settings: SearchSettings): CandidateSource {
+  const zCandidates = createNumericCandidates(settings.zMin, settings.zMax, settings.zStep)
+  const pivotZCandidates = createNumericCandidates(
+    settings.pivotZMin,
+    settings.pivotZMax,
+    settings.pivotZStep,
+  )
+  const estimatedCandidateCount = estimateCandidateCountFromCandidates(
+    zCandidates.length,
+    pivotZCandidates.length,
+  )
+  const indices = SEMANTIC_POINT_NAMES.map(() => 0)
+  let pivotIndex = 0
+  let nextIndex = 1
+
+  return {
+    estimatedCandidateCount,
+    next: () => {
+      if (nextIndex > estimatedCandidateCount) {
+        return null
+      }
+      const candidate = createCandidateFromIndices(
+        nextIndex,
+        indices,
+        pivotIndex,
+        zCandidates,
+        pivotZCandidates,
+      )
+      nextIndex += 1
+      advanceCandidateCursor(indices, zCandidates.length, () => {
+        pivotIndex += 1
+        if (pivotIndex < pivotZCandidates.length) {
+          return false
+        }
+        pivotIndex = 0
+        return true
+      })
+      return candidate
+    },
+    afterEvaluate: () => undefined,
+    localSearchSummary: () => undefined,
+  }
+}
+
+function createLocalOneDimensionalCandidateSource(settings: SearchSettings): CandidateSource {
+  const localSettings = settings.localSearchSettings
+  const baseCandidate = cloneCandidate(localSettings.baseCandidate)
+  const values = createNumericCandidates(
+    localSettings.localMin,
+    localSettings.localMax,
+    localSettings.localStep,
+  )
+  const previousValue = getCandidateParameter(baseCandidate, localSettings.targetParameter)
+  let valueIndex = 0
+  let nextIndex = 1
+  let bestResult: CandidateResult | null = null
+
+  return {
+    estimatedCandidateCount: values.length,
+    next: () => {
+      const value = values[valueIndex]
+      if (typeof value !== "number") {
+        return null
+      }
+      const candidate = setCandidateParameter(
+        baseCandidate,
+        localSettings.targetParameter,
+        value,
+      )
+      valueIndex += 1
+      return createCandidateDefinitionFromCandidate(nextIndex++, candidate)
+    },
+    afterEvaluate: (result) => {
+      if (!bestResult || result.totalScore < bestResult.totalScore) {
+        bestResult = result
+      }
+    },
+    localSearchSummary: () => {
+      const finalCandidate = bestResult ? toFittingCandidate(bestResult) : cloneCandidate(baseCandidate)
+      return {
+        initialCandidate: cloneCandidate(baseCandidate),
+        finalCandidate,
+        steps: [
+          {
+            iteration: 1,
+            parameter: localSettings.targetParameter,
+            previousValue: round(previousValue),
+            bestValue: round(
+              bestResult
+                ? getCandidateParameter(bestResult, localSettings.targetParameter)
+                : previousValue,
+            ),
+            bestScore: round(bestResult?.totalScore ?? Number.POSITIVE_INFINITY),
+            candidateCount: values.length,
+          },
+        ],
+      }
+    },
+  }
+}
+
+function createCoordinateDescentCandidateSource(settings: SearchSettings): CandidateSource {
+  const localSettings = settings.localSearchSettings
+  const iterations = Math.max(1, Math.floor(localSettings.coordinateDescentIterations))
+  const parameterOrder = localSettings.coordinateDescentParameterOrder
+  const valuesByParameter = Object.fromEntries(
+    parameterOrder.map((parameter) => {
+      const range = localSettings.coordinateDescentRanges[parameter]
+      return [parameter, createNumericCandidates(range.min, range.max, range.step)]
+    }),
+  ) as Record<LocalSearchParameter, number[]>
+  const estimatedCandidateCount =
+    iterations *
+    parameterOrder.reduce((total, parameter) => total + valuesByParameter[parameter].length, 0)
+
+  let currentCandidate = cloneCandidate(localSettings.baseCandidate)
+  let iterationIndex = 0
+  let parameterIndex = 0
+  let valueIndex = 0
+  let nextIndex = 1
+  let activeStep:
+    | {
+        iteration: number
+        parameter: LocalSearchParameter
+        previousValue: number
+        candidateCount: number
+        bestResult: CandidateResult | null
+      }
+    | null = null
+  const steps: LocalSearchStepSummary[] = []
+
+  const finishActiveStep = (): void => {
+    if (!activeStep) {
+      return
+    }
+    const bestCandidate = activeStep.bestResult
+      ? toFittingCandidate(activeStep.bestResult)
+      : cloneCandidate(currentCandidate)
+    currentCandidate = bestCandidate
+    steps.push({
+      iteration: activeStep.iteration,
+      parameter: activeStep.parameter,
+      previousValue: round(activeStep.previousValue),
+      bestValue: round(getCandidateParameter(bestCandidate, activeStep.parameter)),
+      bestScore: round(activeStep.bestResult?.totalScore ?? Number.POSITIVE_INFINITY),
+      candidateCount: activeStep.candidateCount,
+    })
+    activeStep = null
+    valueIndex = 0
+    parameterIndex += 1
+    if (parameterIndex >= parameterOrder.length) {
+      parameterIndex = 0
+      iterationIndex += 1
+    }
+  }
+
+  const ensureActiveStep = (): boolean => {
+    if (activeStep) {
+      return true
+    }
+    if (iterationIndex >= iterations || parameterOrder.length === 0) {
+      return false
+    }
+    const parameter = parameterOrder[parameterIndex]
+    activeStep = {
+      iteration: iterationIndex + 1,
+      parameter,
+      previousValue: getCandidateParameter(currentCandidate, parameter),
+      candidateCount: valuesByParameter[parameter].length,
+      bestResult: null,
+    }
+    return true
+  }
+
+  return {
+    estimatedCandidateCount,
+    next: () => {
+      if (!ensureActiveStep() || !activeStep) {
+        return null
+      }
+      const values = valuesByParameter[activeStep.parameter]
+      const value = values[valueIndex]
+      if (typeof value !== "number") {
+        return null
+      }
+      const candidate = setCandidateParameter(currentCandidate, activeStep.parameter, value)
+      return createCandidateDefinitionFromCandidate(nextIndex++, candidate)
+    },
+    afterEvaluate: (result) => {
+      if (!activeStep) {
+        return
+      }
+      if (!activeStep.bestResult || result.totalScore < activeStep.bestResult.totalScore) {
+        activeStep.bestResult = result
+      }
+      valueIndex += 1
+      if (valueIndex >= activeStep.candidateCount) {
+        finishActiveStep()
+      }
+    },
+    localSearchSummary: () => ({
+      initialCandidate: cloneCandidate(localSettings.baseCandidate),
+      finalCandidate: cloneCandidate(currentCandidate),
+      steps,
+    }),
+  }
 }
 
 function createCandidateFromIndices(
@@ -328,6 +579,17 @@ function createCandidateFromIndices(
     candidateId: createCandidateId(index, zByPointId, pivotZ),
     zByPointId,
     pivotZ,
+  }
+}
+
+function createCandidateDefinitionFromCandidate(
+  index: number,
+  candidate: FittingCandidate8,
+): CandidateDefinition {
+  return {
+    candidateId: createCandidateId(index, candidate.zByPointId, candidate.pivotZ),
+    zByPointId: { ...candidate.zByPointId },
+    pivotZ: candidate.pivotZ,
   }
 }
 
@@ -420,6 +682,7 @@ function evaluateCandidate(
   const weightedSemanticDistance =
     average(perFrameResults.map((result) => result.weightedSemanticDistance)) ?? Number.POSITIVE_INFINITY
   const bucketScores = calculateBucketScores(perFrameResults)
+  const scoreDebug = calculateScoreDebug(weightedSemanticDistance, bucketScores)
   const totalScore = weightedSemanticDistance
 
   return {
@@ -428,6 +691,7 @@ function evaluateCandidate(
     weightedSemanticDistance,
     perPointError,
     bucketScores,
+    scoreDebug,
     totalScore,
     sampleCount: perFrameResults.length,
     warnings: Array.from(new Set(perFrameResults.flatMap((result) => result.warnings))),
@@ -543,6 +807,35 @@ function calculateBucketScores(results: FrameEvaluation[]): PoseBucketScores {
   }
 }
 
+function calculateScoreDebug(
+  totalScore: number,
+  bucketScores: PoseBucketScores,
+): CandidateScoreDebug {
+  const yawAverageScore = averageNullable([
+    bucketScores.yawPositive,
+    bucketScores.yawNegative,
+  ])
+  const pitchAverageScore = averageNullable([
+    bucketScores.pitchPositive,
+    bucketScores.pitchNegative,
+  ])
+  const maxBucketScore = maxNullable([
+    bucketScores.front,
+    bucketScores.yawPositive,
+    bucketScores.yawNegative,
+    bucketScores.pitchPositive,
+    bucketScores.pitchNegative,
+    bucketScores.mixedPose,
+  ])
+
+  return {
+    yawAverageScore: roundNullable(yawAverageScore),
+    pitchAverageScore: roundNullable(pitchAverageScore),
+    maxBucketScore: roundNullable(maxBucketScore),
+    balancedScore: round(totalScore + (maxBucketScore ?? 0) * 0.25),
+  }
+}
+
 function averageBucketScore(results: FrameEvaluation[], bucket: CaptureBucket): number | null {
   return roundNullable(
     average(results.filter((result) => result.bucket === bucket).map((result) => result.totalScore)),
@@ -563,6 +856,7 @@ function toRankingEntry(candidate: CandidateResult, rank: number): RankingEntry 
     candidateId: candidate.candidateId,
     totalScore: round(candidate.totalScore),
     bucketScores: roundRecord(candidate.bucketScores),
+    scoreDebug: roundScoreDebug(candidate.scoreDebug),
     candidate: {
       pivotZ: round(candidate.pivotZ),
       zByPointId: roundRecord(candidate.zByPointId),
@@ -605,6 +899,48 @@ function emptyBucketResults(): Record<CaptureBucket, CandidateResult[]> {
     mixedPose: [],
     unknown: [],
   }
+}
+
+function cloneCandidate(candidate: FittingCandidate8): FittingCandidate8 {
+  return {
+    pivotZ: round(candidate.pivotZ),
+    zByPointId: roundRecord(candidate.zByPointId),
+  }
+}
+
+function toFittingCandidate(candidate: FittingCandidate8): FittingCandidate8 {
+  return {
+    pivotZ: round(candidate.pivotZ),
+    zByPointId: roundRecord(candidate.zByPointId),
+  }
+}
+
+function getCandidateParameter(
+  candidate: FittingCandidate8,
+  parameter: LocalSearchParameter,
+): number {
+  if (parameter === "pivotZ") {
+    return candidate.pivotZ
+  }
+  return candidate.zByPointId[toPointNameParameter(parameter)]
+}
+
+function setCandidateParameter(
+  candidate: FittingCandidate8,
+  parameter: LocalSearchParameter,
+  value: number,
+): FittingCandidate8 {
+  const next = cloneCandidate(candidate)
+  if (parameter === "pivotZ") {
+    next.pivotZ = round(value)
+    return next
+  }
+  next.zByPointId[toPointNameParameter(parameter)] = round(value)
+  return next
+}
+
+function toPointNameParameter(parameter: LocalSearchParameter): SemanticPointName {
+  return parameter.replace(".z", "") as SemanticPointName
 }
 
 function createNumericCandidates(minValue: number, maxValue: number, stepValue: number): number[] {
@@ -687,6 +1023,15 @@ function average(values: number[]): number | null {
     : finite.reduce((total, value) => total + value, 0) / finite.length
 }
 
+function averageNullable(values: Array<number | null>): number | null {
+  return average(values.filter((value): value is number => typeof value === "number"))
+}
+
+function maxNullable(values: Array<number | null>): number | null {
+  const finite = values.filter((value): value is number => typeof value === "number" && Number.isFinite(value))
+  return finite.length === 0 ? null : Math.max(...finite)
+}
+
 function distance2D(current: Point2, next: Point2): number {
   return Math.hypot(current.x - next.x, current.y - next.y)
 }
@@ -706,6 +1051,15 @@ function roundRecord<T extends Record<string, number | null>>(record: T): T {
       typeof value === "number" ? round(value) : value,
     ]),
   ) as T
+}
+
+function roundScoreDebug(scoreDebug: CandidateScoreDebug): CandidateScoreDebug {
+  return {
+    yawAverageScore: roundNullable(scoreDebug.yawAverageScore),
+    pitchAverageScore: roundNullable(scoreDebug.pitchAverageScore),
+    maxBucketScore: roundNullable(scoreDebug.maxBucketScore),
+    balancedScore: round(scoreDebug.balancedScore),
+  }
 }
 
 function formatCompactNumber(value: number): string {

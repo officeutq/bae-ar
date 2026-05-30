@@ -78,6 +78,27 @@ type FittingCandidate8 = {
 - `pivotZStep`
 - `topN`
 
+## Search Mode
+
+`eight_point_grid_search_v1` は、8 semantic points（8つの意味点）の z（奥行き値）と pivotZ（回転中心の奥行き）を探索する検証ラボです。
+
+`fullGrid`（全組み合わせ格子探索）は粗探索用です。8点すべての z と pivotZ を全組み合わせで確認するため、`zStep`（奥行き刻み幅）を細かくしすぎると候補数が爆発します。
+
+細かい調整では、`bestCandidate`（最良候補）を `baseCandidate`（基準候補）にして、`localOneDimensional`（1変数局所探索）または `coordinateDescent`（座標降下法）を使います。
+
+現時点の安定した `baseCandidate`（基準候補）は、`pivotZ=0.12`、`leftCheek.z/rightCheek.z=0.12`、その他 z=0 です。ただし、これは debug（検証）候補であり production（本番）確定値ではありません。
+
+```ts
+type SearchMode =
+  | "fullGrid"
+  | "localOneDimensional"
+  | "coordinateDescent"
+```
+
+`localOneDimensional` は `baseCandidate` を固定し、`pivotZ` / `headTop.z` / `chin.z` / `leftCheek.z` / `rightCheek.z` / `leftEye.z` / `rightEye.z` / `nose.z` / `mouth.z` のうち指定した 1 parameter だけを `localMin` 〜 `localMax`、`localStep` で動かします。
+
+`coordinateDescent` は `baseCandidate` から開始し、デフォルトでは `pivotZ -> leftCheek.z -> rightCheek.z -> nose.z -> mouth.z -> leftEye.z -> rightEye.z -> headTop.z -> chin.z` の順番で 1変数局所探索を行い、各 parameter の best value で baseCandidate を更新します。初期の `coordinateDescentIterations` は `2` です。
+
 ## Score
 
 まずはシンプルに、投影後2D点と current 2D landmarks 8点の距離を使います。
@@ -86,6 +107,8 @@ type FittingCandidate8 = {
 - `frameScore`: 8点の weighted average
 - `totalScore`: usable capture frames の frameScore 平均
 - `bucketScores`: front / yawPositive / yawNegative / pitchPositive / pitchNegative / mixedPose ごとの frameScore 平均
+
+派生 debug 指標として `yawAverageScore`、`pitchAverageScore`、`maxBucketScore`、`balancedScore = totalScore + maxBucketScore * 0.25` も summary に出します。これは候補比較用の検証指標であり、現時点の最終評価指標ではありません。
 
 点ごとの weight は既存の semantic point weight を使います。
 
