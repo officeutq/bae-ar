@@ -1,26 +1,25 @@
 # IdealFace Fitting Lab
 
-`tools/ideal-face-fitting-lab` は、IdealFace478 の z、rotationOrigin / pivotZ、zScale、semantic alignment、bounds constraint の仕様判断材料を作る debug lab です。
+`tools/ideal-face-fitting-lab` は、production 用 IdealFace asset を直接作る正式ツールではありません。
 
-この tool は production 用 IdealFace asset を作る正式 authoring tool ではありません。`tools/ideal-face-authoring` の Step 2-I 生成フローにも、`tools/mediapipe-canonical-lab` の MediaPipe 座標系調査にも混ぜません。
+まずは 8 semantic points について、正面基準 x / y を固定し、8点それぞれの z と pivotZ だけを未知数として探索する検証ラボです。正面2Dだけでは z は決められないため、複数姿勢の capture frame へ candidate を回転・投影し、current 2D landmarks 8点との誤差でランキングします。
+
+今回の主導線から、`alignmentMode`、`weighted_similarity_2d`、`zProfile`、`zScale` は外します。MediaPipe の `facialTransformationMatrix` は capture frame の yaw / pitch / roll 取得に使ってよいですが、matrix inverse で current landmarks を IdealFace3D へ戻す処理は行いません。
 
 ## 入力
 
 MediaPipe Canonical Lab が export した captured JSON を import します。
 
-読み込む主な情報:
+主に使う情報:
 
-- capture id
-- landmarks 478
-- pose: yaw / pitch / roll
-- bucket: front / yawPositive / yawNegative / pitchPositive / pitchNegative / mixedPose
-- videoWidth / videoHeight
-- blendshapes
-- facialTransformationMatrix があれば保持
+- `landmarks`: current landmarks 478
+- `pose`: yaw / pitch / roll
+- `bucket`: front / yawPositive / yawNegative / pitchPositive / pitchNegative / mixedPose
+- `videoWidth` / `videoHeight`
+- `blendshapes`
+- `facialTransformationMatrix`: pose 取得元の debug 情報として保持される場合があります
 
-## semantic points
-
-最初の version では 8 semantic points だけを扱います。
+## 8 Semantic Points
 
 | point | index |
 | --- | --- |
@@ -33,94 +32,91 @@ MediaPipe Canonical Lab が export した captured JSON を import します。
 | nose | 4 |
 | mouth | 13, 14 |
 
-leftEye / rightEye は iris が取得できない場合、既存 `FaceGeometry` と同じ eye corner fallback を使います。
+leftEye / rightEye は iris が取得できない場合、eye corner fallback を使います。
 
 ## 処理
 
 1. captured JSON を読み込む
-2. bucket ごとに最大 frame 数まで selected frames を作る
-3. front bucket の selected frames から base8Points2D を作る
-4. zValues / pivotZ / zScale / rotationOrigin / alignment mode の候補を作る
-5. 各 frame の yaw / pitch / roll で 8IdealFace3D を回転する
-6. simple perspective で 2D 投影する
-7. semantic alignment を行う
-8. semantic error / bounds error / penalty / totalScore を計算する
-9. overall ranking と bucket ranking を表示する
-10. bestCandidate から `bestIdealFace8` を生成する
-11. selected frame ごとの current 2D 8 points debug を生成する
+2. bucket ごとの target 数に従って capture frame を選ぶ
+3. front bucket の selected frames から `base8Points2D` を作る
+4. `zMin` / `zMax` / `zStep` から 8点それぞれの z 候補を作る
+5. `pivotZMin` / `pivotZMax` / `pivotZStep` から pivotZ 候補を作る
+6. 8点 z + pivotZ の組み合わせを `FittingCandidate8` として作る
+7. candidate ごとに正面基準 x / y と z から IdealFace3D 8点を作る
+8. capture frame の yaw / pitch / roll で 3D 点を回転し、2Dへ投影する
+9. frame の current 2D landmarks 8点と比較する
+10. frameScore と bucketScores を集計し、totalScore で ranking を作る
+11. bestCandidate から `bestIdealFace8` を出力する
 
-## alignment mode
+current 2D landmarks は各 frame の顔 bounds center を原点にした same-unit 座標へ揃えて比較します。これは candidate に合わせる 2D 再フィットではなく、front 基準 x / y と frame-local current 2D を比較可能にするための座標正規化です。
 
-- `semantic_center_scale`: 8点の weighted center と広がりを合わせる
-- `eye_distance_scale`: 左右目距離を scale 基準にし、両目 / 鼻 / 口の weighted center を合わせる
-- `weighted_similarity_2d`: 8点の weighted similarity fitting で translate / uniformScale / screenRotation を求める
+## Candidate
 
-x/y separate scale は入れません。基本方針は uniformScale です。
+```ts
+type FittingCandidate8 = {
+  zByPointId: {
+    headTop: number
+    chin: number
+    leftCheek: number
+    rightCheek: number
+    leftEye: number
+    rightEye: number
+    nose: number
+    mouth: number
+  }
+  pivotZ: number
+}
+```
 
-## score
+探索範囲は UI から調整できます。
 
-`totalScore` は次の要素で構成します。
+- `zMin`
+- `zMax`
+- `zStep`
+- `pivotZMin`
+- `pivotZMax`
+- `pivotZStep`
+- `topN`
 
-- weightedSemanticDistance
-- averageSemanticDistance
-- perPointError
-- bounds center / width / height / edge error
-- scalePenalty
-- translationPenalty
-- symmetryPenalty
-- zPlausibilityPenalty
+## Score
 
-bounds error は主基準ではなく、外枠破綻を防ぐ制約として扱います。
+まずはシンプルに、投影後2D点と current 2D landmarks 8点の距離を使います。
 
-## export
+- `pointError`: projectedIdeal2D と current2D の距離
+- `frameScore`: 8点の weighted average
+- `totalScore`: usable capture frames の frameScore 平均
+- `bucketScores`: front / yawPositive / yawNegative / pitchPositive / pitchNegative / mixedPose ごとの frameScore 平均
 
-Full:
+点ごとの weight は既存の semantic point weight を使います。
 
-- `schemaVersion: ideal_face_fitting_lab_analysis_v1`
-- allCandidates と perFrameResults を含む詳細検証用 JSON
+## Output
 
-Summary:
+Full / Summary JSON と UI で以下を確認できます。
 
-- `schemaVersion: ideal_face_fitting_lab_analysis_summary_v1`
-- topCandidates 上位20件、bestCandidate、bucketRanking 上位5件、summary 類、warnings を含む軽量 JSON
-- `zProfileDefinitions` 全件、`depthConvention`、`bestIdealFace8`、`depthRelation` を含む
-- `current8BucketSummary`、`current8PoseComparison`、各 bucket 最大2件の `current8FrameSample` を含む
-- allCandidates 全件、perFrameResults 全件、landmarks 478 全文、captured frames 全文、data URL は含めません
+- candidate count
+- capture frame count
+- ranking top N
+- bestCandidate
+- bestIdealFace8
+- bucketScores
+- pivotZ
+- headTop.z / chin.z / leftCheek.z / rightCheek.z / leftEye.z / rightEye.z / nose.z / mouth.z
+- current8BucketSummary
+- current8PoseComparison
+- current8FrameSample
 
-Full:
+## 今回行わないこと
 
-- `current8PointsByFrame` に selected frame ごとの current 2D 8 points を含めます。
-- `current8BoundsByFrame` に current 8 points の bounds と `aspectRatio` を含めます。
-- `current8MetricsByFrame` に `eyeDistance` / `cheekWidth` / `noseToEyeCenterX` / `noseX` などの指標を含めます。
-
-## bestIdealFace8
-
-`bestIdealFace8` は、grid search の `bestCandidate` から作る 8点だけの理想顔3D debug artifact です。production 用 IdealFace asset ではなく、`ideal_face_asset_v1` や `beauty_filter_asset_v1` の schema 変更も行いません。
-
-- x / y は `front` bucket 由来の `base8Points2D` を使います。
-- z は bestCandidate の `zProfile` を使います。
-- `zRaw` は `zProfileDefinitions` にある奥行き形状そのものの値です。
-- `zScaled` は `zRaw * zScale` です。
-- `points[].z` は `zScaled` と同じ値です。
-- `pivotZ` は grid search projection 用の値として `source` に残し、`points[].z` には焼き込みません。
-- このラボでは smaller z が front / 手前、larger z が back / 奥です。
-
-`depthRelation` では `noseZ`、左右頬の z、平均頬 z、`noseIsInFrontOfCheeks`、左右頬 / 左右目の奥行き差を確認できます。
-
-次段では、`bestIdealFace8` の z を正面478点の x/y に補間して `provisionalIdealFace478` を作る予定です。今回は 478点への拡張、`provisionalIdealFace478` 生成、Runtime / Studio / Authoring Tool 連携は実装しません。
-
-## current 2D 8 points debug
-
-`current8` debug は、MediaPipe が検出した current landmarks 478 から 8 semantic points だけを取り出した検証用出力です。`bestIdealFace8` ではありません。
-
-目的は、横向き時に current 8 points が front より縦長になっているか、比較対象の current 2D 側の形を先に確認することです。`bestIdealFace8` の z が正しいかを見る前に、`aspectRatio`、`cheekWidth`、`eyeDistance`、`noseX` を確認します。
-
-- `sameUnitPoints` は fitting input と同じ `x = (rawX - 0.5) * videoAspect`、`y = rawY - 0.5` です。
-- `rawImageNormalizedPoints` は MediaPipe の画像正規化 x/y です。
-- Summary JSON は全 frame の点群を入れず、bucket summary / front vs yaw comparison / bucket ごとの frame sample に抑えます。
-- Full JSON は selected frame 全件の current 8 points / bounds / metrics を含めます。
-
-warning として、`current8YawNarrowerThanFront`、`current8YawAspectRatioMissing`、`current8BucketInsufficientFrames`、`current8LargeRollFrame`、`current8HighBlendshapeFrame` を出します。既存の roll / blendshape warning も残します。
+- alignmentMode による 2D 再フィット
+- `weighted_similarity_2d`
+- `zProfile`
+- `zScale`
+- matrix inverse で current landmarks を標準顔座標へ戻す処理
+- 478点への拡張
+- Runtime への組み込み
+- production 用 asset 出力
+- Engine schema 変更
+- Beauty Studio 変更
 
 ## 起動
 
