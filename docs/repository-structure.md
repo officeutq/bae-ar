@@ -4,6 +4,8 @@
 
 IdealFace Fitting Lab は、production 用 IdealFace asset を直接作る正式ツールではありません。captured JSON の current landmarks 478 から 8 semantic points を取り出し、front bucket 由来の `base8Points2D` を正面基準 x / y として固定したうえで、8点それぞれの z と pivotZ だけを未知数として探索する debug lab です。
 
+grid search は Web Worker で chunk 単位に実行し、ブラウザ main thread を同期的に占有しない方針です。全 candidate 配列は保持せず、overall ranking と `bucketRanking` はそれぞれ `topN` 件だけを保持します。UI では進捗率、処理済み candidate 数、推定総 candidate 数、cancel 状態を表示し、Full / Summary JSON export は探索完了後だけ有効にします。GPU / WebGPU search はまだ扱いません。
+
 扱うもの:
 
 - headTop / chin / leftCheek / rightCheek / leftEye / rightEye / nose / mouth
