@@ -105,6 +105,22 @@ Full / Summary JSON と UI で以下を確認できます。
 - current8PoseComparison
 - current8FrameSample
 
+## Worker Grid Search
+
+grid search はブラウザ main thread ではなく Web Worker で実行します。
+UI thread は import、設定入力、進捗表示、cancel 操作、完了後の結果表示だけを担当します。
+
+- candidate は chunk 単位で処理し、全 candidate の配列は作りません。
+- Worker は z 候補 index と pivotZ 候補 index の cursor を進めながら `FittingCandidate8` を逐次生成します。
+- main thread へは進捗率、処理済み candidate 数、推定総 candidate 数を返します。
+- cancel は Worker へ cancel message を送り、chunk 境界で処理を止めます。
+- overall ranking は `topN` 件だけ保持します。
+- `bucketRanking` も bucket ごとに `topN` 件だけ保持します。
+- Full / Summary JSON export は search completed 後だけ有効にします。
+- 処理中の JSON preview は source summary / semantic mapping など軽い情報に留め、巨大な候補配列は生成しません。
+
+GPU / WebGPU による探索はまだ実装しません。現時点では CPU Worker の chunked search を前提にします。
+
 ## 今回行わないこと
 
 - alignmentMode による 2D 再フィット
@@ -117,6 +133,7 @@ Full / Summary JSON と UI で以下を確認できます。
 - production 用 asset 出力
 - Engine schema 変更
 - Beauty Studio 変更
+- GPU / WebGPU search
 
 ## 起動
 

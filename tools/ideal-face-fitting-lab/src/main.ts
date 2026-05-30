@@ -96,7 +96,6 @@ interface SemanticPoint2D extends Point2 {
 }
 
 type SemanticPointSet2D = Record<SemanticPointName, SemanticPoint2D>
-type SemanticPointSet3D = Record<SemanticPointName, Point3>
 
 interface NormalizedFrame {
   captureId: string
@@ -387,7 +386,8 @@ interface AnalysisResult {
   depthConvention: DepthConvention
   searchSettings: SearchSettings
   candidateCount: number
-  allCandidates: CandidateResult[]
+  processedCandidateCount: number
+  estimatedCandidateCount: number
   topCandidates: RankingEntry[]
   bestCandidate: CandidateResult | null
   bestIdealFace8: BestIdealFace8 | null
@@ -409,6 +409,8 @@ interface SummaryAnalysisResult {
   current8FrameSample: Current8FrameDebug[]
   depthConvention: DepthConvention
   searchSettings: SearchSettings
+  processedCandidateCount: number
+  estimatedCandidateCount: number
   topCandidates: RankingEntry[]
   bestCandidate: RankingEntry | null
   bestIdealFace8: BestIdealFace8 | null
@@ -418,11 +420,25 @@ interface SummaryAnalysisResult {
   warnings: string[]
 }
 
+type SearchProgressStatus = "idle" | "running" | "completed" | "cancelled" | "error"
+
+interface SearchProgressState {
+  status: SearchProgressStatus
+  processedCandidateCount: number
+  estimatedCandidateCount: number
+  progressRate: number
+  startedAt: string | null
+  updatedAt: string | null
+  message: string | null
+}
+
 interface AppState {
   fileName: string | null
   payload: CapturesPayload | null
   frames: NormalizedFrame[]
   analysis: AnalysisResult | null
+  searchWorker: Worker | null
+  searchProgress: SearchProgressState
   importMessage: string | null
   copyMessage: string | null
 }
@@ -538,11 +554,25 @@ const CURRENT8_COORDINATE_SPACE: Current8CoordinateSpace = {
   points: "sameUnitPoints / fitting input space",
 }
 
+function createIdleSearchProgress(): SearchProgressState {
+  return {
+    status: "idle",
+    processedCandidateCount: 0,
+    estimatedCandidateCount: 0,
+    progressRate: 0,
+    startedAt: null,
+    updatedAt: null,
+    message: null,
+  }
+}
+
 const state: AppState = {
   fileName: null,
   payload: null,
   frames: [],
   analysis: null,
+  searchWorker: null,
+  searchProgress: createIdleSearchProgress(),
   importMessage: null,
   copyMessage: null,
 }
@@ -574,7 +604,8 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
           <input id="capture-file-input" type="file" accept="application/json,.json" />
           <div class="controls-wide">
             <button id="run-analysis-button" class="primary" type="button" disabled>解析実行</button>
-            <button id="copy-debug-button" type="button" disabled>デバッグ情報コピー</button>
+            <button id="cancel-analysis-button" type="button" disabled>キャンセル</button>
+            <button id="copy-debug-button" type="button" disabled>デバッグ情報をコピー</button>
           </div>
           <p id="import-message" class="copy-status"></p>
           <p id="copy-message" class="copy-status"></p>
@@ -656,6 +687,11 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
         </section>
 
         <section class="panel">
+          <h2>探索進捗</h2>
+          <div id="search-progress" class="summary-grid"></div>
+        </section>
+
+        <section class="panel">
           <h2>base8Points2D summary</h2>
           <div id="base-summary" class="summary-grid"></div>
         </section>
@@ -724,11 +760,13 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
 
 renderSemanticMapping()
 renderEmptyState()
+renderSearchProgress()
 bindEvents()
 
 function bindEvents(): void {
   getElement<HTMLInputElement>("capture-file-input").addEventListener("change", handleFileImport)
   getElement<HTMLButtonElement>("run-analysis-button").addEventListener("click", runAnalysis)
+  getElement<HTMLButtonElement>("cancel-analysis-button").addEventListener("click", cancelAnalysis)
   getElement<HTMLButtonElement>("copy-debug-button").addEventListener("click", copySummaryJson)
   getElement<HTMLButtonElement>("export-full-button").addEventListener("click", () => {
     if (state.analysis) {
@@ -749,6 +787,9 @@ async function handleFileImport(event: Event): Promise<void> {
     return
   }
 
+  terminateSearchWorker()
+  state.searchProgress = createIdleSearchProgress()
+
   try {
     const payload = JSON.parse(await file.text()) as unknown
     const captures = extractCaptures(payload)
@@ -759,22 +800,26 @@ async function handleFileImport(event: Event): Promise<void> {
     state.payload = isRecord(payload) ? (payload as CapturesPayload) : { captures }
     state.frames = frames
     state.analysis = null
+    state.searchProgress = createIdleSearchProgress()
     state.importMessage = `${file.name} を読み込みました: ${captures.length} captures`
     state.copyMessage = null
     setButtons()
     renderSourceOnly()
+    renderSearchProgress()
   } catch (error) {
     state.importMessage = `読み込みに失敗しました: ${error instanceof Error ? error.message : String(error)}`
     state.payload = null
     state.frames = []
     state.analysis = null
+    state.searchProgress = createIdleSearchProgress()
     setButtons()
     renderEmptyState()
+    renderSearchProgress()
   }
 }
 
 function runAnalysis(): void {
-  if (state.frames.length === 0) {
+  if (state.frames.length === 0 || state.searchProgress.status === "running") {
     return
   }
 
@@ -806,7 +851,8 @@ function runAnalysis(): void {
       depthConvention: DEPTH_CONVENTION,
       searchSettings: settings,
       candidateCount: 0,
-      allCandidates: [],
+      processedCandidateCount: 0,
+      estimatedCandidateCount: 0,
       topCandidates: [],
       bestCandidate: null,
       bestIdealFace8: null,
@@ -815,63 +861,271 @@ function runAnalysis(): void {
       perPointErrorSummary: emptyPointSummary(),
       warnings: [...warnings, "front bucket の usable frame が不足しているため base8Points2D を作れません。"],
     }
+    state.searchProgress = createIdleSearchProgress()
     renderAnalysis()
+    renderSearchProgress()
     return
   }
 
-  const candidates = buildCandidateDefinitions(base8Points2DSummary.points, settings)
-  const evaluated = candidates
-    .map((candidate) =>
-      evaluateCandidate(candidate, base8Points2DSummary.points!, selected.frames, settings),
-    )
-    .sort((a, b) => a.totalScore - b.totalScore)
+  const estimatedCandidateCount = estimateCandidateCount(settings)
+  state.analysis = null
+  state.searchProgress = {
+    status: "running",
+    processedCandidateCount: 0,
+    estimatedCandidateCount,
+    progressRate: 0,
+    startedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    message: "Worker で探索中です。",
+  }
+  state.importMessage = `${estimatedCandidateCount} candidates を Worker で探索中です。`
 
-  const topCandidates = evaluated.slice(0, settings.topN).map((candidate, index) =>
-    toRankingEntry(candidate, index + 1),
-  )
-  const bestCandidate = evaluated[0] ?? null
-  const bestIdealFace8 = bestCandidate
-    ? buildBestIdealFace8(base8Points2DSummary.points!, bestCandidate)
+  startSearchWorker({
+    settings,
+    selected,
+    sourceSummary,
+    base8Points2DSummary,
+    current8Debug,
+    warnings,
+  })
+  setButtons()
+  renderSourceOnly()
+  renderSearchProgress()
+}
+interface SearchWorkerContext {
+  settings: SearchSettings
+  selected: { frames: NormalizedFrame[]; summary: SelectedFrameSummary }
+  sourceSummary: SourceSummary
+  base8Points2DSummary: Base8Points2DSummary
+  current8Debug: Current8DebugSummary
+  warnings: string[]
+}
+
+function startSearchWorker(context: SearchWorkerContext): void {
+  terminateSearchWorker()
+
+  const worker = new Worker(new URL("./searchWorker.ts", import.meta.url), {
+    type: "module",
+  })
+  state.searchWorker = worker
+
+  worker.onmessage = (event: MessageEvent): void => {
+    const message = event.data
+    if (!isRecord(message) || typeof message.type !== "string") {
+      return
+    }
+
+    if (message.type === "progress") {
+      updateSearchProgressFromWorker(message)
+      return
+    }
+
+    if (message.type === "cancelled") {
+      updateSearchProgressFromWorker(message)
+      state.searchProgress.status = "cancelled"
+      state.searchProgress.message = "探索をキャンセルしました。"
+      terminateSearchWorker()
+      setButtons()
+      renderSearchProgress()
+      return
+    }
+
+    if (message.type === "error") {
+      state.searchProgress = {
+        ...state.searchProgress,
+        status: "error",
+        updatedAt: new Date().toISOString(),
+        message: String(message.error ?? "Worker search failed"),
+      }
+      terminateSearchWorker()
+      setButtons()
+      renderSearchProgress()
+      return
+    }
+
+    if (message.type === "complete") {
+      completeSearchFromWorker(context, message)
+    }
+  }
+
+  worker.onerror = (error): void => {
+    state.searchProgress = {
+      ...state.searchProgress,
+      status: "error",
+      updatedAt: new Date().toISOString(),
+      message: error.message,
+    }
+    terminateSearchWorker()
+    setButtons()
+    renderSearchProgress()
+  }
+
+  worker.postMessage({
+    type: "start",
+    basePoints: context.base8Points2DSummary.points,
+    frames: createWorkerFrames(context.selected.frames),
+    settings: context.settings,
+  })
+}
+
+function completeSearchFromWorker(context: SearchWorkerContext, message: Record<string, unknown>): void {
+  const topCandidates = normalizeRankingEntries(message.topCandidates)
+  const bucketRanking = normalizeBucketRanking(message.bucketRanking)
+  const bestCandidate = isRecord(message.bestCandidate)
+    ? (message.bestCandidate as unknown as CandidateResult)
     : null
+  const bestIdealFace8 =
+    bestCandidate && context.base8Points2DSummary.points
+      ? buildBestIdealFace8(context.base8Points2DSummary.points, bestCandidate)
+      : null
+  const processedCandidateCount = toNumber(message.processedCandidateCount, 0)
+  const estimatedCandidateCount = toNumber(message.estimatedCandidateCount, processedCandidateCount)
 
   state.analysis = {
     schemaVersion: "ideal_face_fitting_lab_analysis_v1",
     analysisVersion: "eight_point_grid_search_v1",
     generatedAt: new Date().toISOString(),
-    sourceSummary,
-    selectedFrameSummary: selected.summary,
-    base8Points2DSummary,
-    current8Debug,
-    current8PointsByFrame: current8Debug.current8PointsByFrame,
-    current8BoundsByFrame: current8Debug.current8BoundsByFrame,
-    current8MetricsByFrame: current8Debug.current8MetricsByFrame,
-    current8BucketSummary: current8Debug.current8BucketSummary,
-    current8PoseComparison: current8Debug.current8PoseComparison,
+    sourceSummary: context.sourceSummary,
+    selectedFrameSummary: context.selected.summary,
+    base8Points2DSummary: context.base8Points2DSummary,
+    current8Debug: context.current8Debug,
+    current8PointsByFrame: context.current8Debug.current8PointsByFrame,
+    current8BoundsByFrame: context.current8Debug.current8BoundsByFrame,
+    current8MetricsByFrame: context.current8Debug.current8MetricsByFrame,
+    current8BucketSummary: context.current8Debug.current8BucketSummary,
+    current8PoseComparison: context.current8Debug.current8PoseComparison,
     depthConvention: DEPTH_CONVENTION,
-    searchSettings: settings,
-    candidateCount: evaluated.length,
-    allCandidates: evaluated,
+    searchSettings: context.settings,
+    candidateCount: estimatedCandidateCount,
+    processedCandidateCount,
+    estimatedCandidateCount,
     topCandidates: topCandidates.map((candidate) =>
-      attachIdealFace8Summary(candidate, base8Points2DSummary.points!),
+      attachIdealFace8Summary(candidate, context.base8Points2DSummary.points),
     ),
     bestCandidate,
     bestIdealFace8,
     depthRelation: bestIdealFace8?.summary.depthRelation ?? null,
-    bucketRanking: buildBucketRanking(evaluated, base8Points2DSummary.points!),
+    bucketRanking: Object.fromEntries(
+      BUCKETS.map((bucket) => [
+        bucket,
+        bucketRanking[bucket].map((candidate) =>
+          attachIdealFace8Summary(candidate, context.base8Points2DSummary.points),
+        ),
+      ]),
+    ) as Record<CaptureBucket, RankingEntry[]>,
     perPointErrorSummary: bestCandidate ? bestCandidate.perPointError : emptyPointSummary(),
     warnings: [
       ...new Set([
-        ...warnings,
+        ...context.warnings,
+        ...normalizeStringArray(message.warnings),
         "8点の z / pivotZ は debug 探索候補です。production IdealFace478 の確定値ではありません。",
       ]),
     ],
   }
 
-  state.importMessage = `${evaluated.length} candidates を評価しました。`
+  state.searchProgress = {
+    status: "completed",
+    processedCandidateCount,
+    estimatedCandidateCount,
+    progressRate: calculateProgressRate(processedCandidateCount, estimatedCandidateCount),
+    startedAt: state.searchProgress.startedAt,
+    updatedAt: new Date().toISOString(),
+    message: "探索が完了しました。",
+  }
+  state.importMessage = `${processedCandidateCount} candidates を評価しました。`
+  terminateSearchWorker()
   setButtons()
   renderAnalysis()
+  renderSearchProgress()
 }
 
+function cancelAnalysis(): void {
+  if (state.searchProgress.status !== "running" || !state.searchWorker) {
+    return
+  }
+  state.searchWorker.postMessage({ type: "cancel" })
+  state.searchProgress = {
+    ...state.searchProgress,
+    updatedAt: new Date().toISOString(),
+    message: "キャンセル中です。",
+  }
+  setButtons()
+  renderSearchProgress()
+}
+
+function terminateSearchWorker(): void {
+  if (state.searchWorker) {
+    state.searchWorker.terminate()
+    state.searchWorker = null
+  }
+}
+
+function updateSearchProgressFromWorker(message: Record<string, unknown>): void {
+  const processedCandidateCount = toNumber(message.processedCandidateCount, 0)
+  const estimatedCandidateCount = toNumber(message.estimatedCandidateCount, 0)
+  state.searchProgress = {
+    ...state.searchProgress,
+    status: "running",
+    processedCandidateCount,
+    estimatedCandidateCount,
+    progressRate: calculateProgressRate(processedCandidateCount, estimatedCandidateCount),
+    updatedAt: new Date().toISOString(),
+    message: "Worker で探索中です。",
+  }
+  renderSearchProgress()
+}
+
+function createWorkerFrames(frames: NormalizedFrame[]): Array<{
+  captureId: string
+  bucket: CaptureBucket
+  pose: Pose
+  semanticPoints: SemanticPointSet2D
+  bounds: Bounds2D
+  warnings: string[]
+}> {
+  return frames
+    .filter((frame) => frame.semanticPoints && frame.bounds)
+    .map((frame) => ({
+      captureId: frame.captureId,
+      bucket: frame.bucket,
+      pose: frame.pose,
+      semanticPoints: frame.semanticPoints!,
+      bounds: frame.bounds!,
+      warnings: frame.warnings,
+    }))
+}
+
+function normalizeRankingEntries(value: unknown): RankingEntry[] {
+  return Array.isArray(value) ? (value as RankingEntry[]) : []
+}
+
+function normalizeBucketRanking(value: unknown): Record<CaptureBucket, RankingEntry[]> {
+  const source = isRecord(value) ? value : {}
+  return Object.fromEntries(
+    BUCKETS.map((bucket) => [bucket, normalizeRankingEntries(source[bucket])]),
+  ) as Record<CaptureBucket, RankingEntry[]>
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.map(String) : []
+}
+
+function estimateCandidateCount(settings: SearchSettings): number {
+  const zCount = createNumericCandidates(settings.zMin, settings.zMax, settings.zStep).length
+  const pivotZCount = createNumericCandidates(
+    settings.pivotZMin,
+    settings.pivotZMax,
+    settings.pivotZStep,
+  ).length
+  return zCount ** SEMANTIC_POINT_NAMES.length * pivotZCount
+}
+
+function calculateProgressRate(processed: number, total: number): number {
+  if (total <= 0) {
+    return 0
+  }
+  return round(Math.min(1, processed / total))
+}
 function readSettings(): SearchSettings {
   return {
     ...DEFAULT_SETTINGS,
@@ -1358,47 +1612,6 @@ function createCurrent8FrameSample(
   )
 }
 
-function buildCandidateDefinitions(
-  basePoints: SemanticPointSet2D,
-  settings: SearchSettings,
-): CandidateDefinition[] {
-  if (Object.keys(basePoints).length !== SEMANTIC_POINT_NAMES.length) {
-    return []
-  }
-
-  const zCandidates = createNumericCandidates(settings.zMin, settings.zMax, settings.zStep)
-  const pivotZCandidates = createNumericCandidates(
-    settings.pivotZMin,
-    settings.pivotZMax,
-    settings.pivotZStep,
-  )
-  const definitions: CandidateDefinition[] = []
-  const zByPointId = {} as Record<SemanticPointName, number>
-
-  const visitPoint = (pointIndex: number): void => {
-    if (pointIndex >= SEMANTIC_POINT_NAMES.length) {
-      for (const pivotZ of pivotZCandidates) {
-        const zValues = roundRecord(zByPointId)
-        definitions.push({
-          candidateId: createCandidateId(definitions.length + 1, zValues, pivotZ),
-          zByPointId: zValues,
-          pivotZ,
-        })
-      }
-      return
-    }
-
-    const pointName = SEMANTIC_POINT_NAMES[pointIndex]
-    for (const z of zCandidates) {
-      zByPointId[pointName] = z
-      visitPoint(pointIndex + 1)
-    }
-  }
-
-  visitPoint(0)
-  return definitions
-}
-
 function createNumericCandidates(minValue: number, maxValue: number, stepValue: number): number[] {
   const minCandidate = Math.min(minValue, maxValue)
   const maxCandidate = Math.max(minValue, maxValue)
@@ -1418,126 +1631,6 @@ function createNumericCandidates(minValue: number, maxValue: number, stepValue: 
   }
   return Array.from(new Set(candidates))
 }
-
-function createCandidateId(
-  index: number,
-  zByPointId: Record<SemanticPointName, number>,
-  pivotZ: number,
-): string {
-  const zLabel = SEMANTIC_POINT_NAMES.map(
-    (name) => `${name}:${formatCompactNumber(zByPointId[name])}`,
-  ).join(",")
-  return `candidate_${String(index).padStart(5, "0")}__pivot:${formatCompactNumber(pivotZ)}__${zLabel}`
-}
-
-function calculateBucketScores(results: FrameEvaluation[]): PoseBucketScores {
-  return {
-    front: averageBucketScore(results, "front"),
-    yawPositive: averageBucketScore(results, "yawPositive"),
-    yawNegative: averageBucketScore(results, "yawNegative"),
-    pitchPositive: averageBucketScore(results, "pitchPositive"),
-    pitchNegative: averageBucketScore(results, "pitchNegative"),
-    mixedPose: averageBucketScore(results, "mixedPose"),
-  }
-}
-
-function averageBucketScore(results: FrameEvaluation[], bucket: CaptureBucket): number | null {
-  return roundNullable(
-    average(results.filter((result) => result.bucket === bucket).map((result) => result.totalScore)),
-  )
-}
-
-function normalizeCurrentPointsForScoring(
-  points: SemanticPointSet2D,
-  bounds: Bounds2D,
-): SemanticPointSet2D {
-  const normalized = {} as SemanticPointSet2D
-  for (const name of SEMANTIC_POINT_NAMES) {
-    normalized[name] = {
-      name,
-      x: points[name].x - bounds.centerX,
-      y: points[name].y - bounds.centerY,
-    }
-  }
-  return normalized
-}
-
-function evaluateCandidate(
-  candidate: CandidateDefinition,
-  basePoints: SemanticPointSet2D,
-  frames: NormalizedFrame[],
-  settings: SearchSettings,
-): CandidateResult {
-  const ideal3D = buildIdeal3D(basePoints, candidate)
-  const perFrameResults = frames
-    .filter((frame) => frame.semanticPoints && frame.bounds)
-    .map((frame) => evaluateCandidateOnFrame(candidate, ideal3D, frame, settings))
-
-  const perPointError = averagePerPointError(perFrameResults)
-  const averageSemanticDistance =
-    average(perFrameResults.map((result) => result.averageSemanticDistance)) ?? Number.POSITIVE_INFINITY
-  const weightedSemanticDistance =
-    average(perFrameResults.map((result) => result.weightedSemanticDistance)) ?? Number.POSITIVE_INFINITY
-  const bucketScores = calculateBucketScores(perFrameResults)
-  const totalScore = weightedSemanticDistance
-
-  return {
-    ...candidate,
-    averageSemanticDistance,
-    weightedSemanticDistance,
-    perPointError,
-    bucketScores,
-    totalScore,
-    sampleCount: perFrameResults.length,
-    warnings: Array.from(new Set(perFrameResults.flatMap((result) => result.warnings))),
-    perFrameResults,
-  }
-}
-
-function evaluateCandidateOnFrame(
-  candidate: CandidateDefinition,
-  ideal3D: SemanticPointSet3D,
-  frame: NormalizedFrame,
-  settings: SearchSettings,
-): FrameEvaluation {
-  const projected = projectIdealPoints(ideal3D, frame.pose, candidate, settings)
-  const current = normalizeCurrentPointsForScoring(frame.semanticPoints!, frame.bounds!)
-  const perPointError = calculatePerPointErrors(projected, current)
-  const averageSemanticDistance =
-    average(SEMANTIC_POINT_NAMES.map((name) => perPointError[name])) ?? Number.POSITIVE_INFINITY
-  const weightedSemanticDistance = weightedAverage(
-    SEMANTIC_DEFINITIONS.map((definition) => ({
-      value: perPointError[definition.name],
-      weight: definition.weight,
-    })),
-  )
-
-  return {
-    captureId: frame.captureId,
-    bucket: frame.bucket,
-    averageSemanticDistance,
-    weightedSemanticDistance,
-    perPointError,
-    totalScore: weightedSemanticDistance,
-    warnings: frame.warnings,
-  }
-}
-
-function buildIdeal3D(
-  basePoints: SemanticPointSet2D,
-  candidate: CandidateDefinition,
-): SemanticPointSet3D {
-  const points = {} as SemanticPointSet3D
-  for (const name of SEMANTIC_POINT_NAMES) {
-    points[name] = {
-      x: basePoints[name].x,
-      y: basePoints[name].y,
-      z: candidate.zByPointId[name],
-    }
-  }
-  return points
-}
-
 function buildBestIdealFace8(
   basePoints: SemanticPointSet2D,
   candidate: CandidateDefinition,
@@ -1646,107 +1739,6 @@ function attachIdealFace8Summary(
   }
 }
 
-function projectIdealPoints(
-  ideal3D: SemanticPointSet3D,
-  pose: Pose,
-  candidate: CandidateDefinition,
-  settings: SearchSettings,
-): SemanticPointSet2D {
-  const points = {} as SemanticPointSet2D
-  for (const name of SEMANTIC_POINT_NAMES) {
-    const rotated = rotatePoint3D(
-      {
-        x: ideal3D[name].x,
-        y: ideal3D[name].y,
-        z: ideal3D[name].z - candidate.pivotZ,
-      },
-      pose,
-    )
-    const z = rotated.z + candidate.pivotZ
-    const perspective = settings.focalLength / Math.max(settings.focalLength + z, 0.2)
-    points[name] = {
-      name,
-      x: rotated.x * perspective,
-      y: rotated.y * perspective,
-    }
-  }
-  return points
-}
-
-function calculatePerPointErrors(
-  aligned: SemanticPointSet2D,
-  current: SemanticPointSet2D,
-): Record<SemanticPointName, number> {
-  const result = {} as Record<SemanticPointName, number>
-  for (const name of SEMANTIC_POINT_NAMES) {
-    result[name] = distance2D(aligned[name], current[name])
-  }
-  return result
-}
-
-function calculateBoundsError(
-  aligned: SemanticPointSet2D,
-  current: SemanticPointSet2D,
-): BoundsErrorSummary {
-  const projectedBounds = calculateBounds2D(Object.values(aligned))
-  const currentBounds = calculateBounds2D(Object.values(current))
-  const centerError = Math.hypot(
-    projectedBounds.centerX - currentBounds.centerX,
-    projectedBounds.centerY - currentBounds.centerY,
-  )
-  const widthError = Math.abs(projectedBounds.width - currentBounds.width)
-  const heightError = Math.abs(projectedBounds.height - currentBounds.height)
-  const edgeError =
-    (Math.abs(projectedBounds.xMin - currentBounds.xMin) +
-      Math.abs(projectedBounds.xMax - currentBounds.xMax) +
-      Math.abs(projectedBounds.yMin - currentBounds.yMin) +
-      Math.abs(projectedBounds.yMax - currentBounds.yMax)) /
-    4
-
-  return {
-    centerError,
-    widthError,
-    heightError,
-    edgeError,
-    total: centerError + widthError + heightError + edgeError,
-  }
-}
-
-function buildBucketRanking(
-  candidates: CandidateResult[],
-  basePoints: SemanticPointSet2D,
-): Record<CaptureBucket, RankingEntry[]> {
-  const ranking = emptyBucketRanking()
-
-  for (const bucket of BUCKETS) {
-    const entries = candidates
-      .map((candidate) => {
-        const frameResults = candidate.perFrameResults.filter((result) => result.bucket === bucket)
-        if (frameResults.length === 0) {
-          return null
-        }
-        return attachIdealFace8Summary({
-          ...toRankingEntry(candidate, 0),
-          totalScore: average(frameResults.map((result) => result.totalScore)) ?? candidate.totalScore,
-          weightedSemanticDistance:
-            average(frameResults.map((result) => result.weightedSemanticDistance)) ??
-            candidate.weightedSemanticDistance,
-          averageSemanticDistance:
-            average(frameResults.map((result) => result.averageSemanticDistance)) ??
-            candidate.averageSemanticDistance,
-          sampleCount: frameResults.length,
-        }, basePoints)
-      })
-      .filter((entry): entry is RankingEntry => Boolean(entry))
-      .sort((a, b) => a.totalScore - b.totalScore)
-      .map((entry, index) => ({ ...entry, rank: index + 1 }))
-      .slice(0, 5)
-    ranking[bucket] = entries
-  }
-
-  return ranking
-}
-
 function createSummaryAnalysis(analysis: AnalysisResult): SummaryAnalysisResult {
   return {
     schemaVersion: "ideal_face_fitting_lab_analysis_summary_v1",
@@ -1780,6 +1772,8 @@ function createSummaryAnalysis(analysis: AnalysisResult): SummaryAnalysisResult 
     ),
     depthConvention: analysis.depthConvention,
     searchSettings: analysis.searchSettings,
+    processedCandidateCount: analysis.processedCandidateCount,
+    estimatedCandidateCount: analysis.estimatedCandidateCount,
     topCandidates: analysis.topCandidates.slice(0, 20),
     bestCandidate: analysis.bestCandidate
       ? attachIdealFace8Summary(toRankingEntry(analysis.bestCandidate, 1), analysis.base8Points2DSummary.points)
@@ -1884,6 +1878,8 @@ function renderAnalysis(): void {
     ["bucket counts", formatBucketCounts(analysis.sourceSummary.bucketCounts)],
     ["selected buckets", formatBucketCounts(analysis.selectedFrameSummary.bucketCounts)],
     ["candidate count", String(analysis.candidateCount)],
+    ["processed candidates", String(analysis.processedCandidateCount)],
+    ["estimated candidates", String(analysis.estimatedCandidateCount)],
   ])
   getElement("base-summary").innerHTML = renderStatusItems([
     ["source frame count", String(analysis.base8Points2DSummary.sourceFrameCount)],
@@ -1944,6 +1940,19 @@ function renderAnalysis(): void {
   getElement("warnings").textContent = analysis.warnings.length === 0 ? "警告はありません。" : analysis.warnings.join("\n")
   getElement("json-preview").textContent = JSON.stringify(createSummaryAnalysis(analysis), null, 2)
   setButtons()
+}
+
+function renderSearchProgress(): void {
+  const progress = state.searchProgress
+  getElement("search-progress").innerHTML = renderStatusItems([
+    ["status", progress.status],
+    ["progress", `${formatPercent(progress.progressRate)}%`],
+    ["processed candidates", String(progress.processedCandidateCount)],
+    ["estimated candidates", String(progress.estimatedCandidateCount)],
+    ["startedAt", progress.startedAt ?? "-"],
+    ["updatedAt", progress.updatedAt ?? "-"],
+    ["message", progress.message ?? "-"],
+  ])
 }
 
 function renderEmptyState(): void {
@@ -2264,10 +2273,12 @@ function renderBucketRanking(bucketRanking: Record<CaptureBucket, RankingEntry[]
 }
 
 function setButtons(): void {
-  getElement<HTMLButtonElement>("run-analysis-button").disabled = state.frames.length === 0
-  getElement<HTMLButtonElement>("copy-debug-button").disabled = !state.analysis
-  getElement<HTMLButtonElement>("export-full-button").disabled = !state.analysis
-  getElement<HTMLButtonElement>("export-summary-button").disabled = !state.analysis
+  const isRunning = state.searchProgress.status === "running"
+  getElement<HTMLButtonElement>("run-analysis-button").disabled = state.frames.length === 0 || isRunning
+  getElement<HTMLButtonElement>("cancel-analysis-button").disabled = !isRunning
+  getElement<HTMLButtonElement>("copy-debug-button").disabled = !state.analysis || isRunning
+  getElement<HTMLButtonElement>("export-full-button").disabled = !state.analysis || isRunning
+  getElement<HTMLButtonElement>("export-summary-button").disabled = !state.analysis || isRunning
 }
 
 function extractSemanticPoints2D(
@@ -2354,44 +2365,6 @@ function normalizeBlendshape(value: unknown): BlendshapeCapture {
   }
 }
 
-function rotatePoint3D(point: Point3, pose: Pose): Point3 {
-  const yaw = degreesToRadians(pose.yaw)
-  const pitch = degreesToRadians(pose.pitch)
-  const roll = degreesToRadians(pose.roll)
-
-  const cosY = Math.cos(yaw)
-  const sinY = Math.sin(yaw)
-  const yawed = {
-    x: point.x * cosY + point.z * sinY,
-    y: point.y,
-    z: -point.x * sinY + point.z * cosY,
-  }
-
-  const cosP = Math.cos(pitch)
-  const sinP = Math.sin(pitch)
-  const pitched = {
-    x: yawed.x,
-    y: yawed.y * cosP - yawed.z * sinP,
-    z: yawed.y * sinP + yawed.z * cosP,
-  }
-
-  const cosR = Math.cos(roll)
-  const sinR = Math.sin(roll)
-  return {
-    x: pitched.x * cosR - pitched.y * sinR,
-    y: pitched.x * sinR + pitched.y * cosR,
-    z: pitched.z,
-  }
-}
-
-function averagePerPointError(results: FrameEvaluation[]): Record<SemanticPointName, number> {
-  const summary = {} as Record<SemanticPointName, number>
-  for (const name of SEMANTIC_POINT_NAMES) {
-    summary[name] = average(results.map((result) => result.perPointError[name])) ?? 0
-  }
-  return summary
-}
-
 function toRankingEntry(candidate: CandidateResult, rank: number): RankingEntry {
   return {
     rank,
@@ -2453,14 +2426,6 @@ function averageByIndices(points: LandmarkPoint[], indices: number[]): Point3 | 
     y: average(indexedPoints.map((point) => point.y)) ?? 0,
     z: average(indexedPoints.map((point) => point.z)) ?? 0,
   }
-}
-
-function weightedAverage(items: Array<{ value: number; weight: number }>): number {
-  const weightTotal = items.reduce((total, item) => total + item.weight, 0)
-  if (weightTotal <= EPSILON) {
-    return 0
-  }
-  return items.reduce((total, item) => total + item.value * item.weight, 0) / weightTotal
 }
 
 function averagePoint2D(points: Point2[]): Point2 {
@@ -2642,16 +2607,12 @@ function formatNumber(value: number | null | undefined): string {
   return typeof value === "number" && Number.isFinite(value) ? value.toFixed(6) : "-"
 }
 
-function formatCompactNumber(value: number): string {
-  return round(value).toString().replaceAll(".", "p").replaceAll("-", "m")
+function formatPercent(value: number): string {
+  return Number.isFinite(value) ? (value * 100).toFixed(2) : "0.00"
 }
 
 function formatBooleanOrNull(value: boolean | null): string {
   return value === null ? "-" : String(value)
-}
-
-function degreesToRadians(degrees: number): number {
-  return (degrees / 180) * Math.PI
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
