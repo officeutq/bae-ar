@@ -1,0 +1,13 @@
+{
+  "name": "@bae-ar/ideal-face-fitting-lab",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "vite --host 127.0.0.1",
+    "build": "vite build"
+  },
+  "devDependencies": {
+    "vite": "^7.2.7"
+  }
+}
