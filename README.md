@@ -11,6 +11,7 @@
 - Summary JSON はレビューや ChatGPT 相談用の軽量形式として出力します。
 - grid search の `bestCandidate` から `bestIdealFace8` を出力します。これは 8点だけの debug artifact であり、production 用 IdealFace asset ではありません。
 - Summary JSON にも `zProfileDefinitions` と `bestIdealFace8` を含めます。z は `zRaw`（zProfile そのもの）と `zScaled`（`zRaw * zScale`）を分け、3DIdealFace8 の実値としては `zScaled` を見ます。
+- selected frame ごとの current 2D 8 points debug を出力します。横向き時に現在顔8点が縦長になっていないか、`aspectRatio` / `cheekWidth` / `eyeDistance` / `noseX` を見て、`bestIdealFace8` の z を評価する前に比較対象の current 2D 側を確認できます。
 - 478点への補間や `provisionalIdealFace478` 生成は次段であり、今回は未実装です。
 
 起動:

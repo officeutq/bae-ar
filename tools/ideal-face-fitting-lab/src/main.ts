@@ -84,6 +84,10 @@ interface Bounds2D {
   centerY: number
 }
 
+interface Bounds2DWithAspectRatio extends Bounds2D {
+  aspectRatio: number
+}
+
 interface SemanticDefinition {
   name: SemanticPointName
   label: string
@@ -166,6 +170,101 @@ interface Base8Points2DSummary {
   bounds: Bounds2D | null
   points: SemanticPointSet2D | null
   semanticIndexDebug: Record<SemanticPointName, number[]>
+}
+
+interface Current8CoordinateSpace {
+  rawImageNormalizedPoints: string
+  sameUnitPoints: string
+  points: string
+}
+
+interface Current8Metrics {
+  aspectRatio: number
+  eyeDistance: number
+  cheekWidth: number
+  noseToEyeCenterX: number
+  noseToMouthY: number
+  noseX: number
+  mouthX: number
+  leftCheekX: number
+  rightCheekX: number
+  leftEyeX: number
+  rightEyeX: number
+}
+
+interface Current8PointsFrame {
+  captureId: string
+  bucket: CaptureBucket
+  rawBucket: string
+  pose: Pose
+  videoWidth: number
+  videoHeight: number
+  coordinateSpace: Current8CoordinateSpace
+  points: SemanticPointSet2D
+  sameUnitPoints: SemanticPointSet2D
+  rawImageNormalizedPoints: SemanticPointSet2D
+}
+
+interface Current8BoundsFrame {
+  captureId: string
+  bucket: CaptureBucket
+  pose: Pose
+  bounds: Bounds2DWithAspectRatio
+}
+
+interface Current8MetricsFrame {
+  captureId: string
+  bucket: CaptureBucket
+  pose: Pose
+  metrics: Current8Metrics
+  warnings: string[]
+}
+
+interface Current8FrameDebug extends Current8PointsFrame {
+  bounds: Bounds2DWithAspectRatio
+  metrics: Current8Metrics
+  warnings: string[]
+}
+
+interface Current8BucketSummaryEntry {
+  sampleCount: number
+  averageBounds: Bounds2DWithAspectRatio | null
+  averageAspectRatio: number | null
+  minAspectRatio: number | null
+  maxAspectRatio: number | null
+  averageEyeDistance: number | null
+  averageCheekWidth: number | null
+  averageNoseX: number | null
+  averagePointPositions: Record<SemanticPointName, Point2 | null>
+}
+
+interface Current8PoseComparison {
+  frontAspectRatio: number | null
+  yawPositiveAspectRatio: number | null
+  yawNegativeAspectRatio: number | null
+  yawPositiveAspectRatioRatioToFront: number | null
+  yawNegativeAspectRatioRatioToFront: number | null
+  frontCheekWidth: number | null
+  yawPositiveCheekWidth: number | null
+  yawNegativeCheekWidth: number | null
+  frontEyeDistance: number | null
+  yawPositiveEyeDistance: number | null
+  yawNegativeEyeDistance: number | null
+  interpretation: {
+    yawPositiveLooksNarrowerThanFront: boolean | null
+    yawNegativeLooksNarrowerThanFront: boolean | null
+  }
+}
+
+interface Current8DebugSummary {
+  selectedFrameCount: number
+  coordinateSpace: Current8CoordinateSpace
+  current8PointsByFrame: Current8PointsFrame[]
+  current8BoundsByFrame: Current8BoundsFrame[]
+  current8MetricsByFrame: Current8MetricsFrame[]
+  current8BucketSummary: Record<CaptureBucket, Current8BucketSummaryEntry>
+  current8PoseComparison: Current8PoseComparison
+  current8Warnings: string[]
 }
 
 interface ZGroupValues {
@@ -335,6 +434,12 @@ interface AnalysisResult {
   sourceSummary: SourceSummary
   selectedFrameSummary: SelectedFrameSummary
   base8Points2DSummary: Base8Points2DSummary
+  current8Debug: Current8DebugSummary
+  current8PointsByFrame: Current8PointsFrame[]
+  current8BoundsByFrame: Current8BoundsFrame[]
+  current8MetricsByFrame: Current8MetricsFrame[]
+  current8BucketSummary: Record<CaptureBucket, Current8BucketSummaryEntry>
+  current8PoseComparison: Current8PoseComparison
   zProfileDefinitions: ZProfileDefinition[]
   depthConvention: DepthConvention
   searchSettings: SearchSettings
@@ -357,6 +462,9 @@ interface SummaryAnalysisResult {
   sourceSummary: SourceSummary
   selectedFrameSummary: SelectedFrameSummary
   base8Points2DSummary: Base8Points2DSummary
+  current8BucketSummary: Record<CaptureBucket, Current8BucketSummaryEntry>
+  current8PoseComparison: Current8PoseComparison
+  current8FrameSample: Current8FrameDebug[]
   zProfileDefinitions: ZProfileDefinition[]
   depthConvention: DepthConvention
   searchSettings: SearchSettings
@@ -566,6 +674,11 @@ const DEPTH_CONVENTION: DepthConvention = {
   largerZ: "back / 奥",
   note: "このラボでは z が小さいほど手前、z が大きいほど奥として扱います。",
 }
+const CURRENT8_COORDINATE_SPACE: Current8CoordinateSpace = {
+  rawImageNormalizedPoints: "mediapipe_image_normalized_xy_v1",
+  sameUnitPoints: "bae_ar_fitting_lab_same_unit_xy_v1",
+  points: "sameUnitPoints / fitting input space",
+}
 
 const state: AppState = {
   fileName: null,
@@ -687,6 +800,18 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
         </section>
 
         <section class="panel">
+          <h2>Current 8 Points Debug</h2>
+          <p class="panel-help">current 8 points は MediaPipe が検出した現在顔478点から8つの意味点だけを取り出したものです。bestIdealFace8 ではありません。横向き時に現在顔8点が縦長になっているかを確認する debug です。</p>
+          <div id="current8-overview" class="summary-grid"></div>
+          <h3>front vs yaw comparison</h3>
+          <div id="current8-pose-comparison" class="summary-grid"></div>
+          <h3>bucket別 current8 summary</h3>
+          <div id="current8-bucket-summary" class="table-wrap"></div>
+          <h3>per-frame table</h3>
+          <div id="current8-frame-table" class="table-wrap"></div>
+        </section>
+
+        <section class="panel">
           <h2>candidate ranking</h2>
           <div id="ranking-table" class="table-wrap"></div>
         </section>
@@ -802,10 +927,12 @@ function runAnalysis(): void {
   const sourceSummary = summarizeSource(state.payload, state.frames)
   const selected = selectFrames(state.frames, settings)
   const base8Points2DSummary = buildBase8Points2D(selected.frames)
+  const current8Debug = buildCurrent8Debug(selected.frames, settings)
   const zProfileDefinitions = createZProfileDefinitions()
   const warnings = [
     ...selected.summary.warnings,
     ...state.frames.flatMap((frame) => frame.warnings),
+    ...current8Debug.current8Warnings,
   ]
 
   if (!base8Points2DSummary.points) {
@@ -816,6 +943,12 @@ function runAnalysis(): void {
       sourceSummary,
       selectedFrameSummary: selected.summary,
       base8Points2DSummary,
+      current8Debug,
+      current8PointsByFrame: current8Debug.current8PointsByFrame,
+      current8BoundsByFrame: current8Debug.current8BoundsByFrame,
+      current8MetricsByFrame: current8Debug.current8MetricsByFrame,
+      current8BucketSummary: current8Debug.current8BucketSummary,
+      current8PoseComparison: current8Debug.current8PoseComparison,
       zProfileDefinitions,
       depthConvention: DEPTH_CONVENTION,
       searchSettings: settings,
@@ -854,6 +987,12 @@ function runAnalysis(): void {
     sourceSummary,
     selectedFrameSummary: selected.summary,
     base8Points2DSummary,
+    current8Debug,
+    current8PointsByFrame: current8Debug.current8PointsByFrame,
+    current8BoundsByFrame: current8Debug.current8BoundsByFrame,
+    current8MetricsByFrame: current8Debug.current8MetricsByFrame,
+    current8BucketSummary: current8Debug.current8BucketSummary,
+    current8PoseComparison: current8Debug.current8PoseComparison,
     zProfileDefinitions,
     depthConvention: DEPTH_CONVENTION,
     searchSettings: settings,
@@ -1078,6 +1217,292 @@ function buildBase8Points2D(frames: NormalizedFrame[]): Base8Points2DSummary {
     points,
     semanticIndexDebug: buildSemanticIndexDebug(),
   }
+}
+
+function buildCurrent8Debug(
+  frames: NormalizedFrame[],
+  settings: SearchSettings,
+): Current8DebugSummary {
+  const frameDebug = frames
+    .map((frame) => buildCurrent8FrameDebug(frame, settings))
+    .filter((item): item is Current8FrameDebug => Boolean(item))
+  const current8BucketSummary = buildCurrent8BucketSummary(frameDebug)
+  const current8PoseComparison = buildCurrent8PoseComparison(current8BucketSummary)
+  const current8Warnings = buildCurrent8Warnings(
+    frameDebug,
+    current8BucketSummary,
+    current8PoseComparison,
+    settings,
+  )
+
+  return {
+    selectedFrameCount: frames.length,
+    coordinateSpace: CURRENT8_COORDINATE_SPACE,
+    current8PointsByFrame: frameDebug.map(
+      ({
+        captureId,
+        bucket,
+        rawBucket,
+        pose,
+        videoWidth,
+        videoHeight,
+        coordinateSpace,
+        points,
+        sameUnitPoints,
+        rawImageNormalizedPoints,
+      }) => ({
+        captureId,
+        bucket,
+        rawBucket,
+        pose,
+        videoWidth,
+        videoHeight,
+        coordinateSpace,
+        points,
+        sameUnitPoints,
+        rawImageNormalizedPoints,
+      }),
+    ),
+    current8BoundsByFrame: frameDebug.map(({ captureId, bucket, pose, bounds }) => ({
+      captureId,
+      bucket,
+      pose,
+      bounds,
+    })),
+    current8MetricsByFrame: frameDebug.map(({ captureId, bucket, pose, metrics, warnings }) => ({
+      captureId,
+      bucket,
+      pose,
+      metrics,
+      warnings,
+    })),
+    current8BucketSummary,
+    current8PoseComparison,
+    current8Warnings,
+  }
+}
+
+function buildCurrent8FrameDebug(
+  frame: NormalizedFrame,
+  settings: SearchSettings,
+): Current8FrameDebug | null {
+  const sameUnitPoints = frame.semanticPoints
+  const rawImageNormalizedPoints = extractRawSemanticPoints2D(frame.landmarks)
+  if (!sameUnitPoints || !rawImageNormalizedPoints) {
+    return null
+  }
+  const bounds = calculateBounds2DWithAspectRatio(Object.values(sameUnitPoints))
+  const metrics = calculateCurrent8Metrics(sameUnitPoints, bounds)
+  const warnings: string[] = []
+  if (Math.abs(frame.pose.roll) > settings.rollWarningDeg) {
+    warnings.push(
+      `current8LargeRollFrame: ${frame.captureId} roll=${formatNumber(frame.pose.roll)}`,
+    )
+  }
+  const maxBlendshape = Math.max(0, ...frame.blendshapes.map((item) => item.score))
+  if (maxBlendshape > settings.blendshapeWarningScore) {
+    warnings.push(
+      `current8HighBlendshapeFrame: ${frame.captureId} maxBlendshape=${formatNumber(maxBlendshape)}`,
+    )
+  }
+
+  return {
+    captureId: frame.captureId,
+    bucket: frame.bucket,
+    rawBucket: frame.rawBucket,
+    pose: roundPose(frame.pose),
+    videoWidth: frame.videoWidth,
+    videoHeight: frame.videoHeight,
+    coordinateSpace: CURRENT8_COORDINATE_SPACE,
+    points: roundSemanticPointSet(sameUnitPoints),
+    sameUnitPoints: roundSemanticPointSet(sameUnitPoints),
+    rawImageNormalizedPoints: roundSemanticPointSet(rawImageNormalizedPoints),
+    bounds: roundBounds2DWithAspectRatio(bounds),
+    metrics: roundCurrent8Metrics(metrics),
+    warnings,
+  }
+}
+
+function extractRawSemanticPoints2D(landmarks: LandmarkPoint[]): SemanticPointSet2D | null {
+  const points = {} as SemanticPointSet2D
+  for (const definition of SEMANTIC_DEFINITIONS) {
+    const point =
+      averageByIndices(landmarks, definition.primaryIndices) ??
+      (definition.fallbackIndices ? averageByIndices(landmarks, definition.fallbackIndices) : null)
+    if (!point) {
+      return null
+    }
+    points[definition.name] = {
+      name: definition.name,
+      x: point.x,
+      y: point.y,
+    }
+  }
+  return points
+}
+
+function calculateBounds2DWithAspectRatio(points: Point2[]): Bounds2DWithAspectRatio {
+  const bounds = calculateBounds2D(points)
+  return {
+    ...bounds,
+    aspectRatio: bounds.height > EPSILON ? bounds.width / bounds.height : 0,
+  }
+}
+
+function calculateCurrent8Metrics(
+  points: SemanticPointSet2D,
+  bounds: Bounds2DWithAspectRatio,
+): Current8Metrics {
+  const eyeCenterX = (points.leftEye.x + points.rightEye.x) / 2
+  return {
+    aspectRatio: bounds.aspectRatio,
+    eyeDistance: distance2D(points.leftEye, points.rightEye),
+    cheekWidth: Math.abs(points.rightCheek.x - points.leftCheek.x),
+    noseToEyeCenterX: points.nose.x - eyeCenterX,
+    noseToMouthY: points.mouth.y - points.nose.y,
+    noseX: points.nose.x,
+    mouthX: points.mouth.x,
+    leftCheekX: points.leftCheek.x,
+    rightCheekX: points.rightCheek.x,
+    leftEyeX: points.leftEye.x,
+    rightEyeX: points.rightEye.x,
+  }
+}
+
+function buildCurrent8BucketSummary(
+  frames: Current8FrameDebug[],
+): Record<CaptureBucket, Current8BucketSummaryEntry> {
+  return Object.fromEntries(
+    BUCKETS.map((bucket) => {
+      const bucketFrames = frames.filter((frame) => frame.bucket === bucket)
+      return [bucket, summarizeCurrent8Bucket(bucketFrames)]
+    }),
+  ) as Record<CaptureBucket, Current8BucketSummaryEntry>
+}
+
+function summarizeCurrent8Bucket(frames: Current8FrameDebug[]): Current8BucketSummaryEntry {
+  const aspectRatios = frames.map((frame) => frame.metrics.aspectRatio)
+  return {
+    sampleCount: frames.length,
+    averageBounds: averageCurrent8Bounds(frames),
+    averageAspectRatio: roundNullable(average(aspectRatios)),
+    minAspectRatio: roundNullable(min(aspectRatios)),
+    maxAspectRatio: roundNullable(max(aspectRatios)),
+    averageEyeDistance: roundNullable(average(frames.map((frame) => frame.metrics.eyeDistance))),
+    averageCheekWidth: roundNullable(average(frames.map((frame) => frame.metrics.cheekWidth))),
+    averageNoseX: roundNullable(average(frames.map((frame) => frame.metrics.noseX))),
+    averagePointPositions: averageCurrent8PointPositions(frames),
+  }
+}
+
+function averageCurrent8Bounds(frames: Current8FrameDebug[]): Bounds2DWithAspectRatio | null {
+  if (frames.length === 0) {
+    return null
+  }
+  return roundBounds2DWithAspectRatio({
+    xMin: average(frames.map((frame) => frame.bounds.xMin)) ?? 0,
+    xMax: average(frames.map((frame) => frame.bounds.xMax)) ?? 0,
+    yMin: average(frames.map((frame) => frame.bounds.yMin)) ?? 0,
+    yMax: average(frames.map((frame) => frame.bounds.yMax)) ?? 0,
+    width: average(frames.map((frame) => frame.bounds.width)) ?? 0,
+    height: average(frames.map((frame) => frame.bounds.height)) ?? 0,
+    centerX: average(frames.map((frame) => frame.bounds.centerX)) ?? 0,
+    centerY: average(frames.map((frame) => frame.bounds.centerY)) ?? 0,
+    aspectRatio: average(frames.map((frame) => frame.bounds.aspectRatio)) ?? 0,
+  })
+}
+
+function averageCurrent8PointPositions(
+  frames: Current8FrameDebug[],
+): Record<SemanticPointName, Point2 | null> {
+  return Object.fromEntries(
+    SEMANTIC_POINT_NAMES.map((name) => {
+      if (frames.length === 0) {
+        return [name, null]
+      }
+      return [
+        name,
+        {
+          x: round(average(frames.map((frame) => frame.points[name].x)) ?? 0),
+          y: round(average(frames.map((frame) => frame.points[name].y)) ?? 0),
+        },
+      ]
+    }),
+  ) as Record<SemanticPointName, Point2 | null>
+}
+
+function buildCurrent8PoseComparison(
+  summary: Record<CaptureBucket, Current8BucketSummaryEntry>,
+): Current8PoseComparison {
+  const frontAspectRatio = summary.front.averageAspectRatio
+  const yawPositiveAspectRatio = summary.yawPositive.averageAspectRatio
+  const yawNegativeAspectRatio = summary.yawNegative.averageAspectRatio
+  const yawPositiveRatio = safeRatio(yawPositiveAspectRatio, frontAspectRatio)
+  const yawNegativeRatio = safeRatio(yawNegativeAspectRatio, frontAspectRatio)
+
+  return {
+    frontAspectRatio,
+    yawPositiveAspectRatio,
+    yawNegativeAspectRatio,
+    yawPositiveAspectRatioRatioToFront: yawPositiveRatio,
+    yawNegativeAspectRatioRatioToFront: yawNegativeRatio,
+    frontCheekWidth: summary.front.averageCheekWidth,
+    yawPositiveCheekWidth: summary.yawPositive.averageCheekWidth,
+    yawNegativeCheekWidth: summary.yawNegative.averageCheekWidth,
+    frontEyeDistance: summary.front.averageEyeDistance,
+    yawPositiveEyeDistance: summary.yawPositive.averageEyeDistance,
+    yawNegativeEyeDistance: summary.yawNegative.averageEyeDistance,
+    interpretation: {
+      yawPositiveLooksNarrowerThanFront:
+        yawPositiveRatio === null ? null : yawPositiveRatio < 1,
+      yawNegativeLooksNarrowerThanFront:
+        yawNegativeRatio === null ? null : yawNegativeRatio < 1,
+    },
+  }
+}
+
+function buildCurrent8Warnings(
+  frames: Current8FrameDebug[],
+  summary: Record<CaptureBucket, Current8BucketSummaryEntry>,
+  poseComparison: Current8PoseComparison,
+  settings: SearchSettings,
+): string[] {
+  const warnings: string[] = []
+  if (
+    poseComparison.yawPositiveAspectRatioRatioToFront === null ||
+    poseComparison.yawNegativeAspectRatioRatioToFront === null
+  ) {
+    warnings.push("current8YawAspectRatioMissing: front / yawPositive / yawNegative の比較に必要な selected frame が不足しています。")
+  }
+  if (
+    poseComparison.interpretation.yawPositiveLooksNarrowerThanFront ||
+    poseComparison.interpretation.yawNegativeLooksNarrowerThanFront
+  ) {
+    warnings.push("current8YawNarrowerThanFront: 横向き bucket の current 8 points が front より細く見えます。")
+  }
+  for (const bucket of BUCKETS) {
+    if (summary[bucket].sampleCount === 0) {
+      warnings.push(`current8BucketInsufficientFrames: ${bucket} bucket の current 8 debug sample がありません。`)
+    }
+  }
+  for (const frame of frames) {
+    if (Math.abs(frame.pose.roll) > settings.rollWarningDeg) {
+      warnings.push(`current8LargeRollFrame: ${frame.captureId}`)
+    }
+    if (frame.warnings.some((warning) => warning.startsWith("current8HighBlendshapeFrame"))) {
+      warnings.push(`current8HighBlendshapeFrame: ${frame.captureId}`)
+    }
+  }
+  return Array.from(new Set(warnings))
+}
+
+function createCurrent8FrameSample(
+  frames: Current8FrameDebug[],
+  maxPerBucket = 2,
+): Current8FrameDebug[] {
+  return BUCKETS.flatMap((bucket) =>
+    frames.filter((frame) => frame.bucket === bucket).slice(0, maxPerBucket),
+  )
 }
 
 function buildCandidateDefinitions(
@@ -1594,6 +2019,29 @@ function createSummaryAnalysis(analysis: AnalysisResult): SummaryAnalysisResult 
     sourceSummary: analysis.sourceSummary,
     selectedFrameSummary: analysis.selectedFrameSummary,
     base8Points2DSummary: analysis.base8Points2DSummary,
+    current8BucketSummary: analysis.current8BucketSummary,
+    current8PoseComparison: analysis.current8PoseComparison,
+    current8FrameSample: createCurrent8FrameSample(
+      analysis.current8Debug.current8PointsByFrame.map((pointsFrame) => {
+        const boundsFrame = analysis.current8BoundsByFrame.find(
+          (item) => item.captureId === pointsFrame.captureId,
+        )
+        const metricsFrame = analysis.current8MetricsByFrame.find(
+          (item) => item.captureId === pointsFrame.captureId,
+        )
+        return {
+          ...pointsFrame,
+          bounds: boundsFrame?.bounds ?? calculateBounds2DWithAspectRatio(Object.values(pointsFrame.points)),
+          metrics:
+            metricsFrame?.metrics ??
+            calculateCurrent8Metrics(
+              pointsFrame.points,
+              calculateBounds2DWithAspectRatio(Object.values(pointsFrame.points)),
+            ),
+          warnings: metricsFrame?.warnings ?? [],
+        }
+      }),
+    ),
     zProfileDefinitions: analysis.zProfileDefinitions,
     depthConvention: analysis.depthConvention,
     searchSettings: analysis.searchSettings,
@@ -1662,6 +2110,10 @@ function renderSourceOnly(): void {
     ["video sizes", sourceSummary.videoSizes.join(", ") || "-"],
   ])
   getElement("base-summary").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
+  getElement("current8-overview").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
+  getElement("current8-pose-comparison").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
+  getElement("current8-bucket-summary").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
+  getElement("current8-frame-table").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
   getElement("ranking-table").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
   getElement("best-candidate").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
   getElement("z-profile-definitions").innerHTML = renderZProfileDefinitionsTable(createZProfileDefinitions())
@@ -1714,6 +2166,16 @@ function renderAnalysis(): void {
     ],
     ["index", JSON.stringify(analysis.base8Points2DSummary.semanticIndexDebug)],
   ])
+  getElement("current8-overview").innerHTML = renderCurrent8Overview(analysis.current8Debug)
+  getElement("current8-pose-comparison").innerHTML = renderCurrent8PoseComparison(
+    analysis.current8PoseComparison,
+  )
+  getElement("current8-bucket-summary").innerHTML = renderCurrent8BucketSummaryTable(
+    analysis.current8BucketSummary,
+  )
+  getElement("current8-frame-table").innerHTML = renderCurrent8FrameTable(
+    analysis.current8MetricsByFrame,
+  )
   getElement("ranking-table").innerHTML = renderRankingTable(analysis.topCandidates.slice(0, 20))
   getElement("best-candidate").innerHTML = analysis.bestCandidate
     ? renderStatusItems([
@@ -1751,6 +2213,10 @@ function renderAnalysis(): void {
 function renderEmptyState(): void {
   getElement("source-summary").innerHTML = `<p class="empty">captured JSON を読み込んでください。</p>`
   getElement("base-summary").innerHTML = `<p class="empty">未解析です。</p>`
+  getElement("current8-overview").innerHTML = `<p class="empty">未解析です。</p>`
+  getElement("current8-pose-comparison").innerHTML = `<p class="empty">未解析です。</p>`
+  getElement("current8-bucket-summary").innerHTML = `<p class="empty">未解析です。</p>`
+  getElement("current8-frame-table").innerHTML = `<p class="empty">未解析です。</p>`
   getElement("ranking-table").innerHTML = `<p class="empty">未解析です。</p>`
   getElement("best-candidate").innerHTML = `<p class="empty">未解析です。</p>`
   getElement("z-profile-definitions").innerHTML = renderZProfileDefinitionsTable(createZProfileDefinitions())
@@ -1796,6 +2262,125 @@ function renderSemanticMapping(): void {
               <td><code>${definition.fallbackIndices?.join(", ") ?? "-"}</code></td>
               <td>${definition.weight}</td>
               <td><code>${definition.zGroup}</code></td>
+            </tr>
+          `,
+        ).join("")}
+      </tbody>
+    </table>
+  `
+}
+
+function renderCurrent8Overview(debug: Current8DebugSummary): string {
+  return renderStatusItems([
+    ["selected frame count", String(debug.selectedFrameCount)],
+    ["current8 frame count", String(debug.current8PointsByFrame.length)],
+    ["points coordinate", debug.coordinateSpace.points],
+    ["rawImageNormalizedPoints", debug.coordinateSpace.rawImageNormalizedPoints],
+    ["sameUnitPoints", debug.coordinateSpace.sameUnitPoints],
+    ["warnings", debug.current8Warnings.length === 0 ? "-" : debug.current8Warnings.join(" / ")],
+  ])
+}
+
+function renderCurrent8PoseComparison(comparison: Current8PoseComparison): string {
+  return renderStatusItems([
+    ["front aspectRatio", formatNumber(comparison.frontAspectRatio)],
+    ["yawPositive aspectRatio", formatNumber(comparison.yawPositiveAspectRatio)],
+    ["yawNegative aspectRatio", formatNumber(comparison.yawNegativeAspectRatio)],
+    [
+      "yawPositive / front",
+      formatNumber(comparison.yawPositiveAspectRatioRatioToFront),
+    ],
+    [
+      "yawNegative / front",
+      formatNumber(comparison.yawNegativeAspectRatioRatioToFront),
+    ],
+    ["front cheekWidth", formatNumber(comparison.frontCheekWidth)],
+    ["yawPositive cheekWidth", formatNumber(comparison.yawPositiveCheekWidth)],
+    ["yawNegative cheekWidth", formatNumber(comparison.yawNegativeCheekWidth)],
+    ["front eyeDistance", formatNumber(comparison.frontEyeDistance)],
+    ["yawPositive eyeDistance", formatNumber(comparison.yawPositiveEyeDistance)],
+    ["yawNegative eyeDistance", formatNumber(comparison.yawNegativeEyeDistance)],
+    [
+      "yawPositive narrower",
+      formatBooleanOrNull(comparison.interpretation.yawPositiveLooksNarrowerThanFront),
+    ],
+    [
+      "yawNegative narrower",
+      formatBooleanOrNull(comparison.interpretation.yawNegativeLooksNarrowerThanFront),
+    ],
+  ])
+}
+
+function renderCurrent8BucketSummaryTable(
+  summary: Record<CaptureBucket, Current8BucketSummaryEntry>,
+): string {
+  return `
+    <table>
+      <thead>
+        <tr>
+          <th>bucket</th>
+          <th>sampleCount</th>
+          <th>aspectRatio avg</th>
+          <th>aspectRatio min</th>
+          <th>aspectRatio max</th>
+          <th>cheekWidth</th>
+          <th>eyeDistance</th>
+          <th>noseX</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${BUCKETS.map((bucket) => {
+          const item = summary[bucket]
+          return `
+            <tr>
+              <td><code>${bucket}</code></td>
+              <td>${item.sampleCount}</td>
+              <td>${formatNumber(item.averageAspectRatio)}</td>
+              <td>${formatNumber(item.minAspectRatio)}</td>
+              <td>${formatNumber(item.maxAspectRatio)}</td>
+              <td>${formatNumber(item.averageCheekWidth)}</td>
+              <td>${formatNumber(item.averageEyeDistance)}</td>
+              <td>${formatNumber(item.averageNoseX)}</td>
+            </tr>
+          `
+        }).join("")}
+      </tbody>
+    </table>
+  `
+}
+
+function renderCurrent8FrameTable(entries: Current8MetricsFrame[]): string {
+  if (entries.length === 0) {
+    return `<p class="empty">current 8 frame はありません。</p>`
+  }
+  return `
+    <table>
+      <thead>
+        <tr>
+          <th>captureId</th>
+          <th>bucket</th>
+          <th>yaw</th>
+          <th>pitch</th>
+          <th>roll</th>
+          <th>aspectRatio</th>
+          <th>cheekWidth</th>
+          <th>eyeDistance</th>
+          <th>noseX</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${entries.map(
+          (entry) => `
+            <tr>
+              <td><code>${entry.captureId}</code></td>
+              <td><code>${entry.bucket}</code></td>
+              <td>${formatNumber(entry.pose.yaw)}</td>
+              <td>${formatNumber(entry.pose.pitch)}</td>
+              <td>${formatNumber(entry.pose.roll)}</td>
+              <td>${formatNumber(entry.metrics.aspectRatio)}</td>
+              <td>${formatNumber(entry.metrics.cheekWidth)}</td>
+              <td>${formatNumber(entry.metrics.eyeDistance)}</td>
+              <td>${formatNumber(entry.metrics.noseX)}</td>
             </tr>
           `,
         ).join("")}
@@ -2328,6 +2913,13 @@ function safeScale(current: number, projected: number): number {
   return current / projected
 }
 
+function safeRatio(value: number | null, base: number | null): number | null {
+  if (value === null || base === null || Math.abs(base) <= EPSILON) {
+    return null
+  }
+  return round(value / base)
+}
+
 function distance2D(current: Point2, next: Point2): number {
   return Math.hypot(current.x - next.x, current.y - next.y)
 }
@@ -2369,6 +2961,60 @@ function round(value: number): number {
   return Number.isFinite(value) ? Number(value.toFixed(6)) : value
 }
 
+function roundNullable(value: number | null): number | null {
+  return value === null ? null : round(value)
+}
+
+function roundPose(pose: Pose): Pose {
+  return {
+    yaw: round(pose.yaw),
+    pitch: round(pose.pitch),
+    roll: round(pose.roll),
+  }
+}
+
+function roundSemanticPointSet(points: SemanticPointSet2D): SemanticPointSet2D {
+  const result = {} as SemanticPointSet2D
+  for (const name of SEMANTIC_POINT_NAMES) {
+    result[name] = {
+      name,
+      x: round(points[name].x),
+      y: round(points[name].y),
+    }
+  }
+  return result
+}
+
+function roundBounds2DWithAspectRatio(bounds: Bounds2DWithAspectRatio): Bounds2DWithAspectRatio {
+  return {
+    xMin: round(bounds.xMin),
+    xMax: round(bounds.xMax),
+    yMin: round(bounds.yMin),
+    yMax: round(bounds.yMax),
+    width: round(bounds.width),
+    height: round(bounds.height),
+    centerX: round(bounds.centerX),
+    centerY: round(bounds.centerY),
+    aspectRatio: round(bounds.aspectRatio),
+  }
+}
+
+function roundCurrent8Metrics(metrics: Current8Metrics): Current8Metrics {
+  return {
+    aspectRatio: round(metrics.aspectRatio),
+    eyeDistance: round(metrics.eyeDistance),
+    cheekWidth: round(metrics.cheekWidth),
+    noseToEyeCenterX: round(metrics.noseToEyeCenterX),
+    noseToMouthY: round(metrics.noseToMouthY),
+    noseX: round(metrics.noseX),
+    mouthX: round(metrics.mouthX),
+    leftCheekX: round(metrics.leftCheekX),
+    rightCheekX: round(metrics.rightCheekX),
+    leftEyeX: round(metrics.leftEyeX),
+    rightEyeX: round(metrics.rightEyeX),
+  }
+}
+
 function roundRecord<T extends Record<string, number | null>>(record: T): T {
   return Object.fromEntries(
     Object.entries(record).map(([key, value]) => [
@@ -2380,6 +3026,10 @@ function roundRecord<T extends Record<string, number | null>>(record: T): T {
 
 function formatNumber(value: number | null | undefined): string {
   return typeof value === "number" && Number.isFinite(value) ? value.toFixed(6) : "-"
+}
+
+function formatBooleanOrNull(value: boolean | null): string {
+  return value === null ? "-" : String(value)
 }
 
 function degreesToRadians(degrees: number): number {

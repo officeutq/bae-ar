@@ -10,6 +10,7 @@ IdealFace Fitting Lab は、captured JSON の current landmarks 478 から 8 sem
 - semantic alignment と bounds constraint の評価材料を作る
 - Summary JSON を docs / review / ChatGPT 相談用に出力する
 - `bestCandidate` から 8点だけの `bestIdealFace8` を出力する
+- selected frame ごとの current 2D 8 points debug を出力し、横向き時の現在顔8点の外枠・縦横比・鼻や頬の位置変化を確認する
 
 扱うもの:
 
@@ -18,6 +19,8 @@ IdealFace Fitting Lab は、captured JSON の current landmarks 478 から 8 sem
 - semantic error / bounds error / scalePenalty / translationPenalty / symmetryPenalty / zPlausibilityPenalty
 - Full Fitting JSON / Summary JSON export
 - `zProfileDefinitions` / `depthConvention` / `bestIdealFace8` / `depthRelation`
+- `current8BucketSummary` / `current8PoseComparison` / `current8FrameSample`
+- Full JSON の `current8PointsByFrame` / `current8BoundsByFrame` / `current8MetricsByFrame`
 
 扱わないもの:
 
@@ -30,6 +33,8 @@ IdealFace Fitting Lab は、captured JSON の current landmarks 478 から 8 sem
 - `provisionalIdealFace478` 生成
 
 `bestIdealFace8` は `front` bucket 由来の `base8Points2D` と、grid search の最良 `zProfile` を組み合わせた検証用成果物です。z は `zRaw` と `zScaled` を区別し、Summary JSON にも `zProfileDefinitions` 全件を含めます。478点への拡張は次段であり、この lab ではまだ生成しません。
+
+`current8` debug は `bestIdealFace8` ではなく、MediaPipe が検出した current landmarks 478 から8つの semantic points だけを抜き出した比較対象です。浅い z が良く見える理由を判断する前に、front と yawPositive / yawNegative の current 2D 8 points がどの程度細くなるかを確認するために使います。
 
 ## 現在の構成
 
