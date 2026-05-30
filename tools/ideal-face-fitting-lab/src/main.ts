@@ -276,6 +276,25 @@ interface FittingCandidate8 {
 
 type SearchMode = "fullGrid" | "localOneDimensional" | "coordinateDescent"
 type LocalSearchParameter = "pivotZ" | `${SemanticPointName}.z`
+type SearchPresetId =
+  | "coordinateDescentFine"
+  | "pivotZFine"
+  | "noseZFine"
+  | "leftCheekZFine"
+  | "rightCheekZFine"
+  | "mouthZFine"
+  | "yawFocusFine"
+  | "pitchFocusFine"
+type BaseCandidatePresetId =
+  | "baselineCheekDepth"
+  | "currentFineBest"
+  | "currentBestCandidate"
+type AutoSequencePresetId =
+  | "fineSequence"
+  | "currentBestFineSequence"
+  | "yawFocusSequence"
+  | "pitchFocusSequence"
+type AutoSequenceStatus = "idle" | "running" | "completed" | "cancelled" | "error"
 
 interface LocalSearchRange {
   min: number
@@ -294,6 +313,65 @@ interface LocalSearchSettings {
   coordinateDescentIterations: number
   coordinateDescentParameterOrder: LocalSearchParameter[]
   coordinateDescentRanges: LocalSearchRanges
+}
+
+interface SearchPresetDefinition {
+  id: SearchPresetId
+  label: string
+  searchMode: SearchMode
+  targetParameter: LocalSearchParameter
+  localMin: number
+  localMax: number
+  localStep: number
+  coordinateDescentIterations: number
+  coordinateDescentRanges: LocalSearchRanges
+  baseCandidatePresetId?: BaseCandidatePresetId
+  description: string
+}
+
+interface AutoSequenceDefinition {
+  id: AutoSequencePresetId
+  label: string
+  baseCandidatePresetId: BaseCandidatePresetId
+  steps: SearchPresetId[]
+  description: string
+}
+
+interface AutoSequenceStepSummary {
+  stepIndex: number
+  presetName: string
+  baseCandidate: FittingCandidate8
+  bestCandidate: FittingCandidate8 | null
+  totalScore: number | null
+  scoreDebug?: {
+    yawAverageScore?: number | null
+    pitchAverageScore?: number | null
+    maxBucketScore?: number | null
+    balancedScore?: number | null
+  }
+  processedCandidateCount: number
+  estimatedCandidateCount: number
+}
+
+interface AutoSequenceSummary {
+  sequenceName: string
+  startedAt: string
+  completedAt?: string
+  status: "completed" | "cancelled" | "error"
+  steps: AutoSequenceStepSummary[]
+  finalCandidate: FittingCandidate8 | null
+}
+
+interface AutoSequenceState {
+  status: AutoSequenceStatus
+  definition: AutoSequenceDefinition | null
+  currentStepIndex: number
+  startedAt: string | null
+  completedAt: string | null
+  steps: AutoSequenceStepSummary[]
+  finalCandidate: FittingCandidate8 | null
+  currentBestScore: number | null
+  message: string | null
 }
 
 interface LocalSearchStepSummary {
@@ -446,6 +524,7 @@ interface AnalysisResult {
   depthRelation: DepthRelation | null
   bucketRanking: Record<CaptureBucket, RankingEntry[]>
   perPointErrorSummary: Record<SemanticPointName, number | null>
+  autoSequenceSummary?: AutoSequenceSummary
   warnings: string[]
 }
 
@@ -473,6 +552,7 @@ interface SummaryAnalysisResult {
   depthRelation: DepthRelation | null
   bucketRanking: Record<CaptureBucket, RankingEntry[]>
   perPointErrorSummary: Record<SemanticPointName, number | null>
+  autoSequenceSummary?: AutoSequenceSummary
   warnings: string[]
 }
 
@@ -495,6 +575,10 @@ interface AppState {
   analysis: AnalysisResult | null
   searchWorker: Worker | null
   searchProgress: SearchProgressState
+  coordinateDescentRanges: LocalSearchRanges
+  autoSequence: AutoSequenceState
+  autoSequenceLastAnalysis: AnalysisResult | null
+  presetMessage: string | null
   importMessage: string | null
   copyMessage: string | null
 }
@@ -580,7 +664,7 @@ const DEFAULT_COORDINATE_DESCENT_PARAMETER_ORDER: LocalSearchParameter[] = [
   "chin.z",
 ]
 
-const DEFAULT_LOCAL_SEARCH_BASE_CANDIDATE: FittingCandidate8 = {
+const BASELINE_CHEEK_DEPTH_CANDIDATE: FittingCandidate8 = {
   pivotZ: 0.12,
   zByPointId: {
     headTop: 0,
@@ -594,17 +678,214 @@ const DEFAULT_LOCAL_SEARCH_BASE_CANDIDATE: FittingCandidate8 = {
   },
 }
 
+const CURRENT_FINE_BEST_CANDIDATE: FittingCandidate8 = {
+  pivotZ: 0.09,
+  zByPointId: {
+    headTop: 0.01,
+    chin: 0.01,
+    leftCheek: 0.06,
+    rightCheek: 0.06,
+    leftEye: 0.03,
+    rightEye: 0.03,
+    nose: 0.06,
+    mouth: 0.06,
+  },
+}
+
+const DEFAULT_LOCAL_SEARCH_BASE_CANDIDATE = BASELINE_CHEEK_DEPTH_CANDIDATE
+
 const DEFAULT_COORDINATE_DESCENT_RANGES: LocalSearchRanges = {
   pivotZ: { min: 0.06, max: 0.18, step: 0.01 },
-  "headTop.z": { min: -0.03, max: 0.03, step: 0.01 },
-  "chin.z": { min: -0.03, max: 0.03, step: 0.01 },
-  "leftCheek.z": { min: 0.06, max: 0.18, step: 0.01 },
-  "rightCheek.z": { min: 0.06, max: 0.18, step: 0.01 },
-  "leftEye.z": { min: -0.03, max: 0.03, step: 0.01 },
-  "rightEye.z": { min: -0.03, max: 0.03, step: 0.01 },
-  "nose.z": { min: -0.06, max: 0.06, step: 0.01 },
-  "mouth.z": { min: -0.03, max: 0.06, step: 0.01 },
+  "headTop.z": { min: -0.02, max: 0.03, step: 0.01 },
+  "chin.z": { min: -0.01, max: 0.03, step: 0.01 },
+  "leftCheek.z": { min: 0.03, max: 0.12, step: 0.01 },
+  "rightCheek.z": { min: 0.03, max: 0.12, step: 0.01 },
+  "leftEye.z": { min: 0, max: 0.04, step: 0.01 },
+  "rightEye.z": { min: 0, max: 0.04, step: 0.01 },
+  "nose.z": { min: -0.02, max: 0.08, step: 0.01 },
+  "mouth.z": { min: 0, max: 0.08, step: 0.01 },
 }
+
+const YAW_FOCUS_COORDINATE_DESCENT_RANGES: LocalSearchRanges = {
+  pivotZ: { min: 0.1, max: 0.18, step: 0.01 },
+  "headTop.z": { min: -0.02, max: 0.03, step: 0.01 },
+  "chin.z": { min: -0.02, max: 0.03, step: 0.01 },
+  "leftCheek.z": { min: 0.08, max: 0.18, step: 0.01 },
+  "rightCheek.z": { min: 0.08, max: 0.18, step: 0.01 },
+  "leftEye.z": { min: -0.02, max: 0.03, step: 0.01 },
+  "rightEye.z": { min: -0.02, max: 0.03, step: 0.01 },
+  "nose.z": { min: -0.06, max: 0.03, step: 0.01 },
+  "mouth.z": { min: -0.02, max: 0.04, step: 0.01 },
+}
+
+const PITCH_FOCUS_COORDINATE_DESCENT_RANGES: LocalSearchRanges = {
+  pivotZ: { min: 0.04, max: 0.12, step: 0.01 },
+  "headTop.z": { min: 0, max: 0.04, step: 0.01 },
+  "chin.z": { min: 0, max: 0.04, step: 0.01 },
+  "leftCheek.z": { min: 0.03, max: 0.08, step: 0.01 },
+  "rightCheek.z": { min: 0.03, max: 0.08, step: 0.01 },
+  "leftEye.z": { min: 0.01, max: 0.05, step: 0.01 },
+  "rightEye.z": { min: 0.01, max: 0.05, step: 0.01 },
+  "nose.z": { min: 0.03, max: 0.09, step: 0.01 },
+  "mouth.z": { min: 0.03, max: 0.09, step: 0.01 },
+}
+
+const SEARCH_PRESETS: SearchPresetDefinition[] = [
+  {
+    id: "coordinateDescentFine",
+    label: "Coordinate Descent Fine",
+    searchMode: "coordinateDescent",
+    targetParameter: "pivotZ",
+    localMin: -0.06,
+    localMax: 0.18,
+    localStep: 0.01,
+    coordinateDescentIterations: 2,
+    coordinateDescentRanges: DEFAULT_COORDINATE_DESCENT_RANGES,
+    description:
+      "現在の baseCandidate を起点に、pivotZ と 8 semantic points の z を軽く再最適化します。",
+  },
+  {
+    id: "pivotZFine",
+    label: "PivotZ Fine",
+    searchMode: "localOneDimensional",
+    targetParameter: "pivotZ",
+    localMin: 0.04,
+    localMax: 0.14,
+    localStep: 0.005,
+    coordinateDescentIterations: 2,
+    coordinateDescentRanges: DEFAULT_COORDINATE_DESCENT_RANGES,
+    description:
+      "現在の baseCandidate を固定し、pivotZ だけを 0.04〜0.14 / 0.005 刻みで探索します。",
+  },
+  {
+    id: "noseZFine",
+    label: "NoseZ Fine",
+    searchMode: "localOneDimensional",
+    targetParameter: "nose.z",
+    localMin: -0.04,
+    localMax: 0.08,
+    localStep: 0.005,
+    coordinateDescentIterations: 2,
+    coordinateDescentRanges: DEFAULT_COORDINATE_DESCENT_RANGES,
+    description:
+      "現在の baseCandidate を固定し、nose.z だけを -0.04〜0.08 / 0.005 刻みで探索します。",
+  },
+  {
+    id: "leftCheekZFine",
+    label: "LeftCheekZ Fine",
+    searchMode: "localOneDimensional",
+    targetParameter: "leftCheek.z",
+    localMin: 0.03,
+    localMax: 0.12,
+    localStep: 0.005,
+    coordinateDescentIterations: 2,
+    coordinateDescentRanges: DEFAULT_COORDINATE_DESCENT_RANGES,
+    description:
+      "現在の baseCandidate を固定し、leftCheek.z だけを 0.03〜0.12 / 0.005 刻みで探索します。",
+  },
+  {
+    id: "rightCheekZFine",
+    label: "RightCheekZ Fine",
+    searchMode: "localOneDimensional",
+    targetParameter: "rightCheek.z",
+    localMin: 0.03,
+    localMax: 0.12,
+    localStep: 0.005,
+    coordinateDescentIterations: 2,
+    coordinateDescentRanges: DEFAULT_COORDINATE_DESCENT_RANGES,
+    description:
+      "現在の baseCandidate を固定し、rightCheek.z だけを 0.03〜0.12 / 0.005 刻みで探索します。",
+  },
+  {
+    id: "mouthZFine",
+    label: "MouthZ Fine",
+    searchMode: "localOneDimensional",
+    targetParameter: "mouth.z",
+    localMin: 0,
+    localMax: 0.08,
+    localStep: 0.005,
+    coordinateDescentIterations: 2,
+    coordinateDescentRanges: DEFAULT_COORDINATE_DESCENT_RANGES,
+    description:
+      "現在の baseCandidate を固定し、mouth.z だけを 0〜0.08 / 0.005 刻みで探索します。",
+  },
+  {
+    id: "yawFocusFine",
+    label: "Yaw Focus Fine",
+    searchMode: "coordinateDescent",
+    targetParameter: "pivotZ",
+    localMin: -0.06,
+    localMax: 0.18,
+    localStep: 0.01,
+    coordinateDescentIterations: 2,
+    coordinateDescentRanges: YAW_FOCUS_COORDINATE_DESCENT_RANGES,
+    baseCandidatePresetId: "baselineCheekDepth",
+    description:
+      "baselineCheekDepth を起点に、yawPositive / yawNegative 向けの coordinateDescent 範囲で確認します。",
+  },
+  {
+    id: "pitchFocusFine",
+    label: "Pitch Focus Fine",
+    searchMode: "coordinateDescent",
+    targetParameter: "pivotZ",
+    localMin: -0.06,
+    localMax: 0.18,
+    localStep: 0.01,
+    coordinateDescentIterations: 2,
+    coordinateDescentRanges: PITCH_FOCUS_COORDINATE_DESCENT_RANGES,
+    baseCandidatePresetId: "currentFineBest",
+    description:
+      "currentFineBest を起点に、pitchPositive / pitchNegative 向けの coordinateDescent 範囲で確認します。",
+  },
+]
+
+const AUTO_SEQUENCE_PRESETS: AutoSequenceDefinition[] = [
+  {
+    id: "fineSequence",
+    label: "Fine Sequence",
+    baseCandidatePresetId: "baselineCheekDepth",
+    steps: [
+      "coordinateDescentFine",
+      "pivotZFine",
+      "noseZFine",
+      "leftCheekZFine",
+      "rightCheekZFine",
+      "mouthZFine",
+    ],
+    description:
+      "Baseline Cheek Depth を起点に、基本の精密探索 preset を順番に実行します。",
+  },
+  {
+    id: "currentBestFineSequence",
+    label: "Current Best Fine Sequence",
+    baseCandidatePresetId: "currentBestCandidate",
+    steps: [
+      "pivotZFine",
+      "noseZFine",
+      "leftCheekZFine",
+      "rightCheekZFine",
+      "mouthZFine",
+    ],
+    description:
+      "現在の bestCandidate を起点に、1パラメータ確認 preset を続けて実行します。",
+  },
+  {
+    id: "yawFocusSequence",
+    label: "Yaw Focus Sequence",
+    baseCandidatePresetId: "baselineCheekDepth",
+    steps: ["yawFocusFine", "pivotZFine", "noseZFine"],
+    description:
+      "Baseline Cheek Depth を起点に、左右向き重視の確認 preset を実行します。",
+  },
+  {
+    id: "pitchFocusSequence",
+    label: "Pitch Focus Sequence",
+    baseCandidatePresetId: "currentFineBest",
+    steps: ["pitchFocusFine", "pivotZFine", "mouthZFine", "noseZFine"],
+    description:
+      "Current Fine Best を起点に、上下向き重視の確認 preset を実行します。",
+  },
+]
 
 const BUCKETS: CaptureBucket[] = [
   "front",
@@ -683,6 +964,20 @@ function createIdleSearchProgress(): SearchProgressState {
   }
 }
 
+function createIdleAutoSequence(): AutoSequenceState {
+  return {
+    status: "idle",
+    definition: null,
+    currentStepIndex: 0,
+    startedAt: null,
+    completedAt: null,
+    steps: [],
+    finalCandidate: null,
+    currentBestScore: null,
+    message: null,
+  }
+}
+
 const state: AppState = {
   fileName: null,
   payload: null,
@@ -690,6 +985,10 @@ const state: AppState = {
   analysis: null,
   searchWorker: null,
   searchProgress: createIdleSearchProgress(),
+  coordinateDescentRanges: DEFAULT_COORDINATE_DESCENT_RANGES,
+  autoSequence: createIdleAutoSequence(),
+  autoSequenceLastAnalysis: null,
+  presetMessage: null,
   importMessage: null,
   copyMessage: null,
 }
@@ -730,6 +1029,56 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
 
         <section class="panel">
           <h2>探索設定</h2>
+          <div class="preset-box">
+            <div class="controls">
+              <label>Search Preset
+                <select id="search-preset-select">
+                  ${SEARCH_PRESETS.map(
+                    (preset) => `<option value="${preset.id}">${preset.label}</option>`,
+                  ).join("")}
+                </select>
+              </label>
+              <label>Base Candidate Preset
+                <select id="base-candidate-preset-select">
+                  <option value="baselineCheekDepth">Baseline Cheek Depth</option>
+                  <option value="currentFineBest">Current Fine Best</option>
+                  <option value="currentBestCandidate">Current bestCandidate</option>
+                </select>
+              </label>
+            </div>
+            <div class="controls-wide">
+              <button id="apply-search-preset-button" type="button">Apply Preset</button>
+              <button id="apply-base-candidate-preset-button" type="button">Base Candidate を適用</button>
+            </div>
+            <div class="controls">
+              <label>Auto Search Sequence
+                <select id="auto-sequence-select">
+                  ${AUTO_SEQUENCE_PRESETS.map(
+                    (sequence) => `<option value="${sequence.id}">${sequence.label}</option>`,
+                  ).join("")}
+                </select>
+              </label>
+            </div>
+            <div class="controls-wide">
+              <button id="run-auto-sequence-button" class="primary" type="button" disabled>Run Auto Sequence</button>
+              <button id="cancel-auto-sequence-button" type="button" disabled>Cancel Auto Sequence</button>
+            </div>
+            <div id="auto-sequence-status" class="auto-sequence-status"></div>
+            <div id="preset-message" class="preset-message">
+              Search Preset を選び、Apply Preset で local search 設定をフォームへ反映します。
+            </div>
+            <div class="preset-steps">
+              <strong>おすすめ手順:</strong>
+              <ol>
+                <li>Base Candidate Preset を選ぶ</li>
+                <li>Search Preset を選ぶ</li>
+                <li>Apply Preset</li>
+                <li>Run Search</li>
+                <li>結果が良ければ bestCandidate を base に反映</li>
+                <li>次の preset を試す</li>
+              </ol>
+            </div>
+          </div>
           <div class="controls">
             <label>maxFrames
               <input id="max-frames-input" type="number" min="1" max="120" value="${DEFAULT_SETTINGS.maxFrames}" />
@@ -926,6 +1275,7 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
 renderSemanticMapping()
 renderEmptyState()
 renderSearchProgress()
+renderAutoSequenceStatus()
 bindEvents()
 
 function bindEvents(): void {
@@ -933,6 +1283,22 @@ function bindEvents(): void {
   getElement<HTMLButtonElement>("run-analysis-button").addEventListener("click", runAnalysis)
   getElement<HTMLButtonElement>("cancel-analysis-button").addEventListener("click", cancelAnalysis)
   getElement<HTMLButtonElement>("copy-debug-button").addEventListener("click", copySummaryJson)
+  getElement<HTMLButtonElement>("apply-search-preset-button").addEventListener(
+    "click",
+    applySearchPreset,
+  )
+  getElement<HTMLButtonElement>("apply-base-candidate-preset-button").addEventListener(
+    "click",
+    applySelectedBaseCandidatePreset,
+  )
+  getElement<HTMLButtonElement>("run-auto-sequence-button").addEventListener(
+    "click",
+    runAutoSequence,
+  )
+  getElement<HTMLButtonElement>("cancel-auto-sequence-button").addEventListener(
+    "click",
+    cancelAutoSequence,
+  )
   getElement<HTMLButtonElement>("use-best-candidate-button").addEventListener(
     "click",
     useBestCandidateAsBase,
@@ -958,6 +1324,8 @@ async function handleFileImport(event: Event): Promise<void> {
 
   terminateSearchWorker()
   state.searchProgress = createIdleSearchProgress()
+  state.autoSequence = createIdleAutoSequence()
+  state.autoSequenceLastAnalysis = null
 
   try {
     const payload = JSON.parse(await file.text()) as unknown
@@ -975,15 +1343,19 @@ async function handleFileImport(event: Event): Promise<void> {
     setButtons()
     renderSourceOnly()
     renderSearchProgress()
+    renderAutoSequenceStatus()
   } catch (error) {
     state.importMessage = `読み込みに失敗しました: ${error instanceof Error ? error.message : String(error)}`
     state.payload = null
     state.frames = []
     state.analysis = null
     state.searchProgress = createIdleSearchProgress()
+    state.autoSequence = createIdleAutoSequence()
+    state.autoSequenceLastAnalysis = null
     setButtons()
     renderEmptyState()
     renderSearchProgress()
+    renderAutoSequenceStatus()
   }
 }
 
@@ -1035,8 +1407,13 @@ function runAnalysis(): void {
       warnings: [...warnings, "front bucket の usable frame が不足しているため base8Points2D を作れません。"],
     }
     state.searchProgress = createIdleSearchProgress()
+    if (state.autoSequence.status === "running") {
+      finishAutoSequence("error", "Auto Sequence が停止しました: base8Points2D を作成できませんでした。", state.analysis)
+      return
+    }
     renderAnalysis()
     renderSearchProgress()
+    renderAutoSequenceStatus()
     return
   }
 
@@ -1064,6 +1441,7 @@ function runAnalysis(): void {
   setButtons()
   renderSourceOnly()
   renderSearchProgress()
+  renderAutoSequenceStatus()
 }
 interface SearchWorkerContext {
   settings: SearchSettings
@@ -1098,8 +1476,13 @@ function startSearchWorker(context: SearchWorkerContext): void {
       state.searchProgress.status = "cancelled"
       state.searchProgress.message = "探索をキャンセルしました。"
       terminateSearchWorker()
+      if (state.autoSequence.status === "running") {
+        finishAutoSequence("cancelled", "Auto Sequence をキャンセルしました。")
+        return
+      }
       setButtons()
       renderSearchProgress()
+      renderAutoSequenceStatus()
       return
     }
 
@@ -1111,8 +1494,13 @@ function startSearchWorker(context: SearchWorkerContext): void {
         message: String(message.error ?? "Worker search failed"),
       }
       terminateSearchWorker()
+      if (state.autoSequence.status === "running") {
+        finishAutoSequence("error", `Auto Sequence が停止しました: ${state.searchProgress.message}`)
+        return
+      }
       setButtons()
       renderSearchProgress()
+      renderAutoSequenceStatus()
       return
     }
 
@@ -1129,8 +1517,13 @@ function startSearchWorker(context: SearchWorkerContext): void {
       message: error.message,
     }
     terminateSearchWorker()
+    if (state.autoSequence.status === "running") {
+      finishAutoSequence("error", `Auto Sequence が停止しました: ${error.message}`)
+      return
+    }
     setButtons()
     renderSearchProgress()
+    renderAutoSequenceStatus()
   }
 
   worker.postMessage({
@@ -1215,9 +1608,14 @@ function completeSearchFromWorker(context: SearchWorkerContext, message: Record<
   }
   state.importMessage = `${processedCandidateCount} candidates を評価しました。`
   terminateSearchWorker()
+  if (state.autoSequence.status === "running") {
+    handleAutoSequenceStepComplete(state.analysis)
+    return
+  }
   setButtons()
   renderAnalysis()
   renderSearchProgress()
+  renderAutoSequenceStatus()
 }
 
 function cancelAnalysis(): void {
@@ -1232,6 +1630,7 @@ function cancelAnalysis(): void {
   }
   setButtons()
   renderSearchProgress()
+  renderAutoSequenceStatus()
 }
 
 function useBestCandidateAsBase(): void {
@@ -1240,6 +1639,9 @@ function useBestCandidateAsBase(): void {
     return
   }
   writeCandidateToBaseInputs(bestCandidate)
+  writeSelectValue("base-candidate-preset-select", "currentBestCandidate")
+  state.presetMessage = "Current bestCandidate を baseCandidate に反映しました。"
+  renderPresetMessage()
 }
 
 function terminateSearchWorker(): void {
@@ -1252,6 +1654,7 @@ function terminateSearchWorker(): void {
 function updateSearchProgressFromWorker(message: Record<string, unknown>): void {
   const processedCandidateCount = toNumber(message.processedCandidateCount, 0)
   const estimatedCandidateCount = toNumber(message.estimatedCandidateCount, 0)
+  const currentBest = normalizeRankingEntries(message.topCandidates)[0] ?? null
   state.searchProgress = {
     ...state.searchProgress,
     status: "running",
@@ -1261,7 +1664,11 @@ function updateSearchProgressFromWorker(message: Record<string, unknown>): void 
     updatedAt: new Date().toISOString(),
     message: "Worker で探索中です。",
   }
+  if (state.autoSequence.status === "running") {
+    state.autoSequence.currentBestScore = currentBest?.totalScore ?? null
+  }
   renderSearchProgress()
+  renderAutoSequenceStatus()
 }
 
 function createWorkerFrames(frames: NormalizedFrame[]): Array<{
@@ -1399,7 +1806,7 @@ function readLocalSearchSettings(): LocalSearchSettings {
       ),
     ),
     coordinateDescentParameterOrder: DEFAULT_COORDINATE_DESCENT_PARAMETER_ORDER,
-    coordinateDescentRanges: DEFAULT_COORDINATE_DESCENT_RANGES,
+    coordinateDescentRanges: cloneLocalSearchRanges(state.coordinateDescentRanges),
   }
 }
 
@@ -1424,6 +1831,310 @@ function writeCandidateToBaseInputs(candidate: FittingCandidate8): void {
       round(candidate.zByPointId[name]),
     )
   }
+}
+
+function applySearchPreset(): void {
+  const preset = findSearchPreset(getElement<HTMLSelectElement>("search-preset-select").value)
+  applySearchPresetDefinition(preset, true)
+
+  state.presetMessage = [
+    `Preset: ${preset.label}`,
+    preset.description,
+    "探索後、必要に応じて bestCandidate を base に反映してください。",
+  ].join("\n")
+  renderPresetMessage()
+}
+
+function applySearchPresetDefinition(
+  preset: SearchPresetDefinition,
+  applyRecommendedBaseCandidate: boolean,
+): void {
+  applyCommonPresetSettings()
+  writeSelectValue("search-mode-select", preset.searchMode)
+  writeSelectValue("local-target-parameter-select", preset.targetParameter)
+  writeNumberInput("local-min-input", preset.localMin)
+  writeNumberInput("local-max-input", preset.localMax)
+  writeNumberInput("local-step-input", preset.localStep)
+  writeNumberInput("coordinate-descent-iterations-input", preset.coordinateDescentIterations)
+  state.coordinateDescentRanges = cloneLocalSearchRanges(preset.coordinateDescentRanges)
+
+  if (applyRecommendedBaseCandidate && preset.baseCandidatePresetId) {
+    applyBaseCandidatePreset(preset.baseCandidatePresetId)
+    writeSelectValue("base-candidate-preset-select", preset.baseCandidatePresetId)
+  }
+}
+
+function applySelectedBaseCandidatePreset(): void {
+  const presetId = readBaseCandidatePresetId(
+    getElement<HTMLSelectElement>("base-candidate-preset-select").value,
+  )
+  if (!applyBaseCandidatePreset(presetId)) {
+    state.presetMessage =
+      "Current bestCandidate はまだありません。Run Search 後に選ぶか、既存の bestCandidate を base に反映ボタンを使ってください。"
+    renderPresetMessage()
+    return
+  }
+  state.presetMessage = `Base Candidate Preset: ${formatBaseCandidatePresetLabel(presetId)} を baseCandidate に反映しました。`
+  renderPresetMessage()
+}
+
+function applyBaseCandidatePreset(presetId: BaseCandidatePresetId): boolean {
+  const candidate = getBaseCandidatePreset(presetId)
+  if (!candidate) {
+    return false
+  }
+  writeCandidateToBaseInputs(candidate)
+  return true
+}
+
+function runAutoSequence(): void {
+  if (state.frames.length === 0 || state.searchProgress.status === "running") {
+    return
+  }
+
+  const sequence = findAutoSequence(
+    getElement<HTMLSelectElement>("auto-sequence-select").value,
+  )
+  const initialCandidate = getBaseCandidatePreset(sequence.baseCandidatePresetId)
+  if (!initialCandidate) {
+    state.autoSequence = {
+      ...createIdleAutoSequence(),
+      status: "error",
+      definition: sequence,
+      message:
+        "Current bestCandidate がまだありません。先に単発 search を実行するか、別の sequence を選んでください。",
+    }
+    renderAutoSequenceStatus()
+    setButtons()
+    return
+  }
+
+  state.autoSequence = {
+    status: "running",
+    definition: sequence,
+    currentStepIndex: 0,
+    startedAt: new Date().toISOString(),
+    completedAt: null,
+    steps: [],
+    finalCandidate: null,
+    currentBestScore: null,
+    message: `Auto Sequence running: ${sequence.label}`,
+  }
+  state.autoSequenceLastAnalysis = null
+  beginAutoSequenceStep(initialCandidate)
+}
+
+function cancelAutoSequence(): void {
+  if (state.autoSequence.status !== "running") {
+    return
+  }
+  if (state.searchProgress.status === "running" && state.searchWorker) {
+    cancelAnalysis()
+    return
+  }
+  finishAutoSequence("cancelled", "Auto Sequence をキャンセルしました。")
+}
+
+function beginAutoSequenceStep(baseCandidate: FittingCandidate8): void {
+  const sequence = state.autoSequence.definition
+  if (!sequence || state.autoSequence.status !== "running") {
+    return
+  }
+
+  const stepPresetId = sequence.steps[state.autoSequence.currentStepIndex]
+  const preset = findSearchPreset(stepPresetId)
+  writeSelectValue("auto-sequence-select", sequence.id)
+  writeSelectValue("search-preset-select", preset.id)
+  applySearchPresetDefinition(preset, false)
+  writeCandidateToBaseInputs(baseCandidate)
+  state.autoSequence.currentBestScore = null
+  state.autoSequence.message = `Auto Sequence running: ${preset.label}`
+  state.presetMessage = [
+    `Auto Sequence: ${sequence.label}`,
+    `Current preset: ${preset.label}`,
+    "この step の bestCandidate は次 step の baseCandidate へ自動反映されます。",
+  ].join("\n")
+  renderPresetMessage()
+  renderAutoSequenceStatus()
+  setButtons()
+  runAnalysis()
+}
+
+function handleAutoSequenceStepComplete(analysis: AnalysisResult | null): void {
+  const sequence = state.autoSequence.definition
+  if (!sequence || !analysis) {
+    finishAutoSequence("error", "Auto Sequence の step 結果を保存できませんでした。")
+    return
+  }
+
+  const preset = findSearchPreset(sequence.steps[state.autoSequence.currentStepIndex])
+  const bestCandidate = analysis.bestCandidate ? cloneCandidate(analysis.bestCandidate) : null
+  const stepSummary: AutoSequenceStepSummary = {
+    stepIndex: state.autoSequence.currentStepIndex + 1,
+    presetName: preset.label,
+    baseCandidate: cloneCandidate(analysis.searchSettings.localSearchSettings.baseCandidate),
+    bestCandidate,
+    totalScore: analysis.bestCandidate?.totalScore ?? null,
+    scoreDebug: analysis.bestCandidate?.scoreDebug
+      ? roundScoreDebug(analysis.bestCandidate.scoreDebug)
+      : undefined,
+    processedCandidateCount: analysis.processedCandidateCount,
+    estimatedCandidateCount: analysis.estimatedCandidateCount,
+  }
+
+  state.autoSequence.steps = [...state.autoSequence.steps, stepSummary]
+  state.autoSequence.currentBestScore = stepSummary.totalScore
+  state.autoSequenceLastAnalysis = analysis
+
+  if (!bestCandidate) {
+    finishAutoSequence("error", `Step ${stepSummary.stepIndex}: ${preset.label} で bestCandidate が得られませんでした。`)
+    return
+  }
+
+  writeCandidateToBaseInputs(bestCandidate)
+  state.autoSequence.finalCandidate = bestCandidate
+
+  if (state.autoSequence.currentStepIndex >= sequence.steps.length - 1) {
+    finishAutoSequence("completed", "Auto Sequence completed", analysis)
+    return
+  }
+
+  state.autoSequence.currentStepIndex += 1
+  beginAutoSequenceStep(bestCandidate)
+}
+
+function finishAutoSequence(
+  status: "completed" | "cancelled" | "error",
+  message: string,
+  analysis: AnalysisResult | null = null,
+): void {
+  state.autoSequence = {
+    ...state.autoSequence,
+    status,
+    completedAt: new Date().toISOString(),
+    message,
+  }
+  const summary = buildAutoSequenceSummary(status)
+  const summaryAnalysis = analysis ?? state.autoSequenceLastAnalysis ?? state.analysis
+  if (summaryAnalysis) {
+    summaryAnalysis.autoSequenceSummary = summary
+    state.analysis = summaryAnalysis
+  }
+  terminateSearchWorker()
+  setButtons()
+  if (state.analysis) {
+    renderAnalysis()
+  }
+  renderSearchProgress()
+  renderAutoSequenceStatus()
+}
+
+function buildAutoSequenceSummary(
+  status: "completed" | "cancelled" | "error",
+): AutoSequenceSummary {
+  return {
+    sequenceName: state.autoSequence.definition?.label ?? "-",
+    startedAt: state.autoSequence.startedAt ?? new Date().toISOString(),
+    completedAt: state.autoSequence.completedAt ?? new Date().toISOString(),
+    status,
+    steps: state.autoSequence.steps,
+    finalCandidate: state.autoSequence.finalCandidate,
+  }
+}
+
+function applyCommonPresetSettings(): void {
+  writeNumberInput("max-frames-input", 30)
+  writeNumberInput("target-front-input", 5)
+  writeNumberInput("target-yaw-positive-input", 5)
+  writeNumberInput("target-yaw-negative-input", 5)
+  writeNumberInput("target-pitch-positive-input", 5)
+  writeNumberInput("target-pitch-negative-input", 5)
+  writeNumberInput("target-mixed-input", 0)
+  writeSelectValue("include-mixed-select", "false")
+  writeNumberInput("roll-warning-input", 12)
+  writeNumberInput("blendshape-warning-input", 0.35)
+  writeNumberInput("top-n-input", 100)
+  writeNumberInput("focal-length-input", 2.6)
+  writeNumberInput("z-min-input", -0.24)
+  writeNumberInput("z-max-input", 0.24)
+  writeNumberInput("z-step-input", 0.24)
+  writeNumberInput("pivot-z-min-input", -0.48)
+  writeNumberInput("pivot-z-max-input", 0.48)
+  writeNumberInput("pivot-z-step-input", 0.24)
+}
+
+function renderPresetMessage(): void {
+  getElement("preset-message").textContent =
+    state.presetMessage ??
+    "Search Preset を選び、Apply Preset で local search 設定をフォームへ反映します。"
+}
+
+function findSearchPreset(value: string): SearchPresetDefinition {
+  return (
+    SEARCH_PRESETS.find((preset) => preset.id === value) ??
+    SEARCH_PRESETS[0]
+  )
+}
+
+function findAutoSequence(value: string): AutoSequenceDefinition {
+  return (
+    AUTO_SEQUENCE_PRESETS.find((sequence) => sequence.id === value) ??
+    AUTO_SEQUENCE_PRESETS[0]
+  )
+}
+
+function readBaseCandidatePresetId(value: string): BaseCandidatePresetId {
+  return value === "currentFineBest" || value === "currentBestCandidate"
+    ? value
+    : "baselineCheekDepth"
+}
+
+function getBaseCandidatePreset(
+  presetId: BaseCandidatePresetId,
+): FittingCandidate8 | null {
+  if (presetId === "currentFineBest") {
+    return cloneCandidate(CURRENT_FINE_BEST_CANDIDATE)
+  }
+  if (presetId === "currentBestCandidate") {
+    return state.analysis?.bestCandidate
+      ? cloneCandidate(state.analysis.bestCandidate)
+      : null
+  }
+  return cloneCandidate(BASELINE_CHEEK_DEPTH_CANDIDATE)
+}
+
+function formatBaseCandidatePresetLabel(presetId: BaseCandidatePresetId): string {
+  if (presetId === "currentFineBest") {
+    return "Current Fine Best"
+  }
+  if (presetId === "currentBestCandidate") {
+    return "Current bestCandidate"
+  }
+  return "Baseline Cheek Depth"
+}
+
+function cloneLocalSearchRanges(ranges: LocalSearchRanges): LocalSearchRanges {
+  return Object.fromEntries(
+    LOCAL_SEARCH_PARAMETERS.map((parameter) => [
+      parameter,
+      { ...ranges[parameter] },
+    ]),
+  ) as LocalSearchRanges
+}
+
+function cloneCandidate(candidate: FittingCandidate8): FittingCandidate8 {
+  return {
+    pivotZ: round(candidate.pivotZ),
+    zByPointId: roundRecord(candidate.zByPointId),
+  }
+}
+
+function writeNumberInput(id: string, value: number): void {
+  getElement<HTMLInputElement>(id).value = String(value)
+}
+
+function writeSelectValue(id: string, value: string): void {
+  getElement<HTMLSelectElement>(id).value = value
 }
 
 function readLocalSearchParameter(
@@ -2053,6 +2764,7 @@ function createSummaryAnalysis(analysis: AnalysisResult): SummaryAnalysisResult 
       BUCKETS.map((bucket) => [bucket, analysis.bucketRanking[bucket].slice(0, 5)]),
     ) as Record<CaptureBucket, RankingEntry[]>,
     perPointErrorSummary: analysis.perPointErrorSummary,
+    autoSequenceSummary: analysis.autoSequenceSummary,
     warnings: analysis.warnings,
   }
 }
@@ -2130,6 +2842,7 @@ function renderSourceOnly(): void {
     null,
     2,
   )
+  renderAutoSequenceStatus()
 }
 
 function renderAnalysis(): void {
@@ -2219,6 +2932,7 @@ function renderAnalysis(): void {
   ])
   getElement("warnings").textContent = analysis.warnings.length === 0 ? "警告はありません。" : analysis.warnings.join("\n")
   getElement("json-preview").textContent = JSON.stringify(createSummaryAnalysis(analysis), null, 2)
+  renderAutoSequenceStatus()
   setButtons()
 }
 
@@ -2233,6 +2947,98 @@ function renderSearchProgress(): void {
     ["updatedAt", progress.updatedAt ?? "-"],
     ["message", progress.message ?? "-"],
   ])
+}
+
+function renderAutoSequenceStatus(): void {
+  const auto = state.autoSequence
+  const sequence = auto.definition
+  const currentPresetId = sequence?.steps[auto.currentStepIndex] ?? null
+  const currentPreset = currentPresetId ? findSearchPreset(currentPresetId) : null
+  const stepCount = sequence?.steps.length ?? 0
+  const finalCandidate = auto.finalCandidate
+
+  if (auto.status === "idle") {
+    getElement("auto-sequence-status").innerHTML = renderStatusItems([
+      ["status", "idle"],
+      ["sequence", "-"],
+      ["message", "Auto Search Sequence を選び、Run Auto Sequence で順番に実行します。"],
+    ])
+    return
+  }
+
+  const items: Array<[string, string]> = [
+    ["status", auto.status === "running" ? "Auto Sequence running" : `Auto Sequence ${auto.status}`],
+    ["sequence", sequence?.label ?? "-"],
+    ["current step", stepCount > 0 ? `${Math.min(auto.currentStepIndex + 1, stepCount)} / ${stepCount}` : "-"],
+    ["current preset", currentPreset?.label ?? "-"],
+    [
+      "processed candidates",
+      `${state.searchProgress.processedCandidateCount} / ${state.searchProgress.estimatedCandidateCount}`,
+    ],
+    ["current best score", formatNumber(auto.currentBestScore)],
+    ["message", auto.message ?? "-"],
+  ]
+
+  if (auto.status !== "running") {
+    items.push(["startedAt", auto.startedAt ?? "-"])
+    items.push(["completedAt", auto.completedAt ?? "-"])
+  }
+
+  if (finalCandidate) {
+    items.push(["final pivotZ", formatNumber(finalCandidate.pivotZ)])
+    for (const name of SEMANTIC_POINT_NAMES) {
+      items.push([`final ${name}.z`, formatNumber(finalCandidate.zByPointId[name])])
+    }
+  }
+
+  const finalScore = auto.steps.at(-1)
+  if (finalScore) {
+    items.push(["final totalScore", formatNumber(finalScore.totalScore)])
+    items.push(["final yawAverageScore", formatNumber(finalScore.scoreDebug?.yawAverageScore)])
+    items.push(["final pitchAverageScore", formatNumber(finalScore.scoreDebug?.pitchAverageScore)])
+    items.push(["final maxBucketScore", formatNumber(finalScore.scoreDebug?.maxBucketScore)])
+    items.push(["final balancedScore", formatNumber(finalScore.scoreDebug?.balancedScore)])
+  }
+
+  getElement("auto-sequence-status").innerHTML = `
+    <div class="summary-grid">${renderStatusItems(items)}</div>
+    ${renderAutoSequenceStepTable(auto.steps)}
+  `
+}
+
+function renderAutoSequenceStepTable(steps: AutoSequenceStepSummary[]): string {
+  if (steps.length === 0) {
+    return `<p class="empty">Auto Sequence step result はまだありません。</p>`
+  }
+
+  return `
+    <div class="table-wrap auto-sequence-table">
+      <table>
+        <thead>
+          <tr>
+            <th>step</th>
+            <th>preset</th>
+            <th>totalScore</th>
+            <th>balanced</th>
+            <th>bestCandidate</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${steps.map(
+            (step) => `
+              <tr>
+                <td>${step.stepIndex}</td>
+                <td>${escapeHtml(step.presetName)}</td>
+                <td>${formatNumber(step.totalScore)}</td>
+                <td>${formatNumber(step.scoreDebug?.balancedScore)}</td>
+                <td><code>${escapeHtml(step.bestCandidate ? formatCandidateCompact(step.bestCandidate) : "-")}</code></td>
+              </tr>
+            `,
+          ).join("")}
+        </tbody>
+      </table>
+    </div>
+  `
 }
 
 function renderEmptyState(): void {
@@ -2261,6 +3067,7 @@ function renderEmptyState(): void {
     null,
     2,
   )
+  renderAutoSequenceStatus()
 }
 
 function renderSemanticMapping(): void {
@@ -2586,12 +3393,17 @@ function renderBucketRanking(bucketRanking: Record<CaptureBucket, RankingEntry[]
 
 function setButtons(): void {
   const isRunning = state.searchProgress.status === "running"
-  getElement<HTMLButtonElement>("run-analysis-button").disabled = state.frames.length === 0 || isRunning
+  const isAutoRunning = state.autoSequence.status === "running"
+  getElement<HTMLButtonElement>("run-analysis-button").disabled = state.frames.length === 0 || isRunning || isAutoRunning
   getElement<HTMLButtonElement>("cancel-analysis-button").disabled = !isRunning
-  getElement<HTMLButtonElement>("copy-debug-button").disabled = !state.analysis || isRunning
-  getElement<HTMLButtonElement>("use-best-candidate-button").disabled = !state.analysis?.bestCandidate || isRunning
-  getElement<HTMLButtonElement>("export-full-button").disabled = !state.analysis || isRunning
-  getElement<HTMLButtonElement>("export-summary-button").disabled = !state.analysis || isRunning
+  getElement<HTMLButtonElement>("copy-debug-button").disabled = !state.analysis || isRunning || isAutoRunning
+  getElement<HTMLButtonElement>("apply-search-preset-button").disabled = isRunning || isAutoRunning
+  getElement<HTMLButtonElement>("apply-base-candidate-preset-button").disabled = isRunning || isAutoRunning
+  getElement<HTMLButtonElement>("run-auto-sequence-button").disabled = state.frames.length === 0 || isRunning || isAutoRunning
+  getElement<HTMLButtonElement>("cancel-auto-sequence-button").disabled = !isAutoRunning
+  getElement<HTMLButtonElement>("use-best-candidate-button").disabled = !state.analysis?.bestCandidate || isRunning || isAutoRunning
+  getElement<HTMLButtonElement>("export-full-button").disabled = !state.analysis || isRunning || isAutoRunning
+  getElement<HTMLButtonElement>("export-summary-button").disabled = !state.analysis || isRunning || isAutoRunning
 }
 
 function extractSemanticPoints2D(
@@ -2966,6 +3778,15 @@ function roundScoreDebug(scoreDebug: CandidateScoreDebug): CandidateScoreDebug {
 
 function formatNumber(value: number | null | undefined): string {
   return typeof value === "number" && Number.isFinite(value) ? value.toFixed(6) : "-"
+}
+
+function formatCandidateCompact(candidate: FittingCandidate8): string {
+  return [
+    `pivotZ=${formatNumber(candidate.pivotZ)}`,
+    ...SEMANTIC_POINT_NAMES.map(
+      (name) => `${name}.z=${formatNumber(candidate.zByPointId[name])}`,
+    ),
+  ].join(" / ")
 }
 
 function formatPercent(value: number): string {
