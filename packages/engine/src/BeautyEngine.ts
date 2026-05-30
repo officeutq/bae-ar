@@ -16,6 +16,8 @@ import type {
   IdealLandmarks3DProjectionResult,
   IdealFacePreset,
   IdealFaceProjectionResult,
+  IdealLandmarks3DProjectionMode,
+  DebugProjectionOptions,
   ProjectionDifference,
   ExpressionAttenuationState,
 } from "./ideal-face"
@@ -31,6 +33,15 @@ import {
 } from "./ideal-face"
 
 type FaceFrameListener = (frame: FaceFrame) => void
+
+export interface BeautyEngineProjectionDebugOptions {
+  projectionMode?: IdealLandmarks3DProjectionMode
+  debugPivotZ?: number
+  zScale?: number
+  perspectiveStrength?: number
+  cameraDistance?: number
+  includeDebugProjectionLandmarks?: boolean
+}
 
 export interface FaceFrameLoopVideoDebugInfo {
   videoWidth: number
@@ -71,6 +82,7 @@ export class BeautyEngine {
   private faceFrameLoopLastDetectSkipReason: string | null = null
   private expressionAttenuationState: ExpressionAttenuationState =
     createExpressionAttenuationState()
+  private projectionDebugOptions: BeautyEngineProjectionDebugOptions = {}
 
   constructor(options?: BeautyEngineOptions) {
     this.input = options?.input
@@ -176,20 +188,36 @@ export class BeautyEngine {
     )
   }
 
-  getIdealLandmarks3DProjection(): IdealLandmarks3DProjectionResult {
-    return this.projectIdealLandmarks3D()
+  setProjectionDebugOptions(options: BeautyEngineProjectionDebugOptions): void {
+    this.projectionDebugOptions = {
+      ...options,
+    }
   }
 
-  getIdealLandmarksDifference(): IdealLandmarksDifferenceDebug {
+  getProjectionDebugOptions(): BeautyEngineProjectionDebugOptions {
+    return {
+      ...this.projectionDebugOptions,
+    }
+  }
+
+  getIdealLandmarks3DProjection(
+    options?: BeautyEngineProjectionDebugOptions,
+  ): IdealLandmarks3DProjectionResult {
+    return this.projectIdealLandmarks3D(options)
+  }
+
+  getIdealLandmarksDifference(
+    options?: BeautyEngineProjectionDebugOptions,
+  ): IdealLandmarksDifferenceDebug {
     return calculateIdealLandmarksDifference(
       this.currentFaceFrame?.landmarks,
-      this.getIdealLandmarks3DProjection(),
+      this.getIdealLandmarks3DProjection(options),
     )
   }
 
-  getCorrectionPlan(): CorrectionPlanDebug {
+  getCorrectionPlan(options?: BeautyEngineProjectionDebugOptions): CorrectionPlanDebug {
     return calculateCorrectionPlanDebug(
-      this.getIdealLandmarksDifference(),
+      this.getIdealLandmarksDifference(options),
       this.idealFace,
       {
         blendshapes: this.currentFaceFrame?.blendshapes,
@@ -199,8 +227,11 @@ export class BeautyEngine {
     )
   }
 
-  projectIdealLandmarks3D(): IdealLandmarks3DProjectionResult {
+  projectIdealLandmarks3D(
+    options?: BeautyEngineProjectionDebugOptions,
+  ): IdealLandmarks3DProjectionResult {
     const inputSize = this.getInputProjectionSize()
+    const projectionDebugOptions = this.resolveProjectionDebugOptions(options)
 
     return projectIdealLandmarks3D(
       this.idealFace,
@@ -211,6 +242,16 @@ export class BeautyEngine {
         faceGeometry: this.currentFaceGeometry,
         videoWidth: inputSize?.width,
         videoHeight: inputSize?.height,
+        debugPivotZ:
+          projectionDebugOptions.projectionMode === "simple_perspective"
+            ? projectionDebugOptions.debugPivotZ
+            : undefined,
+        projectionMode: projectionDebugOptions.projectionMode,
+        debugProjection: this.createDebugProjectionOptions(
+          projectionDebugOptions,
+        ),
+        includeDebugProjectionLandmarks:
+          projectionDebugOptions.includeDebugProjectionLandmarks,
       },
     )
   }
@@ -377,6 +418,35 @@ export class BeautyEngine {
     }
 
     return undefined
+  }
+
+  private resolveProjectionDebugOptions(
+    options: BeautyEngineProjectionDebugOptions | undefined,
+  ): BeautyEngineProjectionDebugOptions {
+    return {
+      ...this.projectionDebugOptions,
+      ...options,
+    }
+  }
+
+  private createDebugProjectionOptions(
+    options: BeautyEngineProjectionDebugOptions,
+  ): DebugProjectionOptions | undefined {
+    if (
+      options.projectionMode === undefined &&
+      options.zScale === undefined &&
+      options.perspectiveStrength === undefined &&
+      options.cameraDistance === undefined
+    ) {
+      return undefined
+    }
+
+    return {
+      mode: options.projectionMode,
+      zScale: options.zScale,
+      perspectiveStrength: options.perspectiveStrength,
+      cameraDistance: options.cameraDistance,
+    }
   }
 
   private stopFaceFrameLoop(): void {

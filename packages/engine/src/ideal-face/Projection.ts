@@ -108,6 +108,7 @@ export interface DebugProjectionOptions {
 
 export interface ProjectionModelDebug {
   mode: IdealLandmarks3DProjectionMode
+  debugPivotZ: number | null
   zScale: number
   perspectiveStrength: number
   cameraDistance: number
@@ -138,6 +139,7 @@ export interface IdealLandmarks3DProjectionDebug {
   coordinate?: ProjectionCoordinateDebug
   projection: ProjectionModelDebug
   projectionMode: IdealLandmarks3DProjectionMode
+  debugPivotZ: number | null
   zScale: number
   perspectiveStrength: number
   cameraDistance: number
@@ -361,8 +363,8 @@ export function projectIdealLandmarks3D(
     }
   }
 
-  const rotationCenter = getProjectionRotationCenter(options)
   const projectionOptions = getDebugProjectionOptions(options)
+  const rotationCenter = getProjectionRotationCenter(projectionOptions)
   const rotatedLandmarks = idealLandmarks3D.map((landmark) =>
     rotateIdealLandmark3D(landmark, facePose, rotationCenter),
   )
@@ -792,6 +794,7 @@ function createProjectionDebug(input: {
     coordinate: input.coordinate,
     projection: input.projection,
     projectionMode: input.projection.mode,
+    debugPivotZ: input.projection.debugPivotZ,
     zScale: input.projection.zScale,
     perspectiveStrength: input.projection.perspectiveStrength,
     cameraDistance: input.projection.cameraDistance,
@@ -928,9 +931,16 @@ function getDebugProjectionOptions(
   const cameraDistance =
     getPositiveNumber(options.debugProjection?.cameraDistance) ??
     DEBUG_PROJECTION_DEFAULTS.cameraDistance
+  const debugPivotZ =
+    mode === "simple_perspective" &&
+    typeof options.debugPivotZ === "number" &&
+    Number.isFinite(options.debugPivotZ)
+      ? options.debugPivotZ
+      : null
 
   return {
     mode,
+    debugPivotZ,
     zScale,
     perspectiveStrength,
     cameraDistance,
@@ -1001,16 +1011,10 @@ function projectRotatedIdealLandmark2D(
   }
 }
 
-function getProjectionRotationCenter(
-  options: ProjectIdealLandmarks3DOptions,
-): RotatablePoint3D {
+function getProjectionRotationCenter(projection: ProjectionModelDebug): RotatablePoint3D {
   return {
     ...IDEAL_LANDMARKS_3D_CENTER,
-    z:
-      typeof options.debugPivotZ === "number" &&
-      Number.isFinite(options.debugPivotZ)
-        ? options.debugPivotZ
-        : IDEAL_LANDMARKS_3D_CENTER.z,
+    z: projection.debugPivotZ ?? IDEAL_LANDMARKS_3D_CENTER.z,
   }
 }
 

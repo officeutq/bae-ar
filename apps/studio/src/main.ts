@@ -12,6 +12,7 @@ import {
 } from "@bae-ar/engine"
 import type {
   BeautyEngineState,
+  BeautyEngineProjectionDebugOptions,
   CorrectionPlanDebug,
   CorrectionVector,
   FaceFrame,
@@ -20,6 +21,7 @@ import type {
   IdealFace,
   IdealLandmarksDifferenceDebug,
   IdealLandmarks3DProjectionResult,
+  IdealLandmarks3DProjectionMode,
   LandmarkGroup,
   LandmarkGroupsDebugSummary,
 } from "@bae-ar/engine"
@@ -109,6 +111,21 @@ type ShapeWarpDebugMode =
   | "cpu_radial_debug"
   | "webgl_mesh_debug"
   | "webgl_extended_grid_mesh_debug"
+
+type ProjectionDebugPreset =
+  | "orthographic"
+  | "simple_perspective_pivot0"
+  | "simple_perspective_manual"
+  | "simple_perspective_pivot_minus_025"
+
+type ProjectionDebugSettings = {
+  preset: ProjectionDebugPreset
+  mode: IdealLandmarks3DProjectionMode
+  debugPivotZ: number
+  zScale: number
+  perspectiveStrength: number
+  cameraDistance: number
+}
 
 type ShapeWarpWebglStatus = "available" | "unavailable"
 
@@ -312,6 +329,15 @@ const SHAPE_WARP_DEBUG_PRESETS: Record<
   },
 }
 
+const PROJECTION_DEBUG_DEFAULT_SETTINGS: ProjectionDebugSettings = {
+  preset: "orthographic",
+  mode: "orthographic",
+  debugPivotZ: 0,
+  zScale: 1,
+  perspectiveStrength: 1,
+  cameraDistance: 2,
+}
+
 const MEDIAPIPE_FACE_OVAL_ORDERED_INDICES: readonly number[] = [
   10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379,
   378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127,
@@ -346,6 +372,9 @@ async function bootstrap(): Promise<void> {
     extendedGridInfluence: SHAPE_WARP_NORMAL_SETTINGS.extendedGridInfluence,
     extendedGridNearFaceRadius:
       SHAPE_WARP_NORMAL_SETTINGS.extendedGridNearFaceRadius,
+  }
+  const projectionDebugSettings: ProjectionDebugSettings = {
+    ...PROJECTION_DEBUG_DEFAULT_SETTINGS,
   }
   const stateLog: string[] = []
   let lastEngineState: BeautyEngineState | undefined
@@ -425,6 +454,67 @@ async function bootstrap(): Promise<void> {
 
   function formatNullableNumber(value: number | null | undefined): string {
     return value === null || value === undefined ? "なし" : formatNumber(value)
+  }
+
+  function parseFiniteNumber(value: string, fallback: number): number {
+    const parsed = Number(value)
+
+    return Number.isFinite(parsed) ? parsed : fallback
+  }
+
+  function parsePositiveNumber(value: string, fallback: number): number {
+    const parsed = Number(value)
+
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+  }
+
+  function createProjectionDebugOptions(): BeautyEngineProjectionDebugOptions {
+    return {
+      projectionMode: projectionDebugSettings.mode,
+      debugPivotZ:
+        projectionDebugSettings.mode === "simple_perspective"
+          ? projectionDebugSettings.debugPivotZ
+          : undefined,
+      zScale: projectionDebugSettings.zScale,
+      perspectiveStrength: projectionDebugSettings.perspectiveStrength,
+      cameraDistance: projectionDebugSettings.cameraDistance,
+    }
+  }
+
+  function applyProjectionDebugPreset(preset: ProjectionDebugPreset): void {
+    projectionDebugSettings.preset = preset
+
+    if (preset === "orthographic") {
+      projectionDebugSettings.mode = "orthographic"
+      projectionDebugSettings.debugPivotZ = 0
+      return
+    }
+
+    projectionDebugSettings.mode = "simple_perspective"
+
+    if (preset === "simple_perspective_pivot0") {
+      projectionDebugSettings.debugPivotZ = 0
+    }
+
+    if (preset === "simple_perspective_pivot_minus_025") {
+      projectionDebugSettings.debugPivotZ = -0.25
+    }
+  }
+
+  function parseProjectionDebugPreset(value: string): ProjectionDebugPreset {
+    if (
+      value === "simple_perspective_pivot0" ||
+      value === "simple_perspective_manual" ||
+      value === "simple_perspective_pivot_minus_025"
+    ) {
+      return value
+    }
+
+    return "orthographic"
+  }
+
+  function parseProjectionMode(value: string): IdealLandmarks3DProjectionMode {
+    return value === "simple_perspective" ? "simple_perspective" : "orthographic"
   }
 
   function createShapeWarpDebugSummary(input: {
@@ -758,7 +848,7 @@ current: ${formatLandmarkBounds(debug?.currentBounds)}
 current same-unit: ${formatLandmarkBounds(debug?.currentSameUnitBounds)}
 overlay px: ${formatOverlayPixelBounds(overlayPixelBounds)}
 aspect asset / rotated / projectedBeforeAlignment / aligned / image / current / currentMinusAligned / currentMinusImage: ${formatNullableNumber(debug?.aspectRatio.asset)} / ${formatNullableNumber(debug?.aspectRatio.rotated)} / ${formatNullableNumber(debug?.aspectRatio.projectedBeforeAlignment)} / ${formatNullableNumber(debug?.aspectRatio.aligned)} / ${formatNullableNumber(debug?.aspectRatio.image)} / ${formatNullableNumber(debug?.aspectRatio.current)} / ${formatNullableNumber(debug?.aspectRatio.currentMinusAligned)} / ${formatNullableNumber(debug?.aspectRatio.currentMinusImage)}
-projection: ${debug?.projectionMode ?? "なし"} / zScale ${formatNullableNumber(debug?.zScale)} / perspectiveStrength ${formatNullableNumber(debug?.perspectiveStrength)} / cameraDistance ${formatNullableNumber(debug?.cameraDistance)}
+projection: ${debug?.projectionMode ?? "なし"} / debugPivotZ ${formatNullableNumber(debug?.debugPivotZ)} / zScale ${formatNullableNumber(debug?.zScale)} / perspectiveStrength ${formatNullableNumber(debug?.perspectiveStrength)} / cameraDistance ${formatNullableNumber(debug?.cameraDistance)}
 before alignment debug: aspect ${formatNullableNumber(debug?.projectedBeforeAlignmentAspect)} / aspectError ${formatNullableNumber(debug?.aspectErrorBeforeAlignment)} / widthRatio ${formatNullableNumber(debug?.widthRatioBeforeAlignment)} / heightRatio ${formatNullableNumber(debug?.heightRatioBeforeAlignment)}
 
 Coordinate spaces:
@@ -1207,17 +1297,26 @@ Camera:
     const input = engine.getInput()
 
     if (input instanceof HTMLVideoElement) {
+      const projectionDebugOptions = createProjectionDebugOptions()
+      const idealLandmarks3DProjection = engine.getIdealLandmarks3DProjection(
+        projectionDebugOptions,
+      )
+      const idealLandmarksDifference = engine.getIdealLandmarksDifference(
+        projectionDebugOptions,
+      )
+      const correctionPlan = engine.getCorrectionPlan(projectionDebugOptions)
+
       document
         .querySelector("#source-preview")
         ?.append(input, overlayCanvas)
       document.querySelector("#processed-preview")?.append(processedCanvas)
-      drawProcessedPreview(input, latestFaceFrame, engine.getCorrectionPlan())
+      drawProcessedPreview(input, latestFaceFrame, correctionPlan)
       drawLandmarkOverlay(
         latestFaceFrame,
         engine.getFaceGeometry(),
-        engine.getIdealLandmarks3DProjection(),
-        engine.getIdealLandmarksDifference(),
-        engine.getCorrectionPlan(),
+        idealLandmarks3DProjection,
+        idealLandmarksDifference,
+        correctionPlan,
       )
     }
   }
@@ -2860,6 +2959,109 @@ Camera:
       })
   }
 
+  function attachProjectionDebugHandlers(): void {
+    document
+      .querySelectorAll<HTMLInputElement>('input[name="projection-debug-preset"]')
+      .forEach((input) => {
+        input.addEventListener("change", (event) => {
+          if (
+            !(event.currentTarget instanceof HTMLInputElement) ||
+            !event.currentTarget.checked
+          ) {
+            return
+          }
+
+          applyProjectionDebugPreset(
+            parseProjectionDebugPreset(event.currentTarget.value),
+          )
+          render()
+          appendCameraPreview()
+        })
+      })
+
+    document
+      .querySelector<HTMLSelectElement>("#projection-debug-mode")
+      ?.addEventListener("change", (event) => {
+        if (!(event.currentTarget instanceof HTMLSelectElement)) {
+          return
+        }
+
+        projectionDebugSettings.mode = parseProjectionMode(
+          event.currentTarget.value,
+        )
+        projectionDebugSettings.preset =
+          projectionDebugSettings.mode === "orthographic"
+            ? "orthographic"
+            : "simple_perspective_manual"
+        render()
+        appendCameraPreview()
+      })
+
+    document
+      .querySelector<HTMLInputElement>("#projection-debug-pivot-z")
+      ?.addEventListener("change", (event) => {
+        if (!(event.currentTarget instanceof HTMLInputElement)) {
+          return
+        }
+
+        projectionDebugSettings.debugPivotZ = parseFiniteNumber(
+          event.currentTarget.value,
+          projectionDebugSettings.debugPivotZ,
+        )
+        projectionDebugSettings.preset =
+          projectionDebugSettings.mode === "simple_perspective"
+            ? "simple_perspective_manual"
+            : "orthographic"
+        render()
+        appendCameraPreview()
+      })
+
+    document
+      .querySelector<HTMLInputElement>("#projection-debug-z-scale")
+      ?.addEventListener("change", (event) => {
+        if (!(event.currentTarget instanceof HTMLInputElement)) {
+          return
+        }
+
+        projectionDebugSettings.zScale = parseFiniteNumber(
+          event.currentTarget.value,
+          projectionDebugSettings.zScale,
+        )
+        render()
+        appendCameraPreview()
+      })
+
+    document
+      .querySelector<HTMLInputElement>("#projection-debug-perspective-strength")
+      ?.addEventListener("change", (event) => {
+        if (!(event.currentTarget instanceof HTMLInputElement)) {
+          return
+        }
+
+        projectionDebugSettings.perspectiveStrength = parseFiniteNumber(
+          event.currentTarget.value,
+          projectionDebugSettings.perspectiveStrength,
+        )
+        render()
+        appendCameraPreview()
+      })
+
+    document
+      .querySelector<HTMLInputElement>("#projection-debug-camera-distance")
+      ?.addEventListener("change", (event) => {
+        if (!(event.currentTarget instanceof HTMLInputElement)) {
+          return
+        }
+
+        projectionDebugSettings.cameraDistance = parsePositiveNumber(
+          event.currentTarget.value,
+          projectionDebugSettings.cameraDistance,
+        )
+        render()
+        appendCameraPreview()
+      })
+  }
+
   function attachShapeWarpDebugHandlers(): void {
     document
       .querySelectorAll<HTMLInputElement>('input[name="shape-warp-mode"]')
@@ -3356,7 +3558,10 @@ Camera:
 
     return (
       activeElement instanceof HTMLElement &&
-      Boolean(activeElement.closest("[data-shape-warp-debug-controls]"))
+      Boolean(
+        activeElement.closest("[data-shape-warp-debug-controls]") ||
+          activeElement.closest("[data-projection-debug-controls]"),
+      )
     )
   }
 
@@ -3368,9 +3573,14 @@ Camera:
     const frame = engine.getFaceFrame() ?? latestFaceFrame
     const geometry = engine.getFaceGeometry()
     const idealFace = engine.getIdealFace()
-    const idealLandmarks3DProjection = engine.getIdealLandmarks3DProjection()
-    const idealLandmarksDifference = engine.getIdealLandmarksDifference()
-    const correctionPlan = engine.getCorrectionPlan()
+    const projectionDebugOptions = createProjectionDebugOptions()
+    const idealLandmarks3DProjection = engine.getIdealLandmarks3DProjection(
+      projectionDebugOptions,
+    )
+    const idealLandmarksDifference = engine.getIdealLandmarksDifference(
+      projectionDebugOptions,
+    )
+    const correctionPlan = engine.getCorrectionPlan(projectionDebugOptions)
     const correctionProfile = getCorrectionProfileOrDefault(idealFace)
     const correctionProfileSource = getCorrectionProfileSource(idealFace)
     const availableIdealFaces = engine.getAvailableIdealFaces()
@@ -3405,7 +3615,7 @@ IdealFace: ${idealFace.metadata.name} (${idealFace.metadata.id}) / ${idealFace.m
 IdealFace 478 Projection（理想顔の投影）: ${idealLandmarks3DProjection.status} / ${idealLandmarks3DProjection.landmarkCount} 点
 Alignment（位置合わせ）: ${idealLandmarks3DProjection.alignment?.mode ?? "none"} / scale basis ${idealLandmarks3DProjection.alignment?.scaleBasis?.mode ?? "none"} / scale ${formatNullableNumber(idealLandmarks3DProjection.alignment?.scale)} / limiting axis ${idealLandmarks3DProjection.alignment?.scaleBasis?.limitingAxis ?? "none"} / aspectDiff ${formatNullableNumber(idealLandmarks3DProjection.alignment?.aspectRatioDifference)}
 Aspect debug（縦横比デバッグ）: asset ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectRatio.asset)} / rotated ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectRatio.rotated)} / beforeAlignment ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectRatio.projectedBeforeAlignment)} / aligned ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectRatio.aligned)} / image ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectRatio.image)} / current ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectRatio.current)} / overlay ${formatNullableNumber(overlayProjectedIdealPixelBounds?.aspectRatioPx)}
-Projection debug（投影デバッグ）: ${idealLandmarks3DProjection.debug?.projectionMode ?? "なし"} / aspectErrorBeforeAlignment ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectErrorBeforeAlignment)} / widthRatio ${formatNullableNumber(idealLandmarks3DProjection.debug?.widthRatioBeforeAlignment)} / heightRatio ${formatNullableNumber(idealLandmarks3DProjection.debug?.heightRatioBeforeAlignment)}
+Projection debug（投影デバッグ）: ${idealLandmarks3DProjection.debug?.projectionMode ?? "なし"} / debugPivotZ ${formatNullableNumber(idealLandmarks3DProjection.debug?.debugPivotZ)} / zScale ${formatNullableNumber(idealLandmarks3DProjection.debug?.zScale)} / perspectiveStrength ${formatNullableNumber(idealLandmarks3DProjection.debug?.perspectiveStrength)} / cameraDistance ${formatNullableNumber(idealLandmarks3DProjection.debug?.cameraDistance)} / aspectErrorBeforeAlignment ${formatNullableNumber(idealLandmarks3DProjection.debug?.aspectErrorBeforeAlignment)} / widthRatio ${formatNullableNumber(idealLandmarks3DProjection.debug?.widthRatioBeforeAlignment)} / heightRatio ${formatNullableNumber(idealLandmarks3DProjection.debug?.heightRatioBeforeAlignment)}
 Coordinate conversion（座標変換）: ${idealLandmarks3DProjection.debug?.coordinate?.conversionMode ?? "なし"} / videoAspect ${formatNullableNumber(idealLandmarks3DProjection.debug?.coordinate?.videoAspectRatio)} / fallback ${idealLandmarks3DProjection.debug?.coordinate ? String(idealLandmarks3DProjection.debug.coordinate.fallbackUsed) : "なし"}
 478点差分: ${idealLandmarksDifference.status} / matched ${idealLandmarksDifference.matchedLandmarkCount} / 平均 ${formatNullableNumber(idealLandmarksDifference.averageDistance)} / 最大 ${formatNullableNumber(idealLandmarksDifference.maxDistance)} / 最大index ${idealLandmarksDifference.maxDistanceLandmarkIndex ?? "なし"}
 correctionProfile: ${correctionProfileSource} / ${correctionProfile.schemaVersion} / ${correctionProfile.mode} / default ${formatNumber(correctionProfile.defaultStrength)} / maxDistance ${formatNumber(correctionProfile.maxCorrectionDistance)} / landmarkStrengths ${correctionProfile.landmarkStrengths.length}
@@ -3587,6 +3797,40 @@ Detect（検出回数）: ${faceFrameLoopDebug.detectCallCount}/${mediaPipeDebug
           <input id="shape-warp-used-vectors" type="checkbox" ${showShapeWarpUsedVectors ? "checked" : ""} />
           Shape Warp使用ベクトルを表示
         </label>
+        <fieldset data-projection-debug-controls="true">
+          <legend>Projection Debug（投影デバッグ）</legend>
+          <p>debugPivotZ には Authoring Tool の pivotZEstimation.bestPivotZ を手動入力できます。Runtime default には反映しません。</p>
+          <fieldset>
+            <legend>比較プリセット</legend>
+            <label><input type="radio" name="projection-debug-preset" value="orthographic" ${projectionDebugSettings.preset === "orthographic" ? "checked" : ""} /> 現行 orthographic</label>
+            <label><input type="radio" name="projection-debug-preset" value="simple_perspective_pivot0" ${projectionDebugSettings.preset === "simple_perspective_pivot0" ? "checked" : ""} /> simple_perspective / pivotZ=0</label>
+            <label><input type="radio" name="projection-debug-preset" value="simple_perspective_pivot_minus_025" ${projectionDebugSettings.preset === "simple_perspective_pivot_minus_025" ? "checked" : ""} /> simple_perspective / pivotZ=-0.25</label>
+            <label><input type="radio" name="projection-debug-preset" value="simple_perspective_manual" ${projectionDebugSettings.preset === "simple_perspective_manual" ? "checked" : ""} /> simple_perspective / 手動</label>
+          </fieldset>
+          <label>
+            projectionMode
+            <select id="projection-debug-mode">
+              <option value="orthographic" ${projectionDebugSettings.mode === "orthographic" ? "selected" : ""}>orthographic</option>
+              <option value="simple_perspective" ${projectionDebugSettings.mode === "simple_perspective" ? "selected" : ""}>simple_perspective</option>
+            </select>
+          </label>
+          <label>
+            debugPivotZ
+            <input id="projection-debug-pivot-z" type="number" step="0.01" value="${projectionDebugSettings.debugPivotZ}" />
+          </label>
+          <label>
+            zScale
+            <input id="projection-debug-z-scale" type="number" step="0.05" value="${projectionDebugSettings.zScale}" />
+          </label>
+          <label>
+            perspectiveStrength
+            <input id="projection-debug-perspective-strength" type="number" step="0.05" value="${projectionDebugSettings.perspectiveStrength}" />
+          </label>
+          <label>
+            cameraDistance
+            <input id="projection-debug-camera-distance" type="number" min="0.01" step="0.05" value="${projectionDebugSettings.cameraDistance}" />
+          </label>
+        </fieldset>
         <fieldset data-shape-warp-debug-controls="true">
           <legend>Shape Warp Debug（変形デバッグ）</legend>
           <p>Shape Warp Debug は CorrectionPlan の補正ベクトルを画像に仮反映する検証用です。本番品質の warp 方式ではありません。</p>
@@ -3780,6 +4024,7 @@ Video srcObject: ${faceFrameLoopDebug.video?.hasSrcObject ? "あり" : "なし"}
     attachIdealLandmarkDifferenceOverlayHandler()
     attachCorrectionPlanOverlayHandler()
     attachShapeWarpUsedVectorsOverlayHandler()
+    attachProjectionDebugHandlers()
     attachShapeWarpDebugHandlers()
     attachIdealFaceAssetImportHandler()
     attachDebugDetailsHandlers()
