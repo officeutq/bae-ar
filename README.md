@@ -1,5 +1,23 @@
 # BAE AR
 
+## 起動方法
+
+各 tool / app は root から以下の npm script で起動します。
+
+```bash
+# Beauty Studio
+npm run start
+
+# IdealFace Authoring Tool
+npm run start:ideal-face-authoring
+
+# MediaPipe Canonical Lab
+npm run start:mediapipe-canonical-lab
+
+# IdealFace Fitting Lab
+npm run start:ideal-face-fitting-lab
+```
+
 ## IdealFace Fitting Lab
 
 `tools/ideal-face-fitting-lab` は、8 semantic points を使って IdealFace478 の z、3D rotationOrigin / pivotZ、zScale、semantic alignment、bounds constraint の仕様判断材料を作る debug lab です。
