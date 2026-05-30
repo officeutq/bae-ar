@@ -9,6 +9,9 @@
 - `tools/mediapipe-canonical-lab` の MediaPipe 座標系調査とも目的を分けます。
 - captured JSON を import し、頭頂 / 顎 / 左右頬 / 左右目 / 鼻 / 口の 8 semantic points で coarse grid search を行います。
 - Summary JSON はレビューや ChatGPT 相談用の軽量形式として出力します。
+- grid search の `bestCandidate` から `bestIdealFace8` を出力します。これは 8点だけの debug artifact であり、production 用 IdealFace asset ではありません。
+- Summary JSON にも `zProfileDefinitions` と `bestIdealFace8` を含めます。z は `zRaw`（zProfile そのもの）と `zScaled`（`zRaw * zScale`）を分け、3DIdealFace8 の実値としては `zScaled` を見ます。
+- 478点への補間や `provisionalIdealFace478` 生成は次段であり、今回は未実装です。
 
 起動:
 

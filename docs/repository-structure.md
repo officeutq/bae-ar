@@ -9,6 +9,7 @@ IdealFace Fitting Lab は、captured JSON の current landmarks 478 から 8 sem
 - IdealFace478 の z / pivotZ / zScale / rotationOrigin を検証する
 - semantic alignment と bounds constraint の評価材料を作る
 - Summary JSON を docs / review / ChatGPT 相談用に出力する
+- `bestCandidate` から 8点だけの `bestIdealFace8` を出力する
 
 扱うもの:
 
@@ -16,14 +17,19 @@ IdealFace Fitting Lab は、captured JSON の current landmarks 478 から 8 sem
 - `semantic_center_scale` / `eye_distance_scale` / `weighted_similarity_2d`
 - semantic error / bounds error / scalePenalty / translationPenalty / symmetryPenalty / zPlausibilityPenalty
 - Full Fitting JSON / Summary JSON export
+- `zProfileDefinitions` / `depthConvention` / `bestIdealFace8` / `depthRelation`
 
 扱わないもの:
 
 - production 用 IdealFace asset 作成
+- production 用 IdealFace asset schema 変更
 - IdealFace Authoring Tool Step 2-I の変更
 - MediaPipe Canonical Lab の実装変更
 - Runtime / Studio Projection の変更
 - 478 点全体最適化、GPU、gradient descent、WebGL、Shape Warp 接続
+- `provisionalIdealFace478` 生成
+
+`bestIdealFace8` は `front` bucket 由来の `base8Points2D` と、grid search の最良 `zProfile` を組み合わせた検証用成果物です。z は `zRaw` と `zScaled` を区別し、Summary JSON にも `zProfileDefinitions` 全件を含めます。478点への拡張は次段であり、この lab ではまだ生成しません。
 
 ## 現在の構成
 
