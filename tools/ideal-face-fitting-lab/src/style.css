@@ -1,0 +1,270 @@
+:root {
+  background: #f5f7fa;
+  color: #20242a;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button {
+  background: #ffffff;
+  border: 1px solid #aeb8c3;
+  border-radius: 6px;
+  color: #1d2630;
+  cursor: pointer;
+  font-weight: 700;
+  min-height: 38px;
+  padding: 8px 12px;
+}
+
+button.primary {
+  background: #1f5f9f;
+  border-color: #1f5f9f;
+  color: #ffffff;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+input,
+select {
+  background: #ffffff;
+  border: 1px solid #b9c4cf;
+  border-radius: 6px;
+  min-height: 36px;
+  padding: 6px 8px;
+  width: 100%;
+}
+
+label {
+  color: #47515c;
+  display: grid;
+  font-size: 12px;
+  font-weight: 700;
+  gap: 5px;
+}
+
+.app {
+  display: grid;
+  gap: 16px;
+  margin: 0 auto;
+  max-width: 1480px;
+  padding: 18px;
+}
+
+.header {
+  align-items: end;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.title-block h1 {
+  font-size: 28px;
+  letter-spacing: 0;
+  line-height: 1.15;
+  margin: 0;
+}
+
+.title-block p {
+  color: #5d6875;
+  line-height: 1.55;
+  margin: 8px 0 0;
+  max-width: 940px;
+}
+
+.status-pill {
+  background: #e5f0fb;
+  border: 1px solid #b8d3ef;
+  border-radius: 999px;
+  color: #174d83;
+  font-size: 13px;
+  font-weight: 800;
+  padding: 7px 10px;
+  white-space: nowrap;
+}
+
+.notice {
+  background: #fff8e8;
+  border: 1px solid #ecd293;
+  border-radius: 8px;
+  color: #614800;
+  line-height: 1.6;
+  padding: 12px 14px;
+}
+
+.notice ul {
+  margin: 8px 0 0;
+  padding-left: 20px;
+}
+
+.layout {
+  align-items: start;
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(360px, 0.85fr) minmax(620px, 1.55fr);
+}
+
+.stack {
+  display: grid;
+  gap: 16px;
+}
+
+.panel {
+  background: #ffffff;
+  border: 1px solid #d8e0e8;
+  border-radius: 8px;
+  min-width: 0;
+  padding: 14px;
+}
+
+.panel h2 {
+  font-size: 17px;
+  margin: 0 0 12px;
+}
+
+.panel h3 {
+  font-size: 14px;
+  margin: 0 0 10px;
+}
+
+.panel-help {
+  color: #64707c;
+  font-size: 13px;
+  line-height: 1.55;
+  margin: -4px 0 12px;
+}
+
+.controls {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.controls-wide {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.summary-grid,
+.mini-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.status-item {
+  border-bottom: 1px solid #edf1f5;
+  display: grid;
+  gap: 2px;
+  padding: 4px 0 8px;
+}
+
+.status-label {
+  color: #697581;
+  font-size: 12px;
+}
+
+.status-value {
+  font-family:
+    "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.table-wrap {
+  overflow: auto;
+}
+
+table {
+  border-collapse: collapse;
+  font-size: 12px;
+  min-width: 100%;
+}
+
+th,
+td {
+  border-bottom: 1px solid #e5ebf2;
+  padding: 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+th {
+  background: #f7f9fc;
+  color: #4d5965;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+code {
+  font-family:
+    "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+}
+
+.json-preview,
+.warning-list {
+  background: #f8fafc;
+  border: 1px solid #e0e7ef;
+  border-radius: 6px;
+  color: #33404c;
+  font-family:
+    "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 12px;
+  max-height: 420px;
+  overflow: auto;
+  padding: 10px;
+  white-space: pre-wrap;
+}
+
+.warning-list {
+  color: #755100;
+  font-family: inherit;
+  line-height: 1.5;
+}
+
+.copy-status {
+  color: #235d49;
+  font-size: 13px;
+  font-weight: 700;
+  min-height: 20px;
+}
+
+.empty {
+  color: #6b7784;
+  font-size: 13px;
+}
+
+@media (max-width: 1080px) {
+  .header {
+    align-items: start;
+    flex-direction: column;
+  }
+
+  .layout,
+  .summary-grid,
+  .mini-grid,
+  .controls {
+    grid-template-columns: 1fr;
+  }
+}

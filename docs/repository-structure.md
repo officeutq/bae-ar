@@ -1,5 +1,30 @@
 # リポジトリ構成
 
+## `tools/ideal-face-fitting-lab`
+
+IdealFace Fitting Lab は、captured JSON の current landmarks 478 から 8 semantic points を取り出し、front bucket 由来の base8Points2D と pose bucket の selected frames を使って coarse grid search を行う debug lab です。
+
+目的:
+
+- IdealFace478 の z / pivotZ / zScale / rotationOrigin を検証する
+- semantic alignment と bounds constraint の評価材料を作る
+- Summary JSON を docs / review / ChatGPT 相談用に出力する
+
+扱うもの:
+
+- headTop / chin / leftCheek / rightCheek / leftEye / rightEye / nose / mouth
+- `semantic_center_scale` / `eye_distance_scale` / `weighted_similarity_2d`
+- semantic error / bounds error / scalePenalty / translationPenalty / symmetryPenalty / zPlausibilityPenalty
+- Full Fitting JSON / Summary JSON export
+
+扱わないもの:
+
+- production 用 IdealFace asset 作成
+- IdealFace Authoring Tool Step 2-I の変更
+- MediaPipe Canonical Lab の実装変更
+- Runtime / Studio Projection の変更
+- 478 点全体最適化、GPU、gradient descent、WebGL、Shape Warp 接続
+
 ## 現在の構成
 
 ```text

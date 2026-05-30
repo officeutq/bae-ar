@@ -1,5 +1,9 @@
 # 開発フロー
 
+## IdealFace Fitting Lab
+
+`tools/ideal-face-fitting-lab` は 8 semantic points だけを使い、z / pivotZ / zScale / semantic alignment / bounds constraint の候補を検証する debug lab です。production 用 IdealFace asset は作らず、`tools/ideal-face-authoring` と `tools/mediapipe-canonical-lab` から分離して扱います。
+
 ## 基本方針
 
 BAE AR は、Engine Runtime、Beauty Studio、IdealFace Authoring Tool、Layer Mask Authoring Tool を分けて開発します。

@@ -1,5 +1,21 @@
 # BAE AR
 
+## IdealFace Fitting Lab
+
+`tools/ideal-face-fitting-lab` は、8 semantic points を使って IdealFace478 の z、3D rotationOrigin / pivotZ、zScale、semantic alignment、bounds constraint の仕様判断材料を作る debug lab です。
+
+- production 用 IdealFace asset を作る正式 authoring tool ではありません。
+- `tools/ideal-face-authoring` の Step 2-I 生成フローとは分離します。
+- `tools/mediapipe-canonical-lab` の MediaPipe 座標系調査とも目的を分けます。
+- captured JSON を import し、頭頂 / 顎 / 左右頬 / 左右目 / 鼻 / 口の 8 semantic points で coarse grid search を行います。
+- Summary JSON はレビューや ChatGPT 相談用の軽量形式として出力します。
+
+起動:
+
+```bash
+npm run start:ideal-face-fitting-lab
+```
+
 ## 概要
 
 BAE AR は、リアルタイム顔加工・AR 表現を行う Beauty Engine Runtime と、その開発・検証・調整を行う Beauty Studio、将来の authoring tool 群を含むプロジェクトです。
