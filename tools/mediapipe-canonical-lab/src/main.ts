@@ -81,6 +81,7 @@ interface AppState {
   cameraError: string | null
   detectCount: number
   lastSkippedReason: string | null
+  clipboardMessage: string | null
   latestFrame: FrameSnapshot | null
   captures: CaptureRecord[]
   loopStartedAt: number | null
@@ -109,6 +110,7 @@ const state: AppState = {
   cameraError: null,
   detectCount: 0,
   lastSkippedReason: null,
+  clipboardMessage: null,
   latestFrame: null,
   captures: [],
   loopStartedAt: null,
@@ -146,11 +148,14 @@ app.innerHTML = `
         <div class="controls">
           <button id="captureButton" class="primary" type="button">現在のフレームを保存</button>
           <button id="clearButton" type="button">保存データをクリア</button>
+          <button id="copyButton" type="button">全データをコピー</button>
           <button id="exportButton" type="button">JSON を書き出し</button>
         </div>
+        <p class="copy-status" id="copyStatus"></p>
         <ul class="help-list">
           <li>顔を正面・左右・上下に向けてから「現在のフレームを保存」を押してください。</li>
-          <li>保存したデータは bucket ごとに集計され、「JSON を書き出し」でダウンロードできます。</li>
+          <li>「全データをコピー」は、画面には表示せず、保存済みの全 JSON をクリップボードへコピーします。</li>
+          <li>「JSON を書き出し」は、同じ全データをファイルとしてダウンロードします。</li>
           <li>自動キャプチャはまだ未実装です。</li>
         </ul>
       </div>
@@ -181,6 +186,7 @@ const video = getElement<HTMLVideoElement>("video")
 const overlay = getElement<HTMLCanvasElement>("overlay")
 const captureButton = getElement<HTMLButtonElement>("captureButton")
 const clearButton = getElement<HTMLButtonElement>("clearButton")
+const copyButton = getElement<HTMLButtonElement>("copyButton")
 const exportButton = getElement<HTMLButtonElement>("exportButton")
 
 let faceLandmarker: FaceLandmarker | null = null
@@ -192,7 +198,12 @@ captureButton.addEventListener("click", () => {
 clearButton.addEventListener("click", () => {
   state.captures = []
   state.lastSkippedReason = null
+  state.clipboardMessage = null
   render()
+})
+
+copyButton.addEventListener("click", () => {
+  void copyCapturesToClipboard()
 })
 
 exportButton.addEventListener("click", () => {
@@ -371,6 +382,7 @@ function captureCurrentFrame(): void {
 
   state.captures = [capture, ...state.captures]
   state.lastSkippedReason = null
+  state.clipboardMessage = null
   render()
 }
 
@@ -415,7 +427,43 @@ function classifyBucket(pose: Pose | null): CaptureBucket {
 
 function exportCaptures(): void {
   const createdAt = new Date()
-  const payload = {
+  const payload = createExportPayload(createdAt)
+
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {
+    type: "application/json",
+  })
+  const link = document.createElement("a")
+  link.href = URL.createObjectURL(blob)
+  link.download = `mediapipe_canonical_lab_captures_${formatFileTimestamp(
+    createdAt,
+  )}.json`
+  link.click()
+  URL.revokeObjectURL(link.href)
+}
+
+async function copyCapturesToClipboard(): Promise<void> {
+  if (state.captures.length === 0) {
+    state.clipboardMessage = "コピーできる保存データがありません。"
+    render()
+    return
+  }
+
+  try {
+    const payload = createExportPayload(new Date())
+    await navigator.clipboard.writeText(JSON.stringify(payload, null, 2))
+    state.clipboardMessage = "全データをクリップボードにコピーしました。"
+  } catch (error) {
+    state.clipboardMessage =
+      error instanceof Error
+        ? `クリップボードへのコピーに失敗しました: ${error.message}`
+        : "クリップボードへのコピーに失敗しました。"
+  }
+
+  render()
+}
+
+function createExportPayload(createdAt: Date) {
+  return {
     schemaVersion: "mediapipe_canonical_lab_captures_v1",
     createdAt: createdAt.toISOString(),
     tool: {
@@ -433,17 +481,6 @@ function exportCaptures(): void {
     },
     captures: state.captures.map(({ previewDataUrl, ...capture }) => capture),
   }
-
-  const blob = new Blob([JSON.stringify(payload, null, 2)], {
-    type: "application/json",
-  })
-  const link = document.createElement("a")
-  link.href = URL.createObjectURL(blob)
-  link.download = `mediapipe_canonical_lab_captures_${formatFileTimestamp(
-    createdAt,
-  )}.json`
-  link.click()
-  URL.revokeObjectURL(link.href)
 }
 
 function render(): void {
@@ -527,7 +564,9 @@ function render(): void {
           )
           .join("")
 
+  getElement("copyStatus").textContent = state.clipboardMessage ?? ""
   captureButton.disabled = !state.latestFrame
+  copyButton.disabled = state.captures.length === 0
   exportButton.disabled = state.captures.length === 0
   clearButton.disabled = state.captures.length === 0
 }

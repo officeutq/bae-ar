@@ -165,6 +165,14 @@ canvas {
   margin: 10px 0 0;
 }
 
+.copy-status {
+  color: #235d49;
+  font-size: 13px;
+  font-weight: 650;
+  min-height: 20px;
+  margin: 8px 0 0;
+}
+
 .help-list {
   color: #4d5965;
   display: grid;
