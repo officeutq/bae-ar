@@ -43,6 +43,46 @@ type TranslationMode = "lastColumn" | "lastRow" | "none"
 
 type Canonical468Status = "not_imported" | "loaded" | "invalid"
 
+type Empirical478CandidateName =
+  | "face_bounds_normalized_no_matrix"
+  | "pose_rotation_inverse_engine_convention"
+  | "inverse_matrix_engine_pose_convention"
+  | "inverse_matrix_translation_last_row"
+  | "rotation_only_then_normalize"
+  | "per_bucket_pose_normalized"
+
+type Empirical478InputSpace =
+  | "normalized_xyz_direct"
+  | "image_centered_same_unit"
+  | "face_bounds_centered_width_unit"
+  | "face_bounds_centered_height_unit"
+
+type Empirical478Normalization =
+  | "width_unit"
+  | "height_unit"
+  | "bbox_max_unit"
+  | "xy_separate_debug_only"
+
+type Empirical478WarningCode =
+  | "insufficientCaptureCount"
+  | "insufficientFrontFrames"
+  | "insufficientYawPositiveFrames"
+  | "insufficientYawNegativeFrames"
+  | "insufficientPitchPositiveFrames"
+  | "insufficientPitchNegativeFrames"
+  | "bucketImbalance"
+  | "matrixMissing"
+  | "landmarkCountMismatch"
+  | "expressionTooStrong"
+  | "rollTooLarge"
+  | "candidateUnstable"
+  | "semanticPointUnstable"
+  | "leftRightBucketMismatch"
+  | "pitchBucketMismatch"
+  | "xySeparateScaleDebugOnly"
+  | "canonical468ReferenceOnly"
+  | "empiricalCanonical478NotProductionReady"
+
 type CanonicalProjectionCandidateName =
   | "raw_matrix_then_normalize_bounds"
   | "raw_matrix_then_fit_current_bounds_uniform"
@@ -463,29 +503,172 @@ interface CanonicalProjectionAnalysis {
   warnings: string[]
 }
 
+interface Empirical478CandidateDefinition {
+  candidateName: Empirical478CandidateName
+  description: string
+  usesMatrix: boolean
+  matrixConvention: MatrixConventionName | null
+  runtimeCompatible: boolean
+}
+
+interface FrameWeightDetail {
+  captureId: string
+  bucket: StabilityBucket
+  frameWeight: number
+  poseMagnitude: number | null
+  poseQuality: number
+  rollQuality: number
+  expressionNeutrality: number
+  bucketBalance: number
+  excluded: boolean
+  warnings: Empirical478WarningCode[]
+}
+
+interface FrameWeightSummary {
+  inputFrameCount: number
+  usableFrameCount: number
+  excludedFrameCount: number
+  totalWeight: number
+  averageWeight: number | null
+  bucketCounts: Record<StabilityBucket, number>
+  bucketWeightTotals: Record<StabilityBucket, number>
+  details: FrameWeightDetail[]
+  warnings: Empirical478WarningCode[]
+}
+
+interface Empirical478SemanticStability {
+  noseTip: PointStability
+  eyeCenter: PointStability
+  mouthCenter: PointStability
+  chin: PointStability
+  leftCheek: PointStability
+  rightCheek: PointStability
+  leftContour: PointStability
+  rightContour: PointStability
+}
+
+interface Empirical478GroupStability {
+  faceBoundary: BucketStability
+  eyes: BucketStability
+  nose: BucketStability
+  mouth: BucketStability
+  cheeks: BucketStability
+  jaw: BucketStability
+}
+
+interface Empirical478CandidateResult {
+  candidateName: Empirical478CandidateName
+  inputSpace: Empirical478InputSpace
+  normalization: Empirical478Normalization
+  matrixConvention: MatrixConventionName | null
+  runtimeCompatible: boolean
+  transformedFrameCount: number
+  frameWeightTotal: number
+  averageStdDev3D: number | null
+  averageStdDevX: number | null
+  averageStdDevY: number | null
+  averageStdDevZ: number | null
+  medianStdDev3D: number | null
+  maxStdDev3D: number | null
+  unstableLandmarkCount: number
+  perLandmarkMean: LandmarkPoint[]
+  perLandmarkStdDev: Array<{
+    index: number
+    stdDevX: number
+    stdDevY: number
+    stdDevZ: number
+    stdDev3D: number
+    sampleCount: number
+  }>
+  semanticPointStability: Empirical478SemanticStability
+  groupStability: Empirical478GroupStability
+  bucketStability: Record<StabilityBucket, BucketStability>
+  warnings: Empirical478WarningCode[]
+  warningCount: number
+  score: number | null
+}
+
+interface Empirical478RankingEntry {
+  candidateName: Empirical478CandidateName
+  inputSpace: Empirical478InputSpace
+  normalization: Empirical478Normalization
+  matrixConvention: MatrixConventionName | null
+  averageStdDev3D: number | null
+  semanticAverageStdDev3D: number | null
+  unstableLandmarkCount: number
+  warningCount: number
+  score: number | null
+}
+
 interface EmpiricalCanonicalLandmark extends LandmarkPoint {
   stdDevX: number
   stdDevY: number
   stdDevZ: number
+  stdDev3D: number
   sampleCount: number
 }
 
 interface EmpiricalCanonical478 {
   debugArtifact: true
-  sourceTransformCandidate: TransformName
+  sourceTransformCandidate: TransformName | Empirical478CandidateName
+  sourceCandidate?: Empirical478RankingEntry
   landmarks: EmpiricalCanonicalLandmark[]
   summary: {
     bounds: BoundsSummary | null
     centroid: Point3 | null
     boundsCenter: Point3 | null
     zRange: number | null
+    widthHeightRatio?: number | null
+    widthDepthRatio?: number | null
+    heightDepthRatio?: number | null
     semanticSummary: SemanticSummary
+    frameCount?: number
+    sourceCandidate?: Empirical478RankingEntry
+    warningSummary?: Empirical478WarningCode[]
   }
+}
+
+interface Canonical468ReferenceComparison {
+  status: "not_available" | "available"
+  note: string
+  bestOverall: EmpiricalCanonical478Comparison | null
+  runtimeCompatible: EmpiricalCanonical478Comparison | null
+}
+
+interface EmpiricalCanonical478Comparison {
+  sourceCandidate: Empirical478RankingEntry | null
+  boundsRatio: {
+    width: number | null
+    height: number | null
+    aspectRatio: number | null
+  }
+  zRangeRatio: number | null
+  semanticPointDelta: Record<keyof SemanticPoints, number | null>
+  averageDistanceAfterSimpleNormalization: number | null
+}
+
+interface Empirical478Analysis {
+  status: "available" | "not_available"
+  analysisVersion: "empirical_478_canonical_debug_v1"
+  frameWeightSummary: FrameWeightSummary
+  candidateResults: Empirical478CandidateResult[]
+  overallStabilityRanking: Empirical478RankingEntry[]
+  runtimeCompatibleRanking: Empirical478RankingEntry[]
+  bucketRanking: Record<StabilityBucket, Empirical478RankingEntry[]>
+  bestOverallCandidate: Empirical478RankingEntry | null
+  bestRuntimeCompatibleCandidate: Empirical478RankingEntry | null
+  empiricalCanonical478BestOverall: EmpiricalCanonical478 | null
+  empiricalCanonical478RuntimeCompatible: EmpiricalCanonical478 | null
+  canonical468ReferenceComparison: Canonical468ReferenceComparison
+  warnings: Empirical478WarningCode[]
 }
 
 interface AnalysisResult {
   schemaVersion: "mediapipe_canonical_lab_analysis_v1"
-  analysisVersion: "matrix_convention_debug_v1" | "canonical_468_projection_debug_v1"
+  analysisVersion:
+    | "matrix_convention_debug_v1"
+    | "canonical_468_projection_debug_v1"
+    | "empirical_478_canonical_debug_v1"
   generatedAt: string
   sourceCaptureSummary: SourceCaptureSummary
   rawCaptureSummaries: CaptureRawAnalysis[]
@@ -510,6 +693,7 @@ interface AnalysisResult {
   canonical468: Canonical468Summary
   canonicalProjectionAnalysis: CanonicalProjectionAnalysis
   selectedBestCanonicalProjectionCandidate: CanonicalProjectionRankingEntry | null
+  empirical478Analysis: Empirical478Analysis
   warnings: string[]
 }
 
@@ -563,6 +747,68 @@ const OUTER_CONTOUR_INDICES = [
   10, 21, 54, 58, 67, 93, 103, 109, 127, 132, 136, 148, 149, 150,
   152, 162, 172, 176, 234, 251, 284, 288, 297, 323, 332, 338, 356,
   361, 365, 377, 378, 379, 389, 397, 400, 454,
+]
+const NOSE_GROUP_INDICES = [
+  1, 2, 4, 5, 6, 19, 45, 48, 64, 94, 97, 98, 115, 168, 195, 197, 220,
+  275, 278, 294, 326, 327, 344, 440,
+]
+const CHEEK_GROUP_INDICES = [50, 101, 116, 117, 118, 119, 123, 147, 187, 205, 206, 207, 216, 280, 330, 345, 346, 347, 348, 352, 376, 411, 425, 426, 427, 436]
+const JAW_GROUP_INDICES = [136, 148, 149, 150, 152, 172, 176, 377, 378, 379, 365, 397, 400]
+const EMPIRICAL_478_INPUT_SPACES: Empirical478InputSpace[] = [
+  "face_bounds_centered_width_unit",
+  "image_centered_same_unit",
+  "normalized_xyz_direct",
+  "face_bounds_centered_height_unit",
+]
+const EMPIRICAL_478_NORMALIZATIONS: Empirical478Normalization[] = [
+  "width_unit",
+  "height_unit",
+  "bbox_max_unit",
+  "xy_separate_debug_only",
+]
+const EMPIRICAL_478_CANDIDATES: Empirical478CandidateDefinition[] = [
+  {
+    candidateName: "face_bounds_normalized_no_matrix",
+    description: "Baseline: center current 478 by face bounds and normalize without matrix inverse.",
+    usesMatrix: false,
+    matrixConvention: null,
+    runtimeCompatible: true,
+  },
+  {
+    candidateName: "pose_rotation_inverse_engine_convention",
+    description: "Apply inverse yaw/pitch/roll using the current Engine pose extraction convention.",
+    usesMatrix: true,
+    matrixConvention: "row_major_column_vector",
+    runtimeCompatible: true,
+  },
+  {
+    candidateName: "inverse_matrix_engine_pose_convention",
+    description: "Apply inverse matrix with the Lab/Engine row-major column-vector convention.",
+    usesMatrix: true,
+    matrixConvention: "row_major_column_vector",
+    runtimeCompatible: true,
+  },
+  {
+    candidateName: "inverse_matrix_translation_last_row",
+    description: "Apply inverse matrix with translation interpreted from values[12..14].",
+    usesMatrix: true,
+    matrixConvention: "row_major_row_vector",
+    runtimeCompatible: false,
+  },
+  {
+    candidateName: "rotation_only_then_normalize",
+    description: "Apply inverse rotation/scale only, ignore translation, then normalize bounds.",
+    usesMatrix: true,
+    matrixConvention: "row_major_column_vector",
+    runtimeCompatible: true,
+  },
+  {
+    candidateName: "per_bucket_pose_normalized",
+    description: "Pose inverse candidate kept separate so bucket rankings reveal pose-specific drift.",
+    usesMatrix: true,
+    matrixConvention: "row_major_column_vector",
+    runtimeCompatible: true,
+  },
 ]
 
 const SEMANTIC_INDEX_DEBUG: SemanticIndexDebug = {
@@ -814,9 +1060,15 @@ app.innerHTML = `
         <button id="importButton" class="primary" type="button">Import captured JSON</button>
         <button id="canonicalImportButton" type="button">Import canonical 468 OBJ</button>
         <button id="analyzeButton" type="button">Analyze captures</button>
+        <button id="analyzeEmpirical478Button" class="primary" type="button">Analyze empirical 478</button>
         <button id="clearAnalysisButton" type="button">Clear analysis</button>
-        <button id="exportAnalysisButton" type="button">Export analysis JSON</button>
+        <button id="clearEmpirical478Button" type="button">Clear empirical analysis</button>
+        <button id="exportAnalysisButton" type="button">Export Full Analysis JSON</button>
+        <button id="exportAnalysisSummaryButton" type="button">Export Summary JSON</button>
       </div>
+      <p class="note">
+        Debug note: canonical468 is reference only, not the 478 ground truth. This analysis unprojects current landmarks 478 with multiple candidates, checks frame-to-frame stability, and names the stable weighted average empiricalCanonical478. It is a debug artifact, not a production asset.
+      </p>
       <p class="copy-status" id="importStatus"></p>
       <div class="analysis-grid">
         <section>
@@ -863,6 +1115,42 @@ app.innerHTML = `
       <div class="panel">
         <h2>warnings</h2>
         <div class="latest-box" id="analysisWarnings">解析結果はまだありません。</div>
+      </div>
+    </section>
+
+    <section class="analysis-results">
+      <div class="panel">
+        <h2>Empirical 478 frame weight summary</h2>
+        <div class="status-grid" id="empiricalFrameWeightSummary"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Empirical 478 canonical summary</h2>
+        <div class="status-grid" id="empiricalCanonical478Summary"></div>
+      </div>
+    </section>
+
+    <section class="analysis-results">
+      <div class="panel">
+        <h2>Empirical 478 candidate ranking</h2>
+        <div class="table-wrap" id="empiricalCandidateRanking"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Runtime compatible ranking</h2>
+        <div class="table-wrap" id="empiricalRuntimeRanking"></div>
+      </div>
+    </section>
+
+    <section class="analysis-results">
+      <div class="panel">
+        <h2>Empirical 478 bucket ranking</h2>
+        <div class="table-wrap" id="empiricalBucketRanking"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Canonical 468 reference comparison</h2>
+        <div class="latest-box" id="empiricalCanonical468Comparison">canonical468 is reference only.</div>
       </div>
     </section>
 
@@ -940,8 +1228,11 @@ const importFileInput = getElement<HTMLInputElement>("importFileInput")
 const canonicalImportButton = getElement<HTMLButtonElement>("canonicalImportButton")
 const canonicalObjInput = getElement<HTMLInputElement>("canonicalObjInput")
 const analyzeButton = getElement<HTMLButtonElement>("analyzeButton")
+const analyzeEmpirical478Button = getElement<HTMLButtonElement>("analyzeEmpirical478Button")
 const clearAnalysisButton = getElement<HTMLButtonElement>("clearAnalysisButton")
+const clearEmpirical478Button = getElement<HTMLButtonElement>("clearEmpirical478Button")
 const exportAnalysisButton = getElement<HTMLButtonElement>("exportAnalysisButton")
+const exportAnalysisSummaryButton = getElement<HTMLButtonElement>("exportAnalysisSummaryButton")
 const copyAnalysisButton = getElement<HTMLButtonElement>("copyAnalysisButton")
 
 let faceLandmarker: FaceLandmarker | null = null
@@ -993,6 +1284,10 @@ analyzeButton.addEventListener("click", () => {
   analyzeCaptures()
 })
 
+analyzeEmpirical478Button.addEventListener("click", () => {
+  analyzeCaptures()
+})
+
 clearAnalysisButton.addEventListener("click", () => {
   state.importedCaptures = []
   state.importedFileName = null
@@ -1003,8 +1298,18 @@ clearAnalysisButton.addEventListener("click", () => {
   render()
 })
 
+clearEmpirical478Button.addEventListener("click", () => {
+  state.analysis = null
+  state.analysisMessage = null
+  render()
+})
+
 exportAnalysisButton.addEventListener("click", () => {
   exportAnalysisJson()
+})
+
+exportAnalysisSummaryButton.addEventListener("click", () => {
+  exportAnalysisSummaryJson()
 })
 
 copyAnalysisButton.addEventListener("click", () => {
@@ -1260,6 +1565,18 @@ function exportAnalysisJson(): void {
   )
 }
 
+function exportAnalysisSummaryJson(): void {
+  if (!state.analysis) {
+    return
+  }
+
+  const createdAt = new Date()
+  downloadJson(
+    createAnalysisSummaryPayload(state.analysis),
+    `mediapipe_canonical_lab_analysis_summary_${formatFileTimestamp(createdAt)}.json`,
+  )
+}
+
 async function copyCapturesToClipboard(): Promise<void> {
   if (state.captures.length === 0) {
     state.clipboardMessage = "コピーできる保存データがありません。"
@@ -1325,6 +1642,82 @@ function createExportPayload(createdAt: Date): CapturesPayload {
   }
 }
 
+function createAnalysisSummaryPayload(analysis: AnalysisResult): unknown {
+  const empirical = analysis.empirical478Analysis
+
+  return {
+    schemaVersion: "mediapipe_canonical_lab_analysis_summary_v1",
+    sourceSchemaVersion: analysis.schemaVersion,
+    analysisVersion: analysis.analysisVersion,
+    generatedAt: analysis.generatedAt,
+    sourceCaptureSummary: analysis.sourceCaptureSummary,
+    warnings: analysis.warnings,
+    empirical478Analysis: {
+      status: empirical.status,
+      frameWeightSummary: summarizeFrameWeightSummary(empirical.frameWeightSummary),
+      overallStabilityRankingTop: empirical.overallStabilityRanking.slice(0, 10),
+      runtimeCompatibleRankingTop: empirical.runtimeCompatibleRanking.slice(0, 10),
+      bucketRankingTop: summarizeEmpiricalBucketRanking(empirical.bucketRanking),
+      bestOverallCandidate: empirical.bestOverallCandidate,
+      bestRuntimeCompatibleCandidate: empirical.bestRuntimeCompatibleCandidate,
+      empiricalCanonical478BestOverallSummary:
+        empirical.empiricalCanonical478BestOverall?.summary ?? null,
+      empiricalCanonical478RuntimeCompatibleSummary:
+        empirical.empiricalCanonical478RuntimeCompatible?.summary ?? null,
+      canonical468ReferenceComparisonSummary:
+        summarizeCanonical468ReferenceComparison(empirical.canonical468ReferenceComparison),
+      warnings: empirical.warnings,
+    },
+  }
+}
+
+function summarizeFrameWeightSummary(summary: FrameWeightSummary): unknown {
+  return {
+    inputFrameCount: summary.inputFrameCount,
+    usableFrameCount: summary.usableFrameCount,
+    excludedFrameCount: summary.excludedFrameCount,
+    totalWeight: summary.totalWeight,
+    averageWeight: summary.averageWeight,
+    bucketCounts: summary.bucketCounts,
+    bucketWeightTotals: summary.bucketWeightTotals,
+    warnings: summary.warnings,
+    details: summary.details.map((detail) => ({
+      captureId: detail.captureId,
+      bucket: detail.bucket,
+      frameWeight: detail.frameWeight,
+      poseMagnitude: detail.poseMagnitude,
+      poseQuality: detail.poseQuality,
+      rollQuality: detail.rollQuality,
+      expressionNeutrality: detail.expressionNeutrality,
+      excluded: detail.excluded,
+      warnings: detail.warnings,
+    })),
+  }
+}
+
+function summarizeEmpiricalBucketRanking(
+  bucketRanking: Record<StabilityBucket, Empirical478RankingEntry[]>,
+): Record<StabilityBucket, Empirical478RankingEntry[]> {
+  return STABILITY_BUCKETS.reduce(
+    (summary, bucket) => {
+      summary[bucket] = (bucketRanking[bucket] ?? []).slice(0, 5)
+      return summary
+    },
+    {} as Record<StabilityBucket, Empirical478RankingEntry[]>,
+  )
+}
+
+function summarizeCanonical468ReferenceComparison(
+  comparison: Canonical468ReferenceComparison,
+): unknown {
+  return {
+    status: comparison.status,
+    note: comparison.note,
+    bestOverall: comparison.bestOverall,
+    runtimeCompatible: comparison.runtimeCompatible,
+  }
+}
+
 function createAnalysis(captures: CaptureRecord[]): AnalysisResult {
   const warnings: string[] = []
   const canonical468 = state.canonical468?.summary ?? createEmptyCanonical468Summary()
@@ -1347,6 +1740,7 @@ function createAnalysis(captures: CaptureRecord[]): AnalysisResult {
       ? createEmpiricalCanonical478(bestCandidate, bestStabilityTransformCandidate)
       : null
   const canonicalProjectionAnalysis = analyzeCanonicalProjection(captures, state.canonical468)
+  const empirical478Analysis = analyzeEmpirical478(captures, state.canonical468)
 
   if (captures.length < 2) {
     warnings.push("フレーム間安定性を見るには capture が 2 件以上必要です。")
@@ -1362,10 +1756,11 @@ function createAnalysis(captures: CaptureRecord[]): AnalysisResult {
 
   warnings.push(...canonical468.warnings)
   warnings.push(...canonicalProjectionAnalysis.warnings)
+  warnings.push(...empirical478Analysis.warnings.map((warning) => `empirical478: ${warning}`))
 
   return {
     schemaVersion: "mediapipe_canonical_lab_analysis_v1",
-    analysisVersion: "canonical_468_projection_debug_v1",
+    analysisVersion: "empirical_478_canonical_debug_v1",
     generatedAt: new Date().toISOString(),
     sourceCaptureSummary,
     rawCaptureSummaries,
@@ -1391,6 +1786,7 @@ function createAnalysis(captures: CaptureRecord[]): AnalysisResult {
     canonicalProjectionAnalysis,
     selectedBestCanonicalProjectionCandidate:
       canonicalProjectionAnalysis.overallRanking[0] ?? null,
+    empirical478Analysis,
     warnings,
   }
 }
@@ -1953,6 +2349,34 @@ function createEmptyBucketRanking(): Record<StabilityBucket, CanonicalProjection
   )
 }
 
+function createEmptyStabilityBucketNumberRecord(): Record<StabilityBucket, number> {
+  return STABILITY_BUCKETS.reduce(
+    (summary, bucket) => {
+      summary[bucket] = 0
+      return summary
+    },
+    {} as Record<StabilityBucket, number>,
+  )
+}
+
+function roundStabilityBucketRecord(
+  record: Record<StabilityBucket, number>,
+): Record<StabilityBucket, number> {
+  return STABILITY_BUCKETS.reduce(
+    (summary, bucket) => {
+      summary[bucket] = roundDebugNumber(record[bucket] ?? 0)
+      return summary
+    },
+    {} as Record<StabilityBucket, number>,
+  )
+}
+
+function uniqueWarningCodes(
+  warnings: Empirical478WarningCode[],
+): Empirical478WarningCode[] {
+  return [...new Set(warnings)]
+}
+
 function createCanonicalProjectionComparisonWarnings(
   results: CanonicalProjectionPerCaptureResult[],
   captures: CaptureRecord[],
@@ -2048,6 +2472,1035 @@ function createCanonicalProjectionComparisonWarnings(
   }
 
   return warnings
+}
+
+function analyzeEmpirical478(
+  captures: CaptureRecord[],
+  canonical: ImportedCanonical468 | null,
+): Empirical478Analysis {
+  const frameWeightSummary = calculateFrameWeightSummary(captures)
+  const usableDetails = frameWeightSummary.details.filter((detail) => !detail.excluded)
+  const detailById = new Map(usableDetails.map((detail) => [detail.captureId, detail]))
+  const usableCaptures = captures.filter((capture) => detailById.has(capture.captureId))
+  const candidateResults = EMPIRICAL_478_CANDIDATES.flatMap((candidate) =>
+    EMPIRICAL_478_INPUT_SPACES.flatMap((inputSpace) =>
+      EMPIRICAL_478_NORMALIZATIONS.map((normalization) =>
+        analyzeEmpirical478Candidate(
+          candidate,
+          inputSpace,
+          normalization,
+          usableCaptures,
+          detailById,
+        ),
+      ),
+    ),
+  )
+  const overallStabilityRanking = rankEmpirical478CandidateResults(candidateResults)
+  const runtimeCompatibleRanking = rankEmpirical478CandidateResults(
+    candidateResults.filter(
+      (result) =>
+        result.runtimeCompatible &&
+        result.normalization !== "xy_separate_debug_only" &&
+        !result.warnings.includes("xySeparateScaleDebugOnly") &&
+        result.warningCount <= Math.max(2, Math.ceil(result.transformedFrameCount * 0.5)),
+    ),
+  )
+  const bucketRanking = rankEmpirical478ByBucket(candidateResults)
+  const bestOverallCandidate = overallStabilityRanking[0] ?? null
+  const bestRuntimeCompatibleCandidate = runtimeCompatibleRanking[0] ?? null
+  const empiricalCanonical478BestOverall = createEmpiricalCanonical478FromResult(
+    findEmpiricalResult(candidateResults, bestOverallCandidate),
+    bestOverallCandidate,
+  )
+  const empiricalCanonical478RuntimeCompatible = createEmpiricalCanonical478FromResult(
+    findEmpiricalResult(candidateResults, bestRuntimeCompatibleCandidate),
+    bestRuntimeCompatibleCandidate,
+  )
+  const warnings = uniqueWarningCodes([
+    ...frameWeightSummary.warnings,
+    ...candidateResults.flatMap((result) => result.warnings),
+    "canonical468ReferenceOnly",
+    "empiricalCanonical478NotProductionReady",
+  ])
+
+  return {
+    status: usableCaptures.length > 0 ? "available" : "not_available",
+    analysisVersion: "empirical_478_canonical_debug_v1",
+    frameWeightSummary,
+    candidateResults,
+    overallStabilityRanking,
+    runtimeCompatibleRanking,
+    bucketRanking,
+    bestOverallCandidate,
+    bestRuntimeCompatibleCandidate,
+    empiricalCanonical478BestOverall,
+    empiricalCanonical478RuntimeCompatible,
+    canonical468ReferenceComparison: compareEmpiricalCanonical478WithCanonical468(
+      canonical,
+      empiricalCanonical478BestOverall,
+      bestOverallCandidate,
+      empiricalCanonical478RuntimeCompatible,
+      bestRuntimeCompatibleCandidate,
+    ),
+    warnings,
+  }
+}
+
+function calculateFrameWeightSummary(captures: CaptureRecord[]): FrameWeightSummary {
+  const initialDetails = captures.map(createInitialFrameWeightDetail)
+  const usableInitial = initialDetails.filter((detail) => !detail.excluded)
+  const bucketCounts = createEmptyStabilityBucketNumberRecord()
+  for (const detail of usableInitial) {
+    bucketCounts[detail.bucket] += 1
+  }
+  const nonEmptyCounts = STABILITY_BUCKETS.filter((bucket) => bucket !== "unknown")
+    .map((bucket) => bucketCounts[bucket])
+    .filter((count) => count > 0)
+  const averageBucketCount = averageNumber(nonEmptyCounts) ?? 0
+
+  const details = initialDetails.map((detail) => {
+    const bucketBalance =
+      detail.excluded || averageBucketCount <= 0 || bucketCounts[detail.bucket] <= 0
+        ? detail.bucketBalance
+        : clamp(Math.sqrt(averageBucketCount / bucketCounts[detail.bucket]), 0.45, 1.35)
+    const frameWeight = detail.excluded
+      ? 0
+      : roundDebugNumber(
+          clamp(
+            detail.poseQuality *
+              detail.rollQuality *
+              detail.expressionNeutrality *
+              bucketBalance,
+            0,
+            1.35,
+          ),
+        )
+    return {
+      ...detail,
+      frameWeight,
+      bucketBalance: roundDebugNumber(bucketBalance),
+    }
+  })
+  const usableDetails = details.filter((detail) => !detail.excluded)
+  const bucketWeightTotals = createEmptyStabilityBucketNumberRecord()
+  for (const detail of usableDetails) {
+    bucketWeightTotals[detail.bucket] += detail.frameWeight
+  }
+  const totalWeight = sum(usableDetails.map((detail) => detail.frameWeight))
+  const warnings = createFrameWeightWarnings(captures, usableDetails, bucketCounts)
+
+  return {
+    inputFrameCount: captures.length,
+    usableFrameCount: usableDetails.length,
+    excludedFrameCount: captures.length - usableDetails.length,
+    totalWeight: roundDebugNumber(totalWeight),
+    averageWeight:
+      usableDetails.length === 0
+        ? null
+        : roundDebugNumber(totalWeight / usableDetails.length),
+    bucketCounts,
+    bucketWeightTotals: roundStabilityBucketRecord(bucketWeightTotals),
+    details,
+    warnings,
+  }
+}
+
+function createInitialFrameWeightDetail(capture: CaptureRecord): FrameWeightDetail {
+  const warnings: Empirical478WarningCode[] = []
+  const bucket = toStabilityBucket(capture.bucket)
+  const pose = capture.pose
+  const poseMagnitude = pose ? Math.hypot(pose.yaw, pose.pitch) : null
+  const poseQuality = poseMagnitude === null ? 0.75 : calculatePoseQuality(poseMagnitude)
+  const rollAbs = Math.abs(pose?.roll ?? 0)
+  const rollQuality = clamp(1 - rollAbs / 35, 0.2, 1)
+  const expressionNeutrality = calculateExpressionNeutrality(capture.blendshapes)
+
+  if (capture.landmarks.length !== EXPECTED_LANDMARK_COUNT) {
+    warnings.push("landmarkCountMismatch")
+  }
+  if (!getMatrixValues4x4(capture.facialTransformationMatrix)) {
+    warnings.push("matrixMissing")
+  }
+  if (rollAbs > 20) {
+    warnings.push("rollTooLarge")
+  }
+  if (expressionNeutrality < 0.72) {
+    warnings.push("expressionTooStrong")
+  }
+
+  const excluded =
+    warnings.includes("landmarkCountMismatch") || warnings.includes("matrixMissing")
+
+  return {
+    captureId: capture.captureId,
+    bucket,
+    frameWeight: 0,
+    poseMagnitude,
+    poseQuality: roundDebugNumber(poseQuality),
+    rollQuality: roundDebugNumber(rollQuality),
+    expressionNeutrality: roundDebugNumber(expressionNeutrality),
+    bucketBalance: 1,
+    excluded,
+    warnings,
+  }
+}
+
+function createFrameWeightWarnings(
+  captures: CaptureRecord[],
+  usableDetails: FrameWeightDetail[],
+  bucketCounts: Record<StabilityBucket, number>,
+): Empirical478WarningCode[] {
+  const warnings: Empirical478WarningCode[] = []
+  if (usableDetails.length < 6) {
+    warnings.push("insufficientCaptureCount")
+  }
+  if (bucketCounts.front < 2) {
+    warnings.push("insufficientFrontFrames")
+  }
+  if (bucketCounts.yawPositive < 1) {
+    warnings.push("insufficientYawPositiveFrames")
+  }
+  if (bucketCounts.yawNegative < 1) {
+    warnings.push("insufficientYawNegativeFrames")
+  }
+  if (bucketCounts.pitchPositive < 1) {
+    warnings.push("insufficientPitchPositiveFrames")
+  }
+  if (bucketCounts.pitchNegative < 1) {
+    warnings.push("insufficientPitchNegativeFrames")
+  }
+  if (captures.some((capture) => capture.landmarks.length !== EXPECTED_LANDMARK_COUNT)) {
+    warnings.push("landmarkCountMismatch")
+  }
+  if (captures.some((capture) => !getMatrixValues4x4(capture.facialTransformationMatrix))) {
+    warnings.push("matrixMissing")
+  }
+  if (usableDetails.some((detail) => detail.warnings.includes("expressionTooStrong"))) {
+    warnings.push("expressionTooStrong")
+  }
+  if (usableDetails.some((detail) => detail.warnings.includes("rollTooLarge"))) {
+    warnings.push("rollTooLarge")
+  }
+  const counts = Object.entries(bucketCounts)
+    .filter(([bucket]) => bucket !== "unknown")
+    .map(([, count]) => count)
+    .filter((count) => count > 0)
+  if (counts.length > 0 && Math.max(...counts) > Math.max(2, Math.min(...counts) * 3)) {
+    warnings.push("bucketImbalance")
+  }
+  return uniqueWarningCodes(warnings)
+}
+
+function calculatePoseQuality(poseMagnitude: number): number {
+  if (poseMagnitude < 3) {
+    return 0.85
+  }
+  if (poseMagnitude <= 28) {
+    return 1
+  }
+  if (poseMagnitude <= 45) {
+    return 0.75
+  }
+  return 0.4
+}
+
+function calculateExpressionNeutrality(blendshapes: BlendshapeCapture[]): number {
+  const expressionNames = [
+    "jawOpen",
+    "eyeBlinkLeft",
+    "eyeBlinkRight",
+    "eyeSquintLeft",
+    "eyeSquintRight",
+    "mouthSmileLeft",
+    "mouthSmileRight",
+  ]
+  const maxExpression = maxOrNull(
+    blendshapes
+      .filter((blendshape) => expressionNames.includes(blendshape.categoryName))
+      .map((blendshape) => blendshape.score),
+  )
+  return roundDebugNumber(clamp(1 - (maxExpression ?? 0) * 0.8, 0.25, 1))
+}
+
+function analyzeEmpirical478Candidate(
+  definition: Empirical478CandidateDefinition,
+  inputSpace: Empirical478InputSpace,
+  normalization: Empirical478Normalization,
+  captures: CaptureRecord[],
+  detailById: Map<string, FrameWeightDetail>,
+): Empirical478CandidateResult {
+  const warnings: Empirical478WarningCode[] =
+    normalization === "xy_separate_debug_only" ? ["xySeparateScaleDebugOnly"] : []
+  const transformedFrames: Array<{
+    capture: CaptureRecord
+    points: LandmarkPoint[]
+    weight: number
+  }> = []
+
+  for (const capture of captures) {
+    const detail = detailById.get(capture.captureId)
+    if (!detail || detail.frameWeight <= 0) {
+      continue
+    }
+    const points = transformEmpirical478Capture(
+      capture,
+      definition,
+      inputSpace,
+      normalization,
+    )
+    if (points.length === EXPECTED_LANDMARK_COUNT && points.every(isFinitePoint)) {
+      transformedFrames.push({
+        capture,
+        points,
+        weight: detail.frameWeight,
+      })
+    }
+  }
+
+  const stability = calculateWeightedEmpirical478Stability(transformedFrames)
+  const semanticAverageStdDev3D = averageEmpiricalSemanticStdDev(
+    stability.semanticPointStability,
+  )
+  if (
+    stability.averageStdDev3D !== null &&
+    stability.averageStdDev3D > 0.16
+  ) {
+    warnings.push("candidateUnstable")
+  }
+  if (semanticAverageStdDev3D !== null && semanticAverageStdDev3D > 0.14) {
+    warnings.push("semanticPointUnstable")
+  }
+  const yawPositive = stability.bucketStability.yawPositive.averageStdDev3D
+  const yawNegative = stability.bucketStability.yawNegative.averageStdDev3D
+  if (
+    yawPositive !== null &&
+    yawNegative !== null &&
+    Math.abs(yawPositive - yawNegative) > Math.max(0.04, Math.min(yawPositive, yawNegative) * 0.75)
+  ) {
+    warnings.push("leftRightBucketMismatch")
+  }
+  const pitchPositive = stability.bucketStability.pitchPositive.averageStdDev3D
+  const pitchNegative = stability.bucketStability.pitchNegative.averageStdDev3D
+  if (
+    pitchPositive !== null &&
+    pitchNegative !== null &&
+    Math.abs(pitchPositive - pitchNegative) > Math.max(0.04, Math.min(pitchPositive, pitchNegative) * 0.75)
+  ) {
+    warnings.push("pitchBucketMismatch")
+  }
+
+  const warningCount = warnings.length
+  const score =
+    stability.averageStdDev3D === null
+      ? null
+      : stability.averageStdDev3D +
+        (semanticAverageStdDev3D ?? stability.averageStdDev3D) * 0.35 +
+        stability.unstableLandmarkCount * 0.0005 +
+        warningCount * 0.015
+
+  return {
+    candidateName: definition.candidateName,
+    inputSpace,
+    normalization,
+    matrixConvention: definition.matrixConvention,
+    runtimeCompatible:
+      definition.runtimeCompatible && normalization !== "xy_separate_debug_only",
+    transformedFrameCount: transformedFrames.length,
+    frameWeightTotal: roundDebugNumber(sum(transformedFrames.map((frame) => frame.weight))),
+    averageStdDev3D: stability.averageStdDev3D,
+    averageStdDevX: stability.averageStdDevX,
+    averageStdDevY: stability.averageStdDevY,
+    averageStdDevZ: stability.averageStdDevZ,
+    medianStdDev3D: stability.medianStdDev3D,
+    maxStdDev3D: stability.maxStdDev3D,
+    unstableLandmarkCount: stability.unstableLandmarkCount,
+    perLandmarkMean: stability.perLandmarkMean,
+    perLandmarkStdDev: stability.perLandmarkStdDev,
+    semanticPointStability: stability.semanticPointStability,
+    groupStability: stability.groupStability,
+    bucketStability: stability.bucketStability,
+    warnings: uniqueWarningCodes(warnings),
+    warningCount,
+    score: score === null ? null : roundDebugNumber(score),
+  }
+}
+
+function transformEmpirical478Capture(
+  capture: CaptureRecord,
+  definition: Empirical478CandidateDefinition,
+  inputSpace: Empirical478InputSpace,
+  normalization: Empirical478Normalization,
+): LandmarkPoint[] {
+  const sourcePoints = capture.landmarks.map((landmark) => ({
+    index: landmark.index,
+    ...toEmpiricalInputPoint(capture, landmark, inputSpace),
+  }))
+  let transformed = sourcePoints
+
+  if (
+    definition.candidateName === "pose_rotation_inverse_engine_convention" ||
+    definition.candidateName === "per_bucket_pose_normalized"
+  ) {
+    transformed = sourcePoints.map((point) => ({
+      index: point.index,
+      ...applyInversePoseRotation(point, capture.pose),
+    }))
+  } else if (definition.candidateName === "inverse_matrix_engine_pose_convention") {
+    transformed = applyInverseMatrixToEmpiricalPoints(
+      sourcePoints,
+      capture,
+      "row_major_column_vector",
+      false,
+    )
+  } else if (definition.candidateName === "inverse_matrix_translation_last_row") {
+    transformed = applyInverseMatrixToEmpiricalPoints(
+      sourcePoints,
+      capture,
+      "row_major_row_vector",
+      false,
+    )
+  } else if (definition.candidateName === "rotation_only_then_normalize") {
+    transformed = applyInverseMatrixToEmpiricalPoints(
+      sourcePoints,
+      capture,
+      "row_major_column_vector",
+      true,
+    )
+  }
+
+  return normalizeEmpiricalPoints(transformed, normalization)
+}
+
+function toEmpiricalInputPoint(
+  capture: CaptureRecord,
+  landmark: LandmarkPoint,
+  inputSpace: Empirical478InputSpace,
+): Point3 {
+  const bounds = calculateBounds(capture.landmarks)
+  const center = bounds ? calculateBoundsCenter(bounds) : { x: 0, y: 0, z: 0 }
+  const videoAspect =
+    capture.videoWidth > 0 && capture.videoHeight > 0
+      ? capture.videoWidth / capture.videoHeight
+      : 1
+
+  switch (inputSpace) {
+    case "normalized_xyz_direct":
+      return { x: landmark.x, y: landmark.y, z: landmark.z }
+    case "image_centered_same_unit":
+      return {
+        x: (landmark.x - 0.5) * videoAspect,
+        y: landmark.y - 0.5,
+        z: landmark.z,
+      }
+    case "face_bounds_centered_height_unit":
+      return {
+        x: safeDivide(landmark.x - center.x, bounds?.height ?? 0),
+        y: safeDivide(landmark.y - center.y, bounds?.height ?? 0),
+        z: safeDivide(landmark.z, bounds?.height ?? 0),
+      }
+    case "face_bounds_centered_width_unit":
+      return {
+        x: safeDivide(landmark.x - center.x, bounds?.width ?? 0),
+        y: safeDivide(landmark.y - center.y, bounds?.width ?? 0),
+        z: safeDivide(landmark.z, bounds?.width ?? 0),
+      }
+  }
+}
+
+function applyInversePoseRotation(point: Point3, pose: Pose | null): Point3 {
+  if (!pose) {
+    return point
+  }
+
+  const yaw = (-pose.yaw / RAD_TO_DEG)
+  const pitch = (-pose.pitch / RAD_TO_DEG)
+  const roll = (-pose.roll / RAD_TO_DEG)
+  return rotateZ(rotateY(rotateX(point, pitch), yaw), roll)
+}
+
+function rotateX(point: Point3, angle: number): Point3 {
+  const c = Math.cos(angle)
+  const s = Math.sin(angle)
+  return {
+    x: point.x,
+    y: point.y * c - point.z * s,
+    z: point.y * s + point.z * c,
+  }
+}
+
+function rotateY(point: Point3, angle: number): Point3 {
+  const c = Math.cos(angle)
+  const s = Math.sin(angle)
+  return {
+    x: point.x * c + point.z * s,
+    y: point.y,
+    z: -point.x * s + point.z * c,
+  }
+}
+
+function rotateZ(point: Point3, angle: number): Point3 {
+  const c = Math.cos(angle)
+  const s = Math.sin(angle)
+  return {
+    x: point.x * c - point.y * s,
+    y: point.x * s + point.y * c,
+    z: point.z,
+  }
+}
+
+function applyInverseMatrixToEmpiricalPoints(
+  points: LandmarkPoint[],
+  capture: CaptureRecord,
+  conventionName: MatrixConventionName,
+  rotationOnly: boolean,
+): LandmarkPoint[] {
+  const rawMatrix = getMatrixValues4x4(capture.facialTransformationMatrix)
+  if (!rawMatrix) {
+    return []
+  }
+  const convention = getMatrixConvention(conventionName)
+  const matrix = getConventionMatrix(rawMatrix, convention)
+  const candidateMatrix = rotationOnly ? removeMatrixTranslation(matrix) : matrix
+  const inverseMatrix = invertMatrix(candidateMatrix, 4)
+  if (!inverseMatrix) {
+    return []
+  }
+  return points.map((point) => ({
+    index: point.index,
+    ...applyMatrixByConvention(inverseMatrix, point, convention),
+  }))
+}
+
+function removeMatrixTranslation(matrix: number[]): number[] {
+  const next = matrix.slice()
+  next[3] = 0
+  next[7] = 0
+  next[11] = 0
+  next[12] = 0
+  next[13] = 0
+  next[14] = 0
+  next[15] = 1
+  return next
+}
+
+function normalizeEmpiricalPoints(
+  points: LandmarkPoint[],
+  normalization: Empirical478Normalization,
+): LandmarkPoint[] {
+  const bounds = calculateBounds(points)
+  if (!bounds) {
+    return []
+  }
+  const center = calculateBoundsCenter(bounds)
+  const scale =
+    normalization === "height_unit"
+      ? bounds.height
+      : normalization === "bbox_max_unit"
+        ? Math.max(bounds.width, bounds.height)
+        : bounds.width
+  const scaleX =
+    normalization === "xy_separate_debug_only" ? bounds.width : scale
+  const scaleY =
+    normalization === "xy_separate_debug_only" ? bounds.height : scale
+  const scaleZ = scale
+
+  if (
+    Math.abs(scaleX) <= EPSILON ||
+    Math.abs(scaleY) <= EPSILON ||
+    Math.abs(scaleZ) <= EPSILON
+  ) {
+    return []
+  }
+
+  return points.map((point) => ({
+    index: point.index,
+    x: (point.x - center.x) / scaleX,
+    y: (point.y - center.y) / scaleY,
+    z: (point.z - center.z) / scaleZ,
+  }))
+}
+
+function calculateWeightedEmpirical478Stability(
+  frames: Array<{ capture: CaptureRecord; points: LandmarkPoint[]; weight: number }>,
+): {
+  perLandmarkMean: LandmarkPoint[]
+  perLandmarkStdDev: Empirical478CandidateResult["perLandmarkStdDev"]
+  averageStdDevX: number | null
+  averageStdDevY: number | null
+  averageStdDevZ: number | null
+  averageStdDev3D: number | null
+  medianStdDev3D: number | null
+  maxStdDev3D: number | null
+  unstableLandmarkCount: number
+  semanticPointStability: Empirical478SemanticStability
+  groupStability: Empirical478GroupStability
+  bucketStability: Record<StabilityBucket, BucketStability>
+} {
+  const weightedPointSets = frames.map((frame) => ({
+    points: frame.points,
+    weight: frame.weight,
+  }))
+  const perLandmarkStats = calculateWeightedPerLandmarkStability(weightedPointSets)
+  const stdDevValues = perLandmarkStats.map((item) => item.stdDev3D)
+  const unstableThreshold = Math.max((medianNumber(stdDevValues) ?? 0) * 2.5, 0.08)
+  const semanticSamples = frames.map((frame) => ({
+    weight: frame.weight,
+    points: getSemanticPoints(frame.points),
+  }))
+
+  return {
+    perLandmarkMean: perLandmarkStats.map((item) => ({
+      index: item.index,
+      x: item.mean.x,
+      y: item.mean.y,
+      z: item.mean.z,
+    })),
+    perLandmarkStdDev: perLandmarkStats.map((item) => ({
+      index: item.index,
+      stdDevX: item.stdDevX,
+      stdDevY: item.stdDevY,
+      stdDevZ: item.stdDevZ,
+      stdDev3D: item.stdDev3D,
+      sampleCount: item.sampleCount,
+    })),
+    averageStdDevX: roundNullable(averageNumber(perLandmarkStats.map((item) => item.stdDevX))),
+    averageStdDevY: roundNullable(averageNumber(perLandmarkStats.map((item) => item.stdDevY))),
+    averageStdDevZ: roundNullable(averageNumber(perLandmarkStats.map((item) => item.stdDevZ))),
+    averageStdDev3D: roundNullable(averageNumber(stdDevValues)),
+    medianStdDev3D: roundNullable(medianNumber(stdDevValues)),
+    maxStdDev3D: roundNullable(maxOrNull(stdDevValues)),
+    unstableLandmarkCount: perLandmarkStats.filter(
+      (item) => item.stdDev3D > unstableThreshold,
+    ).length,
+    semanticPointStability: {
+      noseTip: calculateWeightedPointStability(
+        semanticSamples.map((sample) => ({
+          point: sample.points.noseTip,
+          weight: sample.weight,
+        })),
+      ),
+      eyeCenter: calculateWeightedPointStability(
+        semanticSamples.map((sample) => ({
+          point: sample.points.eyeCenter,
+          weight: sample.weight,
+        })),
+      ),
+      mouthCenter: calculateWeightedPointStability(
+        semanticSamples.map((sample) => ({
+          point: sample.points.mouthCenter,
+          weight: sample.weight,
+        })),
+      ),
+      chin: calculateWeightedPointStability(
+        semanticSamples.map((sample) => ({ point: sample.points.chin, weight: sample.weight })),
+      ),
+      leftCheek: calculateWeightedPointStability(
+        semanticSamples.map((sample) => ({
+          point: sample.points.leftCheek,
+          weight: sample.weight,
+        })),
+      ),
+      rightCheek: calculateWeightedPointStability(
+        semanticSamples.map((sample) => ({
+          point: sample.points.rightCheek,
+          weight: sample.weight,
+        })),
+      ),
+      leftContour: calculateWeightedPointStability(
+        semanticSamples.map((sample) => ({
+          point: sample.points.leftContour,
+          weight: sample.weight,
+        })),
+      ),
+      rightContour: calculateWeightedPointStability(
+        semanticSamples.map((sample) => ({
+          point: sample.points.rightContour,
+          weight: sample.weight,
+        })),
+      ),
+    },
+    groupStability: {
+      faceBoundary: calculateWeightedGroupStability(frames, OUTER_CONTOUR_INDICES),
+      eyes: calculateWeightedGroupStability(frames, EYE_ERROR_INDICES),
+      nose: calculateWeightedGroupStability(frames, NOSE_GROUP_INDICES),
+      mouth: calculateWeightedGroupStability(frames, MOUTH_ERROR_INDICES),
+      cheeks: calculateWeightedGroupStability(frames, CHEEK_GROUP_INDICES),
+      jaw: calculateWeightedGroupStability(frames, JAW_GROUP_INDICES),
+    },
+    bucketStability: calculateWeightedBucketStability(frames),
+  }
+}
+
+function calculateWeightedPerLandmarkStability(
+  pointSets: Array<{ points: LandmarkPoint[]; weight: number }>,
+): Array<PerLandmarkStability & { weightedSampleCount: number }> {
+  const result: Array<PerLandmarkStability & { weightedSampleCount: number }> = []
+
+  for (let index = 0; index < EXPECTED_LANDMARK_COUNT; index += 1) {
+    const samples = pointSets
+      .map((set) => ({
+        point: set.points.find((point) => point.index === index) ?? null,
+        weight: set.weight,
+      }))
+      .filter((sample): sample is { point: LandmarkPoint; weight: number } =>
+        Boolean(sample.point),
+      )
+    const stability = calculateWeightedPointStability(samples)
+    if (!stability.mean) {
+      continue
+    }
+    result.push({
+      index,
+      mean: stability.mean,
+      stdDevX: stability.stdDevX ?? 0,
+      stdDevY: stability.stdDevY ?? 0,
+      stdDevZ: stability.stdDevZ ?? 0,
+      stdDev3D: stability.stdDev3D ?? 0,
+      sampleCount: stability.sampleCount,
+      weightedSampleCount: sum(samples.map((sample) => sample.weight)),
+    })
+  }
+
+  return result
+}
+
+function calculateWeightedPointStability(
+  samples: Array<{ point: Point3 | null; weight: number }>,
+): PointStability {
+  const validSamples = samples.filter(
+    (sample): sample is { point: Point3; weight: number } =>
+      Boolean(sample.point) && sample.weight > 0,
+  )
+  const totalWeight = sum(validSamples.map((sample) => sample.weight))
+  if (validSamples.length === 0 || totalWeight <= EPSILON) {
+    return {
+      mean: null,
+      stdDevX: null,
+      stdDevY: null,
+      stdDevZ: null,
+      stdDev3D: null,
+      sampleCount: 0,
+    }
+  }
+  const mean = {
+    x: sum(validSamples.map((sample) => sample.point.x * sample.weight)) / totalWeight,
+    y: sum(validSamples.map((sample) => sample.point.y * sample.weight)) / totalWeight,
+    z: sum(validSamples.map((sample) => sample.point.z * sample.weight)) / totalWeight,
+  }
+  const stdDevX = Math.sqrt(
+    sum(validSamples.map((sample) => ((sample.point.x - mean.x) ** 2) * sample.weight)) /
+      totalWeight,
+  )
+  const stdDevY = Math.sqrt(
+    sum(validSamples.map((sample) => ((sample.point.y - mean.y) ** 2) * sample.weight)) /
+      totalWeight,
+  )
+  const stdDevZ = Math.sqrt(
+    sum(validSamples.map((sample) => ((sample.point.z - mean.z) ** 2) * sample.weight)) /
+      totalWeight,
+  )
+
+  return {
+    mean: roundPoint(mean),
+    stdDevX: roundDebugNumber(stdDevX),
+    stdDevY: roundDebugNumber(stdDevY),
+    stdDevZ: roundDebugNumber(stdDevZ),
+    stdDev3D: roundDebugNumber(Math.hypot(stdDevX, stdDevY, stdDevZ)),
+    sampleCount: validSamples.length,
+  }
+}
+
+function calculateWeightedGroupStability(
+  frames: Array<{ points: LandmarkPoint[]; weight: number }>,
+  indices: number[],
+): BucketStability {
+  const perLandmark = calculateWeightedPerLandmarkStability(
+    frames.map((frame) => ({
+      points: frame.points.filter((point) => indices.includes(point.index)),
+      weight: frame.weight,
+    })),
+  )
+  return {
+    sampleCount: frames.length,
+    averageStdDev3D: roundNullable(averageNumber(perLandmark.map((item) => item.stdDev3D))),
+  }
+}
+
+function calculateWeightedBucketStability(
+  frames: Array<{ capture: CaptureRecord; points: LandmarkPoint[]; weight: number }>,
+): Record<StabilityBucket, BucketStability> {
+  return STABILITY_BUCKETS.reduce(
+    (summary, bucket) => {
+      const bucketFrames = frames.filter(
+        (frame) => toStabilityBucket(frame.capture.bucket) === bucket,
+      )
+      const perLandmark = calculateWeightedPerLandmarkStability(
+        bucketFrames.map((frame) => ({ points: frame.points, weight: frame.weight })),
+      )
+      summary[bucket] = {
+        sampleCount: bucketFrames.length,
+        averageStdDev3D: roundNullable(averageNumber(perLandmark.map((item) => item.stdDev3D))),
+      }
+      return summary
+    },
+    {} as Record<StabilityBucket, BucketStability>,
+  )
+}
+
+function rankEmpirical478CandidateResults(
+  results: Empirical478CandidateResult[],
+): Empirical478RankingEntry[] {
+  return results
+    .map(createEmpirical478RankingEntry)
+    .sort((a, b) => {
+      if (a.score === null && b.score === null) {
+        return 0
+      }
+      if (a.score === null) {
+        return 1
+      }
+      if (b.score === null) {
+        return -1
+      }
+      return a.score - b.score
+    })
+}
+
+function createEmpirical478RankingEntry(
+  result: Empirical478CandidateResult,
+): Empirical478RankingEntry {
+  return {
+    candidateName: result.candidateName,
+    inputSpace: result.inputSpace,
+    normalization: result.normalization,
+    matrixConvention: result.matrixConvention,
+    averageStdDev3D: result.averageStdDev3D,
+    semanticAverageStdDev3D: averageEmpiricalSemanticStdDev(result.semanticPointStability),
+    unstableLandmarkCount: result.unstableLandmarkCount,
+    warningCount: result.warningCount,
+    score: result.score,
+  }
+}
+
+function averageEmpiricalSemanticStdDev(
+  stability: Empirical478SemanticStability,
+): number | null {
+  return roundNullable(
+    averageNumber(
+      [
+        stability.noseTip.stdDev3D,
+        stability.eyeCenter.stdDev3D,
+        stability.mouthCenter.stdDev3D,
+        stability.chin.stdDev3D,
+        stability.leftCheek.stdDev3D,
+        stability.rightCheek.stdDev3D,
+        stability.leftContour.stdDev3D,
+        stability.rightContour.stdDev3D,
+      ].filter((value): value is number => value !== null),
+    ),
+  )
+}
+
+function rankEmpirical478ByBucket(
+  results: Empirical478CandidateResult[],
+): Record<StabilityBucket, Empirical478RankingEntry[]> {
+  return STABILITY_BUCKETS.reduce(
+    (summary, bucket) => {
+      summary[bucket] = results
+        .map((result) => ({
+          ...createEmpirical478RankingEntry(result),
+          averageStdDev3D: result.bucketStability[bucket].averageStdDev3D,
+          score:
+            result.bucketStability[bucket].averageStdDev3D === null
+              ? null
+              : roundDebugNumber(
+                  result.bucketStability[bucket].averageStdDev3D +
+                    result.warningCount * 0.015,
+                ),
+        }))
+        .filter((entry) => entry.averageStdDev3D !== null)
+        .sort((a, b) => (a.score ?? Number.POSITIVE_INFINITY) - (b.score ?? Number.POSITIVE_INFINITY))
+      return summary
+    },
+    {} as Record<StabilityBucket, Empirical478RankingEntry[]>,
+  )
+}
+
+function findEmpiricalResult(
+  results: Empirical478CandidateResult[],
+  entry: Empirical478RankingEntry | null,
+): Empirical478CandidateResult | null {
+  if (!entry) {
+    return null
+  }
+  return (
+    results.find(
+      (result) =>
+        result.candidateName === entry.candidateName &&
+        result.inputSpace === entry.inputSpace &&
+        result.normalization === entry.normalization &&
+        result.matrixConvention === entry.matrixConvention,
+    ) ?? null
+  )
+}
+
+function createEmpiricalCanonical478FromResult(
+  result: Empirical478CandidateResult | null,
+  sourceCandidate: Empirical478RankingEntry | null,
+): EmpiricalCanonical478 | null {
+  if (!result || result.perLandmarkMean.length === 0 || !sourceCandidate) {
+    return null
+  }
+  const stdDevByIndex = new Map(result.perLandmarkStdDev.map((item) => [item.index, item]))
+  const landmarks = result.perLandmarkMean.map((point) => {
+    const stdDev = stdDevByIndex.get(point.index)
+    return {
+      ...point,
+      stdDevX: stdDev?.stdDevX ?? 0,
+      stdDevY: stdDev?.stdDevY ?? 0,
+      stdDevZ: stdDev?.stdDevZ ?? 0,
+      stdDev3D: stdDev?.stdDev3D ?? 0,
+      sampleCount: stdDev?.sampleCount ?? 0,
+    }
+  })
+  const bounds = calculateBounds(landmarks)
+  const depth = bounds?.zRange ?? null
+  const semanticPoints = getSemanticPoints(landmarks)
+
+  return {
+    debugArtifact: true,
+    sourceTransformCandidate: result.candidateName,
+    sourceCandidate,
+    landmarks,
+    summary: {
+      bounds,
+      centroid: calculateCentroid(landmarks),
+      boundsCenter: bounds ? calculateBoundsCenter(bounds) : null,
+      zRange: depth,
+      widthHeightRatio: bounds ? safeFiniteDivide(bounds.width, bounds.height) : null,
+      widthDepthRatio: bounds && depth !== null ? safeFiniteDivide(bounds.width, depth) : null,
+      heightDepthRatio: bounds && depth !== null ? safeFiniteDivide(bounds.height, depth) : null,
+      semanticSummary: {
+        points: semanticPoints,
+        z: getZSemanticSummary(semanticPoints),
+      },
+      frameCount: result.transformedFrameCount,
+      sourceCandidate,
+      warningSummary: result.warnings,
+    },
+  }
+}
+
+function compareEmpiricalCanonical478WithCanonical468(
+  canonical: ImportedCanonical468 | null,
+  bestOverall: EmpiricalCanonical478 | null,
+  bestOverallCandidate: Empirical478RankingEntry | null,
+  runtimeCompatible: EmpiricalCanonical478 | null,
+  runtimeCompatibleCandidate: Empirical478RankingEntry | null,
+): Canonical468ReferenceComparison {
+  if (!canonical || canonical.vertices.length < CANONICAL_468_LANDMARK_COUNT) {
+    return {
+      status: "not_available",
+      note: "canonical468 is reference only and was not imported.",
+      bestOverall: null,
+      runtimeCompatible: null,
+    }
+  }
+
+  return {
+    status: "available",
+    note: "canonical468 is reference only; ranking is based on multi-pose frame stability, not similarity to canonical468.",
+    bestOverall: bestOverall
+      ? compareOneEmpiricalCanonicalWithCanonical468(
+          bestOverall,
+          canonical.vertices,
+          bestOverallCandidate,
+        )
+      : null,
+    runtimeCompatible: runtimeCompatible
+      ? compareOneEmpiricalCanonicalWithCanonical468(
+          runtimeCompatible,
+          canonical.vertices,
+          runtimeCompatibleCandidate,
+        )
+      : null,
+  }
+}
+
+function compareOneEmpiricalCanonicalWithCanonical468(
+  empirical: EmpiricalCanonical478,
+  canonicalVertices: LandmarkPoint[],
+  sourceCandidate: Empirical478RankingEntry | null,
+): EmpiricalCanonical478Comparison {
+  const empirical468 = empirical.landmarks.slice(0, CANONICAL_468_LANDMARK_COUNT)
+  const canonical468 = canonicalVertices.slice(0, CANONICAL_468_LANDMARK_COUNT)
+  const empiricalBounds = calculateBounds(empirical468)
+  const canonicalBounds = calculateBounds(canonical468)
+  const empiricalNormalized = empiricalBounds
+    ? normalizeEmpiricalPoints(empirical468, "bbox_max_unit")
+    : []
+  const canonicalNormalized = canonicalBounds
+    ? normalizeEmpiricalPoints(canonical468, "bbox_max_unit")
+    : []
+  const distances = empiricalNormalized
+    .map((point) => {
+      const canonicalPoint = canonicalNormalized.find((item) => item.index === point.index)
+      return canonicalPoint ? calculateDistance(point, canonicalPoint) : null
+    })
+    .filter((value): value is number => value !== null)
+  const empiricalSemantic = getSemanticPoints(empirical468)
+  const canonicalSemantic = getSemanticPoints(canonical468)
+
+  return {
+    sourceCandidate,
+    boundsRatio: {
+      width:
+        empiricalBounds && canonicalBounds
+          ? safeFiniteDivide(empiricalBounds.width, canonicalBounds.width)
+          : null,
+      height:
+        empiricalBounds && canonicalBounds
+          ? safeFiniteDivide(empiricalBounds.height, canonicalBounds.height)
+          : null,
+      aspectRatio:
+        empiricalBounds?.aspectRatio && canonicalBounds?.aspectRatio
+          ? safeFiniteDivide(empiricalBounds.aspectRatio, canonicalBounds.aspectRatio)
+          : null,
+    },
+    zRangeRatio:
+      empiricalBounds && canonicalBounds
+        ? safeFiniteDivide(empiricalBounds.zRange, canonicalBounds.zRange)
+        : null,
+    semanticPointDelta: {
+      noseTip: calculateOptionalDistance3D(empiricalSemantic.noseTip, canonicalSemantic.noseTip),
+      eyeCenter: calculateOptionalDistance3D(
+        empiricalSemantic.eyeCenter,
+        canonicalSemantic.eyeCenter,
+      ),
+      mouthCenter: calculateOptionalDistance3D(
+        empiricalSemantic.mouthCenter,
+        canonicalSemantic.mouthCenter,
+      ),
+      chin: calculateOptionalDistance3D(empiricalSemantic.chin, canonicalSemantic.chin),
+      leftCheek: calculateOptionalDistance3D(
+        empiricalSemantic.leftCheek,
+        canonicalSemantic.leftCheek,
+      ),
+      rightCheek: calculateOptionalDistance3D(
+        empiricalSemantic.rightCheek,
+        canonicalSemantic.rightCheek,
+      ),
+      leftContour: calculateOptionalDistance3D(
+        empiricalSemantic.leftContour,
+        canonicalSemantic.leftContour,
+      ),
+      rightContour: calculateOptionalDistance3D(
+        empiricalSemantic.rightContour,
+        canonicalSemantic.rightContour,
+      ),
+    },
+    averageDistanceAfterSimpleNormalization: roundNullable(averageNumber(distances)),
+  }
 }
 
 function analyzeTransformCandidate(
@@ -2416,6 +3869,7 @@ function createEmpiricalCanonical478(
       stdDevX: item.stdDevX,
       stdDevY: item.stdDevY,
       stdDevZ: item.stdDevZ,
+      stdDev3D: item.stdDev3D,
       sampleCount: item.sampleCount,
     }))
 
@@ -2861,6 +4315,19 @@ function render(): void {
   getElement("bestCandidateSummary").innerHTML = renderBestCandidateSummary(analysis)
   getElement("analysisWarnings").textContent =
     analysis?.warnings.length ? analysis.warnings.join("\n") : "解析 warning はありません。"
+  getElement("empiricalFrameWeightSummary").innerHTML =
+    renderEmpiricalFrameWeightSummary(analysis)
+  getElement("empiricalCanonical478Summary").innerHTML =
+    renderEmpiricalCanonical478Summary(analysis)
+  getElement("empiricalCandidateRanking").innerHTML = renderEmpirical478Ranking(
+    analysis?.empirical478Analysis.overallStabilityRanking ?? [],
+  )
+  getElement("empiricalRuntimeRanking").innerHTML = renderEmpirical478Ranking(
+    analysis?.empirical478Analysis.runtimeCompatibleRanking ?? [],
+  )
+  getElement("empiricalBucketRanking").innerHTML = renderEmpirical478BucketRanking(analysis)
+  getElement("empiricalCanonical468Comparison").textContent =
+    renderEmpiricalCanonical468Comparison(analysis)
   getElement("matrixSummary").innerHTML = renderMatrixSummary(analysis)
   getElement("matrixConventionComparison").innerHTML =
     renderMatrixConventionComparison(analysis)
@@ -2890,6 +4357,30 @@ function render(): void {
           canonicalProjectionRanking:
             analysis.canonicalProjectionAnalysis.overallRanking.slice(0, 10),
           canonicalBucketRanking: analysis.canonicalProjectionAnalysis.bucketRanking,
+          empirical478Analysis: {
+            status: analysis.empirical478Analysis.status,
+            analysisVersion: analysis.empirical478Analysis.analysisVersion,
+            frameWeightSummary: analysis.empirical478Analysis.frameWeightSummary,
+            overallStabilityRanking:
+              analysis.empirical478Analysis.overallStabilityRanking.slice(0, 10),
+            runtimeCompatibleRanking:
+              analysis.empirical478Analysis.runtimeCompatibleRanking.slice(0, 10),
+            bucketRanking: analysis.empirical478Analysis.bucketRanking,
+            bestOverallCandidate: analysis.empirical478Analysis.bestOverallCandidate,
+            bestRuntimeCompatibleCandidate:
+              analysis.empirical478Analysis.bestRuntimeCompatibleCandidate,
+            empiricalCanonical478BestOverall:
+              summarizeEmpiricalCanonicalForPreview(
+                analysis.empirical478Analysis.empiricalCanonical478BestOverall,
+              ),
+            empiricalCanonical478RuntimeCompatible:
+              summarizeEmpiricalCanonicalForPreview(
+                analysis.empirical478Analysis.empiricalCanonical478RuntimeCompatible,
+              ),
+            canonical468ReferenceComparison:
+              analysis.empirical478Analysis.canonical468ReferenceComparison,
+            warnings: analysis.empirical478Analysis.warnings,
+          },
           empiricalCanonical478: analysis.empiricalCanonical478
             ? {
                 sourceTransformCandidate:
@@ -2952,12 +4443,15 @@ function render(): void {
   exportButton.disabled = state.captures.length === 0
   clearButton.disabled = state.captures.length === 0
   analyzeButton.disabled = inputCaptures.length === 0
+  analyzeEmpirical478Button.disabled = inputCaptures.length === 0
   clearAnalysisButton.disabled =
     state.importedCaptures.length === 0 &&
     state.analysis === null &&
     !state.importMessage &&
     !state.canonicalImportMessage
+  clearEmpirical478Button.disabled = !state.analysis
   exportAnalysisButton.disabled = !state.analysis
+  exportAnalysisSummaryButton.disabled = !state.analysis
   copyAnalysisButton.disabled = !state.analysis
 }
 
@@ -3270,6 +4764,154 @@ function renderCanonicalProjectionComparison(analysis: AnalysisResult | null): s
       </tbody>
     </table>
   `
+}
+
+function renderEmpiricalFrameWeightSummary(analysis: AnalysisResult | null): string {
+  const summary = analysis?.empirical478Analysis.frameWeightSummary
+  if (!summary) {
+    return renderStatusItems([
+      ["status", "not analyzed"],
+      ["note", "Run Analyze empirical 478."],
+    ])
+  }
+
+  return renderStatusItems([
+    ["input / usable / excluded", `${summary.inputFrameCount} / ${summary.usableFrameCount} / ${summary.excludedFrameCount}`],
+    ["total weight", formatNullableNumber(summary.totalWeight)],
+    ["average weight", formatNullableNumber(summary.averageWeight)],
+    ["bucket counts", formatStabilityBucketCounts(summary.bucketCounts)],
+    ["bucket weights", formatStabilityBucketCounts(summary.bucketWeightTotals)],
+    ["warnings", summary.warnings.join(" / ") || "-"],
+  ])
+}
+
+function renderEmpiricalCanonical478Summary(analysis: AnalysisResult | null): string {
+  const empirical = analysis?.empirical478Analysis
+  if (!empirical) {
+    return renderStatusItems([
+      ["best overall", "-"],
+      ["best runtime-compatible", "-"],
+    ])
+  }
+  const bestOverall = empirical.empiricalCanonical478BestOverall
+  const bestRuntime = empirical.empiricalCanonical478RuntimeCompatible
+
+  return renderStatusItems([
+    ["best overall", formatEmpiricalRankingEntry(empirical.bestOverallCandidate)],
+    ["best runtime-compatible", formatEmpiricalRankingEntry(empirical.bestRuntimeCompatibleCandidate)],
+    ["overall landmarks", `${bestOverall?.landmarks.length ?? 0}`],
+    ["runtime landmarks", `${bestRuntime?.landmarks.length ?? 0}`],
+    ["overall bounds", formatBoundsSize(bestOverall?.summary.bounds ?? null)],
+    ["runtime bounds", formatBoundsSize(bestRuntime?.summary.bounds ?? null)],
+    ["overall zRange", formatNullableNumber(bestOverall?.summary.zRange ?? null)],
+    ["runtime zRange", formatNullableNumber(bestRuntime?.summary.zRange ?? null)],
+    ["debug artifact", "true; not production-ready"],
+  ])
+}
+
+function renderEmpirical478Ranking(ranking: Empirical478RankingEntry[]): string {
+  if (ranking.length === 0) {
+    return `<p class="note">Run Analyze empirical 478 to compute stability ranking.</p>`
+  }
+
+  return `
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>candidate</th>
+          <th>inputSpace</th>
+          <th>normalization</th>
+          <th>matrixConvention</th>
+          <th>avgStdDev3D</th>
+          <th>semantic</th>
+          <th>unstable</th>
+          <th>warnings</th>
+          <th>score</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${ranking
+          .slice(0, 20)
+          .map(
+            (entry, index) => `
+              <tr>
+                <td>${index + 1}</td>
+                <td><code>${entry.candidateName}</code></td>
+                <td><code>${entry.inputSpace}</code></td>
+                <td><code>${entry.normalization}</code></td>
+                <td><code>${entry.matrixConvention ?? "none"}</code></td>
+                <td>${formatNullableNumber(entry.averageStdDev3D)}</td>
+                <td>${formatNullableNumber(entry.semanticAverageStdDev3D)}</td>
+                <td>${entry.unstableLandmarkCount}</td>
+                <td>${entry.warningCount}</td>
+                <td>${formatNullableNumber(entry.score)}</td>
+              </tr>
+            `,
+          )
+          .join("")}
+      </tbody>
+    </table>
+  `
+}
+
+function renderEmpirical478BucketRanking(analysis: AnalysisResult | null): string {
+  const bucketRanking = analysis?.empirical478Analysis.bucketRanking
+  if (!bucketRanking) {
+    return `<p class="note">Bucket ranking is not available yet.</p>`
+  }
+
+  return `
+    <table>
+      <thead>
+        <tr>
+          <th>bucket</th>
+          <th>best candidate</th>
+          <th>inputSpace</th>
+          <th>normalization</th>
+          <th>avgStdDev3D</th>
+          <th>score</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${STABILITY_BUCKETS.map((bucket) => {
+          const best = bucketRanking[bucket]?.[0] ?? null
+          return `
+            <tr>
+              <td><code>${bucket}</code></td>
+              <td><code>${best?.candidateName ?? "-"}</code></td>
+              <td><code>${best?.inputSpace ?? "-"}</code></td>
+              <td><code>${best?.normalization ?? "-"}</code></td>
+              <td>${formatNullableNumber(best?.averageStdDev3D ?? null)}</td>
+              <td>${formatNullableNumber(best?.score ?? null)}</td>
+            </tr>
+          `
+        }).join("")}
+      </tbody>
+    </table>
+  `
+}
+
+function renderEmpiricalCanonical468Comparison(analysis: AnalysisResult | null): string {
+  const comparison = analysis?.empirical478Analysis.canonical468ReferenceComparison
+  if (!comparison) {
+    return "canonical468 is reference only. Import canonical 468 OBJ to show optional comparison."
+  }
+  return JSON.stringify(comparison, null, 2)
+}
+
+function summarizeEmpiricalCanonicalForPreview(
+  empirical: EmpiricalCanonical478 | null,
+): unknown {
+  if (!empirical) {
+    return null
+  }
+  return {
+    sourceCandidate: empirical.sourceCandidate,
+    landmarkCount: empirical.landmarks.length,
+    firstLandmarks: empirical.landmarks.slice(0, 5),
+    summary: empirical.summary,
+  }
 }
 
 function renderMatrixSummary(analysis: AnalysisResult | null): string {
@@ -4130,6 +5772,26 @@ function averageNumber(values: number[]): number | null {
   return validValues.length === 0 ? null : sum(validValues) / validValues.length
 }
 
+function roundDebugNumber(value: number): number {
+  return Number.isFinite(value) ? Number(value.toFixed(6)) : value
+}
+
+function roundNullable(value: number | null): number | null {
+  return value === null ? null : roundDebugNumber(value)
+}
+
+function roundPoint(point: Point3): Point3 {
+  return {
+    x: roundDebugNumber(point.x),
+    y: roundDebugNumber(point.y),
+    z: roundDebugNumber(point.z),
+  }
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max)
+}
+
 function standardDeviation(values: number[]): number | null {
   const mean = averageNumber(values)
   if (mean === null) {
@@ -4167,6 +5829,14 @@ function safeDivide(numerator: number, denominator: number): number {
   return Math.abs(denominator) <= EPSILON ? Number.NaN : numerator / denominator
 }
 
+function safeFiniteDivide(numerator: number, denominator: number): number | null {
+  if (Math.abs(denominator) <= EPSILON) {
+    return null
+  }
+  const value = numerator / denominator
+  return Number.isFinite(value) ? roundDebugNumber(value) : null
+}
+
 function vectorLength(point: Point3): number {
   return Math.hypot(point.x, point.y, point.z)
 }
@@ -4181,6 +5851,10 @@ function calculateDistance2D(current: Point3, next: Point3): number {
 
 function calculateOptionalDistance2D(current: Point3 | null, next: Point3 | null): number | null {
   return current && next ? calculateDistance2D(current, next) : null
+}
+
+function calculateOptionalDistance3D(current: Point3 | null, next: Point3 | null): number | null {
+  return current && next ? roundDebugNumber(calculateDistance(current, next)) : null
 }
 
 function calculateZDifferenceByPoint(
@@ -4316,6 +5990,18 @@ function formatBucket(bucket: CaptureBucket): string {
 
 function formatBucketCounts(counts: Record<CaptureBucket, number>): string {
   return BUCKETS.map((bucket) => `${bucket}: ${counts[bucket] ?? 0}`).join(" / ")
+}
+
+function formatStabilityBucketCounts(counts: Record<StabilityBucket, number>): string {
+  return STABILITY_BUCKETS.map((bucket) => `${bucket}: ${formatNullableNumber(counts[bucket])}`)
+    .join(" / ")
+}
+
+function formatEmpiricalRankingEntry(entry: Empirical478RankingEntry | null): string {
+  if (!entry) {
+    return "-"
+  }
+  return `${entry.candidateName} / ${entry.inputSpace} / ${entry.normalization} / score ${formatNullableNumber(entry.score)}`
 }
 
 function formatRange(range: RangeSummary): string {
