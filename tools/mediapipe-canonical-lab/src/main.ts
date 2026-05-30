@@ -1063,7 +1063,8 @@ app.innerHTML = `
         <button id="analyzeEmpirical478Button" class="primary" type="button">Analyze empirical 478</button>
         <button id="clearAnalysisButton" type="button">Clear analysis</button>
         <button id="clearEmpirical478Button" type="button">Clear empirical analysis</button>
-        <button id="exportAnalysisButton" type="button">Export analysis JSON</button>
+        <button id="exportAnalysisButton" type="button">Export Full Analysis JSON</button>
+        <button id="exportAnalysisSummaryButton" type="button">Export Summary JSON</button>
       </div>
       <p class="note">
         Debug note: canonical468 is reference only, not the 478 ground truth. This analysis unprojects current landmarks 478 with multiple candidates, checks frame-to-frame stability, and names the stable weighted average empiricalCanonical478. It is a debug artifact, not a production asset.
@@ -1231,6 +1232,7 @@ const analyzeEmpirical478Button = getElement<HTMLButtonElement>("analyzeEmpirica
 const clearAnalysisButton = getElement<HTMLButtonElement>("clearAnalysisButton")
 const clearEmpirical478Button = getElement<HTMLButtonElement>("clearEmpirical478Button")
 const exportAnalysisButton = getElement<HTMLButtonElement>("exportAnalysisButton")
+const exportAnalysisSummaryButton = getElement<HTMLButtonElement>("exportAnalysisSummaryButton")
 const copyAnalysisButton = getElement<HTMLButtonElement>("copyAnalysisButton")
 
 let faceLandmarker: FaceLandmarker | null = null
@@ -1304,6 +1306,10 @@ clearEmpirical478Button.addEventListener("click", () => {
 
 exportAnalysisButton.addEventListener("click", () => {
   exportAnalysisJson()
+})
+
+exportAnalysisSummaryButton.addEventListener("click", () => {
+  exportAnalysisSummaryJson()
 })
 
 copyAnalysisButton.addEventListener("click", () => {
@@ -1559,6 +1565,18 @@ function exportAnalysisJson(): void {
   )
 }
 
+function exportAnalysisSummaryJson(): void {
+  if (!state.analysis) {
+    return
+  }
+
+  const createdAt = new Date()
+  downloadJson(
+    createAnalysisSummaryPayload(state.analysis),
+    `mediapipe_canonical_lab_analysis_summary_${formatFileTimestamp(createdAt)}.json`,
+  )
+}
+
 async function copyCapturesToClipboard(): Promise<void> {
   if (state.captures.length === 0) {
     state.clipboardMessage = "コピーできる保存データがありません。"
@@ -1621,6 +1639,82 @@ function createExportPayload(createdAt: Date): CapturesPayload {
       ...capture,
       previewDataUrl: null,
     })),
+  }
+}
+
+function createAnalysisSummaryPayload(analysis: AnalysisResult): unknown {
+  const empirical = analysis.empirical478Analysis
+
+  return {
+    schemaVersion: "mediapipe_canonical_lab_analysis_summary_v1",
+    sourceSchemaVersion: analysis.schemaVersion,
+    analysisVersion: analysis.analysisVersion,
+    generatedAt: analysis.generatedAt,
+    sourceCaptureSummary: analysis.sourceCaptureSummary,
+    warnings: analysis.warnings,
+    empirical478Analysis: {
+      status: empirical.status,
+      frameWeightSummary: summarizeFrameWeightSummary(empirical.frameWeightSummary),
+      overallStabilityRankingTop: empirical.overallStabilityRanking.slice(0, 10),
+      runtimeCompatibleRankingTop: empirical.runtimeCompatibleRanking.slice(0, 10),
+      bucketRankingTop: summarizeEmpiricalBucketRanking(empirical.bucketRanking),
+      bestOverallCandidate: empirical.bestOverallCandidate,
+      bestRuntimeCompatibleCandidate: empirical.bestRuntimeCompatibleCandidate,
+      empiricalCanonical478BestOverallSummary:
+        empirical.empiricalCanonical478BestOverall?.summary ?? null,
+      empiricalCanonical478RuntimeCompatibleSummary:
+        empirical.empiricalCanonical478RuntimeCompatible?.summary ?? null,
+      canonical468ReferenceComparisonSummary:
+        summarizeCanonical468ReferenceComparison(empirical.canonical468ReferenceComparison),
+      warnings: empirical.warnings,
+    },
+  }
+}
+
+function summarizeFrameWeightSummary(summary: FrameWeightSummary): unknown {
+  return {
+    inputFrameCount: summary.inputFrameCount,
+    usableFrameCount: summary.usableFrameCount,
+    excludedFrameCount: summary.excludedFrameCount,
+    totalWeight: summary.totalWeight,
+    averageWeight: summary.averageWeight,
+    bucketCounts: summary.bucketCounts,
+    bucketWeightTotals: summary.bucketWeightTotals,
+    warnings: summary.warnings,
+    details: summary.details.map((detail) => ({
+      captureId: detail.captureId,
+      bucket: detail.bucket,
+      frameWeight: detail.frameWeight,
+      poseMagnitude: detail.poseMagnitude,
+      poseQuality: detail.poseQuality,
+      rollQuality: detail.rollQuality,
+      expressionNeutrality: detail.expressionNeutrality,
+      excluded: detail.excluded,
+      warnings: detail.warnings,
+    })),
+  }
+}
+
+function summarizeEmpiricalBucketRanking(
+  bucketRanking: Record<StabilityBucket, Empirical478RankingEntry[]>,
+): Record<StabilityBucket, Empirical478RankingEntry[]> {
+  return STABILITY_BUCKETS.reduce(
+    (summary, bucket) => {
+      summary[bucket] = (bucketRanking[bucket] ?? []).slice(0, 5)
+      return summary
+    },
+    {} as Record<StabilityBucket, Empirical478RankingEntry[]>,
+  )
+}
+
+function summarizeCanonical468ReferenceComparison(
+  comparison: Canonical468ReferenceComparison,
+): unknown {
+  return {
+    status: comparison.status,
+    note: comparison.note,
+    bestOverall: comparison.bestOverall,
+    runtimeCompatible: comparison.runtimeCompatible,
   }
 }
 
@@ -4357,6 +4451,7 @@ function render(): void {
     !state.canonicalImportMessage
   clearEmpirical478Button.disabled = !state.analysis
   exportAnalysisButton.disabled = !state.analysis
+  exportAnalysisSummaryButton.disabled = !state.analysis
   copyAnalysisButton.disabled = !state.analysis
 }
 
