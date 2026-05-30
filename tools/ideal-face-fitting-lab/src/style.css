@@ -176,6 +176,20 @@ label {
   white-space: pre-wrap;
 }
 
+.auto-sequence-status {
+  background: #eef6f2;
+  border: 1px solid #bfdbcf;
+  border-radius: 6px;
+  color: #25483b;
+  font-size: 13px;
+  line-height: 1.55;
+  padding: 10px;
+}
+
+.auto-sequence-table {
+  margin-top: 10px;
+}
+
 .preset-steps {
   color: #55616d;
   font-size: 13px;

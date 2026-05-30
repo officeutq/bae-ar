@@ -120,6 +120,20 @@ Base Candidate Preset には Baseline Cheek Depth / Current Fine Best / Current 
 
 プリセット適用時は maxFrames=30、front / yawPositive / yawNegative / pitchPositive / pitchNegative target=5、mixedPose target=0、mixedPose 不採用、roll warning deg=12、blendshape warning=0.35、topN=100、focalLength=2.6 を基本値としてフォームへ反映する。
 
+## Auto Search Sequence
+
+Auto Search Sequence は、複数の local search preset を順番に実行し、各 step の bestCandidate を次 step の baseCandidate に自動反映する UI 補助である。
+
+Fine Sequence は、Baseline Cheek Depth を起点に Coordinate Descent Fine → PivotZ Fine → NoseZ Fine → LeftCheekZ Fine → RightCheekZ Fine → MouthZ Fine の順で実行する。
+
+Current Best Fine Sequence は、現在の bestCandidate を起点に PivotZ Fine → NoseZ Fine → LeftCheekZ Fine → RightCheekZ Fine → MouthZ Fine を実行する。
+
+Yaw Focus Sequence は、Baseline Cheek Depth を起点に Yaw Focus Fine → PivotZ Fine → NoseZ Fine を実行する。
+
+Pitch Focus Sequence は、Current Fine Best を起点に Pitch Focus Fine → PivotZ Fine → MouthZ Fine → NoseZ Fine を実行する。
+
+Auto Sequence は production 用 IdealFace を確定するものではなく、8 semantic points の z / pivotZ を効率よく検証するための debug workflow である。
+
 ## Score
 
 まずはシンプルに、投影後2D点と current 2D landmarks 8点の距離を使います。
