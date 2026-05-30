@@ -33,6 +33,14 @@ type TransformName =
   | "face_bounds_centered"
   | "no_inverse_canonicalized_baseline"
 
+type MatrixConventionName =
+  | "row_major_column_vector"
+  | "row_major_row_vector"
+  | "column_major_column_vector"
+  | "column_major_row_vector"
+
+type TranslationMode = "lastColumn" | "lastRow" | "none"
+
 interface Point3 {
   x: number
   y: number
@@ -161,6 +169,8 @@ interface CaptureRawAnalysis {
 interface MatrixAnalysis {
   captureId: string
   available: boolean
+  enginePoseConvention: MatrixConventionName
+  labPoseConvention: MatrixConventionName
   assumption: {
     ordering: "row-major"
     indexFormula: "values[row * columns + column]"
@@ -168,7 +178,14 @@ interface MatrixAnalysis {
     maps: "MediaPipe canonical face to detected face"
   }
   rawValues: number[] | null
+  rawTranslationCandidates: {
+    lastRow: Point3 | null
+    lastColumn: Point3 | null
+  }
   translation: Point3 | null
+  interpretedTranslationByConvention: Record<MatrixConventionName, Point3 | null>
+  poseByConvention: Record<MatrixConventionName, MatrixConventionPoseSummary>
+  conventionComparison: MatrixConventionCaptureSummary[]
   approximateScale: number | null
   rotationBasis: {
     xAxis: Point3
@@ -180,6 +197,36 @@ interface MatrixAnalysis {
   capturePose: Pose | null
   poseDelta: Pose | null
   inverseAvailable: boolean
+  warnings: string[]
+}
+
+interface MatrixConventionDefinition {
+  name: MatrixConventionName
+  rawOrdering: "row-major" | "column-major"
+  vectorConvention: "column-vector" | "row-vector"
+  transformDescription: string
+  translationMode: TranslationMode
+}
+
+interface MatrixConventionPoseSummary {
+  extractedPose: Pose | null
+  capturePose: Pose | null
+  poseDelta: Pose | null
+}
+
+interface MatrixConventionCaptureSummary extends MatrixConventionPoseSummary {
+  matrixConvention: MatrixConventionName
+  translationMode: TranslationMode
+  interpretedTranslation: Point3 | null
+  approximateScale: number | null
+  determinant: number | null
+  inverseAvailable: boolean
+  forwardProjectionApproximation: {
+    averageError3D: number | null
+    maxError3D: number | null
+    sampleCount: number
+    note: string
+  }
   warnings: string[]
 }
 
@@ -271,22 +318,33 @@ interface BucketStability {
 
 interface TransformCandidateAnalysis {
   transformName: TransformName
+  matrixConvention: MatrixConventionName | null
+  translationMode: TranslationMode
   description: string
   assumptions: string[]
   perCaptureCanonicalLikeBounds: PerCaptureCandidateSummary[]
   averagedCanonicalLikeBounds: BoundsSummary | null
   frameToFrameStability: CandidateStability
+  abnormalBoundsCount: number
+  hugeValueWarningCount: number
+  score: number | null
   warnings: string[]
 }
 
 interface StabilityRankingEntry {
   transformName: TransformName
+  matrixConvention: MatrixConventionName | null
+  translationMode: TranslationMode
   averageStdDev3D: number | null
   averageStdDevX: number | null
   averageStdDevY: number | null
   averageStdDevZ: number | null
+  semanticPointStability: TransformCandidateAnalysis["frameToFrameStability"]["semanticPointStability"]
   noseStdDev3D: number | null
   zRangeStability: number | null
+  abnormalBoundsCount: number
+  hugeValueWarningCount: number
+  score: number | null
   sampleCount: number
 }
 
@@ -312,13 +370,27 @@ interface EmpiricalCanonical478 {
 
 interface AnalysisResult {
   schemaVersion: "mediapipe_canonical_lab_analysis_v1"
+  analysisVersion: "matrix_convention_debug_v1"
   generatedAt: string
   sourceCaptureSummary: SourceCaptureSummary
   rawCaptureSummaries: CaptureRawAnalysis[]
   matrixSummaries: MatrixAnalysis[]
+  matrixConventionAnalysis: MatrixAnalysis[]
+  translationCandidates: Array<{
+    captureId: string
+    lastRow: Point3 | null
+    lastColumn: Point3 | null
+  }>
+  poseByConvention: Array<{
+    captureId: string
+    conventions: Record<MatrixConventionName, MatrixConventionPoseSummary>
+  }>
   transformCandidates: TransformCandidateAnalysis[]
+  transformConventionCandidates: TransformCandidateAnalysis[]
   stabilityRanking: StabilityRankingEntry[]
+  stabilityRankingByConvention: StabilityRankingEntry[]
   bestStabilityTransformCandidate: TransformName | null
+  selectedBestConventionCandidate: StabilityRankingEntry | null
   empiricalCanonical478: EmpiricalCanonical478 | null
   warnings: string[]
 }
@@ -424,6 +496,43 @@ const CANDIDATE_DEFINITIONS: CandidateDefinition[] = [
     usesInverseMatrix: false,
   },
 ]
+
+const MATRIX_CONVENTIONS: MatrixConventionDefinition[] = [
+  {
+    name: "row_major_column_vector",
+    rawOrdering: "row-major",
+    vectorConvention: "column-vector",
+    transformDescription: "raw values を row-major 4x4 とし、pDetected = M * pCanonical として扱う",
+    translationMode: "lastColumn",
+  },
+  {
+    name: "row_major_row_vector",
+    rawOrdering: "row-major",
+    vectorConvention: "row-vector",
+    transformDescription: "raw values を row-major 4x4 とし、pDetected = pCanonical * M として扱う",
+    translationMode: "lastRow",
+  },
+  {
+    name: "column_major_column_vector",
+    rawOrdering: "column-major",
+    vectorConvention: "column-vector",
+    transformDescription: "raw values を column-major 4x4 とし、pDetected = M * pCanonical として扱う",
+    translationMode: "lastColumn",
+  },
+  {
+    name: "column_major_row_vector",
+    rawOrdering: "column-major",
+    vectorConvention: "row-vector",
+    transformDescription: "raw values を column-major 4x4 とし、pDetected = pCanonical * M として扱う",
+    translationMode: "lastRow",
+  },
+]
+
+const ENGINE_POSE_CONVENTION: MatrixConventionName = "row_major_column_vector"
+const LAB_CURRENT_CONVENTION: MatrixConventionName = "row_major_column_vector"
+const HUGE_ABS_VALUE_THRESHOLD = 1000
+const HUGE_BOUNDS_THRESHOLD = 100
+const HUGE_STDDEV_THRESHOLD = 50
 
 const state: AppState = {
   cameraStatus: "idle",
@@ -535,6 +644,18 @@ app.innerHTML = `
     <section class="panel">
       <h2>matrix summary preview</h2>
       <div class="table-wrap" id="matrixSummary"></div>
+    </section>
+
+    <section class="analysis-results">
+      <div class="panel">
+        <h2>Matrix convention comparison</h2>
+        <div class="table-wrap" id="matrixConventionComparison"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Translation candidates / Pose extraction</h2>
+        <div class="table-wrap" id="translationPoseComparison"></div>
+      </div>
     </section>
 
     <section class="panel">
@@ -928,13 +1049,16 @@ function createAnalysis(captures: CaptureRecord[]): AnalysisResult {
   const sourceCaptureSummary = summarizeCaptures(captures)
   const rawCaptureSummaries = captures.map(analyzeRawCapture)
   const matrixSummaries = captures.map(analyzeMatrix)
-  const transformCandidates = CANDIDATE_DEFINITIONS.map((definition) =>
-    analyzeTransformCandidate(definition, captures),
+  const transformCandidates = createTransformConventionDefinitions().map((candidate) =>
+    analyzeTransformCandidate(candidate.definition, captures, candidate.matrixConvention),
   )
   const stabilityRanking = rankCandidates(transformCandidates)
-  const bestStabilityTransformCandidate = stabilityRanking[0]?.transformName ?? null
+  const selectedBestConventionCandidate = stabilityRanking[0] ?? null
+  const bestStabilityTransformCandidate = selectedBestConventionCandidate?.transformName ?? null
   const bestCandidate = transformCandidates.find(
-    (candidate) => candidate.transformName === bestStabilityTransformCandidate,
+    (candidate) =>
+      candidate.transformName === selectedBestConventionCandidate?.transformName &&
+      candidate.matrixConvention === selectedBestConventionCandidate?.matrixConvention,
   )
   const empiricalCanonical478 =
     bestCandidate && bestStabilityTransformCandidate
@@ -955,13 +1079,27 @@ function createAnalysis(captures: CaptureRecord[]): AnalysisResult {
 
   return {
     schemaVersion: "mediapipe_canonical_lab_analysis_v1",
+    analysisVersion: "matrix_convention_debug_v1",
     generatedAt: new Date().toISOString(),
     sourceCaptureSummary,
     rawCaptureSummaries,
     matrixSummaries,
+    matrixConventionAnalysis: matrixSummaries,
+    translationCandidates: matrixSummaries.map((matrix) => ({
+      captureId: matrix.captureId,
+      lastRow: matrix.rawTranslationCandidates.lastRow,
+      lastColumn: matrix.rawTranslationCandidates.lastColumn,
+    })),
+    poseByConvention: matrixSummaries.map((matrix) => ({
+      captureId: matrix.captureId,
+      conventions: matrix.poseByConvention,
+    })),
     transformCandidates,
+    transformConventionCandidates: transformCandidates,
     stabilityRanking,
+    stabilityRankingByConvention: stabilityRanking,
     bestStabilityTransformCandidate,
+    selectedBestConventionCandidate,
     empiricalCanonical478,
     warnings,
   }
@@ -970,6 +1108,7 @@ function createAnalysis(captures: CaptureRecord[]): AnalysisResult {
 function analyzeTransformCandidate(
   definition: CandidateDefinition,
   captures: CaptureRecord[],
+  matrixConvention: MatrixConventionName | null,
 ): TransformCandidateAnalysis {
   const warnings: string[] = []
   const transformedCaptures: Array<{
@@ -979,7 +1118,7 @@ function analyzeTransformCandidate(
   }> = []
 
   for (const capture of captures) {
-    const result = transformCaptureLandmarks(definition, capture)
+    const result = transformCaptureLandmarks(definition, capture, matrixConvention)
     if (result.warnings.length > 0) {
       warnings.push(...result.warnings.map((warning) => `${capture.captureId}: ${warning}`))
     }
@@ -1004,8 +1143,41 @@ function analyzeTransformCandidate(
     warnings.push("有効な transformed capture がありません。")
   }
 
+  const frameToFrameStability = calculateCandidateStability(transformedCaptures)
+  const abnormalBoundsCount = transformedCaptures.filter((item) =>
+    hasAbnormalBounds(item.summary.canonicalLikeBounds),
+  ).length
+  const hugeValueWarningCount = transformedCaptures.reduce(
+    (count, item) => count + item.summary.warnings.filter(isHugeValueWarning).length,
+    0,
+  )
+  const score = calculateCandidateScore(
+    frameToFrameStability.averageStdDev3D,
+    abnormalBoundsCount,
+    hugeValueWarningCount,
+  )
+
+  if (
+    frameToFrameStability.averageStdDev3D !== null &&
+    frameToFrameStability.averageStdDev3D > HUGE_STDDEV_THRESHOLD
+  ) {
+    warnings.push("unstableCanonicalLikeResult: averageStdDev3D is extremely large.")
+  }
+
+  if (
+    matrixConvention &&
+    frameToFrameStability.averageStdDev3D !== null &&
+    frameToFrameStability.averageStdDev3D > 1
+  ) {
+    warnings.push(
+      "poseConventionMatchesButPointTransformUnstable: pose matching alone does not prove the point transform convention.",
+    )
+  }
+
   return {
     transformName: definition.transformName,
+    matrixConvention,
+    translationMode: matrixConvention ? getMatrixConvention(matrixConvention).translationMode : "none",
     description: definition.description,
     assumptions: definition.assumptions,
     perCaptureCanonicalLikeBounds: transformedCaptures.map((item) => item.summary),
@@ -1014,7 +1186,10 @@ function analyzeTransformCandidate(
         .map((item) => item.summary.canonicalLikeBounds)
         .filter((bounds): bounds is BoundsSummary => Boolean(bounds)),
     ),
-    frameToFrameStability: calculateCandidateStability(transformedCaptures),
+    frameToFrameStability,
+    abnormalBoundsCount,
+    hugeValueWarningCount,
+    score,
     warnings,
   }
 }
@@ -1022,6 +1197,7 @@ function analyzeTransformCandidate(
 function transformCaptureLandmarks(
   definition: CandidateDefinition,
   capture: CaptureRecord,
+  matrixConvention: MatrixConventionName | null,
 ): { points: LandmarkPoint[]; warnings: string[] } {
   const warnings: string[] = []
 
@@ -1040,7 +1216,9 @@ function transformCaptureLandmarks(
   let inverseMatrix: number[] | null = null
   if (definition.usesInverseMatrix) {
     const matrix = getMatrixValues4x4(capture.facialTransformationMatrix)
-    inverseMatrix = matrix ? invertMatrix(matrix, 4) : null
+    const convention = matrixConvention ? getMatrixConvention(matrixConvention) : null
+    const conventionMatrix = matrix && convention ? getConventionMatrix(matrix, convention) : null
+    inverseMatrix = conventionMatrix ? invertMatrix(conventionMatrix, 4) : null
 
     if (!inverseMatrix) {
       return {
@@ -1066,7 +1244,10 @@ function transformCaptureLandmarks(
       faceScale,
       videoAspect,
     )
-    const transformed = inverseMatrix ? applyMatrix4(inverseMatrix, sourcePoint) : sourcePoint
+    const transformed =
+      inverseMatrix && matrixConvention
+        ? applyMatrixByConvention(inverseMatrix, sourcePoint, getMatrixConvention(matrixConvention))
+        : sourcePoint
 
     return {
       index: landmark.index,
@@ -1075,6 +1256,28 @@ function transformCaptureLandmarks(
       z: transformed.z,
     }
   })
+
+  const resultBounds = calculateBounds(points)
+  const resultCentroid = calculateCentroid(points)
+  if (points.some((point) => !isFinitePoint(point))) {
+    warnings.push("matrixConventionLikelyWrong: inverse result has NaN or Infinity.")
+  }
+  if (
+    points.some(
+      (point) =>
+        Math.abs(point.x) > HUGE_ABS_VALUE_THRESHOLD ||
+        Math.abs(point.y) > HUGE_ABS_VALUE_THRESHOLD ||
+        Math.abs(point.z) > HUGE_ABS_VALUE_THRESHOLD,
+    )
+  ) {
+    warnings.push("inverseResultHugeBounds: canonical-like points contain extremely large values.")
+  }
+  if (hasAbnormalBounds(resultBounds)) {
+    warnings.push("inverseResultHugeBounds: canonical-like bounds are extremely large.")
+  }
+  if (resultCentroid && vectorLength(resultCentroid) > HUGE_BOUNDS_THRESHOLD) {
+    warnings.push("inverseResultHugeBounds: canonical-like centroid is extremely far from origin.")
+  }
 
   return { points, warnings }
 }
@@ -1224,27 +1427,33 @@ function rankCandidates(
         .filter((value): value is number => value !== null)
       return {
         transformName: candidate.transformName,
+        matrixConvention: candidate.matrixConvention,
+        translationMode: candidate.translationMode,
         averageStdDev3D: candidate.frameToFrameStability.averageStdDev3D,
         averageStdDevX: candidate.frameToFrameStability.averageStdDevX,
         averageStdDevY: candidate.frameToFrameStability.averageStdDevY,
         averageStdDevZ: candidate.frameToFrameStability.averageStdDevZ,
+        semanticPointStability: candidate.frameToFrameStability.semanticPointStability,
         noseStdDev3D:
           candidate.frameToFrameStability.semanticPointStability.noseTip.stdDev3D,
         zRangeStability: standardDeviation(zRanges),
+        abnormalBoundsCount: candidate.abnormalBoundsCount,
+        hugeValueWarningCount: candidate.hugeValueWarningCount,
+        score: candidate.score,
         sampleCount: candidate.perCaptureCanonicalLikeBounds.length,
       }
     })
     .sort((a, b) => {
-      if (a.averageStdDev3D === null && b.averageStdDev3D === null) {
+      if (a.score === null && b.score === null) {
         return 0
       }
-      if (a.averageStdDev3D === null) {
+      if (a.score === null) {
         return 1
       }
-      if (b.averageStdDev3D === null) {
+      if (b.score === null) {
         return -1
       }
-      return a.averageStdDev3D - b.averageStdDev3D
+      return a.score - b.score
     })
 }
 
@@ -1350,15 +1559,22 @@ function analyzeRawCapture(capture: CaptureRecord): CaptureRawAnalysis {
 function analyzeMatrix(capture: CaptureRecord): MatrixAnalysis {
   const matrix = getMatrixValues4x4(capture.facialTransformationMatrix)
   const warnings: string[] = []
+  const rawTranslationCandidates = getRawTranslationCandidates(matrix)
 
   if (!matrix) {
     warnings.push("4x4 matrix がありません。")
     return {
       captureId: capture.captureId,
       available: false,
+      enginePoseConvention: ENGINE_POSE_CONVENTION,
+      labPoseConvention: LAB_CURRENT_CONVENTION,
       assumption: createMatrixAssumption(),
       rawValues: capture.facialTransformationMatrix?.values ?? null,
+      rawTranslationCandidates,
       translation: null,
+      interpretedTranslationByConvention: createEmptyTranslationByConvention(),
+      poseByConvention: createEmptyPoseByConvention(capture.pose),
+      conventionComparison: [],
       approximateScale: null,
       rotationBasis: null,
       determinant: null,
@@ -1370,6 +1586,12 @@ function analyzeMatrix(capture: CaptureRecord): MatrixAnalysis {
     }
   }
 
+  const conventionComparison = MATRIX_CONVENTIONS.map((convention) =>
+    analyzeMatrixConvention(capture, matrix, convention),
+  )
+  const currentConventionAnalysis = conventionComparison.find(
+    (item) => item.matrixConvention === LAB_CURRENT_CONVENTION,
+  )
   const xAxis = { x: matrix[0], y: matrix[4], z: matrix[8] }
   const yAxis = { x: matrix[1], y: matrix[5], z: matrix[9] }
   const zAxis = { x: matrix[2], y: matrix[6], z: matrix[10] }
@@ -1389,13 +1611,31 @@ function analyzeMatrix(capture: CaptureRecord): MatrixAnalysis {
   return {
     captureId: capture.captureId,
     available: true,
+    enginePoseConvention: ENGINE_POSE_CONVENTION,
+    labPoseConvention: LAB_CURRENT_CONVENTION,
     assumption: createMatrixAssumption(),
     rawValues: matrix,
-    translation: {
-      x: matrix[3],
-      y: matrix[7],
-      z: matrix[11],
-    },
+    rawTranslationCandidates,
+    translation: currentConventionAnalysis?.interpretedTranslation ?? null,
+    interpretedTranslationByConvention: conventionComparison.reduce(
+      (summary, item) => {
+        summary[item.matrixConvention] = item.interpretedTranslation
+        return summary
+      },
+      {} as Record<MatrixConventionName, Point3 | null>,
+    ),
+    poseByConvention: conventionComparison.reduce(
+      (summary, item) => {
+        summary[item.matrixConvention] = {
+          extractedPose: item.extractedPose,
+          capturePose: item.capturePose,
+          poseDelta: item.poseDelta,
+        }
+        return summary
+      },
+      {} as Record<MatrixConventionName, MatrixConventionPoseSummary>,
+    ),
+    conventionComparison,
     approximateScale,
     rotationBasis: {
       xAxis,
@@ -1425,6 +1665,175 @@ function createMatrixAssumption(): MatrixAnalysis["assumption"] {
     vectorConvention: "column-vector point, pDetected = M * pCanonical",
     maps: "MediaPipe canonical face to detected face",
   }
+}
+
+function analyzeMatrixConvention(
+  capture: CaptureRecord,
+  rawValues: number[],
+  convention: MatrixConventionDefinition,
+): MatrixConventionCaptureSummary {
+  const matrix = getConventionMatrix(rawValues, convention)
+  const columnEquivalent = getColumnVectorEquivalentMatrix(matrix, convention)
+  const interpretedTranslation = getInterpretedTranslation(matrix, convention)
+  const pose = estimateFacePoseFromMatrixValues(columnEquivalent, 4)
+  const inverseAvailable = Boolean(invertMatrix(matrix, 4))
+  const axes = getRotationAxesForColumnEquivalent(columnEquivalent)
+  const approximateScale = averageNumber([
+    vectorLength(axes.xAxis),
+    vectorLength(axes.yAxis),
+    vectorLength(axes.zAxis),
+  ])
+  const determinant = determinant3x3(columnEquivalent)
+  const warnings: string[] = []
+
+  if (!inverseAvailable) {
+    warnings.push("matrixConventionLikelyWrong: inverse matrix is unavailable.")
+  }
+
+  if (
+    interpretedTranslation &&
+    vectorLength(interpretedTranslation) > HUGE_BOUNDS_THRESHOLD
+  ) {
+    warnings.push("translationInterpretationSuspicious: interpreted translation is very large.")
+  }
+
+  return {
+    matrixConvention: convention.name,
+    translationMode: convention.translationMode,
+    interpretedTranslation,
+    approximateScale,
+    determinant,
+    extractedPose: pose,
+    capturePose: capture.pose,
+    poseDelta:
+      pose && capture.pose
+        ? {
+            yaw: pose.yaw - capture.pose.yaw,
+            pitch: pose.pitch - capture.pose.pitch,
+            roll: pose.roll - capture.pose.roll,
+          }
+        : null,
+    inverseAvailable,
+    forwardProjectionApproximation: calculateForwardProjectionApproximation(
+      capture,
+      matrix,
+      convention,
+    ),
+    warnings,
+  }
+}
+
+function createTransformConventionDefinitions(): Array<{
+  definition: CandidateDefinition
+  matrixConvention: MatrixConventionName | null
+}> {
+  return CANDIDATE_DEFINITIONS.flatMap(
+    (
+      definition,
+    ): Array<{
+      definition: CandidateDefinition
+      matrixConvention: MatrixConventionName | null
+    }> => {
+    if (!definition.usesInverseMatrix) {
+      return [{ definition, matrixConvention: null }]
+    }
+
+    return MATRIX_CONVENTIONS.map((convention) => ({
+      definition,
+      matrixConvention: convention.name,
+    }))
+  })
+}
+
+function calculateForwardProjectionApproximation(
+  capture: CaptureRecord,
+  matrix: number[],
+  convention: MatrixConventionDefinition,
+): MatrixConventionCaptureSummary["forwardProjectionApproximation"] {
+  const bounds = calculateBounds(capture.landmarks)
+  const boundsCenter = bounds ? calculateBoundsCenter(bounds) : null
+  const faceScale = bounds ? Math.max(bounds.width, bounds.height) : 0
+
+  if (!boundsCenter || faceScale <= EPSILON) {
+    return {
+      averageError3D: null,
+      maxError3D: null,
+      sampleCount: 0,
+      note: "approximate only: face bounds normalization was unavailable.",
+    }
+  }
+
+  const projected = capture.landmarks.map((landmark) => {
+    const canonicalLike = toCandidateSourcePoint(
+      "face_bounds_centered",
+      landmark,
+      boundsCenter,
+      faceScale,
+      capture.videoHeight === 0 ? 1 : capture.videoWidth / capture.videoHeight,
+    )
+    return applyMatrixByConvention(matrix, canonicalLike, convention)
+  })
+  const projectedBounds = calculateBounds(projected)
+  const projectedCenter = projectedBounds ? calculateBoundsCenter(projectedBounds) : null
+  const projectedScale = projectedBounds ? Math.max(projectedBounds.width, projectedBounds.height) : 0
+
+  if (!projectedCenter || projectedScale <= EPSILON) {
+    return {
+      averageError3D: null,
+      maxError3D: null,
+      sampleCount: 0,
+      note: "approximate only: projected bounds normalization was unavailable.",
+    }
+  }
+
+  const errors = projected.map((point, index) => {
+    const normalizedDetected = {
+      x: (point.x - projectedCenter.x) / projectedScale,
+      y: (point.y - projectedCenter.y) / projectedScale,
+      z: (point.z - projectedCenter.z) / projectedScale,
+    }
+    const current = toCandidateSourcePoint(
+      "face_bounds_centered",
+      capture.landmarks[index],
+      boundsCenter,
+      faceScale,
+      1,
+    )
+    return calculateDistance(normalizedDetected, current)
+  })
+
+  return {
+    averageError3D: averageNumber(errors),
+    maxError3D: maxOrNull(errors),
+    sampleCount: errors.length,
+    note: "approximate only: current landmarks were bounds-normalized as a temporary canonical-like source, then normalized again before error measurement.",
+  }
+}
+
+function createEmptyPoseByConvention(
+  capturePose: Pose | null,
+): Record<MatrixConventionName, MatrixConventionPoseSummary> {
+  return MATRIX_CONVENTIONS.reduce(
+    (summary, convention) => {
+      summary[convention.name] = {
+        extractedPose: null,
+        capturePose,
+        poseDelta: null,
+      }
+      return summary
+    },
+    {} as Record<MatrixConventionName, MatrixConventionPoseSummary>,
+  )
+}
+
+function createEmptyTranslationByConvention(): Record<MatrixConventionName, Point3 | null> {
+  return MATRIX_CONVENTIONS.reduce(
+    (summary, convention) => {
+      summary[convention.name] = null
+      return summary
+    },
+    {} as Record<MatrixConventionName, Point3 | null>,
+  )
 }
 
 function render(): void {
@@ -1499,14 +1908,22 @@ function render(): void {
   getElement("analysisWarnings").textContent =
     analysis?.warnings.length ? analysis.warnings.join("\n") : "解析 warning はありません。"
   getElement("matrixSummary").innerHTML = renderMatrixSummary(analysis)
+  getElement("matrixConventionComparison").innerHTML =
+    renderMatrixConventionComparison(analysis)
+  getElement("translationPoseComparison").innerHTML =
+    renderTranslationPoseComparison(analysis)
   getElement("analysisJsonPreview").textContent = analysis
     ? JSON.stringify(
         {
           schemaVersion: analysis.schemaVersion,
+          analysisVersion: analysis.analysisVersion,
           generatedAt: analysis.generatedAt,
           sourceCaptureSummary: analysis.sourceCaptureSummary,
-          stabilityRanking: analysis.stabilityRanking,
+          translationCandidates: analysis.translationCandidates.slice(0, 3),
+          poseByConvention: analysis.poseByConvention.slice(0, 3),
+          stabilityRankingByConvention: analysis.stabilityRankingByConvention,
           bestStabilityTransformCandidate: analysis.bestStabilityTransformCandidate,
+          selectedBestConventionCandidate: analysis.selectedBestConventionCandidate,
           empiricalCanonical478: analysis.empiricalCanonical478
             ? {
                 sourceTransformCandidate:
@@ -1625,12 +2042,17 @@ function renderStabilityRanking(analysis: AnalysisResult | null): string {
       <thead>
         <tr>
           <th>candidate</th>
+          <th>matrixConvention</th>
+          <th>translationMode</th>
           <th>avgStdDev3D</th>
           <th>avgStdDevX</th>
           <th>avgStdDevY</th>
           <th>avgStdDevZ</th>
           <th>noseStdDev</th>
           <th>zRangeStability</th>
+          <th>abnormalBounds</th>
+          <th>hugeWarnings</th>
+          <th>score</th>
         </tr>
       </thead>
       <tbody>
@@ -1639,12 +2061,17 @@ function renderStabilityRanking(analysis: AnalysisResult | null): string {
             (entry) => `
               <tr>
                 <td><code>${entry.transformName}</code></td>
+                <td><code>${entry.matrixConvention ?? "none"}</code></td>
+                <td>${entry.translationMode}</td>
                 <td>${formatNullableNumber(entry.averageStdDev3D)}</td>
                 <td>${formatNullableNumber(entry.averageStdDevX)}</td>
                 <td>${formatNullableNumber(entry.averageStdDevY)}</td>
                 <td>${formatNullableNumber(entry.averageStdDevZ)}</td>
                 <td>${formatNullableNumber(entry.noseStdDev3D)}</td>
                 <td>${formatNullableNumber(entry.zRangeStability)}</td>
+                <td>${entry.abnormalBoundsCount}</td>
+                <td>${entry.hugeValueWarningCount}</td>
+                <td>${formatNullableNumber(entry.score)}</td>
               </tr>
             `,
           )
@@ -1666,6 +2093,18 @@ function renderBestCandidateSummary(analysis: AnalysisResult | null): string {
 
   return renderStatusItems([
     ["best candidate", analysis.bestStabilityTransformCandidate ?? "-"],
+    [
+      "best convention candidate",
+      analysis.selectedBestConventionCandidate
+        ? `${analysis.selectedBestConventionCandidate.transformName} + ${
+            analysis.selectedBestConventionCandidate.matrixConvention ?? "none"
+          }`
+        : "-",
+    ],
+    [
+      "best score",
+      formatNullableNumber(analysis.selectedBestConventionCandidate?.score ?? null),
+    ],
     ["empiricalCanonical478 landmarks", `${empirical?.landmarks.length ?? 0}`],
     ["bounds width / height", formatBoundsSize(empirical?.summary.bounds ?? null)],
     ["zRange", formatNullableNumber(empirical?.summary.zRange ?? null)],
@@ -1697,6 +2136,8 @@ function renderMatrixSummary(analysis: AnalysisResult | null): string {
           <th>capture</th>
           <th>ordering</th>
           <th>translation</th>
+          <th>raw lastRow</th>
+          <th>raw lastColumn</th>
           <th>scale</th>
           <th>determinant</th>
           <th>matrix yaw / pitch / roll</th>
@@ -1711,6 +2152,8 @@ function renderMatrixSummary(analysis: AnalysisResult | null): string {
                 <td><code>${escapeHtml(matrix.captureId)}</code></td>
                 <td>${matrix.assumption.ordering}<br /><small>${matrix.assumption.indexFormula}</small></td>
                 <td>${formatPoint(matrix.translation)}</td>
+                <td>${formatPoint(matrix.rawTranslationCandidates.lastRow)}</td>
+                <td>${formatPoint(matrix.rawTranslationCandidates.lastColumn)}</td>
                 <td>${formatNullableNumber(matrix.approximateScale)}</td>
                 <td>${formatNullableNumber(matrix.determinant)}</td>
                 <td>${escapeHtml(formatPose(matrix.extractedPose))}</td>
@@ -1721,6 +2164,111 @@ function renderMatrixSummary(analysis: AnalysisResult | null): string {
           .join("")}
       </tbody>
     </table>
+  `
+}
+
+function renderMatrixConventionComparison(analysis: AnalysisResult | null): string {
+  const rows =
+    analysis?.matrixConventionAnalysis.flatMap((matrix) =>
+      matrix.conventionComparison.map((convention) => ({
+        captureId: matrix.captureId,
+        ...convention,
+      })),
+    ) ?? []
+
+  if (rows.length === 0) {
+    return `<p class="note">Analyze captures を実行すると matrix convention comparison が表示されます。</p>`
+  }
+
+  return `
+    <table>
+      <thead>
+        <tr>
+          <th>capture</th>
+          <th>convention</th>
+          <th>translationMode</th>
+          <th>interpretedTranslation</th>
+          <th>scale</th>
+          <th>determinant</th>
+          <th>forward error</th>
+          <th>warnings</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows
+          .slice(0, 32)
+          .map(
+            (row) => `
+              <tr>
+                <td><code>${escapeHtml(row.captureId)}</code></td>
+                <td><code>${row.matrixConvention}</code></td>
+                <td>${row.translationMode}</td>
+                <td>${formatPoint(row.interpretedTranslation)}</td>
+                <td>${formatNullableNumber(row.approximateScale)}</td>
+                <td>${formatNullableNumber(row.determinant)}</td>
+                <td>${formatNullableNumber(row.forwardProjectionApproximation.averageError3D)}</td>
+                <td>${escapeHtml(row.warnings.join(" / ") || "-")}</td>
+              </tr>
+            `,
+          )
+          .join("")}
+      </tbody>
+    </table>
+  `
+}
+
+function renderTranslationPoseComparison(analysis: AnalysisResult | null): string {
+  const rows =
+    analysis?.matrixConventionAnalysis.flatMap((matrix) =>
+      MATRIX_CONVENTIONS.map((convention) => ({
+        captureId: matrix.captureId,
+        convention: convention.name,
+        lastRow: matrix.rawTranslationCandidates.lastRow,
+        lastColumn: matrix.rawTranslationCandidates.lastColumn,
+        interpretedTranslation: matrix.interpretedTranslationByConvention[convention.name],
+        pose: matrix.poseByConvention[convention.name],
+        enginePoseConvention: matrix.enginePoseConvention,
+        labPoseConvention: matrix.labPoseConvention,
+      })),
+    ) ?? []
+
+  if (rows.length === 0) {
+    return `<p class="note">Analyze captures を実行すると translation / pose comparison が表示されます。</p>`
+  }
+
+  return `
+    <table>
+      <thead>
+        <tr>
+          <th>capture</th>
+          <th>convention</th>
+          <th>raw lastRow [12..14]</th>
+          <th>raw lastColumn [3,7,11]</th>
+          <th>interpretedTranslation</th>
+          <th>pose delta</th>
+          <th>engine / lab pose convention</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows
+          .slice(0, 32)
+          .map(
+            (row) => `
+              <tr>
+                <td><code>${escapeHtml(row.captureId)}</code></td>
+                <td><code>${row.convention}</code></td>
+                <td>${formatPoint(row.lastRow)}</td>
+                <td>${formatPoint(row.lastColumn)}</td>
+                <td>${formatPoint(row.interpretedTranslation)}</td>
+                <td>${escapeHtml(formatPose(row.pose?.poseDelta ?? null))}</td>
+                <td><code>${row.enginePoseConvention}</code> / <code>${row.labPoseConvention}</code></td>
+              </tr>
+            `,
+          )
+          .join("")}
+      </tbody>
+    </table>
+    <p class="note">Note: pose が一致しても point transform convention が正しいとは限りません。forward projection は approximate only です。</p>
   `
 }
 
@@ -2000,11 +2548,133 @@ function getMatrixValues4x4(matrix: MatrixCapture | null): number[] | null {
   return matrix.values.slice(0, 16)
 }
 
-function applyMatrix4(matrix: number[], point: Point3): Point3 {
+function getMatrixConvention(name: MatrixConventionName): MatrixConventionDefinition {
+  return MATRIX_CONVENTIONS.find((convention) => convention.name === name) ?? MATRIX_CONVENTIONS[0]
+}
+
+function getConventionMatrix(
+  rawValues: number[],
+  convention: MatrixConventionDefinition,
+): number[] {
+  const values = rawValues.slice(0, 16)
+  if (convention.rawOrdering === "row-major") {
+    return values
+  }
+
+  return transposeMatrix4(values)
+}
+
+function getColumnVectorEquivalentMatrix(
+  matrix: number[],
+  convention: MatrixConventionDefinition,
+): number[] {
+  return convention.vectorConvention === "column-vector" ? matrix : transposeMatrix4(matrix)
+}
+
+function transposeMatrix4(matrix: number[]): number[] {
+  return Array.from({ length: 16 }, (_, index) => {
+    const row = Math.floor(index / 4)
+    const column = index % 4
+    return matrix[column * 4 + row]
+  })
+}
+
+function getRawTranslationCandidates(rawValues: number[] | null): {
+  lastRow: Point3 | null
+  lastColumn: Point3 | null
+} {
+  if (!rawValues || rawValues.length < 15) {
+    return {
+      lastRow: null,
+      lastColumn: null,
+    }
+  }
+
+  return {
+    lastRow: {
+      x: rawValues[12],
+      y: rawValues[13],
+      z: rawValues[14],
+    },
+    lastColumn: {
+      x: rawValues[3],
+      y: rawValues[7],
+      z: rawValues[11],
+    },
+  }
+}
+
+function getInterpretedTranslation(
+  matrix: number[],
+  convention: MatrixConventionDefinition,
+): Point3 | null {
+  if (matrix.length < 15) {
+    return null
+  }
+
+  if (convention.translationMode === "lastRow") {
+    return {
+      x: matrix[12],
+      y: matrix[13],
+      z: matrix[14],
+    }
+  }
+
+  if (convention.translationMode === "lastColumn") {
+    return {
+      x: matrix[3],
+      y: matrix[7],
+      z: matrix[11],
+    }
+  }
+
+  return null
+}
+
+function getRotationAxesForColumnEquivalent(matrix: number[]): {
+  xAxis: Point3
+  yAxis: Point3
+  zAxis: Point3
+} {
+  return {
+    xAxis: { x: matrix[0], y: matrix[4], z: matrix[8] },
+    yAxis: { x: matrix[1], y: matrix[5], z: matrix[9] },
+    zAxis: { x: matrix[2], y: matrix[6], z: matrix[10] },
+  }
+}
+
+function applyMatrixByConvention(
+  matrix: number[],
+  point: Point3,
+  convention: MatrixConventionDefinition,
+): Point3 {
+  return convention.vectorConvention === "column-vector"
+    ? applyMatrix4ColumnVector(matrix, point)
+    : applyMatrix4RowVector(matrix, point)
+}
+
+function applyMatrix4ColumnVector(matrix: number[], point: Point3): Point3 {
   const x = matrix[0] * point.x + matrix[1] * point.y + matrix[2] * point.z + matrix[3]
   const y = matrix[4] * point.x + matrix[5] * point.y + matrix[6] * point.z + matrix[7]
   const z = matrix[8] * point.x + matrix[9] * point.y + matrix[10] * point.z + matrix[11]
   const w = matrix[12] * point.x + matrix[13] * point.y + matrix[14] * point.z + matrix[15]
+
+  if (Number.isFinite(w) && Math.abs(w) > EPSILON && Math.abs(w - 1) > EPSILON) {
+    return {
+      x: x / w,
+      y: y / w,
+      z: z / w,
+    }
+  }
+
+  return { x, y, z }
+}
+
+function applyMatrix4RowVector(matrix: number[], point: Point3): Point3 {
+  const x = point.x * matrix[0] + point.y * matrix[4] + point.z * matrix[8] + matrix[12]
+  const y = point.x * matrix[1] + point.y * matrix[5] + point.z * matrix[9] + matrix[13]
+  const z = point.x * matrix[2] + point.y * matrix[6] + point.z * matrix[10] + matrix[14]
+  const w = point.x * matrix[3] + point.y * matrix[7] + point.z * matrix[11] + matrix[15]
 
   if (Number.isFinite(w) && Math.abs(w) > EPSILON && Math.abs(w - 1) > EPSILON) {
     return {
@@ -2333,6 +3003,49 @@ function maxOrNull(values: number[]): number | null {
 
 function vectorLength(point: Point3): number {
   return Math.hypot(point.x, point.y, point.z)
+}
+
+function calculateDistance(current: Point3, next: Point3): number {
+  return Math.hypot(current.x - next.x, current.y - next.y, current.z - next.z)
+}
+
+function isFinitePoint(point: Point3): boolean {
+  return Number.isFinite(point.x) && Number.isFinite(point.y) && Number.isFinite(point.z)
+}
+
+function hasAbnormalBounds(bounds: BoundsSummary | null): boolean {
+  if (!bounds) {
+    return false
+  }
+
+  return (
+    !Number.isFinite(bounds.width) ||
+    !Number.isFinite(bounds.height) ||
+    !Number.isFinite(bounds.zRange) ||
+    bounds.width > HUGE_BOUNDS_THRESHOLD ||
+    bounds.height > HUGE_BOUNDS_THRESHOLD ||
+    bounds.zRange > HUGE_BOUNDS_THRESHOLD
+  )
+}
+
+function isHugeValueWarning(warning: string): boolean {
+  return (
+    warning.includes("inverseResultHugeBounds") ||
+    warning.includes("matrixConventionLikelyWrong") ||
+    warning.includes("translationInterpretationSuspicious")
+  )
+}
+
+function calculateCandidateScore(
+  averageStdDev3D: number | null,
+  abnormalBoundsCount: number,
+  hugeValueWarningCount: number,
+): number | null {
+  if (averageStdDev3D === null || !Number.isFinite(averageStdDev3D)) {
+    return null
+  }
+
+  return averageStdDev3D + abnormalBoundsCount * 100 + hugeValueWarningCount * 10
 }
 
 function escapeHtml(value: string): string {
