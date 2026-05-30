@@ -19,11 +19,6 @@ type SemanticPointName =
   | "nose"
   | "mouth"
 
-type AlignmentMode =
-  | "semantic_center_scale"
-  | "eye_distance_scale"
-  | "weighted_similarity_2d"
-
 interface Point2 {
   x: number
   y: number
@@ -94,7 +89,6 @@ interface SemanticDefinition {
   primaryIndices: number[]
   fallbackIndices?: number[]
   weight: number
-  zGroup: keyof ZGroupValues
 }
 
 interface SemanticPoint2D extends Point2 {
@@ -125,13 +119,14 @@ interface SearchSettings {
   includeMixedPose: boolean
   rollWarningDeg: number
   blendshapeWarningScore: number
-  semanticWeight: number
-  boundsWeight: number
-  rotationOriginX: number
-  rotationOriginY: number
+  zMin: number
+  zMax: number
+  zStep: number
+  pivotZMin: number
+  pivotZMax: number
+  pivotZStep: number
+  topN: number
   focalLength: number
-  screenRotationMode: "fixed_zero" | "fine_search"
-  alignmentModes: AlignmentMode[]
 }
 
 interface SourceSummary {
@@ -267,122 +262,71 @@ interface Current8DebugSummary {
   current8Warnings: string[]
 }
 
-interface ZGroupValues {
-  noseZ: number
-  cheekZ: number
-  eyeZ: number
-  mouthZ: number
-  chinZ: number
-  headTopZ: number
-}
-
-interface ZProfile {
-  name: string
-  label: string
-  description: string
-  values: ZGroupValues
-}
-
-interface ZProfileDefinition {
-  name: string
-  label: string
-  description: string
-  points: Record<SemanticPointName, number>
-}
-
 interface DepthConvention {
   smallerZ: string
   largerZ: string
   note: string
 }
 
-interface CandidateDefinition {
-  candidateId: string
-  zProfileName: string
-  zValues: Record<SemanticPointName, number>
+interface FittingCandidate8 {
+  zByPointId: Record<SemanticPointName, number>
   pivotZ: number
-  zScale: number
-  rotationOriginX: number
-  rotationOriginY: number
-  alignmentMode: AlignmentMode
-  screenRotationDeg: number
 }
 
-interface AlignmentResult {
-  translateX: number
-  translateY: number
-  uniformScale: number
-  screenRotationDeg: number
+interface CandidateDefinition extends FittingCandidate8 {
+  candidateId: string
 }
 
 interface FrameEvaluation {
   captureId: string
   bucket: CaptureBucket
-  alignment: AlignmentResult
   averageSemanticDistance: number
   weightedSemanticDistance: number
   perPointError: Record<SemanticPointName, number>
-  boundsError: BoundsErrorSummary
-  scalePenalty: number
-  translationPenalty: number
   totalScore: number
   warnings: string[]
 }
 
-interface BoundsErrorSummary {
-  centerError: number
-  widthError: number
-  heightError: number
-  edgeError: number
-  total: number
+type PoseBucketScores = Record<
+  "front" | "yawPositive" | "yawNegative" | "pitchPositive" | "pitchNegative" | "mixedPose",
+  number | null
+>
+
+interface FittingCandidate8Score {
+  rank: number
+  totalScore: number
+  bucketScores: PoseBucketScores
+  candidate: FittingCandidate8
 }
 
 interface CandidateResult extends CandidateDefinition {
   averageSemanticDistance: number
   weightedSemanticDistance: number
   perPointError: Record<SemanticPointName, number>
-  boundsError: BoundsErrorSummary
-  scalePenalty: number
-  translationPenalty: number
-  symmetryPenalty: number
-  zPlausibilityPenalty: number
+  bucketScores: PoseBucketScores
   totalScore: number
   sampleCount: number
   warnings: string[]
   perFrameResults: FrameEvaluation[]
 }
 
-interface RankingEntry {
+interface RankingEntry extends FittingCandidate8Score {
   candidateId: string
-  zProfileName: string
-  pivotZ: number
-  zScale: number
-  alignmentMode: AlignmentMode
-  screenRotationDeg: number
-  totalScore: number
   weightedSemanticDistance: number
   averageSemanticDistance: number
-  boundsError: number
   sampleCount: number
   idealFace8Summary?: IdealFace8CandidateSummary
 }
 
 interface IdealFace8Source {
   type: "best_candidate"
-  zProfileName: string
   pivotZ: number
-  zScale: number
-  alignmentMode: AlignmentMode
-  screenRotationDeg: number
   zApplication: string
 }
 
 interface IdealFace8Point extends Point2 {
   name: SemanticPointName
   z: number
-  zRaw: number
-  zScale: number
-  zScaled: number
 }
 
 interface DepthRelation {
@@ -421,7 +365,7 @@ interface BestIdealFace8 {
     intendedNextStep: "interpolate_8point_depth_to_478_debug_candidate"
     semanticPointNames: SemanticPointName[]
     sourceBase2D: "front_bucket_average_same_unit"
-    zSource: "z_profile_grid_search_best_candidate"
+    zSource: "candidate_8point_z_grid_search_best_candidate"
   }
   points: IdealFace8Point[]
   summary: IdealFace8Summary
@@ -440,7 +384,6 @@ interface AnalysisResult {
   current8MetricsByFrame: Current8MetricsFrame[]
   current8BucketSummary: Record<CaptureBucket, Current8BucketSummaryEntry>
   current8PoseComparison: Current8PoseComparison
-  zProfileDefinitions: ZProfileDefinition[]
   depthConvention: DepthConvention
   searchSettings: SearchSettings
   candidateCount: number
@@ -451,7 +394,6 @@ interface AnalysisResult {
   depthRelation: DepthRelation | null
   bucketRanking: Record<CaptureBucket, RankingEntry[]>
   perPointErrorSummary: Record<SemanticPointName, number | null>
-  boundsErrorSummary: BoundsErrorSummary | null
   warnings: string[]
 }
 
@@ -465,7 +407,6 @@ interface SummaryAnalysisResult {
   current8BucketSummary: Record<CaptureBucket, Current8BucketSummaryEntry>
   current8PoseComparison: Current8PoseComparison
   current8FrameSample: Current8FrameDebug[]
-  zProfileDefinitions: ZProfileDefinition[]
   depthConvention: DepthConvention
   searchSettings: SearchSettings
   topCandidates: RankingEntry[]
@@ -474,7 +415,6 @@ interface SummaryAnalysisResult {
   depthRelation: DepthRelation | null
   bucketRanking: Record<CaptureBucket, RankingEntry[]>
   perPointErrorSummary: Record<SemanticPointName, number | null>
-  boundsErrorSummary: BoundsErrorSummary | null
   warnings: string[]
 }
 
@@ -493,28 +433,24 @@ const SEMANTIC_DEFINITIONS: SemanticDefinition[] = [
     label: "頭頂",
     primaryIndices: [10],
     weight: 0.75,
-    zGroup: "headTopZ",
   },
   {
     name: "chin",
     label: "顎",
     primaryIndices: [152],
     weight: 1.0,
-    zGroup: "chinZ",
   },
   {
     name: "leftCheek",
     label: "左頬",
     primaryIndices: [234],
     weight: 1.0,
-    zGroup: "cheekZ",
   },
   {
     name: "rightCheek",
     label: "右頬",
     primaryIndices: [454],
     weight: 1.0,
-    zGroup: "cheekZ",
   },
   {
     name: "leftEye",
@@ -522,7 +458,6 @@ const SEMANTIC_DEFINITIONS: SemanticDefinition[] = [
     primaryIndices: [474, 475, 476, 477],
     fallbackIndices: [263, 362],
     weight: 1.45,
-    zGroup: "eyeZ",
   },
   {
     name: "rightEye",
@@ -530,21 +465,18 @@ const SEMANTIC_DEFINITIONS: SemanticDefinition[] = [
     primaryIndices: [469, 470, 471, 472],
     fallbackIndices: [33, 133],
     weight: 1.45,
-    zGroup: "eyeZ",
   },
   {
     name: "nose",
     label: "鼻",
     primaryIndices: [4],
     weight: 1.7,
-    zGroup: "noseZ",
   },
   {
     name: "mouth",
     label: "口中心",
     primaryIndices: [13, 14],
     weight: 1.2,
-    zGroup: "mouthZ",
   },
 ]
 
@@ -584,90 +516,16 @@ const DEFAULT_SETTINGS: SearchSettings = {
   includeMixedPose: true,
   rollWarningDeg: 12,
   blendshapeWarningScore: 0.35,
-  semanticWeight: 1,
-  boundsWeight: 0.35,
-  rotationOriginX: 0,
-  rotationOriginY: 0,
+  zMin: -0.24,
+  zMax: 0.24,
+  zStep: 0.24,
+  pivotZMin: -0.48,
+  pivotZMax: 0.48,
+  pivotZStep: 0.24,
+  topN: 20,
   focalLength: 2.6,
-  screenRotationMode: "fine_search",
-  alignmentModes: [
-    "semantic_center_scale",
-    "eye_distance_scale",
-    "weighted_similarity_2d",
-  ],
 }
 
-const Z_PROFILES: ZProfile[] = [
-  {
-    name: "balanced_shallow",
-    label: "Balanced Shallow / 浅めでバランス型の奥行き",
-    description: "鼻を手前、頬を奥に置きつつ、全体の奥行きを浅めにした候補です。",
-    values: {
-      noseZ: -0.18,
-      cheekZ: 0.12,
-      eyeZ: 0.0,
-      mouthZ: -0.06,
-      chinZ: 0.06,
-      headTopZ: 0.04,
-    },
-  },
-  {
-    name: "nose_forward",
-    label: "Nose Forward / 鼻を強めに手前へ置く奥行き",
-    description: "鼻の手前方向を強め、横向き時の鼻先投影差を見やすくする候補です。",
-    values: {
-      noseZ: -0.34,
-      cheekZ: 0.16,
-      eyeZ: 0.0,
-      mouthZ: -0.1,
-      chinZ: 0.1,
-      headTopZ: 0.06,
-    },
-  },
-  {
-    name: "deep_cheek",
-    label: "Deep Cheek / 頬を深めに置く奥行き",
-    description: "頬を奥に置き、左右向きで頬の奥行き差が効きやすいかを見る候補です。",
-    values: {
-      noseZ: -0.24,
-      cheekZ: 0.28,
-      eyeZ: 0.04,
-      mouthZ: -0.08,
-      chinZ: 0.14,
-      headTopZ: 0.08,
-    },
-  },
-  {
-    name: "flat_reference",
-    label: "Flat Reference / 奥行きなし基準",
-    description: "すべての意味点の z を 0 にする基準候補です。",
-    values: {
-      noseZ: 0,
-      cheekZ: 0,
-      eyeZ: 0,
-      mouthZ: 0,
-      chinZ: 0,
-      headTopZ: 0,
-    },
-  },
-  {
-    name: "chin_back",
-    label: "Chin Back / 顎を奥へ置く奥行き",
-    description: "顎をやや奥に置き、輪郭下部の投影差を確認する候補です。",
-    values: {
-      noseZ: -0.22,
-      cheekZ: 0.16,
-      eyeZ: 0.02,
-      mouthZ: -0.02,
-      chinZ: 0.22,
-      headTopZ: 0.04,
-    },
-  },
-]
-
-const PIVOT_Z_CANDIDATES = [-1, -0.5, 0, 0.5, 1]
-const Z_SCALE_CANDIDATES = [0.5, 1, 1.5, 2]
-const SCREEN_ROTATION_FINE_CANDIDATES = [-3, 0, 3]
 const EPSILON = 1e-8
 const DEPTH_CONVENTION: DepthConvention = {
   smallerZ: "front / 手前",
@@ -694,17 +552,17 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
     <header class="header">
       <div class="title-block">
         <h1>理想顔フィッティング検証ラボ</h1>
-        <p>8 semantic points を使って z / pivotZ / zScale / alignment 候補を grid search し、IdealFace 478 の仕様判断材料を作る debug lab です。</p>
+        <p>正面基準 x / y を固定し、8 semantic points それぞれの z と pivotZ だけを探索して、capture frame の current 2D landmarks 8点との誤差でランキングする検証ラボです。</p>
       </div>
       <div class="status-pill">debug lab / production asset ではありません</div>
     </header>
 
     <section class="notice">
-      この tool は正式な IdealFace asset 作成ツールではなく、MediaPipe 標準顔478を確定する tool でもありません。検証結果は production へ直接使わず、docs と今後の IdealFace Authoring Tool の仕様判断に使います。
+      この tool は正式な IdealFace asset 作成ツールではありません。alignmentMode / weighted_similarity_2d / zProfile / zScale は今回の主導線から外し、8点の z と pivotZ の候補を pose へ回転・投影して評価します。
       <ul>
         <li>対象は 8 semantic points: 頭頂、顎、左右頬、左右目、鼻、口です。</li>
         <li>Runtime Projection / Studio Projection / IdealFace Authoring Tool Step 2-I は変更しません。</li>
-        <li>bounds は主基準ではなく、破綻防止の制約として評価します。</li>
+        <li>current 2D landmarks は各 frame の顔 bounds center を原点にした same-unit 座標で比較します。</li>
       </ul>
     </section>
 
@@ -758,23 +616,26 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
             <label>blendshape warning
               <input id="blendshape-warning-input" type="number" min="0" max="1" step="0.05" value="${DEFAULT_SETTINGS.blendshapeWarningScore}" />
             </label>
-            <label>semanticWeight
-              <input id="semantic-weight-input" type="number" min="0" max="10" step="0.1" value="${DEFAULT_SETTINGS.semanticWeight}" />
+            <label>zMin
+              <input id="z-min-input" type="number" min="-3" max="3" step="0.01" value="${DEFAULT_SETTINGS.zMin}" />
             </label>
-            <label>boundsWeight
-              <input id="bounds-weight-input" type="number" min="0" max="10" step="0.05" value="${DEFAULT_SETTINGS.boundsWeight}" />
+            <label>zMax
+              <input id="z-max-input" type="number" min="-3" max="3" step="0.01" value="${DEFAULT_SETTINGS.zMax}" />
             </label>
-            <label>rotationOriginX
-              <input id="rotation-origin-x-input" type="number" min="-2" max="2" step="0.05" value="${DEFAULT_SETTINGS.rotationOriginX}" />
+            <label>zStep
+              <input id="z-step-input" type="number" min="0.001" max="3" step="0.01" value="${DEFAULT_SETTINGS.zStep}" />
             </label>
-            <label>rotationOriginY
-              <input id="rotation-origin-y-input" type="number" min="-2" max="2" step="0.05" value="${DEFAULT_SETTINGS.rotationOriginY}" />
+            <label>pivotZMin
+              <input id="pivot-z-min-input" type="number" min="-3" max="3" step="0.01" value="${DEFAULT_SETTINGS.pivotZMin}" />
             </label>
-            <label>screenRotation
-              <select id="screen-rotation-select">
-                <option value="fine_search" selected>-3 / 0 / +3 度</option>
-                <option value="fixed_zero">0 度固定</option>
-              </select>
+            <label>pivotZMax
+              <input id="pivot-z-max-input" type="number" min="-3" max="3" step="0.01" value="${DEFAULT_SETTINGS.pivotZMax}" />
+            </label>
+            <label>pivotZStep
+              <input id="pivot-z-step-input" type="number" min="0.001" max="3" step="0.01" value="${DEFAULT_SETTINGS.pivotZStep}" />
+            </label>
+            <label>topN
+              <input id="top-n-input" type="number" min="1" max="200" step="1" value="${DEFAULT_SETTINGS.topN}" />
             </label>
             <label>focalLength
               <input id="focal-length-input" type="number" min="0.5" max="10" step="0.1" value="${DEFAULT_SETTINGS.focalLength}" />
@@ -822,14 +683,8 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
         </section>
 
         <section class="panel">
-          <h2>zProfileDefinitions</h2>
-          <p class="panel-help">z は奥行き値です。このラボでは小さい z が手前、大きい z が奥です。</p>
-          <div id="z-profile-definitions" class="table-wrap"></div>
-        </section>
-
-        <section class="panel">
           <h2>bestIdealFace8</h2>
-          <p class="panel-help">zRaw は zProfile そのもの、zScaled は zScale 適用後です。3DIdealFace8 の実値としては zScaled を見ます。</p>
+          <p class="panel-help">正面基準 x / y と bestCandidate の z から作る 8点の IdealFace3D debug artifact です。</p>
           <div id="best-ideal-face8-summary" class="summary-grid"></div>
           <div id="best-ideal-face8-table" class="table-wrap"></div>
         </section>
@@ -928,7 +783,6 @@ function runAnalysis(): void {
   const selected = selectFrames(state.frames, settings)
   const base8Points2DSummary = buildBase8Points2D(selected.frames)
   const current8Debug = buildCurrent8Debug(selected.frames, settings)
-  const zProfileDefinitions = createZProfileDefinitions()
   const warnings = [
     ...selected.summary.warnings,
     ...state.frames.flatMap((frame) => frame.warnings),
@@ -949,7 +803,6 @@ function runAnalysis(): void {
       current8MetricsByFrame: current8Debug.current8MetricsByFrame,
       current8BucketSummary: current8Debug.current8BucketSummary,
       current8PoseComparison: current8Debug.current8PoseComparison,
-      zProfileDefinitions,
       depthConvention: DEPTH_CONVENTION,
       searchSettings: settings,
       candidateCount: 0,
@@ -960,7 +813,6 @@ function runAnalysis(): void {
       depthRelation: null,
       bucketRanking: emptyBucketRanking(),
       perPointErrorSummary: emptyPointSummary(),
-      boundsErrorSummary: null,
       warnings: [...warnings, "front bucket の usable frame が不足しているため base8Points2D を作れません。"],
     }
     renderAnalysis()
@@ -974,7 +826,9 @@ function runAnalysis(): void {
     )
     .sort((a, b) => a.totalScore - b.totalScore)
 
-  const topCandidates = evaluated.slice(0, 50).map(toRankingEntry)
+  const topCandidates = evaluated.slice(0, settings.topN).map((candidate, index) =>
+    toRankingEntry(candidate, index + 1),
+  )
   const bestCandidate = evaluated[0] ?? null
   const bestIdealFace8 = bestCandidate
     ? buildBestIdealFace8(base8Points2DSummary.points!, bestCandidate)
@@ -993,7 +847,6 @@ function runAnalysis(): void {
     current8MetricsByFrame: current8Debug.current8MetricsByFrame,
     current8BucketSummary: current8Debug.current8BucketSummary,
     current8PoseComparison: current8Debug.current8PoseComparison,
-    zProfileDefinitions,
     depthConvention: DEPTH_CONVENTION,
     searchSettings: settings,
     candidateCount: evaluated.length,
@@ -1006,11 +859,10 @@ function runAnalysis(): void {
     depthRelation: bestIdealFace8?.summary.depthRelation ?? null,
     bucketRanking: buildBucketRanking(evaluated, base8Points2DSummary.points!),
     perPointErrorSummary: bestCandidate ? bestCandidate.perPointError : emptyPointSummary(),
-    boundsErrorSummary: bestCandidate ? bestCandidate.boundsError : null,
     warnings: [
       ...new Set([
         ...warnings,
-        "z / pivotZ / zScale は debug 探索候補です。production IdealFace478 の確定値ではありません。",
+        "8点の z / pivotZ は debug 探索候補です。production IdealFace478 の確定値ではありません。",
       ]),
     ],
   }
@@ -1045,13 +897,14 @@ function readSettings(): SearchSettings {
       "blendshape-warning-input",
       DEFAULT_SETTINGS.blendshapeWarningScore,
     ),
-    semanticWeight: readNumber("semantic-weight-input", DEFAULT_SETTINGS.semanticWeight),
-    boundsWeight: readNumber("bounds-weight-input", DEFAULT_SETTINGS.boundsWeight),
-    rotationOriginX: readNumber("rotation-origin-x-input", DEFAULT_SETTINGS.rotationOriginX),
-    rotationOriginY: readNumber("rotation-origin-y-input", DEFAULT_SETTINGS.rotationOriginY),
+    zMin: readNumber("z-min-input", DEFAULT_SETTINGS.zMin),
+    zMax: readNumber("z-max-input", DEFAULT_SETTINGS.zMax),
+    zStep: readNumber("z-step-input", DEFAULT_SETTINGS.zStep),
+    pivotZMin: readNumber("pivot-z-min-input", DEFAULT_SETTINGS.pivotZMin),
+    pivotZMax: readNumber("pivot-z-max-input", DEFAULT_SETTINGS.pivotZMax),
+    pivotZStep: readNumber("pivot-z-step-input", DEFAULT_SETTINGS.pivotZStep),
+    topN: Math.max(1, Math.round(readNumber("top-n-input", DEFAULT_SETTINGS.topN))),
     focalLength: readNumber("focal-length-input", DEFAULT_SETTINGS.focalLength),
-    screenRotationMode: getElement<HTMLSelectElement>("screen-rotation-select")
-      .value as SearchSettings["screenRotationMode"],
   }
 }
 
@@ -1509,45 +1362,104 @@ function buildCandidateDefinitions(
   basePoints: SemanticPointSet2D,
   settings: SearchSettings,
 ): CandidateDefinition[] {
-  const screenRotationCandidates =
-    settings.screenRotationMode === "fine_search" ? SCREEN_ROTATION_FINE_CANDIDATES : [0]
-
-  const definitions: CandidateDefinition[] = []
-
-  for (const zProfile of Z_PROFILES) {
-    const zValues = mapZValuesToSemanticPoints(zProfile.values)
-    for (const pivotZ of PIVOT_Z_CANDIDATES) {
-      for (const zScale of Z_SCALE_CANDIDATES) {
-        for (const alignmentMode of settings.alignmentModes) {
-          for (const screenRotationDeg of screenRotationCandidates) {
-            definitions.push({
-              candidateId: [
-                zProfile.name,
-                `pivot${pivotZ}`,
-                `scale${zScale}`,
-                alignmentMode,
-                `rot${screenRotationDeg}`,
-              ].join("__"),
-              zProfileName: zProfile.name,
-              zValues,
-              pivotZ,
-              zScale,
-              rotationOriginX: settings.rotationOriginX,
-              rotationOriginY: settings.rotationOriginY,
-              alignmentMode,
-              screenRotationDeg,
-            })
-          }
-        }
-      }
-    }
-  }
-
   if (Object.keys(basePoints).length !== SEMANTIC_POINT_NAMES.length) {
     return []
   }
 
+  const zCandidates = createNumericCandidates(settings.zMin, settings.zMax, settings.zStep)
+  const pivotZCandidates = createNumericCandidates(
+    settings.pivotZMin,
+    settings.pivotZMax,
+    settings.pivotZStep,
+  )
+  const definitions: CandidateDefinition[] = []
+  const zByPointId = {} as Record<SemanticPointName, number>
+
+  const visitPoint = (pointIndex: number): void => {
+    if (pointIndex >= SEMANTIC_POINT_NAMES.length) {
+      for (const pivotZ of pivotZCandidates) {
+        const zValues = roundRecord(zByPointId)
+        definitions.push({
+          candidateId: createCandidateId(definitions.length + 1, zValues, pivotZ),
+          zByPointId: zValues,
+          pivotZ,
+        })
+      }
+      return
+    }
+
+    const pointName = SEMANTIC_POINT_NAMES[pointIndex]
+    for (const z of zCandidates) {
+      zByPointId[pointName] = z
+      visitPoint(pointIndex + 1)
+    }
+  }
+
+  visitPoint(0)
   return definitions
+}
+
+function createNumericCandidates(minValue: number, maxValue: number, stepValue: number): number[] {
+  const minCandidate = Math.min(minValue, maxValue)
+  const maxCandidate = Math.max(minValue, maxValue)
+  const step = Math.max(Math.abs(stepValue), EPSILON)
+  const candidates: number[] = []
+
+  for (
+    let value = minCandidate, guard = 0;
+    value <= maxCandidate + step * 0.5 && guard < 10000;
+    value += step, guard += 1
+  ) {
+    candidates.push(round(value))
+  }
+
+  if (candidates.length === 0) {
+    return [round(minCandidate)]
+  }
+  return Array.from(new Set(candidates))
+}
+
+function createCandidateId(
+  index: number,
+  zByPointId: Record<SemanticPointName, number>,
+  pivotZ: number,
+): string {
+  const zLabel = SEMANTIC_POINT_NAMES.map(
+    (name) => `${name}:${formatCompactNumber(zByPointId[name])}`,
+  ).join(",")
+  return `candidate_${String(index).padStart(5, "0")}__pivot:${formatCompactNumber(pivotZ)}__${zLabel}`
+}
+
+function calculateBucketScores(results: FrameEvaluation[]): PoseBucketScores {
+  return {
+    front: averageBucketScore(results, "front"),
+    yawPositive: averageBucketScore(results, "yawPositive"),
+    yawNegative: averageBucketScore(results, "yawNegative"),
+    pitchPositive: averageBucketScore(results, "pitchPositive"),
+    pitchNegative: averageBucketScore(results, "pitchNegative"),
+    mixedPose: averageBucketScore(results, "mixedPose"),
+  }
+}
+
+function averageBucketScore(results: FrameEvaluation[], bucket: CaptureBucket): number | null {
+  return roundNullable(
+    average(results.filter((result) => result.bucket === bucket).map((result) => result.totalScore)),
+  )
+}
+
+function normalizeCurrentPointsForScoring(
+  points: SemanticPointSet2D,
+  bounds: Bounds2D,
+): SemanticPointSet2D {
+  const normalized = {} as SemanticPointSet2D
+  for (const name of SEMANTIC_POINT_NAMES) {
+    normalized[name] = {
+      name,
+      x: points[name].x - bounds.centerX,
+      y: points[name].y - bounds.centerY,
+    }
+  }
+  return normalized
 }
 
 function evaluateCandidate(
@@ -1566,30 +1478,15 @@ function evaluateCandidate(
     average(perFrameResults.map((result) => result.averageSemanticDistance)) ?? Number.POSITIVE_INFINITY
   const weightedSemanticDistance =
     average(perFrameResults.map((result) => result.weightedSemanticDistance)) ?? Number.POSITIVE_INFINITY
-  const boundsError = averageBoundsErrors(perFrameResults.map((result) => result.boundsError))
-  const scalePenalty = average(perFrameResults.map((result) => result.scalePenalty)) ?? 0
-  const translationPenalty =
-    average(perFrameResults.map((result) => result.translationPenalty)) ?? 0
-  const symmetryPenalty = calculateSymmetryPenalty(candidate.zValues)
-  const zPlausibilityPenalty = calculateZPlausibilityPenalty(candidate.zValues)
-  const totalScore =
-    weightedSemanticDistance * settings.semanticWeight +
-    boundsError.total * settings.boundsWeight +
-    scalePenalty +
-    translationPenalty +
-    symmetryPenalty +
-    zPlausibilityPenalty
+  const bucketScores = calculateBucketScores(perFrameResults)
+  const totalScore = weightedSemanticDistance
 
   return {
     ...candidate,
     averageSemanticDistance,
     weightedSemanticDistance,
     perPointError,
-    boundsError,
-    scalePenalty,
-    translationPenalty,
-    symmetryPenalty,
-    zPlausibilityPenalty,
+    bucketScores,
     totalScore,
     sampleCount: perFrameResults.length,
     warnings: Array.from(new Set(perFrameResults.flatMap((result) => result.warnings))),
@@ -1604,14 +1501,8 @@ function evaluateCandidateOnFrame(
   settings: SearchSettings,
 ): FrameEvaluation {
   const projected = projectIdealPoints(ideal3D, frame.pose, candidate, settings)
-  const alignment = alignProjectedPoints(
-    projected,
-    frame.semanticPoints!,
-    candidate.alignmentMode,
-    candidate.screenRotationDeg,
-  )
-  const aligned = applyAlignment(projected, alignment)
-  const perPointError = calculatePerPointErrors(aligned, frame.semanticPoints!)
+  const current = normalizeCurrentPointsForScoring(frame.semanticPoints!, frame.bounds!)
+  const perPointError = calculatePerPointErrors(projected, current)
   const averageSemanticDistance =
     average(SEMANTIC_POINT_NAMES.map((name) => perPointError[name])) ?? Number.POSITIVE_INFINITY
   const weightedSemanticDistance = weightedAverage(
@@ -1620,26 +1511,14 @@ function evaluateCandidateOnFrame(
       weight: definition.weight,
     })),
   )
-  const boundsError = calculateBoundsError(aligned, frame.semanticPoints!)
-  const scalePenalty = Math.max(0, Math.abs(alignment.uniformScale - 1) - 0.15) * 0.04
-  const translationPenalty =
-    Math.max(0, Math.hypot(alignment.translateX, alignment.translateY) - 0.08) * 0.03
 
   return {
     captureId: frame.captureId,
     bucket: frame.bucket,
-    alignment,
     averageSemanticDistance,
     weightedSemanticDistance,
     perPointError,
-    boundsError,
-    scalePenalty,
-    translationPenalty,
-    totalScore:
-      weightedSemanticDistance * settings.semanticWeight +
-      boundsError.total * settings.boundsWeight +
-      scalePenalty +
-      translationPenalty,
+    totalScore: weightedSemanticDistance,
     warnings: frame.warnings,
   }
 }
@@ -1653,19 +1532,10 @@ function buildIdeal3D(
     points[name] = {
       x: basePoints[name].x,
       y: basePoints[name].y,
-      z: candidate.zValues[name],
+      z: candidate.zByPointId[name],
     }
   }
   return points
-}
-
-function createZProfileDefinitions(): ZProfileDefinition[] {
-  return Z_PROFILES.map((profile) => ({
-    name: profile.name,
-    label: profile.label,
-    description: profile.description,
-    points: mapZValuesToSemanticPoints(profile.values),
-  }))
 }
 
 function buildBestIdealFace8(
@@ -1673,16 +1543,12 @@ function buildBestIdealFace8(
   candidate: CandidateDefinition,
 ): BestIdealFace8 {
   const points = SEMANTIC_POINT_NAMES.map((name) => {
-    const zRaw = candidate.zValues[name]
-    const zScaled = zRaw * candidate.zScale
+    const z = candidate.zByPointId[name]
     return {
       name,
       x: round(basePoints[name].x),
       y: round(basePoints[name].y),
-      z: round(zScaled),
-      zRaw: round(zRaw),
-      zScale: round(candidate.zScale),
-      zScaled: round(zScaled),
+      z: round(z),
     }
   })
 
@@ -1692,19 +1558,15 @@ function buildBestIdealFace8(
     depthConvention: DEPTH_CONVENTION,
     source: {
       type: "best_candidate",
-      zProfileName: candidate.zProfileName,
       pivotZ: round(candidate.pivotZ),
-      zScale: round(candidate.zScale),
-      alignmentMode: candidate.alignmentMode,
-      screenRotationDeg: round(candidate.screenRotationDeg),
       zApplication:
-        "points[].z は zScaled と同じ値です。zScaled = zRaw * zScale。pivotZ は grid search projection 用に source へ記録し、点の z には焼き込みません。",
+        "points[].z は candidate.zByPointId の値です。pivotZ は projection 用の回転中心奥行きとして source に記録し、点の z には焼き込みません。",
     },
     metadata: {
       intendedNextStep: "interpolate_8point_depth_to_478_debug_candidate",
       semanticPointNames: [...SEMANTIC_POINT_NAMES],
       sourceBase2D: "front_bucket_average_same_unit",
-      zSource: "z_profile_grid_search_best_candidate",
+      zSource: "candidate_8point_z_grid_search_best_candidate",
     },
     points,
     summary: summarizeIdealFace8(points),
@@ -1772,20 +1634,10 @@ function attachIdealFace8Summary(
   if (!basePoints) {
     return entry
   }
-  const zProfile = Z_PROFILES.find((profile) => profile.name === entry.zProfileName)
-  if (!zProfile) {
-    return entry
-  }
   const candidate: CandidateDefinition = {
     candidateId: entry.candidateId,
-    zProfileName: entry.zProfileName,
-    zValues: mapZValuesToSemanticPoints(zProfile.values),
-    pivotZ: entry.pivotZ,
-    zScale: entry.zScale,
-    rotationOriginX: 0,
-    rotationOriginY: 0,
-    alignmentMode: entry.alignmentMode,
-    screenRotationDeg: entry.screenRotationDeg,
+    zByPointId: entry.candidate.zByPointId,
+    pivotZ: entry.candidate.pivotZ,
   }
   const idealFace8 = buildBestIdealFace8(basePoints, candidate)
   return {
@@ -1804,9 +1656,9 @@ function projectIdealPoints(
   for (const name of SEMANTIC_POINT_NAMES) {
     const rotated = rotatePoint3D(
       {
-        x: ideal3D[name].x - candidate.rotationOriginX,
-        y: ideal3D[name].y - candidate.rotationOriginY,
-        z: (ideal3D[name].z - candidate.pivotZ) * candidate.zScale,
+        x: ideal3D[name].x,
+        y: ideal3D[name].y,
+        z: ideal3D[name].z - candidate.pivotZ,
       },
       pose,
     )
@@ -1814,125 +1666,11 @@ function projectIdealPoints(
     const perspective = settings.focalLength / Math.max(settings.focalLength + z, 0.2)
     points[name] = {
       name,
-      x: (rotated.x + candidate.rotationOriginX) * perspective,
-      y: (rotated.y + candidate.rotationOriginY) * perspective,
+      x: rotated.x * perspective,
+      y: rotated.y * perspective,
     }
   }
   return points
-}
-
-function alignProjectedPoints(
-  projected: SemanticPointSet2D,
-  current: SemanticPointSet2D,
-  mode: AlignmentMode,
-  screenRotationDeg: number,
-): AlignmentResult {
-  if (mode === "eye_distance_scale") {
-    return alignByEyeDistance(projected, current, screenRotationDeg)
-  }
-  if (mode === "weighted_similarity_2d") {
-    return alignByWeightedSimilarity(projected, current, screenRotationDeg)
-  }
-  return alignBySemanticCenter(projected, current, screenRotationDeg)
-}
-
-function alignBySemanticCenter(
-  projected: SemanticPointSet2D,
-  current: SemanticPointSet2D,
-  screenRotationDeg: number,
-): AlignmentResult {
-  const projectedCenter = weightedCenter(projected, SEMANTIC_DEFINITIONS)
-  const currentCenter = weightedCenter(current, SEMANTIC_DEFINITIONS)
-  const projectedRadius = weightedRadius(projected, projectedCenter)
-  const currentRadius = weightedRadius(current, currentCenter)
-  const uniformScale = safeScale(currentRadius, projectedRadius)
-  const rotatedCenter = rotatePoint2D(projectedCenter, screenRotationDeg)
-
-  return {
-    uniformScale,
-    screenRotationDeg,
-    translateX: currentCenter.x - rotatedCenter.x * uniformScale,
-    translateY: currentCenter.y - rotatedCenter.y * uniformScale,
-  }
-}
-
-function alignByEyeDistance(
-  projected: SemanticPointSet2D,
-  current: SemanticPointSet2D,
-  screenRotationDeg: number,
-): AlignmentResult {
-  const projectedEyeDistance = distance2D(projected.leftEye, projected.rightEye)
-  const currentEyeDistance = distance2D(current.leftEye, current.rightEye)
-  const uniformScale = safeScale(currentEyeDistance, projectedEyeDistance)
-  const weights = [
-    { name: "leftEye" as SemanticPointName, weight: 1.5 },
-    { name: "rightEye" as SemanticPointName, weight: 1.5 },
-    { name: "nose" as SemanticPointName, weight: 1.4 },
-    { name: "mouth" as SemanticPointName, weight: 0.8 },
-  ]
-  const projectedCenter = weightedCenterByName(projected, weights)
-  const currentCenter = weightedCenterByName(current, weights)
-  const rotatedCenter = rotatePoint2D(projectedCenter, screenRotationDeg)
-
-  return {
-    uniformScale,
-    screenRotationDeg,
-    translateX: currentCenter.x - rotatedCenter.x * uniformScale,
-    translateY: currentCenter.y - rotatedCenter.y * uniformScale,
-  }
-}
-
-function alignByWeightedSimilarity(
-  projected: SemanticPointSet2D,
-  current: SemanticPointSet2D,
-  screenRotationDeg: number,
-): AlignmentResult {
-  const projectedCenter = weightedCenter(projected, SEMANTIC_DEFINITIONS)
-  const currentCenter = weightedCenter(current, SEMANTIC_DEFINITIONS)
-  let a = 0
-  let b = 0
-  let denominator = 0
-
-  for (const definition of SEMANTIC_DEFINITIONS) {
-    const source = projected[definition.name]
-    const target = current[definition.name]
-    const sx = source.x - projectedCenter.x
-    const sy = source.y - projectedCenter.y
-    const tx = target.x - currentCenter.x
-    const ty = target.y - currentCenter.y
-    a += definition.weight * (sx * tx + sy * ty)
-    b += definition.weight * (sx * ty - sy * tx)
-    denominator += definition.weight * (sx * sx + sy * sy)
-  }
-
-  const fittedRotationDeg = radiansToDegrees(Math.atan2(b, a))
-  const uniformScale =
-    denominator <= EPSILON ? 1 : Math.sqrt(a * a + b * b) / denominator
-  const screenRotation = fittedRotationDeg + screenRotationDeg
-  const rotatedCenter = rotatePoint2D(projectedCenter, screenRotation)
-
-  return {
-    uniformScale,
-    screenRotationDeg: screenRotation,
-    translateX: currentCenter.x - rotatedCenter.x * uniformScale,
-    translateY: currentCenter.y - rotatedCenter.y * uniformScale,
-  }
-}
-
-function applyAlignment(
-  projected: SemanticPointSet2D,
-  alignment: AlignmentResult,
-): SemanticPointSet2D {
-  const result = {} as SemanticPointSet2D
-  for (const name of SEMANTIC_POINT_NAMES) {
-    const rotated = rotatePoint2D(projected[name], alignment.screenRotationDeg)
-    result[name] = {
-      name,
-      x: rotated.x * alignment.uniformScale + alignment.translateX,
-      y: rotated.y * alignment.uniformScale + alignment.translateY,
-    }
-  }
-  return result
 }
 
 function calculatePerPointErrors(
@@ -1988,7 +1726,7 @@ function buildBucketRanking(
           return null
         }
         return attachIdealFace8Summary({
-          ...toRankingEntry(candidate),
+          ...toRankingEntry(candidate, 0),
           totalScore: average(frameResults.map((result) => result.totalScore)) ?? candidate.totalScore,
           weightedSemanticDistance:
             average(frameResults.map((result) => result.weightedSemanticDistance)) ??
@@ -1996,14 +1734,12 @@ function buildBucketRanking(
           averageSemanticDistance:
             average(frameResults.map((result) => result.averageSemanticDistance)) ??
             candidate.averageSemanticDistance,
-          boundsError:
-            average(frameResults.map((result) => result.boundsError.total)) ??
-            candidate.boundsError.total,
           sampleCount: frameResults.length,
         }, basePoints)
       })
       .filter((entry): entry is RankingEntry => Boolean(entry))
       .sort((a, b) => a.totalScore - b.totalScore)
+      .map((entry, index) => ({ ...entry, rank: index + 1 }))
       .slice(0, 5)
     ranking[bucket] = entries
   }
@@ -2042,12 +1778,11 @@ function createSummaryAnalysis(analysis: AnalysisResult): SummaryAnalysisResult 
         }
       }),
     ),
-    zProfileDefinitions: analysis.zProfileDefinitions,
     depthConvention: analysis.depthConvention,
     searchSettings: analysis.searchSettings,
     topCandidates: analysis.topCandidates.slice(0, 20),
     bestCandidate: analysis.bestCandidate
-      ? attachIdealFace8Summary(toRankingEntry(analysis.bestCandidate), analysis.base8Points2DSummary.points)
+      ? attachIdealFace8Summary(toRankingEntry(analysis.bestCandidate, 1), analysis.base8Points2DSummary.points)
       : null,
     bestIdealFace8: analysis.bestIdealFace8,
     depthRelation: analysis.depthRelation,
@@ -2055,7 +1790,6 @@ function createSummaryAnalysis(analysis: AnalysisResult): SummaryAnalysisResult 
       BUCKETS.map((bucket) => [bucket, analysis.bucketRanking[bucket].slice(0, 5)]),
     ) as Record<CaptureBucket, RankingEntry[]>,
     perPointErrorSummary: analysis.perPointErrorSummary,
-    boundsErrorSummary: analysis.boundsErrorSummary,
     warnings: analysis.warnings,
   }
 }
@@ -2116,7 +1850,6 @@ function renderSourceOnly(): void {
   getElement("current8-frame-table").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
   getElement("ranking-table").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
   getElement("best-candidate").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
-  getElement("z-profile-definitions").innerHTML = renderZProfileDefinitionsTable(createZProfileDefinitions())
   getElement("best-ideal-face8-summary").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
   getElement("best-ideal-face8-table").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
   getElement("depth-relation").innerHTML = renderDepthConvention(DEPTH_CONVENTION)
@@ -2127,7 +1860,6 @@ function renderSourceOnly(): void {
     {
       importedFile: state.fileName,
       sourceSummary,
-      zProfileDefinitions: createZProfileDefinitions(),
       depthConvention: DEPTH_CONVENTION,
       semanticIndexDebug: buildSemanticIndexDebug(),
     },
@@ -2182,15 +1914,16 @@ function renderAnalysis(): void {
         ["candidateId", analysis.bestCandidate.candidateId],
         ["totalScore", formatNumber(analysis.bestCandidate.totalScore)],
         ["weightedSemanticDistance", formatNumber(analysis.bestCandidate.weightedSemanticDistance)],
-        ["boundsError", formatNumber(analysis.bestCandidate.boundsError.total)],
-        ["zProfile", analysis.bestCandidate.zProfileName],
-        ["zValues", JSON.stringify(roundRecord(analysis.bestCandidate.zValues))],
+        ["frontScore", formatNumber(analysis.bestCandidate.bucketScores.front)],
+        ["yawPositiveScore", formatNumber(analysis.bestCandidate.bucketScores.yawPositive)],
+        ["yawNegativeScore", formatNumber(analysis.bestCandidate.bucketScores.yawNegative)],
+        ["pitchPositiveScore", formatNumber(analysis.bestCandidate.bucketScores.pitchPositive)],
+        ["pitchNegativeScore", formatNumber(analysis.bestCandidate.bucketScores.pitchNegative)],
+        ["mixedPoseScore", formatNumber(analysis.bestCandidate.bucketScores.mixedPose)],
+        ["zByPointId", JSON.stringify(roundRecord(analysis.bestCandidate.zByPointId))],
         ["pivotZ", formatNumber(analysis.bestCandidate.pivotZ)],
-        ["zScale", formatNumber(analysis.bestCandidate.zScale)],
-        ["alignmentMode", analysis.bestCandidate.alignmentMode],
       ])
     : `<p class="empty">候補がありません。</p>`
-  getElement("z-profile-definitions").innerHTML = renderZProfileDefinitionsTable(analysis.zProfileDefinitions)
   getElement("best-ideal-face8-summary").innerHTML = analysis.bestIdealFace8
     ? renderIdealFace8Summary(analysis.bestIdealFace8)
     : `<p class="empty">bestIdealFace8 はありません。</p>`
@@ -2203,7 +1936,10 @@ function renderAnalysis(): void {
   getElement("bucket-ranking").innerHTML = renderBucketRanking(analysis.bucketRanking)
   getElement("error-summary").innerHTML = renderStatusItems([
     ["perPointError", JSON.stringify(roundRecord(analysis.perPointErrorSummary))],
-    ["boundsError", analysis.boundsErrorSummary ? JSON.stringify(roundRecord(analysis.boundsErrorSummary)) : "-"],
+    [
+      "bucketScores",
+      analysis.bestCandidate ? JSON.stringify(roundRecord(analysis.bestCandidate.bucketScores)) : "-",
+    ],
   ])
   getElement("warnings").textContent = analysis.warnings.length === 0 ? "警告はありません。" : analysis.warnings.join("\n")
   getElement("json-preview").textContent = JSON.stringify(createSummaryAnalysis(analysis), null, 2)
@@ -2219,7 +1955,6 @@ function renderEmptyState(): void {
   getElement("current8-frame-table").innerHTML = `<p class="empty">未解析です。</p>`
   getElement("ranking-table").innerHTML = `<p class="empty">未解析です。</p>`
   getElement("best-candidate").innerHTML = `<p class="empty">未解析です。</p>`
-  getElement("z-profile-definitions").innerHTML = renderZProfileDefinitionsTable(createZProfileDefinitions())
   getElement("best-ideal-face8-summary").innerHTML = `<p class="empty">未解析です。</p>`
   getElement("best-ideal-face8-table").innerHTML = `<p class="empty">未解析です。</p>`
   getElement("depth-relation").innerHTML = renderDepthConvention(DEPTH_CONVENTION)
@@ -2229,7 +1964,6 @@ function renderEmptyState(): void {
   getElement("json-preview").textContent = JSON.stringify(
     {
       schemaVersion: "ideal_face_fitting_lab_analysis_summary_v1",
-      zProfileDefinitions: createZProfileDefinitions(),
       depthConvention: DEPTH_CONVENTION,
       semanticIndexDebug: buildSemanticIndexDebug(),
       note: "captured JSON import 後に summary を表示します。",
@@ -2249,7 +1983,6 @@ function renderSemanticMapping(): void {
           <th>primary index</th>
           <th>fallback index</th>
           <th>weight</th>
-          <th>z group</th>
         </tr>
       </thead>
       <tbody>
@@ -2261,7 +1994,6 @@ function renderSemanticMapping(): void {
               <td><code>${definition.primaryIndices.join(", ")}</code></td>
               <td><code>${definition.fallbackIndices?.join(", ") ?? "-"}</code></td>
               <td>${definition.weight}</td>
-              <td><code>${definition.zGroup}</code></td>
             </tr>
           `,
         ).join("")}
@@ -2389,43 +2121,12 @@ function renderCurrent8FrameTable(entries: Current8MetricsFrame[]): string {
   `
 }
 
-function renderZProfileDefinitionsTable(definitions: ZProfileDefinition[]): string {
-  return `
-    <table>
-      <thead>
-        <tr>
-          <th>name</th>
-          <th>label</th>
-          <th>description</th>
-          ${SEMANTIC_POINT_NAMES.map((name) => `<th>${name}</th>`).join("")}
-        </tr>
-      </thead>
-      <tbody>
-        ${definitions.map(
-          (definition) => `
-            <tr>
-              <td><code>${definition.name}</code></td>
-              <td>${escapeHtml(definition.label)}</td>
-              <td>${escapeHtml(definition.description)}</td>
-              ${SEMANTIC_POINT_NAMES.map(
-                (name) => `<td>${formatNumber(definition.points[name])}</td>`,
-              ).join("")}
-            </tr>
-          `,
-        ).join("")}
-      </tbody>
-    </table>
-  `
-}
-
 function renderIdealFace8Summary(idealFace8: BestIdealFace8): string {
   return renderStatusItems([
     ["schemaVersion", idealFace8.schemaVersion],
     ["coordinateSpace", idealFace8.coordinateSpace],
     ["zApplication", idealFace8.source.zApplication],
-    ["zProfileName", idealFace8.source.zProfileName],
     ["pivotZ", formatNumber(idealFace8.source.pivotZ)],
-    ["zScale", formatNumber(idealFace8.source.zScale)],
     ["pointCount", String(idealFace8.summary.pointCount)],
     ["bounds", formatBounds(idealFace8.summary.bounds)],
     ["zRange", formatNumber(idealFace8.summary.zRange)],
@@ -2444,9 +2145,6 @@ function renderIdealFace8Table(points: IdealFace8Point[]): string {
           <th>name</th>
           <th>x</th>
           <th>y</th>
-          <th>zRaw</th>
-          <th>zScale</th>
-          <th>zScaled</th>
           <th>z</th>
         </tr>
       </thead>
@@ -2457,9 +2155,6 @@ function renderIdealFace8Table(points: IdealFace8Point[]): string {
               <td><code>${point.name}</code></td>
               <td>${formatNumber(point.x)}</td>
               <td>${formatNumber(point.y)}</td>
-              <td>${formatNumber(point.zRaw)}</td>
-              <td>${formatNumber(point.zScale)}</td>
-              <td>${formatNumber(point.zScaled)}</td>
               <td>${formatNumber(point.z)}</td>
             </tr>
           `,
@@ -2503,29 +2198,35 @@ function renderRankingTable(entries: RankingEntry[]): string {
       <thead>
         <tr>
           <th>#</th>
-          <th>candidate</th>
-          <th>score</th>
-          <th>semantic</th>
-          <th>bounds</th>
+          <th>candidateId</th>
+          <th>totalScore</th>
+          <th>front</th>
+          <th>yaw+</th>
+          <th>yaw-</th>
+          <th>pitch+</th>
+          <th>pitch-</th>
+          <th>mixed</th>
           <th>pivotZ</th>
-          <th>zScale</th>
-          <th>alignment</th>
-          <th>roll</th>
+          ${SEMANTIC_POINT_NAMES.map((name) => `<th>${name}.z</th>`).join("")}
         </tr>
       </thead>
       <tbody>
         ${entries.map(
           (entry, index) => `
             <tr>
-              <td>${index + 1}</td>
-              <td><code>${entry.zProfileName}</code></td>
+              <td>${entry.rank || index + 1}</td>
+              <td><code>${entry.candidateId}</code></td>
               <td>${formatNumber(entry.totalScore)}</td>
-              <td>${formatNumber(entry.weightedSemanticDistance)}</td>
-              <td>${formatNumber(entry.boundsError)}</td>
-              <td>${formatNumber(entry.pivotZ)}</td>
-              <td>${formatNumber(entry.zScale)}</td>
-              <td><code>${entry.alignmentMode}</code></td>
-              <td>${formatNumber(entry.screenRotationDeg)}</td>
+              <td>${formatNumber(entry.bucketScores.front)}</td>
+              <td>${formatNumber(entry.bucketScores.yawPositive)}</td>
+              <td>${formatNumber(entry.bucketScores.yawNegative)}</td>
+              <td>${formatNumber(entry.bucketScores.pitchPositive)}</td>
+              <td>${formatNumber(entry.bucketScores.pitchNegative)}</td>
+              <td>${formatNumber(entry.bucketScores.mixedPose)}</td>
+              <td>${formatNumber(entry.candidate.pivotZ)}</td>
+              ${SEMANTIC_POINT_NAMES.map(
+                (name) => `<td>${formatNumber(entry.candidate.zByPointId[name])}</td>`,
+              ).join("")}
             </tr>
           `,
         ).join("")}
@@ -2551,7 +2252,7 @@ function renderBucketRanking(bucketRanking: Record<CaptureBucket, RankingEntry[]
               <td>${bucketRanking[bucket]
                 .map(
                   (entry, index) =>
-                    `${index + 1}. ${entry.zProfileName} / ${entry.alignmentMode} / score ${formatNumber(entry.totalScore)}`,
+                    `${index + 1}. ${entry.candidateId} / score ${formatNumber(entry.totalScore)}`,
                 )
                 .join("<br />") || "-"}</td>
             </tr>
@@ -2683,43 +2384,6 @@ function rotatePoint3D(point: Point3, pose: Pose): Point3 {
   }
 }
 
-function rotatePoint2D(point: Point2, degrees: number): Point2 {
-  const radians = degreesToRadians(degrees)
-  const cos = Math.cos(radians)
-  const sin = Math.sin(radians)
-  return {
-    x: point.x * cos - point.y * sin,
-    y: point.x * sin + point.y * cos,
-  }
-}
-
-function mapZValuesToSemanticPoints(values: ZGroupValues): Record<SemanticPointName, number> {
-  const result = {} as Record<SemanticPointName, number>
-  for (const definition of SEMANTIC_DEFINITIONS) {
-    result[definition.name] = values[definition.zGroup]
-  }
-  return result
-}
-
-function calculateSymmetryPenalty(zValues: Record<SemanticPointName, number>): number {
-  return (
-    Math.abs(zValues.leftCheek - zValues.rightCheek) +
-    Math.abs(zValues.leftEye - zValues.rightEye)
-  ) * 0.03
-}
-
-function calculateZPlausibilityPenalty(zValues: Record<SemanticPointName, number>): number {
-  let penalty = 0
-  if (zValues.nose >= zValues.leftCheek || zValues.nose >= zValues.rightCheek) {
-    penalty += 0.08
-  }
-  const zRange = max(Object.values(zValues))! - min(Object.values(zValues))!
-  penalty += Math.max(0, zRange - 1.2) * 0.05
-  penalty += Math.abs(zValues.leftCheek - zValues.rightCheek) * 0.04
-  penalty += Math.abs(zValues.leftEye - zValues.rightEye) * 0.04
-  return penalty
-}
-
 function averagePerPointError(results: FrameEvaluation[]): Record<SemanticPointName, number> {
   const summary = {} as Record<SemanticPointName, number>
   for (const name of SEMANTIC_POINT_NAMES) {
@@ -2728,28 +2392,18 @@ function averagePerPointError(results: FrameEvaluation[]): Record<SemanticPointN
   return summary
 }
 
-function averageBoundsErrors(items: BoundsErrorSummary[]): BoundsErrorSummary {
+function toRankingEntry(candidate: CandidateResult, rank: number): RankingEntry {
   return {
-    centerError: average(items.map((item) => item.centerError)) ?? 0,
-    widthError: average(items.map((item) => item.widthError)) ?? 0,
-    heightError: average(items.map((item) => item.heightError)) ?? 0,
-    edgeError: average(items.map((item) => item.edgeError)) ?? 0,
-    total: average(items.map((item) => item.total)) ?? 0,
-  }
-}
-
-function toRankingEntry(candidate: CandidateResult): RankingEntry {
-  return {
+    rank,
     candidateId: candidate.candidateId,
-    zProfileName: candidate.zProfileName,
-    pivotZ: round(candidate.pivotZ),
-    zScale: round(candidate.zScale),
-    alignmentMode: candidate.alignmentMode,
-    screenRotationDeg: round(candidate.screenRotationDeg),
     totalScore: round(candidate.totalScore),
+    bucketScores: roundRecord(candidate.bucketScores),
+    candidate: {
+      pivotZ: round(candidate.pivotZ),
+      zByPointId: roundRecord(candidate.zByPointId),
+    },
     weightedSemanticDistance: round(candidate.weightedSemanticDistance),
     averageSemanticDistance: round(candidate.averageSemanticDistance),
-    boundsError: round(candidate.boundsError.total),
     sampleCount: candidate.sampleCount,
   }
 }
@@ -2799,39 +2453,6 @@ function averageByIndices(points: LandmarkPoint[], indices: number[]): Point3 | 
     y: average(indexedPoints.map((point) => point.y)) ?? 0,
     z: average(indexedPoints.map((point) => point.z)) ?? 0,
   }
-}
-
-function weightedCenter(
-  points: SemanticPointSet2D,
-  definitions: SemanticDefinition[],
-): Point2 {
-  return weightedCenterByName(
-    points,
-    definitions.map((definition) => ({
-      name: definition.name,
-      weight: definition.weight,
-    })),
-  )
-}
-
-function weightedCenterByName(
-  points: SemanticPointSet2D,
-  weights: Array<{ name: SemanticPointName; weight: number }>,
-): Point2 {
-  const weightTotal = weights.reduce((total, item) => total + item.weight, 0)
-  return {
-    x: weights.reduce((total, item) => total + points[item.name].x * item.weight, 0) / weightTotal,
-    y: weights.reduce((total, item) => total + points[item.name].y * item.weight, 0) / weightTotal,
-  }
-}
-
-function weightedRadius(points: SemanticPointSet2D, center: Point2): number {
-  return weightedAverage(
-    SEMANTIC_DEFINITIONS.map((definition) => ({
-      value: distance2D(points[definition.name], center),
-      weight: definition.weight,
-    })),
-  )
 }
 
 function weightedAverage(items: Array<{ value: number; weight: number }>): number {
@@ -2904,13 +2525,6 @@ function formatBounds(bounds: Bounds2D | null): string {
 
 function toSameUnitX(x: number, aspectRatio: number): number {
   return (x - 0.5) * aspectRatio
-}
-
-function safeScale(current: number, projected: number): number {
-  if (Math.abs(projected) <= EPSILON) {
-    return 1
-  }
-  return current / projected
 }
 
 function safeRatio(value: number | null, base: number | null): number | null {
@@ -3028,16 +2642,16 @@ function formatNumber(value: number | null | undefined): string {
   return typeof value === "number" && Number.isFinite(value) ? value.toFixed(6) : "-"
 }
 
+function formatCompactNumber(value: number): string {
+  return round(value).toString().replaceAll(".", "p").replaceAll("-", "m")
+}
+
 function formatBooleanOrNull(value: boolean | null): string {
   return value === null ? "-" : String(value)
 }
 
 function degreesToRadians(degrees: number): number {
   return (degrees / 180) * Math.PI
-}
-
-function radiansToDegrees(radians: number): number {
-  return (radians / Math.PI) * 180
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

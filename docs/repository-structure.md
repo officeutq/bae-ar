@@ -2,40 +2,38 @@
 
 ## `tools/ideal-face-fitting-lab`
 
-IdealFace Fitting Lab は、captured JSON の current landmarks 478 から 8 semantic points を取り出し、front bucket 由来の base8Points2D と pose bucket の selected frames を使って coarse grid search を行う debug lab です。
-
-目的:
-
-- IdealFace478 の z / pivotZ / zScale / rotationOrigin を検証する
-- semantic alignment と bounds constraint の評価材料を作る
-- Summary JSON を docs / review / ChatGPT 相談用に出力する
-- `bestCandidate` から 8点だけの `bestIdealFace8` を出力する
-- selected frame ごとの current 2D 8 points debug を出力し、横向き時の現在顔8点の外枠・縦横比・鼻や頬の位置変化を確認する
+IdealFace Fitting Lab は、production 用 IdealFace asset を直接作る正式ツールではありません。captured JSON の current landmarks 478 から 8 semantic points を取り出し、front bucket 由来の `base8Points2D` を正面基準 x / y として固定したうえで、8点それぞれの z と pivotZ だけを未知数として探索する debug lab です。
 
 扱うもの:
 
 - headTop / chin / leftCheek / rightCheek / leftEye / rightEye / nose / mouth
-- `semantic_center_scale` / `eye_distance_scale` / `weighted_similarity_2d`
-- semantic error / bounds error / scalePenalty / translationPenalty / symmetryPenalty / zPlausibilityPenalty
+- `zMin` / `zMax` / `zStep`
+- `pivotZMin` / `pivotZMax` / `pivotZStep`
+- capture frame の yaw / pitch / roll による Projection
+- projectedIdeal2D と current 2D landmarks 8点の pointError / frameScore / totalScore
+- front / yawPositive / yawNegative / pitchPositive / pitchNegative / mixedPose の `bucketScores`
 - Full Fitting JSON / Summary JSON export
-- `zProfileDefinitions` / `depthConvention` / `bestIdealFace8` / `depthRelation`
+- `bestCandidate` / `bestIdealFace8` / `depthRelation`
 - `current8BucketSummary` / `current8PoseComparison` / `current8FrameSample`
-- Full JSON の `current8PointsByFrame` / `current8BoundsByFrame` / `current8MetricsByFrame`
 
 扱わないもの:
 
+- alignmentMode による 2D 再フィット
+- `weighted_similarity_2d`
+- `zProfile`
+- `zScale`
+- matrix inverse で current landmarks を標準顔座標へ戻す処理
 - production 用 IdealFace asset 作成
 - production 用 IdealFace asset schema 変更
 - IdealFace Authoring Tool Step 2-I の変更
 - MediaPipe Canonical Lab の実装変更
 - Runtime / Studio Projection の変更
-- 478 点全体最適化、GPU、gradient descent、WebGL、Shape Warp 接続
+- 478点への拡張
 - `provisionalIdealFace478` 生成
 
-`bestIdealFace8` は `front` bucket 由来の `base8Points2D` と、grid search の最良 `zProfile` を組み合わせた検証用成果物です。z は `zRaw` と `zScaled` を区別し、Summary JSON にも `zProfileDefinitions` 全件を含めます。478点への拡張は次段であり、この lab ではまだ生成しません。
+`bestIdealFace8` は `front` bucket 由来の `base8Points2D` と grid search の最良 `FittingCandidate8.zByPointId` を組み合わせた検証用成果物です。pivotZ は Projection 用の回転中心奥行きとして source に残し、各点の z には焼き込みません。478点への拡張は次段であり、この lab ではまだ生成しません。
 
-`current8` debug は `bestIdealFace8` ではなく、MediaPipe が検出した current landmarks 478 から8つの semantic points だけを抜き出した比較対象です。浅い z が良く見える理由を判断する前に、front と yawPositive / yawNegative の current 2D 8 points がどの程度細くなるかを確認するために使います。
-
+`current8` debug は `bestIdealFace8` ではなく、MediaPipe が検出した current landmarks 478 から8つの semantic points だけを抜き出した比較対象です。front と yawPositive / yawNegative などの current 2D 8 points がどの程度変化するかを確認するために使います。
 ## 現在の構成
 
 ```text
