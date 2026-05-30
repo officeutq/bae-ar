@@ -41,6 +41,17 @@ type MatrixConventionName =
 
 type TranslationMode = "lastColumn" | "lastRow" | "none"
 
+type Canonical468Status = "not_imported" | "loaded" | "invalid"
+
+type CanonicalProjectionCandidateName =
+  | "raw_matrix_then_normalize_bounds"
+  | "raw_matrix_then_fit_current_bounds_uniform"
+  | "raw_matrix_then_fit_current_bounds_xy"
+  | "rotation_only_then_fit_current_bounds_uniform"
+  | "rotation_only_then_fit_current_bounds_xy"
+  | "translation_included_then_fit_current_bounds_uniform"
+  | "translation_included_then_fit_current_bounds_xy"
+
 interface Point3 {
   x: number
   y: number
@@ -154,6 +165,40 @@ interface SemanticSummary {
     cheekDepthDelta: number | null
     contourDepthDelta: number | null
   }
+}
+
+interface SemanticIndexDebug {
+  noseTip: number[]
+  eyeCenter: {
+    leftEye: number[]
+    rightEye: number[]
+  }
+  mouthCenter: number[]
+  chin: number[]
+  leftCheek: number[]
+  rightCheek: number[]
+  leftContour: number[]
+  rightContour: number[]
+}
+
+interface Canonical468Summary {
+  status: Canonical468Status
+  source: string | null
+  vertexCount: number
+  bounds: BoundsSummary | null
+  centroid: Point3 | null
+  boundsCenter: Point3 | null
+  zRange: number | null
+  semanticSummary: SemanticSummary
+  semanticIndexDebug: SemanticIndexDebug
+  warnings: string[]
+}
+
+interface ImportedCanonical468 {
+  status: Canonical468Status
+  source: string
+  vertices: LandmarkPoint[]
+  summary: Canonical468Summary
 }
 
 interface CaptureRawAnalysis {
@@ -348,6 +393,76 @@ interface StabilityRankingEntry {
   sampleCount: number
 }
 
+interface CanonicalProjectionCandidateDefinition {
+  candidateName: CanonicalProjectionCandidateName
+  transformMode: "raw" | "rotation_only" | "translation_included"
+  normalizationMode: "normalize_bounds" | "fit_current_bounds_uniform" | "fit_current_bounds_xy"
+  usesTranslation: boolean
+  description: string
+}
+
+interface SemanticPointErrorSummary {
+  noseTip: number | null
+  eyeCenter: number | null
+  mouthCenter: number | null
+  chin: number | null
+  cheek: number | null
+}
+
+interface CanonicalProjectionMetrics {
+  averageDistance2D: number | null
+  medianDistance2D: number | null
+  maxDistance2D: number | null
+  averageDx: number | null
+  averageDy: number | null
+  semanticPointError: SemanticPointErrorSummary
+  centerWeightedDistance: number | null
+  outerContourDistance: number | null
+  mouthEyeDistance: number | null
+  all468Distance: number | null
+  averageZDifference: number | null
+  zRangeRatio: number | null
+  noseZDifference: number | null
+  cheekZDifference: number | null
+}
+
+interface CanonicalProjectionPerCaptureResult {
+  captureId: string
+  bucket: StabilityBucket
+  candidateName: CanonicalProjectionCandidateName
+  matrixConvention: MatrixConventionName
+  translationMode: TranslationMode
+  pointCount: number
+  transformedBounds: BoundsSummary | null
+  currentBounds: BoundsSummary | null
+  metrics: CanonicalProjectionMetrics
+  warnings: string[]
+}
+
+interface CanonicalProjectionRankingEntry {
+  candidateName: CanonicalProjectionCandidateName
+  matrixConvention: MatrixConventionName
+  translationMode: TranslationMode
+  averageDistance2D: number | null
+  centerWeightedDistance: number | null
+  semanticPointErrorSummary: number | null
+  warningCount: number
+  score: number | null
+  sampleCount: number
+}
+
+interface CanonicalProjectionAnalysis {
+  status: "not_available" | "computed"
+  candidates: CanonicalProjectionCandidateDefinition[]
+  matrixConventions: MatrixConventionDefinition[]
+  perCaptureResults: CanonicalProjectionPerCaptureResult[]
+  overallRanking: CanonicalProjectionRankingEntry[]
+  bestMatrixConvention: CanonicalProjectionRankingEntry | null
+  bestProjectionCandidate: CanonicalProjectionRankingEntry | null
+  bucketRanking: Record<StabilityBucket, CanonicalProjectionRankingEntry[]>
+  warnings: string[]
+}
+
 interface EmpiricalCanonicalLandmark extends LandmarkPoint {
   stdDevX: number
   stdDevY: number
@@ -370,7 +485,7 @@ interface EmpiricalCanonical478 {
 
 interface AnalysisResult {
   schemaVersion: "mediapipe_canonical_lab_analysis_v1"
-  analysisVersion: "matrix_convention_debug_v1"
+  analysisVersion: "matrix_convention_debug_v1" | "canonical_468_projection_debug_v1"
   generatedAt: string
   sourceCaptureSummary: SourceCaptureSummary
   rawCaptureSummaries: CaptureRawAnalysis[]
@@ -392,6 +507,9 @@ interface AnalysisResult {
   bestStabilityTransformCandidate: TransformName | null
   selectedBestConventionCandidate: StabilityRankingEntry | null
   empiricalCanonical478: EmpiricalCanonical478 | null
+  canonical468: Canonical468Summary
+  canonicalProjectionAnalysis: CanonicalProjectionAnalysis
+  selectedBestCanonicalProjectionCandidate: CanonicalProjectionRankingEntry | null
   warnings: string[]
 }
 
@@ -409,11 +527,14 @@ interface AppState {
   captures: CaptureRecord[]
   importedCaptures: CaptureRecord[]
   importedFileName: string | null
+  canonical468: ImportedCanonical468 | null
+  canonicalImportMessage: string | null
   analysis: AnalysisResult | null
   loopStartedAt: number | null
 }
 
 const EXPECTED_LANDMARK_COUNT = 478
+const CANONICAL_468_LANDMARK_COUNT = 468
 const RAD_TO_DEG = 180 / Math.PI
 const EPSILON = 1e-9
 
@@ -428,6 +549,35 @@ const LEFT_IRIS_INDICES = [474, 475, 476, 477]
 const RIGHT_IRIS_INDICES = [469, 470, 471, 472]
 const LEFT_EYE_INDICES = [263, 362]
 const RIGHT_EYE_INDICES = [33, 133]
+const MOUTH_ERROR_INDICES = [
+  0, 13, 14, 17, 37, 39, 40, 61, 78, 80, 81, 82, 84, 87, 88, 91, 95,
+  146, 178, 181, 185, 191, 267, 269, 270, 291, 308, 310, 311, 312,
+  314, 317, 318, 321, 324, 375, 402, 405, 409, 415,
+]
+const EYE_ERROR_INDICES = [
+  7, 33, 133, 144, 145, 153, 154, 155, 157, 158, 159, 160, 161, 163,
+  173, 246, 249, 263, 362, 373, 374, 380, 381, 382, 384, 385, 386, 387,
+  388, 390, 398, 466,
+]
+const OUTER_CONTOUR_INDICES = [
+  10, 21, 54, 58, 67, 93, 103, 109, 127, 132, 136, 148, 149, 150,
+  152, 162, 172, 176, 234, 251, 284, 288, 297, 323, 332, 338, 356,
+  361, 365, 377, 378, 379, 389, 397, 400, 454,
+]
+
+const SEMANTIC_INDEX_DEBUG: SemanticIndexDebug = {
+  noseTip: [NOSE_TIP_INDEX],
+  eyeCenter: {
+    leftEye: LEFT_EYE_INDICES,
+    rightEye: RIGHT_EYE_INDICES,
+  },
+  mouthCenter: MOUTH_CENTER_INDICES,
+  chin: [CHIN_INDEX],
+  leftCheek: [LEFT_CHEEK_INDEX],
+  rightCheek: [RIGHT_CHEEK_INDEX],
+  leftContour: [LEFT_CONTOUR_INDEX],
+  rightContour: [RIGHT_CONTOUR_INDEX],
+}
 
 const BUCKETS: CaptureBucket[] = [
   "front",
@@ -497,6 +647,65 @@ const CANDIDATE_DEFINITIONS: CandidateDefinition[] = [
   },
 ]
 
+const CANONICAL_PROJECTION_CANDIDATES: CanonicalProjectionCandidateDefinition[] = [
+  {
+    candidateName: "raw_matrix_then_normalize_bounds",
+    transformMode: "raw",
+    normalizationMode: "normalize_bounds",
+    usesTranslation: true,
+    description:
+      "Apply the matrix to canonical 468, then compare canonical/current x/y after separate bounds normalization.",
+  },
+  {
+    candidateName: "raw_matrix_then_fit_current_bounds_uniform",
+    transformMode: "raw",
+    normalizationMode: "fit_current_bounds_uniform",
+    usesTranslation: true,
+    description:
+      "Apply the raw matrix, then align transformed canonical to current bounds with one x/y scale.",
+  },
+  {
+    candidateName: "raw_matrix_then_fit_current_bounds_xy",
+    transformMode: "raw",
+    normalizationMode: "fit_current_bounds_xy",
+    usesTranslation: true,
+    description:
+      "Apply the raw matrix, then align transformed canonical to current bounds with separate x/y scales.",
+  },
+  {
+    candidateName: "rotation_only_then_fit_current_bounds_uniform",
+    transformMode: "rotation_only",
+    normalizationMode: "fit_current_bounds_uniform",
+    usesTranslation: false,
+    description:
+      "Apply only the 3x3 rotation/scale part, then align to current bounds with one x/y scale.",
+  },
+  {
+    candidateName: "rotation_only_then_fit_current_bounds_xy",
+    transformMode: "rotation_only",
+    normalizationMode: "fit_current_bounds_xy",
+    usesTranslation: false,
+    description:
+      "Apply only the 3x3 rotation/scale part, then align to current bounds with separate x/y scales.",
+  },
+  {
+    candidateName: "translation_included_then_fit_current_bounds_uniform",
+    transformMode: "translation_included",
+    normalizationMode: "fit_current_bounds_uniform",
+    usesTranslation: true,
+    description:
+      "Apply rotation plus interpreted translation, then align to current bounds with one x/y scale.",
+  },
+  {
+    candidateName: "translation_included_then_fit_current_bounds_xy",
+    transformMode: "translation_included",
+    normalizationMode: "fit_current_bounds_xy",
+    usesTranslation: true,
+    description:
+      "Apply rotation plus interpreted translation, then align to current bounds with separate x/y scales.",
+  },
+]
+
 const MATRIX_CONVENTIONS: MatrixConventionDefinition[] = [
   {
     name: "row_major_column_vector",
@@ -548,6 +757,8 @@ const state: AppState = {
   captures: [],
   importedCaptures: [],
   importedFileName: null,
+  canonical468: null,
+  canonicalImportMessage: null,
   analysis: null,
   loopStartedAt: null,
 }
@@ -599,7 +810,9 @@ app.innerHTML = `
       <h2>Captured JSON 解析</h2>
       <div class="controls">
         <input id="importFileInput" type="file" accept="application/json,.json" hidden />
+        <input id="canonicalObjInput" type="file" accept=".obj,text/plain" hidden />
         <button id="importButton" class="primary" type="button">Import captured JSON</button>
+        <button id="canonicalImportButton" type="button">Import canonical 468 OBJ</button>
         <button id="analyzeButton" type="button">Analyze captures</button>
         <button id="clearAnalysisButton" type="button">Clear analysis</button>
         <button id="exportAnalysisButton" type="button">Export analysis JSON</button>
@@ -614,6 +827,18 @@ app.innerHTML = `
           <h3>pose range</h3>
           <div class="status-grid" id="poseSummary"></div>
         </section>
+      </div>
+    </section>
+
+    <section class="analysis-results">
+      <div class="panel">
+        <h2>Canonical 468 status</h2>
+        <div class="status-grid" id="canonicalSummary"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Canonical semantic summary</h2>
+        <div class="latest-box" id="canonicalSemanticSummary">Canonical 468 OBJ is not imported.</div>
       </div>
     </section>
 
@@ -658,6 +883,23 @@ app.innerHTML = `
       </div>
     </section>
 
+    <section class="analysis-results">
+      <div class="panel">
+        <h2>Canonical projection ranking</h2>
+        <div class="table-wrap" id="canonicalProjectionRanking"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Bucket ranking</h2>
+        <div class="table-wrap" id="canonicalBucketRanking"></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Matrix convention x canonical projection comparison</h2>
+      <div class="table-wrap" id="canonicalProjectionComparison"></div>
+    </section>
+
     <section class="panel">
       <h2>raw JSON preview / copy debug</h2>
       <div class="controls">
@@ -695,6 +937,8 @@ const copyButton = getElement<HTMLButtonElement>("copyButton")
 const exportButton = getElement<HTMLButtonElement>("exportButton")
 const importButton = getElement<HTMLButtonElement>("importButton")
 const importFileInput = getElement<HTMLInputElement>("importFileInput")
+const canonicalImportButton = getElement<HTMLButtonElement>("canonicalImportButton")
+const canonicalObjInput = getElement<HTMLInputElement>("canonicalObjInput")
 const analyzeButton = getElement<HTMLButtonElement>("analyzeButton")
 const clearAnalysisButton = getElement<HTMLButtonElement>("clearAnalysisButton")
 const exportAnalysisButton = getElement<HTMLButtonElement>("exportAnalysisButton")
@@ -725,12 +969,24 @@ importButton.addEventListener("click", () => {
   importFileInput.click()
 })
 
+canonicalImportButton.addEventListener("click", () => {
+  canonicalObjInput.click()
+})
+
 importFileInput.addEventListener("change", () => {
   const file = importFileInput.files?.[0]
   if (file) {
     void importCapturedJson(file)
   }
   importFileInput.value = ""
+})
+
+canonicalObjInput.addEventListener("change", () => {
+  const file = canonicalObjInput.files?.[0]
+  if (file) {
+    void importCanonicalObj(file)
+  }
+  canonicalObjInput.value = ""
 })
 
 analyzeButton.addEventListener("click", () => {
@@ -743,6 +999,7 @@ clearAnalysisButton.addEventListener("click", () => {
   state.analysis = null
   state.importMessage = null
   state.analysisMessage = null
+  state.canonicalImportMessage = null
   render()
 })
 
@@ -947,6 +1204,30 @@ async function importCapturedJson(file: File): Promise<void> {
   render()
 }
 
+async function importCanonicalObj(file: File): Promise<void> {
+  try {
+    const vertices = parseCanonicalObj(await file.text())
+    const summary = createCanonical468Summary(vertices, file.name)
+    state.canonical468 = {
+      status: summary.status,
+      source: file.name,
+      vertices,
+      summary,
+    }
+    state.canonicalImportMessage = `${file.name} loaded as canonical OBJ (${vertices.length} vertices).`
+    state.analysis = null
+    state.analysisMessage = null
+  } catch (error) {
+    state.canonical468 = null
+    state.canonicalImportMessage =
+      error instanceof Error
+        ? `canonical OBJ import failed: ${error.message}`
+        : "canonical OBJ import failed."
+  }
+
+  render()
+}
+
 function analyzeCaptures(): void {
   const captures = getAnalysisInputCaptures()
 
@@ -1046,6 +1327,7 @@ function createExportPayload(createdAt: Date): CapturesPayload {
 
 function createAnalysis(captures: CaptureRecord[]): AnalysisResult {
   const warnings: string[] = []
+  const canonical468 = state.canonical468?.summary ?? createEmptyCanonical468Summary()
   const sourceCaptureSummary = summarizeCaptures(captures)
   const rawCaptureSummaries = captures.map(analyzeRawCapture)
   const matrixSummaries = captures.map(analyzeMatrix)
@@ -1064,6 +1346,7 @@ function createAnalysis(captures: CaptureRecord[]): AnalysisResult {
     bestCandidate && bestStabilityTransformCandidate
       ? createEmpiricalCanonical478(bestCandidate, bestStabilityTransformCandidate)
       : null
+  const canonicalProjectionAnalysis = analyzeCanonicalProjection(captures, state.canonical468)
 
   if (captures.length < 2) {
     warnings.push("フレーム間安定性を見るには capture が 2 件以上必要です。")
@@ -1077,9 +1360,12 @@ function createAnalysis(captures: CaptureRecord[]): AnalysisResult {
     warnings.push(...candidate.warnings.map((warning) => `${candidate.transformName}: ${warning}`))
   }
 
+  warnings.push(...canonical468.warnings)
+  warnings.push(...canonicalProjectionAnalysis.warnings)
+
   return {
     schemaVersion: "mediapipe_canonical_lab_analysis_v1",
-    analysisVersion: "matrix_convention_debug_v1",
+    analysisVersion: "canonical_468_projection_debug_v1",
     generatedAt: new Date().toISOString(),
     sourceCaptureSummary,
     rawCaptureSummaries,
@@ -1101,8 +1387,667 @@ function createAnalysis(captures: CaptureRecord[]): AnalysisResult {
     bestStabilityTransformCandidate,
     selectedBestConventionCandidate,
     empiricalCanonical478,
+    canonical468,
+    canonicalProjectionAnalysis,
+    selectedBestCanonicalProjectionCandidate:
+      canonicalProjectionAnalysis.overallRanking[0] ?? null,
     warnings,
   }
+}
+
+function parseCanonicalObj(text: string): LandmarkPoint[] {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("v "))
+    .map((line, index) => {
+      const parts = line.split(/\s+/)
+      const x = Number(parts[1])
+      const y = Number(parts[2])
+      const z = Number(parts[3])
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
+        throw new Error(`invalid vertex at OBJ vertex index ${index}`)
+      }
+      return { index, x, y, z }
+    })
+}
+
+function createCanonical468Summary(
+  vertices: LandmarkPoint[],
+  source: string | null,
+): Canonical468Summary {
+  const warnings: string[] = []
+  const bounds = calculateBounds(vertices)
+  const semanticPoints = getSemanticPoints(vertices)
+
+  if (vertices.length !== CANONICAL_468_LANDMARK_COUNT) {
+    warnings.push(
+      `canonicalVertexCountMismatch: expected 468 vertices, got ${vertices.length}.`,
+    )
+  }
+
+  return {
+    status: vertices.length === CANONICAL_468_LANDMARK_COUNT ? "loaded" : "invalid",
+    source,
+    vertexCount: vertices.length,
+    bounds,
+    centroid: calculateCentroid(vertices),
+    boundsCenter: bounds ? calculateBoundsCenter(bounds) : null,
+    zRange: bounds?.zRange ?? null,
+    semanticSummary: {
+      points: semanticPoints,
+      z: getZSemanticSummary(semanticPoints),
+    },
+    semanticIndexDebug: SEMANTIC_INDEX_DEBUG,
+    warnings,
+  }
+}
+
+function createEmptyCanonical468Summary(): Canonical468Summary {
+  const semanticPoints = getSemanticPoints([])
+  return {
+    status: "not_imported",
+    source: null,
+    vertexCount: 0,
+    bounds: null,
+    centroid: null,
+    boundsCenter: null,
+    zRange: null,
+    semanticSummary: {
+      points: semanticPoints,
+      z: getZSemanticSummary(semanticPoints),
+    },
+    semanticIndexDebug: SEMANTIC_INDEX_DEBUG,
+    warnings: [],
+  }
+}
+
+function analyzeCanonicalProjection(
+  captures: CaptureRecord[],
+  canonical: ImportedCanonical468 | null,
+): CanonicalProjectionAnalysis {
+  const warnings: string[] = []
+
+  if (!canonical || canonical.vertices.length === 0) {
+    return {
+      status: "not_available",
+      candidates: CANONICAL_PROJECTION_CANDIDATES,
+      matrixConventions: MATRIX_CONVENTIONS,
+      perCaptureResults: [],
+      overallRanking: [],
+      bestMatrixConvention: null,
+      bestProjectionCandidate: null,
+      bucketRanking: createEmptyBucketRanking(),
+      warnings: ["canonical468NotImported: import canonical 468 OBJ before projection analysis."],
+    }
+  }
+
+  if (canonical.vertices.length !== CANONICAL_468_LANDMARK_COUNT) {
+    warnings.push(
+      `canonicalVertexCountMismatch: expected 468 vertices, got ${canonical.vertices.length}.`,
+    )
+  }
+
+  const perCaptureResults = captures.flatMap((capture) =>
+    analyzeCanonicalProjectionForCapture(capture, canonical.vertices),
+  )
+  const overallRanking = rankCanonicalProjectionResults(perCaptureResults)
+  const bestMatrixConvention = rankCanonicalProjectionGroups(
+    perCaptureResults,
+    (result) => result.matrixConvention,
+  )[0] ?? null
+  const bestProjectionCandidate = rankCanonicalProjectionGroups(
+    perCaptureResults,
+    (result) => result.candidateName,
+  )[0] ?? null
+  const bucketRanking = rankCanonicalProjectionByBucket(perCaptureResults)
+
+  warnings.push(...createCanonicalProjectionComparisonWarnings(perCaptureResults, captures))
+
+  return {
+    status: "computed",
+    candidates: CANONICAL_PROJECTION_CANDIDATES,
+    matrixConventions: MATRIX_CONVENTIONS,
+    perCaptureResults,
+    overallRanking,
+    bestMatrixConvention,
+    bestProjectionCandidate,
+    bucketRanking,
+    warnings,
+  }
+}
+
+function analyzeCanonicalProjectionForCapture(
+  capture: CaptureRecord,
+  canonicalVertices: LandmarkPoint[],
+): CanonicalProjectionPerCaptureResult[] {
+  const current468 = capture.landmarks
+    .filter((landmark) => landmark.index < CANONICAL_468_LANDMARK_COUNT)
+    .slice(0, CANONICAL_468_LANDMARK_COUNT)
+  const rawMatrix = getMatrixValues4x4(capture.facialTransformationMatrix)
+  const baseWarnings: string[] = []
+
+  if (capture.landmarks.length !== EXPECTED_LANDMARK_COUNT) {
+    baseWarnings.push(
+      `capturedLandmarksCountMismatch: expected 478 landmarks, got ${capture.landmarks.length}.`,
+    )
+  }
+
+  if (!rawMatrix) {
+    baseWarnings.push("missingFacialTransformationMatrix: capture has no 4x4 matrix.")
+    return []
+  }
+
+  if (current468.length !== CANONICAL_468_LANDMARK_COUNT) {
+    baseWarnings.push(
+      `current468Unavailable: expected current landmarks 0-467, got ${current468.length}.`,
+    )
+  }
+
+  return MATRIX_CONVENTIONS.flatMap((convention) =>
+    CANONICAL_PROJECTION_CANDIDATES.map((candidate) => {
+      const matrix = createProjectionMatrixForCandidate(rawMatrix, convention, candidate)
+      const transformed = canonicalVertices.map((point) => ({
+        index: point.index,
+        ...applyMatrixByConvention(matrix, point, convention),
+      }))
+      const comparable = normalizeCanonicalProjectionPoints(
+        transformed,
+        current468,
+        candidate.normalizationMode,
+      )
+      const transformedBounds = calculateBounds(transformed)
+      const currentBounds = calculateBounds(current468)
+      const warnings = [...baseWarnings]
+
+      if (hasAbnormalBounds(transformedBounds)) {
+        warnings.push("transformedCanonicalBoundsExtreme: transformed canonical bounds are huge.")
+      }
+
+      if (comparable.points.length !== CANONICAL_468_LANDMARK_COUNT) {
+        warnings.push(
+          `projectionPointCountMismatch: compared ${comparable.points.length} points instead of 468.`,
+        )
+      }
+
+      if (comparable.warning) {
+        warnings.push(comparable.warning)
+      }
+
+      const metrics = calculateCanonicalProjectionMetrics(
+        comparable.points,
+        comparable.currentPoints,
+      )
+
+      const poseSummary = analyzeMatrixConvention(capture, rawMatrix, convention)
+      const poseDelta = poseSummary.poseDelta
+      if (
+        poseDelta &&
+        Math.abs(poseDelta.yaw) < 5 &&
+        Math.abs(poseDelta.pitch) < 5 &&
+        Math.abs(poseDelta.roll) < 5 &&
+        (metrics.averageDistance2D ?? 0) > 0.08
+      ) {
+        warnings.push(
+          "poseConventionMatchesButPointErrorHigh: pose delta is small but point fit error is high.",
+        )
+      }
+
+      return {
+        captureId: capture.captureId,
+        bucket: toStabilityBucket(capture.bucket),
+        candidateName: candidate.candidateName,
+        matrixConvention: convention.name,
+        translationMode: convention.translationMode,
+        pointCount: comparable.points.length,
+        transformedBounds,
+        currentBounds,
+        metrics,
+        warnings,
+      }
+    }),
+  )
+}
+
+function createProjectionMatrixForCandidate(
+  rawValues: number[],
+  convention: MatrixConventionDefinition,
+  candidate: CanonicalProjectionCandidateDefinition,
+): number[] {
+  const matrix = getConventionMatrix(rawValues, convention)
+
+  if (candidate.transformMode === "raw") {
+    return matrix
+  }
+
+  const next = matrix.slice()
+  next[3] = 0
+  next[7] = 0
+  next[11] = 0
+  next[12] = 0
+  next[13] = 0
+  next[14] = 0
+  next[15] = 1
+
+  if (candidate.transformMode === "translation_included") {
+    const translation = getInterpretedTranslation(matrix, convention)
+    if (translation) {
+      if (convention.translationMode === "lastColumn") {
+        next[3] = translation.x
+        next[7] = translation.y
+        next[11] = translation.z
+      } else if (convention.translationMode === "lastRow") {
+        next[12] = translation.x
+        next[13] = translation.y
+        next[14] = translation.z
+      }
+    }
+  }
+
+  return next
+}
+
+function normalizeCanonicalProjectionPoints(
+  transformed: LandmarkPoint[],
+  current: LandmarkPoint[],
+  mode: CanonicalProjectionCandidateDefinition["normalizationMode"],
+): { points: LandmarkPoint[]; currentPoints: LandmarkPoint[]; warning: string | null } {
+  const transformed468 = transformed.slice(0, CANONICAL_468_LANDMARK_COUNT)
+  const current468 = current.slice(0, CANONICAL_468_LANDMARK_COUNT)
+  const transformedBounds = calculateBounds(transformed468)
+  const currentBounds = calculateBounds(current468)
+
+  if (!transformedBounds || !currentBounds) {
+    return {
+      points: [],
+      currentPoints: [],
+      warning: "projectionBoundsUnavailable: transformed/current bounds were unavailable.",
+    }
+  }
+
+  if (mode === "normalize_bounds") {
+    return {
+      points: normalizePointsByOwnBounds(transformed468, transformedBounds),
+      currentPoints: normalizePointsByOwnBounds(current468, currentBounds),
+      warning: null,
+    }
+  }
+
+  const transformedCenter = calculateBoundsCenter(transformedBounds)
+  const currentCenter = calculateBoundsCenter(currentBounds)
+  const uniformScale = Math.min(
+    safeDivide(currentBounds.width, transformedBounds.width),
+    safeDivide(currentBounds.height, transformedBounds.height),
+  )
+  const scaleX =
+    mode === "fit_current_bounds_xy"
+      ? safeDivide(currentBounds.width, transformedBounds.width)
+      : uniformScale
+  const scaleY =
+    mode === "fit_current_bounds_xy"
+      ? safeDivide(currentBounds.height, transformedBounds.height)
+      : uniformScale
+  const zScale = Number.isFinite(uniformScale) && uniformScale > EPSILON ? uniformScale : 1
+
+  if (
+    !Number.isFinite(scaleX) ||
+    !Number.isFinite(scaleY) ||
+    Math.abs(scaleX) <= EPSILON ||
+    Math.abs(scaleY) <= EPSILON
+  ) {
+    return {
+      points: [],
+      currentPoints: [],
+      warning: "projectionBoundsFitUnavailable: transformed/current bounds could not be fit.",
+    }
+  }
+
+  return {
+    points: transformed468.map((point) => ({
+      index: point.index,
+      x: (point.x - transformedCenter.x) * scaleX + currentCenter.x,
+      y: (point.y - transformedCenter.y) * scaleY + currentCenter.y,
+      z: (point.z - transformedCenter.z) * zScale + currentCenter.z,
+    })),
+    currentPoints: current468,
+    warning:
+      mode === "fit_current_bounds_uniform" &&
+      (Math.abs(
+        safeDivide(transformedBounds.width * uniformScale, currentBounds.width) - 1,
+      ) > 0.25 ||
+        Math.abs(
+          safeDivide(transformedBounds.height * uniformScale, currentBounds.height) - 1,
+        ) > 0.25)
+        ? "transformedCanonicalDoesNotFitCurrentBounds: uniform fit leaves a large width/height mismatch."
+        : null,
+  }
+}
+
+function normalizePointsByOwnBounds(
+  points: LandmarkPoint[],
+  bounds: BoundsSummary,
+): LandmarkPoint[] {
+  return points.map((point) => ({
+    index: point.index,
+    x: safeDivide(point.x - bounds.xMin, bounds.width),
+    y: safeDivide(point.y - bounds.yMin, bounds.height),
+    z: safeDivide(point.z - bounds.zMin, bounds.zRange),
+  }))
+}
+
+function calculateCanonicalProjectionMetrics(
+  projected: LandmarkPoint[],
+  current: LandmarkPoint[],
+): CanonicalProjectionMetrics {
+  const pairs = projected
+    .map((point) => {
+      const currentPoint = current.find((item) => item.index === point.index)
+      return currentPoint ? { projected: point, current: currentPoint } : null
+    })
+    .filter((item): item is { projected: LandmarkPoint; current: LandmarkPoint } => Boolean(item))
+
+  const distances = pairs.map(({ projected, current: currentPoint }) =>
+    calculateDistance2D(projected, currentPoint),
+  )
+  const dxValues = pairs.map(({ projected, current: currentPoint }) => projected.x - currentPoint.x)
+  const dyValues = pairs.map(({ projected, current: currentPoint }) => projected.y - currentPoint.y)
+  const zDiffs = pairs.map(({ projected, current: currentPoint }) => projected.z - currentPoint.z)
+  const projectedBounds = calculateBounds(projected)
+  const currentBounds = calculateBounds(current)
+
+  return {
+    averageDistance2D: averageNumber(distances),
+    medianDistance2D: medianNumber(distances),
+    maxDistance2D: maxOrNull(distances),
+    averageDx: averageNumber(dxValues),
+    averageDy: averageNumber(dyValues),
+    semanticPointError: calculateSemanticPointError(projected, current),
+    centerWeightedDistance: calculateCenterWeightedDistance(projected, current),
+    outerContourDistance: calculateIndexedAverageDistance(projected, current, OUTER_CONTOUR_INDICES),
+    mouthEyeDistance: calculateIndexedAverageDistance(projected, current, [
+      ...MOUTH_ERROR_INDICES,
+      ...EYE_ERROR_INDICES,
+    ]),
+    all468Distance: averageNumber(distances),
+    averageZDifference: averageNumber(zDiffs),
+    zRangeRatio:
+      projectedBounds && currentBounds
+        ? safeDivide(projectedBounds.zRange, currentBounds.zRange)
+        : null,
+    noseZDifference: calculateZDifferenceByPoint(projected, current, NOSE_TIP_INDEX),
+    cheekZDifference: calculateCheekZDifference(projected, current),
+  }
+}
+
+function calculateSemanticPointError(
+  projected: LandmarkPoint[],
+  current: LandmarkPoint[],
+): SemanticPointErrorSummary {
+  const projectedSemantic = getSemanticPoints(projected)
+  const currentSemantic = getSemanticPoints(current)
+  const projectedCheek =
+    projectedSemantic.leftCheek && projectedSemantic.rightCheek
+      ? averagePoints([projectedSemantic.leftCheek, projectedSemantic.rightCheek])
+      : null
+  const currentCheek =
+    currentSemantic.leftCheek && currentSemantic.rightCheek
+      ? averagePoints([currentSemantic.leftCheek, currentSemantic.rightCheek])
+      : null
+
+  return {
+    noseTip: calculateOptionalDistance2D(projectedSemantic.noseTip, currentSemantic.noseTip),
+    eyeCenter: calculateOptionalDistance2D(projectedSemantic.eyeCenter, currentSemantic.eyeCenter),
+    mouthCenter: calculateOptionalDistance2D(
+      projectedSemantic.mouthCenter,
+      currentSemantic.mouthCenter,
+    ),
+    chin: calculateOptionalDistance2D(projectedSemantic.chin, currentSemantic.chin),
+    cheek: calculateOptionalDistance2D(projectedCheek, currentCheek),
+  }
+}
+
+function calculateCenterWeightedDistance(
+  projected: LandmarkPoint[],
+  current: LandmarkPoint[],
+): number | null {
+  const bounds = calculateBounds(current)
+  if (!bounds) {
+    return null
+  }
+
+  const center = calculateBoundsCenter(bounds)
+  const radius = Math.max(bounds.width, bounds.height) / 2
+  if (radius <= EPSILON) {
+    return null
+  }
+
+  let weightedDistance = 0
+  let totalWeight = 0
+
+  for (const currentPoint of current) {
+    const projectedPoint = projected.find((point) => point.index === currentPoint.index)
+    if (!projectedPoint) {
+      continue
+    }
+    const radial = Math.min(calculateDistance2D(currentPoint, center) / radius, 1)
+    const weight = 1 + (1 - radial)
+    weightedDistance += calculateDistance2D(projectedPoint, currentPoint) * weight
+    totalWeight += weight
+  }
+
+  return totalWeight <= EPSILON ? null : weightedDistance / totalWeight
+}
+
+function calculateIndexedAverageDistance(
+  projected: LandmarkPoint[],
+  current: LandmarkPoint[],
+  indices: number[],
+): number | null {
+  const distances = indices
+    .filter((index) => index < CANONICAL_468_LANDMARK_COUNT)
+    .map((index) => {
+      const projectedPoint = getPointByIndex(projected, index)
+      const currentPoint = getPointByIndex(current, index)
+      return projectedPoint && currentPoint
+        ? calculateDistance2D(projectedPoint, currentPoint)
+        : null
+    })
+    .filter((value): value is number => value !== null)
+
+  return averageNumber(distances)
+}
+
+function rankCanonicalProjectionResults(
+  results: CanonicalProjectionPerCaptureResult[],
+): CanonicalProjectionRankingEntry[] {
+  return rankCanonicalProjectionGroups(
+    results,
+    (result) => `${result.candidateName}::${result.matrixConvention}`,
+  )
+}
+
+function rankCanonicalProjectionGroups(
+  results: CanonicalProjectionPerCaptureResult[],
+  getKey: (result: CanonicalProjectionPerCaptureResult) => string,
+): CanonicalProjectionRankingEntry[] {
+  const groups = new Map<string, CanonicalProjectionPerCaptureResult[]>()
+  for (const result of results) {
+    const key = getKey(result)
+    groups.set(key, [...(groups.get(key) ?? []), result])
+  }
+
+  return [...groups.values()]
+    .map(createCanonicalProjectionRankingEntry)
+    .sort((a, b) => {
+      if (a.score === null && b.score === null) {
+        return 0
+      }
+      if (a.score === null) {
+        return 1
+      }
+      if (b.score === null) {
+        return -1
+      }
+      return a.score - b.score
+    })
+}
+
+function createCanonicalProjectionRankingEntry(
+  results: CanonicalProjectionPerCaptureResult[],
+): CanonicalProjectionRankingEntry {
+  const first = results[0]
+  const semanticErrors = results
+    .map((result) => averageSemanticError(result.metrics.semanticPointError))
+    .filter((value): value is number => value !== null)
+  const warningCount = results.reduce((count, result) => count + result.warnings.length, 0)
+  const averageDistance2D = averageNumber(
+    results
+      .map((result) => result.metrics.averageDistance2D)
+      .filter((value): value is number => value !== null),
+  )
+  const centerWeightedDistance = averageNumber(
+    results
+      .map((result) => result.metrics.centerWeightedDistance)
+      .filter((value): value is number => value !== null),
+  )
+  const semanticPointErrorSummary = averageNumber(semanticErrors)
+  const score =
+    averageDistance2D === null
+      ? null
+      : averageDistance2D +
+        (centerWeightedDistance ?? averageDistance2D) * 0.35 +
+        (semanticPointErrorSummary ?? averageDistance2D) * 0.25 +
+        warningCount * 0.01
+
+  return {
+    candidateName: first?.candidateName ?? "raw_matrix_then_normalize_bounds",
+    matrixConvention: first?.matrixConvention ?? MATRIX_CONVENTIONS[0].name,
+    translationMode: first?.translationMode ?? "none",
+    averageDistance2D,
+    centerWeightedDistance,
+    semanticPointErrorSummary,
+    warningCount,
+    score,
+    sampleCount: results.length,
+  }
+}
+
+function rankCanonicalProjectionByBucket(
+  results: CanonicalProjectionPerCaptureResult[],
+): Record<StabilityBucket, CanonicalProjectionRankingEntry[]> {
+  return STABILITY_BUCKETS.reduce((summary, bucket) => {
+    summary[bucket] = rankCanonicalProjectionResults(
+      results.filter((result) => result.bucket === bucket),
+    )
+    return summary
+  }, createEmptyBucketRanking())
+}
+
+function createEmptyBucketRanking(): Record<StabilityBucket, CanonicalProjectionRankingEntry[]> {
+  return STABILITY_BUCKETS.reduce(
+    (summary, bucket) => {
+      summary[bucket] = []
+      return summary
+    },
+    {} as Record<StabilityBucket, CanonicalProjectionRankingEntry[]>,
+  )
+}
+
+function createCanonicalProjectionComparisonWarnings(
+  results: CanonicalProjectionPerCaptureResult[],
+  captures: CaptureRecord[],
+): string[] {
+  const warnings: string[] = []
+  const overallRanking = rankCanonicalProjectionResults(results)
+
+  if (captures.some((capture) => !capture.facialTransformationMatrix)) {
+    warnings.push("missingFacialTransformationMatrix: one or more captures have no matrix.")
+  }
+
+  if (
+    overallRanking[0]?.score !== null &&
+    overallRanking[1]?.score !== null &&
+    overallRanking[0] &&
+    overallRanking[1] &&
+    Math.abs(overallRanking[1].score - overallRanking[0].score) < 0.002
+  ) {
+    warnings.push(
+      "pointTransformConventionUnclear: top canonical projection scores are very close.",
+    )
+  }
+
+  const rotationResults = results.filter((result) =>
+    result.candidateName.startsWith("rotation_only_then_fit_current_bounds"),
+  )
+  const translationResults = results.filter((result) =>
+    result.candidateName.startsWith("translation_included_then_fit_current_bounds"),
+  )
+  const rotationAverage = averageNumber(
+    rotationResults
+      .map((result) => result.metrics.averageDistance2D)
+      .filter((value): value is number => value !== null),
+  )
+  const translationAverage = averageNumber(
+    translationResults
+      .map((result) => result.metrics.averageDistance2D)
+      .filter((value): value is number => value !== null),
+  )
+
+  if (
+    rotationAverage !== null &&
+    translationAverage !== null &&
+    Math.abs(rotationAverage - translationAverage) > 0.005
+  ) {
+    warnings.push(
+      translationAverage < rotationAverage
+        ? "translationImprovesPointFit: translation-included candidates beat rotation-only candidates on average."
+        : "translationWorsensPointFit: translation-included candidates are worse than rotation-only candidates on average.",
+    )
+  }
+
+  const bestByBucket = STABILITY_BUCKETS.map((bucket) => {
+    const ranking = rankCanonicalProjectionResults(results.filter((result) => result.bucket === bucket))
+    return { bucket, best: ranking[0] ?? null }
+  }).filter((item) => item.best)
+
+  const bestKeys = new Set(
+    bestByBucket.map((item) => `${item.best?.candidateName}/${item.best?.matrixConvention}`),
+  )
+  if (bestKeys.size > 1) {
+    warnings.push(
+      "bucketSpecificConventionDifference: best candidate/convention differs across pose buckets.",
+    )
+  }
+
+  const frontBest = bestByBucket.find((item) => item.bucket === "front")?.best
+  const yawBestScores = bestByBucket
+    .filter((item) => item.bucket === "yawPositive" || item.bucket === "yawNegative")
+    .map((item) => item.best?.score ?? null)
+    .filter((score): score is number => score !== null)
+  const yawAverageScore = averageNumber(yawBestScores)
+  if (
+    frontBest?.score !== null &&
+    frontBest?.score !== undefined &&
+    yawAverageScore !== null &&
+    yawAverageScore > frontBest.score * 1.8
+  ) {
+    warnings.push("frontGoodYawBad: front bucket fits much better than yaw buckets.")
+  }
+
+  const yawPositiveBest = bestByBucket.find((item) => item.bucket === "yawPositive")?.best
+  const yawNegativeBest = bestByBucket.find((item) => item.bucket === "yawNegative")?.best
+  if (
+    yawPositiveBest &&
+    yawNegativeBest &&
+    `${yawPositiveBest.candidateName}/${yawPositiveBest.matrixConvention}` !==
+      `${yawNegativeBest.candidateName}/${yawNegativeBest.matrixConvention}`
+  ) {
+    warnings.push(
+      "yawPositiveNegativeTrendDifference: yawPositive and yawNegative prefer different projection conventions.",
+    )
+  }
+
+  return warnings
 }
 
 function analyzeTransformCandidate(
@@ -1880,7 +2825,9 @@ function render(): void {
   }).join("")
 
   getElement("importStatus").textContent =
-    [state.importMessage, state.analysisMessage].filter(Boolean).join(" / ") || ""
+    [state.importMessage, state.canonicalImportMessage, state.analysisMessage]
+      .filter(Boolean)
+      .join(" / ") || ""
 
   getElement("importedSummary").innerHTML = renderStatusItems([
     ["入力ソース", state.importedCaptures.length > 0 ? state.importedFileName ?? "imported JSON" : "保存済み captures"],
@@ -1902,6 +2849,13 @@ function render(): void {
     ["roll min / max", formatRange(importedSummary.poseRange.roll)],
   ])
 
+  getElement("canonicalSummary").innerHTML = renderCanonicalSummary(
+    state.analysis?.canonical468 ?? state.canonical468?.summary ?? createEmptyCanonical468Summary(),
+  )
+  getElement("canonicalSemanticSummary").textContent = renderCanonicalSemanticSummary(
+    state.analysis?.canonical468 ?? state.canonical468?.summary ?? createEmptyCanonical468Summary(),
+  )
+
   getElement("candidateList").innerHTML = renderCandidateList(analysis)
   getElement("stabilityRanking").innerHTML = renderStabilityRanking(analysis)
   getElement("bestCandidateSummary").innerHTML = renderBestCandidateSummary(analysis)
@@ -1912,6 +2866,12 @@ function render(): void {
     renderMatrixConventionComparison(analysis)
   getElement("translationPoseComparison").innerHTML =
     renderTranslationPoseComparison(analysis)
+  getElement("canonicalProjectionRanking").innerHTML =
+    renderCanonicalProjectionRanking(analysis)
+  getElement("canonicalBucketRanking").innerHTML =
+    renderCanonicalBucketRanking(analysis)
+  getElement("canonicalProjectionComparison").innerHTML =
+    renderCanonicalProjectionComparison(analysis)
   getElement("analysisJsonPreview").textContent = analysis
     ? JSON.stringify(
         {
@@ -1924,6 +2884,12 @@ function render(): void {
           stabilityRankingByConvention: analysis.stabilityRankingByConvention,
           bestStabilityTransformCandidate: analysis.bestStabilityTransformCandidate,
           selectedBestConventionCandidate: analysis.selectedBestConventionCandidate,
+          canonical468: analysis.canonical468,
+          selectedBestCanonicalProjectionCandidate:
+            analysis.selectedBestCanonicalProjectionCandidate,
+          canonicalProjectionRanking:
+            analysis.canonicalProjectionAnalysis.overallRanking.slice(0, 10),
+          canonicalBucketRanking: analysis.canonicalProjectionAnalysis.bucketRanking,
           empiricalCanonical478: analysis.empiricalCanonical478
             ? {
                 sourceTransformCandidate:
@@ -1987,7 +2953,10 @@ function render(): void {
   clearButton.disabled = state.captures.length === 0
   analyzeButton.disabled = inputCaptures.length === 0
   clearAnalysisButton.disabled =
-    state.importedCaptures.length === 0 && state.analysis === null && !state.importMessage
+    state.importedCaptures.length === 0 &&
+    state.analysis === null &&
+    !state.importMessage &&
+    !state.canonicalImportMessage
   exportAnalysisButton.disabled = !state.analysis
   copyAnalysisButton.disabled = !state.analysis
 }
@@ -2120,6 +3089,187 @@ function renderBestCandidateSummary(analysis: AnalysisResult | null): string {
     ],
     ["debug artifact", empirical?.debugArtifact ? "true" : "-"],
   ])
+}
+
+function renderCanonicalSummary(summary: Canonical468Summary): string {
+  return renderStatusItems([
+    ["status", summary.status],
+    ["source", summary.source ?? "-"],
+    ["vertex count", `${summary.vertexCount} / expected ${CANONICAL_468_LANDMARK_COUNT}`],
+    ["width / height / zRange", `${formatBoundsSize(summary.bounds)} / ${formatNullableNumber(summary.zRange)}`],
+    ["xMin / xMax", `${formatNullableNumber(summary.bounds?.xMin)} / ${formatNullableNumber(summary.bounds?.xMax)}`],
+    ["yMin / yMax", `${formatNullableNumber(summary.bounds?.yMin)} / ${formatNullableNumber(summary.bounds?.yMax)}`],
+    ["zMin / zMax", `${formatNullableNumber(summary.bounds?.zMin)} / ${formatNullableNumber(summary.bounds?.zMax)}`],
+    ["centroid", formatPoint(summary.centroid)],
+    ["boundsCenter", formatPoint(summary.boundsCenter)],
+    ["warnings", summary.warnings.join(" / ") || "-"],
+  ])
+}
+
+function renderCanonicalSemanticSummary(summary: Canonical468Summary): string {
+  return JSON.stringify(
+    {
+      semanticPoints: summary.semanticSummary.points,
+      semanticZ: summary.semanticSummary.z,
+      semanticIndexDebug: summary.semanticIndexDebug,
+    },
+    null,
+    2,
+  )
+}
+
+function renderCanonicalProjectionRanking(analysis: AnalysisResult | null): string {
+  const ranking = analysis?.canonicalProjectionAnalysis.overallRanking ?? []
+
+  if (ranking.length === 0) {
+    return `<p class="note">Import captured JSON and canonical 468 OBJ, then run Analyze captures.</p>`
+  }
+
+  return renderCanonicalProjectionRankingTable(ranking.slice(0, 20))
+}
+
+function renderCanonicalProjectionRankingTable(
+  ranking: CanonicalProjectionRankingEntry[],
+): string {
+  return `
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>candidate</th>
+          <th>matrixConvention</th>
+          <th>translationMode</th>
+          <th>avg 2D</th>
+          <th>center weighted</th>
+          <th>semantic</th>
+          <th>warnings</th>
+          <th>score</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${ranking
+          .map(
+            (entry, index) => `
+              <tr>
+                <td>${index + 1}</td>
+                <td><code>${entry.candidateName}</code></td>
+                <td><code>${entry.matrixConvention}</code></td>
+                <td>${entry.translationMode}</td>
+                <td>${formatNullableNumber(entry.averageDistance2D)}</td>
+                <td>${formatNullableNumber(entry.centerWeightedDistance)}</td>
+                <td>${formatNullableNumber(entry.semanticPointErrorSummary)}</td>
+                <td>${entry.warningCount}</td>
+                <td>${formatNullableNumber(entry.score)}</td>
+              </tr>
+            `,
+          )
+          .join("")}
+      </tbody>
+    </table>
+  `
+}
+
+function renderCanonicalBucketRanking(analysis: AnalysisResult | null): string {
+  const bucketRanking = analysis?.canonicalProjectionAnalysis.bucketRanking
+
+  if (!bucketRanking) {
+    return `<p class="note">Bucket ranking is not available yet.</p>`
+  }
+
+  return `
+    <table>
+      <thead>
+        <tr>
+          <th>bucket</th>
+          <th>best candidate</th>
+          <th>matrixConvention</th>
+          <th>avg 2D</th>
+          <th>center weighted</th>
+          <th>score</th>
+          <th>samples</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${STABILITY_BUCKETS.map((bucket) => {
+          const best = bucketRanking[bucket]?.[0] ?? null
+          return `
+            <tr>
+              <td><code>${bucket}</code></td>
+              <td><code>${best?.candidateName ?? "-"}</code></td>
+              <td><code>${best?.matrixConvention ?? "-"}</code></td>
+              <td>${formatNullableNumber(best?.averageDistance2D)}</td>
+              <td>${formatNullableNumber(best?.centerWeightedDistance)}</td>
+              <td>${formatNullableNumber(best?.score)}</td>
+              <td>${best?.sampleCount ?? 0}</td>
+            </tr>
+          `
+        }).join("")}
+      </tbody>
+    </table>
+  `
+}
+
+function renderCanonicalProjectionComparison(analysis: AnalysisResult | null): string {
+  const results = analysis?.canonicalProjectionAnalysis.perCaptureResults ?? []
+
+  if (results.length === 0) {
+    return `<p class="note">Canonical projection comparison is not available yet.</p>`
+  }
+
+  return `
+    <table>
+      <thead>
+        <tr>
+          <th>capture</th>
+          <th>bucket</th>
+          <th>candidate</th>
+          <th>convention</th>
+          <th>translationMode</th>
+          <th>avg / median / max 2D</th>
+          <th>dx / dy</th>
+          <th>center weighted</th>
+          <th>outer / mouth+eye</th>
+          <th>z avg / ratio</th>
+          <th>warnings</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${results
+          .slice(0, 96)
+          .map(
+            (result) => `
+              <tr>
+                <td><code>${escapeHtml(result.captureId)}</code></td>
+                <td><code>${result.bucket}</code></td>
+                <td><code>${result.candidateName}</code></td>
+                <td><code>${result.matrixConvention}</code></td>
+                <td>${result.translationMode}</td>
+                <td>${[
+                  result.metrics.averageDistance2D,
+                  result.metrics.medianDistance2D,
+                  result.metrics.maxDistance2D,
+                ].map(formatNullableNumber).join(" / ")}</td>
+                <td>${[
+                  result.metrics.averageDx,
+                  result.metrics.averageDy,
+                ].map(formatNullableNumber).join(" / ")}</td>
+                <td>${formatNullableNumber(result.metrics.centerWeightedDistance)}</td>
+                <td>${[
+                  result.metrics.outerContourDistance,
+                  result.metrics.mouthEyeDistance,
+                ].map(formatNullableNumber).join(" / ")}</td>
+                <td>${[
+                  result.metrics.averageZDifference,
+                  result.metrics.zRangeRatio,
+                ].map(formatNullableNumber).join(" / ")}</td>
+                <td>${escapeHtml(result.warnings.join(" / ") || "-")}</td>
+              </tr>
+            `,
+          )
+          .join("")}
+      </tbody>
+    </table>
+  `
 }
 
 function renderMatrixSummary(analysis: AnalysisResult | null): string {
@@ -3001,12 +4151,67 @@ function maxOrNull(values: number[]): number | null {
   return validValues.length === 0 ? null : Math.max(...validValues)
 }
 
+function medianNumber(values: number[]): number | null {
+  const validValues = values.filter((value) => Number.isFinite(value)).sort((a, b) => a - b)
+  if (validValues.length === 0) {
+    return null
+  }
+
+  const mid = Math.floor(validValues.length / 2)
+  return validValues.length % 2 === 0
+    ? (validValues[mid - 1] + validValues[mid]) / 2
+    : validValues[mid]
+}
+
+function safeDivide(numerator: number, denominator: number): number {
+  return Math.abs(denominator) <= EPSILON ? Number.NaN : numerator / denominator
+}
+
 function vectorLength(point: Point3): number {
   return Math.hypot(point.x, point.y, point.z)
 }
 
 function calculateDistance(current: Point3, next: Point3): number {
   return Math.hypot(current.x - next.x, current.y - next.y, current.z - next.z)
+}
+
+function calculateDistance2D(current: Point3, next: Point3): number {
+  return Math.hypot(current.x - next.x, current.y - next.y)
+}
+
+function calculateOptionalDistance2D(current: Point3 | null, next: Point3 | null): number | null {
+  return current && next ? calculateDistance2D(current, next) : null
+}
+
+function calculateZDifferenceByPoint(
+  projected: LandmarkPoint[],
+  current: LandmarkPoint[],
+  index: number,
+): number | null {
+  const projectedPoint = getPointByIndex(projected, index)
+  const currentPoint = getPointByIndex(current, index)
+  return projectedPoint && currentPoint ? projectedPoint.z - currentPoint.z : null
+}
+
+function calculateCheekZDifference(
+  projected: LandmarkPoint[],
+  current: LandmarkPoint[],
+): number | null {
+  const left = calculateZDifferenceByPoint(projected, current, LEFT_CHEEK_INDEX)
+  const right = calculateZDifferenceByPoint(projected, current, RIGHT_CHEEK_INDEX)
+  return averageNumber([left, right].filter((value): value is number => value !== null))
+}
+
+function averageSemanticError(summary: SemanticPointErrorSummary): number | null {
+  return averageNumber(
+    [
+      summary.noseTip,
+      summary.eyeCenter,
+      summary.mouthCenter,
+      summary.chin,
+      summary.cheek,
+    ].filter((value): value is number => value !== null),
+  )
 }
 
 function isFinitePoint(point: Point3): boolean {
