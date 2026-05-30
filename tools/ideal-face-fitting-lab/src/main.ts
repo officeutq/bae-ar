@@ -113,6 +113,7 @@ interface NormalizedFrame {
 }
 
 interface SearchSettings {
+  searchMode: SearchMode
   maxFrames: number
   targets: Record<CaptureBucket, number>
   includeMixedPose: boolean
@@ -126,6 +127,7 @@ interface SearchSettings {
   pivotZStep: number
   topN: number
   focalLength: number
+  localSearchSettings: LocalSearchSettings
 }
 
 interface SourceSummary {
@@ -272,6 +274,43 @@ interface FittingCandidate8 {
   pivotZ: number
 }
 
+type SearchMode = "fullGrid" | "localOneDimensional" | "coordinateDescent"
+type LocalSearchParameter = "pivotZ" | `${SemanticPointName}.z`
+
+interface LocalSearchRange {
+  min: number
+  max: number
+  step: number
+}
+
+type LocalSearchRanges = Record<LocalSearchParameter, LocalSearchRange>
+
+interface LocalSearchSettings {
+  baseCandidate: FittingCandidate8
+  targetParameter: LocalSearchParameter
+  localMin: number
+  localMax: number
+  localStep: number
+  coordinateDescentIterations: number
+  coordinateDescentParameterOrder: LocalSearchParameter[]
+  coordinateDescentRanges: LocalSearchRanges
+}
+
+interface LocalSearchStepSummary {
+  iteration: number
+  parameter: LocalSearchParameter
+  previousValue: number
+  bestValue: number
+  bestScore: number
+  candidateCount: number
+}
+
+interface LocalSearchSummary {
+  initialCandidate: FittingCandidate8
+  finalCandidate: FittingCandidate8
+  steps: LocalSearchStepSummary[]
+}
+
 interface CandidateDefinition extends FittingCandidate8 {
   candidateId: string
 }
@@ -303,16 +342,25 @@ interface CandidateResult extends CandidateDefinition {
   weightedSemanticDistance: number
   perPointError: Record<SemanticPointName, number>
   bucketScores: PoseBucketScores
+  scoreDebug: CandidateScoreDebug
   totalScore: number
   sampleCount: number
   warnings: string[]
   perFrameResults: FrameEvaluation[]
 }
 
+interface CandidateScoreDebug {
+  yawAverageScore: number | null
+  pitchAverageScore: number | null
+  maxBucketScore: number | null
+  balancedScore: number
+}
+
 interface RankingEntry extends FittingCandidate8Score {
   candidateId: string
   weightedSemanticDistance: number
   averageSemanticDistance: number
+  scoreDebug: CandidateScoreDebug
   sampleCount: number
   idealFace8Summary?: IdealFace8CandidateSummary
 }
@@ -384,7 +432,11 @@ interface AnalysisResult {
   current8BucketSummary: Record<CaptureBucket, Current8BucketSummaryEntry>
   current8PoseComparison: Current8PoseComparison
   depthConvention: DepthConvention
+  searchMode: SearchMode
   searchSettings: SearchSettings
+  localSearchSettings?: LocalSearchSettings
+  localSearchSummary?: LocalSearchSummary
+  scoreDebugSummary: CandidateScoreDebug | null
   candidateCount: number
   processedCandidateCount: number
   estimatedCandidateCount: number
@@ -408,7 +460,11 @@ interface SummaryAnalysisResult {
   current8PoseComparison: Current8PoseComparison
   current8FrameSample: Current8FrameDebug[]
   depthConvention: DepthConvention
+  searchMode: SearchMode
   searchSettings: SearchSettings
+  localSearchSettings?: LocalSearchSettings
+  localSearchSummary?: LocalSearchSummary
+  scoreDebugSummary: CandidateScoreDebug | null
   processedCandidateCount: number
   estimatedCandidateCount: number
   topCandidates: RankingEntry[]
@@ -500,6 +556,56 @@ const SEMANTIC_POINT_NAMES = SEMANTIC_DEFINITIONS.map(
   (definition) => definition.name,
 ) as SemanticPointName[]
 
+const LOCAL_SEARCH_PARAMETERS: LocalSearchParameter[] = [
+  "pivotZ",
+  "headTop.z",
+  "chin.z",
+  "leftCheek.z",
+  "rightCheek.z",
+  "leftEye.z",
+  "rightEye.z",
+  "nose.z",
+  "mouth.z",
+]
+
+const DEFAULT_COORDINATE_DESCENT_PARAMETER_ORDER: LocalSearchParameter[] = [
+  "pivotZ",
+  "leftCheek.z",
+  "rightCheek.z",
+  "nose.z",
+  "mouth.z",
+  "leftEye.z",
+  "rightEye.z",
+  "headTop.z",
+  "chin.z",
+]
+
+const DEFAULT_LOCAL_SEARCH_BASE_CANDIDATE: FittingCandidate8 = {
+  pivotZ: 0.12,
+  zByPointId: {
+    headTop: 0,
+    chin: 0,
+    leftCheek: 0.12,
+    rightCheek: 0.12,
+    leftEye: 0,
+    rightEye: 0,
+    nose: 0,
+    mouth: 0,
+  },
+}
+
+const DEFAULT_COORDINATE_DESCENT_RANGES: LocalSearchRanges = {
+  pivotZ: { min: 0.06, max: 0.18, step: 0.01 },
+  "headTop.z": { min: -0.03, max: 0.03, step: 0.01 },
+  "chin.z": { min: -0.03, max: 0.03, step: 0.01 },
+  "leftCheek.z": { min: 0.06, max: 0.18, step: 0.01 },
+  "rightCheek.z": { min: 0.06, max: 0.18, step: 0.01 },
+  "leftEye.z": { min: -0.03, max: 0.03, step: 0.01 },
+  "rightEye.z": { min: -0.03, max: 0.03, step: 0.01 },
+  "nose.z": { min: -0.06, max: 0.06, step: 0.01 },
+  "mouth.z": { min: -0.03, max: 0.06, step: 0.01 },
+}
+
 const BUCKETS: CaptureBucket[] = [
   "front",
   "yawPositive",
@@ -519,6 +625,7 @@ const REQUIRED_BUCKETS: CaptureBucket[] = [
 ]
 
 const DEFAULT_SETTINGS: SearchSettings = {
+  searchMode: "fullGrid",
   maxFrames: 30,
   targets: {
     front: 5,
@@ -540,6 +647,16 @@ const DEFAULT_SETTINGS: SearchSettings = {
   pivotZStep: 0.24,
   topN: 20,
   focalLength: 2.6,
+  localSearchSettings: {
+    baseCandidate: DEFAULT_LOCAL_SEARCH_BASE_CANDIDATE,
+    targetParameter: "leftCheek.z",
+    localMin: 0.06,
+    localMax: 0.18,
+    localStep: 0.01,
+    coordinateDescentIterations: 2,
+    coordinateDescentParameterOrder: DEFAULT_COORDINATE_DESCENT_PARAMETER_ORDER,
+    coordinateDescentRanges: DEFAULT_COORDINATE_DESCENT_RANGES,
+  },
 }
 
 const EPSILON = 1e-8
@@ -671,6 +788,49 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
             <label>focalLength
               <input id="focal-length-input" type="number" min="0.5" max="10" step="0.1" value="${DEFAULT_SETTINGS.focalLength}" />
             </label>
+            <label>searchMode
+              <select id="search-mode-select">
+                <option value="fullGrid" selected>fullGrid</option>
+                <option value="localOneDimensional">localOneDimensional</option>
+                <option value="coordinateDescent">coordinateDescent</option>
+              </select>
+            </label>
+            <label>localTargetParameter
+              <select id="local-target-parameter-select">
+                ${LOCAL_SEARCH_PARAMETERS.map(
+                  (parameter) =>
+                    `<option value="${parameter}"${parameter === DEFAULT_SETTINGS.localSearchSettings.targetParameter ? " selected" : ""}>${parameter}</option>`,
+                ).join("")}
+              </select>
+            </label>
+            <label>localMin
+              <input id="local-min-input" type="number" min="-3" max="3" step="0.005" value="${DEFAULT_SETTINGS.localSearchSettings.localMin}" />
+            </label>
+            <label>localMax
+              <input id="local-max-input" type="number" min="-3" max="3" step="0.005" value="${DEFAULT_SETTINGS.localSearchSettings.localMax}" />
+            </label>
+            <label>localStep
+              <input id="local-step-input" type="number" min="0.001" max="3" step="0.005" value="${DEFAULT_SETTINGS.localSearchSettings.localStep}" />
+            </label>
+            <label>coordinateDescentIterations
+              <input id="coordinate-descent-iterations-input" type="number" min="1" max="20" step="1" value="${DEFAULT_SETTINGS.localSearchSettings.coordinateDescentIterations}" />
+            </label>
+          </div>
+          <h3>baseCandidate</h3>
+          <div class="controls">
+            <label>base pivotZ
+              <input id="base-pivot-z-input" type="number" min="-3" max="3" step="0.005" value="${DEFAULT_LOCAL_SEARCH_BASE_CANDIDATE.pivotZ}" />
+            </label>
+            ${SEMANTIC_POINT_NAMES.map(
+              (name) => `
+                <label>base ${name}.z
+                  <input id="base-${name}-z-input" type="number" min="-3" max="3" step="0.005" value="${DEFAULT_LOCAL_SEARCH_BASE_CANDIDATE.zByPointId[name]}" />
+                </label>
+              `,
+            ).join("")}
+          </div>
+          <div class="controls-wide">
+            <button id="use-best-candidate-button" type="button" disabled>bestCandidate を base に反映</button>
           </div>
         </section>
 
@@ -689,6 +849,11 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
         <section class="panel">
           <h2>探索進捗</h2>
           <div id="search-progress" class="summary-grid"></div>
+        </section>
+
+        <section class="panel">
+          <h2>local search summary</h2>
+          <div id="local-search-summary" class="summary-grid"></div>
         </section>
 
         <section class="panel">
@@ -768,6 +933,10 @@ function bindEvents(): void {
   getElement<HTMLButtonElement>("run-analysis-button").addEventListener("click", runAnalysis)
   getElement<HTMLButtonElement>("cancel-analysis-button").addEventListener("click", cancelAnalysis)
   getElement<HTMLButtonElement>("copy-debug-button").addEventListener("click", copySummaryJson)
+  getElement<HTMLButtonElement>("use-best-candidate-button").addEventListener(
+    "click",
+    useBestCandidateAsBase,
+  )
   getElement<HTMLButtonElement>("export-full-button").addEventListener("click", () => {
     if (state.analysis) {
       downloadJson(state.analysis, createFileName("ideal-face-fitting-full"))
@@ -849,7 +1018,11 @@ function runAnalysis(): void {
       current8BucketSummary: current8Debug.current8BucketSummary,
       current8PoseComparison: current8Debug.current8PoseComparison,
       depthConvention: DEPTH_CONVENTION,
+      searchMode: settings.searchMode,
       searchSettings: settings,
+      localSearchSettings: settings.searchMode === "fullGrid" ? undefined : settings.localSearchSettings,
+      localSearchSummary: undefined,
+      scoreDebugSummary: null,
       candidateCount: 0,
       processedCandidateCount: 0,
       estimatedCandidateCount: 0,
@@ -980,6 +1153,9 @@ function completeSearchFromWorker(context: SearchWorkerContext, message: Record<
       : null
   const processedCandidateCount = toNumber(message.processedCandidateCount, 0)
   const estimatedCandidateCount = toNumber(message.estimatedCandidateCount, processedCandidateCount)
+  const localSearchSummary = isRecord(message.localSearchSummary)
+    ? (message.localSearchSummary as unknown as LocalSearchSummary)
+    : undefined
 
   state.analysis = {
     schemaVersion: "ideal_face_fitting_lab_analysis_v1",
@@ -995,7 +1171,12 @@ function completeSearchFromWorker(context: SearchWorkerContext, message: Record<
     current8BucketSummary: context.current8Debug.current8BucketSummary,
     current8PoseComparison: context.current8Debug.current8PoseComparison,
     depthConvention: DEPTH_CONVENTION,
+    searchMode: context.settings.searchMode,
     searchSettings: context.settings,
+    localSearchSettings:
+      context.settings.searchMode === "fullGrid" ? undefined : context.settings.localSearchSettings,
+    localSearchSummary,
+    scoreDebugSummary: bestCandidate?.scoreDebug ?? null,
     candidateCount: estimatedCandidateCount,
     processedCandidateCount,
     estimatedCandidateCount,
@@ -1051,6 +1232,14 @@ function cancelAnalysis(): void {
   }
   setButtons()
   renderSearchProgress()
+}
+
+function useBestCandidateAsBase(): void {
+  const bestCandidate = state.analysis?.bestCandidate
+  if (!bestCandidate) {
+    return
+  }
+  writeCandidateToBaseInputs(bestCandidate)
 }
 
 function terminateSearchWorker(): void {
@@ -1111,6 +1300,24 @@ function normalizeStringArray(value: unknown): string[] {
 }
 
 function estimateCandidateCount(settings: SearchSettings): number {
+  if (settings.searchMode === "localOneDimensional") {
+    return createNumericCandidates(
+      settings.localSearchSettings.localMin,
+      settings.localSearchSettings.localMax,
+      settings.localSearchSettings.localStep,
+    ).length
+  }
+
+  if (settings.searchMode === "coordinateDescent") {
+    return (
+      settings.localSearchSettings.coordinateDescentIterations *
+      settings.localSearchSettings.coordinateDescentParameterOrder.reduce((total, parameter) => {
+        const range = settings.localSearchSettings.coordinateDescentRanges[parameter]
+        return total + createNumericCandidates(range.min, range.max, range.step).length
+      }, 0)
+    )
+  }
+
   const zCount = createNumericCandidates(settings.zMin, settings.zMax, settings.zStep).length
   const pivotZCount = createNumericCandidates(
     settings.pivotZMin,
@@ -1127,8 +1334,10 @@ function calculateProgressRate(processed: number, total: number): number {
   return round(Math.min(1, processed / total))
 }
 function readSettings(): SearchSettings {
+  const searchMode = readSearchMode()
   return {
     ...DEFAULT_SETTINGS,
+    searchMode,
     maxFrames: readNumber("max-frames-input", DEFAULT_SETTINGS.maxFrames),
     targets: {
       front: readNumber("target-front-input", DEFAULT_SETTINGS.targets.front),
@@ -1159,7 +1368,71 @@ function readSettings(): SearchSettings {
     pivotZStep: readNumber("pivot-z-step-input", DEFAULT_SETTINGS.pivotZStep),
     topN: Math.max(1, Math.round(readNumber("top-n-input", DEFAULT_SETTINGS.topN))),
     focalLength: readNumber("focal-length-input", DEFAULT_SETTINGS.focalLength),
+    localSearchSettings: readLocalSearchSettings(),
   }
+}
+
+function readSearchMode(): SearchMode {
+  const value = getElement<HTMLSelectElement>("search-mode-select").value
+  return value === "localOneDimensional" || value === "coordinateDescent"
+    ? value
+    : "fullGrid"
+}
+
+function readLocalSearchSettings(): LocalSearchSettings {
+  return {
+    baseCandidate: readBaseCandidate(),
+    targetParameter: readLocalSearchParameter(
+      getElement<HTMLSelectElement>("local-target-parameter-select").value,
+      DEFAULT_SETTINGS.localSearchSettings.targetParameter,
+    ),
+    localMin: readNumber("local-min-input", DEFAULT_SETTINGS.localSearchSettings.localMin),
+    localMax: readNumber("local-max-input", DEFAULT_SETTINGS.localSearchSettings.localMax),
+    localStep: readNumber("local-step-input", DEFAULT_SETTINGS.localSearchSettings.localStep),
+    coordinateDescentIterations: Math.max(
+      1,
+      Math.round(
+        readNumber(
+          "coordinate-descent-iterations-input",
+          DEFAULT_SETTINGS.localSearchSettings.coordinateDescentIterations,
+        ),
+      ),
+    ),
+    coordinateDescentParameterOrder: DEFAULT_COORDINATE_DESCENT_PARAMETER_ORDER,
+    coordinateDescentRanges: DEFAULT_COORDINATE_DESCENT_RANGES,
+  }
+}
+
+function readBaseCandidate(): FittingCandidate8 {
+  const zByPointId = {} as Record<SemanticPointName, number>
+  for (const name of SEMANTIC_POINT_NAMES) {
+    zByPointId[name] = readNumber(
+      `base-${name}-z-input`,
+      DEFAULT_LOCAL_SEARCH_BASE_CANDIDATE.zByPointId[name],
+    )
+  }
+  return {
+    pivotZ: readNumber("base-pivot-z-input", DEFAULT_LOCAL_SEARCH_BASE_CANDIDATE.pivotZ),
+    zByPointId,
+  }
+}
+
+function writeCandidateToBaseInputs(candidate: FittingCandidate8): void {
+  getElement<HTMLInputElement>("base-pivot-z-input").value = String(round(candidate.pivotZ))
+  for (const name of SEMANTIC_POINT_NAMES) {
+    getElement<HTMLInputElement>(`base-${name}-z-input`).value = String(
+      round(candidate.zByPointId[name]),
+    )
+  }
+}
+
+function readLocalSearchParameter(
+  value: string,
+  fallback: LocalSearchParameter,
+): LocalSearchParameter {
+  return LOCAL_SEARCH_PARAMETERS.includes(value as LocalSearchParameter)
+    ? (value as LocalSearchParameter)
+    : fallback
 }
 
 function extractCaptures(payload: unknown): CaptureRecord[] {
@@ -1249,7 +1522,8 @@ function selectFrames(
 ): { frames: NormalizedFrame[]; summary: SelectedFrameSummary } {
   const usableFrames = frames.filter((frame) => frame.semanticPoints && frame.bounds)
   const selected: NormalizedFrame[] = []
-  const bucketOrder = settings.includeMixedPose
+  const includeMixedPose = settings.includeMixedPose && settings.targets.mixedPose > 0
+  const bucketOrder = includeMixedPose
     ? [...REQUIRED_BUCKETS, "mixedPose" as CaptureBucket]
     : REQUIRED_BUCKETS
 
@@ -1257,15 +1531,6 @@ function selectFrames(
     const target = settings.targets[bucket] ?? 0
     const bucketFrames = usableFrames.filter((frame) => frame.bucket === bucket).slice(0, target)
     selected.push(...bucketFrames)
-  }
-
-  if (selected.length < settings.maxFrames) {
-    const selectedIds = new Set(selected.map((frame) => frame.captureId))
-    selected.push(
-      ...usableFrames
-        .filter((frame) => !selectedIds.has(frame.captureId))
-        .slice(0, settings.maxFrames - selected.length),
-    )
   }
 
   const capped = selected.slice(0, settings.maxFrames)
@@ -1771,7 +2036,11 @@ function createSummaryAnalysis(analysis: AnalysisResult): SummaryAnalysisResult 
       }),
     ),
     depthConvention: analysis.depthConvention,
+    searchMode: analysis.searchMode,
     searchSettings: analysis.searchSettings,
+    localSearchSettings: analysis.localSearchSettings,
+    localSearchSummary: analysis.localSearchSummary,
+    scoreDebugSummary: analysis.scoreDebugSummary,
     processedCandidateCount: analysis.processedCandidateCount,
     estimatedCandidateCount: analysis.estimatedCandidateCount,
     topCandidates: analysis.topCandidates.slice(0, 20),
@@ -1838,6 +2107,7 @@ function renderSourceOnly(): void {
     ["video sizes", sourceSummary.videoSizes.join(", ") || "-"],
   ])
   getElement("base-summary").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
+  getElement("local-search-summary").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
   getElement("current8-overview").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
   getElement("current8-pose-comparison").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
   getElement("current8-bucket-summary").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
@@ -1877,10 +2147,12 @@ function renderAnalysis(): void {
     ["selected", String(analysis.selectedFrameSummary.selectedFrameCount)],
     ["bucket counts", formatBucketCounts(analysis.sourceSummary.bucketCounts)],
     ["selected buckets", formatBucketCounts(analysis.selectedFrameSummary.bucketCounts)],
+    ["searchMode", analysis.searchMode],
     ["candidate count", String(analysis.candidateCount)],
     ["processed candidates", String(analysis.processedCandidateCount)],
     ["estimated candidates", String(analysis.estimatedCandidateCount)],
   ])
+  getElement("local-search-summary").innerHTML = renderLocalSearchSummary(analysis)
   getElement("base-summary").innerHTML = renderStatusItems([
     ["source frame count", String(analysis.base8Points2DSummary.sourceFrameCount)],
     ["bounds", formatBounds(analysis.base8Points2DSummary.bounds)],
@@ -1916,6 +2188,10 @@ function renderAnalysis(): void {
         ["pitchPositiveScore", formatNumber(analysis.bestCandidate.bucketScores.pitchPositive)],
         ["pitchNegativeScore", formatNumber(analysis.bestCandidate.bucketScores.pitchNegative)],
         ["mixedPoseScore", formatNumber(analysis.bestCandidate.bucketScores.mixedPose)],
+        ["yawAverageScore", formatNumber(analysis.bestCandidate.scoreDebug?.yawAverageScore)],
+        ["pitchAverageScore", formatNumber(analysis.bestCandidate.scoreDebug?.pitchAverageScore)],
+        ["maxBucketScore", formatNumber(analysis.bestCandidate.scoreDebug?.maxBucketScore)],
+        ["balancedScore", formatNumber(analysis.bestCandidate.scoreDebug?.balancedScore)],
         ["zByPointId", JSON.stringify(roundRecord(analysis.bestCandidate.zByPointId))],
         ["pivotZ", formatNumber(analysis.bestCandidate.pivotZ)],
       ])
@@ -1935,6 +2211,10 @@ function renderAnalysis(): void {
     [
       "bucketScores",
       analysis.bestCandidate ? JSON.stringify(roundRecord(analysis.bestCandidate.bucketScores)) : "-",
+    ],
+    [
+      "scoreDebug",
+      analysis.scoreDebugSummary ? JSON.stringify(roundScoreDebug(analysis.scoreDebugSummary)) : "-",
     ],
   ])
   getElement("warnings").textContent = analysis.warnings.length === 0 ? "警告はありません。" : analysis.warnings.join("\n")
@@ -1958,6 +2238,7 @@ function renderSearchProgress(): void {
 function renderEmptyState(): void {
   getElement("source-summary").innerHTML = `<p class="empty">captured JSON を読み込んでください。</p>`
   getElement("base-summary").innerHTML = `<p class="empty">未解析です。</p>`
+  getElement("local-search-summary").innerHTML = `<p class="empty">未解析です。</p>`
   getElement("current8-overview").innerHTML = `<p class="empty">未解析です。</p>`
   getElement("current8-pose-comparison").innerHTML = `<p class="empty">未解析です。</p>`
   getElement("current8-bucket-summary").innerHTML = `<p class="empty">未解析です。</p>`
@@ -2198,6 +2479,35 @@ function renderDepthConvention(depthConvention: DepthConvention): string {
   ])
 }
 
+function renderLocalSearchSummary(analysis: AnalysisResult): string {
+  if (analysis.searchMode === "fullGrid") {
+    return renderStatusItems([
+      ["searchMode", "fullGrid"],
+      ["note", "full grid search を実行しました。"],
+    ])
+  }
+
+  const summary = analysis.localSearchSummary
+  const settings = analysis.localSearchSettings
+  const latestStep = summary?.steps.at(-1) ?? null
+  return renderStatusItems([
+    ["searchMode", analysis.searchMode],
+    ["targetParameter", settings?.targetParameter ?? "-"],
+    ["localRange", settings ? `${formatNumber(settings.localMin)} - ${formatNumber(settings.localMax)} / step ${formatNumber(settings.localStep)}` : "-"],
+    ["coordinateDescentIterations", settings ? String(settings.coordinateDescentIterations) : "-"],
+    ["coordinateDescentOrder", settings?.coordinateDescentParameterOrder.join(" -> ") ?? "-"],
+    ["initialCandidate", summary ? JSON.stringify(summary.initialCandidate) : "-"],
+    ["finalCandidate", summary ? JSON.stringify(summary.finalCandidate) : "-"],
+    ["stepCount", summary ? String(summary.steps.length) : "0"],
+    [
+      "latestStep",
+      latestStep
+        ? `${latestStep.iteration}: ${latestStep.parameter} ${formatNumber(latestStep.previousValue)} -> ${formatNumber(latestStep.bestValue)} / score ${formatNumber(latestStep.bestScore)} / candidates ${latestStep.candidateCount}`
+        : "-",
+    ],
+  ])
+}
+
 function renderRankingTable(entries: RankingEntry[]): string {
   if (entries.length === 0) {
     return `<p class="empty">ranking はありません。</p>`
@@ -2215,6 +2525,7 @@ function renderRankingTable(entries: RankingEntry[]): string {
           <th>pitch+</th>
           <th>pitch-</th>
           <th>mixed</th>
+          <th>balanced</th>
           <th>pivotZ</th>
           ${SEMANTIC_POINT_NAMES.map((name) => `<th>${name}.z</th>`).join("")}
         </tr>
@@ -2232,6 +2543,7 @@ function renderRankingTable(entries: RankingEntry[]): string {
               <td>${formatNumber(entry.bucketScores.pitchPositive)}</td>
               <td>${formatNumber(entry.bucketScores.pitchNegative)}</td>
               <td>${formatNumber(entry.bucketScores.mixedPose)}</td>
+              <td>${formatNumber(entry.scoreDebug?.balancedScore)}</td>
               <td>${formatNumber(entry.candidate.pivotZ)}</td>
               ${SEMANTIC_POINT_NAMES.map(
                 (name) => `<td>${formatNumber(entry.candidate.zByPointId[name])}</td>`,
@@ -2277,6 +2589,7 @@ function setButtons(): void {
   getElement<HTMLButtonElement>("run-analysis-button").disabled = state.frames.length === 0 || isRunning
   getElement<HTMLButtonElement>("cancel-analysis-button").disabled = !isRunning
   getElement<HTMLButtonElement>("copy-debug-button").disabled = !state.analysis || isRunning
+  getElement<HTMLButtonElement>("use-best-candidate-button").disabled = !state.analysis?.bestCandidate || isRunning
   getElement<HTMLButtonElement>("export-full-button").disabled = !state.analysis || isRunning
   getElement<HTMLButtonElement>("export-summary-button").disabled = !state.analysis || isRunning
 }
@@ -2371,6 +2684,7 @@ function toRankingEntry(candidate: CandidateResult, rank: number): RankingEntry 
     candidateId: candidate.candidateId,
     totalScore: round(candidate.totalScore),
     bucketScores: roundRecord(candidate.bucketScores),
+    scoreDebug: roundScoreDebug(candidate.scoreDebug ?? calculateScoreDebug(candidate.totalScore, candidate.bucketScores)),
     candidate: {
       pivotZ: round(candidate.pivotZ),
       zByPointId: roundRecord(candidate.zByPointId),
@@ -2499,6 +2813,35 @@ function safeRatio(value: number | null, base: number | null): number | null {
   return round(value / base)
 }
 
+function calculateScoreDebug(
+  totalScore: number,
+  bucketScores: PoseBucketScores,
+): CandidateScoreDebug {
+  const yawAverageScore = averageNullable([
+    bucketScores.yawPositive,
+    bucketScores.yawNegative,
+  ])
+  const pitchAverageScore = averageNullable([
+    bucketScores.pitchPositive,
+    bucketScores.pitchNegative,
+  ])
+  const maxBucketScore = maxNullable([
+    bucketScores.front,
+    bucketScores.yawPositive,
+    bucketScores.yawNegative,
+    bucketScores.pitchPositive,
+    bucketScores.pitchNegative,
+    bucketScores.mixedPose,
+  ])
+
+  return {
+    yawAverageScore: roundNullable(yawAverageScore),
+    pitchAverageScore: roundNullable(pitchAverageScore),
+    maxBucketScore: roundNullable(maxBucketScore),
+    balancedScore: round(totalScore + (maxBucketScore ?? 0) * 0.25),
+  }
+}
+
 function distance2D(current: Point2, next: Point2): number {
   return Math.hypot(current.x - next.x, current.y - next.y)
 }
@@ -2525,6 +2868,15 @@ function average(values: number[]): number | null {
   return finite.length === 0
     ? null
     : finite.reduce((total, value) => total + value, 0) / finite.length
+}
+
+function averageNullable(values: Array<number | null>): number | null {
+  return average(values.filter((value): value is number => typeof value === "number"))
+}
+
+function maxNullable(values: Array<number | null>): number | null {
+  const finite = values.filter((value): value is number => typeof value === "number" && Number.isFinite(value))
+  return finite.length === 0 ? null : Math.max(...finite)
 }
 
 function readNumber(id: string, fallback: number): number {
@@ -2601,6 +2953,15 @@ function roundRecord<T extends Record<string, number | null>>(record: T): T {
       typeof value === "number" ? round(value) : value,
     ]),
   ) as T
+}
+
+function roundScoreDebug(scoreDebug: CandidateScoreDebug): CandidateScoreDebug {
+  return {
+    yawAverageScore: roundNullable(scoreDebug.yawAverageScore),
+    pitchAverageScore: roundNullable(scoreDebug.pitchAverageScore),
+    maxBucketScore: roundNullable(scoreDebug.maxBucketScore),
+    balancedScore: round(scoreDebug.balancedScore),
+  }
 }
 
 function formatNumber(value: number | null | undefined): string {
