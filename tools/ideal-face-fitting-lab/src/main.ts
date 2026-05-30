@@ -96,6 +96,7 @@ interface SemanticPoint2D extends Point2 {
 }
 
 type SemanticPointSet2D = Record<SemanticPointName, SemanticPoint2D>
+type SemanticPointSet3D = Record<SemanticPointName, Point3>
 
 interface NormalizedFrame {
   captureId: string
@@ -496,6 +497,64 @@ interface BestIdealFace8 {
   summary: IdealFace8Summary
 }
 
+type ProjectionSignDebugBucket = Exclude<CaptureBucket, "mixedPose" | "unknown">
+type ProjectionSignDirection = "positive" | "negative" | "flat"
+type ProjectionSignPointName = "nose" | "leftCheek" | "rightCheek" | "mouth"
+
+interface ProjectionSignPointDelta {
+  dx: number
+  dy: number
+  distance: number
+}
+
+interface ProjectionSignMovement {
+  dx: number
+  dy: number
+}
+
+type ProjectionSignPointSet = Record<ProjectionSignPointName, Point2>
+type ProjectionSignDeltaSet = Record<ProjectionSignPointName, ProjectionSignPointDelta>
+
+interface ProjectionSignDebugRow {
+  captureId: string
+  bucket: ProjectionSignDebugBucket
+  pose: Pose
+  candidate: {
+    pivotZ: number
+    noseZ: number
+    leftCheekZ: number
+    rightCheekZ: number
+    mouthZ: number
+  }
+  projected: ProjectionSignPointSet
+  current: ProjectionSignPointSet
+  deltaToCurrent: ProjectionSignDeltaSet
+  noseMovementFromBase?: ProjectionSignMovement
+}
+
+interface ProjectionSignBucketSummary {
+  captureId: string
+  pose: Pose
+  noseZIncreasingEffect: {
+    projectedNoseXDirection: ProjectionSignDirection
+    projectedNoseYDirection: ProjectionSignDirection
+  }
+  bestNoseZByNoseDistance: number
+  bestNoseZByFrameScore: number
+  note?: string
+}
+
+interface ProjectionSignDebugSummary {
+  byBucket: Record<ProjectionSignDebugBucket, ProjectionSignBucketSummary>
+}
+
+interface ProjectionSignDebug {
+  baseCandidate: FittingCandidate8
+  noseZCandidates: number[]
+  rows: ProjectionSignDebugRow[]
+  summary: ProjectionSignDebugSummary
+}
+
 interface AnalysisResult {
   schemaVersion: "ideal_face_fitting_lab_analysis_v1"
   analysisVersion: "eight_point_grid_search_v1"
@@ -524,6 +583,7 @@ interface AnalysisResult {
   depthRelation: DepthRelation | null
   bucketRanking: Record<CaptureBucket, RankingEntry[]>
   perPointErrorSummary: Record<SemanticPointName, number | null>
+  projectionSignDebug?: ProjectionSignDebug
   autoSequenceSummary?: AutoSequenceSummary
   warnings: string[]
 }
@@ -552,6 +612,7 @@ interface SummaryAnalysisResult {
   depthRelation: DepthRelation | null
   bucketRanking: Record<CaptureBucket, RankingEntry[]>
   perPointErrorSummary: Record<SemanticPointName, number | null>
+  projectionSignDebug?: ProjectionSignDebug
   autoSequenceSummary?: AutoSequenceSummary
   warnings: string[]
 }
@@ -905,6 +966,31 @@ const REQUIRED_BUCKETS: CaptureBucket[] = [
   "pitchNegative",
 ]
 
+const PROJECTION_SIGN_DEBUG_BUCKETS: ProjectionSignDebugBucket[] = [
+  "front",
+  "yawPositive",
+  "yawNegative",
+  "pitchPositive",
+  "pitchNegative",
+]
+
+const PROJECTION_SIGN_POINT_NAMES: ProjectionSignPointName[] = [
+  "nose",
+  "leftCheek",
+  "rightCheek",
+  "mouth",
+]
+
+const DEFAULT_PROJECTION_SIGN_NOSE_Z_CANDIDATES = [
+  -0.04,
+  -0.02,
+  0,
+  0.02,
+  0.04,
+  0.06,
+  0.08,
+]
+
 const DEFAULT_SETTINGS: SearchSettings = {
   searchMode: "fullGrid",
   maxFrames: 30,
@@ -1233,6 +1319,21 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
         </section>
 
         <section class="panel">
+          <h2>Projection Sign Debug</h2>
+          <p class="panel-help">selected frame の各 bucket 先頭フレームを使い、baseCandidate の nose.z だけを変えて projection の符号と yaw / pitch 応答を確認します。score 式と bestCandidate 選定は変更しません。</p>
+          <h3>selected frame by bucket</h3>
+          <div id="projection-sign-selected-frames" class="table-wrap"></div>
+          <h3>baseCandidate / nose.z candidates</h3>
+          <div id="projection-sign-base" class="summary-grid"></div>
+          <h3>summary by bucket</h3>
+          <div id="projection-sign-summary" class="table-wrap"></div>
+          <h3>table of projected nose / current nose / error</h3>
+          <div id="projection-sign-table" class="table-wrap"></div>
+          <h3>leftCheek / rightCheek / mouth JSON preview</h3>
+          <pre id="projection-sign-json" class="json-preview"></pre>
+        </section>
+
+        <section class="panel">
           <h2>bestIdealFace8</h2>
           <p class="panel-help">正面基準 x / y と bestCandidate の z から作る 8点の IdealFace3D debug artifact です。</p>
           <div id="best-ideal-face8-summary" class="summary-grid"></div>
@@ -1549,6 +1650,17 @@ function completeSearchFromWorker(context: SearchWorkerContext, message: Record<
   const localSearchSummary = isRecord(message.localSearchSummary)
     ? (message.localSearchSummary as unknown as LocalSearchSummary)
     : undefined
+  const projectionSignDebugBaseCandidate = bestCandidate
+    ? cloneCandidate(bestCandidate)
+    : cloneCandidate(context.settings.localSearchSettings.baseCandidate)
+  const projectionSignDebug = context.base8Points2DSummary.points
+    ? buildProjectionSignDebug(
+        context.base8Points2DSummary.points,
+        context.selected.frames,
+        context.settings,
+        projectionSignDebugBaseCandidate,
+      )
+    : undefined
 
   state.analysis = {
     schemaVersion: "ideal_face_fitting_lab_analysis_v1",
@@ -1588,6 +1700,7 @@ function completeSearchFromWorker(context: SearchWorkerContext, message: Record<
       ]),
     ) as Record<CaptureBucket, RankingEntry[]>,
     perPointErrorSummary: bestCandidate ? bestCandidate.perPointError : emptyPointSummary(),
+    projectionSignDebug,
     warnings: [
       ...new Set([
         ...context.warnings,
@@ -1740,6 +1853,336 @@ function calculateProgressRate(processed: number, total: number): number {
   }
   return round(Math.min(1, processed / total))
 }
+
+function buildProjectionSignDebug(
+  basePoints: SemanticPointSet2D,
+  frames: NormalizedFrame[],
+  settings: SearchSettings,
+  baseCandidate: FittingCandidate8,
+): ProjectionSignDebug {
+  const base = cloneCandidate(baseCandidate)
+  const noseZCandidates = [...DEFAULT_PROJECTION_SIGN_NOSE_Z_CANDIDATES]
+  const selectedFrames = PROJECTION_SIGN_DEBUG_BUCKETS.map((bucket) =>
+    frames.find((frame) => frame.bucket === bucket && frame.semanticPoints && frame.bounds),
+  ).filter((frame): frame is NormalizedFrame => Boolean(frame))
+  const rows = selectedFrames.flatMap((frame) =>
+    buildProjectionSignDebugRowsForFrame(basePoints, frame, settings, base, noseZCandidates),
+  )
+
+  return {
+    baseCandidate: base,
+    noseZCandidates,
+    rows,
+    summary: buildProjectionSignDebugSummary(rows, basePoints, selectedFrames, settings, base),
+  }
+}
+
+function buildProjectionSignDebugRowsForFrame(
+  basePoints: SemanticPointSet2D,
+  frame: NormalizedFrame,
+  settings: SearchSettings,
+  baseCandidate: FittingCandidate8,
+  noseZCandidates: number[],
+): ProjectionSignDebugRow[] {
+  if (!frame.semanticPoints || !frame.bounds || !isProjectionSignDebugBucket(frame.bucket)) {
+    return []
+  }
+
+  const current = normalizeCurrentPointsForScoring(frame.semanticPoints, frame.bounds)
+  const baseProjected = projectIdealPoints(
+    buildIdeal3D(basePoints, baseCandidate),
+    frame.pose,
+    baseCandidate,
+    settings,
+  )
+
+  return noseZCandidates.map((noseZ) => {
+    const candidate = setCandidateNoseZ(baseCandidate, noseZ)
+    const projected = projectIdealPoints(
+      buildIdeal3D(basePoints, candidate),
+      frame.pose,
+      candidate,
+      settings,
+    )
+    const deltaToCurrent = buildProjectionSignDeltaSet(projected, current)
+
+    return {
+      captureId: frame.captureId,
+      bucket: frame.bucket,
+      pose: roundPose(frame.pose),
+      candidate: {
+        pivotZ: round(candidate.pivotZ),
+        noseZ: round(candidate.zByPointId.nose),
+        leftCheekZ: round(candidate.zByPointId.leftCheek),
+        rightCheekZ: round(candidate.zByPointId.rightCheek),
+        mouthZ: round(candidate.zByPointId.mouth),
+      },
+      projected: pickProjectionSignPoints(projected),
+      current: pickProjectionSignPoints(current),
+      deltaToCurrent,
+      noseMovementFromBase: {
+        dx: round(projected.nose.x - baseProjected.nose.x),
+        dy: round(projected.nose.y - baseProjected.nose.y),
+      },
+    }
+  })
+}
+
+function buildProjectionSignDebugSummary(
+  rows: ProjectionSignDebugRow[],
+  basePoints: SemanticPointSet2D,
+  frames: NormalizedFrame[],
+  settings: SearchSettings,
+  baseCandidate: FittingCandidate8,
+): ProjectionSignDebugSummary {
+  const byBucket = {} as Record<ProjectionSignDebugBucket, ProjectionSignBucketSummary>
+
+  for (const bucket of PROJECTION_SIGN_DEBUG_BUCKETS) {
+    const bucketRows = rows
+      .filter((row) => row.bucket === bucket)
+      .sort((a, b) => a.candidate.noseZ - b.candidate.noseZ)
+    const frame = frames.find((item) => item.bucket === bucket)
+    if (!frame || bucketRows.length === 0) {
+      byBucket[bucket] = {
+        captureId: "-",
+        pose: { yaw: 0, pitch: 0, roll: 0 },
+        noseZIncreasingEffect: {
+          projectedNoseXDirection: "flat",
+          projectedNoseYDirection: "flat",
+        },
+        bestNoseZByNoseDistance: round(baseCandidate.zByPointId.nose),
+        bestNoseZByFrameScore: round(baseCandidate.zByPointId.nose),
+        note: "selected frame がありません。",
+      }
+      continue
+    }
+    const first = bucketRows[0]
+    const last = bucketRows[bucketRows.length - 1]
+    const bestByFrameScore = findBestProjectionSignNoseZByFrameScore(
+      basePoints,
+      frame,
+      settings,
+      baseCandidate,
+      bucketRows.map((row) => row.candidate.noseZ),
+    )
+
+    byBucket[bucket] = {
+      captureId: frame.captureId,
+      pose: roundPose(frame.pose),
+      noseZIncreasingEffect: {
+        projectedNoseXDirection: toProjectionSignDirection(
+          last.projected.nose.x - first.projected.nose.x,
+        ),
+        projectedNoseYDirection: toProjectionSignDirection(
+          last.projected.nose.y - first.projected.nose.y,
+        ),
+      },
+      bestNoseZByNoseDistance: findBestProjectionSignRowByNoseDistance(bucketRows).candidate.noseZ,
+      bestNoseZByFrameScore: bestByFrameScore,
+      note:
+        bucket === "front"
+          ? "front は yaw / pitch response より perspective scale の基準確認用です。"
+          : undefined,
+    }
+  }
+
+  return { byBucket }
+}
+
+function findBestProjectionSignNoseZByFrameScore(
+  basePoints: SemanticPointSet2D,
+  frame: NormalizedFrame,
+  settings: SearchSettings,
+  baseCandidate: FittingCandidate8,
+  noseZCandidates: number[],
+): number {
+  if (!frame.semanticPoints || !frame.bounds) {
+    return noseZCandidates[0] ?? baseCandidate.zByPointId.nose
+  }
+  const current = normalizeCurrentPointsForScoring(frame.semanticPoints, frame.bounds)
+  let bestNoseZ = noseZCandidates[0] ?? baseCandidate.zByPointId.nose
+  let bestScore = Number.POSITIVE_INFINITY
+  for (const noseZ of noseZCandidates) {
+    const candidate = setCandidateNoseZ(baseCandidate, noseZ)
+    const projected = projectIdealPoints(
+      buildIdeal3D(basePoints, candidate),
+      frame.pose,
+      candidate,
+      settings,
+    )
+    const score = calculateProjectionSignFrameScore(projected, current)
+    if (score < bestScore) {
+      bestScore = score
+      bestNoseZ = noseZ
+    }
+  }
+  return round(bestNoseZ)
+}
+
+function findBestProjectionSignRowByNoseDistance(
+  rows: ProjectionSignDebugRow[],
+): ProjectionSignDebugRow {
+  return rows.reduce((best, row) =>
+    row.deltaToCurrent.nose.distance < best.deltaToCurrent.nose.distance ? row : best,
+  )
+}
+
+function calculateProjectionSignFrameScore(
+  projected: SemanticPointSet2D,
+  current: SemanticPointSet2D,
+): number {
+  const weightedTotal = SEMANTIC_DEFINITIONS.reduce(
+    (total, definition) =>
+      total + distance2D(projected[definition.name], current[definition.name]) * definition.weight,
+    0,
+  )
+  const weightTotal = SEMANTIC_DEFINITIONS.reduce((total, definition) => total + definition.weight, 0)
+  return weightTotal <= EPSILON ? 0 : weightedTotal / weightTotal
+}
+
+function buildIdeal3D(
+  basePoints: SemanticPointSet2D,
+  candidate: FittingCandidate8,
+): SemanticPointSet3D {
+  const points = {} as SemanticPointSet3D
+  for (const name of SEMANTIC_POINT_NAMES) {
+    points[name] = {
+      x: basePoints[name].x,
+      y: basePoints[name].y,
+      z: candidate.zByPointId[name],
+    }
+  }
+  return points
+}
+
+function projectIdealPoints(
+  ideal3D: SemanticPointSet3D,
+  pose: Pose,
+  candidate: FittingCandidate8,
+  settings: SearchSettings,
+): SemanticPointSet2D {
+  const points = {} as SemanticPointSet2D
+  for (const name of SEMANTIC_POINT_NAMES) {
+    const rotated = rotatePoint3D(
+      {
+        x: ideal3D[name].x,
+        y: ideal3D[name].y,
+        z: ideal3D[name].z - candidate.pivotZ,
+      },
+      pose,
+    )
+    const z = rotated.z + candidate.pivotZ
+    const perspective = settings.focalLength / Math.max(settings.focalLength + z, 0.2)
+    points[name] = {
+      name,
+      x: round(rotated.x * perspective),
+      y: round(rotated.y * perspective),
+    }
+  }
+  return points
+}
+
+function rotatePoint3D(point: Point3, pose: Pose): Point3 {
+  const yaw = degreesToRadians(pose.yaw)
+  const pitch = degreesToRadians(pose.pitch)
+  const roll = degreesToRadians(pose.roll)
+
+  const cosY = Math.cos(yaw)
+  const sinY = Math.sin(yaw)
+  const yawed = {
+    x: point.x * cosY + point.z * sinY,
+    y: point.y,
+    z: -point.x * sinY + point.z * cosY,
+  }
+
+  const cosP = Math.cos(pitch)
+  const sinP = Math.sin(pitch)
+  const pitched = {
+    x: yawed.x,
+    y: yawed.y * cosP - yawed.z * sinP,
+    z: yawed.y * sinP + yawed.z * cosP,
+  }
+
+  const cosR = Math.cos(roll)
+  const sinR = Math.sin(roll)
+  return {
+    x: pitched.x * cosR - pitched.y * sinR,
+    y: pitched.x * sinR + pitched.y * cosR,
+    z: pitched.z,
+  }
+}
+
+function normalizeCurrentPointsForScoring(
+  points: SemanticPointSet2D,
+  bounds: Bounds2D,
+): SemanticPointSet2D {
+  const normalized = {} as SemanticPointSet2D
+  for (const name of SEMANTIC_POINT_NAMES) {
+    normalized[name] = {
+      name,
+      x: round(points[name].x - bounds.centerX),
+      y: round(points[name].y - bounds.centerY),
+    }
+  }
+  return normalized
+}
+
+function setCandidateNoseZ(
+  candidate: FittingCandidate8,
+  noseZ: number,
+): FittingCandidate8 {
+  const next = cloneCandidate(candidate)
+  next.zByPointId.nose = round(noseZ)
+  return next
+}
+
+function pickProjectionSignPoints(points: SemanticPointSet2D): ProjectionSignPointSet {
+  return Object.fromEntries(
+    PROJECTION_SIGN_POINT_NAMES.map((name) => [
+      name,
+      {
+        x: round(points[name].x),
+        y: round(points[name].y),
+      },
+    ]),
+  ) as ProjectionSignPointSet
+}
+
+function buildProjectionSignDeltaSet(
+  projected: SemanticPointSet2D,
+  current: SemanticPointSet2D,
+): ProjectionSignDeltaSet {
+  return Object.fromEntries(
+    PROJECTION_SIGN_POINT_NAMES.map((name) => {
+      const dx = projected[name].x - current[name].x
+      const dy = projected[name].y - current[name].y
+      return [
+        name,
+        {
+          dx: round(dx),
+          dy: round(dy),
+          distance: round(Math.hypot(dx, dy)),
+        },
+      ]
+    }),
+  ) as ProjectionSignDeltaSet
+}
+
+function toProjectionSignDirection(value: number): ProjectionSignDirection {
+  if (Math.abs(value) <= 0.00001) {
+    return "flat"
+  }
+  return value > 0 ? "positive" : "negative"
+}
+
+function isProjectionSignDebugBucket(bucket: CaptureBucket): bucket is ProjectionSignDebugBucket {
+  return PROJECTION_SIGN_DEBUG_BUCKETS.includes(bucket as ProjectionSignDebugBucket)
+}
+
+function degreesToRadians(degrees: number): number {
+  return (degrees / 180) * Math.PI
+}
+
 function readSettings(): SearchSettings {
   const searchMode = readSearchMode()
   return {
@@ -2764,6 +3207,7 @@ function createSummaryAnalysis(analysis: AnalysisResult): SummaryAnalysisResult 
       BUCKETS.map((bucket) => [bucket, analysis.bucketRanking[bucket].slice(0, 5)]),
     ) as Record<CaptureBucket, RankingEntry[]>,
     perPointErrorSummary: analysis.perPointErrorSummary,
+    projectionSignDebug: analysis.projectionSignDebug,
     autoSequenceSummary: analysis.autoSequenceSummary,
     warnings: analysis.warnings,
   }
@@ -2826,6 +3270,7 @@ function renderSourceOnly(): void {
   getElement("current8-frame-table").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
   getElement("ranking-table").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
   getElement("best-candidate").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
+  renderProjectionSignDebug(null)
   getElement("best-ideal-face8-summary").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
   getElement("best-ideal-face8-table").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
   getElement("depth-relation").innerHTML = renderDepthConvention(DEPTH_CONVENTION)
@@ -2909,6 +3354,7 @@ function renderAnalysis(): void {
         ["pivotZ", formatNumber(analysis.bestCandidate.pivotZ)],
       ])
     : `<p class="empty">候補がありません。</p>`
+  renderProjectionSignDebug(analysis.projectionSignDebug ?? null)
   getElement("best-ideal-face8-summary").innerHTML = analysis.bestIdealFace8
     ? renderIdealFace8Summary(analysis.bestIdealFace8)
     : `<p class="empty">bestIdealFace8 はありません。</p>`
@@ -3041,6 +3487,187 @@ function renderAutoSequenceStepTable(steps: AutoSequenceStepSummary[]): string {
   `
 }
 
+function renderProjectionSignDebug(debug: ProjectionSignDebug | null): void {
+  if (!debug) {
+    const empty = `<p class="empty">解析実行後に表示します。</p>`
+    getElement("projection-sign-selected-frames").innerHTML = empty
+    getElement("projection-sign-base").innerHTML = empty
+    getElement("projection-sign-summary").innerHTML = empty
+    getElement("projection-sign-table").innerHTML = empty
+    getElement("projection-sign-json").textContent = ""
+    return
+  }
+
+  getElement("projection-sign-selected-frames").innerHTML =
+    renderProjectionSignSelectedFrames(debug)
+  getElement("projection-sign-base").innerHTML = renderStatusItems([
+    ["baseCandidate", formatCandidateCompact(debug.baseCandidate)],
+    ["nose.z candidates", debug.noseZCandidates.map(formatNumber).join(" / ")],
+    ["depthConvention", `${DEPTH_CONVENTION.smallerZ} / ${DEPTH_CONVENTION.largerZ}`],
+  ])
+  getElement("projection-sign-summary").innerHTML =
+    renderProjectionSignSummaryTable(debug.summary)
+  getElement("projection-sign-table").innerHTML = renderProjectionSignRowsTable(debug.rows)
+  getElement("projection-sign-json").textContent = JSON.stringify(
+    {
+      rows: debug.rows.map((row) => ({
+        captureId: row.captureId,
+        bucket: row.bucket,
+        noseZ: row.candidate.noseZ,
+        projected: {
+          leftCheek: row.projected.leftCheek,
+          rightCheek: row.projected.rightCheek,
+          mouth: row.projected.mouth,
+        },
+        current: {
+          leftCheek: row.current.leftCheek,
+          rightCheek: row.current.rightCheek,
+          mouth: row.current.mouth,
+        },
+        deltaToCurrent: {
+          leftCheek: row.deltaToCurrent.leftCheek,
+          rightCheek: row.deltaToCurrent.rightCheek,
+          mouth: row.deltaToCurrent.mouth,
+        },
+      })),
+      summary: debug.summary,
+    },
+    null,
+    2,
+  )
+}
+
+function renderProjectionSignSelectedFrames(debug: ProjectionSignDebug): string {
+  const rows = PROJECTION_SIGN_DEBUG_BUCKETS.map((bucket) => {
+    const summary = debug.summary.byBucket[bucket]
+    return {
+      bucket,
+      captureId: summary?.captureId ?? "-",
+      pose: summary?.pose ?? null,
+    }
+  })
+
+  return `
+    <table>
+      <thead>
+        <tr>
+          <th>bucket</th>
+          <th>captureId</th>
+          <th>yaw</th>
+          <th>pitch</th>
+          <th>roll</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map(
+          (row) => `
+            <tr>
+              <td><code>${row.bucket}</code></td>
+              <td><code>${escapeHtml(row.captureId)}</code></td>
+              <td>${formatNumber(row.pose?.yaw)}</td>
+              <td>${formatNumber(row.pose?.pitch)}</td>
+              <td>${formatNumber(row.pose?.roll)}</td>
+            </tr>
+          `,
+        ).join("")}
+      </tbody>
+    </table>
+  `
+}
+
+function renderProjectionSignSummaryTable(summary: ProjectionSignDebugSummary): string {
+  return `
+    <table>
+      <thead>
+        <tr>
+          <th>bucket</th>
+          <th>captureId</th>
+          <th>yaw</th>
+          <th>pitch</th>
+          <th>roll</th>
+          <th>nose.z増加時 x</th>
+          <th>nose.z増加時 y</th>
+          <th>best nose.z / nose distance</th>
+          <th>best nose.z / frame score</th>
+          <th>note</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${PROJECTION_SIGN_DEBUG_BUCKETS.map((bucket) => {
+          const entry = summary.byBucket[bucket]
+          return `
+            <tr>
+              <td><code>${bucket}</code></td>
+              <td><code>${escapeHtml(entry?.captureId ?? "-")}</code></td>
+              <td>${formatNumber(entry?.pose.yaw)}</td>
+              <td>${formatNumber(entry?.pose.pitch)}</td>
+              <td>${formatNumber(entry?.pose.roll)}</td>
+              <td>${entry?.noseZIncreasingEffect.projectedNoseXDirection ?? "-"}</td>
+              <td>${entry?.noseZIncreasingEffect.projectedNoseYDirection ?? "-"}</td>
+              <td>${formatNumber(entry?.bestNoseZByNoseDistance)}</td>
+              <td>${formatNumber(entry?.bestNoseZByFrameScore)}</td>
+              <td>${escapeHtml(entry?.note ?? "")}</td>
+            </tr>
+          `
+        }).join("")}
+      </tbody>
+    </table>
+  `
+}
+
+function renderProjectionSignRowsTable(rows: ProjectionSignDebugRow[]): string {
+  if (rows.length === 0) {
+    return `<p class="empty">Projection Sign Debug の対象フレームがありません。</p>`
+  }
+
+  return `
+    <table>
+      <thead>
+        <tr>
+          <th>bucket</th>
+          <th>captureId</th>
+          <th>yaw</th>
+          <th>pitch</th>
+          <th>roll</th>
+          <th>nose.z</th>
+          <th>projected nose.x</th>
+          <th>projected nose.y</th>
+          <th>current nose.x</th>
+          <th>current nose.y</th>
+          <th>nose dx</th>
+          <th>nose dy</th>
+          <th>nose distance</th>
+          <th>movement from base dx</th>
+          <th>movement from base dy</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map(
+          (row) => `
+            <tr>
+              <td><code>${row.bucket}</code></td>
+              <td><code>${escapeHtml(row.captureId)}</code></td>
+              <td>${formatNumber(row.pose.yaw)}</td>
+              <td>${formatNumber(row.pose.pitch)}</td>
+              <td>${formatNumber(row.pose.roll)}</td>
+              <td>${formatNumber(row.candidate.noseZ)}</td>
+              <td>${formatNumber(row.projected.nose.x)}</td>
+              <td>${formatNumber(row.projected.nose.y)}</td>
+              <td>${formatNumber(row.current.nose.x)}</td>
+              <td>${formatNumber(row.current.nose.y)}</td>
+              <td>${formatNumber(row.deltaToCurrent.nose.dx)}</td>
+              <td>${formatNumber(row.deltaToCurrent.nose.dy)}</td>
+              <td>${formatNumber(row.deltaToCurrent.nose.distance)}</td>
+              <td>${formatNumber(row.noseMovementFromBase?.dx)}</td>
+              <td>${formatNumber(row.noseMovementFromBase?.dy)}</td>
+            </tr>
+          `,
+        ).join("")}
+      </tbody>
+    </table>
+  `
+}
+
 function renderEmptyState(): void {
   getElement("source-summary").innerHTML = `<p class="empty">captured JSON を読み込んでください。</p>`
   getElement("base-summary").innerHTML = `<p class="empty">未解析です。</p>`
@@ -3051,6 +3678,7 @@ function renderEmptyState(): void {
   getElement("current8-frame-table").innerHTML = `<p class="empty">未解析です。</p>`
   getElement("ranking-table").innerHTML = `<p class="empty">未解析です。</p>`
   getElement("best-candidate").innerHTML = `<p class="empty">未解析です。</p>`
+  renderProjectionSignDebug(null)
   getElement("best-ideal-face8-summary").innerHTML = `<p class="empty">未解析です。</p>`
   getElement("best-ideal-face8-table").innerHTML = `<p class="empty">未解析です。</p>`
   getElement("depth-relation").innerHTML = renderDepthConvention(DEPTH_CONVENTION)
