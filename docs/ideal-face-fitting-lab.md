@@ -163,6 +163,27 @@ Full / Summary JSON と UI で以下を確認できます。
 - current8PoseComparison
 - current8FrameSample
 
+## Projection Sign Debug
+
+Projection Sign Debug は、8点 z / pivotZ 探索で得られた候補について、z の符号や yaw / pitch 回転方向が期待通りに projection へ反映されているかを確認するための debug 機能です。
+
+この debug は selected frames のうち `front` / `yawPositive` / `yawNegative` / `pitchPositive` / `pitchNegative` の各 bucket 先頭フレームを使います。`mixedPose` は使いません。現在の `bestCandidate` を baseCandidate とし、`nose.z` だけを `-0.04` / `-0.02` / `0` / `0.02` / `0.04` / `0.06` / `0.08` に差し替えて、projected nose / current nose / error と、leftCheek / rightCheek / mouth の詳細を出力します。
+
+2D 誤差最小候補で `nose.z` が `cheek.z` より大きくなる場合、それが自然な顔形状を意味するとは限りません。まず projection sign / pose sign / pitch-yaw response を確認する必要があります。
+
+この debug は score 式、bestCandidate 選定ロジック、depth prior を変更しません。候補選定前の原因切り分けに使います。
+
+Full JSON / Summary JSON には以下が追加されます。
+
+```ts
+projectionSignDebug?: {
+  baseCandidate: FittingCandidate8
+  noseZCandidates: number[]
+  rows: ProjectionSignDebugRow[]
+  summary: ProjectionSignDebugSummary
+}
+```
+
 ## Worker Grid Search
 
 grid search はブラウザ main thread ではなく Web Worker で実行します。
