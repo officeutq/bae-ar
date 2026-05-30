@@ -276,6 +276,19 @@ interface FittingCandidate8 {
 
 type SearchMode = "fullGrid" | "localOneDimensional" | "coordinateDescent"
 type LocalSearchParameter = "pivotZ" | `${SemanticPointName}.z`
+type SearchPresetId =
+  | "coordinateDescentFine"
+  | "pivotZFine"
+  | "noseZFine"
+  | "leftCheekZFine"
+  | "rightCheekZFine"
+  | "mouthZFine"
+  | "yawFocusFine"
+  | "pitchFocusFine"
+type BaseCandidatePresetId =
+  | "baselineCheekDepth"
+  | "currentFineBest"
+  | "currentBestCandidate"
 
 interface LocalSearchRange {
   min: number
@@ -294,6 +307,20 @@ interface LocalSearchSettings {
   coordinateDescentIterations: number
   coordinateDescentParameterOrder: LocalSearchParameter[]
   coordinateDescentRanges: LocalSearchRanges
+}
+
+interface SearchPresetDefinition {
+  id: SearchPresetId
+  label: string
+  searchMode: SearchMode
+  targetParameter: LocalSearchParameter
+  localMin: number
+  localMax: number
+  localStep: number
+  coordinateDescentIterations: number
+  coordinateDescentRanges: LocalSearchRanges
+  baseCandidatePresetId?: BaseCandidatePresetId
+  description: string
 }
 
 interface LocalSearchStepSummary {
@@ -495,6 +522,8 @@ interface AppState {
   analysis: AnalysisResult | null
   searchWorker: Worker | null
   searchProgress: SearchProgressState
+  coordinateDescentRanges: LocalSearchRanges
+  presetMessage: string | null
   importMessage: string | null
   copyMessage: string | null
 }
@@ -580,7 +609,7 @@ const DEFAULT_COORDINATE_DESCENT_PARAMETER_ORDER: LocalSearchParameter[] = [
   "chin.z",
 ]
 
-const DEFAULT_LOCAL_SEARCH_BASE_CANDIDATE: FittingCandidate8 = {
+const BASELINE_CHEEK_DEPTH_CANDIDATE: FittingCandidate8 = {
   pivotZ: 0.12,
   zByPointId: {
     headTop: 0,
@@ -594,17 +623,166 @@ const DEFAULT_LOCAL_SEARCH_BASE_CANDIDATE: FittingCandidate8 = {
   },
 }
 
+const CURRENT_FINE_BEST_CANDIDATE: FittingCandidate8 = {
+  pivotZ: 0.09,
+  zByPointId: {
+    headTop: 0.01,
+    chin: 0.01,
+    leftCheek: 0.06,
+    rightCheek: 0.06,
+    leftEye: 0.03,
+    rightEye: 0.03,
+    nose: 0.06,
+    mouth: 0.06,
+  },
+}
+
+const DEFAULT_LOCAL_SEARCH_BASE_CANDIDATE = BASELINE_CHEEK_DEPTH_CANDIDATE
+
 const DEFAULT_COORDINATE_DESCENT_RANGES: LocalSearchRanges = {
   pivotZ: { min: 0.06, max: 0.18, step: 0.01 },
-  "headTop.z": { min: -0.03, max: 0.03, step: 0.01 },
-  "chin.z": { min: -0.03, max: 0.03, step: 0.01 },
-  "leftCheek.z": { min: 0.06, max: 0.18, step: 0.01 },
-  "rightCheek.z": { min: 0.06, max: 0.18, step: 0.01 },
-  "leftEye.z": { min: -0.03, max: 0.03, step: 0.01 },
-  "rightEye.z": { min: -0.03, max: 0.03, step: 0.01 },
-  "nose.z": { min: -0.06, max: 0.06, step: 0.01 },
-  "mouth.z": { min: -0.03, max: 0.06, step: 0.01 },
+  "headTop.z": { min: -0.02, max: 0.03, step: 0.01 },
+  "chin.z": { min: -0.01, max: 0.03, step: 0.01 },
+  "leftCheek.z": { min: 0.03, max: 0.12, step: 0.01 },
+  "rightCheek.z": { min: 0.03, max: 0.12, step: 0.01 },
+  "leftEye.z": { min: 0, max: 0.04, step: 0.01 },
+  "rightEye.z": { min: 0, max: 0.04, step: 0.01 },
+  "nose.z": { min: -0.02, max: 0.08, step: 0.01 },
+  "mouth.z": { min: 0, max: 0.08, step: 0.01 },
 }
+
+const YAW_FOCUS_COORDINATE_DESCENT_RANGES: LocalSearchRanges = {
+  pivotZ: { min: 0.1, max: 0.18, step: 0.01 },
+  "headTop.z": { min: -0.02, max: 0.03, step: 0.01 },
+  "chin.z": { min: -0.02, max: 0.03, step: 0.01 },
+  "leftCheek.z": { min: 0.08, max: 0.18, step: 0.01 },
+  "rightCheek.z": { min: 0.08, max: 0.18, step: 0.01 },
+  "leftEye.z": { min: -0.02, max: 0.03, step: 0.01 },
+  "rightEye.z": { min: -0.02, max: 0.03, step: 0.01 },
+  "nose.z": { min: -0.06, max: 0.03, step: 0.01 },
+  "mouth.z": { min: -0.02, max: 0.04, step: 0.01 },
+}
+
+const PITCH_FOCUS_COORDINATE_DESCENT_RANGES: LocalSearchRanges = {
+  pivotZ: { min: 0.04, max: 0.12, step: 0.01 },
+  "headTop.z": { min: 0, max: 0.04, step: 0.01 },
+  "chin.z": { min: 0, max: 0.04, step: 0.01 },
+  "leftCheek.z": { min: 0.03, max: 0.08, step: 0.01 },
+  "rightCheek.z": { min: 0.03, max: 0.08, step: 0.01 },
+  "leftEye.z": { min: 0.01, max: 0.05, step: 0.01 },
+  "rightEye.z": { min: 0.01, max: 0.05, step: 0.01 },
+  "nose.z": { min: 0.03, max: 0.09, step: 0.01 },
+  "mouth.z": { min: 0.03, max: 0.09, step: 0.01 },
+}
+
+const SEARCH_PRESETS: SearchPresetDefinition[] = [
+  {
+    id: "coordinateDescentFine",
+    label: "Coordinate Descent Fine",
+    searchMode: "coordinateDescent",
+    targetParameter: "pivotZ",
+    localMin: -0.06,
+    localMax: 0.18,
+    localStep: 0.01,
+    coordinateDescentIterations: 2,
+    coordinateDescentRanges: DEFAULT_COORDINATE_DESCENT_RANGES,
+    description:
+      "現在の baseCandidate を起点に、pivotZ と 8 semantic points の z を軽く再最適化します。",
+  },
+  {
+    id: "pivotZFine",
+    label: "PivotZ Fine",
+    searchMode: "localOneDimensional",
+    targetParameter: "pivotZ",
+    localMin: 0.04,
+    localMax: 0.14,
+    localStep: 0.005,
+    coordinateDescentIterations: 2,
+    coordinateDescentRanges: DEFAULT_COORDINATE_DESCENT_RANGES,
+    description:
+      "現在の baseCandidate を固定し、pivotZ だけを 0.04〜0.14 / 0.005 刻みで探索します。",
+  },
+  {
+    id: "noseZFine",
+    label: "NoseZ Fine",
+    searchMode: "localOneDimensional",
+    targetParameter: "nose.z",
+    localMin: -0.04,
+    localMax: 0.08,
+    localStep: 0.005,
+    coordinateDescentIterations: 2,
+    coordinateDescentRanges: DEFAULT_COORDINATE_DESCENT_RANGES,
+    description:
+      "現在の baseCandidate を固定し、nose.z だけを -0.04〜0.08 / 0.005 刻みで探索します。",
+  },
+  {
+    id: "leftCheekZFine",
+    label: "LeftCheekZ Fine",
+    searchMode: "localOneDimensional",
+    targetParameter: "leftCheek.z",
+    localMin: 0.03,
+    localMax: 0.12,
+    localStep: 0.005,
+    coordinateDescentIterations: 2,
+    coordinateDescentRanges: DEFAULT_COORDINATE_DESCENT_RANGES,
+    description:
+      "現在の baseCandidate を固定し、leftCheek.z だけを 0.03〜0.12 / 0.005 刻みで探索します。",
+  },
+  {
+    id: "rightCheekZFine",
+    label: "RightCheekZ Fine",
+    searchMode: "localOneDimensional",
+    targetParameter: "rightCheek.z",
+    localMin: 0.03,
+    localMax: 0.12,
+    localStep: 0.005,
+    coordinateDescentIterations: 2,
+    coordinateDescentRanges: DEFAULT_COORDINATE_DESCENT_RANGES,
+    description:
+      "現在の baseCandidate を固定し、rightCheek.z だけを 0.03〜0.12 / 0.005 刻みで探索します。",
+  },
+  {
+    id: "mouthZFine",
+    label: "MouthZ Fine",
+    searchMode: "localOneDimensional",
+    targetParameter: "mouth.z",
+    localMin: 0,
+    localMax: 0.08,
+    localStep: 0.005,
+    coordinateDescentIterations: 2,
+    coordinateDescentRanges: DEFAULT_COORDINATE_DESCENT_RANGES,
+    description:
+      "現在の baseCandidate を固定し、mouth.z だけを 0〜0.08 / 0.005 刻みで探索します。",
+  },
+  {
+    id: "yawFocusFine",
+    label: "Yaw Focus Fine",
+    searchMode: "coordinateDescent",
+    targetParameter: "pivotZ",
+    localMin: -0.06,
+    localMax: 0.18,
+    localStep: 0.01,
+    coordinateDescentIterations: 2,
+    coordinateDescentRanges: YAW_FOCUS_COORDINATE_DESCENT_RANGES,
+    baseCandidatePresetId: "baselineCheekDepth",
+    description:
+      "baselineCheekDepth を起点に、yawPositive / yawNegative 向けの coordinateDescent 範囲で確認します。",
+  },
+  {
+    id: "pitchFocusFine",
+    label: "Pitch Focus Fine",
+    searchMode: "coordinateDescent",
+    targetParameter: "pivotZ",
+    localMin: -0.06,
+    localMax: 0.18,
+    localStep: 0.01,
+    coordinateDescentIterations: 2,
+    coordinateDescentRanges: PITCH_FOCUS_COORDINATE_DESCENT_RANGES,
+    baseCandidatePresetId: "currentFineBest",
+    description:
+      "currentFineBest を起点に、pitchPositive / pitchNegative 向けの coordinateDescent 範囲で確認します。",
+  },
+]
 
 const BUCKETS: CaptureBucket[] = [
   "front",
@@ -690,6 +868,8 @@ const state: AppState = {
   analysis: null,
   searchWorker: null,
   searchProgress: createIdleSearchProgress(),
+  coordinateDescentRanges: DEFAULT_COORDINATE_DESCENT_RANGES,
+  presetMessage: null,
   importMessage: null,
   copyMessage: null,
 }
@@ -730,6 +910,42 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
 
         <section class="panel">
           <h2>探索設定</h2>
+          <div class="preset-box">
+            <div class="controls">
+              <label>Search Preset
+                <select id="search-preset-select">
+                  ${SEARCH_PRESETS.map(
+                    (preset) => `<option value="${preset.id}">${preset.label}</option>`,
+                  ).join("")}
+                </select>
+              </label>
+              <label>Base Candidate Preset
+                <select id="base-candidate-preset-select">
+                  <option value="baselineCheekDepth">Baseline Cheek Depth</option>
+                  <option value="currentFineBest">Current Fine Best</option>
+                  <option value="currentBestCandidate">Current bestCandidate</option>
+                </select>
+              </label>
+            </div>
+            <div class="controls-wide">
+              <button id="apply-search-preset-button" type="button">Apply Preset</button>
+              <button id="apply-base-candidate-preset-button" type="button">Base Candidate を適用</button>
+            </div>
+            <div id="preset-message" class="preset-message">
+              Search Preset を選び、Apply Preset で local search 設定をフォームへ反映します。
+            </div>
+            <div class="preset-steps">
+              <strong>おすすめ手順:</strong>
+              <ol>
+                <li>Base Candidate Preset を選ぶ</li>
+                <li>Search Preset を選ぶ</li>
+                <li>Apply Preset</li>
+                <li>Run Search</li>
+                <li>結果が良ければ bestCandidate を base に反映</li>
+                <li>次の preset を試す</li>
+              </ol>
+            </div>
+          </div>
           <div class="controls">
             <label>maxFrames
               <input id="max-frames-input" type="number" min="1" max="120" value="${DEFAULT_SETTINGS.maxFrames}" />
@@ -933,6 +1149,14 @@ function bindEvents(): void {
   getElement<HTMLButtonElement>("run-analysis-button").addEventListener("click", runAnalysis)
   getElement<HTMLButtonElement>("cancel-analysis-button").addEventListener("click", cancelAnalysis)
   getElement<HTMLButtonElement>("copy-debug-button").addEventListener("click", copySummaryJson)
+  getElement<HTMLButtonElement>("apply-search-preset-button").addEventListener(
+    "click",
+    applySearchPreset,
+  )
+  getElement<HTMLButtonElement>("apply-base-candidate-preset-button").addEventListener(
+    "click",
+    applySelectedBaseCandidatePreset,
+  )
   getElement<HTMLButtonElement>("use-best-candidate-button").addEventListener(
     "click",
     useBestCandidateAsBase,
@@ -1240,6 +1464,9 @@ function useBestCandidateAsBase(): void {
     return
   }
   writeCandidateToBaseInputs(bestCandidate)
+  writeSelectValue("base-candidate-preset-select", "currentBestCandidate")
+  state.presetMessage = "Current bestCandidate を baseCandidate に反映しました。"
+  renderPresetMessage()
 }
 
 function terminateSearchWorker(): void {
@@ -1399,7 +1626,7 @@ function readLocalSearchSettings(): LocalSearchSettings {
       ),
     ),
     coordinateDescentParameterOrder: DEFAULT_COORDINATE_DESCENT_PARAMETER_ORDER,
-    coordinateDescentRanges: DEFAULT_COORDINATE_DESCENT_RANGES,
+    coordinateDescentRanges: cloneLocalSearchRanges(state.coordinateDescentRanges),
   }
 }
 
@@ -1424,6 +1651,141 @@ function writeCandidateToBaseInputs(candidate: FittingCandidate8): void {
       round(candidate.zByPointId[name]),
     )
   }
+}
+
+function applySearchPreset(): void {
+  const preset = findSearchPreset(getElement<HTMLSelectElement>("search-preset-select").value)
+  applyCommonPresetSettings()
+  writeSelectValue("search-mode-select", preset.searchMode)
+  writeSelectValue("local-target-parameter-select", preset.targetParameter)
+  writeNumberInput("local-min-input", preset.localMin)
+  writeNumberInput("local-max-input", preset.localMax)
+  writeNumberInput("local-step-input", preset.localStep)
+  writeNumberInput("coordinate-descent-iterations-input", preset.coordinateDescentIterations)
+  state.coordinateDescentRanges = cloneLocalSearchRanges(preset.coordinateDescentRanges)
+
+  if (preset.baseCandidatePresetId) {
+    applyBaseCandidatePreset(preset.baseCandidatePresetId)
+    writeSelectValue("base-candidate-preset-select", preset.baseCandidatePresetId)
+  }
+
+  state.presetMessage = [
+    `Preset: ${preset.label}`,
+    preset.description,
+    "探索後、必要に応じて bestCandidate を base に反映してください。",
+  ].join("\n")
+  renderPresetMessage()
+}
+
+function applySelectedBaseCandidatePreset(): void {
+  const presetId = readBaseCandidatePresetId(
+    getElement<HTMLSelectElement>("base-candidate-preset-select").value,
+  )
+  if (!applyBaseCandidatePreset(presetId)) {
+    state.presetMessage =
+      "Current bestCandidate はまだありません。Run Search 後に選ぶか、既存の bestCandidate を base に反映ボタンを使ってください。"
+    renderPresetMessage()
+    return
+  }
+  state.presetMessage = `Base Candidate Preset: ${formatBaseCandidatePresetLabel(presetId)} を baseCandidate に反映しました。`
+  renderPresetMessage()
+}
+
+function applyBaseCandidatePreset(presetId: BaseCandidatePresetId): boolean {
+  const candidate = getBaseCandidatePreset(presetId)
+  if (!candidate) {
+    return false
+  }
+  writeCandidateToBaseInputs(candidate)
+  return true
+}
+
+function applyCommonPresetSettings(): void {
+  writeNumberInput("max-frames-input", 30)
+  writeNumberInput("target-front-input", 5)
+  writeNumberInput("target-yaw-positive-input", 5)
+  writeNumberInput("target-yaw-negative-input", 5)
+  writeNumberInput("target-pitch-positive-input", 5)
+  writeNumberInput("target-pitch-negative-input", 5)
+  writeNumberInput("target-mixed-input", 0)
+  writeSelectValue("include-mixed-select", "false")
+  writeNumberInput("roll-warning-input", 12)
+  writeNumberInput("blendshape-warning-input", 0.35)
+  writeNumberInput("top-n-input", 100)
+  writeNumberInput("focal-length-input", 2.6)
+  writeNumberInput("z-min-input", -0.24)
+  writeNumberInput("z-max-input", 0.24)
+  writeNumberInput("z-step-input", 0.24)
+  writeNumberInput("pivot-z-min-input", -0.48)
+  writeNumberInput("pivot-z-max-input", 0.48)
+  writeNumberInput("pivot-z-step-input", 0.24)
+}
+
+function renderPresetMessage(): void {
+  getElement("preset-message").textContent =
+    state.presetMessage ??
+    "Search Preset を選び、Apply Preset で local search 設定をフォームへ反映します。"
+}
+
+function findSearchPreset(value: string): SearchPresetDefinition {
+  return (
+    SEARCH_PRESETS.find((preset) => preset.id === value) ??
+    SEARCH_PRESETS[0]
+  )
+}
+
+function readBaseCandidatePresetId(value: string): BaseCandidatePresetId {
+  return value === "currentFineBest" || value === "currentBestCandidate"
+    ? value
+    : "baselineCheekDepth"
+}
+
+function getBaseCandidatePreset(
+  presetId: BaseCandidatePresetId,
+): FittingCandidate8 | null {
+  if (presetId === "currentFineBest") {
+    return cloneCandidate(CURRENT_FINE_BEST_CANDIDATE)
+  }
+  if (presetId === "currentBestCandidate") {
+    return state.analysis?.bestCandidate
+      ? cloneCandidate(state.analysis.bestCandidate)
+      : null
+  }
+  return cloneCandidate(BASELINE_CHEEK_DEPTH_CANDIDATE)
+}
+
+function formatBaseCandidatePresetLabel(presetId: BaseCandidatePresetId): string {
+  if (presetId === "currentFineBest") {
+    return "Current Fine Best"
+  }
+  if (presetId === "currentBestCandidate") {
+    return "Current bestCandidate"
+  }
+  return "Baseline Cheek Depth"
+}
+
+function cloneLocalSearchRanges(ranges: LocalSearchRanges): LocalSearchRanges {
+  return Object.fromEntries(
+    LOCAL_SEARCH_PARAMETERS.map((parameter) => [
+      parameter,
+      { ...ranges[parameter] },
+    ]),
+  ) as LocalSearchRanges
+}
+
+function cloneCandidate(candidate: FittingCandidate8): FittingCandidate8 {
+  return {
+    pivotZ: round(candidate.pivotZ),
+    zByPointId: roundRecord(candidate.zByPointId),
+  }
+}
+
+function writeNumberInput(id: string, value: number): void {
+  getElement<HTMLInputElement>(id).value = String(value)
+}
+
+function writeSelectValue(id: string, value: string): void {
+  getElement<HTMLSelectElement>(id).value = value
 }
 
 function readLocalSearchParameter(
@@ -2589,6 +2951,8 @@ function setButtons(): void {
   getElement<HTMLButtonElement>("run-analysis-button").disabled = state.frames.length === 0 || isRunning
   getElement<HTMLButtonElement>("cancel-analysis-button").disabled = !isRunning
   getElement<HTMLButtonElement>("copy-debug-button").disabled = !state.analysis || isRunning
+  getElement<HTMLButtonElement>("apply-search-preset-button").disabled = isRunning
+  getElement<HTMLButtonElement>("apply-base-candidate-preset-button").disabled = isRunning
   getElement<HTMLButtonElement>("use-best-candidate-button").disabled = !state.analysis?.bestCandidate || isRunning
   getElement<HTMLButtonElement>("export-full-button").disabled = !state.analysis || isRunning
   getElement<HTMLButtonElement>("export-summary-button").disabled = !state.analysis || isRunning

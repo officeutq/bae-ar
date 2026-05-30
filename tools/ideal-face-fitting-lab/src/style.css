@@ -153,6 +153,40 @@ label {
   margin: -4px 0 12px;
 }
 
+.preset-box {
+  background: #f7fafc;
+  border: 1px solid #d6e1ec;
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 12px;
+}
+
+.preset-message {
+  background: #ffffff;
+  border: 1px solid #cdd9e5;
+  border-radius: 6px;
+  color: #2e3a46;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.55;
+  min-height: 44px;
+  padding: 9px 10px;
+  white-space: pre-wrap;
+}
+
+.preset-steps {
+  color: #55616d;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.preset-steps ol {
+  margin: 6px 0 0;
+  padding-left: 22px;
+}
+
 .controls {
   display: grid;
   gap: 10px;

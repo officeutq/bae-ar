@@ -105,6 +105,21 @@ type SearchMode =
 
 `topCandidates` / `bucketRanking` は candidate 値で dedupe し、同一 candidate を複数表示しません。
 
+## Local Search Preset
+
+local search preset は、8 semantic points の z と pivotZ を手動入力なしで試すための UI 補助である。
+
+fullGrid は粗探索用。
+coordinateDescent は baseCandidate 周辺の自動微調整用。
+localOneDimensional は pivotZ / nose.z / cheek.z など、1パラメータの感度確認用。
+
+推奨手順は、Coordinate Descent Fine で大まかに微調整し、その後 PivotZ Fine / NoseZ Fine / CheekZ Fine などで個別確認すること。
+
+Search Preset には Coordinate Descent Fine / PivotZ Fine / NoseZ Fine / LeftCheekZ Fine / RightCheekZ Fine / MouthZ Fine / Yaw Focus Fine / Pitch Focus Fine を用意する。
+Base Candidate Preset には Baseline Cheek Depth / Current Fine Best / Current bestCandidate を用意する。
+
+プリセット適用時は maxFrames=30、front / yawPositive / yawNegative / pitchPositive / pitchNegative target=5、mixedPose target=0、mixedPose 不採用、roll warning deg=12、blendshape warning=0.35、topN=100、focalLength=2.6 を基本値としてフォームへ反映する。
+
 ## Score
 
 まずはシンプルに、投影後2D点と current 2D landmarks 8点の距離を使います。
