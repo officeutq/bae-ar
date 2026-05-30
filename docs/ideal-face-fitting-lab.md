@@ -184,6 +184,30 @@ projectionSignDebug?: {
 }
 ```
 
+## Rotation Center Debug
+
+Rotation Center Debug は、8点 z / pivotZ 探索で得られた候補について、回転中心を `(0, 0, pivotZ)` 固定と仮定することが pitch / yaw の投影誤差にどのような影響を与えるかを確認するための debug 機能である。
+
+実際の頭部回転中心は顔表面中心ではなく、頭部内部・眼窩奥・耳の間・首寄りに存在する可能性がある。
+
+回転中心が誤っている場合、探索された z は顔形状の奥行きではなく、回転中心誤差を吸収した値になる可能性がある。
+
+この debug は score や探索ロジックを変更せず、pivotY / pivotZ の影響を切り分けるために使う。`pivotX` はまず `0` 固定とし、`pivotY` と `pivotZ` の候補を組み合わせて selected frames に対する score を比較する。
+
+Full JSON / Summary JSON には以下が追加される。
+
+```ts
+rotationCenterDebug?: {
+  baseCandidate: FittingCandidate8
+  baseCandidateName: string
+  pivotXCandidates: number[]
+  pivotYCandidates: number[]
+  pivotZCandidates: number[]
+  results: RotationCenterDebugResult[]
+  summary: RotationCenterDebugSummary
+}
+```
+
 ## Worker Grid Search
 
 grid search はブラウザ main thread ではなく Web Worker で実行します。

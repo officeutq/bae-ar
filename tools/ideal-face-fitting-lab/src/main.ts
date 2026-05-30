@@ -275,6 +275,17 @@ interface FittingCandidate8 {
   pivotZ: number
 }
 
+interface RotationCenter {
+  x: number
+  y: number
+  z: number
+}
+
+interface ProjectionOptions {
+  pivotZ: number
+  rotationCenter?: RotationCenter
+}
+
 type SearchMode = "fullGrid" | "localOneDimensional" | "coordinateDescent"
 type LocalSearchParameter = "pivotZ" | `${SemanticPointName}.z`
 type SearchPresetId =
@@ -514,6 +525,11 @@ interface ProjectionSignMovement {
 
 type ProjectionSignPointSet = Record<ProjectionSignPointName, Point2>
 type ProjectionSignDeltaSet = Record<ProjectionSignPointName, ProjectionSignPointDelta>
+type RotationCenterDebugBaseCandidateId =
+  | "currentBestCandidate"
+  | "currentBaseCandidate"
+  | "pitchFocusRawBest"
+  | "naturalNoseCandidate"
 
 interface ProjectionSignDebugRow {
   captureId: string
@@ -555,6 +571,52 @@ interface ProjectionSignDebug {
   summary: ProjectionSignDebugSummary
 }
 
+interface RotationCenterDebugResult {
+  baseCandidate: FittingCandidate8
+  pivotX: number
+  pivotY: number
+  pivotZ: number
+  totalScore: number
+  bucketScores: PoseBucketScores
+  scoreDebug: {
+    yawAverageScore: number | null
+    pitchAverageScore: number | null
+    maxBucketScore: number | null
+    balancedScore: number | null
+  }
+  perPointErrorSummary?: Record<SemanticPointName, number>
+}
+
+interface RotationCenterDebugSummary {
+  candidateName: string
+  bestByTotalScore: RotationCenterDebugResult
+  bestByBalancedScore: RotationCenterDebugResult
+  bestByPitchAverageScore: RotationCenterDebugResult
+  bestByMaxBucketScore: RotationCenterDebugResult
+  baselineRotationCenter: {
+    pivotX: 0
+    pivotY: 0
+    pivotZ: number
+  }
+  baselineResult: RotationCenterDebugResult
+  improvementFromBaseline: {
+    totalScoreDelta: number
+    balancedScoreDelta: number
+    pitchAverageScoreDelta: number
+    maxBucketScoreDelta: number
+  }
+}
+
+interface RotationCenterDebug {
+  baseCandidate: FittingCandidate8
+  baseCandidateName: string
+  pivotXCandidates: number[]
+  pivotYCandidates: number[]
+  pivotZCandidates: number[]
+  results: RotationCenterDebugResult[]
+  summary: RotationCenterDebugSummary
+}
+
 interface AnalysisResult {
   schemaVersion: "ideal_face_fitting_lab_analysis_v1"
   analysisVersion: "eight_point_grid_search_v1"
@@ -584,6 +646,7 @@ interface AnalysisResult {
   bucketRanking: Record<CaptureBucket, RankingEntry[]>
   perPointErrorSummary: Record<SemanticPointName, number | null>
   projectionSignDebug?: ProjectionSignDebug
+  rotationCenterDebug?: RotationCenterDebug
   autoSequenceSummary?: AutoSequenceSummary
   warnings: string[]
 }
@@ -613,6 +676,7 @@ interface SummaryAnalysisResult {
   bucketRanking: Record<CaptureBucket, RankingEntry[]>
   perPointErrorSummary: Record<SemanticPointName, number | null>
   projectionSignDebug?: ProjectionSignDebug
+  rotationCenterDebug?: RotationCenterDebug
   autoSequenceSummary?: AutoSequenceSummary
   warnings: string[]
 }
@@ -750,6 +814,34 @@ const CURRENT_FINE_BEST_CANDIDATE: FittingCandidate8 = {
     rightEye: 0.03,
     nose: 0.06,
     mouth: 0.06,
+  },
+}
+
+const PITCH_FOCUS_RAW_BEST: FittingCandidate8 = {
+  pivotZ: 0.075,
+  zByPointId: {
+    headTop: 0,
+    chin: 0,
+    leftCheek: 0.03,
+    rightCheek: 0.03,
+    leftEye: 0.05,
+    rightEye: 0.03,
+    nose: 0.08,
+    mouth: 0.05,
+  },
+}
+
+const NATURAL_NOSE_CANDIDATE: FittingCandidate8 = {
+  pivotZ: 0.075,
+  zByPointId: {
+    headTop: 0,
+    chin: 0,
+    leftCheek: 0.03,
+    rightCheek: 0.03,
+    leftEye: 0.05,
+    rightEye: 0.03,
+    nose: 0.025,
+    mouth: 0.05,
   },
 }
 
@@ -990,6 +1082,17 @@ const DEFAULT_PROJECTION_SIGN_NOSE_Z_CANDIDATES = [
   0.06,
   0.08,
 ]
+
+const ROTATION_CENTER_DEBUG_BASE_LABELS: Record<RotationCenterDebugBaseCandidateId, string> = {
+  currentBestCandidate: "Current bestCandidate",
+  currentBaseCandidate: "Current baseCandidate",
+  pitchFocusRawBest: "Pitch Focus raw best",
+  naturalNoseCandidate: "Natural nose candidate",
+}
+
+const ROTATION_CENTER_PIVOT_X_CANDIDATES = [0]
+const ROTATION_CENTER_PIVOT_Y_CANDIDATES = [-0.12, -0.08, -0.04, 0, 0.04, 0.08, 0.12]
+const ROTATION_CENTER_PIVOT_Z_CANDIDATES = [0.04, 0.06, 0.08, 0.1, 0.12, 0.14, 0.16]
 
 const DEFAULT_SETTINGS: SearchSettings = {
   searchMode: "fullGrid",
@@ -1334,6 +1437,26 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
         </section>
 
         <section class="panel">
+          <h2>Rotation Center Debug</h2>
+          <p class="panel-help">baseCandidate を固定し、debug 用の rotationCenter だけを pivotX / pivotY / pivotZ で差し替えて selected frames の score を比較します。score 式と bestCandidate 選定ロジックは変更しません。</p>
+          <div class="controls">
+            <label>Rotation Center Debug Base
+              <select id="rotation-center-base-select">
+                ${Object.entries(ROTATION_CENTER_DEBUG_BASE_LABELS).map(
+                  ([id, label]) => `<option value="${id}">${label}</option>`,
+                ).join("")}
+              </select>
+            </label>
+          </div>
+          <h3>base / candidates</h3>
+          <div id="rotation-center-config" class="summary-grid"></div>
+          <h3>best summary</h3>
+          <div id="rotation-center-summary" class="summary-grid"></div>
+          <h3>results table</h3>
+          <div id="rotation-center-table" class="table-wrap"></div>
+        </section>
+
+        <section class="panel">
           <h2>bestIdealFace8</h2>
           <p class="panel-help">正面基準 x / y と bestCandidate の z から作る 8点の IdealFace3D debug artifact です。</p>
           <div id="best-ideal-face8-summary" class="summary-grid"></div>
@@ -1403,6 +1526,10 @@ function bindEvents(): void {
   getElement<HTMLButtonElement>("use-best-candidate-button").addEventListener(
     "click",
     useBestCandidateAsBase,
+  )
+  getElement<HTMLSelectElement>("rotation-center-base-select").addEventListener(
+    "change",
+    updateRotationCenterDebugFromSelection,
   )
   getElement<HTMLButtonElement>("export-full-button").addEventListener("click", () => {
     if (state.analysis) {
@@ -1661,6 +1788,16 @@ function completeSearchFromWorker(context: SearchWorkerContext, message: Record<
         projectionSignDebugBaseCandidate,
       )
     : undefined
+  const rotationCenterDebug = context.base8Points2DSummary.points
+    ? buildRotationCenterDebug(
+        context.base8Points2DSummary.points,
+        context.selected.frames,
+        context.settings,
+        bestCandidate,
+        context.settings.localSearchSettings.baseCandidate,
+        readRotationCenterDebugBaseCandidateId(),
+      )
+    : undefined
 
   state.analysis = {
     schemaVersion: "ideal_face_fitting_lab_analysis_v1",
@@ -1701,6 +1838,7 @@ function completeSearchFromWorker(context: SearchWorkerContext, message: Record<
     ) as Record<CaptureBucket, RankingEntry[]>,
     perPointErrorSummary: bestCandidate ? bestCandidate.perPointError : emptyPointSummary(),
     projectionSignDebug,
+    rotationCenterDebug,
     warnings: [
       ...new Set([
         ...context.warnings,
@@ -1852,6 +1990,249 @@ function calculateProgressRate(processed: number, total: number): number {
     return 0
   }
   return round(Math.min(1, processed / total))
+}
+
+function buildRotationCenterDebug(
+  basePoints: SemanticPointSet2D,
+  frames: NormalizedFrame[],
+  settings: SearchSettings,
+  bestCandidate: FittingCandidate8 | null,
+  currentBaseCandidate: FittingCandidate8,
+  baseCandidateId: RotationCenterDebugBaseCandidateId,
+): RotationCenterDebug | undefined {
+  const baseCandidate = getRotationCenterDebugBaseCandidate(
+    baseCandidateId,
+    bestCandidate,
+    currentBaseCandidate,
+  )
+  if (!baseCandidate) {
+    return undefined
+  }
+
+  const baseCandidateName = ROTATION_CENTER_DEBUG_BASE_LABELS[baseCandidateId]
+  const candidate = createRotationCenterCandidateDefinition(baseCandidate, baseCandidateName)
+  const usableFrames = frames.filter(
+    (frame) => frame.semanticPoints && frame.bounds,
+  )
+  const results = ROTATION_CENTER_PIVOT_X_CANDIDATES.flatMap((pivotX) =>
+    ROTATION_CENTER_PIVOT_Y_CANDIDATES.flatMap((pivotY) =>
+      ROTATION_CENTER_PIVOT_Z_CANDIDATES.map((pivotZ) =>
+        evaluateCandidateForDebug(candidate, basePoints, usableFrames, settings, {
+          pivotZ,
+          rotationCenter: { x: pivotX, y: pivotY, z: pivotZ },
+        }),
+      ),
+    ),
+  )
+
+  const baselinePivotZ = round(baseCandidate.pivotZ)
+  const baselineResult = evaluateCandidateForDebug(candidate, basePoints, usableFrames, settings, {
+    pivotZ: baselinePivotZ,
+    rotationCenter: { x: 0, y: 0, z: baselinePivotZ },
+  })
+  const summary = buildRotationCenterDebugSummary(
+    baseCandidateName,
+    results,
+    baselineResult,
+    baselinePivotZ,
+  )
+
+  return {
+    baseCandidate: cloneCandidate(baseCandidate),
+    baseCandidateName,
+    pivotXCandidates: [...ROTATION_CENTER_PIVOT_X_CANDIDATES],
+    pivotYCandidates: [...ROTATION_CENTER_PIVOT_Y_CANDIDATES],
+    pivotZCandidates: [...ROTATION_CENTER_PIVOT_Z_CANDIDATES],
+    results,
+    summary,
+  }
+}
+
+function getRotationCenterDebugBaseCandidate(
+  baseCandidateId: RotationCenterDebugBaseCandidateId,
+  bestCandidate: FittingCandidate8 | null,
+  currentBaseCandidate: FittingCandidate8,
+): FittingCandidate8 | null {
+  if (baseCandidateId === "currentBestCandidate") {
+    return bestCandidate ? cloneCandidate(bestCandidate) : null
+  }
+  if (baseCandidateId === "currentBaseCandidate") {
+    return cloneCandidate(currentBaseCandidate)
+  }
+  if (baseCandidateId === "pitchFocusRawBest") {
+    return cloneCandidate(PITCH_FOCUS_RAW_BEST)
+  }
+  return cloneCandidate(NATURAL_NOSE_CANDIDATE)
+}
+
+function createRotationCenterCandidateDefinition(
+  candidate: FittingCandidate8,
+  candidateName: string,
+): CandidateDefinition {
+  return {
+    candidateId: `rotation_center_debug__${candidateName.toLowerCase().replaceAll(" ", "_")}`,
+    pivotZ: round(candidate.pivotZ),
+    zByPointId: roundRecord(candidate.zByPointId),
+  }
+}
+
+function evaluateCandidateForDebug(
+  candidate: CandidateDefinition,
+  basePoints: SemanticPointSet2D,
+  frames: NormalizedFrame[],
+  settings: SearchSettings,
+  projectionOptions: ProjectionOptions,
+): RotationCenterDebugResult {
+  const ideal3D = buildIdeal3D(basePoints, candidate)
+  const perFrameResults = frames
+    .filter((frame) => frame.semanticPoints && frame.bounds)
+    .map((frame) =>
+      evaluateCandidateOnFrameForDebug(candidate, ideal3D, frame, settings, projectionOptions),
+    )
+  const bucketScores = calculateBucketScores(perFrameResults)
+  const totalScore =
+    average(perFrameResults.map((result) => result.weightedSemanticDistance)) ??
+    Number.POSITIVE_INFINITY
+  const scoreDebug = calculateScoreDebug(totalScore, bucketScores)
+
+  return {
+    baseCandidate: cloneCandidate(candidate),
+    pivotX: round(projectionOptions.rotationCenter?.x ?? 0),
+    pivotY: round(projectionOptions.rotationCenter?.y ?? 0),
+    pivotZ: round(projectionOptions.rotationCenter?.z ?? projectionOptions.pivotZ),
+    totalScore: round(totalScore),
+    bucketScores: roundRecord(bucketScores),
+    scoreDebug: roundScoreDebug(scoreDebug),
+    perPointErrorSummary: averagePerPointError(perFrameResults),
+  }
+}
+
+function evaluateCandidateOnFrameForDebug(
+  candidate: CandidateDefinition,
+  ideal3D: SemanticPointSet3D,
+  frame: NormalizedFrame,
+  settings: SearchSettings,
+  projectionOptions: ProjectionOptions,
+): FrameEvaluation {
+  const projected = projectIdealPoints(ideal3D, frame.pose, candidate, settings, projectionOptions)
+  const current = normalizeCurrentPointsForScoring(frame.semanticPoints!, frame.bounds!)
+  const perPointError = calculatePerPointErrors(projected, current)
+  const averageSemanticDistance =
+    average(SEMANTIC_POINT_NAMES.map((name) => perPointError[name])) ?? Number.POSITIVE_INFINITY
+  const weightedSemanticDistance = weightedAverage(
+    SEMANTIC_DEFINITIONS.map((definition) => ({
+      value: perPointError[definition.name],
+      weight: definition.weight,
+    })),
+  )
+
+  return {
+    captureId: frame.captureId,
+    bucket: frame.bucket,
+    averageSemanticDistance,
+    weightedSemanticDistance,
+    perPointError,
+    totalScore: weightedSemanticDistance,
+    warnings: frame.warnings,
+  }
+}
+
+function calculatePerPointErrors(
+  projected: SemanticPointSet2D,
+  current: SemanticPointSet2D,
+): Record<SemanticPointName, number> {
+  return Object.fromEntries(
+    SEMANTIC_POINT_NAMES.map((name) => [name, round(distance2D(projected[name], current[name]))]),
+  ) as Record<SemanticPointName, number>
+}
+
+function calculateBucketScores(results: FrameEvaluation[]): PoseBucketScores {
+  return {
+    front: averageBucketScore(results, "front"),
+    yawPositive: averageBucketScore(results, "yawPositive"),
+    yawNegative: averageBucketScore(results, "yawNegative"),
+    pitchPositive: averageBucketScore(results, "pitchPositive"),
+    pitchNegative: averageBucketScore(results, "pitchNegative"),
+    mixedPose: averageBucketScore(results, "mixedPose"),
+  }
+}
+
+function averageBucketScore(results: FrameEvaluation[], bucket: CaptureBucket): number | null {
+  return roundNullable(
+    average(results.filter((result) => result.bucket === bucket).map((result) => result.totalScore)),
+  )
+}
+
+function averagePerPointError(results: FrameEvaluation[]): Record<SemanticPointName, number> {
+  return Object.fromEntries(
+    SEMANTIC_POINT_NAMES.map((name) => [
+      name,
+      round(average(results.map((result) => result.perPointError[name])) ?? 0),
+    ]),
+  ) as Record<SemanticPointName, number>
+}
+
+function buildRotationCenterDebugSummary(
+  candidateName: string,
+  results: RotationCenterDebugResult[],
+  baselineResult: RotationCenterDebugResult,
+  baselinePivotZ: number,
+): RotationCenterDebugSummary {
+  const bestByTotalScore = findBestRotationCenterResult(results, (result) => result.totalScore)
+  const bestByBalancedScore = findBestRotationCenterResult(
+    results,
+    (result) => result.scoreDebug.balancedScore,
+  )
+  const bestByPitchAverageScore = findBestRotationCenterResult(
+    results,
+    (result) => result.scoreDebug.pitchAverageScore,
+  )
+  const bestByMaxBucketScore = findBestRotationCenterResult(
+    results,
+    (result) => result.scoreDebug.maxBucketScore,
+  )
+
+  return {
+    candidateName,
+    bestByTotalScore,
+    bestByBalancedScore,
+    bestByPitchAverageScore,
+    bestByMaxBucketScore,
+    baselineRotationCenter: {
+      pivotX: 0,
+      pivotY: 0,
+      pivotZ: baselinePivotZ,
+    },
+    baselineResult,
+    improvementFromBaseline: {
+      totalScoreDelta: round(baselineResult.totalScore - bestByTotalScore.totalScore),
+      balancedScoreDelta: round(
+        nullableScore(baselineResult.scoreDebug.balancedScore) -
+          nullableScore(bestByBalancedScore.scoreDebug.balancedScore),
+      ),
+      pitchAverageScoreDelta: round(
+        nullableScore(baselineResult.scoreDebug.pitchAverageScore) -
+          nullableScore(bestByPitchAverageScore.scoreDebug.pitchAverageScore),
+      ),
+      maxBucketScoreDelta: round(
+        nullableScore(baselineResult.scoreDebug.maxBucketScore) -
+          nullableScore(bestByMaxBucketScore.scoreDebug.maxBucketScore),
+      ),
+    },
+  }
+}
+
+function findBestRotationCenterResult(
+  results: RotationCenterDebugResult[],
+  getScore: (result: RotationCenterDebugResult) => number | null,
+): RotationCenterDebugResult {
+  return results.reduce((best, result) =>
+    nullableScore(getScore(result)) < nullableScore(getScore(best)) ? result : best,
+  )
+}
+
+function nullableScore(score: number | null): number {
+  return typeof score === "number" && Number.isFinite(score) ? score : Number.POSITIVE_INFINITY
 }
 
 function buildProjectionSignDebug(
@@ -2060,26 +2441,34 @@ function projectIdealPoints(
   pose: Pose,
   candidate: FittingCandidate8,
   settings: SearchSettings,
+  options: ProjectionOptions = { pivotZ: candidate.pivotZ },
 ): SemanticPointSet2D {
+  const rotationCenter = getProjectionRotationCenter(options)
   const points = {} as SemanticPointSet2D
   for (const name of SEMANTIC_POINT_NAMES) {
     const rotated = rotatePoint3D(
       {
-        x: ideal3D[name].x,
-        y: ideal3D[name].y,
-        z: ideal3D[name].z - candidate.pivotZ,
+        x: ideal3D[name].x - rotationCenter.x,
+        y: ideal3D[name].y - rotationCenter.y,
+        z: ideal3D[name].z - rotationCenter.z,
       },
       pose,
     )
-    const z = rotated.z + candidate.pivotZ
+    const projectedX = rotated.x + rotationCenter.x
+    const projectedY = rotated.y + rotationCenter.y
+    const z = rotated.z + rotationCenter.z
     const perspective = settings.focalLength / Math.max(settings.focalLength + z, 0.2)
     points[name] = {
       name,
-      x: round(rotated.x * perspective),
-      y: round(rotated.y * perspective),
+      x: round(projectedX * perspective),
+      y: round(projectedY * perspective),
     }
   }
   return points
+}
+
+function getProjectionRotationCenter(options: ProjectionOptions): RotationCenter {
+  return options.rotationCenter ?? { x: 0, y: 0, z: options.pivotZ }
 }
 
 function rotatePoint3D(point: Point3, pose: Pose): Point3 {
@@ -2177,6 +2566,42 @@ function toProjectionSignDirection(value: number): ProjectionSignDirection {
 
 function isProjectionSignDebugBucket(bucket: CaptureBucket): bucket is ProjectionSignDebugBucket {
   return PROJECTION_SIGN_DEBUG_BUCKETS.includes(bucket as ProjectionSignDebugBucket)
+}
+
+function readRotationCenterDebugBaseCandidateId(): RotationCenterDebugBaseCandidateId {
+  const value = getElement<HTMLSelectElement>("rotation-center-base-select").value
+  return isRotationCenterDebugBaseCandidateId(value) ? value : "currentBestCandidate"
+}
+
+function isRotationCenterDebugBaseCandidateId(
+  value: string,
+): value is RotationCenterDebugBaseCandidateId {
+  return Object.prototype.hasOwnProperty.call(ROTATION_CENTER_DEBUG_BASE_LABELS, value)
+}
+
+function updateRotationCenterDebugFromSelection(): void {
+  const analysis = state.analysis
+  if (!analysis?.base8Points2DSummary.points) {
+    renderRotationCenterDebug(null)
+    return
+  }
+
+  const selectedFrames = getAnalysisSelectedFrames(analysis)
+  analysis.rotationCenterDebug = buildRotationCenterDebug(
+    analysis.base8Points2DSummary.points,
+    selectedFrames,
+    analysis.searchSettings,
+    analysis.bestCandidate,
+    analysis.searchSettings.localSearchSettings.baseCandidate,
+    readRotationCenterDebugBaseCandidateId(),
+  )
+  renderRotationCenterDebug(analysis.rotationCenterDebug ?? null)
+  getElement("json-preview").textContent = JSON.stringify(createSummaryAnalysis(analysis), null, 2)
+}
+
+function getAnalysisSelectedFrames(analysis: AnalysisResult): NormalizedFrame[] {
+  const selectedIds = new Set(analysis.selectedFrameSummary.selectedCaptureIds)
+  return state.frames.filter((frame) => selectedIds.has(frame.captureId))
 }
 
 function degreesToRadians(degrees: number): number {
@@ -3208,6 +3633,7 @@ function createSummaryAnalysis(analysis: AnalysisResult): SummaryAnalysisResult 
     ) as Record<CaptureBucket, RankingEntry[]>,
     perPointErrorSummary: analysis.perPointErrorSummary,
     projectionSignDebug: analysis.projectionSignDebug,
+    rotationCenterDebug: analysis.rotationCenterDebug,
     autoSequenceSummary: analysis.autoSequenceSummary,
     warnings: analysis.warnings,
   }
@@ -3271,6 +3697,7 @@ function renderSourceOnly(): void {
   getElement("ranking-table").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
   getElement("best-candidate").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
   renderProjectionSignDebug(null)
+  renderRotationCenterDebug(null)
   getElement("best-ideal-face8-summary").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
   getElement("best-ideal-face8-table").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
   getElement("depth-relation").innerHTML = renderDepthConvention(DEPTH_CONVENTION)
@@ -3355,6 +3782,7 @@ function renderAnalysis(): void {
       ])
     : `<p class="empty">候補がありません。</p>`
   renderProjectionSignDebug(analysis.projectionSignDebug ?? null)
+  renderRotationCenterDebug(analysis.rotationCenterDebug ?? null)
   getElement("best-ideal-face8-summary").innerHTML = analysis.bestIdealFace8
     ? renderIdealFace8Summary(analysis.bestIdealFace8)
     : `<p class="empty">bestIdealFace8 はありません。</p>`
@@ -3668,6 +4096,120 @@ function renderProjectionSignRowsTable(rows: ProjectionSignDebugRow[]): string {
   `
 }
 
+function renderRotationCenterDebug(debug: RotationCenterDebug | null): void {
+  if (!debug) {
+    const empty = `<p class="empty">解析実行後に表示します。</p>`
+    getElement("rotation-center-config").innerHTML = empty
+    getElement("rotation-center-summary").innerHTML = empty
+    getElement("rotation-center-table").innerHTML = empty
+    return
+  }
+
+  getElement("rotation-center-config").innerHTML = renderStatusItems([
+    ["baseCandidate", debug.baseCandidateName],
+    ["baseCandidate values", formatCandidateCompact(debug.baseCandidate)],
+    ["pivotX candidates", debug.pivotXCandidates.map(formatNumber).join(" / ")],
+    ["pivotY candidates", debug.pivotYCandidates.map(formatNumber).join(" / ")],
+    ["pivotZ candidates", debug.pivotZCandidates.map(formatNumber).join(" / ")],
+    [
+      "baseline rotationCenter",
+      `x ${formatNumber(debug.summary.baselineRotationCenter.pivotX)} / y ${formatNumber(debug.summary.baselineRotationCenter.pivotY)} / z ${formatNumber(debug.summary.baselineRotationCenter.pivotZ)}`,
+    ],
+  ])
+  getElement("rotation-center-summary").innerHTML = renderStatusItems([
+    ["Best by totalScore", formatRotationCenterResultCompact(debug.summary.bestByTotalScore)],
+    ["Best by balancedScore", formatRotationCenterResultCompact(debug.summary.bestByBalancedScore)],
+    [
+      "Best by pitchAverageScore",
+      formatRotationCenterResultCompact(debug.summary.bestByPitchAverageScore),
+    ],
+    ["Best by maxBucketScore", formatRotationCenterResultCompact(debug.summary.bestByMaxBucketScore)],
+    ["baseline totalScore", formatNumber(debug.summary.baselineResult.totalScore)],
+    [
+      "baseline pitchAverageScore",
+      formatNumber(debug.summary.baselineResult.scoreDebug.pitchAverageScore),
+    ],
+    ["totalScore improvement", formatNumber(debug.summary.improvementFromBaseline.totalScoreDelta)],
+    [
+      "balancedScore improvement",
+      formatNumber(debug.summary.improvementFromBaseline.balancedScoreDelta),
+    ],
+    [
+      "pitchAverageScore improvement",
+      formatNumber(debug.summary.improvementFromBaseline.pitchAverageScoreDelta),
+    ],
+    [
+      "maxBucketScore improvement",
+      formatNumber(debug.summary.improvementFromBaseline.maxBucketScoreDelta),
+    ],
+  ])
+  getElement("rotation-center-table").innerHTML = renderRotationCenterResultsTable(debug.results)
+}
+
+function renderRotationCenterResultsTable(results: RotationCenterDebugResult[]): string {
+  if (results.length === 0) {
+    return `<p class="empty">Rotation Center Debug の結果がありません。</p>`
+  }
+
+  const rows = [...results].sort(
+    (a, b) => nullableScore(a.scoreDebug.balancedScore) - nullableScore(b.scoreDebug.balancedScore),
+  )
+  return `
+    <table>
+      <thead>
+        <tr>
+          <th>pivotX</th>
+          <th>pivotY</th>
+          <th>pivotZ</th>
+          <th>totalScore</th>
+          <th>yawAverageScore</th>
+          <th>pitchAverageScore</th>
+          <th>maxBucketScore</th>
+          <th>balancedScore</th>
+          <th>front</th>
+          <th>yawPositive</th>
+          <th>yawNegative</th>
+          <th>pitchPositive</th>
+          <th>pitchNegative</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map(
+          (result) => `
+            <tr>
+              <td>${formatNumber(result.pivotX)}</td>
+              <td>${formatNumber(result.pivotY)}</td>
+              <td>${formatNumber(result.pivotZ)}</td>
+              <td>${formatNumber(result.totalScore)}</td>
+              <td>${formatNumber(result.scoreDebug.yawAverageScore)}</td>
+              <td>${formatNumber(result.scoreDebug.pitchAverageScore)}</td>
+              <td>${formatNumber(result.scoreDebug.maxBucketScore)}</td>
+              <td>${formatNumber(result.scoreDebug.balancedScore)}</td>
+              <td>${formatNumber(result.bucketScores.front)}</td>
+              <td>${formatNumber(result.bucketScores.yawPositive)}</td>
+              <td>${formatNumber(result.bucketScores.yawNegative)}</td>
+              <td>${formatNumber(result.bucketScores.pitchPositive)}</td>
+              <td>${formatNumber(result.bucketScores.pitchNegative)}</td>
+            </tr>
+          `,
+        ).join("")}
+      </tbody>
+    </table>
+  `
+}
+
+function formatRotationCenterResultCompact(result: RotationCenterDebugResult): string {
+  return [
+    `x ${formatNumber(result.pivotX)}`,
+    `y ${formatNumber(result.pivotY)}`,
+    `z ${formatNumber(result.pivotZ)}`,
+    `total ${formatNumber(result.totalScore)}`,
+    `pitch ${formatNumber(result.scoreDebug.pitchAverageScore)}`,
+    `max ${formatNumber(result.scoreDebug.maxBucketScore)}`,
+    `balanced ${formatNumber(result.scoreDebug.balancedScore)}`,
+  ].join(" / ")
+}
+
 function renderEmptyState(): void {
   getElement("source-summary").innerHTML = `<p class="empty">captured JSON を読み込んでください。</p>`
   getElement("base-summary").innerHTML = `<p class="empty">未解析です。</p>`
@@ -3679,6 +4221,7 @@ function renderEmptyState(): void {
   getElement("ranking-table").innerHTML = `<p class="empty">未解析です。</p>`
   getElement("best-candidate").innerHTML = `<p class="empty">未解析です。</p>`
   renderProjectionSignDebug(null)
+  renderRotationCenterDebug(null)
   getElement("best-ideal-face8-summary").innerHTML = `<p class="empty">未解析です。</p>`
   getElement("best-ideal-face8-table").innerHTML = `<p class="empty">未解析です。</p>`
   getElement("depth-relation").innerHTML = renderDepthConvention(DEPTH_CONVENTION)
@@ -4284,6 +4827,14 @@ function calculateScoreDebug(
 
 function distance2D(current: Point2, next: Point2): number {
   return Math.hypot(current.x - next.x, current.y - next.y)
+}
+
+function weightedAverage(items: Array<{ value: number; weight: number }>): number {
+  const weightTotal = items.reduce((total, item) => total + item.weight, 0)
+  if (weightTotal <= EPSILON) {
+    return 0
+  }
+  return items.reduce((total, item) => total + item.value * item.weight, 0) / weightTotal
 }
 
 function range(values: number[]): RangeSummary {

@@ -77,6 +77,17 @@ interface FittingCandidate8 {
   pivotZ: number
 }
 
+interface RotationCenter {
+  x: number
+  y: number
+  z: number
+}
+
+interface ProjectionOptions {
+  pivotZ: number
+  rotationCenter?: RotationCenter
+}
+
 type SearchMode = "fullGrid" | "localOneDimensional" | "coordinateDescent"
 type LocalSearchParameter = "pivotZ" | `${SemanticPointName}.z`
 
@@ -769,26 +780,34 @@ function projectIdealPoints(
   pose: Pose,
   candidate: CandidateDefinition,
   settings: SearchSettings,
+  options: ProjectionOptions = { pivotZ: candidate.pivotZ },
 ): SemanticPointSet2D {
+  const rotationCenter = getProjectionRotationCenter(options)
   const points = {} as SemanticPointSet2D
   for (const name of SEMANTIC_POINT_NAMES) {
     const rotated = rotatePoint3D(
       {
-        x: ideal3D[name].x,
-        y: ideal3D[name].y,
-        z: ideal3D[name].z - candidate.pivotZ,
+        x: ideal3D[name].x - rotationCenter.x,
+        y: ideal3D[name].y - rotationCenter.y,
+        z: ideal3D[name].z - rotationCenter.z,
       },
       pose,
     )
-    const z = rotated.z + candidate.pivotZ
+    const projectedX = rotated.x + rotationCenter.x
+    const projectedY = rotated.y + rotationCenter.y
+    const z = rotated.z + rotationCenter.z
     const perspective = settings.focalLength / Math.max(settings.focalLength + z, 0.2)
     points[name] = {
       name,
-      x: rotated.x * perspective,
-      y: rotated.y * perspective,
+      x: projectedX * perspective,
+      y: projectedY * perspective,
     }
   }
   return points
+}
+
+function getProjectionRotationCenter(options: ProjectionOptions): RotationCenter {
+  return options.rotationCenter ?? { x: 0, y: 0, z: options.pivotZ }
 }
 
 function normalizeCurrentPointsForScoring(
