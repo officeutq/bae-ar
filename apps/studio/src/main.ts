@@ -337,6 +337,7 @@ const PROJECTION_DEBUG_DEFAULT_SETTINGS: ProjectionDebugSettings = {
   perspectiveStrength: 1,
   cameraDistance: 2,
 }
+const REALTIME_PANEL_RENDER_DEFER_MS = 3000
 
 const MEDIAPIPE_FACE_OVAL_ORDERED_INDICES: readonly number[] = [
   10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379,
@@ -389,6 +390,8 @@ async function bootstrap(): Promise<void> {
   let shapeWarpRenderTimeAverageMs: number | null = null
   let webglMeshWarpRenderer: WebglMeshWarpRenderer | null = null
   let webglMeshWarpRendererError: string | null = null
+  let realtimePanelRenderDeferredUntil = 0
+  let realtimePanelScrollTop = 0
   let latestShapeWarpDebugSummary: ShapeWarpDebugSummary =
     createShapeWarpDebugSummary({
       status: "disabled",
@@ -3553,19 +3556,75 @@ Camera:
       })
   }
 
-  function isShapeWarpDebugControlActive(): boolean {
+  function markRealtimePanelInteraction(): void {
+    realtimePanelRenderDeferredUntil =
+      Date.now() + REALTIME_PANEL_RENDER_DEFER_MS
+  }
+
+  function getRealtimePanel(): HTMLElement | null {
+    return document.querySelector<HTMLElement>("[data-realtime-panel]")
+  }
+
+  function restoreRealtimePanelScroll(): void {
+    const panel = getRealtimePanel()
+
+    if (!panel) {
+      return
+    }
+
+    panel.scrollTop = realtimePanelScrollTop
+  }
+
+  function attachRealtimePanelInteractionHandlers(): void {
+    const panel = getRealtimePanel()
+
+    if (!panel) {
+      return
+    }
+
+    panel.addEventListener("pointermove", markRealtimePanelInteraction)
+    panel.addEventListener("pointerdown", markRealtimePanelInteraction)
+    panel.addEventListener("keydown", markRealtimePanelInteraction)
+    panel.addEventListener("touchstart", markRealtimePanelInteraction, {
+      passive: true,
+    })
+    panel.addEventListener(
+      "wheel",
+      () => {
+        realtimePanelScrollTop = panel.scrollTop
+        markRealtimePanelInteraction()
+      },
+      { passive: true },
+    )
+    panel.addEventListener(
+      "scroll",
+      () => {
+        realtimePanelScrollTop = panel.scrollTop
+        markRealtimePanelInteraction()
+      },
+      { passive: true },
+    )
+  }
+
+  function isRealtimePanelRenderDeferred(): boolean {
     const activeElement = document.activeElement
+    const activeInRealtimePanel =
+      activeElement instanceof HTMLElement &&
+      Boolean(activeElement.closest("[data-realtime-panel]"))
 
     return (
-      activeElement instanceof HTMLElement &&
-      Boolean(
-        activeElement.closest("[data-shape-warp-debug-controls]") ||
-          activeElement.closest("[data-projection-debug-controls]"),
-      )
+      activeInRealtimePanel ||
+      Date.now() < realtimePanelRenderDeferredUntil
     )
   }
 
   function render(): void {
+    const previousRealtimePanel = getRealtimePanel()
+
+    if (previousRealtimePanel) {
+      realtimePanelScrollTop = previousRealtimePanel.scrollTop
+    }
+
     const currentState = engine.getState()
     const mediaPipeDebug =
       engine.getFaceDetectorDebugInfo() as DetectorDebugInfo | null
@@ -3783,7 +3842,7 @@ Detect（検出回数）: ${faceFrameLoopDebug.detectCallCount}/${mediaPipeDebug
         <h2 class="debug-heading">Debug values（デバッグ値）</h2>
         <pre>${escapeHtml(statusSummary)}</pre>
         <div class="studio-top-grid">
-          <section class="realtime-panel">
+          <section class="realtime-panel" data-realtime-panel="true">
             <h2 class="realtime-heading">リアルタイム調整</h2>
         <label>
           <input id="ideal-landmark-difference-lines" type="checkbox" ${showIdealLandmarkDifferenceLines ? "checked" : ""} />
@@ -4028,11 +4087,13 @@ Video srcObject: ${faceFrameLoopDebug.video?.hasSrcObject ? "あり" : "なし"}
     attachShapeWarpDebugHandlers()
     attachIdealFaceAssetImportHandler()
     attachDebugDetailsHandlers()
+    attachRealtimePanelInteractionHandlers()
+    restoreRealtimePanelScroll()
   }
 
   engine.setFaceDetector(detector)
   window.setInterval(() => {
-    if (!isShapeWarpDebugControlActive()) {
+    if (!isRealtimePanelRenderDeferred()) {
       render()
     }
     appendCameraPreview()
@@ -4047,7 +4108,9 @@ Video srcObject: ${faceFrameLoopDebug.video?.hasSrcObject ? "あり" : "なし"}
     previousFrameTimestamp = frame.timestamp
     latestFaceFrame = frame
 
-    render()
+    if (!isRealtimePanelRenderDeferred()) {
+      render()
+    }
     appendCameraPreview()
   })
 
