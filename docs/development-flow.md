@@ -11,6 +11,7 @@ BAE AR は、Engine Runtime、Beauty Studio、IdealFace Authoring Tool、Layer M
 - IdealFace Authoring Tool は Step 2-I-A/B/C と Step 2-H まで実装済みです。
 - IdealFace Authoring Tool の Step 2-I-A では、`frontReference` / `useForInference` / `expressionGroup` を重複可能な用途タグとして扱い、`excluded` だけを排他的に扱います。
 - MP4 detailed scan / Step 2-I-A frame selection では、`usage-aware frame sampling v1` として `frontReferenceCandidate` を提示し、`idealFaceInference` / expression groups は用途別 bucket の targetCount を見ながら frame を採用します。v1 prototype の adaptive sampling では required bucket の `idealFaceInference` が満たされたら early stop できます。expression groups は optional bucket として不足 warning を表示します。`frontReference` は自動 bucket ではなく、ユーザーが手動選択する正面基準で、early stop 条件には含めません。
+- `tools/mediapipe-canonical-lab` は MediaPipe Face Landmarker の 478 landmarks / `facialTransformationMatrix` / pose / blendshapes を調査する debug lab です。IdealFace Authoring Tool とは目的が違い、`empiricalCanonical478` は debug artifact として扱います。最新の empirical 478 analysis では `face_bounds_normalized_no_matrix` が現時点の best candidate で、`facialTransformationMatrix` inverse は production の IdealFace 3D478 作成主導線にしません。詳細は [MediaPipe Canonical Lab](mediapipe-canonical-lab.md) を参照します。
 - Step 2-I-A では、一覧カードに加えて Frame Review Carousel で1フレームを大きく確認しながら、`frontReference` / `expressionGroup` / `useForInference` / `excluded` を調整できます。
 - `poseOutOfRange` は自動除外ではなく注意タグとして扱います。正面基準には不向きですが、pose-aware 3D 推定には使える可能性があるため、`useForInference` の対象に残せます。
 - `noFace` / `invalidLandmarks` / `manual` は除外理由として扱い、`mixedExpression` / `pending` / `missingBlendshapes` は注意タグとして扱います。

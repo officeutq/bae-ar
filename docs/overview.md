@@ -26,6 +26,8 @@ BAE AR
 
 現在の実装は `packages/engine`、`apps/studio`、`tools/ideal-face-authoring` が中心です。`tools/ideal-face-authoring` は Step 2-I-A/B/C と Step 2-H まで実装済みで、`tools/layer-mask-authoring` は将来予定です。
 
+`tools/mediapipe-canonical-lab` は、MediaPipe Face Landmarker の current landmarks 478、`facialTransformationMatrix`、yaw / pitch / roll、blendshapes、pose bucket 別 capture を調査する debug lab です。IdealFace を作る authoring tool ではなく、`empiricalCanonical478` も debug artifact として扱い、そのまま production asset にはしません。最新の empirical 478 analysis では、`face_bounds_normalized_no_matrix`、つまり MediaPipe の行列を使わず顔の外枠で中心合わせとスケール正規化を行う方式が現時点の best candidate です。詳細は [MediaPipe Canonical Lab](mediapipe-canonical-lab.md) を参照してください。
+
 ## 現在の到達点
 
 現在の Runtime / Studio 実装は、カメラ映像を `HTMLVideoElement` として取得し、`BeautyEngine.setInput()` に渡し、MediaPipe Face Landmarker を使って `FaceFrame` を更新する段階です。FacePose の実推定、IdealFace v1、Natural v1 最小プリセット、IdealFace 公開 API、`idealLandmarks3D` 478点 Projection、current-vs-projected ideal 478点 difference debug、Studio overlay / debug / Copy Debug 関連は実装済みです。
@@ -377,6 +379,8 @@ MediaPipe z normalize uses `raw` as the current recommended default for Step 2-I
 Semantic origin centering places the final candidate's semantic center x/y at the asset origin and makes z average 0. This is not for Runtime display alignment; it is the authoring center policy because Engine uses the asset origin as the rotation center. Runtime alignment remains projected ideal bounds center -> current face bounds center.
 
 Step 2-H displays that candidate as `currentCandidate` in the point cloud preview.
+
+`tools/mediapipe-canonical-lab` の empirical 478 analysis では、`facialTransformationMatrix` inverse 系 candidate に `inverseResultHugeBounds` や `poseConventionMatchesButPointTransformUnstable` が出ています。そのため、現時点では `facialTransformationMatrix` を yaw / pitch / roll、pose bucket、frame weighting、debug comparison には使いますが、IdealFace 3D478 作成の production 主導線として matrix inverse で current landmarks を標準顔座標へ戻す方式は採用しません。production の IdealFace 3D478 作成では、顔枠ベースの正規化・整列を主軸にします。
 
 Removed legacy workflow:
 
