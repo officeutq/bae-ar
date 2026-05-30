@@ -46,6 +46,7 @@ leftEye / rightEye は iris が取得できない場合、既存 `FaceGeometry` 
 7. semantic alignment を行う
 8. semantic error / bounds error / penalty / totalScore を計算する
 9. overall ranking と bucket ranking を表示する
+10. bestCandidate から `bestIdealFace8` を生成する
 
 ## alignment mode
 
@@ -81,7 +82,24 @@ Summary:
 
 - `schemaVersion: ideal_face_fitting_lab_analysis_summary_v1`
 - topCandidates 上位20件、bestCandidate、bucketRanking 上位5件、summary 類、warnings を含む軽量 JSON
+- `zProfileDefinitions` 全件、`depthConvention`、`bestIdealFace8`、`depthRelation` を含む
 - allCandidates 全件、perFrameResults 全件、landmarks 478 全文、captured frames 全文、data URL は含めません
+
+## bestIdealFace8
+
+`bestIdealFace8` は、grid search の `bestCandidate` から作る 8点だけの理想顔3D debug artifact です。production 用 IdealFace asset ではなく、`ideal_face_asset_v1` や `beauty_filter_asset_v1` の schema 変更も行いません。
+
+- x / y は `front` bucket 由来の `base8Points2D` を使います。
+- z は bestCandidate の `zProfile` を使います。
+- `zRaw` は `zProfileDefinitions` にある奥行き形状そのものの値です。
+- `zScaled` は `zRaw * zScale` です。
+- `points[].z` は `zScaled` と同じ値です。
+- `pivotZ` は grid search projection 用の値として `source` に残し、`points[].z` には焼き込みません。
+- このラボでは smaller z が front / 手前、larger z が back / 奥です。
+
+`depthRelation` では `noseZ`、左右頬の z、平均頬 z、`noseIsInFrontOfCheeks`、左右頬 / 左右目の奥行き差を確認できます。
+
+次段では、`bestIdealFace8` の z を正面478点の x/y に補間して `provisionalIdealFace478` を作る予定です。今回は 478点への拡張、`provisionalIdealFace478` 生成、Runtime / Studio / Authoring Tool 連携は実装しません。
 
 ## 起動
 

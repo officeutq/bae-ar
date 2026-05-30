@@ -179,7 +179,22 @@ interface ZGroupValues {
 
 interface ZProfile {
   name: string
+  label: string
+  description: string
   values: ZGroupValues
+}
+
+interface ZProfileDefinition {
+  name: string
+  label: string
+  description: string
+  points: Record<SemanticPointName, number>
+}
+
+interface DepthConvention {
+  smallerZ: string
+  largerZ: string
+  note: string
 }
 
 interface CandidateDefinition {
@@ -250,6 +265,67 @@ interface RankingEntry {
   averageSemanticDistance: number
   boundsError: number
   sampleCount: number
+  idealFace8Summary?: IdealFace8CandidateSummary
+}
+
+interface IdealFace8Source {
+  type: "best_candidate"
+  zProfileName: string
+  pivotZ: number
+  zScale: number
+  alignmentMode: AlignmentMode
+  screenRotationDeg: number
+  zApplication: string
+}
+
+interface IdealFace8Point extends Point2 {
+  name: SemanticPointName
+  z: number
+  zRaw: number
+  zScale: number
+  zScaled: number
+}
+
+interface DepthRelation {
+  noseZ: number
+  leftCheekZ: number
+  rightCheekZ: number
+  averageCheekZ: number
+  noseIsInFrontOfCheeks: boolean
+  leftRightCheekZDelta: number
+  leftRightEyeZDelta: number
+}
+
+interface IdealFace8CandidateSummary {
+  pointCount: number
+  zRange: number
+  noseZ: number
+  leftCheekZ: number
+  rightCheekZ: number
+  noseIsInFrontOfCheeks: boolean
+}
+
+interface IdealFace8Summary extends IdealFace8CandidateSummary {
+  bounds: Bounds2D | null
+  zMin: number | null
+  zMax: number | null
+  averageCheekZ: number
+  depthRelation: DepthRelation
+}
+
+interface BestIdealFace8 {
+  schemaVersion: "ideal_face_fitting_lab_ideal_face_8_v1"
+  coordinateSpace: "bae_ar_fitting_lab_8point_same_unit_v1"
+  depthConvention: DepthConvention
+  source: IdealFace8Source
+  metadata: {
+    intendedNextStep: "interpolate_8point_depth_to_478_debug_candidate"
+    semanticPointNames: SemanticPointName[]
+    sourceBase2D: "front_bucket_average_same_unit"
+    zSource: "z_profile_grid_search_best_candidate"
+  }
+  points: IdealFace8Point[]
+  summary: IdealFace8Summary
 }
 
 interface AnalysisResult {
@@ -259,11 +335,15 @@ interface AnalysisResult {
   sourceSummary: SourceSummary
   selectedFrameSummary: SelectedFrameSummary
   base8Points2DSummary: Base8Points2DSummary
+  zProfileDefinitions: ZProfileDefinition[]
+  depthConvention: DepthConvention
   searchSettings: SearchSettings
   candidateCount: number
   allCandidates: CandidateResult[]
   topCandidates: RankingEntry[]
   bestCandidate: CandidateResult | null
+  bestIdealFace8: BestIdealFace8 | null
+  depthRelation: DepthRelation | null
   bucketRanking: Record<CaptureBucket, RankingEntry[]>
   perPointErrorSummary: Record<SemanticPointName, number | null>
   boundsErrorSummary: BoundsErrorSummary | null
@@ -277,9 +357,13 @@ interface SummaryAnalysisResult {
   sourceSummary: SourceSummary
   selectedFrameSummary: SelectedFrameSummary
   base8Points2DSummary: Base8Points2DSummary
+  zProfileDefinitions: ZProfileDefinition[]
+  depthConvention: DepthConvention
   searchSettings: SearchSettings
   topCandidates: RankingEntry[]
   bestCandidate: RankingEntry | null
+  bestIdealFace8: BestIdealFace8 | null
+  depthRelation: DepthRelation | null
   bucketRanking: Record<CaptureBucket, RankingEntry[]>
   perPointErrorSummary: Record<SemanticPointName, number | null>
   boundsErrorSummary: BoundsErrorSummary | null
@@ -408,6 +492,8 @@ const DEFAULT_SETTINGS: SearchSettings = {
 const Z_PROFILES: ZProfile[] = [
   {
     name: "balanced_shallow",
+    label: "Balanced Shallow / 浅めでバランス型の奥行き",
+    description: "鼻を手前、頬を奥に置きつつ、全体の奥行きを浅めにした候補です。",
     values: {
       noseZ: -0.18,
       cheekZ: 0.12,
@@ -419,6 +505,8 @@ const Z_PROFILES: ZProfile[] = [
   },
   {
     name: "nose_forward",
+    label: "Nose Forward / 鼻を強めに手前へ置く奥行き",
+    description: "鼻の手前方向を強め、横向き時の鼻先投影差を見やすくする候補です。",
     values: {
       noseZ: -0.34,
       cheekZ: 0.16,
@@ -430,6 +518,8 @@ const Z_PROFILES: ZProfile[] = [
   },
   {
     name: "deep_cheek",
+    label: "Deep Cheek / 頬を深めに置く奥行き",
+    description: "頬を奥に置き、左右向きで頬の奥行き差が効きやすいかを見る候補です。",
     values: {
       noseZ: -0.24,
       cheekZ: 0.28,
@@ -441,6 +531,8 @@ const Z_PROFILES: ZProfile[] = [
   },
   {
     name: "flat_reference",
+    label: "Flat Reference / 奥行きなし基準",
+    description: "すべての意味点の z を 0 にする基準候補です。",
     values: {
       noseZ: 0,
       cheekZ: 0,
@@ -452,6 +544,8 @@ const Z_PROFILES: ZProfile[] = [
   },
   {
     name: "chin_back",
+    label: "Chin Back / 顎を奥へ置く奥行き",
+    description: "顎をやや奥に置き、輪郭下部の投影差を確認する候補です。",
     values: {
       noseZ: -0.22,
       cheekZ: 0.16,
@@ -467,6 +561,11 @@ const PIVOT_Z_CANDIDATES = [-1, -0.5, 0, 0.5, 1]
 const Z_SCALE_CANDIDATES = [0.5, 1, 1.5, 2]
 const SCREEN_ROTATION_FINE_CANDIDATES = [-3, 0, 3]
 const EPSILON = 1e-8
+const DEPTH_CONVENTION: DepthConvention = {
+  smallerZ: "front / 手前",
+  largerZ: "back / 奥",
+  note: "このラボでは z が小さいほど手前、z が大きいほど奥として扱います。",
+}
 
 const state: AppState = {
   fileName: null,
@@ -598,6 +697,24 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
         </section>
 
         <section class="panel">
+          <h2>zProfileDefinitions</h2>
+          <p class="panel-help">z は奥行き値です。このラボでは小さい z が手前、大きい z が奥です。</p>
+          <div id="z-profile-definitions" class="table-wrap"></div>
+        </section>
+
+        <section class="panel">
+          <h2>bestIdealFace8</h2>
+          <p class="panel-help">zRaw は zProfile そのもの、zScaled は zScale 適用後です。3DIdealFace8 の実値としては zScaled を見ます。</p>
+          <div id="best-ideal-face8-summary" class="summary-grid"></div>
+          <div id="best-ideal-face8-table" class="table-wrap"></div>
+        </section>
+
+        <section class="panel">
+          <h2>depthRelation</h2>
+          <div id="depth-relation" class="summary-grid"></div>
+        </section>
+
+        <section class="panel">
           <h2>bucket ranking</h2>
           <div id="bucket-ranking" class="table-wrap"></div>
         </section>
@@ -685,6 +802,7 @@ function runAnalysis(): void {
   const sourceSummary = summarizeSource(state.payload, state.frames)
   const selected = selectFrames(state.frames, settings)
   const base8Points2DSummary = buildBase8Points2D(selected.frames)
+  const zProfileDefinitions = createZProfileDefinitions()
   const warnings = [
     ...selected.summary.warnings,
     ...state.frames.flatMap((frame) => frame.warnings),
@@ -698,11 +816,15 @@ function runAnalysis(): void {
       sourceSummary,
       selectedFrameSummary: selected.summary,
       base8Points2DSummary,
+      zProfileDefinitions,
+      depthConvention: DEPTH_CONVENTION,
       searchSettings: settings,
       candidateCount: 0,
       allCandidates: [],
       topCandidates: [],
       bestCandidate: null,
+      bestIdealFace8: null,
+      depthRelation: null,
       bucketRanking: emptyBucketRanking(),
       perPointErrorSummary: emptyPointSummary(),
       boundsErrorSummary: null,
@@ -721,6 +843,9 @@ function runAnalysis(): void {
 
   const topCandidates = evaluated.slice(0, 50).map(toRankingEntry)
   const bestCandidate = evaluated[0] ?? null
+  const bestIdealFace8 = bestCandidate
+    ? buildBestIdealFace8(base8Points2DSummary.points!, bestCandidate)
+    : null
 
   state.analysis = {
     schemaVersion: "ideal_face_fitting_lab_analysis_v1",
@@ -729,12 +854,18 @@ function runAnalysis(): void {
     sourceSummary,
     selectedFrameSummary: selected.summary,
     base8Points2DSummary,
+    zProfileDefinitions,
+    depthConvention: DEPTH_CONVENTION,
     searchSettings: settings,
     candidateCount: evaluated.length,
     allCandidates: evaluated,
-    topCandidates,
+    topCandidates: topCandidates.map((candidate) =>
+      attachIdealFace8Summary(candidate, base8Points2DSummary.points!),
+    ),
     bestCandidate,
-    bucketRanking: buildBucketRanking(evaluated),
+    bestIdealFace8,
+    depthRelation: bestIdealFace8?.summary.depthRelation ?? null,
+    bucketRanking: buildBucketRanking(evaluated, base8Points2DSummary.points!),
     perPointErrorSummary: bestCandidate ? bestCandidate.perPointError : emptyPointSummary(),
     boundsErrorSummary: bestCandidate ? bestCandidate.boundsError : null,
     warnings: [
@@ -1103,6 +1234,141 @@ function buildIdeal3D(
   return points
 }
 
+function createZProfileDefinitions(): ZProfileDefinition[] {
+  return Z_PROFILES.map((profile) => ({
+    name: profile.name,
+    label: profile.label,
+    description: profile.description,
+    points: mapZValuesToSemanticPoints(profile.values),
+  }))
+}
+
+function buildBestIdealFace8(
+  basePoints: SemanticPointSet2D,
+  candidate: CandidateDefinition,
+): BestIdealFace8 {
+  const points = SEMANTIC_POINT_NAMES.map((name) => {
+    const zRaw = candidate.zValues[name]
+    const zScaled = zRaw * candidate.zScale
+    return {
+      name,
+      x: round(basePoints[name].x),
+      y: round(basePoints[name].y),
+      z: round(zScaled),
+      zRaw: round(zRaw),
+      zScale: round(candidate.zScale),
+      zScaled: round(zScaled),
+    }
+  })
+
+  return {
+    schemaVersion: "ideal_face_fitting_lab_ideal_face_8_v1",
+    coordinateSpace: "bae_ar_fitting_lab_8point_same_unit_v1",
+    depthConvention: DEPTH_CONVENTION,
+    source: {
+      type: "best_candidate",
+      zProfileName: candidate.zProfileName,
+      pivotZ: round(candidate.pivotZ),
+      zScale: round(candidate.zScale),
+      alignmentMode: candidate.alignmentMode,
+      screenRotationDeg: round(candidate.screenRotationDeg),
+      zApplication:
+        "points[].z は zScaled と同じ値です。zScaled = zRaw * zScale。pivotZ は grid search projection 用に source へ記録し、点の z には焼き込みません。",
+    },
+    metadata: {
+      intendedNextStep: "interpolate_8point_depth_to_478_debug_candidate",
+      semanticPointNames: [...SEMANTIC_POINT_NAMES],
+      sourceBase2D: "front_bucket_average_same_unit",
+      zSource: "z_profile_grid_search_best_candidate",
+    },
+    points,
+    summary: summarizeIdealFace8(points),
+  }
+}
+
+function summarizeIdealFace8(points: IdealFace8Point[]): IdealFace8Summary {
+  const zValues = points.map((point) => point.z)
+  const zMin = min(zValues)
+  const zMax = max(zValues)
+  const depthRelation = calculateDepthRelation(points)
+
+  return {
+    pointCount: points.length,
+    bounds: points.length > 0 ? calculateBounds2D(points) : null,
+    zMin,
+    zMax,
+    zRange: zMin === null || zMax === null ? 0 : round(zMax - zMin),
+    noseZ: depthRelation.noseZ,
+    leftCheekZ: depthRelation.leftCheekZ,
+    rightCheekZ: depthRelation.rightCheekZ,
+    averageCheekZ: depthRelation.averageCheekZ,
+    noseIsInFrontOfCheeks: depthRelation.noseIsInFrontOfCheeks,
+    depthRelation,
+  }
+}
+
+function summarizeIdealFace8ForCandidate(points: IdealFace8Point[]): IdealFace8CandidateSummary {
+  const summary = summarizeIdealFace8(points)
+  return {
+    pointCount: summary.pointCount,
+    zRange: summary.zRange,
+    noseZ: summary.noseZ,
+    leftCheekZ: summary.leftCheekZ,
+    rightCheekZ: summary.rightCheekZ,
+    noseIsInFrontOfCheeks: summary.noseIsInFrontOfCheeks,
+  }
+}
+
+function calculateDepthRelation(points: IdealFace8Point[]): DepthRelation {
+  const byName = Object.fromEntries(points.map((point) => [point.name, point])) as Record<
+    SemanticPointName,
+    IdealFace8Point
+  >
+  const noseZ = byName.nose.z
+  const leftCheekZ = byName.leftCheek.z
+  const rightCheekZ = byName.rightCheek.z
+  const averageCheekZ = (leftCheekZ + rightCheekZ) / 2
+
+  return {
+    noseZ: round(noseZ),
+    leftCheekZ: round(leftCheekZ),
+    rightCheekZ: round(rightCheekZ),
+    averageCheekZ: round(averageCheekZ),
+    noseIsInFrontOfCheeks: noseZ < leftCheekZ && noseZ < rightCheekZ,
+    leftRightCheekZDelta: round(Math.abs(leftCheekZ - rightCheekZ)),
+    leftRightEyeZDelta: round(Math.abs(byName.leftEye.z - byName.rightEye.z)),
+  }
+}
+
+function attachIdealFace8Summary(
+  entry: RankingEntry,
+  basePoints: SemanticPointSet2D | null,
+): RankingEntry {
+  if (!basePoints) {
+    return entry
+  }
+  const zProfile = Z_PROFILES.find((profile) => profile.name === entry.zProfileName)
+  if (!zProfile) {
+    return entry
+  }
+  const candidate: CandidateDefinition = {
+    candidateId: entry.candidateId,
+    zProfileName: entry.zProfileName,
+    zValues: mapZValuesToSemanticPoints(zProfile.values),
+    pivotZ: entry.pivotZ,
+    zScale: entry.zScale,
+    rotationOriginX: 0,
+    rotationOriginY: 0,
+    alignmentMode: entry.alignmentMode,
+    screenRotationDeg: entry.screenRotationDeg,
+  }
+  const idealFace8 = buildBestIdealFace8(basePoints, candidate)
+  return {
+    ...entry,
+    idealFace8Summary: summarizeIdealFace8ForCandidate(idealFace8.points),
+  }
+}
+
 function projectIdealPoints(
   ideal3D: SemanticPointSet3D,
   pose: Pose,
@@ -1283,7 +1549,10 @@ function calculateBoundsError(
   }
 }
 
-function buildBucketRanking(candidates: CandidateResult[]): Record<CaptureBucket, RankingEntry[]> {
+function buildBucketRanking(
+  candidates: CandidateResult[],
+  basePoints: SemanticPointSet2D,
+): Record<CaptureBucket, RankingEntry[]> {
   const ranking = emptyBucketRanking()
 
   for (const bucket of BUCKETS) {
@@ -1293,7 +1562,7 @@ function buildBucketRanking(candidates: CandidateResult[]): Record<CaptureBucket
         if (frameResults.length === 0) {
           return null
         }
-        return {
+        return attachIdealFace8Summary({
           ...toRankingEntry(candidate),
           totalScore: average(frameResults.map((result) => result.totalScore)) ?? candidate.totalScore,
           weightedSemanticDistance:
@@ -1306,7 +1575,7 @@ function buildBucketRanking(candidates: CandidateResult[]): Record<CaptureBucket
             average(frameResults.map((result) => result.boundsError.total)) ??
             candidate.boundsError.total,
           sampleCount: frameResults.length,
-        }
+        }, basePoints)
       })
       .filter((entry): entry is RankingEntry => Boolean(entry))
       .sort((a, b) => a.totalScore - b.totalScore)
@@ -1325,9 +1594,15 @@ function createSummaryAnalysis(analysis: AnalysisResult): SummaryAnalysisResult 
     sourceSummary: analysis.sourceSummary,
     selectedFrameSummary: analysis.selectedFrameSummary,
     base8Points2DSummary: analysis.base8Points2DSummary,
+    zProfileDefinitions: analysis.zProfileDefinitions,
+    depthConvention: analysis.depthConvention,
     searchSettings: analysis.searchSettings,
     topCandidates: analysis.topCandidates.slice(0, 20),
-    bestCandidate: analysis.bestCandidate ? toRankingEntry(analysis.bestCandidate) : null,
+    bestCandidate: analysis.bestCandidate
+      ? attachIdealFace8Summary(toRankingEntry(analysis.bestCandidate), analysis.base8Points2DSummary.points)
+      : null,
+    bestIdealFace8: analysis.bestIdealFace8,
+    depthRelation: analysis.depthRelation,
     bucketRanking: Object.fromEntries(
       BUCKETS.map((bucket) => [bucket, analysis.bucketRanking[bucket].slice(0, 5)]),
     ) as Record<CaptureBucket, RankingEntry[]>,
@@ -1389,6 +1664,10 @@ function renderSourceOnly(): void {
   getElement("base-summary").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
   getElement("ranking-table").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
   getElement("best-candidate").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
+  getElement("z-profile-definitions").innerHTML = renderZProfileDefinitionsTable(createZProfileDefinitions())
+  getElement("best-ideal-face8-summary").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
+  getElement("best-ideal-face8-table").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
+  getElement("depth-relation").innerHTML = renderDepthConvention(DEPTH_CONVENTION)
   getElement("bucket-ranking").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
   getElement("error-summary").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
   getElement("warnings").textContent = state.frames.flatMap((frame) => frame.warnings).join("\n")
@@ -1396,6 +1675,8 @@ function renderSourceOnly(): void {
     {
       importedFile: state.fileName,
       sourceSummary,
+      zProfileDefinitions: createZProfileDefinitions(),
+      depthConvention: DEPTH_CONVENTION,
       semanticIndexDebug: buildSemanticIndexDebug(),
     },
     null,
@@ -1447,6 +1728,16 @@ function renderAnalysis(): void {
         ["alignmentMode", analysis.bestCandidate.alignmentMode],
       ])
     : `<p class="empty">候補がありません。</p>`
+  getElement("z-profile-definitions").innerHTML = renderZProfileDefinitionsTable(analysis.zProfileDefinitions)
+  getElement("best-ideal-face8-summary").innerHTML = analysis.bestIdealFace8
+    ? renderIdealFace8Summary(analysis.bestIdealFace8)
+    : `<p class="empty">bestIdealFace8 はありません。</p>`
+  getElement("best-ideal-face8-table").innerHTML = analysis.bestIdealFace8
+    ? renderIdealFace8Table(analysis.bestIdealFace8.points)
+    : `<p class="empty">bestIdealFace8 はありません。</p>`
+  getElement("depth-relation").innerHTML = analysis.depthRelation
+    ? renderDepthRelation(analysis.depthRelation, analysis.depthConvention)
+    : renderDepthConvention(analysis.depthConvention)
   getElement("bucket-ranking").innerHTML = renderBucketRanking(analysis.bucketRanking)
   getElement("error-summary").innerHTML = renderStatusItems([
     ["perPointError", JSON.stringify(roundRecord(analysis.perPointErrorSummary))],
@@ -1462,12 +1753,18 @@ function renderEmptyState(): void {
   getElement("base-summary").innerHTML = `<p class="empty">未解析です。</p>`
   getElement("ranking-table").innerHTML = `<p class="empty">未解析です。</p>`
   getElement("best-candidate").innerHTML = `<p class="empty">未解析です。</p>`
+  getElement("z-profile-definitions").innerHTML = renderZProfileDefinitionsTable(createZProfileDefinitions())
+  getElement("best-ideal-face8-summary").innerHTML = `<p class="empty">未解析です。</p>`
+  getElement("best-ideal-face8-table").innerHTML = `<p class="empty">未解析です。</p>`
+  getElement("depth-relation").innerHTML = renderDepthConvention(DEPTH_CONVENTION)
   getElement("bucket-ranking").innerHTML = `<p class="empty">未解析です。</p>`
   getElement("error-summary").innerHTML = `<p class="empty">未解析です。</p>`
   getElement("warnings").textContent = ""
   getElement("json-preview").textContent = JSON.stringify(
     {
       schemaVersion: "ideal_face_fitting_lab_analysis_summary_v1",
+      zProfileDefinitions: createZProfileDefinitions(),
+      depthConvention: DEPTH_CONVENTION,
       semanticIndexDebug: buildSemanticIndexDebug(),
       note: "captured JSON import 後に summary を表示します。",
     },
@@ -1505,6 +1802,111 @@ function renderSemanticMapping(): void {
       </tbody>
     </table>
   `
+}
+
+function renderZProfileDefinitionsTable(definitions: ZProfileDefinition[]): string {
+  return `
+    <table>
+      <thead>
+        <tr>
+          <th>name</th>
+          <th>label</th>
+          <th>description</th>
+          ${SEMANTIC_POINT_NAMES.map((name) => `<th>${name}</th>`).join("")}
+        </tr>
+      </thead>
+      <tbody>
+        ${definitions.map(
+          (definition) => `
+            <tr>
+              <td><code>${definition.name}</code></td>
+              <td>${escapeHtml(definition.label)}</td>
+              <td>${escapeHtml(definition.description)}</td>
+              ${SEMANTIC_POINT_NAMES.map(
+                (name) => `<td>${formatNumber(definition.points[name])}</td>`,
+              ).join("")}
+            </tr>
+          `,
+        ).join("")}
+      </tbody>
+    </table>
+  `
+}
+
+function renderIdealFace8Summary(idealFace8: BestIdealFace8): string {
+  return renderStatusItems([
+    ["schemaVersion", idealFace8.schemaVersion],
+    ["coordinateSpace", idealFace8.coordinateSpace],
+    ["zApplication", idealFace8.source.zApplication],
+    ["zProfileName", idealFace8.source.zProfileName],
+    ["pivotZ", formatNumber(idealFace8.source.pivotZ)],
+    ["zScale", formatNumber(idealFace8.source.zScale)],
+    ["pointCount", String(idealFace8.summary.pointCount)],
+    ["bounds", formatBounds(idealFace8.summary.bounds)],
+    ["zRange", formatNumber(idealFace8.summary.zRange)],
+    ["nextStep", idealFace8.metadata.intendedNextStep],
+  ])
+}
+
+function renderIdealFace8Table(points: IdealFace8Point[]): string {
+  if (points.length === 0) {
+    return `<p class="empty">points はありません。</p>`
+  }
+  return `
+    <table>
+      <thead>
+        <tr>
+          <th>name</th>
+          <th>x</th>
+          <th>y</th>
+          <th>zRaw</th>
+          <th>zScale</th>
+          <th>zScaled</th>
+          <th>z</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${points.map(
+          (point) => `
+            <tr>
+              <td><code>${point.name}</code></td>
+              <td>${formatNumber(point.x)}</td>
+              <td>${formatNumber(point.y)}</td>
+              <td>${formatNumber(point.zRaw)}</td>
+              <td>${formatNumber(point.zScale)}</td>
+              <td>${formatNumber(point.zScaled)}</td>
+              <td>${formatNumber(point.z)}</td>
+            </tr>
+          `,
+        ).join("")}
+      </tbody>
+    </table>
+  `
+}
+
+function renderDepthRelation(
+  depthRelation: DepthRelation,
+  depthConvention: DepthConvention,
+): string {
+  return renderStatusItems([
+    ["depthConvention", `${depthConvention.smallerZ} / ${depthConvention.largerZ}`],
+    ["note", depthConvention.note],
+    ["noseZ", formatNumber(depthRelation.noseZ)],
+    ["leftCheekZ", formatNumber(depthRelation.leftCheekZ)],
+    ["rightCheekZ", formatNumber(depthRelation.rightCheekZ)],
+    ["averageCheekZ", formatNumber(depthRelation.averageCheekZ)],
+    ["noseIsInFrontOfCheeks", String(depthRelation.noseIsInFrontOfCheeks)],
+    ["leftRightCheekZDelta", formatNumber(depthRelation.leftRightCheekZDelta)],
+    ["leftRightEyeZDelta", formatNumber(depthRelation.leftRightEyeZDelta)],
+  ])
+}
+
+function renderDepthConvention(depthConvention: DepthConvention): string {
+  return renderStatusItems([
+    ["smallerZ", depthConvention.smallerZ],
+    ["largerZ", depthConvention.largerZ],
+    ["note", depthConvention.note],
+  ])
 }
 
 function renderRankingTable(entries: RankingEntry[]): string {
