@@ -168,6 +168,7 @@ const PIVOT_Z_ESTIMATION_DEFAULT_PROJECTION = {
   perspectiveStrength: 1,
   cameraDistance: 2,
 } as const
+const PIVOT_Z_ESTIMATION_DEFAULT_ASPECT_SCORE_WEIGHT_PERCENT = 0
 const PIVOT_Z_ESTIMATION_STABLE_LANDMARK_COUNT = 80
 const PIVOT_Z_ESTIMATION_MIN_STABLE_LANDMARK_COUNT = 60
 const PIVOT_Z_ESTIMATION_TOP_CANDIDATE_COUNT = 5
@@ -188,6 +189,8 @@ const PIVOT_Z_ESTIMATION_PROBE_DELTA_EPSILON = 0.00000001
 const PIVOT_Z_ESTIMATION_MIN_BUCKET_FRAME_COUNT = 2
 const PIVOT_Z_ESTIMATION_FLAT_RELATIVE_THRESHOLD = 0.01
 const PIVOT_Z_ESTIMATION_FLAT_ABSOLUTE_THRESHOLD = 0.0002
+const PIVOT_Z_ESTIMATION_NORMALIZATION_EPSILON = 0.000000001
+const PIVOT_Z_ESTIMATION_ASPECT_WEIGHT_DOMINATES_THRESHOLD = 0.8
 const PIVOT_Z_ESTIMATION_BUCKET_IMBALANCE_WARNING_RATIO = 3
 const PIVOT_Z_BUCKET_WEIGHTS = {
   yawPositive: 0.35,
@@ -1293,6 +1296,11 @@ type PivotZEstimationWarning =
   | "insufficientPitchNegativeFrames"
   | "insufficientFrontFrames"
   | "scoreLooksFlat"
+  | "aspectScoreLooksFlat"
+  | "landmarkScoreLooksFlat"
+  | "aspectWeightDominates"
+  | "bestPivotZChangedByAspectWeight"
+  | "scoreNormalizationFlatRange"
   | "bestPivotZAtRangeEdge"
   | "bucketImbalance"
   | "highRollFramesIncluded"
@@ -1326,6 +1334,13 @@ interface PivotZAspectDebug {
 interface PivotZCandidateScoreDebug {
   pivotZ: number
   score: number
+  combinedScore: number
+  landmarkScore: number
+  landmarkScoreRaw: number
+  aspectError: number | null
+  aspectErrorRaw: number | null
+  normalizedLandmarkScore: number | null
+  normalizedAspectScore: number | null
   centerLandmarkScore: number | null
   all478Score: number | null
   averageDx: number | null
@@ -1347,6 +1362,9 @@ interface PivotZCandidateScoreDebug {
 interface PivotZCandidateScoreSampleItemDebug {
   pivotZ: number
   score: number
+  combinedScore: number
+  landmarkScore: number
+  aspectError: number | null
 }
 
 interface PivotZCandidateProjectionDebugSampleItem {
@@ -1378,6 +1396,22 @@ interface PivotZEstimationScoreSpreadDebug {
   max: number | null
   absolute: number | null
   relativeToBest: number | null
+}
+
+interface PivotZEstimationScoringNormalizationDebug {
+  landmarkScoreMin: number | null
+  landmarkScoreMax: number | null
+  aspectErrorMin: number | null
+  aspectErrorMax: number | null
+  normalized: boolean
+}
+
+interface PivotZEstimationScoringDebug {
+  strategy: typeof PIVOT_Z_ESTIMATION_STRATEGY
+  landmarkScoreWeight: number
+  aspectScoreWeight: number
+  aspectScoreWeightPercent: number
+  normalization: PivotZEstimationScoringNormalizationDebug
 }
 
 interface PivotZWeightRangeSummary {
@@ -1428,6 +1462,7 @@ interface PivotZEstimationSettings {
   zScale: number
   perspectiveStrength: number
   cameraDistance: number
+  aspectScoreWeightPercent: number
 }
 
 interface PivotZProjectionProbeLandmarkDebug {
@@ -1506,6 +1541,9 @@ interface PivotZEstimationDebugResult {
   selectedLandmarkCountAverage: number | null
   bestPivotZ: number | null
   bestScore: number | null
+  bestLandmarkScore: number | null
+  bestAspectError: number | null
+  scoring: PivotZEstimationScoringDebug
   scoreSpread: PivotZEstimationScoreSpreadDebug
   scoreLooksFlat: boolean
   firstCandidateScore: number | null
@@ -2331,6 +2369,33 @@ function createDefaultPivotZEstimationSettings(): PivotZEstimationSettings {
     perspectiveStrength:
       PIVOT_Z_ESTIMATION_DEFAULT_PROJECTION.perspectiveStrength,
     cameraDistance: PIVOT_Z_ESTIMATION_DEFAULT_PROJECTION.cameraDistance,
+    aspectScoreWeightPercent:
+      PIVOT_Z_ESTIMATION_DEFAULT_ASPECT_SCORE_WEIGHT_PERCENT,
+  }
+}
+
+function createPivotZEstimationScoringDebug(
+  settings: PivotZEstimationSettings = pivotZEstimationSettings,
+  normalization: PivotZEstimationScoringNormalizationDebug = {
+    landmarkScoreMin: null,
+    landmarkScoreMax: null,
+    aspectErrorMin: null,
+    aspectErrorMax: null,
+    normalized: false,
+  },
+): PivotZEstimationScoringDebug {
+  const aspectScoreWeight = roundPivotZDebugNumber(
+    clamp(settings.aspectScoreWeightPercent / 100, 0, 1),
+  )
+
+  return {
+    strategy: PIVOT_Z_ESTIMATION_STRATEGY,
+    landmarkScoreWeight: roundPivotZDebugNumber(1 - aspectScoreWeight),
+    aspectScoreWeight,
+    aspectScoreWeightPercent: roundPivotZDebugNumber(
+      settings.aspectScoreWeightPercent,
+    ),
+    normalization,
   }
 }
 
@@ -2375,6 +2440,9 @@ function createInitialPivotZEstimationDebugResult(
     selectedLandmarkCountAverage: null,
     bestPivotZ: null,
     bestScore: null,
+    bestLandmarkScore: null,
+    bestAspectError: null,
+    scoring: createPivotZEstimationScoringDebug(),
     scoreSpread: {
       min: null,
       max: null,
@@ -3444,6 +3512,11 @@ function sanitizePivotZEstimationSettings(
     Number.isFinite(settings.cameraDistance) && settings.cameraDistance > 0
       ? settings.cameraDistance
       : defaultSettings.cameraDistance
+  const aspectScoreWeightPercent = Number.isFinite(
+    settings.aspectScoreWeightPercent,
+  )
+    ? clamp(settings.aspectScoreWeightPercent, 0, 100)
+    : defaultSettings.aspectScoreWeightPercent
 
   return {
     min: roundIdealFaceAssetNumber(min),
@@ -3458,6 +3531,7 @@ function sanitizePivotZEstimationSettings(
       PIVOT_Z_ESTIMATION_DEFAULT_PROJECTION.perspectiveStrength,
     ),
     cameraDistance: roundIdealFaceAssetNumber(cameraDistance),
+    aspectScoreWeightPercent: roundPivotZDebugNumber(aspectScoreWeightPercent),
   }
 }
 
@@ -3483,6 +3557,9 @@ function readPivotZEstimationSettingsFromControls(): PivotZEstimationSettings {
   const cameraDistanceInput = document.querySelector<HTMLInputElement>(
     "[data-pivot-z-estimation-camera-distance]",
   )
+  const aspectScoreWeightInput = document.querySelector<HTMLInputElement>(
+    "[data-pivot-z-estimation-aspect-score-weight]",
+  )
 
   return sanitizePivotZEstimationSettings({
     min: Number(minInput?.value),
@@ -3496,6 +3573,7 @@ function readPivotZEstimationSettingsFromControls(): PivotZEstimationSettings {
     zScale: Number(zScaleInput?.value),
     perspectiveStrength: Number(perspectiveStrengthInput?.value),
     cameraDistance: Number(cameraDistanceInput?.value),
+    aspectScoreWeightPercent: Number(aspectScoreWeightInput?.value),
   })
 }
 
@@ -4204,6 +4282,7 @@ function calculatePivotZCandidateScore(
   const projectedAfterWidthFitAspects: number[] = []
   const currentAspects: number[] = []
   const aspectErrorsBeforeAlignment: number[] = []
+  const aspectErrorMagnitudesBeforeAlignment: number[] = []
   const aspectErrorsBeforeWidthFit: number[] = []
   const aspectErrorsAfterWidthFit: number[] = []
   const widthRatiosBeforeAlignment: number[] = []
@@ -4264,10 +4343,18 @@ function calculatePivotZCandidateScore(
       projectedBeforeAlignmentAspects,
       projection.debug?.projectedBeforeAlignmentAspect,
     )
+    const aspectErrorBeforeAlignment =
+      projection.debug?.aspectErrorBeforeAlignment ??
+      widthFit.aspectDebug.aspectErrorBeforeAlignment
     collectNullableDebugNumber(
       aspectErrorsBeforeAlignment,
-      projection.debug?.aspectErrorBeforeAlignment ??
-        widthFit.aspectDebug.aspectErrorBeforeAlignment,
+      aspectErrorBeforeAlignment,
+    )
+    collectNullableDebugNumber(
+      aspectErrorMagnitudesBeforeAlignment,
+      typeof aspectErrorBeforeAlignment === "number"
+        ? Math.abs(aspectErrorBeforeAlignment)
+        : null,
     )
     collectNullableDebugNumber(
       projectedAfterWidthFitAspects,
@@ -4341,9 +4428,21 @@ function calculatePivotZCandidateScore(
     return null
   }
 
+  const landmarkScore = roundPivotZDebugNumber(scoreTotal / scoreWeightTotal)
+  const aspectError = roundNullablePivotZDebugNumber(
+    averageNumbers(aspectErrorMagnitudesBeforeAlignment),
+  )
+
   return {
     pivotZ: roundIdealFaceAssetNumber(pivotZ),
-    score: roundPivotZDebugNumber(scoreTotal / scoreWeightTotal),
+    score: landmarkScore,
+    combinedScore: landmarkScore,
+    landmarkScore,
+    landmarkScoreRaw: landmarkScore,
+    aspectError,
+    aspectErrorRaw: aspectError,
+    normalizedLandmarkScore: null,
+    normalizedAspectScore: null,
     centerLandmarkScore:
       centerScoreWeightTotal > 0
         ? roundPivotZDebugNumber(centerScoreTotal / centerScoreWeightTotal)
@@ -4431,6 +4530,9 @@ function buildPivotZCandidateScoreSample(
   ): PivotZCandidateScoreSampleItemDebug => ({
     pivotZ: candidate.pivotZ,
     score: candidate.score,
+    combinedScore: candidate.combinedScore,
+    landmarkScore: candidate.landmarkScore,
+    aspectError: candidate.aspectError,
   })
   const sampleCount = PIVOT_Z_ESTIMATION_SCORE_SAMPLE_COUNT
   const middleStart = Math.max(
@@ -4475,6 +4577,106 @@ function buildPivotZCandidateProjectionDebugSample(
       .slice(middleStart, middleStart + sampleCount)
       .map(toItem),
     tail: candidateScoresByPivot.slice(-sampleCount).map(toItem),
+  }
+}
+
+function normalizePivotZScore(
+  value: number | null,
+  min: number,
+  max: number,
+): number {
+  const range = max - min
+
+  if (
+    value === null ||
+    !Number.isFinite(value) ||
+    Math.abs(range) <= PIVOT_Z_ESTIMATION_NORMALIZATION_EPSILON
+  ) {
+    return 0
+  }
+
+  return roundPivotZDebugNumber((value - min) / range)
+}
+
+function buildPivotZCombinedCandidateScores(
+  candidateScoresByPivot: PivotZCandidateScoreDebug[],
+  settings: PivotZEstimationSettings,
+): {
+  candidateScoresByPivot: PivotZCandidateScoreDebug[]
+  scoring: PivotZEstimationScoringDebug
+  landmarkScoreLooksFlat: boolean
+  aspectScoreLooksFlat: boolean
+  scoreNormalizationFlatRange: boolean
+  landmarkOnlyBestPivotZ: number | null
+} {
+  const landmarkScores = candidateScoresByPivot.map(
+    (candidate) => candidate.landmarkScoreRaw,
+  )
+  const aspectErrors = candidateScoresByPivot
+    .map((candidate) => candidate.aspectErrorRaw)
+    .filter((value): value is number => typeof value === "number")
+  const landmarkScoreMin = Math.min(...landmarkScores)
+  const landmarkScoreMax = Math.max(...landmarkScores)
+  const aspectErrorMin =
+    aspectErrors.length > 0 ? Math.min(...aspectErrors) : 0
+  const aspectErrorMax =
+    aspectErrors.length > 0 ? Math.max(...aspectErrors) : 0
+  const landmarkScoreRange = landmarkScoreMax - landmarkScoreMin
+  const aspectErrorRange = aspectErrorMax - aspectErrorMin
+  const landmarkScoreLooksFlat =
+    Math.abs(landmarkScoreRange) <= PIVOT_Z_ESTIMATION_NORMALIZATION_EPSILON
+  const aspectScoreLooksFlat =
+    Math.abs(aspectErrorRange) <= PIVOT_Z_ESTIMATION_NORMALIZATION_EPSILON
+  const aspectScoreWeightRatio = clamp(
+    settings.aspectScoreWeightPercent / 100,
+    0,
+    1,
+  )
+  const landmarkScoreWeightRatio = 1 - aspectScoreWeightRatio
+  const combinedCandidates = candidateScoresByPivot.map((candidate) => {
+    const normalizedLandmarkScore = normalizePivotZScore(
+      candidate.landmarkScoreRaw,
+      landmarkScoreMin,
+      landmarkScoreMax,
+    )
+    const normalizedAspectScore = normalizePivotZScore(
+      candidate.aspectErrorRaw,
+      aspectErrorMin,
+      aspectErrorMax,
+    )
+    const combinedScore = roundPivotZDebugNumber(
+      normalizedLandmarkScore * landmarkScoreWeightRatio +
+        normalizedAspectScore * aspectScoreWeightRatio,
+    )
+
+    return {
+      ...candidate,
+      score: combinedScore,
+      combinedScore,
+      landmarkScore: candidate.landmarkScoreRaw,
+      aspectError: candidate.aspectErrorRaw,
+      normalizedLandmarkScore,
+      normalizedAspectScore,
+    }
+  })
+  const landmarkOnlyBestPivotZ =
+    [...candidateScoresByPivot].sort(
+      (a, b) => a.landmarkScoreRaw - b.landmarkScoreRaw,
+    )[0]?.pivotZ ?? null
+
+  return {
+    candidateScoresByPivot: combinedCandidates,
+    scoring: createPivotZEstimationScoringDebug(settings, {
+      landmarkScoreMin: roundPivotZDebugNumber(landmarkScoreMin),
+      landmarkScoreMax: roundPivotZDebugNumber(landmarkScoreMax),
+      aspectErrorMin: roundPivotZDebugNumber(aspectErrorMin),
+      aspectErrorMax: roundPivotZDebugNumber(aspectErrorMax),
+      normalized: true,
+    }),
+    landmarkScoreLooksFlat,
+    aspectScoreLooksFlat,
+    scoreNormalizationFlatRange: landmarkScoreLooksFlat || aspectScoreLooksFlat,
+    landmarkOnlyBestPivotZ,
   }
 }
 
@@ -4965,6 +5167,12 @@ function buildPivotZEstimationWarnings(
   frames: PivotZEvaluationFrame[],
   bestPivotZ: number | null,
   settings: PivotZEstimationSettings,
+  scoringDiagnostics: {
+    landmarkScoreLooksFlat: boolean
+    aspectScoreLooksFlat: boolean
+    scoreNormalizationFlatRange: boolean
+    landmarkOnlyBestPivotZ: number | null
+  },
 ): PivotZEstimationWarning[] {
   const warnings: PivotZEstimationWarning[] = []
 
@@ -4994,6 +5202,33 @@ function buildPivotZEstimationWarnings(
 
   if (isPivotZScoreLooksFlat(scoreSpread)) {
     warnings.push("scoreLooksFlat")
+  }
+
+  if (scoringDiagnostics.landmarkScoreLooksFlat) {
+    warnings.push("landmarkScoreLooksFlat")
+  }
+
+  if (scoringDiagnostics.aspectScoreLooksFlat) {
+    warnings.push("aspectScoreLooksFlat")
+  }
+
+  if (scoringDiagnostics.scoreNormalizationFlatRange) {
+    warnings.push("scoreNormalizationFlatRange")
+  }
+
+  if (
+    settings.aspectScoreWeightPercent / 100 >=
+    PIVOT_Z_ESTIMATION_ASPECT_WEIGHT_DOMINATES_THRESHOLD
+  ) {
+    warnings.push("aspectWeightDominates")
+  }
+
+  if (
+    bestPivotZ !== null &&
+    scoringDiagnostics.landmarkOnlyBestPivotZ !== null &&
+    Math.abs(bestPivotZ - scoringDiagnostics.landmarkOnlyBestPivotZ) > 0.0000001
+  ) {
+    warnings.push("bestPivotZChangedByAspectWeight")
   }
 
   if (
@@ -5139,7 +5374,7 @@ function runPivotZEstimationDebug(): PivotZEstimationDebugResult {
     evaluationFrames,
     pivotZEstimationSettings,
   )
-  const candidateScoresByPivot = candidateValues
+  const rawCandidateScoresByPivot = candidateValues
     .map((pivotZ) =>
       calculatePivotZCandidateScore(
         idealFaceForProjection,
@@ -5151,11 +5386,8 @@ function runPivotZEstimationDebug(): PivotZEstimationDebugResult {
     .filter(
       (candidate): candidate is PivotZCandidateScoreDebug => candidate !== null,
     )
-  const candidateScores = [...candidateScoresByPivot].sort(
-    (a, b) => a.score - b.score,
-  )
 
-  if (candidateScores.length === 0) {
+  if (rawCandidateScoresByPivot.length === 0) {
     return {
       ...createInitialPivotZEstimationDebugResult(
         "projection produced no candidate scores",
@@ -5177,6 +5409,15 @@ function runPivotZEstimationDebug(): PivotZEstimationDebugResult {
     }
   }
 
+  const combinedScoring = buildPivotZCombinedCandidateScores(
+    rawCandidateScoresByPivot,
+    pivotZEstimationSettings,
+  )
+  const candidateScoresByPivot = combinedScoring.candidateScoresByPivot
+  const candidateScores = [...candidateScoresByPivot].sort(
+    (a, b) => a.score - b.score,
+  )
+
   const bestCandidate = candidateScores[0]
   const scoreValues = candidateScores.map((candidate) => candidate.score)
   const scoreMin = Math.min(...scoreValues)
@@ -5197,6 +5438,13 @@ function runPivotZEstimationDebug(): PivotZEstimationDebugResult {
     evaluationFrames,
     bestCandidate.pivotZ,
     pivotZEstimationSettings,
+    {
+      landmarkScoreLooksFlat: combinedScoring.landmarkScoreLooksFlat,
+      aspectScoreLooksFlat: combinedScoring.aspectScoreLooksFlat,
+      scoreNormalizationFlatRange:
+        combinedScoring.scoreNormalizationFlatRange,
+      landmarkOnlyBestPivotZ: combinedScoring.landmarkOnlyBestPivotZ,
+    },
   )
   const reliability = buildPivotZReliability(
     warnings,
@@ -5231,6 +5479,9 @@ function runPivotZEstimationDebug(): PivotZEstimationDebugResult {
     ),
     bestPivotZ: bestCandidate.pivotZ,
     bestScore: bestCandidate.score,
+    bestLandmarkScore: bestCandidate.landmarkScore,
+    bestAspectError: bestCandidate.aspectError,
+    scoring: combinedScoring.scoring,
     scoreSpread,
     scoreLooksFlat,
     firstCandidateScore: candidateScoresByPivot[0]?.score ?? null,
@@ -12752,6 +13003,18 @@ function renderPivotZEstimationDebugPanel(
             data-pivot-z-estimation-camera-distance="true"
           />
         </label>
+        <label>
+          aspect score weight
+          <input
+            type="number"
+            min="0"
+            max="100"
+            step="1"
+            value="${pivotZEstimationSettings.aspectScoreWeightPercent}"
+            data-pivot-z-estimation-aspect-score-weight="true"
+          />
+          %
+        </label>
       </div>
       <dl class="pose-aware-summary-list">
         <div>
@@ -12777,6 +13040,18 @@ function renderPivotZEstimationDebugPanel(
         <div>
           <dt>best pivotZ / score</dt>
           <dd>${formatNullableDebugNumber(debug.bestPivotZ)} / ${formatNullableDebugNumber(debug.bestScore)}</dd>
+        </div>
+        <div>
+          <dt>best landmark / aspect</dt>
+          <dd>${formatNullableDebugNumber(debug.bestLandmarkScore)} / ${formatNullableDebugNumber(debug.bestAspectError)}</dd>
+        </div>
+        <div>
+          <dt>score weights</dt>
+          <dd>landmark ${formatNullableDebugNumber(debug.scoring.landmarkScoreWeight)} / aspect ${formatNullableDebugNumber(debug.scoring.aspectScoreWeight)} (${formatNullableDebugNumber(debug.scoring.aspectScoreWeightPercent)}%)</dd>
+        </div>
+        <div>
+          <dt>score normalization</dt>
+          <dd>landmark ${formatNullableDebugNumber(debug.scoring.normalization.landmarkScoreMin)}-${formatNullableDebugNumber(debug.scoring.normalization.landmarkScoreMax)} / aspect ${formatNullableDebugNumber(debug.scoring.normalization.aspectErrorMin)}-${formatNullableDebugNumber(debug.scoring.normalization.aspectErrorMax)}</dd>
         </div>
         <div>
           <dt>score spread</dt>
@@ -16363,6 +16638,7 @@ function attachIdealLandmarks3DCandidateHandler(): void {
         "[data-pivot-z-estimation-z-scale]",
         "[data-pivot-z-estimation-perspective-strength]",
         "[data-pivot-z-estimation-camera-distance]",
+        "[data-pivot-z-estimation-aspect-score-weight]",
       ].join(", "),
     )
     .forEach((input) => {
