@@ -273,6 +273,7 @@ interface DepthConvention {
 interface FittingCandidate8 {
   zByPointId: Record<SemanticPointName, number>
   pivotZ: number
+  rotationCenter?: RotationCenter
 }
 
 interface RotationCenter {
@@ -287,9 +288,11 @@ interface ProjectionOptions {
 }
 
 type SearchMode = "fullGrid" | "localOneDimensional" | "coordinateDescent"
-type LocalSearchParameter = "pivotZ" | `${SemanticPointName}.z`
+type LocalSearchParameter = "pivotZ" | "rotationCenter.y" | "rotationCenter.z" | `${SemanticPointName}.z`
 type SearchPresetId =
   | "coordinateDescentFine"
+  | "rotationCenterFine"
+  | "rotationCenter8PointFine"
   | "pivotZFine"
   | "noseZFine"
   | "leftCheekZFine"
@@ -300,12 +303,16 @@ type SearchPresetId =
 type BaseCandidatePresetId =
   | "baselineCheekDepth"
   | "currentFineBest"
+  | "rotationCenterDebugBest"
+  | "naturalNoseWithRotationCenter"
   | "currentBestCandidate"
 type AutoSequencePresetId =
   | "fineSequence"
   | "currentBestFineSequence"
   | "yawFocusSequence"
   | "pitchFocusSequence"
+  | "rotationCenterFineSequence"
+  | "naturalNoseRotationCenterSequence"
 type AutoSequenceStatus = "idle" | "running" | "completed" | "cancelled" | "error"
 
 interface LocalSearchRange {
@@ -336,6 +343,7 @@ interface SearchPresetDefinition {
   localMax: number
   localStep: number
   coordinateDescentIterations: number
+  coordinateDescentParameterOrder?: LocalSearchParameter[]
   coordinateDescentRanges: LocalSearchRanges
   baseCandidatePresetId?: BaseCandidatePresetId
   description: string
@@ -458,6 +466,7 @@ interface RankingEntry extends FittingCandidate8Score {
 interface IdealFace8Source {
   type: "best_candidate"
   pivotZ: number
+  rotationCenter: RotationCenter
   zApplication: string
 }
 
@@ -700,6 +709,7 @@ interface AppState {
   analysis: AnalysisResult | null
   searchWorker: Worker | null
   searchProgress: SearchProgressState
+  coordinateDescentParameterOrder: LocalSearchParameter[]
   coordinateDescentRanges: LocalSearchRanges
   autoSequence: AutoSequenceState
   autoSequenceLastAnalysis: AnalysisResult | null
@@ -767,6 +777,8 @@ const SEMANTIC_POINT_NAMES = SEMANTIC_DEFINITIONS.map(
 
 const LOCAL_SEARCH_PARAMETERS: LocalSearchParameter[] = [
   "pivotZ",
+  "rotationCenter.y",
+  "rotationCenter.z",
   "headTop.z",
   "chin.z",
   "leftCheek.z",
@@ -778,7 +790,8 @@ const LOCAL_SEARCH_PARAMETERS: LocalSearchParameter[] = [
 ]
 
 const DEFAULT_COORDINATE_DESCENT_PARAMETER_ORDER: LocalSearchParameter[] = [
-  "pivotZ",
+  "rotationCenter.y",
+  "rotationCenter.z",
   "leftCheek.z",
   "rightCheek.z",
   "nose.z",
@@ -787,6 +800,11 @@ const DEFAULT_COORDINATE_DESCENT_PARAMETER_ORDER: LocalSearchParameter[] = [
   "rightEye.z",
   "headTop.z",
   "chin.z",
+]
+
+const ROTATION_CENTER_ONLY_PARAMETER_ORDER: LocalSearchParameter[] = [
+  "rotationCenter.y",
+  "rotationCenter.z",
 ]
 
 const BASELINE_CHEEK_DEPTH_CANDIDATE: FittingCandidate8 = {
@@ -845,22 +863,64 @@ const NATURAL_NOSE_CANDIDATE: FittingCandidate8 = {
   },
 }
 
+const ROTATION_CENTER_DEBUG_BEST: FittingCandidate8 = {
+  pivotZ: 0.04,
+  rotationCenter: {
+    x: 0,
+    y: -0.08,
+    z: 0.04,
+  },
+  zByPointId: {
+    headTop: 0,
+    chin: 0,
+    leftCheek: 0.03,
+    rightCheek: 0.03,
+    leftEye: 0.05,
+    rightEye: 0.03,
+    nose: 0.08,
+    mouth: 0.05,
+  },
+}
+
+const NATURAL_NOSE_WITH_ROTATION_CENTER: FittingCandidate8 = {
+  pivotZ: 0.04,
+  rotationCenter: {
+    x: 0,
+    y: -0.08,
+    z: 0.04,
+  },
+  zByPointId: {
+    headTop: 0,
+    chin: 0,
+    leftCheek: 0.03,
+    rightCheek: 0.03,
+    leftEye: 0.05,
+    rightEye: 0.03,
+    nose: 0.025,
+    mouth: 0.05,
+  },
+}
+
 const DEFAULT_LOCAL_SEARCH_BASE_CANDIDATE = BASELINE_CHEEK_DEPTH_CANDIDATE
 
 const DEFAULT_COORDINATE_DESCENT_RANGES: LocalSearchRanges = {
   pivotZ: { min: 0.06, max: 0.18, step: 0.01 },
+  "rotationCenter.y": { min: -0.14, max: -0.02, step: 0.01 },
+  "rotationCenter.z": { min: 0.02, max: 0.1, step: 0.01 },
   "headTop.z": { min: -0.02, max: 0.03, step: 0.01 },
   "chin.z": { min: -0.01, max: 0.03, step: 0.01 },
-  "leftCheek.z": { min: 0.03, max: 0.12, step: 0.01 },
-  "rightCheek.z": { min: 0.03, max: 0.12, step: 0.01 },
-  "leftEye.z": { min: 0, max: 0.04, step: 0.01 },
-  "rightEye.z": { min: 0, max: 0.04, step: 0.01 },
+  "leftCheek.z": { min: 0.02, max: 0.08, step: 0.01 },
+  "rightCheek.z": { min: 0.02, max: 0.08, step: 0.01 },
+  "leftEye.z": { min: 0, max: 0.06, step: 0.01 },
+  "rightEye.z": { min: 0, max: 0.06, step: 0.01 },
   "nose.z": { min: -0.02, max: 0.08, step: 0.01 },
   "mouth.z": { min: 0, max: 0.08, step: 0.01 },
 }
 
 const YAW_FOCUS_COORDINATE_DESCENT_RANGES: LocalSearchRanges = {
   pivotZ: { min: 0.1, max: 0.18, step: 0.01 },
+  "rotationCenter.y": { min: -0.14, max: -0.02, step: 0.01 },
+  "rotationCenter.z": { min: 0.02, max: 0.1, step: 0.01 },
   "headTop.z": { min: -0.02, max: 0.03, step: 0.01 },
   "chin.z": { min: -0.02, max: 0.03, step: 0.01 },
   "leftCheek.z": { min: 0.08, max: 0.18, step: 0.01 },
@@ -873,6 +933,8 @@ const YAW_FOCUS_COORDINATE_DESCENT_RANGES: LocalSearchRanges = {
 
 const PITCH_FOCUS_COORDINATE_DESCENT_RANGES: LocalSearchRanges = {
   pivotZ: { min: 0.04, max: 0.12, step: 0.01 },
+  "rotationCenter.y": { min: -0.14, max: -0.02, step: 0.01 },
+  "rotationCenter.z": { min: 0.02, max: 0.1, step: 0.01 },
   "headTop.z": { min: 0, max: 0.04, step: 0.01 },
   "chin.z": { min: 0, max: 0.04, step: 0.01 },
   "leftCheek.z": { min: 0.03, max: 0.08, step: 0.01 },
@@ -881,6 +943,12 @@ const PITCH_FOCUS_COORDINATE_DESCENT_RANGES: LocalSearchRanges = {
   "rightEye.z": { min: 0.01, max: 0.05, step: 0.01 },
   "nose.z": { min: 0.03, max: 0.09, step: 0.01 },
   "mouth.z": { min: 0.03, max: 0.09, step: 0.01 },
+}
+
+const ROTATION_CENTER_FINE_RANGES: LocalSearchRanges = {
+  ...DEFAULT_COORDINATE_DESCENT_RANGES,
+  "rotationCenter.y": { min: -0.14, max: -0.02, step: 0.005 },
+  "rotationCenter.z": { min: 0.02, max: 0.1, step: 0.005 },
 }
 
 const SEARCH_PRESETS: SearchPresetDefinition[] = [
@@ -896,6 +964,36 @@ const SEARCH_PRESETS: SearchPresetDefinition[] = [
     coordinateDescentRanges: DEFAULT_COORDINATE_DESCENT_RANGES,
     description:
       "現在の baseCandidate を起点に、pivotZ と 8 semantic points の z を軽く再最適化します。",
+  },
+  {
+    id: "rotationCenterFine",
+    label: "Rotation Center Fine",
+    searchMode: "coordinateDescent",
+    targetParameter: "rotationCenter.y",
+    localMin: -0.14,
+    localMax: -0.02,
+    localStep: 0.005,
+    coordinateDescentIterations: 2,
+    coordinateDescentParameterOrder: ROTATION_CENTER_ONLY_PARAMETER_ORDER,
+    coordinateDescentRanges: ROTATION_CENTER_FINE_RANGES,
+    baseCandidatePresetId: "rotationCenterDebugBest",
+    description:
+      "rotationCenter.y / rotationCenter.z だけを coordinateDescent で細かく調整します。",
+  },
+  {
+    id: "rotationCenter8PointFine",
+    label: "Rotation Center + 8Point Fine",
+    searchMode: "coordinateDescent",
+    targetParameter: "rotationCenter.y",
+    localMin: -0.14,
+    localMax: -0.02,
+    localStep: 0.01,
+    coordinateDescentIterations: 2,
+    coordinateDescentParameterOrder: DEFAULT_COORDINATE_DESCENT_PARAMETER_ORDER,
+    coordinateDescentRanges: DEFAULT_COORDINATE_DESCENT_RANGES,
+    baseCandidatePresetId: "rotationCenterDebugBest",
+    description:
+      "rotationCenter.y / rotationCenter.z を先に調整し、その後 8 semantic points の z を再探索します。",
   },
   {
     id: "pivotZFine",
@@ -1038,6 +1136,22 @@ const AUTO_SEQUENCE_PRESETS: AutoSequenceDefinition[] = [
     description:
       "Current Fine Best を起点に、上下向き重視の確認 preset を実行します。",
   },
+  {
+    id: "rotationCenterFineSequence",
+    label: "Rotation Center Fine Sequence",
+    baseCandidatePresetId: "rotationCenterDebugBest",
+    steps: ["rotationCenterFine", "rotationCenter8PointFine", "noseZFine", "mouthZFine"],
+    description:
+      "Rotation Center Debug Best を起点に、rotationCenter を先に調整してから 8点 z を再探索します。",
+  },
+  {
+    id: "naturalNoseRotationCenterSequence",
+    label: "Natural Nose Rotation Center Sequence",
+    baseCandidatePresetId: "naturalNoseWithRotationCenter",
+    steps: ["rotationCenterFine", "rotationCenter8PointFine", "noseZFine", "mouthZFine"],
+    description:
+      "Natural Nose With Rotation Center を起点に、nose.z が自然寄りでも score が出るか確認します。",
+  },
 ]
 
 const BUCKETS: CaptureBucket[] = [
@@ -1174,6 +1288,7 @@ const state: AppState = {
   analysis: null,
   searchWorker: null,
   searchProgress: createIdleSearchProgress(),
+  coordinateDescentParameterOrder: DEFAULT_COORDINATE_DESCENT_PARAMETER_ORDER,
   coordinateDescentRanges: DEFAULT_COORDINATE_DESCENT_RANGES,
   autoSequence: createIdleAutoSequence(),
   autoSequenceLastAnalysis: null,
@@ -1231,6 +1346,8 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
                 <select id="base-candidate-preset-select">
                   <option value="baselineCheekDepth">Baseline Cheek Depth</option>
                   <option value="currentFineBest">Current Fine Best</option>
+                  <option value="rotationCenterDebugBest">Rotation Center Debug Best</option>
+                  <option value="naturalNoseWithRotationCenter">Natural Nose With Rotation Center</option>
                   <option value="currentBestCandidate">Current bestCandidate</option>
                 </select>
               </label>
@@ -1356,8 +1473,17 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
           </div>
           <h3>baseCandidate</h3>
           <div class="controls">
-            <label>base pivotZ
+            <label>base legacy pivotZ / rotationCenter.z
               <input id="base-pivot-z-input" type="number" min="-3" max="3" step="0.005" value="${DEFAULT_LOCAL_SEARCH_BASE_CANDIDATE.pivotZ}" />
+            </label>
+            <label>base rotationCenter.x
+              <input id="base-rotation-center-x-input" type="number" min="-3" max="3" step="0.005" value="0" />
+            </label>
+            <label>base rotationCenter.y
+              <input id="base-rotation-center-y-input" type="number" min="-3" max="3" step="0.005" value="0" />
+            </label>
+            <label>base rotationCenter.z
+              <input id="base-rotation-center-z-input" type="number" min="-3" max="3" step="0.005" value="${DEFAULT_LOCAL_SEARCH_BASE_CANDIDATE.pivotZ}" />
             </label>
             ${SEMANTIC_POINT_NAMES.map(
               (name) => `
@@ -1766,7 +1892,7 @@ function completeSearchFromWorker(context: SearchWorkerContext, message: Record<
   const topCandidates = normalizeRankingEntries(message.topCandidates)
   const bucketRanking = normalizeBucketRanking(message.bucketRanking)
   const bestCandidate = isRecord(message.bestCandidate)
-    ? (message.bestCandidate as unknown as CandidateResult)
+    ? normalizeCandidateResult(message.bestCandidate as unknown as CandidateResult)
     : null
   const bestIdealFace8 =
     bestCandidate && context.base8Points2DSummary.points
@@ -1943,7 +2069,26 @@ function createWorkerFrames(frames: NormalizedFrame[]): Array<{
 }
 
 function normalizeRankingEntries(value: unknown): RankingEntry[] {
-  return Array.isArray(value) ? (value as RankingEntry[]) : []
+  return Array.isArray(value)
+    ? (value as RankingEntry[]).map((entry) => ({
+        ...entry,
+        candidate: cloneCandidate({
+          pivotZ: entry.candidate.pivotZ,
+          rotationCenter: getCandidateRotationCenter(entry.candidate),
+          zByPointId: entry.candidate.zByPointId,
+        }),
+      }))
+    : []
+}
+
+function normalizeCandidateResult(candidate: CandidateResult): CandidateResult {
+  const normalized = cloneCandidate(candidate)
+  return {
+    ...candidate,
+    pivotZ: normalized.pivotZ,
+    rotationCenter: normalized.rotationCenter ?? getCandidateRotationCenter(normalized),
+    zByPointId: normalized.zByPointId,
+  }
 }
 
 function normalizeBucketRanking(value: unknown): Record<CaptureBucket, RankingEntry[]> {
@@ -2072,6 +2217,7 @@ function createRotationCenterCandidateDefinition(
   return {
     candidateId: `rotation_center_debug__${candidateName.toLowerCase().replaceAll(" ", "_")}`,
     pivotZ: round(candidate.pivotZ),
+    rotationCenter: getCandidateRotationCenter(candidate),
     zByPointId: roundRecord(candidate.zByPointId),
   }
 }
@@ -2441,9 +2587,9 @@ function projectIdealPoints(
   pose: Pose,
   candidate: FittingCandidate8,
   settings: SearchSettings,
-  options: ProjectionOptions = { pivotZ: candidate.pivotZ },
+  options?: ProjectionOptions,
 ): SemanticPointSet2D {
-  const rotationCenter = getProjectionRotationCenter(options)
+  const rotationCenter = getProjectionRotationCenter(candidate, options)
   const points = {} as SemanticPointSet2D
   for (const name of SEMANTIC_POINT_NAMES) {
     const rotated = rotatePoint3D(
@@ -2467,8 +2613,17 @@ function projectIdealPoints(
   return points
 }
 
-function getProjectionRotationCenter(options: ProjectionOptions): RotationCenter {
-  return options.rotationCenter ?? { x: 0, y: 0, z: options.pivotZ }
+function getProjectionRotationCenter(
+  candidate: FittingCandidate8,
+  options?: ProjectionOptions,
+): RotationCenter {
+  if (options?.rotationCenter) {
+    return roundRotationCenter(options.rotationCenter)
+  }
+  if (candidate.rotationCenter) {
+    return roundRotationCenter(candidate.rotationCenter)
+  }
+  return { x: 0, y: 0, z: round(options?.pivotZ ?? candidate.pivotZ) }
 }
 
 function rotatePoint3D(point: Point3, pose: Pose): Point3 {
@@ -2686,14 +2841,25 @@ function readBaseCandidate(): FittingCandidate8 {
       DEFAULT_LOCAL_SEARCH_BASE_CANDIDATE.zByPointId[name],
     )
   }
+  const legacyPivotZ = readNumber("base-pivot-z-input", DEFAULT_LOCAL_SEARCH_BASE_CANDIDATE.pivotZ)
+  const rotationCenterZ = readNumber("base-rotation-center-z-input", legacyPivotZ)
   return {
-    pivotZ: readNumber("base-pivot-z-input", DEFAULT_LOCAL_SEARCH_BASE_CANDIDATE.pivotZ),
+    pivotZ: rotationCenterZ,
+    rotationCenter: {
+      x: readNumber("base-rotation-center-x-input", 0),
+      y: readNumber("base-rotation-center-y-input", 0),
+      z: rotationCenterZ,
+    },
     zByPointId,
   }
 }
 
 function writeCandidateToBaseInputs(candidate: FittingCandidate8): void {
+  const rotationCenter = getCandidateRotationCenter(candidate)
   getElement<HTMLInputElement>("base-pivot-z-input").value = String(round(candidate.pivotZ))
+  getElement<HTMLInputElement>("base-rotation-center-x-input").value = String(round(rotationCenter.x))
+  getElement<HTMLInputElement>("base-rotation-center-y-input").value = String(round(rotationCenter.y))
+  getElement<HTMLInputElement>("base-rotation-center-z-input").value = String(round(rotationCenter.z))
   for (const name of SEMANTIC_POINT_NAMES) {
     getElement<HTMLInputElement>(`base-${name}-z-input`).value = String(
       round(candidate.zByPointId[name]),
@@ -2724,6 +2890,9 @@ function applySearchPresetDefinition(
   writeNumberInput("local-max-input", preset.localMax)
   writeNumberInput("local-step-input", preset.localStep)
   writeNumberInput("coordinate-descent-iterations-input", preset.coordinateDescentIterations)
+  state.coordinateDescentParameterOrder = [
+    ...(preset.coordinateDescentParameterOrder ?? DEFAULT_COORDINATE_DESCENT_PARAMETER_ORDER),
+  ]
   state.coordinateDescentRanges = cloneLocalSearchRanges(preset.coordinateDescentRanges)
 
   if (applyRecommendedBaseCandidate && preset.baseCandidatePresetId) {
@@ -2911,6 +3080,7 @@ function buildAutoSequenceSummary(
 }
 
 function applyCommonPresetSettings(): void {
+  state.coordinateDescentParameterOrder = [...DEFAULT_COORDINATE_DESCENT_PARAMETER_ORDER]
   writeNumberInput("max-frames-input", 30)
   writeNumberInput("target-front-input", 5)
   writeNumberInput("target-yaw-positive-input", 5)
@@ -2952,7 +3122,10 @@ function findAutoSequence(value: string): AutoSequenceDefinition {
 }
 
 function readBaseCandidatePresetId(value: string): BaseCandidatePresetId {
-  return value === "currentFineBest" || value === "currentBestCandidate"
+  return value === "currentFineBest" ||
+    value === "currentBestCandidate" ||
+    value === "rotationCenterDebugBest" ||
+    value === "naturalNoseWithRotationCenter"
     ? value
     : "baselineCheekDepth"
 }
@@ -2968,6 +3141,12 @@ function getBaseCandidatePreset(
       ? cloneCandidate(state.analysis.bestCandidate)
       : null
   }
+  if (presetId === "rotationCenterDebugBest") {
+    return cloneCandidate(ROTATION_CENTER_DEBUG_BEST)
+  }
+  if (presetId === "naturalNoseWithRotationCenter") {
+    return cloneCandidate(NATURAL_NOSE_WITH_ROTATION_CENTER)
+  }
   return cloneCandidate(BASELINE_CHEEK_DEPTH_CANDIDATE)
 }
 
@@ -2977,6 +3156,12 @@ function formatBaseCandidatePresetLabel(presetId: BaseCandidatePresetId): string
   }
   if (presetId === "currentBestCandidate") {
     return "Current bestCandidate"
+  }
+  if (presetId === "rotationCenterDebugBest") {
+    return "Rotation Center Debug Best"
+  }
+  if (presetId === "naturalNoseWithRotationCenter") {
+    return "Natural Nose With Rotation Center"
   }
   return "Baseline Cheek Depth"
 }
@@ -2991,9 +3176,28 @@ function cloneLocalSearchRanges(ranges: LocalSearchRanges): LocalSearchRanges {
 }
 
 function cloneCandidate(candidate: FittingCandidate8): FittingCandidate8 {
-  return {
+  const next: FittingCandidate8 = {
     pivotZ: round(candidate.pivotZ),
     zByPointId: roundRecord(candidate.zByPointId),
+  }
+  if (candidate.rotationCenter) {
+    next.rotationCenter = roundRotationCenter(candidate.rotationCenter)
+    next.pivotZ = next.rotationCenter.z
+  }
+  return next
+}
+
+function getCandidateRotationCenter(candidate: FittingCandidate8): RotationCenter {
+  return candidate.rotationCenter
+    ? roundRotationCenter(candidate.rotationCenter)
+    : { x: 0, y: 0, z: round(candidate.pivotZ) }
+}
+
+function roundRotationCenter(rotationCenter: RotationCenter): RotationCenter {
+  return {
+    x: round(rotationCenter.x),
+    y: round(rotationCenter.y),
+    z: round(rotationCenter.z),
   }
 }
 
@@ -3496,8 +3700,9 @@ function buildBestIdealFace8(
     source: {
       type: "best_candidate",
       pivotZ: round(candidate.pivotZ),
+      rotationCenter: getCandidateRotationCenter(candidate),
       zApplication:
-        "points[].z は candidate.zByPointId の値です。pivotZ は projection 用の回転中心奥行きとして source に記録し、点の z には焼き込みません。",
+        "points[].z は candidate.zByPointId の値です。rotationCenter は projection 用の回転中心として source に記録し、点の z には焼き込みません。",
     },
     metadata: {
       intendedNextStep: "interpolate_8point_depth_to_478_debug_candidate",
@@ -3575,6 +3780,7 @@ function attachIdealFace8Summary(
     candidateId: entry.candidateId,
     zByPointId: entry.candidate.zByPointId,
     pivotZ: entry.candidate.pivotZ,
+    rotationCenter: entry.candidate.rotationCenter,
   }
   const idealFace8 = buildBestIdealFace8(basePoints, candidate)
   return {
@@ -3778,7 +3984,10 @@ function renderAnalysis(): void {
         ["maxBucketScore", formatNumber(analysis.bestCandidate.scoreDebug?.maxBucketScore)],
         ["balancedScore", formatNumber(analysis.bestCandidate.scoreDebug?.balancedScore)],
         ["zByPointId", JSON.stringify(roundRecord(analysis.bestCandidate.zByPointId))],
-        ["pivotZ", formatNumber(analysis.bestCandidate.pivotZ)],
+        ["legacy pivotZ / rotationCenter.z", formatNumber(analysis.bestCandidate.pivotZ)],
+        ["rotationCenter.x", formatNumber(getCandidateRotationCenter(analysis.bestCandidate).x)],
+        ["rotationCenter.y", formatNumber(getCandidateRotationCenter(analysis.bestCandidate).y)],
+        ["rotationCenter.z", formatNumber(getCandidateRotationCenter(analysis.bestCandidate).z)],
       ])
     : `<p class="empty">候補がありません。</p>`
   renderProjectionSignDebug(analysis.projectionSignDebug ?? null)
@@ -3860,6 +4069,7 @@ function renderAutoSequenceStatus(): void {
 
   if (finalCandidate) {
     items.push(["final pivotZ", formatNumber(finalCandidate.pivotZ)])
+    items.push(["final rotationCenter", formatRotationCenter(getCandidateRotationCenter(finalCandidate))])
     for (const name of SEMANTIC_POINT_NAMES) {
       items.push([`final ${name}.z`, formatNumber(finalCandidate.zByPointId[name])])
     }
@@ -4395,6 +4605,7 @@ function renderIdealFace8Summary(idealFace8: BestIdealFace8): string {
     ["coordinateSpace", idealFace8.coordinateSpace],
     ["zApplication", idealFace8.source.zApplication],
     ["pivotZ", formatNumber(idealFace8.source.pivotZ)],
+    ["rotationCenter", formatRotationCenter(idealFace8.source.rotationCenter)],
     ["pointCount", String(idealFace8.summary.pointCount)],
     ["bounds", formatBounds(idealFace8.summary.bounds)],
     ["zRange", formatNumber(idealFace8.summary.zRange)],
@@ -4504,7 +4715,9 @@ function renderRankingTable(entries: RankingEntry[]): string {
           <th>pitch-</th>
           <th>mixed</th>
           <th>balanced</th>
-          <th>pivotZ</th>
+          <th>legacy pivotZ</th>
+          <th>rotationCenter.y</th>
+          <th>rotationCenter.z</th>
           ${SEMANTIC_POINT_NAMES.map((name) => `<th>${name}.z</th>`).join("")}
         </tr>
       </thead>
@@ -4523,6 +4736,8 @@ function renderRankingTable(entries: RankingEntry[]): string {
               <td>${formatNumber(entry.bucketScores.mixedPose)}</td>
               <td>${formatNumber(entry.scoreDebug?.balancedScore)}</td>
               <td>${formatNumber(entry.candidate.pivotZ)}</td>
+              <td>${formatNumber(getCandidateRotationCenter(entry.candidate).y)}</td>
+              <td>${formatNumber(getCandidateRotationCenter(entry.candidate).z)}</td>
               ${SEMANTIC_POINT_NAMES.map(
                 (name) => `<td>${formatNumber(entry.candidate.zByPointId[name])}</td>`,
               ).join("")}
@@ -4670,6 +4885,7 @@ function toRankingEntry(candidate: CandidateResult, rank: number): RankingEntry 
     scoreDebug: roundScoreDebug(candidate.scoreDebug ?? calculateScoreDebug(candidate.totalScore, candidate.bucketScores)),
     candidate: {
       pivotZ: round(candidate.pivotZ),
+      rotationCenter: getCandidateRotationCenter(candidate),
       zByPointId: roundRecord(candidate.zByPointId),
     },
     weightedSemanticDistance: round(candidate.weightedSemanticDistance),
@@ -4960,12 +5176,18 @@ function formatNumber(value: number | null | undefined): string {
 }
 
 function formatCandidateCompact(candidate: FittingCandidate8): string {
+  const rotationCenter = getCandidateRotationCenter(candidate)
   return [
     `pivotZ=${formatNumber(candidate.pivotZ)}`,
+    `rotationCenter=(${formatNumber(rotationCenter.x)}, ${formatNumber(rotationCenter.y)}, ${formatNumber(rotationCenter.z)})`,
     ...SEMANTIC_POINT_NAMES.map(
       (name) => `${name}.z=${formatNumber(candidate.zByPointId[name])}`,
     ),
   ].join(" / ")
+}
+
+function formatRotationCenter(rotationCenter: RotationCenter): string {
+  return `x=${formatNumber(rotationCenter.x)} / y=${formatNumber(rotationCenter.y)} / z=${formatNumber(rotationCenter.z)}`
 }
 
 function formatPercent(value: number): string {
