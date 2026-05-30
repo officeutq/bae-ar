@@ -99,6 +99,12 @@ type SearchMode =
 
 `coordinateDescent` は `baseCandidate` から開始し、デフォルトでは `pivotZ -> leftCheek.z -> rightCheek.z -> nose.z -> mouth.z -> leftEye.z -> rightEye.z -> headTop.z -> chin.z` の順番で 1変数局所探索を行い、各 parameter の best value で baseCandidate を更新します。初期の `coordinateDescentIterations` は `2` です。
 
+`coordinateDescent` は `fullGrid` と異なり、`baseCandidate` を起点に parameter ごとに局所探索するため、候補数は少なく短時間で完了します。
+
+`includeMixedPose=false` または `mixedPose target=0` の場合、`mixedPose` frame は selected frames / evaluation input に含めません。
+
+`topCandidates` / `bucketRanking` は candidate 値で dedupe し、同一 candidate を複数表示しません。
+
 ## Score
 
 まずはシンプルに、投影後2D点と current 2D landmarks 8点の距離を使います。

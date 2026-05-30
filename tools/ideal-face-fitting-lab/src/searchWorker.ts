@@ -613,6 +613,16 @@ function advanceCandidateCursor(
 }
 
 function insertTopResult(results: CandidateResult[], next: CandidateResult, limit: number): void {
+  const nextKey = buildCandidateKey(next)
+  const existingIndex = results.findIndex((result) => buildCandidateKey(result) === nextKey)
+  if (existingIndex >= 0) {
+    if (next.totalScore < results[existingIndex].totalScore) {
+      results[existingIndex] = next
+    }
+    results.sort((a, b) => a.totalScore - b.totalScore)
+    return
+  }
+
   results.push(next)
   results.sort((a, b) => a.totalScore - b.totalScore)
   if (results.length > limit) {
@@ -631,6 +641,17 @@ function insertBucketTopResults(
       continue
     }
     const results = bucketResults[bucket]
+    const nextKey = buildCandidateKey(next)
+    const existingIndex = results.findIndex((result) => buildCandidateKey(result) === nextKey)
+    if (existingIndex >= 0) {
+      const existingScore = scoreForBucket(results[existingIndex], bucket) ?? Infinity
+      if (bucketScore < existingScore) {
+        results[existingIndex] = next
+      }
+      results.sort((a, b) => (scoreForBucket(a, bucket) ?? Infinity) - (scoreForBucket(b, bucket) ?? Infinity))
+      continue
+    }
+
     results.push(next)
     results.sort((a, b) => (scoreForBucket(a, bucket) ?? Infinity) - (scoreForBucket(b, bucket) ?? Infinity))
     if (results.length > limit) {
@@ -978,6 +999,15 @@ function createCandidateId(
   return `candidate_${String(index).padStart(5, "0")}__pivot:${formatCompactNumber(pivotZ)}__${zLabel}`
 }
 
+function buildCandidateKey(candidate: FittingCandidate8): string {
+  return [
+    `pivotZ:${formatCandidateNumber(candidate.pivotZ)}`,
+    ...SEMANTIC_POINT_NAMES.map(
+      (name) => `${name}:${formatCandidateNumber(candidate.zByPointId[name])}`,
+    ),
+  ].join("|")
+}
+
 function rotatePoint3D(point: Point3, pose: Pose): Point3 {
   const yaw = degreesToRadians(pose.yaw)
   const pitch = degreesToRadians(pose.pitch)
@@ -1064,6 +1094,10 @@ function roundScoreDebug(scoreDebug: CandidateScoreDebug): CandidateScoreDebug {
 
 function formatCompactNumber(value: number): string {
   return round(value).toString().replaceAll(".", "p").replaceAll("-", "m")
+}
+
+function formatCandidateNumber(value: number): string {
+  return round(value).toFixed(6)
 }
 
 function degreesToRadians(degrees: number): number {

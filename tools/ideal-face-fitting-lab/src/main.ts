@@ -1522,7 +1522,8 @@ function selectFrames(
 ): { frames: NormalizedFrame[]; summary: SelectedFrameSummary } {
   const usableFrames = frames.filter((frame) => frame.semanticPoints && frame.bounds)
   const selected: NormalizedFrame[] = []
-  const bucketOrder = settings.includeMixedPose
+  const includeMixedPose = settings.includeMixedPose && settings.targets.mixedPose > 0
+  const bucketOrder = includeMixedPose
     ? [...REQUIRED_BUCKETS, "mixedPose" as CaptureBucket]
     : REQUIRED_BUCKETS
 
@@ -1530,15 +1531,6 @@ function selectFrames(
     const target = settings.targets[bucket] ?? 0
     const bucketFrames = usableFrames.filter((frame) => frame.bucket === bucket).slice(0, target)
     selected.push(...bucketFrames)
-  }
-
-  if (selected.length < settings.maxFrames) {
-    const selectedIds = new Set(selected.map((frame) => frame.captureId))
-    selected.push(
-      ...usableFrames
-        .filter((frame) => !selectedIds.has(frame.captureId))
-        .slice(0, settings.maxFrames - selected.length),
-    )
   }
 
   const capped = selected.slice(0, settings.maxFrames)
