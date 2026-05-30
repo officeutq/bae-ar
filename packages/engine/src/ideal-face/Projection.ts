@@ -130,6 +130,7 @@ export interface IdealLandmarks3DProjectionDebug {
   assetBounds?: Landmark3DBoundsSummary
   rotatedBounds?: Landmark3DBoundsSummary
   projectedBeforeAlignmentBounds?: Landmark3DBoundsSummary
+  projectedBeforeAlignmentLandmarks?: ProjectedIdealLandmarkSameUnit[]
   alignedBounds?: Landmark3DBoundsSummary
   imageBounds?: Landmark3DBoundsSummary
   currentBounds?: Landmark2DBoundsSummary
@@ -207,6 +208,7 @@ export interface ProjectIdealLandmarks3DOptions {
   debugPivotZ?: number
   projectionMode?: IdealLandmarks3DProjectionMode
   debugProjection?: DebugProjectionOptions
+  includeDebugProjectionLandmarks?: boolean
 }
 
 const DEG_TO_RAD = Math.PI / 180
@@ -404,6 +406,9 @@ export function projectIdealLandmarks3D(
       projectedBeforeAlignmentBounds: summarizeLandmark3DBounds(
         projectedBeforeAlignmentLandmarks,
       ),
+      projectedBeforeAlignmentLandmarks: options.includeDebugProjectionLandmarks
+        ? projectedBeforeAlignmentLandmarks
+        : undefined,
       alignedBounds: sameUnitBounds,
       imageBounds,
       currentBounds,
@@ -745,6 +750,7 @@ function createProjectionDebug(input: {
   assetBounds?: Landmark3DBoundsSummary
   rotatedBounds?: Landmark3DBoundsSummary
   projectedBeforeAlignmentBounds?: Landmark3DBoundsSummary
+  projectedBeforeAlignmentLandmarks?: ProjectedIdealLandmarkSameUnit[]
   alignedBounds?: Landmark3DBoundsSummary
   imageBounds?: Landmark3DBoundsSummary
   currentBounds?: Landmark2DBoundsSummary
@@ -778,6 +784,7 @@ function createProjectionDebug(input: {
     assetBounds: input.assetBounds,
     rotatedBounds: input.rotatedBounds,
     projectedBeforeAlignmentBounds: input.projectedBeforeAlignmentBounds,
+    projectedBeforeAlignmentLandmarks: input.projectedBeforeAlignmentLandmarks,
     alignedBounds: input.alignedBounds,
     imageBounds: input.imageBounds,
     currentBounds: input.currentBounds,
