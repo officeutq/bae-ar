@@ -23,6 +23,9 @@ tools/ideal-face-authoring
   IdealFace Authoring Tool
   Step 2-I-A/B/C と Step 2-H まで実装済み
 
+tools/mediapipe-canonical-lab
+  MediaPipe Face Landmarker の 478 landmarks / facialTransformationMatrix / pose / blendshapes を調査する debug lab
+
 docs
   設計、仕様、ロードマップ、開発方針
 
@@ -66,6 +69,7 @@ Engine Runtime に Studio / Authoring 用 UI や生成・編集処理は入れ�
 - IdealFace Authoring Tool Expression frame grouping summary prototype
 - IdealFace Authoring Tool frame usage card UI prototype
 - IdealFace Authoring Tool usage-aware adaptive scan prototype
+- MediaPipe Canonical Lab empirical 478 analysis / Summary JSON export docs 方針
 
 ### 未実装 / 後段
 
@@ -142,6 +146,16 @@ Step 2-I-A では、一覧カードに加えて Frame Review Carousel で1フレ
 - `expressionFollow` / `expressionAttenuation` / `landmarkFollowStrengths`: `expressionFollow` は今後の中心仕様、`expressionAttenuation` は既存 Engine foundation、`landmarkFollowStrengths` は expressionFollow rule 内の landmark ごとの target idealFollowStrength です。`expressionFollow` 実装と `landmarkFollowStrengths` 自動生成は未実装です。
 
 詳しい定義は [usage-aware frame sampling v1](docs/usage-aware-frame-sampling-v1.md) と [MP4 expression 3D analysis plan](docs/mp4-expression-3d-analysis-plan.md) を参照してください。
+
+## MediaPipe Canonical Lab
+
+`tools/mediapipe-canonical-lab` は IdealFace を作るツールではなく、MediaPipe Face Landmarker の current landmarks 478、`facialTransformationMatrix`、yaw / pitch / roll、blendshapes、pose bucket 別 capture を調査する debug lab です。`empiricalCanonical478` は実測から作った標準顔 478 候補ですが、debug artifact であり、そのまま production asset にはしません。
+
+最新の empirical 478 analysis では、41 captures、478 landmarks、matrix available 41、video size `1280x720` で検証し、`front` 6、`yawPositive` 5、`yawNegative` 5、`pitchPositive` 10、`pitchNegative` 5、`mixedPose` 10 の bucket balance まで改善しています。現時点の best candidate は `face_bounds_normalized_no_matrix` です。これは MediaPipe の行列を使わず、顔の外枠で中心合わせし、顔の大きさでスケールを揃える方式です。Runtime compatible ranking でも 1 位です。
+
+`facialTransformationMatrix` は yaw / pitch / roll、pose bucket、frame weighting、debug comparison には使います。ただし、`inverseResultHugeBounds` や `poseConventionMatchesButPointTransformUnstable` が出ているため、IdealFace 3D478 作成の production 主導線として matrix inverse で current landmarks を標準顔座標へ戻す方式は採用しません。production の IdealFace 3D478 作成では、顔枠ベースの正規化・整列を主軸にし、matrix inverse は research / debug 扱いに留めます。
+
+Analysis JSON export は、詳細検証・再解析用の `Export Full Analysis JSON` と、ChatGPT / 人間レビュー用の軽量版 `Export Summary JSON` に分けます。Summary JSON は `schemaVersion: mediapipe_canonical_lab_analysis_summary_v1` で、`sourceCaptureSummary`、`frameWeightSummary`、ranking top、best candidate summary、warnings を含み、478点 full landmarks 配列、`candidateResults` 全件、`perLandmarkMean`、`perLandmarkStdDev`、`previewDataUrl` は含めません。詳細は [MediaPipe Canonical Lab](docs/mediapipe-canonical-lab.md) を参照してください。
 
 ## IdealFace Projection / 座標系方針
 

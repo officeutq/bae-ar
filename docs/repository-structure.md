@@ -31,7 +31,12 @@ bae-ar/
 │           └─ MockFaceDetector.ts
 │
 ├─ tools/
-│  └─ ideal-face-authoring/
+│  ├─ ideal-face-authoring/
+│  │  ├─ package.json
+│  │  └─ src/
+│  │     └─ main.ts
+│
+│  └─ mediapipe-canonical-lab/
 │     ├─ package.json
 │     └─ src/
 │        └─ main.ts
@@ -54,7 +59,7 @@ tools/
    └─ Layer Mask Authoring Tool
 ```
 
-`tools/ideal-face-authoring` は Step 2-I-A/B/C と Step 2-H まで実装済みです。`tools/layer-mask-authoring` は将来予定です。
+`tools/ideal-face-authoring` は Step 2-I-A/B/C と Step 2-H まで実装済みです。`tools/mediapipe-canonical-lab` は MediaPipe Face Landmarker の 478 landmarks / `facialTransformationMatrix` / pose / blendshapes を調査する debug lab です。`tools/layer-mask-authoring` は将来予定です。
 
 ## `packages/engine`
 
@@ -181,6 +186,25 @@ Authoring Tool の生成・編集処理は Engine Runtime / Beauty Studio に混
 
 Landmark Group Editor v1 prototype も実装済みです。`mouth` / `left_eye` / `right_eye` / `face_boundary` を選択し、478点 overlay 上で selected group を確認できます。click toggle、矩形範囲選択、index highlight、highlighted indices の一括追加 / 削除、group count / indices / reset selected / reset all、JSON preview summary、`ideal_face_asset_v1` optional `landmarkGroups` export に対応しています。
 
+## `tools/mediapipe-canonical-lab`
+
+MediaPipe Canonical Lab は、IdealFace を作る tool ではなく、MediaPipe Face Landmarker の生データと座標系を調査する debug lab です。
+
+現在含まれるもの:
+
+- current landmarks 478 capture
+- `facialTransformationMatrix` capture
+- yaw / pitch / roll capture
+- blendshapes capture
+- pose bucket 別 capture
+- captured JSON import / analysis
+- `Export Full Analysis JSON`
+- `Export Summary JSON`
+
+`empiricalCanonical478` は実測から作った標準顔 478 候補ですが、debug artifact であり、そのまま production asset にしません。最新の empirical 478 analysis では、41 captures、478 landmarks、matrix available 41、video size `1280x720` で検証し、Runtime compatible ranking も含めて `face_bounds_normalized_no_matrix` が現時点の best candidate です。これは `facialTransformationMatrix` を使わず、顔の外枠で中心合わせし、顔の大きさでスケールを揃える方式です。
+
+`facialTransformationMatrix` は yaw / pitch / roll、pose bucket、frame weighting、debug comparison には使います。ただし、matrix inverse で current landmarks を production の IdealFace 3D478 作成主導線へ戻す方式は採用しません。詳細は [MediaPipe Canonical Lab](mediapipe-canonical-lab.md) を参照してください。
+
 ## `tools/layer-mask-authoring`
 
 将来予定です。
@@ -211,6 +235,7 @@ Layer Mask Authoring Tool を置く想定の場所です。
 - `landmark-groups-v1.md`: `ideal_face_asset_v1` / `beauty_filter_asset_v1` で使う optional `landmarkGroups` 仕様、Engine fallback、validation、Landmark Group Editor 方針
 - `shape-warp-production-direction.md`: Shape Warp v1 debug prototype と production candidate の違い、WebGL mesh warp 方針、段階分け
 - `beauty-filter-asset-v1.md`: 最終フィルター / プリセットを `idealFace` / `landmarkGroups` / `correctionProfile` / `shapeWarpSettings` / `colorLayers` に分けつつ、1つの `beauty_filter_asset_v1` JSON として配布する方向性
+- `mediapipe-canonical-lab.md`: MediaPipe Canonical Lab の位置づけ、empirical 478 analysis 暫定結論、`facialTransformationMatrix` inverse の扱い、Full / Summary Analysis JSON export 方針
 
 ## `tools/ideal-face-authoring` detailed scan
 
