@@ -47,6 +47,7 @@ leftEye / rightEye は iris が取得できない場合、既存 `FaceGeometry` 
 8. semantic error / bounds error / penalty / totalScore を計算する
 9. overall ranking と bucket ranking を表示する
 10. bestCandidate から `bestIdealFace8` を生成する
+11. selected frame ごとの current 2D 8 points debug を生成する
 
 ## alignment mode
 
@@ -83,7 +84,14 @@ Summary:
 - `schemaVersion: ideal_face_fitting_lab_analysis_summary_v1`
 - topCandidates 上位20件、bestCandidate、bucketRanking 上位5件、summary 類、warnings を含む軽量 JSON
 - `zProfileDefinitions` 全件、`depthConvention`、`bestIdealFace8`、`depthRelation` を含む
+- `current8BucketSummary`、`current8PoseComparison`、各 bucket 最大2件の `current8FrameSample` を含む
 - allCandidates 全件、perFrameResults 全件、landmarks 478 全文、captured frames 全文、data URL は含めません
+
+Full:
+
+- `current8PointsByFrame` に selected frame ごとの current 2D 8 points を含めます。
+- `current8BoundsByFrame` に current 8 points の bounds と `aspectRatio` を含めます。
+- `current8MetricsByFrame` に `eyeDistance` / `cheekWidth` / `noseToEyeCenterX` / `noseX` などの指標を含めます。
 
 ## bestIdealFace8
 
@@ -100,6 +108,19 @@ Summary:
 `depthRelation` では `noseZ`、左右頬の z、平均頬 z、`noseIsInFrontOfCheeks`、左右頬 / 左右目の奥行き差を確認できます。
 
 次段では、`bestIdealFace8` の z を正面478点の x/y に補間して `provisionalIdealFace478` を作る予定です。今回は 478点への拡張、`provisionalIdealFace478` 生成、Runtime / Studio / Authoring Tool 連携は実装しません。
+
+## current 2D 8 points debug
+
+`current8` debug は、MediaPipe が検出した current landmarks 478 から 8 semantic points だけを取り出した検証用出力です。`bestIdealFace8` ではありません。
+
+目的は、横向き時に current 8 points が front より縦長になっているか、比較対象の current 2D 側の形を先に確認することです。`bestIdealFace8` の z が正しいかを見る前に、`aspectRatio`、`cheekWidth`、`eyeDistance`、`noseX` を確認します。
+
+- `sameUnitPoints` は fitting input と同じ `x = (rawX - 0.5) * videoAspect`、`y = rawY - 0.5` です。
+- `rawImageNormalizedPoints` は MediaPipe の画像正規化 x/y です。
+- Summary JSON は全 frame の点群を入れず、bucket summary / front vs yaw comparison / bucket ごとの frame sample に抑えます。
+- Full JSON は selected frame 全件の current 8 points / bounds / metrics を含めます。
+
+warning として、`current8YawNarrowerThanFront`、`current8YawAspectRatioMissing`、`current8BucketInsufficientFrames`、`current8LargeRollFrame`、`current8HighBlendshapeFrame` を出します。既存の roll / blendshape warning も残します。
 
 ## 起動
 
