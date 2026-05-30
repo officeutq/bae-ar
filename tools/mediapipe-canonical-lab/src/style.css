@@ -97,6 +97,13 @@ button.primary {
   margin: 0 0 12px;
 }
 
+.panel-help {
+  color: #687481;
+  font-size: 13px;
+  line-height: 1.55;
+  margin: -4px 0 12px;
+}
+
 .status-grid {
   display: grid;
   gap: 8px;
@@ -156,6 +163,16 @@ canvas {
   color: #687481;
   font-size: 13px;
   margin: 10px 0 0;
+}
+
+.help-list {
+  color: #4d5965;
+  display: grid;
+  font-size: 13px;
+  gap: 6px;
+  line-height: 1.55;
+  margin: 12px 0 0;
+  padding-left: 20px;
 }
 
 .summary {

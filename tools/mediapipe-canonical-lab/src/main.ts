@@ -124,49 +124,54 @@ app.innerHTML = `
   <main class="app">
     <header class="header">
       <div class="title-block">
-        <h1>MediaPipe Canonical Lab</h1>
-        <p>MediaPipe Face Landmarker の生出力を姿勢 bucket ごとに収集する調査用ツールです。</p>
+        <h1>MediaPipe 標準顔座標系 調査ラボ</h1>
+        <p>MediaPipe Face Landmarker の生データを、顔の向きごとに保存するための調査用ツールです。</p>
       </div>
-      <div class="status-pill" id="runStatus">initializing</div>
+      <div class="status-pill" id="runStatus">初期化中</div>
     </header>
 
     <section class="layout">
       <div class="panel">
-        <h2>Camera / Detector status</h2>
+        <h2>カメラ / 検出器の状態</h2>
+        <p class="panel-help">カメラが起動し、検出器が準備完了になると、顔検出結果と姿勢角がここに表示されます。</p>
         <div class="status-grid" id="statusGrid"></div>
       </div>
 
       <div class="panel">
-        <h2>Live preview</h2>
+        <h2>ライブプレビュー</h2>
         <div class="preview-wrap">
           <video id="video" playsinline muted autoplay></video>
           <canvas id="overlay"></canvas>
         </div>
         <div class="controls">
-          <button id="captureButton" class="primary" type="button">Capture current frame</button>
-          <button id="clearButton" type="button">Clear captures</button>
-          <button id="exportButton" type="button">Export captured JSON</button>
+          <button id="captureButton" class="primary" type="button">現在のフレームを保存</button>
+          <button id="clearButton" type="button">保存データをクリア</button>
+          <button id="exportButton" type="button">JSON を書き出し</button>
         </div>
-        <p class="note">Auto capture is not implemented yet.</p>
+        <ul class="help-list">
+          <li>顔を正面・左右・上下に向けてから「現在のフレームを保存」を押してください。</li>
+          <li>保存したデータは bucket ごとに集計され、「JSON を書き出し」でダウンロードできます。</li>
+          <li>自動キャプチャはまだ未実装です。</li>
+        </ul>
       </div>
     </section>
 
     <section class="summary">
       <div class="panel">
-        <h2>Capture list / summary</h2>
+        <h2>保存データの概要</h2>
         <div class="status-grid" id="captureSummary"></div>
-        <h2>Bucket count</h2>
+        <h2>姿勢 bucket 別の件数</h2>
         <div class="bucket-grid" id="bucketCounts"></div>
       </div>
 
       <div class="panel">
-        <h2>Latest capture summary</h2>
-        <div class="latest-box" id="latestCapture">No captures yet.</div>
+        <h2>最新の保存データ</h2>
+        <div class="latest-box" id="latestCapture">まだ保存されていません。</div>
       </div>
     </section>
 
     <section class="panel">
-      <h2>Captured frame preview list</h2>
+      <h2>保存したフレーム一覧</h2>
       <div class="preview-list" id="previewList"></div>
     </section>
   </main>
@@ -316,30 +321,30 @@ function captureCurrentFrame(): void {
   const notes: string[] = []
 
   if (!frame) {
-    state.lastSkippedReason = "No detection frame is available yet."
+    state.lastSkippedReason = "まだ検出フレームがありません。"
     render()
     return
   }
 
   if (!frame.detected) {
-    warnings.push("No face was detected in the latest frame.")
+    warnings.push("最新フレームで顔が検出されていません。")
   }
 
   if (frame.landmarks.length !== EXPECTED_LANDMARK_COUNT) {
     warnings.push(
-      `Expected ${EXPECTED_LANDMARK_COUNT} landmarks, got ${frame.landmarks.length}.`,
+      `landmarks は ${EXPECTED_LANDMARK_COUNT} 点を期待していますが、${frame.landmarks.length} 点でした。`,
     )
   }
 
   if (!frame.facialTransformationMatrix) {
-    warnings.push("facialTransformationMatrix is missing.")
+    warnings.push("facialTransformationMatrix がありません。")
   }
 
   if (!frame.pose) {
-    warnings.push("yaw / pitch / roll could not be estimated from matrix.")
+    warnings.push("matrix から yaw / pitch / roll を推定できませんでした。")
   }
 
-  notes.push("Captured manually from latest MediaPipe FaceLandmarker result.")
+  notes.push("最新の MediaPipe FaceLandmarker 結果を手動で保存しました。")
 
   const capture: CaptureRecord = {
     captureId: createCaptureId(state.captures.length + 1),
@@ -451,55 +456,57 @@ function render(): void {
 
   getElement("runStatus").textContent =
     state.cameraStatus === "running" && state.detectorStatus === "ready"
-      ? "ready"
-      : `${state.cameraStatus} / ${state.detectorStatus}`
+      ? "準備完了"
+      : `カメラ: ${formatLifecycleStatus(
+          state.cameraStatus,
+        )} / 検出器: ${formatLifecycleStatus(state.detectorStatus)}`
 
   getElement("statusGrid").innerHTML = renderStatusItems([
-    ["Camera status", state.cameraStatus],
-    ["Detector status", state.detectorStatus],
-    ["detected / no face", frame?.detected ? "detected" : "no face"],
-    ["landmarks count", String(frame?.landmarks.length ?? 0)],
-    ["matrix available / missing", matrixAvailable ? "available" : "missing"],
-    ["blendshapes count", String(frame?.blendshapes.length ?? 0)],
-    ["current yaw / pitch / roll", formatPose(frame?.pose ?? null)],
-    ["video width / height", `${frame?.videoWidth ?? 0} / ${frame?.videoHeight ?? 0}`],
-    ["FPS / detect count", `${fps.toFixed(1)} / ${state.detectCount}`],
-    ["Detector error", state.detectorError ?? "-"],
-    ["Camera error", state.cameraError ?? "-"],
+    ["カメラ状態", formatLifecycleStatus(state.cameraStatus)],
+    ["検出器状態", formatLifecycleStatus(state.detectorStatus)],
+    ["顔検出", frame?.detected ? "検出あり" : "未検出"],
+    ["landmarks 数", `${frame?.landmarks.length ?? 0} 点`],
+    ["facialTransformationMatrix", matrixAvailable ? "取得あり" : "未取得"],
+    ["blendshapes 数", `${frame?.blendshapes.length ?? 0} 件`],
+    ["現在の yaw / pitch / roll", formatPose(frame?.pose ?? null)],
+    ["映像サイズ", `${frame?.videoWidth ?? 0} / ${frame?.videoHeight ?? 0}`],
+    ["FPS / 検出回数", `${fps.toFixed(1)} / ${state.detectCount}`],
+    ["検出器エラー", state.detectorError ?? "-"],
+    ["カメラエラー", state.cameraError ?? "-"],
   ])
 
   getElement("captureSummary").innerHTML = renderStatusItems([
-    ["total captured count", String(state.captures.length)],
-    ["latest bucket", state.captures[0]?.bucket ?? "-"],
-    ["last skipped reason", state.lastSkippedReason ?? "-"],
+    ["保存件数", `${state.captures.length} 件`],
+    ["最新 bucket", state.captures[0] ? formatBucket(state.captures[0].bucket) : "-"],
+    ["最後に保存できなかった理由", state.lastSkippedReason ?? "-"],
   ])
 
   getElement("bucketCounts").innerHTML = BUCKETS.map((bucket) => {
     const count = state.captures.filter((capture) => capture.bucket === bucket).length
-    return `<div class="bucket-item"><span>${bucket}</span><strong>${count}</strong></div>`
+    return `<div class="bucket-item"><span>${formatBucket(bucket)}</span><strong>${count}</strong></div>`
   }).join("")
 
   const latest = state.captures[0]
   getElement("latestCapture").textContent = latest
     ? JSON.stringify(
         {
-          captureId: latest.captureId,
-          capturedAt: latest.capturedAt,
-          bucket: latest.bucket,
-          pose: latest.pose,
-          landmarks: latest.landmarks.length,
-          matrixAvailable: Boolean(latest.facialTransformationMatrix),
-          blendshapes: latest.blendshapes.length,
-          warnings: latest.warnings,
+          "保存ID": latest.captureId,
+          "保存日時": latest.capturedAt,
+          "bucket": formatBucket(latest.bucket),
+          "姿勢": latest.pose,
+          "landmarks数": latest.landmarks.length,
+          "matrix取得": Boolean(latest.facialTransformationMatrix),
+          "blendshapes数": latest.blendshapes.length,
+          "注意": latest.warnings,
         },
         null,
         2,
       )
-    : "No captures yet."
+    : "まだ保存されていません。"
 
   getElement("previewList").innerHTML =
     state.captures.length === 0
-      ? `<p class="note">No captured frames yet.</p>`
+      ? `<p class="note">保存したフレームはまだありません。</p>`
       : state.captures
           .map(
             (capture) => `
@@ -511,9 +518,9 @@ function render(): void {
                 }
                 <dl>
                   <dt>ID</dt><dd>${escapeHtml(capture.captureId)}</dd>
-                  <dt>bucket</dt><dd>${capture.bucket}</dd>
-                  <dt>pose</dt><dd>${escapeHtml(formatPose(capture.pose))}</dd>
-                  <dt>points</dt><dd>${capture.landmarks.length}</dd>
+                  <dt>bucket</dt><dd>${formatBucket(capture.bucket)}</dd>
+                  <dt>姿勢</dt><dd>${escapeHtml(formatPose(capture.pose))}</dd>
+                  <dt>点数</dt><dd>${capture.landmarks.length}</dd>
                 </dl>
               </article>
             `,
@@ -660,7 +667,51 @@ function formatPose(pose: Pose | null): string {
     return "-"
   }
 
-  return `yaw ${pose.yaw.toFixed(2)}, pitch ${pose.pitch.toFixed(2)}, roll ${pose.roll.toFixed(2)}`
+  return `yaw ${pose.yaw.toFixed(2)} / pitch ${pose.pitch.toFixed(2)} / roll ${pose.roll.toFixed(2)}`
+}
+
+function formatLifecycleStatus(status: AppState["cameraStatus"] | AppState["detectorStatus"]): string {
+  switch (status) {
+    case "idle":
+      return "待機中"
+    case "starting":
+      return "起動中"
+    case "running":
+      return "起動済み"
+    case "initializing":
+      return "初期化中"
+    case "ready":
+      return "準備完了"
+    case "error":
+      return "エラー"
+  }
+}
+
+function formatBucket(bucket: CaptureBucket): string {
+  switch (bucket) {
+    case "front":
+      return "front（正面）"
+    case "yawPositiveSmall":
+      return "yawPositiveSmall（右/左向き 小）"
+    case "yawPositiveMid":
+      return "yawPositiveMid（右/左向き 中）"
+    case "yawPositiveStrong":
+      return "yawPositiveStrong（右/左向き 大）"
+    case "yawNegativeSmall":
+      return "yawNegativeSmall（反対向き 小）"
+    case "yawNegativeMid":
+      return "yawNegativeMid（反対向き 中）"
+    case "yawNegativeStrong":
+      return "yawNegativeStrong（反対向き 大）"
+    case "pitchPositive":
+      return "pitchPositive（上/下向き）"
+    case "pitchNegative":
+      return "pitchNegative（反対の上下向き）"
+    case "mixedPose":
+      return "mixedPose（横向き + 上下向き）"
+    case "unknown":
+      return "unknown（判定不可）"
+  }
 }
 
 function formatFileTimestamp(date: Date): string {
