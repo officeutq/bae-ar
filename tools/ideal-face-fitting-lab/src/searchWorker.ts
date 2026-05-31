@@ -53,6 +53,7 @@ interface Bounds2D {
 interface SearchFrame {
   captureId: string
   bucket: CaptureBucket
+  rawBucket?: string | null
   pose: Pose
   semanticPoints: SemanticPointSet2D
   bounds: Bounds2D
@@ -62,6 +63,7 @@ interface SearchFrame {
 interface SearchSettings {
   searchMode: SearchMode
   objectiveMode: ObjectiveMode
+  outlierFiltering?: OutlierFilteringSettings
   zMin: number
   zMax: number
   zStep: number
@@ -97,7 +99,21 @@ type ObjectiveMode =
   | "maxBucketScore"
   | "pitchAverageScore"
   | "yawAverageScore"
+type OutlierFilteringMode = "off" | "debugOnly" | "excludeFromInference"
+type OutlierFilteringMethod = "medianMultiplier" | "medianAbsoluteDelta" | "topWorstPercent"
 type LocalSearchParameter = "pivotZ" | "rotationCenter.y" | "rotationCenter.z" | `${SemanticPointName}.z`
+
+interface OutlierFilteringSettings {
+  enabled: boolean
+  mode: OutlierFilteringMode
+  perBucketMaxOutliers: number
+  minBucketSampleCount: number
+  method: OutlierFilteringMethod
+  medianMultiplier: number
+  absoluteDeltaThreshold: number
+  topWorstPercent: number
+  applyToObjectiveScore: boolean
+}
 
 interface LocalSearchRange {
   min: number
@@ -140,9 +156,18 @@ interface CandidateDefinition extends FittingCandidate8 {
 interface FrameEvaluation {
   captureId: string
   bucket: CaptureBucket
+  rawBucket?: string | null
+  pose: {
+    yaw: number | null
+    pitch: number | null
+    roll: number | null
+  }
+  frameError: number
   averageSemanticDistance: number
   weightedSemanticDistance: number
   perPointError: Record<SemanticPointName, number>
+  projectedPoints: Record<SemanticPointName, Point2>
+  currentPoints: Record<SemanticPointName, Point2>
   totalScore: number
   warnings: string[]
 }
@@ -164,6 +189,7 @@ interface CandidateResult extends CandidateDefinition {
   sampleCount: number
   warnings: string[]
   perFrameResults: FrameEvaluation[]
+  outlierDebug?: CandidateOutlierDebug
 }
 
 interface CandidateScoreDebug {
@@ -171,6 +197,58 @@ interface CandidateScoreDebug {
   pitchAverageScore: number | null
   maxBucketScore: number | null
   balancedScore: number
+}
+
+interface CandidateScoreSnapshot {
+  totalScore: number
+  bucketScores: PoseBucketScores
+  scoreDebug: CandidateScoreDebug
+}
+
+interface OutlierFrameDebug {
+  captureId: string
+  bucket: CaptureBucket
+  rawBucket?: string | null
+  pose: {
+    yaw: number | null
+    pitch: number | null
+    roll: number | null
+  }
+  frameError: number
+  bucketMedianError: number | null
+  bucketAverageError: number | null
+  ratioToMedian: number | null
+  deltaFromMedian: number | null
+  perPointError: Record<SemanticPointName, number>
+  worstPoint: {
+    pointId: SemanticPointName
+    error: number
+  } | null
+  outlierReason: string
+  excludedFromInference: boolean
+  retainedForValidation: boolean
+}
+
+interface BucketFrameErrorSummary {
+  bucket: CaptureBucket
+  sampleCount: number
+  rawAverageError: number | null
+  rawMedianError: number | null
+  rawMaxError: number | null
+  filteredAverageError: number | null
+  filteredMedianError: number | null
+  filteredMaxError: number | null
+  outlierFrameCount: number
+  worstFrame: OutlierFrameDebug | null
+  outlierFrames: OutlierFrameDebug[]
+}
+
+interface CandidateOutlierDebug {
+  settings: OutlierFilteringSettings
+  bucketSummaries: BucketFrameErrorSummary[]
+  outlierFrames: OutlierFrameDebug[]
+  rawScores: CandidateScoreSnapshot
+  filteredScores: CandidateScoreSnapshot | null
 }
 
 interface RankingEntry {
@@ -253,6 +331,18 @@ const SCORE_WEIGHTS: Record<SemanticPointName, number> = {
   rightEye: 1.45,
   nose: 1.7,
   mouth: 1.2,
+}
+
+const DEFAULT_OUTLIER_FILTERING_SETTINGS: OutlierFilteringSettings = {
+  enabled: false,
+  mode: "debugOnly",
+  perBucketMaxOutliers: 1,
+  minBucketSampleCount: 8,
+  method: "medianMultiplier",
+  medianMultiplier: 1.75,
+  absoluteDeltaThreshold: 0.015,
+  topWorstPercent: 10,
+  applyToObjectiveScore: false,
 }
 
 const BUCKETS: CaptureBucket[] = [
@@ -757,8 +847,17 @@ function evaluateCandidate(
   const bucketScores = calculateBucketScores(perFrameResults)
   const scoreDebug = calculateScoreDebug(weightedSemanticDistance, bucketScores)
   const totalScore = weightedSemanticDistance
+  const outlierDebug = buildCandidateOutlierDebug(perFrameResults, {
+    totalScore,
+    bucketScores,
+    scoreDebug,
+  }, settings.outlierFiltering)
+  const scoreForObjective =
+    shouldApplyFilteredObjective(outlierDebug?.settings) && outlierDebug?.filteredScores
+      ? outlierDebug.filteredScores
+      : { totalScore, bucketScores, scoreDebug }
   const objectiveMode = normalizeObjectiveMode(settings.objectiveMode)
-  const objectiveScore = getObjectiveScore({ totalScore, scoreDebug }, objectiveMode)
+  const objectiveScore = getObjectiveScore(scoreForObjective, objectiveMode)
 
   return {
     ...candidate,
@@ -773,6 +872,7 @@ function evaluateCandidate(
     sampleCount: perFrameResults.length,
     warnings: Array.from(new Set(perFrameResults.flatMap((result) => result.warnings))),
     perFrameResults,
+    outlierDebug,
   }
 }
 
@@ -797,9 +897,18 @@ function evaluateCandidateOnFrame(
   return {
     captureId: frame.captureId,
     bucket: frame.bucket,
+    rawBucket: frame.rawBucket ?? null,
+    pose: {
+      yaw: round(frame.pose.yaw),
+      pitch: round(frame.pose.pitch),
+      roll: round(frame.pose.roll),
+    },
+    frameError: weightedSemanticDistance,
     averageSemanticDistance,
     weightedSemanticDistance,
     perPointError,
+    projectedPoints: roundPointRecord(projected),
+    currentPoints: roundPointRecord(current),
     totalScore: weightedSemanticDistance,
     warnings: frame.warnings,
   }
@@ -928,6 +1037,219 @@ function calculateScoreDebug(
     maxBucketScore: roundNullable(maxBucketScore),
     balancedScore: round(totalScore + (maxBucketScore ?? 0) * 0.25),
   }
+}
+
+function buildCandidateOutlierDebug(
+  perFrameResults: FrameEvaluation[],
+  rawScores: CandidateScoreSnapshot,
+  sourceSettings?: OutlierFilteringSettings,
+): CandidateOutlierDebug | undefined {
+  const settings = normalizeOutlierFilteringSettings(sourceSettings)
+  if (!settings.enabled || settings.mode === "off") {
+    return undefined
+  }
+
+  const bucketSummaries = BUCKETS.map((bucket) =>
+    buildBucketFrameErrorSummary(perFrameResults, bucket, settings),
+  )
+  const outlierFrames = bucketSummaries.flatMap((summary) => summary.outlierFrames)
+  const outlierIds = new Set(outlierFrames.map((frame) => `${frame.bucket}:${frame.captureId}`))
+  const filteredResults = perFrameResults.filter(
+    (result) => !outlierIds.has(`${result.bucket}:${result.captureId}`),
+  )
+  const filteredScores =
+    outlierIds.size > 0
+      ? buildCandidateScoreSnapshot(filteredResults)
+      : {
+          totalScore: rawScores.totalScore,
+          bucketScores: rawScores.bucketScores,
+          scoreDebug: rawScores.scoreDebug,
+        }
+
+  return {
+    settings,
+    bucketSummaries,
+    outlierFrames,
+    rawScores: roundScoreSnapshot(rawScores),
+    filteredScores: roundScoreSnapshot(filteredScores),
+  }
+}
+
+function buildBucketFrameErrorSummary(
+  perFrameResults: FrameEvaluation[],
+  bucket: CaptureBucket,
+  settings: OutlierFilteringSettings,
+): BucketFrameErrorSummary {
+  const bucketResults = perFrameResults.filter((result) => result.bucket === bucket)
+  const rawErrors = bucketResults.map((result) => result.frameError)
+  const rawAverageError = roundNullable(average(rawErrors))
+  const rawMedianError = roundNullable(median(rawErrors))
+  const rawMaxError = roundNullable(max(rawErrors))
+  const canDetectOutliers = bucketResults.length >= settings.minBucketSampleCount
+  const outlierResults = canDetectOutliers
+    ? selectOutlierFrameResults(bucketResults, rawMedianError, settings)
+    : []
+  const outlierIds = new Set(outlierResults.map((result) => result.captureId))
+  const filteredErrors = bucketResults
+    .filter((result) => !outlierIds.has(result.captureId))
+    .map((result) => result.frameError)
+  const worstResult = bucketResults.reduce<FrameEvaluation | null>(
+    (worst, result) => (!worst || result.frameError > worst.frameError ? result : worst),
+    null,
+  )
+  const outlierFrames = outlierResults.map((result) =>
+    toOutlierFrameDebug(result, rawMedianError, rawAverageError, settings, buildOutlierReason(settings)),
+  )
+
+  return {
+    bucket,
+    sampleCount: bucketResults.length,
+    rawAverageError,
+    rawMedianError,
+    rawMaxError,
+    filteredAverageError: roundNullable(average(filteredErrors)),
+    filteredMedianError: roundNullable(median(filteredErrors)),
+    filteredMaxError: roundNullable(max(filteredErrors)),
+    outlierFrameCount: outlierFrames.length,
+    worstFrame: worstResult
+      ? toOutlierFrameDebug(
+          worstResult,
+          rawMedianError,
+          rawAverageError,
+          settings,
+          outlierIds.has(worstResult.captureId) ? buildOutlierReason(settings) : "worstFrameOnly",
+        )
+      : null,
+    outlierFrames,
+  }
+}
+
+function selectOutlierFrameResults(
+  bucketResults: FrameEvaluation[],
+  bucketMedianError: number | null,
+  settings: OutlierFilteringSettings,
+): FrameEvaluation[] {
+  const maxOutliers = Math.max(0, Math.round(settings.perBucketMaxOutliers))
+  if (maxOutliers === 0 || bucketResults.length === 0) {
+    return []
+  }
+  const sortedWorstFirst = [...bucketResults].sort((a, b) => b.frameError - a.frameError)
+  if (settings.method === "topWorstPercent") {
+    const percentCount = Math.ceil(bucketResults.length * Math.max(0, settings.topWorstPercent) / 100)
+    return sortedWorstFirst.slice(0, Math.min(maxOutliers, percentCount))
+  }
+  if (bucketMedianError === null) {
+    return []
+  }
+  if (settings.method === "medianAbsoluteDelta") {
+    const threshold = bucketMedianError + settings.absoluteDeltaThreshold
+    return sortedWorstFirst
+      .filter((result) => result.frameError > threshold)
+      .slice(0, maxOutliers)
+  }
+  const threshold = bucketMedianError * settings.medianMultiplier
+  return sortedWorstFirst
+    .filter((result) => result.frameError > threshold)
+    .slice(0, maxOutliers)
+}
+
+function toOutlierFrameDebug(
+  result: FrameEvaluation,
+  bucketMedianError: number | null,
+  bucketAverageError: number | null,
+  settings: OutlierFilteringSettings,
+  outlierReason: string,
+): OutlierFrameDebug {
+  return {
+    captureId: result.captureId,
+    bucket: result.bucket,
+    rawBucket: result.rawBucket ?? null,
+    pose: result.pose,
+    frameError: round(result.frameError),
+    bucketMedianError,
+    bucketAverageError,
+    ratioToMedian: safeRatio(result.frameError, bucketMedianError),
+    deltaFromMedian: bucketMedianError === null ? null : round(result.frameError - bucketMedianError),
+    perPointError: roundRecord(result.perPointError),
+    worstPoint: findWorstPoint(result.perPointError),
+    outlierReason,
+    excludedFromInference: settings.mode === "excludeFromInference",
+    retainedForValidation: true,
+  }
+}
+
+function buildOutlierReason(settings: OutlierFilteringSettings): string {
+  if (settings.method === "medianAbsoluteDelta") {
+    return `frameError > bucketMedianError + ${settings.absoluteDeltaThreshold}`
+  }
+  if (settings.method === "topWorstPercent") {
+    return `top ${settings.topWorstPercent}% worst frameError`
+  }
+  return `frameError > bucketMedianError * ${settings.medianMultiplier}`
+}
+
+function buildCandidateScoreSnapshot(results: FrameEvaluation[]): CandidateScoreSnapshot {
+  const totalScore =
+    average(results.map((result) => result.weightedSemanticDistance)) ?? Number.POSITIVE_INFINITY
+  const bucketScores = calculateBucketScores(results)
+  return {
+    totalScore,
+    bucketScores,
+    scoreDebug: calculateScoreDebug(totalScore, bucketScores),
+  }
+}
+
+function shouldApplyFilteredObjective(settings?: OutlierFilteringSettings): boolean {
+  return Boolean(
+    settings?.enabled &&
+      settings.mode === "excludeFromInference" &&
+      settings.applyToObjectiveScore,
+  )
+}
+
+function normalizeOutlierFilteringSettings(
+  settings?: OutlierFilteringSettings,
+): OutlierFilteringSettings {
+  return {
+    ...DEFAULT_OUTLIER_FILTERING_SETTINGS,
+    ...(settings ?? {}),
+    perBucketMaxOutliers: Math.max(
+      0,
+      Math.round(settings?.perBucketMaxOutliers ?? DEFAULT_OUTLIER_FILTERING_SETTINGS.perBucketMaxOutliers),
+    ),
+    minBucketSampleCount: Math.max(
+      1,
+      Math.round(settings?.minBucketSampleCount ?? DEFAULT_OUTLIER_FILTERING_SETTINGS.minBucketSampleCount),
+    ),
+    topWorstPercent: Math.max(
+      0,
+      Math.min(100, settings?.topWorstPercent ?? DEFAULT_OUTLIER_FILTERING_SETTINGS.topWorstPercent),
+    ),
+  }
+}
+
+function roundScoreSnapshot(snapshot: CandidateScoreSnapshot): CandidateScoreSnapshot {
+  return {
+    totalScore: round(snapshot.totalScore),
+    bucketScores: roundRecord(snapshot.bucketScores),
+    scoreDebug: roundScoreDebug(snapshot.scoreDebug),
+  }
+}
+
+function findWorstPoint(perPointError: Record<SemanticPointName, number>): {
+  pointId: SemanticPointName
+  error: number
+} | null {
+  return SEMANTIC_POINT_NAMES.reduce<{
+    pointId: SemanticPointName
+    error: number
+  } | null>((worst, pointId) => {
+    const error = perPointError[pointId]
+    if (!Number.isFinite(error)) {
+      return worst
+    }
+    return !worst || error > worst.error ? { pointId, error: round(error) } : worst
+  }, null)
 }
 
 function getObjectiveScore(
@@ -1213,6 +1535,22 @@ function averageNullable(values: Array<number | null>): number | null {
   return average(values.filter((value): value is number => typeof value === "number"))
 }
 
+function median(values: number[]): number | null {
+  const finite = values.filter(Number.isFinite).sort((a, b) => a - b)
+  if (finite.length === 0) {
+    return null
+  }
+  const middle = Math.floor(finite.length / 2)
+  return finite.length % 2 === 0
+    ? (finite[middle - 1] + finite[middle]) / 2
+    : finite[middle]
+}
+
+function max(values: number[]): number | null {
+  const finite = values.filter(Number.isFinite)
+  return finite.length === 0 ? null : Math.max(...finite)
+}
+
 function maxNullable(values: Array<number | null>): number | null {
   const finite = values.filter((value): value is number => typeof value === "number" && Number.isFinite(value))
   return finite.length === 0 ? null : Math.max(...finite)
@@ -1239,6 +1577,18 @@ function roundRecord<T extends Record<string, number | null>>(record: T): T {
   ) as T
 }
 
+function roundPointRecord<T extends Record<string, Point2>>(record: T): T {
+  return Object.fromEntries(
+    Object.entries(record).map(([key, value]) => [
+      key,
+      {
+        x: round(value.x),
+        y: round(value.y),
+      },
+    ]),
+  ) as T
+}
+
 function roundScoreDebug(scoreDebug: CandidateScoreDebug): CandidateScoreDebug {
   return {
     yawAverageScore: roundNullable(scoreDebug.yawAverageScore),
@@ -1258,6 +1608,13 @@ function formatCandidateNumber(value: number): string {
 
 function degreesToRadians(degrees: number): number {
   return (degrees / 180) * Math.PI
+}
+
+function safeRatio(value: number | null, base: number | null): number | null {
+  if (value === null || base === null || Math.abs(base) <= EPSILON) {
+    return null
+  }
+  return round(value / base)
 }
 
 function postMessageToMain(message: WorkerOutputMessage): void {

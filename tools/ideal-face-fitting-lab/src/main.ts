@@ -116,6 +116,7 @@ interface NormalizedFrame {
 interface SearchSettings {
   searchMode: SearchMode
   objectiveMode: ObjectiveMode
+  outlierFiltering: OutlierFilteringSettings
   maxFrames: number
   targets: Record<CaptureBucket, number>
   includeMixedPose: boolean
@@ -295,6 +296,8 @@ type ObjectiveMode =
   | "maxBucketScore"
   | "pitchAverageScore"
   | "yawAverageScore"
+type OutlierFilteringMode = "off" | "debugOnly" | "excludeFromInference"
+type OutlierFilteringMethod = "medianMultiplier" | "medianAbsoluteDelta" | "topWorstPercent"
 type LocalSearchParameter = "pivotZ" | "rotationCenter.y" | "rotationCenter.z" | `${SemanticPointName}.z`
 type SearchPresetId =
   | "coordinateDescentFine"
@@ -337,6 +340,18 @@ type StabilitySequencePresetId =
   | "rotationCenterMaxBucketSequence"
   | "naturalNoseBalancedSequence"
   | "naturalNoseMaxBucketSequence"
+
+interface OutlierFilteringSettings {
+  enabled: boolean
+  mode: OutlierFilteringMode
+  perBucketMaxOutliers: number
+  minBucketSampleCount: number
+  method: OutlierFilteringMethod
+  medianMultiplier: number
+  absoluteDeltaThreshold: number
+  topWorstPercent: number
+  applyToObjectiveScore: boolean
+}
 
 interface LocalSearchRange {
   min: number
@@ -464,6 +479,17 @@ interface StabilityHistoryEntry {
     bucket: CaptureBucket
     score: number
   } | null
+  outlierSummary?: StabilityOutlierSummary
+}
+
+interface StabilityOutlierSummary {
+  enabled: boolean
+  mode: string
+  totalOutlierFrameCount: number
+  outlierFrameCountsByBucket: Record<CaptureBucket, number>
+  outlierFrames: OutlierFrameDebug[]
+  rawScores: CandidateScoreSnapshot
+  filteredScores: CandidateScoreSnapshot | null
 }
 
 interface StabilitySummary {
@@ -523,9 +549,18 @@ interface CandidateDefinition extends FittingCandidate8 {
 interface FrameEvaluation {
   captureId: string
   bucket: CaptureBucket
+  rawBucket?: string | null
+  pose: {
+    yaw: number | null
+    pitch: number | null
+    roll: number | null
+  }
+  frameError: number
   averageSemanticDistance: number
   weightedSemanticDistance: number
   perPointError: Record<SemanticPointName, number>
+  projectedPoints: Record<SemanticPointName, Point2>
+  currentPoints: Record<SemanticPointName, Point2>
   totalScore: number
   warnings: string[]
 }
@@ -556,6 +591,7 @@ interface CandidateResult extends CandidateDefinition {
   sampleCount: number
   warnings: string[]
   perFrameResults: FrameEvaluation[]
+  outlierDebug?: CandidateOutlierDebug
 }
 
 interface CandidateScoreDebug {
@@ -563,6 +599,58 @@ interface CandidateScoreDebug {
   pitchAverageScore: number | null
   maxBucketScore: number | null
   balancedScore: number
+}
+
+interface CandidateScoreSnapshot {
+  totalScore: number
+  bucketScores: PoseBucketScores
+  scoreDebug: CandidateScoreDebug
+}
+
+interface OutlierFrameDebug {
+  captureId: string
+  bucket: CaptureBucket
+  rawBucket?: string | null
+  pose: {
+    yaw: number | null
+    pitch: number | null
+    roll: number | null
+  }
+  frameError: number
+  bucketMedianError: number | null
+  bucketAverageError: number | null
+  ratioToMedian: number | null
+  deltaFromMedian: number | null
+  perPointError: Record<SemanticPointName, number>
+  worstPoint: {
+    pointId: SemanticPointName
+    error: number
+  } | null
+  outlierReason: string
+  excludedFromInference: boolean
+  retainedForValidation: boolean
+}
+
+interface BucketFrameErrorSummary {
+  bucket: CaptureBucket
+  sampleCount: number
+  rawAverageError: number | null
+  rawMedianError: number | null
+  rawMaxError: number | null
+  filteredAverageError: number | null
+  filteredMedianError: number | null
+  filteredMaxError: number | null
+  outlierFrameCount: number
+  worstFrame: OutlierFrameDebug | null
+  outlierFrames: OutlierFrameDebug[]
+}
+
+interface CandidateOutlierDebug {
+  settings: OutlierFilteringSettings
+  bucketSummaries: BucketFrameErrorSummary[]
+  outlierFrames: OutlierFrameDebug[]
+  rawScores: CandidateScoreSnapshot
+  filteredScores: CandidateScoreSnapshot | null
 }
 
 interface RankingEntry extends FittingCandidate8Score {
@@ -767,6 +855,7 @@ interface AnalysisResult {
   perPointErrorSummary: Record<SemanticPointName, number | null>
   projectionSignDebug?: ProjectionSignDebug
   rotationCenterDebug?: RotationCenterDebug
+  outlierFrameDebug?: AnalysisOutlierFrameDebug
   autoSequenceSummary?: AutoSequenceSummary
   candidateStabilityDebug?: CandidateStabilityDebug
   warnings: string[]
@@ -798,9 +887,20 @@ interface SummaryAnalysisResult {
   perPointErrorSummary: Record<SemanticPointName, number | null>
   projectionSignDebug?: ProjectionSignDebug
   rotationCenterDebug?: RotationCenterDebug
+  outlierFrameDebug?: AnalysisOutlierFrameDebug
   autoSequenceSummary?: AutoSequenceSummary
   candidateStabilityDebug?: CandidateStabilityDebug
   warnings: string[]
+}
+
+interface AnalysisOutlierFrameDebug {
+  settings: OutlierFilteringSettings
+  bestCandidateOutliers?: {
+    bucketSummaries: BucketFrameErrorSummary[]
+    outlierFrames: OutlierFrameDebug[]
+    rawScores: CandidateScoreSnapshot
+    filteredScores: CandidateScoreSnapshot | null
+  }
 }
 
 type SearchProgressStatus = "idle" | "running" | "completed" | "cancelled" | "error"
@@ -1527,9 +1627,22 @@ const ROTATION_CENTER_PIVOT_X_CANDIDATES = [0]
 const ROTATION_CENTER_PIVOT_Y_CANDIDATES = [-0.12, -0.08, -0.04, 0, 0.04, 0.08, 0.12]
 const ROTATION_CENTER_PIVOT_Z_CANDIDATES = [0.04, 0.06, 0.08, 0.1, 0.12, 0.14, 0.16]
 
+const DEFAULT_OUTLIER_FILTERING_SETTINGS: OutlierFilteringSettings = {
+  enabled: false,
+  mode: "debugOnly",
+  perBucketMaxOutliers: 1,
+  minBucketSampleCount: 8,
+  method: "medianMultiplier",
+  medianMultiplier: 1.75,
+  absoluteDeltaThreshold: 0.015,
+  topWorstPercent: 10,
+  applyToObjectiveScore: false,
+}
+
 const DEFAULT_SETTINGS: SearchSettings = {
   searchMode: "fullGrid",
   objectiveMode: "totalScore",
+  outlierFiltering: DEFAULT_OUTLIER_FILTERING_SETTINGS,
   maxFrames: 30,
   targets: {
     front: 5,
@@ -1803,6 +1916,47 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
                 ).join("")}
               </select>
             </label>
+            <label>Outlier Filtering enabled
+              <select id="outlier-enabled-select">
+                <option value="false" selected>false</option>
+                <option value="true">true</option>
+              </select>
+            </label>
+            <label>Outlier mode
+              <select id="outlier-mode-select">
+                <option value="off">off</option>
+                <option value="debugOnly" selected>debugOnly</option>
+                <option value="excludeFromInference">excludeFromInference</option>
+              </select>
+            </label>
+            <label>Outlier method
+              <select id="outlier-method-select">
+                <option value="medianMultiplier" selected>medianMultiplier</option>
+                <option value="medianAbsoluteDelta">medianAbsoluteDelta</option>
+                <option value="topWorstPercent">topWorstPercent</option>
+              </select>
+            </label>
+            <label>perBucketMaxOutliers
+              <input id="outlier-per-bucket-max-input" type="number" min="0" max="5" step="1" value="${DEFAULT_OUTLIER_FILTERING_SETTINGS.perBucketMaxOutliers}" />
+            </label>
+            <label>minBucketSampleCount
+              <input id="outlier-min-bucket-sample-count-input" type="number" min="1" max="30" step="1" value="${DEFAULT_OUTLIER_FILTERING_SETTINGS.minBucketSampleCount}" />
+            </label>
+            <label>medianMultiplier
+              <input id="outlier-median-multiplier-input" type="number" min="1" max="10" step="0.05" value="${DEFAULT_OUTLIER_FILTERING_SETTINGS.medianMultiplier}" />
+            </label>
+            <label>absoluteDeltaThreshold
+              <input id="outlier-absolute-delta-threshold-input" type="number" min="0" max="1" step="0.001" value="${DEFAULT_OUTLIER_FILTERING_SETTINGS.absoluteDeltaThreshold}" />
+            </label>
+            <label>topWorstPercent
+              <input id="outlier-top-worst-percent-input" type="number" min="0" max="100" step="1" value="${DEFAULT_OUTLIER_FILTERING_SETTINGS.topWorstPercent}" />
+            </label>
+            <label>applyToObjectiveScore
+              <select id="outlier-apply-to-objective-select">
+                <option value="false" selected>false</option>
+                <option value="true">true</option>
+              </select>
+            </label>
             <label>localTargetParameter
               <select id="local-target-parameter-select">
                 ${LOCAL_SEARCH_PARAMETERS.map(
@@ -1825,6 +1979,7 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
             </label>
           </div>
           <p class="panel-help">Objective Mode は、探索中にどのスコアを最小化するかを選ぶ設定です。totalScore は従来挙動、maxBucketScore は一部姿勢だけ悪化する候補を避けるための確認用です。</p>
+          <p class="panel-help">Outlier Frame Debug は、maxBucketScore を極端に悪化させているフレームを検出するための debug 機能です。score を良く見せるためではなく、MediaPipe の検出ズレ・強い表情・ブレなど、推定用に使うべきでない観測値を見つける目的で使います。</p>
           <h3>baseCandidate</h3>
           <div class="controls">
             <label>base legacy pivotZ / rotationCenter.z
@@ -1899,6 +2054,17 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
         <section class="panel">
           <h2>best candidate</h2>
           <div id="best-candidate" class="summary-grid"></div>
+        </section>
+
+        <section class="panel">
+          <h2>Outlier Frame Debug</h2>
+          <p class="panel-help">Outlier Frame Debug は、maxBucketScore を極端に悪化させているフレームを検出するための debug 機能です。score を良く見せるためではなく、MediaPipe の検出ズレ・強い表情・ブレなど、推定用に使うべきでない観測値を見つける目的で使います。</p>
+          <h3>Outlier Filtering</h3>
+          <div id="outlier-settings-summary" class="summary-grid"></div>
+          <h3>Best Candidate Outlier Summary</h3>
+          <div id="outlier-best-summary" class="summary-grid"></div>
+          <h3>外れフレーム一覧</h3>
+          <div id="outlier-frame-table" class="table-wrap"></div>
         </section>
 
         <section class="panel">
@@ -2168,6 +2334,7 @@ function runAnalysis(settingsOverride?: SearchSettings): void {
       depthRelation: null,
       bucketRanking: emptyBucketRanking(),
       perPointErrorSummary: emptyPointSummary(),
+      outlierFrameDebug: buildAnalysisOutlierFrameDebug(settings, null),
       candidateStabilityDebug: buildCandidateStabilityDebug(),
       warnings: [...warnings, "front bucket の usable frame が不足しているため base8Points2D を作れません。"],
     }
@@ -2335,6 +2502,7 @@ function completeSearchFromWorker(context: SearchWorkerContext, message: Record<
         readRotationCenterDebugBaseCandidateId(),
       )
     : undefined
+  const outlierFrameDebug = buildAnalysisOutlierFrameDebug(context.settings, bestCandidate)
 
   state.analysis = {
     schemaVersion: "ideal_face_fitting_lab_analysis_v1",
@@ -2376,6 +2544,7 @@ function completeSearchFromWorker(context: SearchWorkerContext, message: Record<
     perPointErrorSummary: bestCandidate ? bestCandidate.perPointError : emptyPointSummary(),
     projectionSignDebug,
     rotationCenterDebug,
+    outlierFrameDebug,
     candidateStabilityDebug: buildCandidateStabilityDebug(),
     warnings: [
       ...new Set([
@@ -2463,6 +2632,7 @@ function updateSearchProgressFromWorker(message: Record<string, unknown>): void 
 function createWorkerFrames(frames: NormalizedFrame[]): Array<{
   captureId: string
   bucket: CaptureBucket
+  rawBucket: string
   pose: Pose
   semanticPoints: SemanticPointSet2D
   bounds: Bounds2D
@@ -2473,6 +2643,7 @@ function createWorkerFrames(frames: NormalizedFrame[]): Array<{
     .map((frame) => ({
       captureId: frame.captureId,
       bucket: frame.bucket,
+      rawBucket: frame.rawBucket,
       pose: frame.pose,
       semanticPoints: frame.semanticPoints!,
       bounds: frame.bounds!,
@@ -2712,9 +2883,18 @@ function evaluateCandidateOnFrameForDebug(
   return {
     captureId: frame.captureId,
     bucket: frame.bucket,
+    rawBucket: frame.rawBucket,
+    pose: {
+      yaw: round(frame.pose.yaw),
+      pitch: round(frame.pose.pitch),
+      roll: round(frame.pose.roll),
+    },
+    frameError: weightedSemanticDistance,
     averageSemanticDistance,
     weightedSemanticDistance,
     perPointError,
+    projectedPoints: roundPointRecord(projected),
+    currentPoints: roundPointRecord(current),
     totalScore: weightedSemanticDistance,
     warnings: frame.warnings,
   }
@@ -3196,6 +3376,24 @@ function getAnalysisSelectedFrames(analysis: AnalysisResult): NormalizedFrame[] 
   return state.frames.filter((frame) => selectedIds.has(frame.captureId))
 }
 
+function buildAnalysisOutlierFrameDebug(
+  settings: SearchSettings,
+  bestCandidate: CandidateResult | null,
+): AnalysisOutlierFrameDebug {
+  const outlierDebug = bestCandidate?.outlierDebug
+  return {
+    settings: outlierDebug?.settings ?? settings.outlierFiltering,
+    bestCandidateOutliers: outlierDebug
+      ? {
+          bucketSummaries: outlierDebug.bucketSummaries,
+          outlierFrames: outlierDebug.outlierFrames,
+          rawScores: outlierDebug.rawScores,
+          filteredScores: outlierDebug.filteredScores,
+        }
+      : undefined,
+  }
+}
+
 function degreesToRadians(degrees: number): number {
   return (degrees / 180) * Math.PI
 }
@@ -3206,6 +3404,7 @@ function readSettings(): SearchSettings {
     ...DEFAULT_SETTINGS,
     searchMode,
     objectiveMode: readObjectiveMode(),
+    outlierFiltering: readOutlierFilteringSettings(),
     maxFrames: readNumber("max-frames-input", DEFAULT_SETTINGS.maxFrames),
     targets: {
       front: readNumber("target-front-input", DEFAULT_SETTINGS.targets.front),
@@ -3238,6 +3437,62 @@ function readSettings(): SearchSettings {
     focalLength: readNumber("focal-length-input", DEFAULT_SETTINGS.focalLength),
     localSearchSettings: readLocalSearchSettings(),
   }
+}
+
+function readOutlierFilteringSettings(): OutlierFilteringSettings {
+  return {
+    enabled: getElement<HTMLSelectElement>("outlier-enabled-select").value === "true",
+    mode: readOutlierFilteringMode(getElement<HTMLSelectElement>("outlier-mode-select").value),
+    perBucketMaxOutliers: Math.max(
+      0,
+      Math.round(
+        readNumber(
+          "outlier-per-bucket-max-input",
+          DEFAULT_OUTLIER_FILTERING_SETTINGS.perBucketMaxOutliers,
+        ),
+      ),
+    ),
+    minBucketSampleCount: Math.max(
+      1,
+      Math.round(
+        readNumber(
+          "outlier-min-bucket-sample-count-input",
+          DEFAULT_OUTLIER_FILTERING_SETTINGS.minBucketSampleCount,
+        ),
+      ),
+    ),
+    method: readOutlierFilteringMethod(getElement<HTMLSelectElement>("outlier-method-select").value),
+    medianMultiplier: readNumber(
+      "outlier-median-multiplier-input",
+      DEFAULT_OUTLIER_FILTERING_SETTINGS.medianMultiplier,
+    ),
+    absoluteDeltaThreshold: readNumber(
+      "outlier-absolute-delta-threshold-input",
+      DEFAULT_OUTLIER_FILTERING_SETTINGS.absoluteDeltaThreshold,
+    ),
+    topWorstPercent: Math.max(
+      0,
+      Math.min(
+        100,
+        readNumber(
+          "outlier-top-worst-percent-input",
+          DEFAULT_OUTLIER_FILTERING_SETTINGS.topWorstPercent,
+        ),
+      ),
+    ),
+    applyToObjectiveScore:
+      getElement<HTMLSelectElement>("outlier-apply-to-objective-select").value === "true",
+  }
+}
+
+function readOutlierFilteringMode(value: string): OutlierFilteringMode {
+  return value === "off" || value === "excludeFromInference" ? value : "debugOnly"
+}
+
+function readOutlierFilteringMethod(value: string): OutlierFilteringMethod {
+  return value === "medianAbsoluteDelta" || value === "topWorstPercent"
+    ? value
+    : "medianMultiplier"
 }
 
 function readSearchMode(): SearchMode {
@@ -3743,10 +3998,28 @@ function appendStabilityHistoryFromAnalysis(analysis: AnalysisResult): void {
         finalStep?.scoreDebug?.yawAverageScore ?? bestCandidate?.scoreDebug?.yawAverageScore ?? null,
     },
     worstBucket: bestCandidate ? getWorstBucket(bestCandidate.bucketScores) : null,
+    outlierSummary: buildStabilityOutlierSummary(bestCandidate?.outlierDebug ?? null),
   }
 
   state.stabilityHistory = [...state.stabilityHistory, entry]
   analysis.candidateStabilityDebug = buildCandidateStabilityDebug()
+}
+
+function buildStabilityOutlierSummary(
+  outlierDebug: CandidateOutlierDebug | null | undefined,
+): StabilityOutlierSummary | undefined {
+  if (!outlierDebug) {
+    return undefined
+  }
+  return {
+    enabled: outlierDebug.settings.enabled,
+    mode: outlierDebug.settings.mode,
+    totalOutlierFrameCount: outlierDebug.outlierFrames.length,
+    outlierFrameCountsByBucket: countOutlierFramesByBucket(outlierDebug.outlierFrames),
+    outlierFrames: outlierDebug.outlierFrames,
+    rawScores: outlierDebug.rawScores,
+    filteredScores: outlierDebug.filteredScores,
+  }
 }
 
 function buildCandidateStabilityDebug(): CandidateStabilityDebug {
@@ -3877,6 +4150,15 @@ function applyCommonPresetSettings(): void {
   writeNumberInput("top-n-input", 100)
   writeNumberInput("focal-length-input", 2.6)
   writeSelectValue("objective-mode-select", DEFAULT_SETTINGS.objectiveMode)
+  writeSelectValue("outlier-enabled-select", String(DEFAULT_OUTLIER_FILTERING_SETTINGS.enabled))
+  writeSelectValue("outlier-mode-select", DEFAULT_OUTLIER_FILTERING_SETTINGS.mode)
+  writeSelectValue("outlier-method-select", DEFAULT_OUTLIER_FILTERING_SETTINGS.method)
+  writeNumberInput("outlier-per-bucket-max-input", DEFAULT_OUTLIER_FILTERING_SETTINGS.perBucketMaxOutliers)
+  writeNumberInput("outlier-min-bucket-sample-count-input", DEFAULT_OUTLIER_FILTERING_SETTINGS.minBucketSampleCount)
+  writeNumberInput("outlier-median-multiplier-input", DEFAULT_OUTLIER_FILTERING_SETTINGS.medianMultiplier)
+  writeNumberInput("outlier-absolute-delta-threshold-input", DEFAULT_OUTLIER_FILTERING_SETTINGS.absoluteDeltaThreshold)
+  writeNumberInput("outlier-top-worst-percent-input", DEFAULT_OUTLIER_FILTERING_SETTINGS.topWorstPercent)
+  writeSelectValue("outlier-apply-to-objective-select", String(DEFAULT_OUTLIER_FILTERING_SETTINGS.applyToObjectiveScore))
   writeNumberInput("z-min-input", -0.24)
   writeNumberInput("z-max-input", 0.24)
   writeNumberInput("z-step-input", 0.24)
@@ -4633,6 +4915,7 @@ function createSummaryAnalysis(analysis: AnalysisResult): SummaryAnalysisResult 
     perPointErrorSummary: analysis.perPointErrorSummary,
     projectionSignDebug: analysis.projectionSignDebug,
     rotationCenterDebug: analysis.rotationCenterDebug,
+    outlierFrameDebug: analysis.outlierFrameDebug,
     autoSequenceSummary: analysis.autoSequenceSummary,
     candidateStabilityDebug: analysis.candidateStabilityDebug,
     warnings: analysis.warnings,
@@ -4696,6 +4979,7 @@ function renderSourceOnly(): void {
   getElement("current8-frame-table").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
   getElement("ranking-table").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
   getElement("best-candidate").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
+  renderOutlierFrameDebug(null, readSettings().outlierFiltering)
   renderProjectionSignDebug(null)
   renderRotationCenterDebug(null)
   renderBucketTargetWarning()
@@ -4781,6 +5065,10 @@ function renderAnalysis(): void {
         ["pitchAverageScore", formatNumber(analysis.bestCandidate.scoreDebug?.pitchAverageScore)],
         ["maxBucketScore", formatNumber(analysis.bestCandidate.scoreDebug?.maxBucketScore)],
         ["balancedScore", formatNumber(analysis.bestCandidate.scoreDebug?.balancedScore)],
+        ["raw totalScore", formatNumber(analysis.bestCandidate.outlierDebug?.rawScores.totalScore)],
+        ["filtered totalScore", formatNumber(analysis.bestCandidate.outlierDebug?.filteredScores?.totalScore)],
+        ["raw maxBucketScore", formatNumber(analysis.bestCandidate.outlierDebug?.rawScores.scoreDebug.maxBucketScore)],
+        ["filtered maxBucketScore", formatNumber(analysis.bestCandidate.outlierDebug?.filteredScores?.scoreDebug.maxBucketScore)],
         ["zByPointId", JSON.stringify(roundRecord(analysis.bestCandidate.zByPointId))],
         ["legacy pivotZ / rotationCenter.z", formatNumber(analysis.bestCandidate.pivotZ)],
         ["rotationCenter.x", formatNumber(getCandidateRotationCenter(analysis.bestCandidate).x)],
@@ -4788,6 +5076,7 @@ function renderAnalysis(): void {
         ["rotationCenter.z", formatNumber(getCandidateRotationCenter(analysis.bestCandidate).z)],
       ])
     : `<p class="empty">候補がありません。</p>`
+  renderOutlierFrameDebug(analysis.outlierFrameDebug ?? null, analysis.searchSettings.outlierFiltering)
   renderProjectionSignDebug(analysis.projectionSignDebug ?? null)
   renderRotationCenterDebug(analysis.rotationCenterDebug ?? null)
   renderBucketTargetWarning()
@@ -4811,6 +5100,20 @@ function renderAnalysis(): void {
     [
       "scoreDebug",
       analysis.scoreDebugSummary ? JSON.stringify(roundScoreDebug(analysis.scoreDebugSummary)) : "-",
+    ],
+    [
+      "outlierDebug",
+      analysis.outlierFrameDebug?.bestCandidateOutliers
+        ? JSON.stringify({
+            totalOutlierFrames: analysis.outlierFrameDebug.bestCandidateOutliers.outlierFrames.length,
+            rawTotalScore: analysis.outlierFrameDebug.bestCandidateOutliers.rawScores.totalScore,
+            filteredTotalScore: analysis.outlierFrameDebug.bestCandidateOutliers.filteredScores?.totalScore ?? null,
+            rawMaxBucketScore:
+              analysis.outlierFrameDebug.bestCandidateOutliers.rawScores.scoreDebug.maxBucketScore,
+            filteredMaxBucketScore:
+              analysis.outlierFrameDebug.bestCandidateOutliers.filteredScores?.scoreDebug.maxBucketScore ?? null,
+          })
+        : "-",
     ],
   ])
   getElement("warnings").textContent = analysis.warnings.length === 0 ? "警告はありません。" : analysis.warnings.join("\n")
@@ -5014,6 +5317,12 @@ function renderStabilityHistoryTable(entries: StabilityHistoryEntry[]): string {
           <th>maxBucketScore</th>
           <th>pitchAverageScore</th>
           <th>yawAverageScore</th>
+          <th>outlier count</th>
+          <th>outlier buckets</th>
+          <th>raw totalScore</th>
+          <th>filtered totalScore</th>
+          <th>raw maxBucketScore</th>
+          <th>filtered maxBucketScore</th>
           <th>worstBucket</th>
         </tr>
       </thead>
@@ -5037,6 +5346,12 @@ function renderStabilityHistoryTable(entries: StabilityHistoryEntry[]): string {
               <td>${formatNumber(entry.scores.maxBucketScore)}</td>
               <td>${formatNumber(entry.scores.pitchAverageScore)}</td>
               <td>${formatNumber(entry.scores.yawAverageScore)}</td>
+              <td>${formatNumber(entry.outlierSummary?.totalOutlierFrameCount)}</td>
+              <td>${entry.outlierSummary ? formatOutlierBuckets(entry.outlierSummary.outlierFrameCountsByBucket) : "-"}</td>
+              <td>${formatNumber(entry.outlierSummary?.rawScores.totalScore)}</td>
+              <td>${formatNumber(entry.outlierSummary?.filteredScores?.totalScore)}</td>
+              <td>${formatNumber(entry.outlierSummary?.rawScores.scoreDebug.maxBucketScore)}</td>
+              <td>${formatNumber(entry.outlierSummary?.filteredScores?.scoreDebug.maxBucketScore)}</td>
               <td>${entry.worstBucket ? `${entry.worstBucket.bucket}: ${formatNumber(entry.worstBucket.score)}` : "-"}</td>
             </tr>
           `
@@ -5083,6 +5398,9 @@ function renderStabilitySummaryEntries(entries: StabilityHistoryEntry[]): string
             <th>rotationCenter.z</th>
             <th>nose.z</th>
             <th>maxBucketScore</th>
+            <th>outlier count</th>
+            <th>raw maxBucketScore</th>
+            <th>filtered maxBucketScore</th>
           </tr>
         </thead>
         <tbody>
@@ -5095,6 +5413,9 @@ function renderStabilitySummaryEntries(entries: StabilityHistoryEntry[]): string
                 <td>${formatNumber(rotationCenter?.z)}</td>
                 <td>${formatNumber(entry.finalCandidate?.zByPointId.nose)}</td>
                 <td>${formatNumber(entry.scores.maxBucketScore)}</td>
+                <td>${formatNumber(entry.outlierSummary?.totalOutlierFrameCount)}</td>
+                <td>${formatNumber(entry.outlierSummary?.rawScores.scoreDebug.maxBucketScore)}</td>
+                <td>${formatNumber(entry.outlierSummary?.filteredScores?.scoreDebug.maxBucketScore)}</td>
               </tr>
             `
           }).join("")}
@@ -5114,6 +5435,106 @@ function formatShortage(shortage: BucketTargetShortage[] | undefined): string {
         `${item.bucket}: required ${item.required}, available ${item.available}, selected ${item.selected}`,
     )
     .join("<br />")
+}
+
+function renderOutlierFrameDebug(
+  debug: AnalysisOutlierFrameDebug | null,
+  fallbackSettings: OutlierFilteringSettings,
+): void {
+  const settings = debug?.settings ?? fallbackSettings
+  const bestCandidateOutliers = debug?.bestCandidateOutliers
+  const outlierFrames = bestCandidateOutliers?.outlierFrames ?? []
+  const countsByBucket = countOutlierFramesByBucket(outlierFrames)
+  const rawScores = bestCandidateOutliers?.rawScores ?? null
+  const filteredScores = bestCandidateOutliers?.filteredScores ?? null
+
+  getElement("outlier-settings-summary").innerHTML = renderStatusItems([
+    ["enabled", String(settings.enabled)],
+    ["mode", settings.mode],
+    ["method", settings.method],
+    ["perBucketMaxOutliers", String(settings.perBucketMaxOutliers)],
+    ["minBucketSampleCount", String(settings.minBucketSampleCount)],
+    ["medianMultiplier", formatNumber(settings.medianMultiplier)],
+    ["absoluteDeltaThreshold", formatNumber(settings.absoluteDeltaThreshold)],
+    ["topWorstPercent", formatNumber(settings.topWorstPercent)],
+    ["applyToObjectiveScore", String(settings.applyToObjectiveScore)],
+  ])
+
+  getElement("outlier-best-summary").innerHTML = bestCandidateOutliers
+    ? renderStatusItems([
+        ["total outlier frames", String(outlierFrames.length)],
+        ["outlier count by bucket", formatBucketCounts(countsByBucket)],
+        ["outlier buckets", formatOutlierBuckets(countsByBucket)],
+        ["raw totalScore", formatNumber(rawScores?.totalScore)],
+        ["filtered totalScore", formatNumber(filteredScores?.totalScore)],
+        ["raw maxBucketScore", formatNumber(rawScores?.scoreDebug.maxBucketScore)],
+        ["filtered maxBucketScore", formatNumber(filteredScores?.scoreDebug.maxBucketScore)],
+        ["raw balancedScore", formatNumber(rawScores?.scoreDebug.balancedScore)],
+        ["filtered balancedScore", formatNumber(filteredScores?.scoreDebug.balancedScore)],
+        ["warning", outlierFrames.length > 3 ? "outlier count が多いため候補の利用には注意してください。" : "-"],
+      ])
+    : `<p class="empty">Outlier Filtering が disabled / off、または bestCandidate がないため outlier summary はありません。</p>`
+
+  getElement("outlier-frame-table").innerHTML = renderOutlierFrameTable(outlierFrames)
+}
+
+function renderOutlierFrameTable(frames: OutlierFrameDebug[]): string {
+  if (frames.length === 0) {
+    return `<p class="empty">外れフレーム候補はありません。</p>`
+  }
+  return `
+    <table>
+      <thead>
+        <tr>
+          <th>captureId</th>
+          <th>bucket</th>
+          <th>pose yaw/pitch/roll</th>
+          <th>frameError</th>
+          <th>bucketMedianError</th>
+          <th>ratioToMedian</th>
+          <th>deltaFromMedian</th>
+          <th>worstPoint</th>
+          <th>worstPointError</th>
+          <th>outlierReason</th>
+          <th>excludedFromInference</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${frames.map((frame) => `
+          <tr>
+            <td><code>${escapeHtml(frame.captureId)}</code></td>
+            <td><code>${frame.bucket}</code></td>
+            <td>${formatNumber(frame.pose.yaw)} / ${formatNumber(frame.pose.pitch)} / ${formatNumber(frame.pose.roll)}</td>
+            <td>${formatNumber(frame.frameError)}</td>
+            <td>${formatNumber(frame.bucketMedianError)}</td>
+            <td>${formatNumber(frame.ratioToMedian)}</td>
+            <td>${formatNumber(frame.deltaFromMedian)}</td>
+            <td><code>${frame.worstPoint?.pointId ?? "-"}</code></td>
+            <td>${formatNumber(frame.worstPoint?.error)}</td>
+            <td>${escapeHtml(frame.outlierReason)}</td>
+            <td>${String(frame.excludedFromInference)}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `
+}
+
+function countOutlierFramesByBucket(frames: OutlierFrameDebug[]): Record<CaptureBucket, number> {
+  return BUCKETS.reduce(
+    (counts, bucket) => {
+      counts[bucket] = frames.filter((frame) => frame.bucket === bucket).length
+      return counts
+    },
+    {} as Record<CaptureBucket, number>,
+  )
+}
+
+function formatOutlierBuckets(counts: Record<CaptureBucket, number>): string {
+  const buckets = BUCKETS.filter((bucket) => counts[bucket] > 0)
+  return buckets.length === 0
+    ? "-"
+    : buckets.map((bucket) => `${bucket}: ${counts[bucket]}`).join(" / ")
 }
 
 function renderProjectionSignDebug(debug: ProjectionSignDebug | null): void {
@@ -5421,6 +5842,7 @@ function renderEmptyState(): void {
   getElement("current8-frame-table").innerHTML = `<p class="empty">未解析です。</p>`
   getElement("ranking-table").innerHTML = `<p class="empty">未解析です。</p>`
   getElement("best-candidate").innerHTML = `<p class="empty">未解析です。</p>`
+  renderOutlierFrameDebug(null, DEFAULT_OUTLIER_FILTERING_SETTINGS)
   renderProjectionSignDebug(null)
   renderRotationCenterDebug(null)
   renderBucketTargetWarning()
@@ -6191,6 +6613,18 @@ function roundRecord<T extends Record<string, number | null>>(record: T): T {
     Object.entries(record).map(([key, value]) => [
       key,
       typeof value === "number" ? round(value) : value,
+    ]),
+  ) as T
+}
+
+function roundPointRecord<T extends Record<string, Point2>>(record: T): T {
+  return Object.fromEntries(
+    Object.entries(record).map(([key, value]) => [
+      key,
+      {
+        x: round(value.x),
+        y: round(value.y),
+      },
     ]),
   ) as T
 }
