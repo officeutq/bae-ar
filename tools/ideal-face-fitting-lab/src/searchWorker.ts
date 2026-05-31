@@ -739,7 +739,8 @@ async function runSearch(message: WorkerStartMessage): Promise<void> {
       for (const warning of result.warnings) {
         warnings.add(warning)
       }
-      insertRawTopResult(rawTopResults, result, message.settings.topN)
+      const activeSemanticPointNames = getSemanticPointNames(message.settings.semanticPointSetId)
+      insertRawTopResult(rawTopResults, result, message.settings.topN, activeSemanticPointNames)
       if (isDepthRelationRejected(result)) {
         rejectedCandidateCount += 1
         if (result.depthRelationDebug) {
@@ -752,8 +753,19 @@ async function runSearch(message: WorkerStartMessage): Promise<void> {
           }
         }
       } else {
-        insertTopResult(topResults, result, message.settings.topN, message.settings.objectiveMode)
-        insertBucketTopResults(bucketTopResults, result, message.settings.topN)
+        insertTopResult(
+          topResults,
+          result,
+          message.settings.topN,
+          message.settings.objectiveMode,
+          activeSemanticPointNames,
+        )
+        insertBucketTopResults(
+          bucketTopResults,
+          result,
+          message.settings.topN,
+          activeSemanticPointNames,
+        )
       }
       candidateSource.afterEvaluate(result)
 
@@ -912,7 +924,11 @@ function createLocalOneDimensionalCandidateSource(settings: SearchSettings): Can
         value,
       )
       valueIndex += 1
-      return createCandidateDefinitionFromCandidate(nextIndex++, candidate)
+      return createCandidateDefinitionFromCandidate(
+        nextIndex++,
+        candidate,
+        getSemanticPointNames(settings.semanticPointSetId),
+      )
     },
     afterEvaluate: (result) => {
       if (!isSelectableCandidate(result)) {
@@ -1042,7 +1058,11 @@ function createCoordinateDescentCandidateSource(settings: SearchSettings): Candi
         return null
       }
       const candidate = setCandidateParameter(currentCandidate, activeStep.parameter, value)
-      return createCandidateDefinitionFromCandidate(nextIndex++, candidate)
+      return createCandidateDefinitionFromCandidate(
+        nextIndex++,
+        candidate,
+        getSemanticPointNames(settings.semanticPointSetId),
+      )
     },
     afterEvaluate: (result) => {
       if (!activeStep) {
@@ -1083,7 +1103,7 @@ function createCandidateFromIndices(
   const completedZByPointId = completeSemanticZ(zByPointId)
   const pivotZ = pivotZCandidates[pivotIndex]
   return {
-    candidateId: createCandidateId(index, completedZByPointId, pivotZ),
+    candidateId: createCandidateId(index, completedZByPointId, pivotZ, semanticPointNames),
     zByPointId: completedZByPointId,
     pivotZ,
   }
@@ -1092,9 +1112,10 @@ function createCandidateFromIndices(
 function createCandidateDefinitionFromCandidate(
   index: number,
   candidate: FittingCandidate8,
+  semanticPointNames: SemanticPointName[],
 ): CandidateDefinition {
   const definition: CandidateDefinition = {
-    candidateId: createCandidateId(index, candidate.zByPointId, candidate.pivotZ),
+    candidateId: createCandidateId(index, candidate.zByPointId, candidate.pivotZ, semanticPointNames),
     zByPointId: completeSemanticZ(candidate.zByPointId),
     pivotZ: candidate.pivotZ,
   }
@@ -1129,9 +1150,10 @@ function insertTopResult(
   next: CandidateResult,
   limit: number,
   objectiveMode: ObjectiveMode,
+  semanticPointNames: SemanticPointName[],
 ): void {
-  const nextKey = buildCandidateKey(next)
-  const existingIndex = results.findIndex((result) => buildCandidateKey(result) === nextKey)
+  const nextKey = buildCandidateKey(next, semanticPointNames)
+  const existingIndex = results.findIndex((result) => buildCandidateKey(result, semanticPointNames) === nextKey)
   if (existingIndex >= 0) {
     if (isBetterObjectiveResult(next, results[existingIndex], objectiveMode)) {
       results[existingIndex] = next
@@ -1151,8 +1173,15 @@ function insertRawTopResult(
   results: CandidateResult[],
   next: CandidateResult,
   limit: number,
+  semanticPointNames: SemanticPointName[],
 ): void {
-  insertResultByScore(results, next, limit, (candidate) => candidate.objectiveScoreBeforeDepthFilter)
+  insertResultByScore(
+    results,
+    next,
+    limit,
+    (candidate) => candidate.objectiveScoreBeforeDepthFilter,
+    semanticPointNames,
+  )
 }
 
 function insertResultByScore(
@@ -1160,9 +1189,10 @@ function insertResultByScore(
   next: CandidateResult,
   limit: number,
   score: (candidate: CandidateResult) => number,
+  semanticPointNames: SemanticPointName[],
 ): void {
-  const nextKey = buildCandidateKey(next)
-  const existingIndex = results.findIndex((result) => buildCandidateKey(result) === nextKey)
+  const nextKey = buildCandidateKey(next, semanticPointNames)
+  const existingIndex = results.findIndex((result) => buildCandidateKey(result, semanticPointNames) === nextKey)
   if (existingIndex >= 0) {
     if (score(next) < score(results[existingIndex])) {
       results[existingIndex] = next
@@ -1200,6 +1230,7 @@ function insertBucketTopResults(
   bucketResults: Record<CaptureBucket, CandidateResult[]>,
   next: CandidateResult,
   limit: number,
+  semanticPointNames: SemanticPointName[],
 ): void {
   for (const bucket of BUCKETS) {
     const bucketScore = scoreForBucket(next, bucket)
@@ -1207,8 +1238,8 @@ function insertBucketTopResults(
       continue
     }
     const results = bucketResults[bucket]
-    const nextKey = buildCandidateKey(next)
-    const existingIndex = results.findIndex((result) => buildCandidateKey(result) === nextKey)
+    const nextKey = buildCandidateKey(next, semanticPointNames)
+    const existingIndex = results.findIndex((result) => buildCandidateKey(result, semanticPointNames) === nextKey)
     if (existingIndex >= 0) {
       const existingScore = scoreForBucket(results[existingIndex], bucket) ?? Infinity
       if (bucketScore < existingScore) {
@@ -2242,21 +2273,25 @@ function createCandidateId(
   index: number,
   zByPointId: Record<SemanticPointName, number>,
   pivotZ: number,
+  semanticPointNames: SemanticPointName[],
 ): string {
-  const zLabel = SEMANTIC_POINT_NAMES.map(
+  const zLabel = semanticPointNames.map(
     (name) => `${name}:${formatCompactNumber(zByPointId[name])}`,
   ).join(",")
   return `candidate_${String(index).padStart(5, "0")}__pivot:${formatCompactNumber(pivotZ)}__${zLabel}`
 }
 
-function buildCandidateKey(candidate: FittingCandidate8): string {
+function buildCandidateKey(
+  candidate: FittingCandidate8,
+  semanticPointNames: SemanticPointName[],
+): string {
   const rotationCenter = getCandidateRotationCenter(candidate)
   return [
     `pivotZ:${formatCandidateNumber(candidate.pivotZ)}`,
     `rotationCenter.x:${formatCandidateNumber(rotationCenter.x)}`,
     `rotationCenter.y:${formatCandidateNumber(rotationCenter.y)}`,
     `rotationCenter.z:${formatCandidateNumber(rotationCenter.z)}`,
-    ...SEMANTIC_POINT_NAMES.map(
+    ...semanticPointNames.map(
       (name) => `${name}:${formatCandidateNumber(candidate.zByPointId[name])}`,
     ),
   ].join("|")

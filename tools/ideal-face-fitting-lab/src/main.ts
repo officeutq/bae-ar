@@ -46,6 +46,10 @@ type PoseBucket = CaptureBucket
 type Depth478CandidateSource = "autoSequenceFinalCandidate" | "bestCandidate"
 type Depth478GenerationMethod = "inverseDistanceWeighting" | "canonicalDepthBased"
 type PerLandmarkZSearchTargetIndices = "all478" | "canonical468Only"
+type CanonicalDepthFitReferencePointSetId =
+  | "8pt_compatible"
+  | "12pt_rotation_center"
+  | "24pt_structure"
 
 interface Point2 {
   x: number
@@ -939,7 +943,7 @@ interface CanonicalDepthFitReferencePoint {
 interface CanonicalDepthBasedDebug {
   templateFile: "canonical-face-depth-template-v1.json"
   templateSchemaVersion: "canonical_face_depth_template_v1"
-  fitReferencePointSet: SemanticPointSetId
+  fitReferencePointSet: CanonicalDepthFitReferencePointSetId
   comparisonLandmarkCount: number
   excludedLandmarkIndices: number[]
   fit: {
@@ -1019,6 +1023,7 @@ interface DepthGroupCorrection {
 interface Generated478DepthCandidate {
   id: string
   source8CandidateId?: string | null
+  sourceSemanticPointSetId?: SemanticPointSetId
   generationSettings: {
     interpolation: DepthInterpolationSettings
     groupCorrections: DepthGroupCorrection[]
@@ -1163,6 +1168,13 @@ interface SemanticPointSetComparisonRun {
   perLandmarkAverageErrorAfter: number | null
   perLandmarkAverageBestDeltaZ: number | null
   sourceCandidateId: string | null
+  activeSemanticPointIds: SemanticPointName[]
+  activeSemanticPointCount: number
+  zByPointIdKeys: SemanticPointName[]
+  unexpectedPointIds: SemanticPointName[]
+  fitReferencePointSet: CanonicalDepthFitReferencePointSetId | null
+  usesOnlyActiveSemanticPointsForScore: boolean
+  usesOnlyActiveSemanticPointsForCandidateId: boolean
 }
 
 interface SemanticPointSetComparisonSummary {
@@ -2671,10 +2683,6 @@ const CANONICAL_FACE_DEPTH_TEMPLATE =
 const CANONICAL_FACE_DEPTH_TEMPLATE_FILE = "canonical-face-depth-template-v1.json" as const
 const CANONICAL_COMPARISON_LANDMARK_COUNT = 468
 const IRIS_DEPTH_FALLBACK_INDICES = [468, 469, 470, 471, 472, 473, 474, 475, 476, 477]
-const SEMANTIC_ANCHOR_LANDMARK_INDICES = new Set([
-  10, 152, 234, 454, 4, 13, 14, 6, 172, 397, 168, 327, 98, 263, 33, 362, 133,
-  356, 127, 291, 61, 365, 136,
-])
 const PER_LANDMARK_Z_SEARCH_SAMPLE_INDICES = [
   4, 10, 13, 14, 33, 61, 98, 127, 133, 136, 152, 234, 263, 291, 327, 356, 362,
   365, 454,
@@ -5202,6 +5210,11 @@ function buildSemanticPointSetComparisonRun(
   const perLandmark = prototype?.generatedCandidate?.perLandmarkZSearchDebug?.summary
   const noseTipGroupZ = relation?.groupValues.noseTipGroup?.z ?? null
   const cheekGroupZ = relation?.groupValues.cheekGroup?.z ?? null
+  const activeSemanticPointIds = getSemanticPointSet(pointSetId).pointIds
+  const candidateIdPointIds = parseCandidateIdSemanticPointIds(finalCandidate?.candidateId)
+  const unexpectedPointIds = candidateIdPointIds.filter(
+    (pointId) => !activeSemanticPointIds.includes(pointId),
+  )
   return {
     semanticPointSetId: pointSetId,
     pointCount: getSemanticPointSet(pointSetId).pointIds.length,
@@ -5228,7 +5241,22 @@ function buildSemanticPointSetComparisonRun(
     perLandmarkAverageErrorAfter: perLandmark?.averageErrorAfter ?? null,
     perLandmarkAverageBestDeltaZ: perLandmark?.averageBestDeltaZ ?? null,
     sourceCandidateId: prototype?.generatedCandidate?.source8CandidateId ?? null,
+    activeSemanticPointIds: [...activeSemanticPointIds],
+    activeSemanticPointCount: activeSemanticPointIds.length,
+    zByPointIdKeys: [...activeSemanticPointIds],
+    unexpectedPointIds,
+    fitReferencePointSet:
+      prototype?.generatedCandidate?.canonicalDepthBasedDebug?.fitReferencePointSet ?? null,
+    usesOnlyActiveSemanticPointsForScore: true,
+    usesOnlyActiveSemanticPointsForCandidateId: unexpectedPointIds.length === 0,
   }
+}
+
+function parseCandidateIdSemanticPointIds(candidateId: string | null | undefined): SemanticPointName[] {
+  if (!candidateId) {
+    return []
+  }
+  return SEMANTIC_POINT_NAMES.filter((pointId) => candidateId.includes(`${pointId}:`))
 }
 
 function getSemanticPointSetComparisonDepthRelationStatus(
@@ -5674,8 +5702,10 @@ function buildBase478Landmarks2D(frames: NormalizedFrame[]): LandmarkPoint[] | n
 function buildDepthAnchors8(
   basePoints: SemanticPointSet2D,
   candidate: FittingCandidate8,
+  semanticPointSetId: SemanticPointSetId,
 ): DepthAnchor8[] {
-  return SEMANTIC_DEFINITIONS.map((definition) => ({
+  const activePointIds = new Set(getSemanticPointSet(semanticPointSetId).pointIds)
+  return SEMANTIC_DEFINITIONS.filter((definition) => activePointIds.has(definition.name)).map((definition) => ({
     id: definition.name,
     label: definition.label,
     x: basePoints[definition.name].x,
@@ -5693,7 +5723,7 @@ function buildGenerated478DepthCandidate(
   interpolation: DepthInterpolationSettings,
   groupCorrections: DepthGroupCorrection[],
 ): Generated478DepthCandidate {
-  const anchors = buildDepthAnchors8(base8Points, sourceCandidate)
+  const anchors = buildDepthAnchors8(base8Points, sourceCandidate, semanticPointSetId)
   const generated =
     interpolation.method === "canonicalDepthBased"
       ? buildCanonicalDepthBased478Landmarks(base478, sourceCandidate, semanticPointSetId, interpolation)
@@ -5714,6 +5744,7 @@ function buildGenerated478DepthCandidate(
   return {
     id: `depth478-${Date.now()}`,
     source8CandidateId,
+    sourceSemanticPointSetId: semanticPointSetId,
     generationSettings: {
       interpolation: { ...interpolation },
       groupCorrections: cloneDepthGroupCorrections(groupCorrections),
@@ -5738,7 +5769,8 @@ function buildCanonicalDepthBased478Landmarks(
   const canonicalByIndex = new Map(
     CANONICAL_FACE_DEPTH_TEMPLATE.canonicalDepth.map((point) => [point.index, point]),
   )
-  const fit = buildCanonicalDepthFit(sourceCandidate, canonicalByIndex, semanticPointSetId)
+  const fitReferencePointSet = resolveCanonicalDepthFitReferencePointSet(semanticPointSetId)
+  const fit = buildCanonicalDepthFit(sourceCandidate, canonicalByIndex, fitReferencePointSet)
   const landmarks = base478.map((landmark) => {
     const canonical = canonicalByIndex.get(landmark.index)
     if (canonical) {
@@ -5781,7 +5813,7 @@ function buildCanonicalDepthBased478Landmarks(
     canonicalDepthBasedDebug: {
       templateFile: CANONICAL_FACE_DEPTH_TEMPLATE_FILE,
       templateSchemaVersion: CANONICAL_FACE_DEPTH_TEMPLATE.schemaVersion,
-      fitReferencePointSet: semanticPointSetId,
+      fitReferencePointSet,
       comparisonLandmarkCount: CANONICAL_FACE_DEPTH_TEMPLATE.comparisonLandmarkIndices.length,
       excludedLandmarkIndices: [...CANONICAL_FACE_DEPTH_TEMPLATE.excludedLandmarkIndices],
       fit: {
@@ -5814,13 +5846,13 @@ function validateCanonicalDepthTemplate(template: CanonicalFaceDepthTemplateV1):
 function buildCanonicalDepthFit(
   sourceCandidate: FittingCandidate8,
   canonicalByIndex: Map<number, CanonicalDepthTemplatePoint>,
-  semanticPointSetId: SemanticPointSetId,
+  fitReferencePointSet: CanonicalDepthFitReferencePointSetId,
 ): {
   scale: number
   offset: number
   referencePoints: CanonicalDepthFitReferencePoint[]
 } {
-  const references = getSemanticPointSet(semanticPointSetId).pointIds.flatMap((pointId) => {
+  const references = getCanonicalDepthFitReferencePointIds(fitReferencePointSet).flatMap((pointId) => {
     const definition = SEMANTIC_DEFINITIONS.find((item) => item.name === pointId)
     if (!definition) {
       throw new Error(`semantic point definition not found: ${pointId}`)
@@ -5886,6 +5918,24 @@ function buildCanonicalFitReference(
     canonicalZ: average(canonicalValues) ?? 0,
     targetZ,
   }
+}
+
+function resolveCanonicalDepthFitReferencePointSet(
+  semanticPointSetId: SemanticPointSetId,
+): CanonicalDepthFitReferencePointSetId {
+  return semanticPointSetId === "24pt_structure" ? "24pt_structure" : "8pt_compatible"
+}
+
+function getCanonicalDepthFitReferencePointIds(
+  fitReferencePointSet: CanonicalDepthFitReferencePointSetId,
+): SemanticPointName[] {
+  if (fitReferencePointSet === "24pt_structure") {
+    return STRUCTURE_24_SEMANTIC_POINT_NAMES
+  }
+  if (fitReferencePointSet === "12pt_rotation_center") {
+    return ROTATION_CENTER_12_SEMANTIC_POINT_NAMES
+  }
+  return BASIC_8_SEMANTIC_POINT_NAMES
 }
 
 function getCanonicalFitReferenceIndices(definition: SemanticDefinition): number[] {
@@ -6145,6 +6195,9 @@ function applyPerLandmarkZSearch(
     ]
   })
   const targetIndices = buildPerLandmarkZSearchTargetIndices(candidate.landmarks, settings)
+  const semanticAnchorLandmarkIndices = buildSemanticAnchorLandmarkIndices(
+    searchSettings.semanticPointSetId,
+  )
   const optimizedByIndex = new Map<number, number>()
   const rows: PerLandmarkZSearchDebugRow[] = []
 
@@ -6153,7 +6206,7 @@ function applyPerLandmarkZSearch(
     if (!landmark) {
       continue
     }
-    const isAnchor = SEMANTIC_ANCHOR_LANDMARK_INDICES.has(index)
+    const isAnchor = semanticAnchorLandmarkIndices.has(index)
     const range = isAnchor ? settings.anchorZRange : settings.zRange
     const step = isAnchor ? settings.anchorZStep : settings.zStep
     const baseZ = landmark.z
@@ -6250,6 +6303,15 @@ function buildPerLandmarkZSearchTargetIndices(
     .map((landmark) => landmark.index)
     .filter((index) => settings.targetIndices === "all478" || index < CANONICAL_COMPARISON_LANDMARK_COUNT)
     .sort((a, b) => a - b)
+}
+
+function buildSemanticAnchorLandmarkIndices(pointSetId: SemanticPointSetId): Set<number> {
+  const activePointIds = new Set(getSemanticPointSet(pointSetId).pointIds)
+  return new Set(
+    SEMANTIC_DEFINITIONS.filter((definition) => activePointIds.has(definition.name)).flatMap(
+      (definition) => [...definition.primaryIndices, ...(definition.fallbackIndices ?? [])],
+    ),
+  )
 }
 
 function evaluateProjectionErrorForSingleLandmarkZ(
