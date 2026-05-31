@@ -23,9 +23,19 @@ npm run generate:canonical-depth-template --workspace @bae-ar/ideal-face-fitting
 }
 ```
 
-Quick Run（クイック実行）では、将来的にこの JSON を読み、標準顔奥行きを基準に候補生成・ランキングする予定です。ただし、このテンプレートの canonicalZ は正解値として採用するものではなく、478 Depth Prototype（478点奥行き試作）の参照情報として扱います。
+Quick Run（クイック実行）では、この JSON を読み、標準顔奥行きを基準に 478 Depth Prototype（478点奥行き試作）の debug candidate を生成できます。ただし、このテンプレートの canonicalZ は正解値として採用するものではなく、478 Depth Prototype の参照情報として扱います。
 
 ## 8Point To 478 Depth Prototype
+
+### canonicalDepthBased
+
+`canonicalDepthBased`（標準顔奥行きベース方式）は、478 Depth Prototype 用の debug candidate 生成方式です。`tools/ideal-face-fitting-lab/data/canonical-face-depth-template-v1.json` を読み込み、`canonicalDepth[0..467].z` を標準顔奥行きの参照値として使います。これは IdealFace 確定ではなく、production asset export でもありません。
+
+この方式では、既存の 8 semantic points のうち `0..467` に対応できる `nose -> 4`、`leftCheek -> 234`、`rightCheek -> 454`、`mouth -> 13 / 14`、`chin -> 152`、`headTop -> 10` を参照点にして、8点 candidate の z に対する `canonicalZ * scale + offset` を least squares で推定します。その変換後の canonical depth を 0〜467 の z 候補として使い、既存の `478 Projection Evaluation`、`478 Depth Relation Debug`、`478 Candidate Comparison` に流します。
+
+`468..477` は MediaPipe Face Landmarker の追加10点（iris / 目まわり追加点）であり、MediaPipe canonical face model 由来の `canonicalDepth` には存在しません。そのため、この範囲は eye fallback の z で補完し、canonical comparison では比較対象外にします。JSON には `irisDepthFallback.excludedFromCanonicalComparison: true` として出力します。
+
+既存の `inverseDistanceWeighting`（距離の逆数による重み付け補間）は残し、`canonicalDepthBased` とは別方式として比較可能にします。Quick Run の `Run 478 Depth Hard Reject Debug` では、`quickRun.settings.depth478GenerationMethod: "canonicalDepthBased"` を出力します。
 
 `tools/ideal-face-fitting-lab` には、8 semantic points の候補を最終 IdealFace asset としてすぐ export するのではなく、478 landmarks の z を評価するための prototype を追加している。
 
