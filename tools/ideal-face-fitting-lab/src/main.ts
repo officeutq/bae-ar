@@ -3631,7 +3631,10 @@ function runAutoSequence(): void {
   const sequence = findAutoSequence(
     getElement<HTMLSelectElement>("auto-sequence-select").value,
   )
-  startAutoSequence(sequence)
+  const bucketTargetPreset = findBucketTargetPreset(
+    getElement<HTMLSelectElement>("bucket-target-preset-select").value,
+  )
+  startAutoSequence(sequence, bucketTargetPreset)
 }
 
 function startAutoSequence(
@@ -4136,15 +4139,6 @@ function valueRange(values: Array<number | null | undefined>): number | null {
 
 function applyCommonPresetSettings(): void {
   state.coordinateDescentParameterOrder = [...DEFAULT_COORDINATE_DESCENT_PARAMETER_ORDER]
-  writeSelectValue("bucket-target-preset-select", "balanced5Each")
-  writeNumberInput("max-frames-input", 30)
-  writeNumberInput("target-front-input", 5)
-  writeNumberInput("target-yaw-positive-input", 5)
-  writeNumberInput("target-yaw-negative-input", 5)
-  writeNumberInput("target-pitch-positive-input", 5)
-  writeNumberInput("target-pitch-negative-input", 5)
-  writeNumberInput("target-mixed-input", 0)
-  writeSelectValue("include-mixed-select", "false")
   writeNumberInput("roll-warning-input", 12)
   writeNumberInput("blendshape-warning-input", 0.35)
   writeNumberInput("top-n-input", 100)
