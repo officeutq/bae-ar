@@ -432,6 +432,9 @@ interface AutoSequenceDefinition {
   label: string
   baseCandidatePresetId: BaseCandidatePresetId
   steps: SearchPresetId[]
+  depthRelationFilteringOverride?: Partial<
+    Pick<DepthRelationFilteringSettings, "enabled" | "mode" | "applyToObjectiveScore">
+  >
   description: string
 }
 
@@ -450,6 +453,7 @@ interface AutoSequenceStepSummary {
     balancedScore?: number | null
   }
   depthRelationSummary?: DepthRelationSummary
+  depthRelationFiltering?: DepthRelationFilteringSummary
   processedCandidateCount: number
   estimatedCandidateCount: number
 }
@@ -765,6 +769,13 @@ interface DepthRelationSummary {
   finalCandidatePenalty: number
 }
 
+interface DepthRelationFilteringSummary {
+  enabled: boolean
+  mode: DepthRelationMode
+  applyToObjectiveScore: boolean
+  ruleCount: number
+}
+
 interface RankingEntry extends FittingCandidate8Score {
   candidateId: string
   weightedSemanticDistance: number
@@ -920,9 +931,12 @@ interface Depth478GroupValue {
 }
 
 interface Depth478RelationDebug {
+  settings: DepthRelationFilteringSummary
   groupValues: Record<string, Depth478GroupValue>
   ruleResults: DepthRelationRuleResult[]
   violationCount: number
+  hardRejectViolationCount: number
+  isRejected: boolean
 }
 
 interface SmoothnessDebug478 {
@@ -1086,6 +1100,7 @@ interface AnalysisResult {
   depthConvention: DepthConvention
   searchMode: SearchMode
   searchSettings: SearchSettings
+  depthRelationFiltering: DepthRelationFilteringSummary
   localSearchSettings?: LocalSearchSettings
   localSearchSummary?: LocalSearchSummary
   scoreDebugSummary: CandidateScoreDebug | null
@@ -1124,6 +1139,7 @@ interface SummaryAnalysisResult {
   depthConvention: DepthConvention
   searchMode: SearchMode
   searchSettings: SearchSettings
+  depthRelationFiltering: DepthRelationFilteringSummary
   localSearchSettings?: LocalSearchSettings
   localSearchSummary?: LocalSearchSummary
   scoreDebugSummary: CandidateScoreDebug | null
@@ -1741,6 +1757,11 @@ const AUTO_SEQUENCE_PRESETS: AutoSequenceDefinition[] = [
       "noseZFine",
       "mouthZFine",
     ],
+    depthRelationFilteringOverride: {
+      enabled: true,
+      mode: "hardReject",
+      applyToObjectiveScore: false,
+    },
     description:
       "Natural Nose With Rotation Center を起点に、balancedScore 重視でどこに収束するか確認します。",
   },
@@ -1754,6 +1775,11 @@ const AUTO_SEQUENCE_PRESETS: AutoSequenceDefinition[] = [
       "noseZFine",
       "mouthZFine",
     ],
+    depthRelationFilteringOverride: {
+      enabled: true,
+      mode: "hardReject",
+      applyToObjectiveScore: false,
+    },
     description:
       "Natural Nose With Rotation Center を起点に、maxBucketScore 重視でどこに収束するか確認します。",
   },
@@ -2824,6 +2850,7 @@ function runAnalysis(settingsOverride?: SearchSettings): void {
       depthConvention: DEPTH_CONVENTION,
       searchMode: settings.searchMode,
       searchSettings: settings,
+      depthRelationFiltering: summarizeDepthRelationFilteringSettings(settings.depthRelationFiltering),
       localSearchSettings: settings.searchMode === "fullGrid" ? undefined : settings.localSearchSettings,
       localSearchSummary: undefined,
       scoreDebugSummary: null,
@@ -3033,6 +3060,9 @@ function completeSearchFromWorker(context: SearchWorkerContext, message: Record<
     depthConvention: DEPTH_CONVENTION,
     searchMode: context.settings.searchMode,
     searchSettings: context.settings,
+    depthRelationFiltering: summarizeDepthRelationFilteringSettings(
+      context.settings.depthRelationFiltering,
+    ),
     localSearchSettings:
       context.settings.searchMode === "fullGrid" ? undefined : context.settings.localSearchSettings,
     localSearchSummary,
@@ -3939,7 +3969,10 @@ function generateDepth478DebugCandidate(): void {
     selectedFrames,
     analysis.searchSettings,
   )
-  const depthRelationDebug = buildDepth478RelationDebug(generatedCandidate)
+  const depthRelationDebug = buildDepth478RelationDebug(
+    generatedCandidate,
+    analysis.searchSettings.depthRelationFiltering,
+  )
   const smoothnessDebug = buildSmoothnessDebug478(
     generatedCandidate,
     prototypeSettings.smoothnessThreshold,
@@ -4363,7 +4396,9 @@ function buildProjection478GroupErrors(
 
 function buildDepth478RelationDebug(
   candidate: Generated478DepthCandidate,
+  sourceSettings: DepthRelationFilteringSettings,
 ): Depth478RelationDebug {
+  const settings = normalizeDepthRelationFilteringSettings(sourceSettings)
   const groups = [
     ...DEPTH_478_GROUP_DEFINITIONS,
     {
@@ -4400,6 +4435,8 @@ function buildDepth478RelationDebug(
       "inFrontOf",
       0.005,
       groupValues,
+      settings,
+      "hardReject",
     ),
     buildDepth478RelationRuleResult(
       "face_center_group_in_front_of_boundary_group",
@@ -4409,12 +4446,20 @@ function buildDepth478RelationDebug(
       "inFrontOf",
       0,
       groupValues,
+      settings,
+      "debugOnly",
     ),
   ]
+  const hardRejectViolationCount = ruleResults.filter(
+    (result) => result.severity === "violation" && result.mode === "hardReject",
+  ).length
   return {
+    settings: summarizeDepthRelationFilteringSettings(settings),
     groupValues,
     ruleResults,
     violationCount: ruleResults.filter((result) => !result.passed).length,
+    hardRejectViolationCount,
+    isRejected: settings.mode === "hardReject" && ruleResults.some((result) => result.reject),
   }
 }
 
@@ -4452,14 +4497,18 @@ function buildDepth478RelationRuleResult(
   relation: DepthRelationKind,
   margin: number,
   groupValues: Record<string, Depth478GroupValue>,
+  settings: DepthRelationFilteringSettings,
+  ruleMode: Exclude<DepthRelationMode, "off">,
 ): DepthRelationRuleResult {
   const subjectZ = groupValues[subjectGroupId]?.z ?? null
   const referenceZ = groupValues[referenceGroupId]?.z ?? null
   const delta = subjectZ === null || referenceZ === null ? null : round(subjectZ - referenceZ)
+  const effectiveMode = getDepth478EffectiveRuleMode(settings.mode, ruleMode)
   const passed =
     subjectZ !== null &&
     referenceZ !== null &&
     evaluateDepthRelation(subjectZ, referenceZ, relation, margin)
+  const severity = passed ? "ok" : "violation"
   return {
     ruleId,
     label,
@@ -4471,15 +4520,28 @@ function buildDepth478RelationRuleResult(
     margin,
     delta,
     passed,
-    severity: passed ? "ok" : "violation",
-    mode: "debugOnly",
+    severity,
+    mode: effectiveMode,
     penalty: 0,
-    reject: false,
+    reject: settings.mode === "hardReject" && effectiveMode === "hardReject" && severity === "violation",
     explanation:
       subjectZ === null || referenceZ === null
         ? "group z が不足しています。"
         : `${subjectGroupId}.z=${formatNumber(subjectZ)} / ${referenceGroupId}.z=${formatNumber(referenceZ)} / delta=${formatNumber(delta)}`,
   }
+}
+
+function getDepth478EffectiveRuleMode(
+  globalMode: DepthRelationMode,
+  ruleMode: Exclude<DepthRelationMode, "off">,
+): Exclude<DepthRelationMode, "off"> {
+  if (globalMode === "off" || globalMode === "debugOnly" || ruleMode === "debugOnly") {
+    return "debugOnly"
+  }
+  if (globalMode === "penalty") {
+    return "penalty"
+  }
+  return ruleMode
 }
 
 function evaluateDepthRelation(
@@ -4743,6 +4805,9 @@ function readDepthRelationFilteringSettings(): DepthRelationFilteringSettings {
 }
 
 function readDepthRelationMode(value: string): DepthRelationMode {
+  if (value === "reject") {
+    return "hardReject"
+  }
   return value === "off" || value === "penalty" || value === "hardReject" ? value : "debugOnly"
 }
 
@@ -5006,9 +5071,26 @@ function beginAutoSequenceStep(baseCandidate: FittingCandidate8): void {
 
 function resolveAutoSequenceStepSettings(): SearchSettings {
   const settings = readSettings()
-  return state.autoSequence.bucketTargetPreset
+  const withBucketPreset = state.autoSequence.bucketTargetPreset
     ? applyBucketTargetPresetToSettings(settings, state.autoSequence.bucketTargetPreset)
     : settings
+  return applyAutoSequenceDepthRelationOverride(withBucketPreset, state.autoSequence.definition)
+}
+
+function applyAutoSequenceDepthRelationOverride(
+  settings: SearchSettings,
+  sequence: AutoSequenceDefinition | null,
+): SearchSettings {
+  if (!sequence?.depthRelationFilteringOverride) {
+    return settings
+  }
+  return {
+    ...settings,
+    depthRelationFiltering: normalizeDepthRelationFilteringSettings({
+      ...settings.depthRelationFiltering,
+      ...sequence.depthRelationFilteringOverride,
+    }),
+  }
 }
 
 function handleAutoSequenceStepComplete(analysis: AnalysisResult | null): void {
@@ -5039,6 +5121,9 @@ function handleAutoSequenceStepComplete(analysis: AnalysisResult | null): void {
     depthRelationSummary: buildDepthRelationSummary(
       analysis.depthRelationDebug,
       analysis.bestCandidate?.depthRelationDebug,
+    ),
+    depthRelationFiltering: summarizeDepthRelationFilteringSettings(
+      analysis.searchSettings.depthRelationFiltering,
     ),
     processedCandidateCount: analysis.processedCandidateCount,
     estimatedCandidateCount: analysis.estimatedCandidateCount,
@@ -5351,6 +5436,18 @@ function buildDepthRelationSummary(
     rejectedCandidateCount: analysisDebug?.rejectedCandidateCount ?? 0,
     finalCandidatePassed: candidateDebug ? candidateDebug.hardRejectViolationCount === 0 : false,
     finalCandidatePenalty: candidateDebug?.penalty ?? 0,
+  }
+}
+
+function summarizeDepthRelationFilteringSettings(
+  settings: DepthRelationFilteringSettings,
+): DepthRelationFilteringSummary {
+  const normalized = normalizeDepthRelationFilteringSettings(settings)
+  return {
+    enabled: normalized.enabled,
+    mode: normalized.mode,
+    applyToObjectiveScore: normalized.applyToObjectiveScore,
+    ruleCount: normalized.rules.length,
   }
 }
 
@@ -6209,6 +6306,7 @@ function createSummaryAnalysis(analysis: AnalysisResult): SummaryAnalysisResult 
     depthConvention: analysis.depthConvention,
     searchMode: analysis.searchMode,
     searchSettings: analysis.searchSettings,
+    depthRelationFiltering: analysis.depthRelationFiltering,
     localSearchSettings: analysis.localSearchSettings,
     localSearchSummary: analysis.localSearchSummary,
     scoreDebugSummary: analysis.scoreDebugSummary,
@@ -6485,6 +6583,10 @@ function renderResultSummary(analysis: AnalysisResult): string {
     ["autoSequenceName", autoSummary?.sequenceName ?? "-"],
     ["autoSequenceStatus", autoSummary?.status ?? "-"],
     ["autoSequenceFinalObjectiveScore", formatNumber(autoSummary?.finalObjectiveScore)],
+    ["depthRelationMode", analysis.depthRelationFiltering.mode],
+    ["depthRelationEnabled", String(analysis.depthRelationFiltering.enabled)],
+    ["depthRelationApplyToObjectiveScore", String(analysis.depthRelationFiltering.applyToObjectiveScore)],
+    ["depthRelationRuleCount", String(analysis.depthRelationFiltering.ruleCount)],
     ["depth rejectedCandidates", String(analysis.depthRelationDebug?.rejectedCandidateCount ?? 0)],
     [
       "depth final passed",
@@ -6523,6 +6625,13 @@ function renderAutoSequenceResult(analysis: AnalysisResult): string {
     ["final step preset", finalStep?.presetName ?? "-"],
     ["final step totalScore", formatNumber(finalStep?.totalScore)],
     ["final step maxBucketScore", formatNumber(finalStep?.scoreDebug?.maxBucketScore)],
+    ["final depth mode", finalStep?.depthRelationFiltering?.mode ?? "-"],
+    [
+      "final depth applyToObjectiveScore",
+      finalStep?.depthRelationFiltering
+        ? String(finalStep.depthRelationFiltering.applyToObjectiveScore)
+        : "-",
+    ],
     ["final depth passed", String(finalStep?.depthRelationSummary?.finalCandidatePassed ?? false)],
     ["final depth rejected", formatNumber(finalStep?.depthRelationSummary?.rejectedCandidateCount)],
     ["final depth penalty", formatNumber(finalStep?.depthRelationSummary?.finalCandidatePenalty)],
@@ -6594,6 +6703,13 @@ function renderAutoSequenceStatus(): void {
     items.push(["final pitchAverageScore", formatNumber(finalScore.scoreDebug?.pitchAverageScore)])
     items.push(["final maxBucketScore", formatNumber(finalScore.scoreDebug?.maxBucketScore)])
     items.push(["final balancedScore", formatNumber(finalScore.scoreDebug?.balancedScore)])
+    items.push(["final depth mode", finalScore.depthRelationFiltering?.mode ?? "-"])
+    items.push([
+      "final depth applyToObjectiveScore",
+      finalScore.depthRelationFiltering
+        ? String(finalScore.depthRelationFiltering.applyToObjectiveScore)
+        : "-",
+    ])
   }
 
   getElement("auto-sequence-status").innerHTML = `
@@ -6619,6 +6735,8 @@ function renderAutoSequenceStepTable(steps: AutoSequenceStepSummary[]): string {
             <th>totalScore</th>
             <th>balanced</th>
             <th>maxBucket</th>
+            <th>depth mode</th>
+            <th>depth apply</th>
             <th>depth passed</th>
             <th>depth rejected</th>
             <th>depth penalty</th>
@@ -6636,6 +6754,8 @@ function renderAutoSequenceStepTable(steps: AutoSequenceStepSummary[]): string {
                 <td>${formatNumber(step.totalScore)}</td>
                 <td>${formatNumber(step.scoreDebug?.balancedScore)}</td>
                 <td>${formatNumber(step.scoreDebug?.maxBucketScore)}</td>
+                <td><code>${step.depthRelationFiltering?.mode ?? "-"}</code></td>
+                <td>${String(step.depthRelationFiltering?.applyToObjectiveScore ?? false)}</td>
                 <td>${String(step.depthRelationSummary?.finalCandidatePassed ?? false)}</td>
                 <td>${formatNumber(step.depthRelationSummary?.rejectedCandidateCount)}</td>
                 <td>${formatNumber(step.depthRelationSummary?.finalCandidatePenalty)}</td>
@@ -7099,7 +7219,13 @@ function renderDepth478Prototype(prototype: Depth478PrototypeResult | null): voi
     : ""
   getElement("depth-478-relation-debug").innerHTML = relation
     ? renderStatusItems([
+        ["enabled", String(relation.settings.enabled)],
+        ["mode", relation.settings.mode],
+        ["applyToObjectiveScore", String(relation.settings.applyToObjectiveScore)],
+        ["ruleCount", String(relation.settings.ruleCount)],
         ["violationCount", String(relation.violationCount)],
+        ["hardRejectViolationCount", String(relation.hardRejectViolationCount)],
+        ["isRejected", String(relation.isRejected)],
         ["noseTipGroup.z", formatNumber(relation.groupValues.noseTipGroup?.z ?? null)],
         ["cheekGroup.z", formatNumber(relation.groupValues.cheekGroup?.z ?? null)],
         ["faceCenterGroup.z", formatNumber(relation.groupValues.faceCenterGroup?.z ?? null)],

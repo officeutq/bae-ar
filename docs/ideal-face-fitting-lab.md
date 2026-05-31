@@ -28,6 +28,8 @@
 
 最終的な export は、478候補の評価・比較後に別工程で行う。現段階では Runtime、IdealFace Authoring Tool、asset schema、Standard Face、MediaPipe canonical face model との比較には組み込まない。
 
+478候補の `depthRelationDebug` には、候補生成時の search settings 由来の Depth Relation Filtering summary を出す。`mode: hardReject` の場合、478 debug rule result でも `reject: true` を出せる。ただし 478 Depth Prototype は単一 debug candidate の評価であり、478点 z の個別自由探索や production asset export は行わない。
+
 `tools/ideal-face-fitting-lab` は、production 用 IdealFace asset を直接作る正式ツールではありません。
 
 まずは 8 semantic points について、正面基準 x / y を固定し、8点それぞれの z と pivotZ だけを未知数として探索する検証ラボです。正面2Dだけでは z は決められないため、複数姿勢の capture frame へ candidate を回転・投影し、current 2D landmarks 8点との誤差でランキングします。
@@ -398,7 +400,7 @@ mode の挙動は以下である。
 
 - `debugOnly`: ランキングには影響しない。`depthRelationDebug` だけを出す。
 - `penalty`: `applyToObjectiveScore = true` のときだけ、`objectiveScore = baseObjectiveScore + depthRelationPenalty` とする。
-- `hardReject`: `applyToObjectiveScore = true` のときだけ、`hardReject` rule 違反候補を ranking / local search / coordinateDescent の候補選択から除外する。
+- `hardReject`: `applyToObjectiveScore` とは独立して、`hardReject` rule 違反候補を ranking / local search / coordinateDescent の候補選択から除外する。`applyToObjectiveScore` は penalty を score に加えるかどうかの設定であり、reject の有効・無効には使わない。
 
 除外候補は捨てず、`depthRelationDebug.rejectedCandidates` に最大20件まで保持する。すべて除外された場合、`bestCandidate` は `null` になり、UI は no valid candidate として落ちずに表示する。
 
@@ -417,7 +419,17 @@ autoSequenceSummary.finalCandidate.depthRelationDebug
 candidateStabilityDebug.history[].depthRelationSummary
 ```
 
-Auto Sequence では各 step に現在の Depth Relation Filtering settings を渡す。`mode: hardReject` かつ `applyToObjectiveScore: true` の場合、各 step の bestCandidate 選択にも反映される。
+Auto Sequence では各 step に現在の Depth Relation Filtering settings を渡す。`mode: hardReject` の場合、各 step の bestCandidate 選択にも反映される。
+
+Natural Nose Balanced Sequence / Natural Nose MaxBucket Sequence は、nose depth relation を自然寄りに保つ確認用 sequence として、step 実行時に以下を明示する。
+
+```text
+Depth Relation Filtering enabled = true
+Depth Relation mode = hardReject
+Depth Relation applyToObjectiveScore = false
+```
+
+この設定では penalty は objective score に加えないが、`nose_tip_in_front_of_cheeks` の `hardReject` 違反候補は除外する。
 
 Candidate Stability Debug でも同じ設定を使い、5件 / 8件 / 10件の比較で Depth Relation Rule を満たす候補へ安定して収束するか確認できる。
 
