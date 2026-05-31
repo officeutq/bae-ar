@@ -2112,6 +2112,7 @@ const DEFAULT_DEPTH_478_SMOOTHNESS_THRESHOLD = 0.03
 const DEPTH_478_NEIGHBOR_COUNT = 4
 const DEPTH_478_MAX_HIGH_DELTA_EDGES = 50
 const QUICK_DEPTH_478_NOSE_CHEEK_MARGIN = 0.005
+const QUICK_478_DEPTH_DEBUG_WORKER_CHUNK_SIZE = 50
 
 const QUICK_478_DEPTH_DEBUG_SETTINGS = {
   bucketPreset: "balanced10Each" as BucketTargetPresetId,
@@ -3049,6 +3050,13 @@ function runAnalysis(settingsOverride?: SearchSettings): void {
   renderSourceOnly()
   renderSearchProgress()
   renderAutoSequenceStatus()
+  if (state.quick478DepthDebug.status === "running") {
+    state.quick478DepthDebug = {
+      ...state.quick478DepthDebug,
+      message: buildQuick478DepthDebugProgressMessage(),
+    }
+    renderQuick478DepthDebug()
+  }
 }
 interface SearchWorkerContext {
   settings: SearchSettings
@@ -3138,6 +3146,10 @@ function startSearchWorker(context: SearchWorkerContext): void {
     basePoints: context.base8Points2DSummary.points,
     frames: createWorkerFrames(context.selected.frames),
     settings: context.settings,
+    chunkSize:
+      state.quick478DepthDebug.status === "running"
+        ? QUICK_478_DEPTH_DEBUG_WORKER_CHUNK_SIZE
+        : undefined,
   })
 }
 
@@ -4193,10 +4205,18 @@ function runQuick478DepthHardRejectDebug(): void {
   writeSelectValue("bucket-target-preset-select", QUICK_478_DEPTH_DEBUG_SETTINGS.bucketPreset)
   renderQuick478DepthDebug()
   setButtons()
-  startAutoSequence(
-    findAutoSequence(QUICK_478_DEPTH_DEBUG_SETTINGS.autoSearchSequence),
-    findBucketTargetPreset(QUICK_478_DEPTH_DEBUG_SETTINGS.bucketPreset),
-  )
+  try {
+    startAutoSequence(
+      findAutoSequence(QUICK_478_DEPTH_DEBUG_SETTINGS.autoSearchSequence),
+      findBucketTargetPreset(QUICK_478_DEPTH_DEBUG_SETTINGS.bucketPreset),
+    )
+    renderQuick478DepthDebug()
+  } catch (error) {
+    completeQuick478DepthDebug(
+      "error",
+      error instanceof Error ? error.message : String(error),
+    )
+  }
 }
 
 function createQuick478DepthPrototypeSettings(): Depth478PrototypeResult["settings"] {

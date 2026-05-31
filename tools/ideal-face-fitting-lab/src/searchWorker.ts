@@ -553,6 +553,7 @@ async function runSearch(message: WorkerStartMessage): Promise<void> {
 
   const processChunk = (): void => {
     let processedInChunk = 0
+    let sourceExhausted = false
 
     while (
       processedCandidateCount < estimatedCandidateCount &&
@@ -561,6 +562,7 @@ async function runSearch(message: WorkerStartMessage): Promise<void> {
     ) {
       const candidate = candidateSource.next()
       if (!candidate) {
+        sourceExhausted = true
         break
       }
       const result = evaluateCandidate(
@@ -614,7 +616,7 @@ async function runSearch(message: WorkerStartMessage): Promise<void> {
       rejectedCandidateCount,
     })
 
-    if (processedCandidateCount >= estimatedCandidateCount) {
+    if (sourceExhausted || processedCandidateCount >= estimatedCandidateCount) {
       const rawRanking = toRankingEntries(rawTopResults)
       const rejectedWithRank = attachOriginalRanksToRejectedCandidates(rejectedCandidates, rawRanking)
       const nearestRejectedWithRank = nearestRejectedCandidate
