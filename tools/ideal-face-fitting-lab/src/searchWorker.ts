@@ -17,6 +17,12 @@ type SemanticPointName =
   | "nose"
   | "mouth"
 
+type SemanticPointId = SemanticPointName
+type DepthRelationAggregation = "mean" | "median"
+type DepthRelationMode = "off" | "debugOnly" | "penalty" | "hardReject"
+type DepthRelationKind = "inFrontOf" | "behind" | "near"
+type DepthRelationSeverity = "ok" | "warning" | "violation"
+
 interface Point2 {
   x: number
   y: number
@@ -64,6 +70,7 @@ interface SearchSettings {
   searchMode: SearchMode
   objectiveMode: ObjectiveMode
   outlierFiltering?: OutlierFilteringSettings
+  depthRelationFiltering?: DepthRelationFilteringSettings
   zMin: number
   zMax: number
   zStep: number
@@ -113,6 +120,35 @@ interface OutlierFilteringSettings {
   absoluteDeltaThreshold: number
   topWorstPercent: number
   applyToObjectiveScore: boolean
+}
+
+interface DepthRelationGroup {
+  id: string
+  label: string
+  pointIds: SemanticPointId[]
+  aggregation: DepthRelationAggregation
+}
+
+interface DepthRelationRule {
+  id: string
+  label: string
+  subjectGroupId: string
+  referenceGroupId: string
+  relation: DepthRelationKind
+  margin: number
+  warningMargin: number
+  weight: number
+  mode: Exclude<DepthRelationMode, "off">
+}
+
+interface DepthRelationFilteringSettings {
+  enabled: boolean
+  mode: DepthRelationMode
+  applyToObjectiveScore: boolean
+  groups: DepthRelationGroup[]
+  rules: DepthRelationRule[]
+  penaltyScale: number
+  maxPenalty: number
 }
 
 interface LocalSearchRange {
@@ -184,12 +220,14 @@ interface CandidateResult extends CandidateDefinition {
   bucketScores: PoseBucketScores
   scoreDebug: CandidateScoreDebug
   objectiveMode: ObjectiveMode
+  objectiveScoreBeforeDepthFilter: number
   objectiveScore: number
   totalScore: number
   sampleCount: number
   warnings: string[]
   perFrameResults: FrameEvaluation[]
   outlierDebug?: CandidateOutlierDebug
+  depthRelationDebug?: DepthRelationDebug
 }
 
 interface CandidateScoreDebug {
@@ -251,10 +289,66 @@ interface CandidateOutlierDebug {
   filteredScores: CandidateScoreSnapshot | null
 }
 
+interface DepthRelationGroupValue {
+  groupId: string
+  label: string
+  pointIds: SemanticPointId[]
+  aggregation: DepthRelationAggregation
+  z: number | null
+}
+
+interface DepthRelationRuleResult {
+  ruleId: string
+  label: string
+  subjectGroupId: string
+  referenceGroupId: string
+  relation: DepthRelationKind
+  subjectZ: number | null
+  referenceZ: number | null
+  margin: number
+  delta: number | null
+  passed: boolean
+  severity: DepthRelationSeverity
+  mode: Exclude<DepthRelationMode, "off">
+  penalty: number
+  reject: boolean
+  explanation: string
+}
+
+interface DepthRelationDebug {
+  settings: DepthRelationFilteringSettings
+  groupValues: Record<string, DepthRelationGroupValue>
+  ruleResults: DepthRelationRuleResult[]
+  violationCount: number
+  hardRejectViolationCount: number
+  penalty: number
+  isRejected: boolean
+}
+
+interface RejectedCandidateSummary {
+  candidateId: string
+  originalRank?: number | null
+  candidate: FittingCandidate8
+  objectiveMode: ObjectiveMode
+  objectiveScoreBeforeDepthFilter: number
+  totalScore: number
+  scoreDebug: CandidateScoreDebug
+  depthRelationDebug: DepthRelationDebug
+  rejectReasons: string[]
+}
+
+interface AnalysisDepthRelationDebug {
+  settings: DepthRelationFilteringSettings
+  bestCandidateDepthRelation?: DepthRelationDebug
+  rejectedCandidates: RejectedCandidateSummary[]
+  rejectedCandidateCount: number
+}
+
 interface RankingEntry {
   rank: number
   candidateId: string
   objectiveMode: ObjectiveMode
+  objectiveScoreBeforeDepthFilter?: number
   objectiveScore: number
   totalScore: number
   bucketScores: PoseBucketScores
@@ -263,6 +357,7 @@ interface RankingEntry {
   weightedSemanticDistance: number
   averageSemanticDistance: number
   sampleCount: number
+  depthRelationDebug?: DepthRelationDebug
 }
 
 interface WorkerStartMessage {
@@ -284,13 +379,17 @@ interface WorkerProgressMessage {
   processedCandidateCount: number
   estimatedCandidateCount: number
   topCandidates: RankingEntry[]
+  rawRanking?: RankingEntry[]
+  depthFilteredRanking?: RankingEntry[]
   bucketRanking: Record<CaptureBucket, RankingEntry[]>
+  rejectedCandidateCount?: number
 }
 
 interface WorkerCompleteMessage extends WorkerProgressMessage {
   type: "complete"
   bestCandidate: CandidateResult | null
   localSearchSummary?: LocalSearchSummary
+  depthRelationDebug: AnalysisDepthRelationDebug
   warnings: string[]
 }
 
@@ -345,6 +444,68 @@ const DEFAULT_OUTLIER_FILTERING_SETTINGS: OutlierFilteringSettings = {
   applyToObjectiveScore: false,
 }
 
+const DEFAULT_DEPTH_RELATION_GROUPS_8: DepthRelationGroup[] = [
+  {
+    id: "noseTip",
+    label: "鼻先",
+    pointIds: ["nose"],
+    aggregation: "median",
+  },
+  {
+    id: "cheeks",
+    label: "左右頬",
+    pointIds: ["leftCheek", "rightCheek"],
+    aggregation: "mean",
+  },
+  {
+    id: "faceCenter",
+    label: "顔中心",
+    pointIds: ["nose", "mouth", "leftEye", "rightEye"],
+    aggregation: "median",
+  },
+  {
+    id: "faceBoundary",
+    label: "顔境界",
+    pointIds: ["leftCheek", "rightCheek", "chin", "headTop"],
+    aggregation: "median",
+  },
+]
+
+const DEFAULT_DEPTH_RELATION_RULES_8: DepthRelationRule[] = [
+  {
+    id: "nose_tip_in_front_of_cheeks",
+    label: "鼻先は左右頬より手前",
+    subjectGroupId: "noseTip",
+    referenceGroupId: "cheeks",
+    relation: "inFrontOf",
+    margin: 0.005,
+    warningMargin: 0,
+    weight: 1,
+    mode: "hardReject",
+  },
+  {
+    id: "face_center_in_front_of_boundary",
+    label: "顔中心は顔境界より手前",
+    subjectGroupId: "faceCenter",
+    referenceGroupId: "faceBoundary",
+    relation: "inFrontOf",
+    margin: 0,
+    warningMargin: 0,
+    weight: 0.5,
+    mode: "debugOnly",
+  },
+]
+
+const DEFAULT_DEPTH_RELATION_FILTERING_SETTINGS: DepthRelationFilteringSettings = {
+  enabled: true,
+  mode: "debugOnly",
+  applyToObjectiveScore: false,
+  groups: DEFAULT_DEPTH_RELATION_GROUPS_8,
+  rules: DEFAULT_DEPTH_RELATION_RULES_8,
+  penaltyScale: 1,
+  maxPenalty: 0.05,
+}
+
 const BUCKETS: CaptureBucket[] = [
   "front",
   "yawPositive",
@@ -381,8 +542,11 @@ async function runSearch(message: WorkerStartMessage): Promise<void> {
   const estimatedCandidateCount = candidateSource.estimatedCandidateCount
   const chunkSize = Math.max(1, Math.floor(message.chunkSize ?? DEFAULT_CHUNK_SIZE))
   let processedCandidateCount = 0
+  let rejectedCandidateCount = 0
+  const rawTopResults: CandidateResult[] = []
   const topResults: CandidateResult[] = []
   const bucketTopResults = emptyBucketResults()
+  const rejectedCandidates: RejectedCandidateSummary[] = []
   const warnings = new Set<string>()
 
   const processChunk = (): void => {
@@ -403,12 +567,20 @@ async function runSearch(message: WorkerStartMessage): Promise<void> {
         message.frames,
         message.settings,
       )
-      candidateSource.afterEvaluate(result)
       for (const warning of result.warnings) {
         warnings.add(warning)
       }
-      insertTopResult(topResults, result, message.settings.topN, message.settings.objectiveMode)
-      insertBucketTopResults(bucketTopResults, result, message.settings.topN)
+      insertRawTopResult(rawTopResults, result, message.settings.topN)
+      if (isDepthRelationRejected(result)) {
+        rejectedCandidateCount += 1
+        if (rejectedCandidates.length < 20 && result.depthRelationDebug) {
+          rejectedCandidates.push(toRejectedCandidateSummary(result))
+        }
+      } else {
+        insertTopResult(topResults, result, message.settings.topN, message.settings.objectiveMode)
+        insertBucketTopResults(bucketTopResults, result, message.settings.topN)
+      }
+      candidateSource.afterEvaluate(result)
 
       processedCandidateCount += 1
       processedInChunk += 1
@@ -428,18 +600,31 @@ async function runSearch(message: WorkerStartMessage): Promise<void> {
       processedCandidateCount,
       estimatedCandidateCount,
       topCandidates: toRankingEntries(topResults),
+      rawRanking: toRankingEntries(rawTopResults),
+      depthFilteredRanking: toRankingEntries(topResults),
       bucketRanking: toBucketRanking(bucketTopResults),
+      rejectedCandidateCount,
     })
 
     if (processedCandidateCount >= estimatedCandidateCount) {
+      const rawRanking = toRankingEntries(rawTopResults)
+      const rejectedWithRank = attachOriginalRanksToRejectedCandidates(rejectedCandidates, rawRanking)
       postMessageToMain({
         type: "complete",
         processedCandidateCount,
         estimatedCandidateCount,
         topCandidates: toRankingEntries(topResults),
+        rawRanking,
+        depthFilteredRanking: toRankingEntries(topResults),
         bucketRanking: toBucketRanking(bucketTopResults),
         bestCandidate: topResults[0] ?? null,
         localSearchSummary: candidateSource.localSearchSummary(),
+        depthRelationDebug: {
+          settings: normalizeDepthRelationFilteringSettings(message.settings.depthRelationFiltering),
+          bestCandidateDepthRelation: topResults[0]?.depthRelationDebug,
+          rejectedCandidates: rejectedWithRank,
+          rejectedCandidateCount,
+        },
         warnings: Array.from(warnings),
       })
       return
@@ -541,6 +726,9 @@ function createLocalOneDimensionalCandidateSource(settings: SearchSettings): Can
       return createCandidateDefinitionFromCandidate(nextIndex++, candidate)
     },
     afterEvaluate: (result) => {
+      if (!isSelectableCandidate(result)) {
+        return
+      }
       if (!bestResult || isBetterObjectiveResult(result, bestResult, settings.objectiveMode)) {
         bestResult = result
       }
@@ -667,9 +855,10 @@ function createCoordinateDescentCandidateSource(settings: SearchSettings): Candi
         return
       }
       if (
-        !activeStep.bestResult ||
+        isSelectableCandidate(result) &&
+        (!activeStep.bestResult ||
         isBetterObjectiveResult(result, activeStep.bestResult, settings.objectiveMode)
-      ) {
+      )) {
         activeStep.bestResult = result
       }
       valueIndex += 1
@@ -762,6 +951,37 @@ function insertTopResult(
   }
 }
 
+function insertRawTopResult(
+  results: CandidateResult[],
+  next: CandidateResult,
+  limit: number,
+): void {
+  insertResultByScore(results, next, limit, (candidate) => candidate.objectiveScoreBeforeDepthFilter)
+}
+
+function insertResultByScore(
+  results: CandidateResult[],
+  next: CandidateResult,
+  limit: number,
+  score: (candidate: CandidateResult) => number,
+): void {
+  const nextKey = buildCandidateKey(next)
+  const existingIndex = results.findIndex((result) => buildCandidateKey(result) === nextKey)
+  if (existingIndex >= 0) {
+    if (score(next) < score(results[existingIndex])) {
+      results[existingIndex] = next
+    }
+    results.sort((a, b) => score(a) - score(b))
+    return
+  }
+
+  results.push(next)
+  results.sort((a, b) => score(a) - score(b))
+  if (results.length > limit) {
+    results.length = limit
+  }
+}
+
 function isBetterObjectiveResult(
   next: CandidateResult,
   current: CandidateResult,
@@ -770,6 +990,14 @@ function isBetterObjectiveResult(
   const nextScore = getObjectiveScore(next, objectiveMode)
   const currentScore = getObjectiveScore(current, objectiveMode)
   return nextScore < currentScore
+}
+
+function isSelectableCandidate(candidate: CandidateResult): boolean {
+  return !isDepthRelationRejected(candidate)
+}
+
+function isDepthRelationRejected(candidate: CandidateResult): boolean {
+  return Boolean(candidate.depthRelationDebug?.isRejected)
 }
 
 function insertBucketTopResults(
@@ -857,7 +1085,12 @@ function evaluateCandidate(
       ? outlierDebug.filteredScores
       : { totalScore, bucketScores, scoreDebug }
   const objectiveMode = normalizeObjectiveMode(settings.objectiveMode)
-  const objectiveScore = getObjectiveScore(scoreForObjective, objectiveMode)
+  const objectiveScoreBeforeDepthFilter = getObjectiveScore(scoreForObjective, objectiveMode)
+  const depthRelationDebug = buildCandidateDepthRelationDebug(candidate, settings.depthRelationFiltering)
+  const objectiveScore =
+    shouldApplyDepthRelationPenalty(depthRelationDebug)
+      ? round(objectiveScoreBeforeDepthFilter + depthRelationDebug.penalty)
+      : objectiveScoreBeforeDepthFilter
 
   return {
     ...candidate,
@@ -867,12 +1100,14 @@ function evaluateCandidate(
     bucketScores,
     scoreDebug,
     objectiveMode,
+    objectiveScoreBeforeDepthFilter: round(objectiveScoreBeforeDepthFilter),
     objectiveScore,
     totalScore,
     sampleCount: perFrameResults.length,
     warnings: Array.from(new Set(perFrameResults.flatMap((result) => result.warnings))),
     perFrameResults,
     outlierDebug,
+    depthRelationDebug,
   }
 }
 
@@ -1207,6 +1442,196 @@ function shouldApplyFilteredObjective(settings?: OutlierFilteringSettings): bool
   )
 }
 
+function buildCandidateDepthRelationDebug(
+  candidate: FittingCandidate8,
+  sourceSettings?: DepthRelationFilteringSettings,
+): DepthRelationDebug | undefined {
+  const settings = normalizeDepthRelationFilteringSettings(sourceSettings)
+  if (!settings.enabled || settings.mode === "off") {
+    return undefined
+  }
+
+  const groupValues = Object.fromEntries(
+    settings.groups.map((group) => [group.id, buildDepthRelationGroupValue(group, candidate)]),
+  ) as Record<string, DepthRelationGroupValue>
+  const rawRuleResults = settings.rules.map((rule) =>
+    evaluateDepthRelationRule(rule, groupValues, settings),
+  )
+  const rawPenalty = rawRuleResults.reduce((total, result) => total + result.penalty, 0)
+  const penalty = round(Math.min(settings.maxPenalty, rawPenalty))
+  const ruleResults = rawRuleResults.map((result) => ({
+    ...result,
+    penalty: round(result.penalty),
+  }))
+  const violationCount = ruleResults.filter((result) => result.severity === "violation").length
+  const hardRejectViolationCount = ruleResults.filter(
+    (result) => result.severity === "violation" && result.mode === "hardReject",
+  ).length
+  const isRejected = Boolean(
+    settings.applyToObjectiveScore &&
+      settings.mode === "hardReject" &&
+      ruleResults.some((result) => result.reject),
+  )
+
+  return {
+    settings,
+    groupValues,
+    ruleResults,
+    violationCount,
+    hardRejectViolationCount,
+    penalty,
+    isRejected,
+  }
+}
+
+function buildDepthRelationGroupValue(
+  group: DepthRelationGroup,
+  candidate: FittingCandidate8,
+): DepthRelationGroupValue {
+  const values = group.pointIds
+    .map((pointId) => candidate.zByPointId[pointId])
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value))
+  const z = group.aggregation === "median" ? median(values) : average(values)
+  return {
+    groupId: group.id,
+    label: group.label,
+    pointIds: [...group.pointIds],
+    aggregation: group.aggregation,
+    z: roundNullable(z),
+  }
+}
+
+function evaluateDepthRelationRule(
+  rule: DepthRelationRule,
+  groupValues: Record<string, DepthRelationGroupValue>,
+  settings: DepthRelationFilteringSettings,
+): DepthRelationRuleResult {
+  const subjectZ = groupValues[rule.subjectGroupId]?.z ?? null
+  const referenceZ = groupValues[rule.referenceGroupId]?.z ?? null
+  const delta = subjectZ === null || referenceZ === null ? null : round(subjectZ - referenceZ)
+  const effectiveMode = getEffectiveDepthRelationRuleMode(settings.mode, rule.mode)
+  const passed = delta === null ? false : isDepthRelationPassed(rule.relation, delta, rule.margin)
+  const severity = delta === null
+    ? "violation"
+    : getDepthRelationSeverity(rule.relation, delta, rule.margin, rule.warningMargin, passed)
+  const violationDistance = severity === "violation" && delta !== null
+    ? calculateDepthRelationViolationDistance(rule.relation, delta, rule.margin)
+    : 0
+  const penalty =
+    effectiveMode === "penalty" || effectiveMode === "hardReject"
+      ? Math.max(0, violationDistance) * Math.max(0, rule.weight) * settings.penaltyScale
+      : 0
+  const reject =
+    settings.applyToObjectiveScore &&
+    settings.mode === "hardReject" &&
+    effectiveMode === "hardReject" &&
+    severity === "violation"
+
+  return {
+    ruleId: rule.id,
+    label: rule.label,
+    subjectGroupId: rule.subjectGroupId,
+    referenceGroupId: rule.referenceGroupId,
+    relation: rule.relation,
+    subjectZ,
+    referenceZ,
+    margin: round(rule.margin),
+    delta,
+    passed,
+    severity,
+    mode: effectiveMode,
+    penalty,
+    reject,
+    explanation: buildDepthRelationExplanation(rule, subjectZ, referenceZ, delta, passed),
+  }
+}
+
+function getEffectiveDepthRelationRuleMode(
+  globalMode: DepthRelationMode,
+  ruleMode: Exclude<DepthRelationMode, "off">,
+): Exclude<DepthRelationMode, "off"> {
+  if (globalMode === "off" || globalMode === "debugOnly" || ruleMode === "debugOnly") {
+    return "debugOnly"
+  }
+  if (globalMode === "penalty") {
+    return "penalty"
+  }
+  return ruleMode
+}
+
+function isDepthRelationPassed(
+  relation: DepthRelationKind,
+  delta: number,
+  margin: number,
+): boolean {
+  if (relation === "inFrontOf") {
+    return delta < -margin
+  }
+  if (relation === "behind") {
+    return delta > margin
+  }
+  return Math.abs(delta) <= margin
+}
+
+function getDepthRelationSeverity(
+  relation: DepthRelationKind,
+  delta: number,
+  margin: number,
+  warningMargin: number,
+  passed: boolean,
+): DepthRelationSeverity {
+  if (!passed) {
+    return "violation"
+  }
+  if (warningMargin <= 0) {
+    return "ok"
+  }
+  if (relation === "inFrontOf") {
+    return delta >= -margin - warningMargin ? "warning" : "ok"
+  }
+  if (relation === "behind") {
+    return delta <= margin + warningMargin ? "warning" : "ok"
+  }
+  return Math.abs(delta) >= Math.max(0, margin - warningMargin) ? "warning" : "ok"
+}
+
+function calculateDepthRelationViolationDistance(
+  relation: DepthRelationKind,
+  delta: number,
+  margin: number,
+): number {
+  if (relation === "inFrontOf") {
+    return delta + margin
+  }
+  if (relation === "behind") {
+    return margin - delta
+  }
+  return Math.abs(delta) - margin
+}
+
+function buildDepthRelationExplanation(
+  rule: DepthRelationRule,
+  subjectZ: number | null,
+  referenceZ: number | null,
+  delta: number | null,
+  passed: boolean,
+): string {
+  if (subjectZ === null || referenceZ === null || delta === null) {
+    return `${rule.label}: group z を計算できませんでした。`
+  }
+  const status = passed ? "通過" : "違反"
+  return `${rule.label}: subjectZ=${round(subjectZ)}, referenceZ=${round(referenceZ)}, delta=${round(delta)} (${status})`
+}
+
+function shouldApplyDepthRelationPenalty(debug?: DepthRelationDebug): boolean {
+  return Boolean(
+    debug?.settings.enabled &&
+      debug.settings.mode === "penalty" &&
+      debug.settings.applyToObjectiveScore &&
+      debug.penalty > 0,
+  )
+}
+
 function normalizeOutlierFilteringSettings(
   settings?: OutlierFilteringSettings,
 ): OutlierFilteringSettings {
@@ -1226,6 +1651,79 @@ function normalizeOutlierFilteringSettings(
       Math.min(100, settings?.topWorstPercent ?? DEFAULT_OUTLIER_FILTERING_SETTINGS.topWorstPercent),
     ),
   }
+}
+
+function normalizeDepthRelationFilteringSettings(
+  settings?: DepthRelationFilteringSettings,
+): DepthRelationFilteringSettings {
+  const groups = normalizeDepthRelationGroups(settings?.groups)
+  return {
+    ...DEFAULT_DEPTH_RELATION_FILTERING_SETTINGS,
+    ...(settings ?? {}),
+    mode: normalizeDepthRelationMode(settings?.mode),
+    applyToObjectiveScore: Boolean(
+      settings?.applyToObjectiveScore ?? DEFAULT_DEPTH_RELATION_FILTERING_SETTINGS.applyToObjectiveScore,
+    ),
+    groups,
+    rules: normalizeDepthRelationRules(settings?.rules, groups),
+    penaltyScale: Math.max(
+      0,
+      settings?.penaltyScale ?? DEFAULT_DEPTH_RELATION_FILTERING_SETTINGS.penaltyScale,
+    ),
+    maxPenalty: Math.max(
+      0,
+      settings?.maxPenalty ?? DEFAULT_DEPTH_RELATION_FILTERING_SETTINGS.maxPenalty,
+    ),
+  }
+}
+
+function normalizeDepthRelationMode(value: string | undefined): DepthRelationMode {
+  return value === "off" || value === "penalty" || value === "hardReject" ? value : "debugOnly"
+}
+
+function normalizeDepthRelationGroups(groups?: DepthRelationGroup[]): DepthRelationGroup[] {
+  const source = Array.isArray(groups) && groups.length > 0
+    ? groups
+    : DEFAULT_DEPTH_RELATION_GROUPS_8
+  return source.map((group) => ({
+    id: String(group.id),
+    label: String(group.label),
+    pointIds: group.pointIds.filter((pointId): pointId is SemanticPointId =>
+      SEMANTIC_POINT_NAMES.includes(pointId),
+    ),
+    aggregation: group.aggregation === "mean" ? "mean" : "median",
+  }))
+}
+
+function normalizeDepthRelationRules(
+  rules: DepthRelationRule[] | undefined,
+  groups: DepthRelationGroup[],
+): DepthRelationRule[] {
+  const groupIds = new Set(groups.map((group) => group.id))
+  const source = Array.isArray(rules) && rules.length > 0
+    ? rules
+    : DEFAULT_DEPTH_RELATION_RULES_8
+  return source
+    .filter((rule) => groupIds.has(rule.subjectGroupId) && groupIds.has(rule.referenceGroupId))
+    .map((rule) => ({
+      id: String(rule.id),
+      label: String(rule.label),
+      subjectGroupId: String(rule.subjectGroupId),
+      referenceGroupId: String(rule.referenceGroupId),
+      relation: normalizeDepthRelationKind(rule.relation),
+      margin: Math.max(0, Number.isFinite(rule.margin) ? rule.margin : 0),
+      warningMargin: Math.max(0, Number.isFinite(rule.warningMargin) ? rule.warningMargin : 0),
+      weight: Math.max(0, Number.isFinite(rule.weight) ? rule.weight : 1),
+      mode: normalizeDepthRelationRuleMode(rule.mode),
+    }))
+}
+
+function normalizeDepthRelationKind(value: string): DepthRelationKind {
+  return value === "behind" || value === "near" ? value : "inFrontOf"
+}
+
+function normalizeDepthRelationRuleMode(value: string): Exclude<DepthRelationMode, "off"> {
+  return value === "penalty" || value === "hardReject" ? value : "debugOnly"
 }
 
 function roundScoreSnapshot(snapshot: CandidateScoreSnapshot): CandidateScoreSnapshot {
@@ -1253,9 +1751,20 @@ function findWorstPoint(perPointError: Record<SemanticPointName, number>): {
 }
 
 function getObjectiveScore(
-  result: { totalScore: number; scoreDebug: CandidateScoreDebug },
+  result: {
+    totalScore: number
+    scoreDebug: CandidateScoreDebug
+    objectiveMode?: ObjectiveMode
+    objectiveScore?: number
+  },
   objectiveMode: ObjectiveMode,
 ): number {
+  if (
+    result.objectiveMode === normalizeObjectiveMode(objectiveMode) &&
+    typeof result.objectiveScore === "number"
+  ) {
+    return result.objectiveScore
+  }
   switch (normalizeObjectiveMode(objectiveMode)) {
     case "totalScore":
       return result.totalScore
@@ -1298,6 +1807,7 @@ function toRankingEntry(candidate: CandidateResult, rank: number): RankingEntry 
     rank,
     candidateId: candidate.candidateId,
     objectiveMode: candidate.objectiveMode,
+    objectiveScoreBeforeDepthFilter: round(candidate.objectiveScoreBeforeDepthFilter),
     objectiveScore: round(candidate.objectiveScore),
     totalScore: round(candidate.totalScore),
     bucketScores: roundRecord(candidate.bucketScores),
@@ -1310,7 +1820,35 @@ function toRankingEntry(candidate: CandidateResult, rank: number): RankingEntry 
     weightedSemanticDistance: round(candidate.weightedSemanticDistance),
     averageSemanticDistance: round(candidate.averageSemanticDistance),
     sampleCount: candidate.sampleCount,
+    depthRelationDebug: candidate.depthRelationDebug,
   }
+}
+
+function toRejectedCandidateSummary(candidate: CandidateResult): RejectedCandidateSummary {
+  return {
+    candidateId: candidate.candidateId,
+    originalRank: null,
+    candidate: toFittingCandidate(candidate),
+    objectiveMode: candidate.objectiveMode,
+    objectiveScoreBeforeDepthFilter: round(candidate.objectiveScoreBeforeDepthFilter),
+    totalScore: round(candidate.totalScore),
+    scoreDebug: roundScoreDebug(candidate.scoreDebug),
+    depthRelationDebug: candidate.depthRelationDebug!,
+    rejectReasons: candidate.depthRelationDebug?.ruleResults
+      .filter((result) => result.reject)
+      .map((result) => result.explanation) ?? [],
+  }
+}
+
+function attachOriginalRanksToRejectedCandidates(
+  rejectedCandidates: RejectedCandidateSummary[],
+  rawRanking: RankingEntry[],
+): RejectedCandidateSummary[] {
+  const ranks = new Map(rawRanking.map((entry) => [entry.candidateId, entry.rank]))
+  return rejectedCandidates.map((candidate) => ({
+    ...candidate,
+    originalRank: ranks.get(candidate.candidateId) ?? null,
+  }))
 }
 
 function toBucketRankingEntry(
