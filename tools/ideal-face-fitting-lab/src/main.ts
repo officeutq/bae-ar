@@ -296,6 +296,7 @@ type ObjectiveMode =
   | "maxBucketScore"
   | "pitchAverageScore"
   | "yawAverageScore"
+type LastRunType = "autoSequence" | "singleSearch" | "stabilityCheck"
 type OutlierFilteringMode = "off" | "debugOnly" | "excludeFromInference"
 type OutlierFilteringMethod = "medianMultiplier" | "medianAbsoluteDelta" | "topWorstPercent"
 type LocalSearchParameter = "pivotZ" | "rotationCenter.y" | "rotationCenter.z" | `${SemanticPointName}.z`
@@ -829,6 +830,7 @@ interface AnalysisResult {
   schemaVersion: "ideal_face_fitting_lab_analysis_v1"
   analysisVersion: "eight_point_grid_search_v1"
   generatedAt: string
+  lastRunType: LastRunType
   sourceSummary: SourceSummary
   selectedFrameSummary: SelectedFrameSummary
   base8Points2DSummary: Base8Points2DSummary
@@ -865,6 +867,7 @@ interface SummaryAnalysisResult {
   schemaVersion: "ideal_face_fitting_lab_analysis_summary_v1"
   analysisVersion: "eight_point_grid_search_v1"
   generatedAt: string
+  lastRunType: LastRunType
   sourceSummary: SourceSummary
   selectedFrameSummary: SelectedFrameSummary
   base8Points2DSummary: Base8Points2DSummary
@@ -889,6 +892,8 @@ interface SummaryAnalysisResult {
   rotationCenterDebug?: RotationCenterDebug
   outlierFrameDebug?: AnalysisOutlierFrameDebug
   autoSequenceSummary?: AutoSequenceSummary
+  autoSequenceSummaryFinalCandidate?: FittingCandidate8 | null
+  autoSequenceStepCount: number
   candidateStabilityDebug?: CandidateStabilityDebug
   warnings: string[]
 }
@@ -2020,6 +2025,11 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
         </section>
 
         <section class="panel">
+          <h2>Result Summary</h2>
+          <div id="result-summary" class="summary-grid"></div>
+        </section>
+
+        <section class="panel">
           <h2>探索進捗</h2>
           <div id="search-progress" class="summary-grid"></div>
         </section>
@@ -2052,7 +2062,12 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
         </section>
 
         <section class="panel">
-          <h2>best candidate</h2>
+          <h2>Auto Sequence result</h2>
+          <div id="auto-sequence-result" class="summary-grid"></div>
+        </section>
+
+        <section class="panel">
+          <h2>Last single search result</h2>
           <div id="best-candidate" class="summary-grid"></div>
         </section>
 
@@ -2310,6 +2325,7 @@ function runAnalysis(settingsOverride?: SearchSettings): void {
       schemaVersion: "ideal_face_fitting_lab_analysis_v1",
       analysisVersion: "eight_point_grid_search_v1",
       generatedAt: new Date().toISOString(),
+      lastRunType: state.stabilityCheck.status === "running" ? "stabilityCheck" : "singleSearch",
       sourceSummary,
       selectedFrameSummary: selected.summary,
       base8Points2DSummary,
@@ -2508,6 +2524,7 @@ function completeSearchFromWorker(context: SearchWorkerContext, message: Record<
     schemaVersion: "ideal_face_fitting_lab_analysis_v1",
     analysisVersion: "eight_point_grid_search_v1",
     generatedAt: new Date().toISOString(),
+    lastRunType: "singleSearch",
     sourceSummary: context.sourceSummary,
     selectedFrameSummary: context.selected.summary,
     base8Points2DSummary: context.base8Points2DSummary,
@@ -3767,6 +3784,7 @@ function finishAutoSequence(
   message: string,
   analysis: AnalysisResult | null = null,
 ): void {
+  const isStabilityCheckRun = state.stabilityCheck.status === "running"
   state.autoSequence = {
     ...state.autoSequence,
     status,
@@ -3776,6 +3794,8 @@ function finishAutoSequence(
   const summary = buildAutoSequenceSummary(status)
   const summaryAnalysis = analysis ?? state.autoSequenceLastAnalysis ?? state.analysis
   if (summaryAnalysis) {
+    summaryAnalysis.lastRunType =
+      isStabilityCheckRun && status === "completed" ? "stabilityCheck" : "autoSequence"
     summaryAnalysis.autoSequenceSummary = summary
     if (status === "completed") {
       appendStabilityHistoryFromAnalysis(summaryAnalysis)
@@ -4843,6 +4863,7 @@ function createSummaryAnalysis(analysis: AnalysisResult): SummaryAnalysisResult 
     schemaVersion: "ideal_face_fitting_lab_analysis_summary_v1",
     analysisVersion: analysis.analysisVersion,
     generatedAt: analysis.generatedAt,
+    lastRunType: analysis.lastRunType,
     sourceSummary: analysis.sourceSummary,
     selectedFrameSummary: analysis.selectedFrameSummary,
     base8Points2DSummary: analysis.base8Points2DSummary,
@@ -4891,6 +4912,8 @@ function createSummaryAnalysis(analysis: AnalysisResult): SummaryAnalysisResult 
     rotationCenterDebug: analysis.rotationCenterDebug,
     outlierFrameDebug: analysis.outlierFrameDebug,
     autoSequenceSummary: analysis.autoSequenceSummary,
+    autoSequenceSummaryFinalCandidate: analysis.autoSequenceSummary?.finalCandidate ?? null,
+    autoSequenceStepCount: analysis.autoSequenceSummary?.steps.length ?? 0,
     candidateStabilityDebug: analysis.candidateStabilityDebug,
     warnings: analysis.warnings,
   }
@@ -4952,6 +4975,8 @@ function renderSourceOnly(): void {
   getElement("current8-bucket-summary").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
   getElement("current8-frame-table").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
   getElement("ranking-table").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
+  getElement("result-summary").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
+  getElement("auto-sequence-result").innerHTML = `<p class="empty">Auto Sequence 実行後に表示します。</p>`
   getElement("best-candidate").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
   renderOutlierFrameDebug(null, readSettings().outlierFiltering)
   renderProjectionSignDebug(null)
@@ -4997,6 +5022,7 @@ function renderAnalysis(): void {
     ["processed candidates", String(analysis.processedCandidateCount)],
     ["estimated candidates", String(analysis.estimatedCandidateCount)],
   ])
+  getElement("result-summary").innerHTML = renderResultSummary(analysis)
   getElement("local-search-summary").innerHTML = renderLocalSearchSummary(analysis)
   getElement("base-summary").innerHTML = renderStatusItems([
     ["source frame count", String(analysis.base8Points2DSummary.sourceFrameCount)],
@@ -5022,6 +5048,7 @@ function renderAnalysis(): void {
     analysis.current8MetricsByFrame,
   )
   getElement("ranking-table").innerHTML = renderRankingTable(analysis.topCandidates.slice(0, 20))
+  getElement("auto-sequence-result").innerHTML = renderAutoSequenceResult(analysis)
   getElement("best-candidate").innerHTML = analysis.bestCandidate
     ? renderStatusItems([
         ["candidateId", analysis.bestCandidate.candidateId],
@@ -5094,6 +5121,59 @@ function renderAnalysis(): void {
   getElement("json-preview").textContent = JSON.stringify(createSummaryAnalysis(analysis), null, 2)
   renderAutoSequenceStatus()
   setButtons()
+}
+
+function renderResultSummary(analysis: AnalysisResult): string {
+  const autoSummary = analysis.autoSequenceSummary
+  const autoFinalCandidate = autoSummary?.finalCandidate ?? null
+  const isAutoResult =
+    analysis.lastRunType === "autoSequence" || analysis.lastRunType === "stabilityCheck"
+  return renderStatusItems([
+    ["lastRunType", analysis.lastRunType],
+    [
+      "primary result",
+      isAutoResult
+        ? "autoSequenceSummary.finalCandidate"
+        : "bestCandidate / last single search",
+    ],
+    ["autoSequenceStepCount", String(autoSummary?.steps.length ?? 0)],
+    ["autoSequenceName", autoSummary?.sequenceName ?? "-"],
+    ["autoSequenceStatus", autoSummary?.status ?? "-"],
+    ["autoSequenceFinalObjectiveScore", formatNumber(autoSummary?.finalObjectiveScore)],
+    [
+      "autoSequenceSummary.finalCandidate",
+      autoFinalCandidate ? formatCandidateCompact(autoFinalCandidate) : "-",
+    ],
+    [
+      "last single search bestCandidate",
+      analysis.bestCandidate ? formatCandidateCompact(analysis.bestCandidate) : "-",
+    ],
+    [
+      "note",
+      isAutoResult
+        ? "Auto Sequence 実行結果は autoSequenceSummary を確認してください。top-level の searchMode / localSearchSummary は最後に実行された単発 step の状態です。"
+        : "単発検索結果です。",
+    ],
+  ])
+}
+
+function renderAutoSequenceResult(analysis: AnalysisResult): string {
+  const summary = analysis.autoSequenceSummary
+  if (!summary) {
+    return `<p class="empty">Auto Sequence result はまだありません。</p>`
+  }
+  const finalStep = summary.steps.at(-1)
+  return renderStatusItems([
+    ["sequenceName", summary.sequenceName],
+    ["status", summary.status],
+    ["stepCount", String(summary.steps.length)],
+    ["finalObjectiveMode", summary.finalObjectiveMode ?? "-"],
+    ["finalObjectiveScore", formatNumber(summary.finalObjectiveScore)],
+    ["finalCandidate", summary.finalCandidate ? formatCandidateCompact(summary.finalCandidate) : "-"],
+    ["final step preset", finalStep?.presetName ?? "-"],
+    ["final step totalScore", formatNumber(finalStep?.totalScore)],
+    ["final step maxBucketScore", formatNumber(finalStep?.scoreDebug?.maxBucketScore)],
+  ])
 }
 
 function renderSearchProgress(): void {
@@ -5815,6 +5895,8 @@ function renderEmptyState(): void {
   getElement("current8-bucket-summary").innerHTML = `<p class="empty">未解析です。</p>`
   getElement("current8-frame-table").innerHTML = `<p class="empty">未解析です。</p>`
   getElement("ranking-table").innerHTML = `<p class="empty">未解析です。</p>`
+  getElement("result-summary").innerHTML = `<p class="empty">未解析です。</p>`
+  getElement("auto-sequence-result").innerHTML = `<p class="empty">未解析です。</p>`
   getElement("best-candidate").innerHTML = `<p class="empty">未解析です。</p>`
   renderOutlierFrameDebug(null, DEFAULT_OUTLIER_FILTERING_SETTINGS)
   renderProjectionSignDebug(null)
