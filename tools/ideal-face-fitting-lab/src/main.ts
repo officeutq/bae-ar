@@ -28,6 +28,7 @@ type DepthRelationSeverity = "ok" | "warning" | "violation"
 type PoseBucket = CaptureBucket
 type Depth478CandidateSource = "autoSequenceFinalCandidate" | "bestCandidate"
 type Depth478GenerationMethod = "inverseDistanceWeighting" | "canonicalDepthBased"
+type PerLandmarkZSearchTargetIndices = "all478" | "canonical468Only"
 
 interface Point2 {
   x: number
@@ -928,6 +929,54 @@ interface CanonicalDepthBasedDebug {
   }
 }
 
+interface PerLandmarkZSearchSettings {
+  enabled: boolean
+  targetIndices: PerLandmarkZSearchTargetIndices
+  zRange: number
+  zStep: number
+  anchorZRange: number
+  anchorZStep: number
+  canonicalDeviationPenaltyWeight: number
+  maxFrames?: number
+}
+
+interface PerLandmarkZSearchDebugRow {
+  index: number
+  baseZ: number
+  bestZ: number
+  deltaZ: number
+  errorBefore: number
+  errorAfter: number
+  bestScore: number
+  candidateCount: number
+}
+
+interface PerLandmarkZSearchDebug {
+  enabled: boolean
+  targetIndices: PerLandmarkZSearchTargetIndices
+  usedOutlierFilteredFrames: boolean
+  settings: {
+    zRange: number
+    zStep: number
+    anchorZRange: number
+    anchorZStep: number
+    canonicalDeviationPenaltyWeight: number
+    maxFrames?: number
+  }
+  summary: {
+    optimizedLandmarkCount: number
+    totalEvaluatedCandidates: number
+    averageBestDeltaZ: number
+    maxBestDeltaZ: number
+    averageErrorBefore: number
+    averageErrorAfter: number
+  }
+  worstImprovedLandmarks: PerLandmarkZSearchDebugRow[]
+  largestDeltaLandmarks: PerLandmarkZSearchDebugRow[]
+  sampleRows: PerLandmarkZSearchDebugRow[]
+  fullPerLandmarkRows?: PerLandmarkZSearchDebugRow[]
+}
+
 interface DepthGroupCorrection {
   groupId: string
   label: string
@@ -967,6 +1016,7 @@ interface Generated478DepthCandidate {
     averageZ: number
   }
   canonicalDepthBasedDebug?: CanonicalDepthBasedDebug
+  perLandmarkZSearchDebug?: PerLandmarkZSearchDebug
 }
 
 interface ProjectionEvaluation478 {
@@ -1028,6 +1078,9 @@ interface Depth478CandidateComparisonEntry {
   candidateId: string
   source8CandidateId?: string | null
   depth478GenerationMethod: Depth478GenerationMethod
+  perLandmarkZSearchEnabled: boolean
+  averageProjectionErrorBeforePerLandmark: number | null
+  averageProjectionErrorAfterPerLandmark: number | null
   totalProjectionError: number | null
   maxBucketScore: number | null
   depthRelationViolationCount: number | null
@@ -1044,6 +1097,7 @@ interface Depth478PrototypeResult {
     interpolation: DepthInterpolationSettings
     groupCorrections: DepthGroupCorrection[]
     smoothnessThreshold: number
+    perLandmarkZSearch: PerLandmarkZSearchSettings
   }
   generatedCandidate?: Generated478DepthCandidate
   projectionEvaluation?: ProjectionEvaluation478
@@ -1052,7 +1106,14 @@ interface Depth478PrototypeResult {
   candidateComparison?: Depth478CandidateComparisonEntry[]
 }
 
-type Quick478DepthDebugStatus = "idle" | "running" | "passed" | "rejected" | "noCandidate" | "error"
+type Quick478DepthDebugStatus =
+  | "idle"
+  | "running"
+  | "passed"
+  | "warning"
+  | "rejected"
+  | "noCandidate"
+  | "error"
 
 interface Quick478DepthDebugSummary {
   schemaVersion: "ideal_face_fitting_depth478_quick_debug_v1"
@@ -1067,6 +1128,7 @@ interface Quick478DepthDebugSummary {
     autoSearchSequence: "rotation_center_balanced"
     depthRelationMode: DepthRelationMode
     outlierFilteringEnabled: boolean
+    perLandmarkZSearchEnabled: boolean
     depth478GenerationMethod: Depth478GenerationMethod
     interpolationMethod: DepthInterpolationSettings["method"]
   }
@@ -2188,11 +2250,23 @@ const DEFAULT_DEPTH_478_INTERPOLATION_SETTINGS: DepthInterpolationSettings = {
   zMax: 0.24,
 }
 
+const DEFAULT_PER_LANDMARK_Z_SEARCH_SETTINGS: PerLandmarkZSearchSettings = {
+  enabled: true,
+  targetIndices: "all478",
+  zRange: 0.01,
+  zStep: 0.0005,
+  anchorZRange: 0.005,
+  anchorZStep: 0.0005,
+  canonicalDeviationPenaltyWeight: 0.1,
+}
+
 const CANONICAL_FACE_DEPTH_TEMPLATE =
   canonicalFaceDepthTemplate as unknown as CanonicalFaceDepthTemplateV1
 const CANONICAL_FACE_DEPTH_TEMPLATE_FILE = "canonical-face-depth-template-v1.json" as const
 const CANONICAL_COMPARISON_LANDMARK_COUNT = 468
 const IRIS_DEPTH_FALLBACK_INDICES = [468, 469, 470, 471, 472, 473, 474, 475, 476, 477]
+const SEMANTIC_ANCHOR_LANDMARK_INDICES = new Set([10, 152, 234, 454, 4, 13, 14])
+const PER_LANDMARK_Z_SEARCH_SAMPLE_INDICES = [4, 10, 13, 14, 152, 234, 454]
 
 const DEFAULT_DEPTH_478_SMOOTHNESS_THRESHOLD = 0.03
 const DEPTH_478_NEIGHBOR_COUNT = 4
@@ -2222,6 +2296,10 @@ const QUICK_478_DEPTH_DEBUG_SETTINGS = {
     zMin: -0.24,
     zMax: 0.24,
   } satisfies DepthInterpolationSettings,
+  perLandmarkZSearch: {
+    ...DEFAULT_PER_LANDMARK_Z_SEARCH_SETTINGS,
+    targetIndices: "canonical468Only" as const,
+  },
   smoothnessThreshold: 0.03,
 }
 
@@ -2230,6 +2308,7 @@ const QUICK_478_DEPTH_DEBUG_SETTINGS_SUMMARY = {
   autoSearchSequence: "rotation_center_balanced" as const,
   depthRelationMode: "hardReject" as const,
   depth478GenerationMethod: "canonicalDepthBased" as const,
+  perLandmarkZSearchEnabled: true,
   interpolationMethod: "canonicalDepthBased" as const,
 }
 
@@ -4186,6 +4265,36 @@ function getAnalysisSelectedFrames(analysis: AnalysisResult): NormalizedFrame[] 
   return state.frames.filter((frame) => selectedIds.has(frame.captureId))
 }
 
+function getDepth478EvaluationFrameInput(analysis: AnalysisResult): {
+  frames: NormalizedFrame[]
+  usedOutlierFilteredFrames: boolean
+} {
+  const selectedFrames = getAnalysisSelectedFrames(analysis)
+  const outlierDebug = analysis.outlierFrameDebug?.bestCandidateOutliers
+  if (
+    analysis.searchSettings.outlierFiltering.enabled &&
+    analysis.searchSettings.outlierFiltering.mode === "excludeFromInference" &&
+    outlierDebug?.outlierFrames.length
+  ) {
+    const excludedIds = new Set(
+      outlierDebug.outlierFrames
+        .filter((frame) => frame.excludedFromInference)
+        .map((frame) => frame.captureId),
+    )
+    const filteredFrames = selectedFrames.filter((frame) => !excludedIds.has(frame.captureId))
+    if (filteredFrames.length > 0 && filteredFrames.length < selectedFrames.length) {
+      return {
+        frames: filteredFrames,
+        usedOutlierFilteredFrames: true,
+      }
+    }
+  }
+  return {
+    frames: selectedFrames,
+    usedOutlierFilteredFrames: false,
+  }
+}
+
 function generateDepth478DebugCandidate(): void {
   const analysis = state.analysis
   if (!analysis?.base8Points2DSummary.points) {
@@ -4211,7 +4320,8 @@ function buildDepth478PrototypeFromSource(
   prototypeSettings: Depth478PrototypeResult["settings"],
   previousComparison: Depth478CandidateComparisonEntry[] = [],
 ): Depth478PrototypeResult {
-  const selectedFrames = getAnalysisSelectedFrames(analysis)
+  const frameInput = getDepth478EvaluationFrameInput(analysis)
+  const selectedFrames = frameInput.frames
   const base478 = buildBase478Landmarks2D(selectedFrames)
   if (!analysis.base8Points2DSummary.points || !base478 || !source) {
     return {
@@ -4220,7 +4330,7 @@ function buildDepth478PrototypeFromSource(
     }
   }
 
-  const generatedCandidate = buildGenerated478DepthCandidate(
+  const generatedCandidateBase = buildGenerated478DepthCandidate(
     base478,
     analysis.base8Points2DSummary.points,
     source.candidate,
@@ -4228,6 +4338,17 @@ function buildDepth478PrototypeFromSource(
     prototypeSettings.interpolation,
     prototypeSettings.groupCorrections,
   )
+  const generatedCandidate =
+    prototypeSettings.perLandmarkZSearch.enabled &&
+    prototypeSettings.interpolation.method === "canonicalDepthBased"
+      ? applyPerLandmarkZSearch(
+          generatedCandidateBase,
+          selectedFrames,
+          analysis.searchSettings,
+          prototypeSettings.perLandmarkZSearch,
+          frameInput.usedOutlierFilteredFrames,
+        )
+      : generatedCandidateBase
   const projectionEvaluation = evaluateProjection478(
     generatedCandidate,
     selectedFrames,
@@ -4336,6 +4457,7 @@ function createQuick478DepthPrototypeSettings(): Depth478PrototypeResult["settin
     interpolation: { ...QUICK_478_DEPTH_DEBUG_SETTINGS.interpolation },
     groupCorrections: cloneDepthGroupCorrections(DEFAULT_DEPTH_478_GROUP_CORRECTIONS),
     smoothnessThreshold: QUICK_478_DEPTH_DEBUG_SETTINGS.smoothnessThreshold,
+    perLandmarkZSearch: { ...QUICK_478_DEPTH_DEBUG_SETTINGS.perLandmarkZSearch },
   }
 }
 
@@ -4405,18 +4527,35 @@ function completeQuick478DepthDebug(
   )
   analysis.depth478Prototype = prototype
 
+  const status = diagnoseQuick478DepthDebugStatus(prototype.depthRelationDebug)
   const isRejected = prototype.depthRelationDebug?.isRejected ?? false
-  const status: Quick478DepthDebugSummary["status"] = isRejected ? "rejected" : "passed"
   finishQuick478DepthDebug(
     buildQuick478DepthDebugPayload(prototype, {
       status,
-      reason: isRejected ? "depthRelationHardReject" : undefined,
+      reason:
+        status === "rejected"
+          ? "depthRelationHardReject"
+          : status === "warning"
+            ? "depthRelationMarginWarning"
+            : undefined,
       startedAt,
       completedAt,
       isRejected,
       analysis,
     }),
   )
+}
+
+function diagnoseQuick478DepthDebugStatus(
+  relation: Depth478RelationDebug | undefined,
+): Quick478DepthDebugSummary["status"] {
+  if (!relation) {
+    return "error"
+  }
+  if (relation.isRejected) {
+    return "rejected"
+  }
+  return relation.ruleResults.some((rule) => rule.severity === "warning") ? "warning" : "passed"
 }
 
 function getQuick478DepthDebugCurrentStepLabel(): string | undefined {
@@ -4477,6 +4616,7 @@ function buildQuick478DepthDebugPayload(
       ...QUICK_478_DEPTH_DEBUG_SETTINGS_SUMMARY,
       depthRelationMode: QUICK_478_DEPTH_DEBUG_SETTINGS.depthRelationFiltering.mode,
       outlierFilteringEnabled: QUICK_478_DEPTH_DEBUG_SETTINGS.outlierFiltering.enabled,
+      perLandmarkZSearchEnabled: QUICK_478_DEPTH_DEBUG_SETTINGS.perLandmarkZSearch.enabled,
       interpolationMethod: QUICK_478_DEPTH_DEBUG_SETTINGS.interpolation.method,
     },
     actualExecution: buildQuick478ActualExecution(options.analysis),
@@ -4623,6 +4763,9 @@ function formatQuick478DepthDebugMessage(quickRun: Quick478DepthDebugSummary): s
   if (quickRun.status === "passed") {
     return "Debug JSON をダウンロードしました。"
   }
+  if (quickRun.status === "warning") {
+    return "Debug JSON をダウンロードしました。478点奥行き関係は方向OKですが margin 未達です。"
+  }
   if (quickRun.status === "rejected") {
     return "結果: rejected（奥行き関係 hardReject）"
   }
@@ -4659,6 +4802,7 @@ function readDepth478PrototypeSettings(): Depth478PrototypeResult["settings"] {
       0,
       readNumber("depth-478-smoothness-threshold-input", DEFAULT_DEPTH_478_SMOOTHNESS_THRESHOLD),
     ),
+    perLandmarkZSearch: { ...DEFAULT_PER_LANDMARK_Z_SEARCH_SETTINGS },
   }
 }
 
@@ -5183,6 +5327,231 @@ function projectGenerated478Candidate(
   })
 }
 
+function applyPerLandmarkZSearch(
+  candidate: Generated478DepthCandidate,
+  frames: NormalizedFrame[],
+  searchSettings: SearchSettings,
+  settings: PerLandmarkZSearchSettings,
+  usedOutlierFilteredFrames: boolean,
+): Generated478DepthCandidate {
+  const frameLimit = settings.maxFrames ? Math.max(1, settings.maxFrames) : frames.length
+  const scoringFrames = frames.slice(0, frameLimit).flatMap((frame) => {
+    const current = normalizeCurrent478LandmarksForScoring(frame)
+    if (!current) {
+      return []
+    }
+    return [
+      {
+        pose: frame.pose,
+        currentByIndex: new Map(current.map((landmark) => [landmark.index, landmark])),
+      },
+    ]
+  })
+  const targetIndices = buildPerLandmarkZSearchTargetIndices(candidate.landmarks, settings)
+  const optimizedByIndex = new Map<number, number>()
+  const rows: PerLandmarkZSearchDebugRow[] = []
+
+  for (const index of targetIndices) {
+    const landmark = candidate.landmarks.find((point) => point.index === index)
+    if (!landmark) {
+      continue
+    }
+    const isAnchor = SEMANTIC_ANCHOR_LANDMARK_INDICES.has(index)
+    const range = isAnchor ? settings.anchorZRange : settings.zRange
+    const step = isAnchor ? settings.anchorZStep : settings.zStep
+    const baseZ = landmark.z
+    const rawCandidates = createNumericCandidates(baseZ - range, baseZ + range, step)
+    const zCandidates = candidate.generationSettings.interpolation.clampZ
+      ? rawCandidates.map((z) =>
+          round(
+            clamp(
+              z,
+              Math.min(
+                candidate.generationSettings.interpolation.zMin,
+                candidate.generationSettings.interpolation.zMax,
+              ),
+              Math.max(
+                candidate.generationSettings.interpolation.zMin,
+                candidate.generationSettings.interpolation.zMax,
+              ),
+            ),
+          ),
+        )
+      : rawCandidates
+    const uniqueCandidates = Array.from(new Set(zCandidates))
+    const errorBefore = evaluateProjectionErrorForSingleLandmarkZ(
+      landmark,
+      baseZ,
+      candidate.rotationCenter,
+      scoringFrames,
+      searchSettings,
+    )
+    let bestZ = baseZ
+    let bestError = errorBefore
+    let bestScore = Number.POSITIVE_INFINITY
+
+    for (const candidateZ of uniqueCandidates) {
+      const projectionError = evaluateProjectionErrorForSingleLandmarkZ(
+        landmark,
+        candidateZ,
+        candidate.rotationCenter,
+        scoringFrames,
+        searchSettings,
+      )
+      const canonicalDeviationPenalty =
+        Math.abs(candidateZ - baseZ) * settings.canonicalDeviationPenaltyWeight
+      const score = projectionError + canonicalDeviationPenalty
+      if (
+        score < bestScore ||
+        (Math.abs(score - bestScore) <= EPSILON && Math.abs(candidateZ - baseZ) < Math.abs(bestZ - baseZ))
+      ) {
+        bestZ = candidateZ
+        bestError = projectionError
+        bestScore = score
+      }
+    }
+
+    optimizedByIndex.set(index, round(bestZ))
+    rows.push({
+      index,
+      baseZ: round(baseZ),
+      bestZ: round(bestZ),
+      deltaZ: round(bestZ - baseZ),
+      errorBefore: round(errorBefore),
+      errorAfter: round(bestError),
+      bestScore: round(bestScore),
+      candidateCount: uniqueCandidates.length,
+    })
+  }
+
+  const optimizedLandmarks = candidate.landmarks.map((landmark) =>
+    optimizedByIndex.has(landmark.index)
+      ? {
+          ...landmark,
+          z: optimizedByIndex.get(landmark.index)!,
+        }
+      : landmark,
+  )
+
+  return {
+    ...candidate,
+    landmarks: optimizedLandmarks,
+    summary: summarizeGenerated478DepthCandidate(optimizedLandmarks),
+    perLandmarkZSearchDebug: buildPerLandmarkZSearchDebug(
+      settings,
+      rows,
+      usedOutlierFilteredFrames,
+    ),
+  }
+}
+
+function buildPerLandmarkZSearchTargetIndices(
+  landmarks: Generated478DepthCandidate["landmarks"],
+  settings: PerLandmarkZSearchSettings,
+): number[] {
+  return landmarks
+    .map((landmark) => landmark.index)
+    .filter((index) => settings.targetIndices === "all478" || index < CANONICAL_COMPARISON_LANDMARK_COUNT)
+    .sort((a, b) => a - b)
+}
+
+function evaluateProjectionErrorForSingleLandmarkZ(
+  landmark: Generated478DepthCandidate["landmarks"][number],
+  candidateZ: number,
+  rotationCenter: RotationCenter,
+  frames: Array<{
+    pose: Pose
+    currentByIndex: Map<number, LandmarkPoint>
+  }>,
+  settings: SearchSettings,
+): number {
+  const errors = frames.flatMap((frame) => {
+    const current = frame.currentByIndex.get(landmark.index)
+    if (!current) {
+      return []
+    }
+    const projected = projectSingleGenerated478Landmark(
+      landmark,
+      candidateZ,
+      rotationCenter,
+      frame.pose,
+      settings,
+    )
+    return [distance2D(projected, current)]
+  })
+  return round(average(errors) ?? 0)
+}
+
+function projectSingleGenerated478Landmark(
+  landmark: Generated478DepthCandidate["landmarks"][number],
+  candidateZ: number,
+  rotationCenter: RotationCenter,
+  pose: Pose,
+  settings: SearchSettings,
+): LandmarkPoint {
+  const rotated = rotatePoint3D(
+    {
+      x: landmark.x - rotationCenter.x,
+      y: landmark.y - rotationCenter.y,
+      z: candidateZ - rotationCenter.z,
+    },
+    pose,
+  )
+  const projectedX = rotated.x + rotationCenter.x
+  const projectedY = rotated.y + rotationCenter.y
+  const z = rotated.z + rotationCenter.z
+  const perspective = settings.focalLength / Math.max(settings.focalLength + z, 0.2)
+  return {
+    index: landmark.index,
+    x: round(projectedX * perspective),
+    y: round(projectedY * perspective),
+    z: round(z),
+  }
+}
+
+function buildPerLandmarkZSearchDebug(
+  settings: PerLandmarkZSearchSettings,
+  rows: PerLandmarkZSearchDebugRow[],
+  usedOutlierFilteredFrames: boolean,
+): PerLandmarkZSearchDebug {
+  const sortedByImprovement = [...rows]
+    .sort((a, b) => b.errorBefore - b.errorAfter - (a.errorBefore - a.errorAfter))
+    .slice(0, 10)
+  const sortedByDelta = [...rows]
+    .sort((a, b) => Math.abs(b.deltaZ) - Math.abs(a.deltaZ))
+    .slice(0, 10)
+  const sampleRows = PER_LANDMARK_Z_SEARCH_SAMPLE_INDICES.flatMap((index) => {
+    const row = rows.find((item) => item.index === index)
+    return row ? [row] : []
+  })
+  const fallbackSamples = sampleRows.length > 0 ? sampleRows : rows.slice(0, 10)
+
+  return {
+    enabled: settings.enabled,
+    targetIndices: settings.targetIndices,
+    usedOutlierFilteredFrames,
+    settings: {
+      zRange: round(settings.zRange),
+      zStep: round(settings.zStep),
+      anchorZRange: round(settings.anchorZRange),
+      anchorZStep: round(settings.anchorZStep),
+      canonicalDeviationPenaltyWeight: round(settings.canonicalDeviationPenaltyWeight),
+      ...(settings.maxFrames ? { maxFrames: settings.maxFrames } : {}),
+    },
+    summary: {
+      optimizedLandmarkCount: rows.length,
+      totalEvaluatedCandidates: rows.reduce((total, row) => total + row.candidateCount, 0),
+      averageBestDeltaZ: round(average(rows.map((row) => Math.abs(row.deltaZ))) ?? 0),
+      maxBestDeltaZ: round(max(rows.map((row) => Math.abs(row.deltaZ))) ?? 0),
+      averageErrorBefore: round(average(rows.map((row) => row.errorBefore)) ?? 0),
+      averageErrorAfter: round(average(rows.map((row) => row.errorAfter)) ?? 0),
+    },
+    worstImprovedLandmarks: sortedByImprovement,
+    largestDeltaLandmarks: sortedByDelta,
+    sampleRows: fallbackSamples,
+  }
+}
+
 function buildProjection478GroupErrors(
   frameResults: Array<{
     projected: LandmarkPoint[]
@@ -5328,7 +5697,11 @@ function buildDepth478RelationRuleResult(
     subjectZ !== null &&
     referenceZ !== null &&
     evaluateDepthRelation(subjectZ, referenceZ, relation, margin)
-  const severity = passed ? "ok" : "violation"
+  const directionPassed =
+    subjectZ !== null &&
+    referenceZ !== null &&
+    evaluateDepthRelationDirection(subjectZ, referenceZ, relation)
+  const severity: DepthRelationSeverity = passed ? "ok" : directionPassed ? "warning" : "violation"
   return {
     ruleId,
     label,
@@ -5349,6 +5722,20 @@ function buildDepth478RelationRuleResult(
         ? "group z が不足しています。"
         : `${subjectGroupId}.z=${formatNumber(subjectZ)} / ${referenceGroupId}.z=${formatNumber(referenceZ)} / delta=${formatNumber(delta)}`,
   }
+}
+
+function evaluateDepthRelationDirection(
+  subjectZ: number,
+  referenceZ: number,
+  relation: DepthRelationKind,
+): boolean {
+  if (relation === "inFrontOf") {
+    return subjectZ < referenceZ
+  }
+  if (relation === "behind") {
+    return subjectZ > referenceZ
+  }
+  return false
 }
 
 function getDepth478EffectiveRuleMode(
@@ -5435,6 +5822,11 @@ function buildDepth478CandidateComparisonEntry(
     candidateId: candidate.id,
     source8CandidateId: candidate.source8CandidateId ?? null,
     depth478GenerationMethod: candidate.generationSettings.interpolation.method,
+    perLandmarkZSearchEnabled: candidate.perLandmarkZSearchDebug?.enabled ?? false,
+    averageProjectionErrorBeforePerLandmark:
+      candidate.perLandmarkZSearchDebug?.summary.averageErrorBefore ?? null,
+    averageProjectionErrorAfterPerLandmark:
+      candidate.perLandmarkZSearchDebug?.summary.averageErrorAfter ?? null,
     totalProjectionError: projectionEvaluation.totalProjectionError,
     maxBucketScore: maxNullable(Object.values(projectionEvaluation.bucketScores)),
     depthRelationViolationCount: depthRelationDebug.violationCount,
@@ -8670,6 +9062,7 @@ function renderQuick478DepthDebug(): void {
   summaryElement.innerHTML = renderStatusItems([
     ["status", quick.quickRun.status],
     ["depth478GenerationMethod", quick.quickRun.settings.depth478GenerationMethod],
+    ["perLandmarkZSearchEnabled", String(quick.quickRun.settings.perLandmarkZSearchEnabled)],
     ["noseTipGroup.z", formatNumber(quick.quickRun.summary.noseTipGroupZ)],
     ["cheekGroup.z", formatNumber(quick.quickRun.summary.cheekGroupZ)],
     ["margin", formatNumber(quick.quickRun.summary.margin)],

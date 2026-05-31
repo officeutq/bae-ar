@@ -1,5 +1,17 @@
 # IdealFace Fitting Lab
 
+## perLandmarkZSearch（ランドマーク単位 z 探索）
+
+`perLandmarkZSearch`（ランドマーク単位 z 探索）は、`canonicalDepthBased`（標準顔奥行きベース方式）で作った仮の 478 点 z を起点に、各 landmark（ランドマーク）の z だけを独立に 1 次元探索する debug prototype（試作）である。478 点を同時に総当たり探索するものではないため、組み合わせ爆発は起きない。
+
+処理は `baseZ`（基準奥行き）を中心に `candidateZ`（候補奥行き）を作り、対象 landmark 1 点だけを selectedFrames（選択フレーム）へ回転・投影して current 2D landmark と比較する。score（スコア）は `projectionError`（投影誤差）に `canonicalDeviationPenalty`（標準顔からの逸脱ペナルティ）を足したものを使い、2D には合うが標準顔奥行きから離れすぎる z を抑制する。
+
+`rotationCenter`（回転中心）と `pivotZ`（投影基準奥行き）は、既存の 8 点探索結果を使う。初期実装では Quick Run（クイック実行）の対象は `canonical468Only`、つまり `0..467` の canonical 468 点を主対象にし、`468..477` は iris fallback（虹彩補完）の値を維持する。
+
+計算量の目安は `468 landmarks * 41 z candidates * 50 frames = 959,400 point projections` である。各 candidate では 478 点全体を投影せず、評価対象の 1 点だけを投影する。
+
+478 点側の `Depth Relation Debug`（奥行き関係デバッグ）は、今後 `passed / warning / rejected` の 3 段階診断へ寄せる。`noseTipGroup.z < cheekGroup.z` の方向は正しいが margin（余白）に少し足りない場合は `warning` とし、方向自体が逆の場合を `rejected` とする。
+
 ## Canonical Face Depth Template
 
 `canonical-face-depth-template-v1.json` は、MediaPipe canonical face model（MediaPipe標準顔モデル）の `canonical_face_model.obj` から生成する Fitting Lab 用の奥行き参照テンプレートです。これは IdealFace（理想顔）そのものではなく、production asset export（本番用アセット書き出し）でもありません。
