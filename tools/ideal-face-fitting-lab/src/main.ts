@@ -24,6 +24,8 @@ type DepthRelationAggregation = "mean" | "median"
 type DepthRelationMode = "off" | "debugOnly" | "penalty" | "hardReject"
 type DepthRelationKind = "inFrontOf" | "behind" | "near"
 type DepthRelationSeverity = "ok" | "warning" | "violation"
+type PoseBucket = CaptureBucket
+type Depth478CandidateSource = "autoSequenceFinalCandidate" | "bestCandidate"
 
 interface Point2 {
   x: number
@@ -828,6 +830,136 @@ interface BestIdealFace8 {
   summary: IdealFace8Summary
 }
 
+interface DepthAnchor8 {
+  id: SemanticPointId
+  label: string
+  x: number
+  y: number
+  z: number
+}
+
+interface DepthInterpolationSettings {
+  enabled: boolean
+  method: "inverseDistanceWeighting"
+  epsilon: number
+  power: number
+  clampZ: boolean
+  zMin: number
+  zMax: number
+}
+
+interface DepthGroupCorrection {
+  groupId: string
+  label: string
+  pointIndices: number[]
+  offset: number
+  strength: number
+  falloff?: number
+}
+
+interface Generated478DepthCandidate {
+  id: string
+  source8CandidateId?: string | null
+  generationSettings: {
+    interpolation: DepthInterpolationSettings
+    groupCorrections: DepthGroupCorrection[]
+  }
+  rotationCenter: RotationCenter
+  landmarks: Array<{
+    index: number
+    x: number
+    y: number
+    z: number
+    sourceDebug?: {
+      nearestAnchorId?: string
+      anchorWeights?: Record<string, number>
+      groupCorrectionOffset?: number
+    }
+  }>
+  summary: {
+    landmarkCount: number
+    zMin: number
+    zMax: number
+    zRange: number
+    averageZ: number
+  }
+}
+
+interface ProjectionEvaluation478 {
+  totalProjectionError: number
+  averageProjectionError: number
+  bucketScores: Record<PoseBucket, number | null>
+  perGroupError: Record<
+    string,
+    {
+      groupId: string
+      label: string
+      averageError: number | null
+      maxError: number | null
+      sampleCount: number
+    }
+  >
+  worstFrame: {
+    captureId: string
+    bucket: PoseBucket
+    error: number
+  } | null
+  worstGroup: {
+    groupId: string
+    label: string
+    averageError: number
+  } | null
+}
+
+interface Depth478GroupValue {
+  groupId: string
+  label: string
+  pointIndices: number[]
+  aggregation: DepthRelationAggregation
+  z: number | null
+}
+
+interface Depth478RelationDebug {
+  groupValues: Record<string, Depth478GroupValue>
+  ruleResults: DepthRelationRuleResult[]
+  violationCount: number
+}
+
+interface SmoothnessDebug478 {
+  averageNeighborDeltaZ: number | null
+  maxNeighborDeltaZ: number | null
+  highDeltaEdgeCount: number
+  highDeltaEdges: Array<{
+    from: number
+    to: number
+    deltaZ: number
+  }>
+  threshold: number
+}
+
+interface Depth478CandidateComparisonEntry {
+  candidateId: string
+  source8CandidateId?: string | null
+  totalProjectionError: number | null
+  maxBucketScore: number | null
+  depthRelationViolationCount: number | null
+  smoothnessMaxDeltaZ: number | null
+  smoothnessHighDeltaEdgeCount: number | null
+}
+
+interface Depth478PrototypeResult {
+  settings: {
+    interpolation: DepthInterpolationSettings
+    groupCorrections: DepthGroupCorrection[]
+    smoothnessThreshold: number
+  }
+  generatedCandidate?: Generated478DepthCandidate
+  projectionEvaluation?: ProjectionEvaluation478
+  depthRelationDebug?: Depth478RelationDebug
+  smoothnessDebug?: SmoothnessDebug478
+  candidateComparison?: Depth478CandidateComparisonEntry[]
+}
+
 type ProjectionSignDebugBucket = Exclude<CaptureBucket, "mixedPose" | "unknown">
 type ProjectionSignDirection = "positive" | "negative" | "flat"
 type ProjectionSignPointName = "nose" | "leftCheek" | "rightCheek" | "mouth"
@@ -974,6 +1106,7 @@ interface AnalysisResult {
   outlierFrameDebug?: AnalysisOutlierFrameDebug
   autoSequenceSummary?: AutoSequenceSummary
   candidateStabilityDebug?: CandidateStabilityDebug
+  depth478Prototype?: Depth478PrototypeResult
   warnings: string[]
 }
 
@@ -1012,6 +1145,7 @@ interface SummaryAnalysisResult {
   autoSequenceSummaryFinalCandidate?: FittingCandidate8 | null
   autoSequenceStepCount: number
   candidateStabilityDebug?: CandidateStabilityDebug
+  depth478Prototype?: Depth478PrototypeResult
   warnings: string[]
 }
 
@@ -1861,6 +1995,74 @@ const DEFAULT_SETTINGS: SearchSettings = {
   },
 }
 
+const DEFAULT_DEPTH_478_INTERPOLATION_SETTINGS: DepthInterpolationSettings = {
+  enabled: true,
+  method: "inverseDistanceWeighting",
+  epsilon: 0.0001,
+  power: 2,
+  clampZ: true,
+  zMin: -0.24,
+  zMax: 0.24,
+}
+
+const DEFAULT_DEPTH_478_SMOOTHNESS_THRESHOLD = 0.03
+const DEPTH_478_NEIGHBOR_COUNT = 4
+const DEPTH_478_MAX_HIGH_DELTA_EDGES = 50
+
+const DEPTH_478_GROUP_DEFINITIONS: Array<{
+  groupId: string
+  label: string
+  pointIndices: number[]
+  aggregation: DepthRelationAggregation
+}> = [
+  { groupId: "noseTipGroup", label: "鼻先グループ", pointIndices: [1, 2, 4, 5, 98, 327], aggregation: "median" },
+  { groupId: "noseBridgeGroup", label: "鼻筋グループ", pointIndices: [6, 168, 197, 195], aggregation: "median" },
+  {
+    groupId: "leftCheekGroup",
+    label: "左頬グループ",
+    pointIndices: [50, 100, 101, 117, 118, 119, 123, 132, 147, 187, 203, 205, 234],
+    aggregation: "median",
+  },
+  {
+    groupId: "rightCheekGroup",
+    label: "右頬グループ",
+    pointIndices: [329, 330, 346, 347, 348, 352, 361, 376, 411, 423, 425, 454],
+    aggregation: "median",
+  },
+  {
+    groupId: "mouthGroup",
+    label: "口グループ",
+    pointIndices: [
+      0, 13, 14, 17, 37, 39, 40, 61, 78, 80, 81, 82, 87, 88, 91, 95, 146, 178, 181, 185,
+      191, 267, 269, 270, 291, 308, 310, 311, 312, 317, 318, 321, 324, 375, 402, 405,
+      409, 415,
+    ],
+    aggregation: "median",
+  },
+  { groupId: "leftEyeGroup", label: "左目グループ", pointIndices: [249, 263, 362, 373, 374, 380, 381, 382, 384, 385, 386, 387, 388, 390, 398, 466, 469, 470, 471, 472], aggregation: "median" },
+  { groupId: "rightEyeGroup", label: "右目グループ", pointIndices: [7, 33, 133, 144, 145, 153, 154, 155, 157, 158, 159, 160, 161, 163, 173, 246, 474, 475, 476, 477], aggregation: "median" },
+  { groupId: "jawGroup", label: "顎グループ", pointIndices: [58, 132, 136, 148, 149, 150, 152, 172, 176, 288, 361, 365, 377, 378, 379, 397, 400], aggregation: "median" },
+  {
+    groupId: "faceBoundaryGroup",
+    label: "顔境界グループ",
+    pointIndices: [
+      10, 21, 54, 58, 67, 93, 103, 109, 127, 132, 136, 148, 149, 150, 152, 162, 172,
+      176, 234, 251, 284, 288, 297, 323, 332, 338, 356, 361, 365, 377, 378, 379, 389,
+      397, 400, 454,
+    ],
+    aggregation: "median",
+  },
+]
+
+const DEFAULT_DEPTH_478_GROUP_CORRECTIONS: DepthGroupCorrection[] =
+  DEPTH_478_GROUP_DEFINITIONS.map((group) => ({
+    groupId: group.groupId,
+    label: group.label,
+    pointIndices: group.pointIndices,
+    offset: 0,
+    strength: 0,
+  }))
+
 const EPSILON = 1e-8
 const DEPTH_CONVENTION: DepthConvention = {
   smallerZ: "front / 手前",
@@ -2303,6 +2505,62 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
         </section>
 
         <section class="panel">
+          <h2>478 Depth Prototype（478点奥行き試作）</h2>
+          <p class="panel-help">8点候補を depth anchors として使い、478 landmarks の z を補間して評価する debug prototype です。最終 asset export ではありません。</p>
+          <div class="controls">
+            <label>candidate source（候補ソース）
+              <select id="depth-478-source-select">
+                <option value="autoSequenceFinalCandidate" selected>Use Auto Sequence Final Candidate（自動探索の最終候補を使う）</option>
+                <option value="bestCandidate">Use Best Candidate（最良候補を使う）</option>
+              </select>
+            </label>
+            <label>Interpolation method（補間方法）
+              <select id="depth-478-method-select">
+                <option value="inverseDistanceWeighting" selected>inverseDistanceWeighting</option>
+              </select>
+            </label>
+            <label>epsilon（ゼロ除算回避値）
+              <input id="depth-478-epsilon-input" type="number" min="0.000001" max="1" step="0.0001" value="${DEFAULT_DEPTH_478_INTERPOLATION_SETTINGS.epsilon}" />
+            </label>
+            <label>power（距離減衰の強さ）
+              <input id="depth-478-power-input" type="number" min="0.1" max="8" step="0.1" value="${DEFAULT_DEPTH_478_INTERPOLATION_SETTINGS.power}" />
+            </label>
+            <label>clampZ（zを範囲内に制限）
+              <select id="depth-478-clamp-z-select">
+                <option value="true" selected>true</option>
+                <option value="false">false</option>
+              </select>
+            </label>
+            <label>zMin（z最小値）
+              <input id="depth-478-z-min-input" type="number" min="-3" max="3" step="0.005" value="${DEFAULT_DEPTH_478_INTERPOLATION_SETTINGS.zMin}" />
+            </label>
+            <label>zMax（z最大値）
+              <input id="depth-478-z-max-input" type="number" min="-3" max="3" step="0.005" value="${DEFAULT_DEPTH_478_INTERPOLATION_SETTINGS.zMax}" />
+            </label>
+            <label>smoothnessThreshold（滑らかさしきい値）
+              <input id="depth-478-smoothness-threshold-input" type="number" min="0" max="1" step="0.001" value="${DEFAULT_DEPTH_478_SMOOTHNESS_THRESHOLD}" />
+            </label>
+          </div>
+          <div class="controls-wide">
+            <button id="generate-depth-478-button" class="primary" type="button" disabled>Generate 478 Debug Candidate（478点デバッグ候補を生成）</button>
+            <button id="export-depth-478-button" type="button" disabled>Export 478 Debug JSON（478点デバッグJSONを書き出し）</button>
+          </div>
+          <h3>Generated 478 Summary（生成478点概要）</h3>
+          <div id="depth-478-summary" class="summary-grid"></div>
+          <h3>478 Projection Evaluation（478点投影評価）</h3>
+          <div id="depth-478-projection-evaluation" class="summary-grid"></div>
+          <div id="depth-478-group-error-table" class="table-wrap"></div>
+          <h3>478 Depth Relation Debug（478点奥行き関係デバッグ）</h3>
+          <div id="depth-478-relation-debug" class="summary-grid"></div>
+          <div id="depth-478-relation-rule-table" class="table-wrap"></div>
+          <h3>478 Smoothness Debug（478点滑らかさデバッグ）</h3>
+          <div id="depth-478-smoothness-debug" class="summary-grid"></div>
+          <div id="depth-478-smoothness-edge-table" class="table-wrap"></div>
+          <h3>478 Candidate Comparison（478点候補比較）</h3>
+          <div id="depth-478-candidate-comparison" class="table-wrap"></div>
+        </section>
+
+        <section class="panel">
           <h2>Projection Sign Debug</h2>
           <p class="panel-help">selected frame の各 bucket 先頭フレームを使い、baseCandidate の nose.z だけを変えて projection の符号と yaw / pitch 応答を確認します。score 式と bestCandidate 選定は変更しません。</p>
           <h3>selected frame by bucket</h3>
@@ -2447,6 +2705,14 @@ function bindEvents(): void {
   getElement<HTMLSelectElement>("rotation-center-base-select").addEventListener(
     "change",
     updateRotationCenterDebugFromSelection,
+  )
+  getElement<HTMLButtonElement>("generate-depth-478-button").addEventListener(
+    "click",
+    generateDepth478DebugCandidate,
+  )
+  getElement<HTMLButtonElement>("export-depth-478-button").addEventListener(
+    "click",
+    exportDepth478DebugJson,
   )
   getElement<HTMLButtonElement>("run-stability-check-button").addEventListener(
     "click",
@@ -3638,6 +3904,677 @@ function updateRotationCenterDebugFromSelection(): void {
 function getAnalysisSelectedFrames(analysis: AnalysisResult): NormalizedFrame[] {
   const selectedIds = new Set(analysis.selectedFrameSummary.selectedCaptureIds)
   return state.frames.filter((frame) => selectedIds.has(frame.captureId))
+}
+
+function generateDepth478DebugCandidate(): void {
+  const analysis = state.analysis
+  if (!analysis?.base8Points2DSummary.points) {
+    return
+  }
+
+  const selectedFrames = getAnalysisSelectedFrames(analysis)
+  const base478 = buildBase478Landmarks2D(selectedFrames)
+  const source = resolveDepth478SourceCandidate(analysis, readDepth478CandidateSource())
+  if (!base478 || !source) {
+    analysis.depth478Prototype = {
+      settings: readDepth478PrototypeSettings(),
+      candidateComparison: analysis.depth478Prototype?.candidateComparison ?? [],
+    }
+    renderDepth478Prototype(analysis.depth478Prototype)
+    getElement("json-preview").textContent = JSON.stringify(createSummaryAnalysis(analysis), null, 2)
+    return
+  }
+
+  const prototypeSettings = readDepth478PrototypeSettings()
+  const generatedCandidate = buildGenerated478DepthCandidate(
+    base478,
+    analysis.base8Points2DSummary.points,
+    source.candidate,
+    source.source8CandidateId,
+    prototypeSettings.interpolation,
+    prototypeSettings.groupCorrections,
+  )
+  const projectionEvaluation = evaluateProjection478(
+    generatedCandidate,
+    selectedFrames,
+    analysis.searchSettings,
+  )
+  const depthRelationDebug = buildDepth478RelationDebug(generatedCandidate)
+  const smoothnessDebug = buildSmoothnessDebug478(
+    generatedCandidate,
+    prototypeSettings.smoothnessThreshold,
+  )
+  const comparisonEntry = buildDepth478CandidateComparisonEntry(
+    generatedCandidate,
+    projectionEvaluation,
+    depthRelationDebug,
+    smoothnessDebug,
+  )
+  const previousComparison = analysis.depth478Prototype?.candidateComparison ?? []
+
+  analysis.depth478Prototype = {
+    settings: prototypeSettings,
+    generatedCandidate,
+    projectionEvaluation,
+    depthRelationDebug,
+    smoothnessDebug,
+    candidateComparison: [...previousComparison, comparisonEntry].slice(-20),
+  }
+  renderDepth478Prototype(analysis.depth478Prototype)
+  getElement("json-preview").textContent = JSON.stringify(createSummaryAnalysis(analysis), null, 2)
+  setButtons()
+}
+
+function exportDepth478DebugJson(): void {
+  const prototype = state.analysis?.depth478Prototype
+  if (!prototype) {
+    return
+  }
+  downloadJson(prototype, createFileName("ideal-face-fitting-depth478-debug"))
+}
+
+function readDepth478CandidateSource(): Depth478CandidateSource {
+  const value = getElement<HTMLSelectElement>("depth-478-source-select").value
+  return value === "bestCandidate" ? "bestCandidate" : "autoSequenceFinalCandidate"
+}
+
+function readDepth478PrototypeSettings(): Depth478PrototypeResult["settings"] {
+  return {
+    interpolation: {
+      enabled: true,
+      method: "inverseDistanceWeighting",
+      epsilon: Math.max(
+        0.000001,
+        readNumber("depth-478-epsilon-input", DEFAULT_DEPTH_478_INTERPOLATION_SETTINGS.epsilon),
+      ),
+      power: Math.max(
+        0.1,
+        readNumber("depth-478-power-input", DEFAULT_DEPTH_478_INTERPOLATION_SETTINGS.power),
+      ),
+      clampZ: getElement<HTMLSelectElement>("depth-478-clamp-z-select").value === "true",
+      zMin: readNumber("depth-478-z-min-input", DEFAULT_DEPTH_478_INTERPOLATION_SETTINGS.zMin),
+      zMax: readNumber("depth-478-z-max-input", DEFAULT_DEPTH_478_INTERPOLATION_SETTINGS.zMax),
+    },
+    groupCorrections: cloneDepthGroupCorrections(DEFAULT_DEPTH_478_GROUP_CORRECTIONS),
+    smoothnessThreshold: Math.max(
+      0,
+      readNumber("depth-478-smoothness-threshold-input", DEFAULT_DEPTH_478_SMOOTHNESS_THRESHOLD),
+    ),
+  }
+}
+
+function resolveDepth478SourceCandidate(
+  analysis: AnalysisResult,
+  source: Depth478CandidateSource,
+): { candidate: FittingCandidate8; source8CandidateId: string | null } | null {
+  if (source === "bestCandidate") {
+    if (analysis.bestCandidate) {
+      return {
+        candidate: cloneCandidate(analysis.bestCandidate),
+        source8CandidateId: analysis.bestCandidate.candidateId,
+      }
+    }
+    if (analysis.autoSequenceSummary?.finalCandidate) {
+      return {
+        candidate: cloneCandidate(analysis.autoSequenceSummary.finalCandidate),
+        source8CandidateId: "autoSequenceSummary.finalCandidate",
+      }
+    }
+    return null
+  }
+
+  if (analysis.autoSequenceSummary?.finalCandidate) {
+    return {
+      candidate: cloneCandidate(analysis.autoSequenceSummary.finalCandidate),
+      source8CandidateId: "autoSequenceSummary.finalCandidate",
+    }
+  }
+  if (analysis.bestCandidate) {
+    return {
+      candidate: cloneCandidate(analysis.bestCandidate),
+      source8CandidateId: analysis.bestCandidate.candidateId,
+    }
+  }
+  return null
+}
+
+function buildBase478Landmarks2D(frames: NormalizedFrame[]): LandmarkPoint[] | null {
+  const frontFrames = frames.filter(
+    (frame) => frame.bucket === "front" && frame.bounds && frame.landmarks.length === 478,
+  )
+  const sourceFrames =
+    frontFrames.length > 0
+      ? frontFrames
+      : frames.filter((frame) => frame.bounds && frame.landmarks.length === 478)
+  if (sourceFrames.length === 0) {
+    return null
+  }
+
+  const boundsCenter = averagePoint2D(
+    sourceFrames.map((frame) => ({
+      x: frame.bounds!.centerX,
+      y: frame.bounds!.centerY,
+    })),
+  )
+  const landmarks: LandmarkPoint[] = []
+  for (let index = 0; index < 478; index += 1) {
+    const samples = sourceFrames
+      .map((frame) => frame.landmarks.find((landmark) => landmark.index === index))
+      .filter((landmark): landmark is LandmarkPoint => Boolean(landmark))
+    if (samples.length !== sourceFrames.length) {
+      return null
+    }
+    const normalizedSamples = sourceFrames.map((frame) => {
+      const landmark = frame.landmarks.find((point) => point.index === index)!
+      return {
+        x: toSameUnitX(landmark.x, frame.aspectRatio) - boundsCenter.x,
+        y: landmark.y - 0.5 - boundsCenter.y,
+      }
+    })
+    landmarks.push({
+      index,
+      x: round(average(normalizedSamples.map((point) => point.x)) ?? 0),
+      y: round(average(normalizedSamples.map((point) => point.y)) ?? 0),
+      z: 0,
+    })
+  }
+  return landmarks
+}
+
+function buildDepthAnchors8(
+  basePoints: SemanticPointSet2D,
+  candidate: FittingCandidate8,
+): DepthAnchor8[] {
+  return SEMANTIC_DEFINITIONS.map((definition) => ({
+    id: definition.name,
+    label: definition.label,
+    x: basePoints[definition.name].x,
+    y: basePoints[definition.name].y,
+    z: candidate.zByPointId[definition.name],
+  }))
+}
+
+function buildGenerated478DepthCandidate(
+  base478: LandmarkPoint[],
+  base8Points: SemanticPointSet2D,
+  sourceCandidate: FittingCandidate8,
+  source8CandidateId: string | null,
+  interpolation: DepthInterpolationSettings,
+  groupCorrections: DepthGroupCorrection[],
+): Generated478DepthCandidate {
+  const anchors = buildDepthAnchors8(base8Points, sourceCandidate)
+  const interpolated = base478.map((landmark) =>
+    interpolateDepth478Landmark(landmark, anchors, interpolation),
+  )
+  const corrected = applyDepthGroupCorrections(interpolated, groupCorrections)
+  return {
+    id: `depth478-${Date.now()}`,
+    source8CandidateId,
+    generationSettings: {
+      interpolation: { ...interpolation },
+      groupCorrections: cloneDepthGroupCorrections(groupCorrections),
+    },
+    rotationCenter: getCandidateRotationCenter(sourceCandidate),
+    landmarks: corrected,
+    summary: summarizeGenerated478DepthCandidate(corrected),
+  }
+}
+
+function interpolateDepth478Landmark(
+  landmark: LandmarkPoint,
+  anchors: DepthAnchor8[],
+  settings: DepthInterpolationSettings,
+): Generated478DepthCandidate["landmarks"][number] {
+  const weights = anchors.map((anchor) => {
+    const distance = distance2D(landmark, anchor)
+    return {
+      anchor,
+      rawWeight: 1 / Math.pow(distance + settings.epsilon, settings.power),
+      distance,
+    }
+  })
+  const weightTotal = weights.reduce((total, item) => total + item.rawWeight, 0)
+  const anchorWeights = Object.fromEntries(
+    weights.map((item) => [item.anchor.id, round(item.rawWeight / weightTotal)]),
+  )
+  const nearest = weights.reduce((best, item) => (item.distance < best.distance ? item : best))
+  const rawZ = weights.reduce(
+    (total, item) => total + item.anchor.z * (item.rawWeight / weightTotal),
+    0,
+  )
+  const z = settings.clampZ
+    ? clamp(rawZ, Math.min(settings.zMin, settings.zMax), Math.max(settings.zMin, settings.zMax))
+    : rawZ
+
+  return {
+    index: landmark.index,
+    x: round(landmark.x),
+    y: round(landmark.y),
+    z: round(z),
+    sourceDebug: {
+      nearestAnchorId: nearest.anchor.id,
+      anchorWeights,
+      groupCorrectionOffset: 0,
+    },
+  }
+}
+
+function applyDepthGroupCorrections(
+  landmarks: Generated478DepthCandidate["landmarks"],
+  corrections: DepthGroupCorrection[],
+): Generated478DepthCandidate["landmarks"] {
+  return landmarks.map((landmark) => {
+    const correctionOffset = corrections.reduce((total, correction) => {
+      const directHit = correction.pointIndices.includes(landmark.index)
+      if (!directHit && (!correction.falloff || correction.falloff <= 0)) {
+        return total
+      }
+      const directWeight = directHit ? 1 : calculateDepthGroupFalloffWeight(landmark, landmarks, correction)
+      return total + correction.offset * correction.strength * directWeight
+    }, 0)
+    return {
+      ...landmark,
+      z: round(landmark.z + correctionOffset),
+      sourceDebug: {
+        ...landmark.sourceDebug,
+        groupCorrectionOffset: round(correctionOffset),
+      },
+    }
+  })
+}
+
+function calculateDepthGroupFalloffWeight(
+  landmark: Point2,
+  landmarks: Generated478DepthCandidate["landmarks"],
+  correction: DepthGroupCorrection,
+): number {
+  if (!correction.falloff || correction.falloff <= 0) {
+    return 0
+  }
+  const groupPoints = correction.pointIndices
+    .map((index) => landmarks.find((point) => point.index === index))
+    .filter((point): point is Generated478DepthCandidate["landmarks"][number] => Boolean(point))
+  if (groupPoints.length === 0) {
+    return 0
+  }
+  const minDistance = Math.min(...groupPoints.map((point) => distance2D(landmark, point)))
+  return clamp(1 - minDistance / correction.falloff, 0, 1)
+}
+
+function summarizeGenerated478DepthCandidate(
+  landmarks: Generated478DepthCandidate["landmarks"],
+): Generated478DepthCandidate["summary"] {
+  const zValues = landmarks.map((landmark) => landmark.z)
+  const zMin = min(zValues) ?? 0
+  const zMax = max(zValues) ?? 0
+  return {
+    landmarkCount: landmarks.length,
+    zMin: round(zMin),
+    zMax: round(zMax),
+    zRange: round(zMax - zMin),
+    averageZ: round(average(zValues) ?? 0),
+  }
+}
+
+function evaluateProjection478(
+  candidate: Generated478DepthCandidate,
+  frames: NormalizedFrame[],
+  settings: SearchSettings,
+): ProjectionEvaluation478 {
+  const frameResults = frames.flatMap((frame) => {
+    const current = normalizeCurrent478LandmarksForScoring(frame)
+    if (!current) {
+      return []
+    }
+    const projected = projectGenerated478Candidate(candidate, frame.pose, settings)
+    const currentByIndex = new Map(current.map((landmark) => [landmark.index, landmark]))
+    const distances = projected.flatMap((point) => {
+      const currentPoint = currentByIndex.get(point.index)
+      return currentPoint ? [distance2D(point, currentPoint)] : []
+    })
+    const error = round(average(distances) ?? 0)
+    return [
+      {
+        captureId: frame.captureId,
+        bucket: frame.bucket,
+        error,
+        projected,
+        current,
+      },
+    ]
+  })
+
+  const totalProjectionError = round(
+    frameResults.reduce((total, result) => total + result.error, 0),
+  )
+  const averageProjectionError = round(average(frameResults.map((result) => result.error)) ?? 0)
+  const bucketScores = Object.fromEntries(
+    BUCKETS.map((bucket) => [
+      bucket,
+      roundNullable(
+        average(frameResults.filter((result) => result.bucket === bucket).map((result) => result.error)),
+      ),
+    ]),
+  ) as Record<PoseBucket, number | null>
+  const perGroupError = buildProjection478GroupErrors(frameResults)
+  const worstFrame =
+    frameResults.length === 0
+      ? null
+      : frameResults.reduce((worst, result) => (result.error > worst.error ? result : worst))
+  const worstGroup = Object.values(perGroupError)
+    .filter(
+      (group): group is ProjectionEvaluation478["perGroupError"][string] & { averageError: number } =>
+        typeof group.averageError === "number",
+    )
+    .reduce<ProjectionEvaluation478["worstGroup"]>(
+      (worst, group) =>
+        !worst || group.averageError > worst.averageError
+          ? { groupId: group.groupId, label: group.label, averageError: group.averageError }
+          : worst,
+      null,
+    )
+
+  return {
+    totalProjectionError,
+    averageProjectionError,
+    bucketScores,
+    perGroupError,
+    worstFrame: worstFrame
+      ? {
+          captureId: worstFrame.captureId,
+          bucket: worstFrame.bucket,
+          error: worstFrame.error,
+        }
+      : null,
+    worstGroup,
+  }
+}
+
+function normalizeCurrent478LandmarksForScoring(frame: NormalizedFrame): LandmarkPoint[] | null {
+  if (!frame.bounds || frame.landmarks.length !== 478) {
+    return null
+  }
+  return frame.landmarks.map((landmark) => ({
+    index: landmark.index,
+    x: round(toSameUnitX(landmark.x, frame.aspectRatio) - frame.bounds!.centerX),
+    y: round(landmark.y - 0.5 - frame.bounds!.centerY),
+    z: round(landmark.z),
+  }))
+}
+
+function projectGenerated478Candidate(
+  candidate: Generated478DepthCandidate,
+  pose: Pose,
+  settings: SearchSettings,
+): LandmarkPoint[] {
+  const rotationCenter = candidate.rotationCenter
+  return candidate.landmarks.map((landmark) => {
+    const rotated = rotatePoint3D(
+      {
+        x: landmark.x - rotationCenter.x,
+        y: landmark.y - rotationCenter.y,
+        z: landmark.z - rotationCenter.z,
+      },
+      pose,
+    )
+    const projectedX = rotated.x + rotationCenter.x
+    const projectedY = rotated.y + rotationCenter.y
+    const z = rotated.z + rotationCenter.z
+    const perspective = settings.focalLength / Math.max(settings.focalLength + z, 0.2)
+    return {
+      index: landmark.index,
+      x: round(projectedX * perspective),
+      y: round(projectedY * perspective),
+      z: round(z),
+    }
+  })
+}
+
+function buildProjection478GroupErrors(
+  frameResults: Array<{
+    projected: LandmarkPoint[]
+    current: LandmarkPoint[]
+  }>,
+): ProjectionEvaluation478["perGroupError"] {
+  return Object.fromEntries(
+    DEPTH_478_GROUP_DEFINITIONS.map((group) => {
+      const errors = frameResults.flatMap((result) => {
+        const projectedByIndex = new Map(result.projected.map((point) => [point.index, point]))
+        const currentByIndex = new Map(result.current.map((point) => [point.index, point]))
+        return group.pointIndices.flatMap((index) => {
+          const projected = projectedByIndex.get(index)
+          const current = currentByIndex.get(index)
+          return projected && current ? [distance2D(projected, current)] : []
+        })
+      })
+      return [
+        group.groupId,
+        {
+          groupId: group.groupId,
+          label: group.label,
+          averageError: roundNullable(average(errors)),
+          maxError: roundNullable(max(errors)),
+          sampleCount: errors.length,
+        },
+      ]
+    }),
+  )
+}
+
+function buildDepth478RelationDebug(
+  candidate: Generated478DepthCandidate,
+): Depth478RelationDebug {
+  const groups = [
+    ...DEPTH_478_GROUP_DEFINITIONS,
+    {
+      groupId: "cheekGroup",
+      label: "頬グループ",
+      pointIndices: [
+        ...getDepth478GroupDefinition("leftCheekGroup").pointIndices,
+        ...getDepth478GroupDefinition("rightCheekGroup").pointIndices,
+      ],
+      aggregation: "median" as DepthRelationAggregation,
+    },
+    {
+      groupId: "faceCenterGroup",
+      label: "顔中心グループ",
+      pointIndices: [
+        ...getDepth478GroupDefinition("noseTipGroup").pointIndices,
+        ...getDepth478GroupDefinition("noseBridgeGroup").pointIndices,
+        ...getDepth478GroupDefinition("mouthGroup").pointIndices,
+        ...getDepth478GroupDefinition("leftEyeGroup").pointIndices,
+        ...getDepth478GroupDefinition("rightEyeGroup").pointIndices,
+      ],
+      aggregation: "median" as DepthRelationAggregation,
+    },
+  ]
+  const groupValues = Object.fromEntries(
+    groups.map((group) => [group.groupId, buildDepth478GroupValue(candidate, group)]),
+  )
+  const ruleResults = [
+    buildDepth478RelationRuleResult(
+      "nose_tip_group_in_front_of_cheek_group",
+      "noseTipGroup は cheekGroup より手前",
+      "noseTipGroup",
+      "cheekGroup",
+      "inFrontOf",
+      0.005,
+      groupValues,
+    ),
+    buildDepth478RelationRuleResult(
+      "face_center_group_in_front_of_boundary_group",
+      "faceCenterGroup は faceBoundaryGroup より手前",
+      "faceCenterGroup",
+      "faceBoundaryGroup",
+      "inFrontOf",
+      0,
+      groupValues,
+    ),
+  ]
+  return {
+    groupValues,
+    ruleResults,
+    violationCount: ruleResults.filter((result) => !result.passed).length,
+  }
+}
+
+function getDepth478GroupDefinition(
+  groupId: string,
+): (typeof DEPTH_478_GROUP_DEFINITIONS)[number] {
+  return (
+    DEPTH_478_GROUP_DEFINITIONS.find((group) => group.groupId === groupId) ??
+    DEPTH_478_GROUP_DEFINITIONS[0]
+  )
+}
+
+function buildDepth478GroupValue(
+  candidate: Generated478DepthCandidate,
+  group: (typeof DEPTH_478_GROUP_DEFINITIONS)[number],
+): Depth478GroupValue {
+  const byIndex = new Map(candidate.landmarks.map((landmark) => [landmark.index, landmark]))
+  const values = group.pointIndices
+    .map((index) => byIndex.get(index)?.z)
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value))
+  return {
+    groupId: group.groupId,
+    label: group.label,
+    pointIndices: group.pointIndices,
+    aggregation: group.aggregation,
+    z: aggregateDepthValues(values, group.aggregation),
+  }
+}
+
+function buildDepth478RelationRuleResult(
+  ruleId: string,
+  label: string,
+  subjectGroupId: string,
+  referenceGroupId: string,
+  relation: DepthRelationKind,
+  margin: number,
+  groupValues: Record<string, Depth478GroupValue>,
+): DepthRelationRuleResult {
+  const subjectZ = groupValues[subjectGroupId]?.z ?? null
+  const referenceZ = groupValues[referenceGroupId]?.z ?? null
+  const delta = subjectZ === null || referenceZ === null ? null : round(subjectZ - referenceZ)
+  const passed =
+    subjectZ !== null &&
+    referenceZ !== null &&
+    evaluateDepthRelation(subjectZ, referenceZ, relation, margin)
+  return {
+    ruleId,
+    label,
+    subjectGroupId,
+    referenceGroupId,
+    relation,
+    subjectZ,
+    referenceZ,
+    margin,
+    delta,
+    passed,
+    severity: passed ? "ok" : "violation",
+    mode: "debugOnly",
+    penalty: 0,
+    reject: false,
+    explanation:
+      subjectZ === null || referenceZ === null
+        ? "group z が不足しています。"
+        : `${subjectGroupId}.z=${formatNumber(subjectZ)} / ${referenceGroupId}.z=${formatNumber(referenceZ)} / delta=${formatNumber(delta)}`,
+  }
+}
+
+function evaluateDepthRelation(
+  subjectZ: number,
+  referenceZ: number,
+  relation: DepthRelationKind,
+  margin: number,
+): boolean {
+  if (relation === "inFrontOf") {
+    return subjectZ < referenceZ - margin
+  }
+  if (relation === "behind") {
+    return subjectZ > referenceZ + margin
+  }
+  return Math.abs(subjectZ - referenceZ) <= margin
+}
+
+function buildSmoothnessDebug478(
+  candidate: Generated478DepthCandidate,
+  threshold: number,
+): SmoothnessDebug478 {
+  const edges = buildDepth478NeighborEdges(candidate.landmarks)
+  const deltas = edges.map((edge) => ({
+    ...edge,
+    deltaZ: round(
+      Math.abs(candidate.landmarks[edge.from].z - candidate.landmarks[edge.to].z),
+    ),
+  }))
+  const highDeltaEdges = deltas
+    .filter((edge) => edge.deltaZ > threshold)
+    .sort((a, b) => b.deltaZ - a.deltaZ)
+    .slice(0, DEPTH_478_MAX_HIGH_DELTA_EDGES)
+
+  return {
+    averageNeighborDeltaZ: roundNullable(average(deltas.map((edge) => edge.deltaZ))),
+    maxNeighborDeltaZ: roundNullable(max(deltas.map((edge) => edge.deltaZ))),
+    highDeltaEdgeCount: deltas.filter((edge) => edge.deltaZ > threshold).length,
+    highDeltaEdges,
+    threshold: round(threshold),
+  }
+}
+
+function buildDepth478NeighborEdges(
+  landmarks: Generated478DepthCandidate["landmarks"],
+): Array<{ from: number; to: number }> {
+  const edges = new Map<string, { from: number; to: number }>()
+  landmarks.forEach((landmark, position) => {
+    const nearest = landmarks
+      .map((other, otherPosition) => ({
+        otherPosition,
+        distance: position === otherPosition ? Number.POSITIVE_INFINITY : distance2D(landmark, other),
+      }))
+      .sort((a, b) => a.distance - b.distance)
+      .slice(0, DEPTH_478_NEIGHBOR_COUNT)
+    for (const item of nearest) {
+      const from = Math.min(position, item.otherPosition)
+      const to = Math.max(position, item.otherPosition)
+      edges.set(`${from}:${to}`, { from, to })
+    }
+  })
+  return Array.from(edges.values())
+}
+
+function buildDepth478CandidateComparisonEntry(
+  candidate: Generated478DepthCandidate,
+  projectionEvaluation: ProjectionEvaluation478,
+  depthRelationDebug: Depth478RelationDebug,
+  smoothnessDebug: SmoothnessDebug478,
+): Depth478CandidateComparisonEntry {
+  return {
+    candidateId: candidate.id,
+    source8CandidateId: candidate.source8CandidateId ?? null,
+    totalProjectionError: projectionEvaluation.totalProjectionError,
+    maxBucketScore: maxNullable(Object.values(projectionEvaluation.bucketScores)),
+    depthRelationViolationCount: depthRelationDebug.violationCount,
+    smoothnessMaxDeltaZ: smoothnessDebug.maxNeighborDeltaZ,
+    smoothnessHighDeltaEdgeCount: smoothnessDebug.highDeltaEdgeCount,
+  }
+}
+
+function cloneDepthGroupCorrections(corrections: DepthGroupCorrection[]): DepthGroupCorrection[] {
+  return corrections.map((correction) => ({
+    ...correction,
+    pointIndices: [...correction.pointIndices],
+  }))
+}
+
+function aggregateDepthValues(
+  values: number[],
+  aggregation: DepthRelationAggregation,
+): number | null {
+  if (values.length === 0) {
+    return null
+  }
+  return aggregation === "median" ? round(median(values) ?? 0) : round(average(values) ?? 0)
 }
 
 function buildAnalysisOutlierFrameDebug(
@@ -5302,6 +6239,7 @@ function createSummaryAnalysis(analysis: AnalysisResult): SummaryAnalysisResult 
     autoSequenceSummaryFinalCandidate: analysis.autoSequenceSummary?.finalCandidate ?? null,
     autoSequenceStepCount: analysis.autoSequenceSummary?.steps.length ?? 0,
     candidateStabilityDebug: analysis.candidateStabilityDebug,
+    depth478Prototype: analysis.depth478Prototype,
     warnings: analysis.warnings,
   }
 }
@@ -5367,6 +6305,7 @@ function renderSourceOnly(): void {
   getElement("best-candidate").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
   renderOutlierFrameDebug(null, readSettings().outlierFiltering)
   renderDepthRelationDebug(null, readSettings().depthRelationFiltering)
+  renderDepth478Prototype(null)
   renderProjectionSignDebug(null)
   renderRotationCenterDebug(null)
   renderBucketTargetWarning()
@@ -5471,6 +6410,7 @@ function renderAnalysis(): void {
     : `<p class="empty">候補がありません。</p>`
   renderOutlierFrameDebug(analysis.outlierFrameDebug ?? null, analysis.searchSettings.outlierFiltering)
   renderDepthRelationDebug(analysis.depthRelationDebug ?? null, analysis.searchSettings.depthRelationFiltering)
+  renderDepth478Prototype(analysis.depth478Prototype ?? null)
   renderProjectionSignDebug(analysis.projectionSignDebug ?? null)
   renderRotationCenterDebug(analysis.rotationCenterDebug ?? null)
   renderBucketTargetWarning()
@@ -6097,6 +7037,191 @@ function renderDepthRelationRuleTable(results: DepthRelationRuleResult[]): strin
   `
 }
 
+function renderDepth478Prototype(prototype: Depth478PrototypeResult | null): void {
+  const empty = `<p class="empty">478点デバッグ候補はまだ生成されていません。</p>`
+  if (!prototype?.generatedCandidate) {
+    getElement("depth-478-summary").innerHTML = empty
+    getElement("depth-478-projection-evaluation").innerHTML = empty
+    getElement("depth-478-group-error-table").innerHTML = ""
+    getElement("depth-478-relation-debug").innerHTML = empty
+    getElement("depth-478-relation-rule-table").innerHTML = ""
+    getElement("depth-478-smoothness-debug").innerHTML = empty
+    getElement("depth-478-smoothness-edge-table").innerHTML = ""
+    getElement("depth-478-candidate-comparison").innerHTML =
+      renderDepth478CandidateComparisonTable(prototype?.candidateComparison ?? [])
+    return
+  }
+
+  const candidate = prototype.generatedCandidate
+  const projection = prototype.projectionEvaluation
+  const relation = prototype.depthRelationDebug
+  const smoothness = prototype.smoothnessDebug
+  getElement("depth-478-summary").innerHTML = renderStatusItems([
+    ["candidateId", candidate.id],
+    ["source8CandidateId", candidate.source8CandidateId ?? "-"],
+    ["landmarkCount", String(candidate.summary.landmarkCount)],
+    ["zMin", formatNumber(candidate.summary.zMin)],
+    ["zMax", formatNumber(candidate.summary.zMax)],
+    ["zRange", formatNumber(candidate.summary.zRange)],
+    ["averageZ", formatNumber(candidate.summary.averageZ)],
+    ["rotationCenter", formatRotationCenter(candidate.rotationCenter)],
+    ["method", prototype.settings.interpolation.method],
+    ["epsilon", formatNumber(prototype.settings.interpolation.epsilon)],
+    ["power", formatNumber(prototype.settings.interpolation.power)],
+    ["clampZ", String(prototype.settings.interpolation.clampZ)],
+  ])
+  getElement("depth-478-projection-evaluation").innerHTML = projection
+    ? renderStatusItems([
+        ["totalProjectionError", formatNumber(projection.totalProjectionError)],
+        ["averageProjectionError", formatNumber(projection.averageProjectionError)],
+        ["front", formatNumber(projection.bucketScores.front)],
+        ["yawPositive", formatNumber(projection.bucketScores.yawPositive)],
+        ["yawNegative", formatNumber(projection.bucketScores.yawNegative)],
+        ["pitchPositive", formatNumber(projection.bucketScores.pitchPositive)],
+        ["pitchNegative", formatNumber(projection.bucketScores.pitchNegative)],
+        ["mixedPose", formatNumber(projection.bucketScores.mixedPose)],
+        [
+          "worstFrame",
+          projection.worstFrame
+            ? `${projection.worstFrame.captureId} / ${projection.worstFrame.bucket} / ${formatNumber(projection.worstFrame.error)}`
+            : "-",
+        ],
+        [
+          "worstGroup",
+          projection.worstGroup
+            ? `${projection.worstGroup.label} / ${formatNumber(projection.worstGroup.averageError)}`
+            : "-",
+        ],
+      ])
+    : empty
+  getElement("depth-478-group-error-table").innerHTML = projection
+    ? renderDepth478GroupErrorTable(projection.perGroupError)
+    : ""
+  getElement("depth-478-relation-debug").innerHTML = relation
+    ? renderStatusItems([
+        ["violationCount", String(relation.violationCount)],
+        ["noseTipGroup.z", formatNumber(relation.groupValues.noseTipGroup?.z ?? null)],
+        ["cheekGroup.z", formatNumber(relation.groupValues.cheekGroup?.z ?? null)],
+        ["faceCenterGroup.z", formatNumber(relation.groupValues.faceCenterGroup?.z ?? null)],
+        ["faceBoundaryGroup.z", formatNumber(relation.groupValues.faceBoundaryGroup?.z ?? null)],
+      ])
+    : empty
+  getElement("depth-478-relation-rule-table").innerHTML = relation
+    ? renderDepthRelationRuleTable(relation.ruleResults)
+    : ""
+  getElement("depth-478-smoothness-debug").innerHTML = smoothness
+    ? renderStatusItems([
+        ["averageNeighborDeltaZ", formatNumber(smoothness.averageNeighborDeltaZ)],
+        ["maxNeighborDeltaZ", formatNumber(smoothness.maxNeighborDeltaZ)],
+        ["highDeltaEdgeCount", String(smoothness.highDeltaEdgeCount)],
+        ["threshold", formatNumber(smoothness.threshold)],
+      ])
+    : empty
+  getElement("depth-478-smoothness-edge-table").innerHTML = smoothness
+    ? renderDepth478SmoothnessEdgeTable(smoothness.highDeltaEdges)
+    : ""
+  getElement("depth-478-candidate-comparison").innerHTML = renderDepth478CandidateComparisonTable(
+    prototype.candidateComparison ?? [],
+  )
+}
+
+function renderDepth478GroupErrorTable(
+  perGroupError: ProjectionEvaluation478["perGroupError"],
+): string {
+  const groups = Object.values(perGroupError)
+  if (groups.length === 0) {
+    return `<p class="empty">478 group error はありません。</p>`
+  }
+  return `
+    <table>
+      <thead>
+        <tr>
+          <th>groupId</th>
+          <th>label</th>
+          <th>averageError</th>
+          <th>maxError</th>
+          <th>sampleCount</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${groups.map((group) => `
+          <tr>
+            <td><code>${escapeHtml(group.groupId)}</code></td>
+            <td>${escapeHtml(group.label)}</td>
+            <td>${formatNumber(group.averageError)}</td>
+            <td>${formatNumber(group.maxError)}</td>
+            <td>${group.sampleCount}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `
+}
+
+function renderDepth478SmoothnessEdgeTable(
+  edges: SmoothnessDebug478["highDeltaEdges"],
+): string {
+  if (edges.length === 0) {
+    return `<p class="empty">しきい値を超える近傍 z 差はありません。</p>`
+  }
+  return `
+    <table>
+      <thead>
+        <tr>
+          <th>from</th>
+          <th>to</th>
+          <th>deltaZ</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${edges.map((edge) => `
+          <tr>
+            <td><code>${edge.from}</code></td>
+            <td><code>${edge.to}</code></td>
+            <td>${formatNumber(edge.deltaZ)}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `
+}
+
+function renderDepth478CandidateComparisonTable(
+  entries: Depth478CandidateComparisonEntry[],
+): string {
+  if (entries.length === 0) {
+    return `<p class="empty">478点候補比較はまだありません。</p>`
+  }
+  return `
+    <table>
+      <thead>
+        <tr>
+          <th>candidateId</th>
+          <th>source8Candidate</th>
+          <th>totalProjectionError</th>
+          <th>worstBucketScore</th>
+          <th>depthRelationViolationCount</th>
+          <th>smoothnessMaxDeltaZ</th>
+          <th>smoothnessHighDeltaEdgeCount</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${entries.map((entry) => `
+          <tr>
+            <td><code>${escapeHtml(entry.candidateId)}</code></td>
+            <td><code>${escapeHtml(entry.source8CandidateId ?? "-")}</code></td>
+            <td>${formatNumber(entry.totalProjectionError)}</td>
+            <td>${formatNumber(entry.maxBucketScore)}</td>
+            <td>${formatNumber(entry.depthRelationViolationCount)}</td>
+            <td>${formatNumber(entry.smoothnessMaxDeltaZ)}</td>
+            <td>${formatNumber(entry.smoothnessHighDeltaEdgeCount)}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `
+}
+
 function renderRejectedCandidateTable(
   candidates: RejectedCandidateSummary[],
   rejectedCandidateCount: number,
@@ -6469,6 +7594,7 @@ function renderEmptyState(): void {
   getElement("best-candidate").innerHTML = `<p class="empty">未解析です。</p>`
   renderOutlierFrameDebug(null, DEFAULT_OUTLIER_FILTERING_SETTINGS)
   renderDepthRelationDebug(null, DEFAULT_DEPTH_RELATION_FILTERING_SETTINGS)
+  renderDepth478Prototype(null)
   renderProjectionSignDebug(null)
   renderRotationCenterDebug(null)
   renderBucketTargetWarning()
@@ -6841,6 +7967,10 @@ function setButtons(): void {
   getElement<HTMLButtonElement>("run-auto-sequence-button").disabled = state.frames.length === 0 || isRunning || isAutoRunning
   getElement<HTMLButtonElement>("cancel-auto-sequence-button").disabled = !isAutoRunning
   getElement<HTMLButtonElement>("use-best-candidate-button").disabled = !state.analysis?.bestCandidate || isRunning || isAutoRunning
+  getElement<HTMLButtonElement>("generate-depth-478-button").disabled =
+    !state.analysis || isRunning || isAutoRunning
+  getElement<HTMLButtonElement>("export-depth-478-button").disabled =
+    !state.analysis?.depth478Prototype?.generatedCandidate || isRunning || isAutoRunning
   getElement<HTMLButtonElement>("export-full-button").disabled = !state.analysis || isRunning || isAutoRunning
   getElement<HTMLButtonElement>("export-summary-button").disabled = !state.analysis || isRunning || isAutoRunning
   getElement<HTMLButtonElement>("run-stability-check-button").disabled =
@@ -7177,6 +8307,17 @@ function average(values: number[]): number | null {
     : finite.reduce((total, value) => total + value, 0) / finite.length
 }
 
+function median(values: number[]): number | null {
+  const finite = values.filter(Number.isFinite).sort((a, b) => a - b)
+  if (finite.length === 0) {
+    return null
+  }
+  const middle = Math.floor(finite.length / 2)
+  return finite.length % 2 === 0
+    ? (finite[middle - 1] + finite[middle]) / 2
+    : finite[middle]
+}
+
 function averageNullable(values: Array<number | null>): number | null {
   return average(values.filter((value): value is number => typeof value === "number"))
 }
@@ -7193,6 +8334,10 @@ function readNumber(id: string, fallback: number): number {
 
 function toNumber(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? value : Number(value) || fallback
+}
+
+function clamp(value: number, minValue: number, maxValue: number): number {
+  return Math.min(Math.max(value, minValue), maxValue)
 }
 
 function round(value: number): number {

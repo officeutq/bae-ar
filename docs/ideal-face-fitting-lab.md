@@ -1,5 +1,33 @@
 # IdealFace Fitting Lab
 
+## 8Point To 478 Depth Prototype
+
+`tools/ideal-face-fitting-lab` には、8 semantic points の候補を最終 IdealFace asset としてすぐ export するのではなく、478 landmarks の z を評価するための prototype を追加している。
+
+この prototype では、8点候補を `depthAnchors` として扱う。
+
+- `headTop.z`
+- `chin.z`
+- `leftCheek.z`
+- `rightCheek.z`
+- `leftEye.z`
+- `rightEye.z`
+- `nose.z`
+- `mouth.z`
+
+478点それぞれの z は個別探索しない。初期実装では、front bucket の selected frames から 478点の x / y を同じ座標系で平均し、8つの depth anchor から `inverseDistanceWeighting` で z を補間する。必要な微調整は、個別 landmark の自由探索ではなく `DepthGroupCorrection` による group correction として扱う。
+
+8点から478点へ拡張した候補は、まだ production asset ではない。`Generated478DepthCandidate` は debug candidate であり、候補評価後に採用判断する。UI でも `Generate 478 Debug Candidate` / `Export 478 Debug JSON` として扱い、Final Export とは呼ばない。
+
+処理フローの 5 と 6 の間には、以下の評価工程を置く。
+
+- `478 Projection Evaluation`: 補正後478点候補を selected frames の pose へ投影し、current 478 landmarks と比較する。478 landmarks がない frame は評価から除外する。
+- `478 Depth Relation Debug`: `noseTipGroup` が `cheekGroup` より手前、`faceCenterGroup` が `faceBoundaryGroup` より手前かを debug として確認する。
+- `478 Smoothness Debug`: 近傍 landmark 間の z 差を見て、z が不自然にガタついていないかを確認する。
+- `478 Candidate Comparison`: candidate id、元8点候補、投影誤差、奥行き関係違反数、smoothness の最大差としきい値超過数を比較する。
+
+最終的な export は、478候補の評価・比較後に別工程で行う。現段階では Runtime、IdealFace Authoring Tool、asset schema、Standard Face、MediaPipe canonical face model との比較には組み込まない。
+
 `tools/ideal-face-fitting-lab` は、production 用 IdealFace asset を直接作る正式ツールではありません。
 
 まずは 8 semantic points について、正面基準 x / y を固定し、8点それぞれの z と pivotZ だけを未知数として探索する検証ラボです。正面2Dだけでは z は決められないため、複数姿勢の capture frame へ candidate を回転・投影し、current 2D landmarks 8点との誤差でランキングします。
