@@ -4,7 +4,7 @@
 
 `tools/ideal-face-fitting-lab` には、8 semantic points の候補を最終 IdealFace asset としてすぐ export するのではなく、478 landmarks の z を評価するための prototype を追加している。
 
-現在の主導線は `Run 478 Depth Hard Reject Debug` です。このボタンは、capture JSON 読み込み後に `Balanced 5 each`、`Natural Nose Balanced Sequence`、Depth Relation `hardReject`、Outlier Filtering off の固定設定で 8点探索から 478点奥行き debug candidate 生成までを一括実行し、`depth478` debug JSON を自動ダウンロードする。
+現在の主導線は `Run 478 Depth Hard Reject Debug` です。このボタンは、capture JSON 読み込み後に `Balanced 10 each`、`Rotation Center Balanced Sequence`、Depth Relation `hardReject`、Outlier Filtering enabled の固定設定で 8点探索から 478点奥行き debug candidate 生成までを一括実行し、`depth478` debug JSON を自動ダウンロードする。
 
 この出力は production asset export ではない。UI 表示は手動操作を減らすために簡略化し、詳細 debug result は UI ではなくダウンロードされる JSON を正とする。従来の探索設定、ranking、per-frame table、478 Projection / Depth Relation / Smoothness / Candidate Comparison の詳細表示は `Advanced Settings / Debug UI` に折りたたむ。
 

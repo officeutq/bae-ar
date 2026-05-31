@@ -341,6 +341,7 @@ interface AnalysisDepthRelationDebug {
   settings: DepthRelationFilteringSettings
   bestCandidateDepthRelation?: DepthRelationDebug
   rejectedCandidates: RejectedCandidateSummary[]
+  nearestRejectedCandidate?: RejectedCandidateSummary
   rejectedCandidateCount: number
 }
 
@@ -547,10 +548,12 @@ async function runSearch(message: WorkerStartMessage): Promise<void> {
   const topResults: CandidateResult[] = []
   const bucketTopResults = emptyBucketResults()
   const rejectedCandidates: RejectedCandidateSummary[] = []
+  let nearestRejectedCandidate: RejectedCandidateSummary | null = null
   const warnings = new Set<string>()
 
   const processChunk = (): void => {
     let processedInChunk = 0
+    let sourceExhausted = false
 
     while (
       processedCandidateCount < estimatedCandidateCount &&
@@ -559,6 +562,7 @@ async function runSearch(message: WorkerStartMessage): Promise<void> {
     ) {
       const candidate = candidateSource.next()
       if (!candidate) {
+        sourceExhausted = true
         break
       }
       const result = evaluateCandidate(
@@ -573,8 +577,14 @@ async function runSearch(message: WorkerStartMessage): Promise<void> {
       insertRawTopResult(rawTopResults, result, message.settings.topN)
       if (isDepthRelationRejected(result)) {
         rejectedCandidateCount += 1
-        if (rejectedCandidates.length < 20 && result.depthRelationDebug) {
-          rejectedCandidates.push(toRejectedCandidateSummary(result))
+        if (result.depthRelationDebug) {
+          const rejectedCandidate = toRejectedCandidateSummary(result)
+          if (rejectedCandidates.length < 20) {
+            rejectedCandidates.push(rejectedCandidate)
+          }
+          if (isNearerRejectedCandidate(rejectedCandidate, nearestRejectedCandidate)) {
+            nearestRejectedCandidate = rejectedCandidate
+          }
         }
       } else {
         insertTopResult(topResults, result, message.settings.topN, message.settings.objectiveMode)
@@ -606,9 +616,12 @@ async function runSearch(message: WorkerStartMessage): Promise<void> {
       rejectedCandidateCount,
     })
 
-    if (processedCandidateCount >= estimatedCandidateCount) {
+    if (sourceExhausted || processedCandidateCount >= estimatedCandidateCount) {
       const rawRanking = toRankingEntries(rawTopResults)
       const rejectedWithRank = attachOriginalRanksToRejectedCandidates(rejectedCandidates, rawRanking)
+      const nearestRejectedWithRank = nearestRejectedCandidate
+        ? attachOriginalRanksToRejectedCandidates([nearestRejectedCandidate], rawRanking)[0]
+        : undefined
       if (
         topResults.length === 0 &&
         rejectedCandidateCount > 0 &&
@@ -630,6 +643,7 @@ async function runSearch(message: WorkerStartMessage): Promise<void> {
           settings: normalizeDepthRelationFilteringSettings(message.settings.depthRelationFiltering),
           bestCandidateDepthRelation: topResults[0]?.depthRelationDebug,
           rejectedCandidates: rejectedWithRank,
+          nearestRejectedCandidate: nearestRejectedWithRank,
           rejectedCandidateCount,
         },
         warnings: Array.from(warnings),
@@ -1846,6 +1860,33 @@ function toRejectedCandidateSummary(candidate: CandidateResult): RejectedCandida
       .filter((result) => result.reject)
       .map((result) => result.explanation) ?? [],
   }
+}
+
+function isNearerRejectedCandidate(
+  next: RejectedCandidateSummary,
+  current: RejectedCandidateSummary | null,
+): boolean {
+  if (!current) {
+    return true
+  }
+  const nextDistance = getHardRejectViolationDistance(next)
+  const currentDistance = getHardRejectViolationDistance(current)
+  if (nextDistance !== currentDistance) {
+    return nextDistance < currentDistance
+  }
+  return next.objectiveScoreBeforeDepthFilter < current.objectiveScoreBeforeDepthFilter
+}
+
+function getHardRejectViolationDistance(candidate: RejectedCandidateSummary): number {
+  const distances = candidate.depthRelationDebug.ruleResults
+    .filter((result) => result.reject && result.delta !== null)
+    .map((result) =>
+      calculateDepthRelationViolationDistance(result.relation, result.delta as number, result.margin),
+    )
+  if (distances.length === 0) {
+    return Number.POSITIVE_INFINITY
+  }
+  return Math.min(...distances)
 }
 
 function attachOriginalRanksToRejectedCandidates(

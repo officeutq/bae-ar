@@ -441,6 +441,8 @@ interface AutoSequenceDefinition {
 interface AutoSequenceStepSummary {
   stepIndex: number
   presetName: string
+  presetId: SearchPresetId
+  searchSettings: AutoSequenceStepSearchSettings
   objectiveMode: ObjectiveMode
   objectiveScore: number | null
   baseCandidate: FittingCandidate8
@@ -458,8 +460,25 @@ interface AutoSequenceStepSummary {
   estimatedCandidateCount: number
 }
 
+interface AutoSequenceStepSearchSettings {
+  searchMode: SearchMode
+  objectiveMode: ObjectiveMode
+  targetParameter?: LocalSearchParameter
+  localRange?: {
+    min: number
+    max: number
+    step: number
+  }
+  coordinateDescentIterations?: number
+  coordinateDescentParameterOrder?: LocalSearchParameter[]
+  coordinateDescentRanges?: LocalSearchRanges
+}
+
 interface AutoSequenceSummary {
+  sequenceId: AutoSequencePresetId | null
   sequenceName: string
+  baseCandidatePresetId: BaseCandidatePresetId | null
+  stepPresetIds: SearchPresetId[]
   startedAt: string
   completedAt?: string
   status: "completed" | "cancelled" | "error"
@@ -756,6 +775,7 @@ interface AnalysisDepthRelationDebug {
   settings: DepthRelationFilteringSettings
   bestCandidateDepthRelation?: DepthRelationDebug
   rejectedCandidates: RejectedCandidateSummary[]
+  nearestRejectedCandidate?: RejectedCandidateSummary
   rejectedCandidateCount: number
 }
 
@@ -984,14 +1004,16 @@ interface Quick478DepthDebugSummary {
   schemaVersion: "ideal_face_fitting_depth478_quick_debug_v1"
   status: Exclude<Quick478DepthDebugStatus, "idle" | "running">
   reason?: string
+  failedStep?: string
+  stack?: string
   startedAt: string
   completedAt: string
   settings: {
-    bucketPreset: "balanced_5_each"
-    autoSearchSequence: "natural_nose_balanced"
-    depthRelationMode: "hardReject"
-    outlierFilteringEnabled: false
-    interpolationMethod: "inverseDistanceWeighting"
+    bucketPreset: "balanced_10_each"
+    autoSearchSequence: "rotation_center_balanced"
+    depthRelationMode: DepthRelationMode
+    outlierFilteringEnabled: boolean
+    interpolationMethod: DepthInterpolationSettings["method"]
   }
   summary: {
     noseTipGroupZ: number | null
@@ -1005,6 +1027,16 @@ interface Quick478DepthDebugSummary {
   }
   isRejected?: boolean
   fallbackUsed?: boolean
+  nearestRejectedCandidate?: Quick478NearestRejectedCandidate
+}
+
+interface Quick478NearestRejectedCandidate {
+  candidateId: string
+  noseZ: number | null
+  cheekZ: number | null
+  margin: number | null
+  delta: number | null
+  reason: string
 }
 
 interface Quick478DepthDebugPayload extends Depth478PrototypeResult {
@@ -2082,18 +2114,20 @@ const DEFAULT_DEPTH_478_SMOOTHNESS_THRESHOLD = 0.03
 const DEPTH_478_NEIGHBOR_COUNT = 4
 const DEPTH_478_MAX_HIGH_DELTA_EDGES = 50
 const QUICK_DEPTH_478_NOSE_CHEEK_MARGIN = 0.005
+const QUICK_478_DEPTH_DEBUG_WORKER_CHUNK_SIZE = 50
 
 const QUICK_478_DEPTH_DEBUG_SETTINGS = {
-  bucketPreset: "balanced5Each" as BucketTargetPresetId,
-  autoSearchSequence: "naturalNoseBalancedSequence" as AutoSequencePresetId,
+  bucketPreset: "balanced10Each" as BucketTargetPresetId,
+  autoSearchSequence: "rotationCenterBalancedSequence" as AutoSequencePresetId,
   depthRelationFiltering: {
     enabled: true,
     mode: "hardReject" as DepthRelationMode,
     applyToObjectiveScore: false,
   },
   outlierFiltering: {
-    enabled: false,
-    mode: "off" as OutlierFilteringMode,
+    enabled: true,
+    mode: "excludeFromInference" as OutlierFilteringMode,
+    applyToObjectiveScore: true,
   },
   interpolation: {
     enabled: true,
@@ -2105,6 +2139,13 @@ const QUICK_478_DEPTH_DEBUG_SETTINGS = {
     zMax: 0.24,
   } satisfies DepthInterpolationSettings,
   smoothnessThreshold: 0.03,
+}
+
+const QUICK_478_DEPTH_DEBUG_SETTINGS_SUMMARY = {
+  bucketPreset: "balanced_10_each" as const,
+  autoSearchSequence: "rotation_center_balanced" as const,
+  depthRelationMode: "hardReject" as const,
+  interpolationMethod: "inverseDistanceWeighting" as const,
 }
 
 const DEPTH_478_GROUP_DEFINITIONS: Array<{
@@ -2259,7 +2300,7 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
 
     <section class="panel">
       <h2>478 Depth Hard Reject Debug</h2>
-      <p class="panel-help">capture JSON を読み込み、Natural Nose Balanced Sequence / Balanced 5 each / Depth Relation hardReject 固定で 478点奥行き debug JSON を自動ダウンロードします。production asset export ではありません。</p>
+      <p class="panel-help">capture JSON を読み込み、Rotation Center Balanced Sequence / Balanced 10 each / Depth Relation hardReject / Outlier Filtering enabled 固定で 478点奥行き debug JSON を自動ダウンロードします。production asset export ではありません。</p>
       <input id="capture-file-input" type="file" accept="application/json,.json" />
       <div class="controls-wide">
         <button id="run-quick-depth-478-button" class="primary" type="button">Run 478 Depth Hard Reject Debug（478点奥行き hardReject デバッグを実行）</button>
@@ -3011,6 +3052,13 @@ function runAnalysis(settingsOverride?: SearchSettings): void {
   renderSourceOnly()
   renderSearchProgress()
   renderAutoSequenceStatus()
+  if (state.quick478DepthDebug.status === "running") {
+    state.quick478DepthDebug = {
+      ...state.quick478DepthDebug,
+      message: buildQuick478DepthDebugProgressMessage(),
+    }
+    renderQuick478DepthDebug()
+  }
 }
 interface SearchWorkerContext {
   settings: SearchSettings
@@ -3100,6 +3148,10 @@ function startSearchWorker(context: SearchWorkerContext): void {
     basePoints: context.base8Points2DSummary.points,
     frames: createWorkerFrames(context.selected.frames),
     settings: context.settings,
+    chunkSize:
+      state.quick478DepthDebug.status === "running"
+        ? QUICK_478_DEPTH_DEBUG_WORKER_CHUNK_SIZE
+        : undefined,
   })
 }
 
@@ -3282,6 +3334,13 @@ function updateSearchProgressFromWorker(message: Record<string, unknown>): void 
   }
   renderSearchProgress()
   renderAutoSequenceStatus()
+  if (state.quick478DepthDebug.status === "running") {
+    state.quick478DepthDebug = {
+      ...state.quick478DepthDebug,
+      message: buildQuick478DepthDebugProgressMessage(),
+    }
+    renderQuick478DepthDebug()
+  }
 }
 
 function createWorkerFrames(frames: NormalizedFrame[]): Array<{
@@ -4138,7 +4197,7 @@ function runQuick478DepthHardRejectDebug(): void {
   const startedAt = new Date().toISOString()
   state.quick478DepthDebug = {
     status: "running",
-    message: "478 Depth hardReject debug を実行中...",
+    message: "478 Depth hardReject debug をバックグラウンドで実行中...",
     startedAt,
     completedAt: null,
     quickRun: null,
@@ -4148,10 +4207,22 @@ function runQuick478DepthHardRejectDebug(): void {
   writeSelectValue("bucket-target-preset-select", QUICK_478_DEPTH_DEBUG_SETTINGS.bucketPreset)
   renderQuick478DepthDebug()
   setButtons()
-  startAutoSequence(
-    findAutoSequence(QUICK_478_DEPTH_DEBUG_SETTINGS.autoSearchSequence),
-    findBucketTargetPreset(QUICK_478_DEPTH_DEBUG_SETTINGS.bucketPreset),
-  )
+  try {
+    startAutoSequence(
+      findAutoSequence(QUICK_478_DEPTH_DEBUG_SETTINGS.autoSearchSequence),
+      findBucketTargetPreset(QUICK_478_DEPTH_DEBUG_SETTINGS.bucketPreset),
+    )
+    renderQuick478DepthDebug()
+  } catch (error) {
+    completeQuick478DepthDebug(
+      "error",
+      error instanceof Error ? error.message : String(error),
+      {
+        failedStep: getQuick478DepthDebugCurrentStepLabel(),
+        stack: error instanceof Error ? error.stack : undefined,
+      },
+    )
+  }
 }
 
 function createQuick478DepthPrototypeSettings(): Depth478PrototypeResult["settings"] {
@@ -4165,16 +4236,20 @@ function createQuick478DepthPrototypeSettings(): Depth478PrototypeResult["settin
 function completeQuick478DepthDebug(
   autoStatus: "completed" | "cancelled" | "error",
   message: string,
+  errorDetails?: { failedStep?: string; stack?: string },
 ): void {
   const startedAt = state.quick478DepthDebug.startedAt ?? new Date().toISOString()
   const completedAt = new Date().toISOString()
   const analysis = state.analysis
+  const failedStep = errorDetails?.failedStep ?? getQuick478DepthDebugCurrentStepLabel()
 
   if (!analysis || autoStatus === "cancelled") {
     finishQuick478DepthDebug(
       buildQuick478DepthDebugPayload(null, {
         status: "error",
         reason: autoStatus === "cancelled" ? "cancelled" : message,
+        failedStep,
+        stack: errorDetails?.stack,
         startedAt,
         completedAt,
       }),
@@ -4188,6 +4263,8 @@ function completeQuick478DepthDebug(
       buildQuick478DepthDebugPayload(null, {
         status: noCandidate ? "noCandidate" : "error",
         reason: noCandidate ? "No candidate passed depth relation hardReject" : message,
+        failedStep: noCandidate ? undefined : failedStep,
+        stack: errorDetails?.stack,
         startedAt,
         completedAt,
         fallbackUsed: noCandidate ? false : undefined,
@@ -4236,6 +4313,17 @@ function completeQuick478DepthDebug(
   )
 }
 
+function getQuick478DepthDebugCurrentStepLabel(): string | undefined {
+  const sequence = state.autoSequence.definition
+  if (!sequence) {
+    return "startAutoSequence"
+  }
+  const stepIndex = state.autoSequence.currentStepIndex
+  const stepPresetId = sequence.steps[stepIndex]
+  const step = stepPresetId ? findSearchPreset(stepPresetId) : null
+  return step ? `${sequence.label} step ${stepIndex + 1}: ${step.label}` : sequence.label
+}
+
 function finishQuick478DepthDebug(payload: Quick478DepthDebugPayload): void {
   state.quick478DepthDebug = {
     status: payload.quickRun.status,
@@ -4258,6 +4346,8 @@ function buildQuick478DepthDebugPayload(
   options: {
     status: Quick478DepthDebugSummary["status"]
     reason?: string
+    failedStep?: string
+    stack?: string
     startedAt: string
     completedAt: string
     isRejected?: boolean
@@ -4273,14 +4363,15 @@ function buildQuick478DepthDebugPayload(
     schemaVersion: "ideal_face_fitting_depth478_quick_debug_v1",
     status: options.status,
     reason: options.reason,
+    failedStep: options.failedStep,
+    stack: options.stack,
     startedAt: options.startedAt,
     completedAt: options.completedAt,
     settings: {
-      bucketPreset: "balanced_5_each",
-      autoSearchSequence: "natural_nose_balanced",
-      depthRelationMode: "hardReject",
-      outlierFilteringEnabled: false,
-      interpolationMethod: "inverseDistanceWeighting",
+      ...QUICK_478_DEPTH_DEBUG_SETTINGS_SUMMARY,
+      depthRelationMode: QUICK_478_DEPTH_DEBUG_SETTINGS.depthRelationFiltering.mode,
+      outlierFilteringEnabled: QUICK_478_DEPTH_DEBUG_SETTINGS.outlierFiltering.enabled,
+      interpolationMethod: QUICK_478_DEPTH_DEBUG_SETTINGS.interpolation.method,
     },
     summary: {
       noseTipGroupZ: relation?.groupValues.noseTipGroup?.z ?? null,
@@ -4299,11 +4390,54 @@ function buildQuick478DepthDebugPayload(
   if (options.fallbackUsed !== undefined) {
     quickRun.fallbackUsed = options.fallbackUsed
   }
+  if (options.status === "noCandidate" && options.analysis) {
+    const nearestRejectedCandidate = buildQuick478NearestRejectedCandidate(
+      options.analysis.depthRelationDebug?.nearestRejectedCandidate,
+    )
+    if (nearestRejectedCandidate) {
+      quickRun.nearestRejectedCandidate = nearestRejectedCandidate
+    }
+  }
 
   return {
     quickRun,
     ...(prototype ?? { settings: createQuick478DepthPrototypeSettings() }),
     analysisSummary: options.analysis ? createSummaryAnalysis(options.analysis) : undefined,
+  }
+}
+
+function buildQuick478NearestRejectedCandidate(
+  rejected: RejectedCandidateSummary | undefined,
+): Quick478NearestRejectedCandidate | undefined {
+  if (!rejected) {
+    return undefined
+  }
+  const noseRule =
+    rejected.depthRelationDebug.ruleResults.find(
+      (rule) => rule.ruleId === "nose_tip_in_front_of_cheek_group",
+    ) ??
+    rejected.depthRelationDebug.ruleResults.find(
+      (rule) => rule.ruleId === "nose_tip_in_front_of_cheeks",
+    ) ??
+    rejected.depthRelationDebug.ruleResults.find((rule) => rule.reject)
+  const noseZ =
+    rejected.depthRelationDebug.groupValues.noseTipGroup?.z ??
+    rejected.depthRelationDebug.groupValues.noseTip?.z ??
+    rejected.candidate.zByPointId.nose ??
+    null
+  const cheekZ =
+    rejected.depthRelationDebug.groupValues.cheekGroup?.z ??
+    rejected.depthRelationDebug.groupValues.cheeks?.z ??
+    null
+  return {
+    candidateId: rejected.candidateId,
+    noseZ,
+    cheekZ,
+    margin: noseRule?.margin ?? null,
+    delta: noseRule?.delta ?? null,
+    reason: noseRule
+      ? `${noseRule.label}: ${noseRule.explanation}`
+      : rejected.rejectReasons[0] ?? "Rejected by depth relation hardReject",
   }
 }
 
@@ -4991,6 +5125,9 @@ function buildAnalysisDepthRelationDebug(
       rejectedCandidates: Array.isArray(sourceDebug.rejectedCandidates)
         ? (sourceDebug.rejectedCandidates as RejectedCandidateSummary[])
         : [],
+      nearestRejectedCandidate: isRecord(sourceDebug.nearestRejectedCandidate)
+        ? (sourceDebug.nearestRejectedCandidate as unknown as RejectedCandidateSummary)
+        : undefined,
       rejectedCandidateCount: toNumber(sourceDebug.rejectedCandidateCount, 0),
     }
   }
@@ -4998,6 +5135,7 @@ function buildAnalysisDepthRelationDebug(
     settings: normalizeDepthRelationFilteringSettings(settings.depthRelationFiltering),
     bestCandidateDepthRelation: bestCandidate?.depthRelationDebug,
     rejectedCandidates: [],
+    nearestRejectedCandidate: undefined,
     rejectedCandidateCount: 0,
   }
 }
@@ -5049,26 +5187,16 @@ function readSettings(): SearchSettings {
 }
 
 function readOutlierFilteringSettings(): OutlierFilteringSettings {
-  return {
+  return buildOutlierFilteringSettings({
     enabled: getElement<HTMLSelectElement>("outlier-enabled-select").value === "true",
     mode: readOutlierFilteringMode(getElement<HTMLSelectElement>("outlier-mode-select").value),
-    perBucketMaxOutliers: Math.max(
-      0,
-      Math.round(
-        readNumber(
-          "outlier-per-bucket-max-input",
-          DEFAULT_OUTLIER_FILTERING_SETTINGS.perBucketMaxOutliers,
-        ),
-      ),
+    perBucketMaxOutliers: readNumber(
+      "outlier-per-bucket-max-input",
+      DEFAULT_OUTLIER_FILTERING_SETTINGS.perBucketMaxOutliers,
     ),
-    minBucketSampleCount: Math.max(
-      1,
-      Math.round(
-        readNumber(
-          "outlier-min-bucket-sample-count-input",
-          DEFAULT_OUTLIER_FILTERING_SETTINGS.minBucketSampleCount,
-        ),
-      ),
+    minBucketSampleCount: readNumber(
+      "outlier-min-bucket-sample-count-input",
+      DEFAULT_OUTLIER_FILTERING_SETTINGS.minBucketSampleCount,
     ),
     method: readOutlierFilteringMethod(getElement<HTMLSelectElement>("outlier-method-select").value),
     medianMultiplier: readNumber(
@@ -5091,6 +5219,25 @@ function readOutlierFilteringSettings(): OutlierFilteringSettings {
     ),
     applyToObjectiveScore:
       getElement<HTMLSelectElement>("outlier-apply-to-objective-select").value === "true",
+  })
+}
+
+function buildOutlierFilteringSettings(
+  source?: Partial<OutlierFilteringSettings>,
+): OutlierFilteringSettings {
+  const merged = {
+    ...DEFAULT_OUTLIER_FILTERING_SETTINGS,
+    ...(source ?? {}),
+  }
+  return {
+    ...merged,
+    enabled: Boolean(merged.enabled),
+    mode: readOutlierFilteringMode(merged.mode),
+    perBucketMaxOutliers: Math.max(0, Math.round(merged.perBucketMaxOutliers)),
+    minBucketSampleCount: Math.max(1, Math.round(merged.minBucketSampleCount)),
+    method: readOutlierFilteringMethod(merged.method),
+    topWorstPercent: Math.max(0, Math.min(100, merged.topWorstPercent)),
+    applyToObjectiveScore: Boolean(merged.applyToObjectiveScore),
   }
 }
 
@@ -5414,12 +5561,10 @@ function createQuick478DepthDebugSearchSettings(
       ...DEFAULT_SETTINGS,
       searchMode: preset.searchMode,
       objectiveMode: preset.objectiveMode ?? DEFAULT_SETTINGS.objectiveMode,
-      outlierFiltering: {
+      outlierFiltering: buildOutlierFilteringSettings({
         ...DEFAULT_OUTLIER_FILTERING_SETTINGS,
-        enabled: QUICK_478_DEPTH_DEBUG_SETTINGS.outlierFiltering.enabled,
-        mode: QUICK_478_DEPTH_DEBUG_SETTINGS.outlierFiltering.mode,
-        applyToObjectiveScore: false,
-      },
+        ...QUICK_478_DEPTH_DEBUG_SETTINGS.outlierFiltering,
+      }),
       depthRelationFiltering: normalizeDepthRelationFilteringSettings({
         ...DEFAULT_DEPTH_RELATION_FILTERING_SETTINGS,
         enabled: QUICK_478_DEPTH_DEBUG_SETTINGS.depthRelationFiltering.enabled,
@@ -5478,6 +5623,8 @@ function handleAutoSequenceStepComplete(analysis: AnalysisResult | null): void {
   const stepSummary: AutoSequenceStepSummary = {
     stepIndex: state.autoSequence.currentStepIndex + 1,
     presetName: preset.label,
+    presetId: preset.id,
+    searchSettings: buildAutoSequenceStepSearchSettings(analysis.searchSettings),
     objectiveMode: analysis.bestCandidate?.objectiveMode ?? analysis.searchSettings.objectiveMode,
     objectiveScore: analysis.bestCandidate?.objectiveScore ?? null,
     baseCandidate: cloneCandidate(analysis.searchSettings.localSearchSettings.baseCandidate),
@@ -5570,8 +5717,12 @@ function buildAutoSequenceSummary(
   status: "completed" | "cancelled" | "error",
 ): AutoSequenceSummary {
   const finalStep = state.autoSequence.steps.at(-1)
+  const sequence = state.autoSequence.definition
   return {
-    sequenceName: state.autoSequence.definition?.label ?? "-",
+    sequenceId: sequence?.id ?? null,
+    sequenceName: sequence?.label ?? "-",
+    baseCandidatePresetId: sequence?.baseCandidatePresetId ?? null,
+    stepPresetIds: sequence ? [...sequence.steps] : [],
     startedAt: state.autoSequence.startedAt ?? new Date().toISOString(),
     completedAt: state.autoSequence.completedAt ?? new Date().toISOString(),
     status,
@@ -5579,6 +5730,29 @@ function buildAutoSequenceSummary(
     finalCandidate: state.autoSequence.finalCandidate,
     finalObjectiveMode: finalStep?.objectiveMode ?? null,
     finalObjectiveScore: finalStep?.objectiveScore ?? null,
+  }
+}
+
+function buildAutoSequenceStepSearchSettings(settings: SearchSettings): AutoSequenceStepSearchSettings {
+  const local = settings.searchMode === "fullGrid" ? undefined : settings.localSearchSettings
+  return {
+    searchMode: settings.searchMode,
+    objectiveMode: settings.objectiveMode,
+    targetParameter: local?.targetParameter,
+    localRange: local
+      ? {
+          min: local.localMin,
+          max: local.localMax,
+          step: local.localStep,
+        }
+      : undefined,
+    coordinateDescentIterations: local?.coordinateDescentIterations,
+    coordinateDescentParameterOrder: local
+      ? [...local.coordinateDescentParameterOrder]
+      : undefined,
+    coordinateDescentRanges: local
+      ? cloneLocalSearchRanges(local.coordinateDescentRanges)
+      : undefined,
   }
 }
 
@@ -8100,8 +8274,9 @@ function renderQuick478DepthDebug(): void {
   const summaryElement = getElement("quick-depth-478-summary")
 
   if (quick.status === "running") {
-    statusElement.textContent = quick.message ?? "478 Depth hardReject debug を実行中..."
-    summaryElement.innerHTML = ""
+    statusElement.textContent =
+      quick.message ?? buildQuick478DepthDebugProgressMessage()
+    summaryElement.innerHTML = renderQuick478DepthDebugProgress()
     return
   }
 
@@ -8125,6 +8300,52 @@ function renderQuick478DepthDebug(): void {
     ],
     ["averageProjectionError", formatNumber(quick.quickRun.summary.averageProjectionError)],
   ])
+}
+
+function buildQuick478DepthDebugProgressMessage(): string {
+  const auto = state.autoSequence
+  const sequence = auto.definition
+  const stepCount = sequence?.steps.length ?? 0
+  const currentStep = stepCount > 0 ? Math.min(auto.currentStepIndex + 1, stepCount) : 0
+  const presetId = sequence?.steps[auto.currentStepIndex] ?? null
+  const preset = presetId ? findSearchPreset(presetId) : null
+  const progress = state.searchProgress
+  const percent = formatPercent(progress.progressRate)
+  if (auto.status === "running" && preset) {
+    return `478 Depth hardReject debug をバックグラウンドで実行中... step ${currentStep}/${stepCount}: ${preset.label} / ${percent}%`
+  }
+  return `478 Depth hardReject debug をバックグラウンドで実行中... ${percent}%`
+}
+
+function renderQuick478DepthDebugProgress(): string {
+  const auto = state.autoSequence
+  const sequence = auto.definition
+  const progress = state.searchProgress
+  const stepCount = sequence?.steps.length ?? 0
+  const currentStep = stepCount > 0 ? Math.min(auto.currentStepIndex + 1, stepCount) : 0
+  const presetId = sequence?.steps[auto.currentStepIndex] ?? null
+  const preset = presetId ? findSearchPreset(presetId) : null
+  const progressPercent = formatPercent(progress.progressRate)
+
+  return `
+    <div class="quick-progress" aria-label="Quick Run progress">
+      <div class="quick-progress-bar">
+        <div class="quick-progress-fill" style="width: ${progressPercent}%"></div>
+      </div>
+    </div>
+    ${renderStatusItems([
+      ["sequence", sequence?.label ?? "Rotation Center Balanced Sequence"],
+      ["step", stepCount > 0 ? `${currentStep} / ${stepCount}` : "-"],
+      ["preset", preset?.label ?? "-"],
+      ["progress", `${progressPercent}%`],
+      [
+        "processed candidates",
+        `${progress.processedCandidateCount} / ${progress.estimatedCandidateCount}`,
+      ],
+      ["current best score", formatNumber(auto.currentBestScore)],
+      ["updatedAt", progress.updatedAt ?? "-"],
+    ])}
+  `
 }
 
 function renderEmptyState(): void {
