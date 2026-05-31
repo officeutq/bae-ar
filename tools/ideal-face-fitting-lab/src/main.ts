@@ -1,4 +1,5 @@
 import "./style.css"
+import canonicalFaceDepthTemplate from "../data/canonical-face-depth-template-v1.json"
 
 type CaptureBucket =
   | "front"
@@ -26,6 +27,7 @@ type DepthRelationKind = "inFrontOf" | "behind" | "near"
 type DepthRelationSeverity = "ok" | "warning" | "violation"
 type PoseBucket = CaptureBucket
 type Depth478CandidateSource = "autoSequenceFinalCandidate" | "bestCandidate"
+type Depth478GenerationMethod = "inverseDistanceWeighting" | "canonicalDepthBased"
 
 interface Point2 {
   x: number
@@ -872,12 +874,58 @@ interface DepthAnchor8 {
 
 interface DepthInterpolationSettings {
   enabled: boolean
-  method: "inverseDistanceWeighting"
+  method: Depth478GenerationMethod
   epsilon: number
   power: number
   clampZ: boolean
   zMin: number
   zMax: number
+}
+
+interface CanonicalDepthTemplatePoint {
+  index: number
+  rawZ: number
+  z: number
+}
+
+interface CanonicalFaceDepthTemplateV1 {
+  schemaVersion: "canonical_face_depth_template_v1"
+  sourceLandmarkCount: number
+  targetLandmarkCount: number
+  canonicalDepth: CanonicalDepthTemplatePoint[]
+  comparisonLandmarkIndices: number[]
+  excludedLandmarkIndices: number[]
+}
+
+interface CanonicalDepthFitReferencePoint {
+  pointId: "nose" | "leftCheek" | "rightCheek" | "mouth" | "chin" | "headTop"
+  landmarkIndex: number | number[]
+  canonicalZ: number
+  targetZ: number
+  fittedZ: number
+  error: number
+}
+
+interface CanonicalDepthBasedDebug {
+  templateFile: "canonical-face-depth-template-v1.json"
+  templateSchemaVersion: "canonical_face_depth_template_v1"
+  comparisonLandmarkCount: number
+  excludedLandmarkIndices: number[]
+  fit: {
+    method: "leastSquares" | "rangeMatching"
+    scale: number
+    offset: number
+    referencePoints: CanonicalDepthFitReferencePoint[]
+  }
+  irisDepthFallback: {
+    enabled: boolean
+    excludedFromCanonicalComparison: boolean
+    indices: number[]
+  }
+  canonicalDeviation: {
+    averageAbsError: number
+    maxAbsError: number
+  }
 }
 
 interface DepthGroupCorrection {
@@ -906,6 +954,9 @@ interface Generated478DepthCandidate {
       nearestAnchorId?: string
       anchorWeights?: Record<string, number>
       groupCorrectionOffset?: number
+      canonicalZ?: number
+      fittedCanonicalZ?: number
+      irisDepthFallbackFrom?: "leftEye" | "rightEye"
     }
   }>
   summary: {
@@ -915,6 +966,7 @@ interface Generated478DepthCandidate {
     zRange: number
     averageZ: number
   }
+  canonicalDepthBasedDebug?: CanonicalDepthBasedDebug
 }
 
 interface ProjectionEvaluation478 {
@@ -975,6 +1027,7 @@ interface SmoothnessDebug478 {
 interface Depth478CandidateComparisonEntry {
   candidateId: string
   source8CandidateId?: string | null
+  depth478GenerationMethod: Depth478GenerationMethod
   totalProjectionError: number | null
   maxBucketScore: number | null
   depthRelationViolationCount: number | null
@@ -1014,6 +1067,7 @@ interface Quick478DepthDebugSummary {
     autoSearchSequence: "rotation_center_balanced"
     depthRelationMode: DepthRelationMode
     outlierFilteringEnabled: boolean
+    depth478GenerationMethod: Depth478GenerationMethod
     interpolationMethod: DepthInterpolationSettings["method"]
   }
   actualExecution: Quick478ActualExecution
@@ -2134,6 +2188,12 @@ const DEFAULT_DEPTH_478_INTERPOLATION_SETTINGS: DepthInterpolationSettings = {
   zMax: 0.24,
 }
 
+const CANONICAL_FACE_DEPTH_TEMPLATE =
+  canonicalFaceDepthTemplate as unknown as CanonicalFaceDepthTemplateV1
+const CANONICAL_FACE_DEPTH_TEMPLATE_FILE = "canonical-face-depth-template-v1.json" as const
+const CANONICAL_COMPARISON_LANDMARK_COUNT = 468
+const IRIS_DEPTH_FALLBACK_INDICES = [468, 469, 470, 471, 472, 473, 474, 475, 476, 477]
+
 const DEFAULT_DEPTH_478_SMOOTHNESS_THRESHOLD = 0.03
 const DEPTH_478_NEIGHBOR_COUNT = 4
 const DEPTH_478_MAX_HIGH_DELTA_EDGES = 50
@@ -2155,7 +2215,7 @@ const QUICK_478_DEPTH_DEBUG_SETTINGS = {
   },
   interpolation: {
     enabled: true,
-    method: "inverseDistanceWeighting",
+    method: "canonicalDepthBased",
     epsilon: 0.0001,
     power: 2,
     clampZ: true,
@@ -2169,7 +2229,8 @@ const QUICK_478_DEPTH_DEBUG_SETTINGS_SUMMARY = {
   bucketPreset: "balanced_10_each" as const,
   autoSearchSequence: "rotation_center_balanced" as const,
   depthRelationMode: "hardReject" as const,
-  interpolationMethod: "inverseDistanceWeighting" as const,
+  depth478GenerationMethod: "canonicalDepthBased" as const,
+  interpolationMethod: "canonicalDepthBased" as const,
 }
 
 const DEPTH_478_GROUP_DEFINITIONS: Array<{
@@ -2703,6 +2764,7 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
             <label>Interpolation method（8点から478点への奥行き補間方法）
               <select id="depth-478-method-select">
                 <option value="inverseDistanceWeighting" selected>inverseDistanceWeighting</option>
+                <option value="canonicalDepthBased">canonicalDepthBased（標準顔奥行きベース方式）</option>
               </select>
             </label>
             <label>epsilon（距離ゼロ除算を避ける微小値）
@@ -4266,6 +4328,7 @@ function applyQuick478DepthDebugSettingsToControls(): void {
     "depth-relation-apply-to-objective-select",
     String(QUICK_478_DEPTH_DEBUG_SETTINGS.depthRelationFiltering.applyToObjectiveScore),
   )
+  writeSelectValue("depth-478-method-select", QUICK_478_DEPTH_DEBUG_SETTINGS.interpolation.method)
 }
 
 function createQuick478DepthPrototypeSettings(): Depth478PrototypeResult["settings"] {
@@ -4578,7 +4641,7 @@ function readDepth478PrototypeSettings(): Depth478PrototypeResult["settings"] {
   return {
     interpolation: {
       enabled: true,
-      method: "inverseDistanceWeighting",
+      method: readDepth478GenerationMethod(),
       epsilon: Math.max(
         0.000001,
         readNumber("depth-478-epsilon-input", DEFAULT_DEPTH_478_INTERPOLATION_SETTINGS.epsilon),
@@ -4597,6 +4660,11 @@ function readDepth478PrototypeSettings(): Depth478PrototypeResult["settings"] {
       readNumber("depth-478-smoothness-threshold-input", DEFAULT_DEPTH_478_SMOOTHNESS_THRESHOLD),
     ),
   }
+}
+
+function readDepth478GenerationMethod(): Depth478GenerationMethod {
+  const value = getElement<HTMLSelectElement>("depth-478-method-select").value
+  return value === "canonicalDepthBased" ? "canonicalDepthBased" : "inverseDistanceWeighting"
 }
 
 function resolveDepth478SourceCandidate(
@@ -4699,10 +4767,23 @@ function buildGenerated478DepthCandidate(
   groupCorrections: DepthGroupCorrection[],
 ): Generated478DepthCandidate {
   const anchors = buildDepthAnchors8(base8Points, sourceCandidate)
-  const interpolated = base478.map((landmark) =>
-    interpolateDepth478Landmark(landmark, anchors, interpolation),
-  )
+  const generated =
+    interpolation.method === "canonicalDepthBased"
+      ? buildCanonicalDepthBased478Landmarks(base478, sourceCandidate, interpolation)
+      : {
+          landmarks: base478.map((landmark) =>
+            interpolateDepth478Landmark(landmark, anchors, interpolation),
+          ),
+          canonicalDepthBasedDebug: undefined,
+        }
+  const interpolated = generated.landmarks
   const corrected = applyDepthGroupCorrections(interpolated, groupCorrections)
+  const canonicalDepthBasedDebug = generated.canonicalDepthBasedDebug
+    ? {
+        ...generated.canonicalDepthBasedDebug,
+        canonicalDeviation: buildCanonicalDeviationDebug(corrected, generated.landmarks),
+      }
+    : undefined
   return {
     id: `depth478-${Date.now()}`,
     source8CandidateId,
@@ -4713,6 +4794,182 @@ function buildGenerated478DepthCandidate(
     rotationCenter: getCandidateRotationCenter(sourceCandidate),
     landmarks: corrected,
     summary: summarizeGenerated478DepthCandidate(corrected),
+    canonicalDepthBasedDebug,
+  }
+}
+
+function buildCanonicalDepthBased478Landmarks(
+  base478: LandmarkPoint[],
+  sourceCandidate: FittingCandidate8,
+  settings: DepthInterpolationSettings,
+): {
+  landmarks: Generated478DepthCandidate["landmarks"]
+  canonicalDepthBasedDebug: CanonicalDepthBasedDebug
+} {
+  validateCanonicalDepthTemplate(CANONICAL_FACE_DEPTH_TEMPLATE)
+  const canonicalByIndex = new Map(
+    CANONICAL_FACE_DEPTH_TEMPLATE.canonicalDepth.map((point) => [point.index, point]),
+  )
+  const fit = buildCanonicalDepthFit(sourceCandidate, canonicalByIndex)
+  const landmarks = base478.map((landmark) => {
+    const canonical = canonicalByIndex.get(landmark.index)
+    if (canonical) {
+      const fittedZ = canonical.z * fit.scale + fit.offset
+      const z = settings.clampZ
+        ? clamp(fittedZ, Math.min(settings.zMin, settings.zMax), Math.max(settings.zMin, settings.zMax))
+        : fittedZ
+      return {
+        index: landmark.index,
+        x: round(landmark.x),
+        y: round(landmark.y),
+        z: round(z),
+        sourceDebug: {
+          canonicalZ: round(canonical.z),
+          fittedCanonicalZ: round(z),
+          groupCorrectionOffset: 0,
+        },
+      }
+    }
+
+    const fallbackFrom = landmark.index <= 472 ? "rightEye" : "leftEye"
+    const fallbackZ = sourceCandidate.zByPointId[fallbackFrom]
+    const z = settings.clampZ
+      ? clamp(fallbackZ, Math.min(settings.zMin, settings.zMax), Math.max(settings.zMin, settings.zMax))
+      : fallbackZ
+    return {
+      index: landmark.index,
+      x: round(landmark.x),
+      y: round(landmark.y),
+      z: round(z),
+      sourceDebug: {
+        irisDepthFallbackFrom: fallbackFrom,
+        groupCorrectionOffset: 0,
+      },
+    }
+  })
+
+  return {
+    landmarks,
+    canonicalDepthBasedDebug: {
+      templateFile: CANONICAL_FACE_DEPTH_TEMPLATE_FILE,
+      templateSchemaVersion: CANONICAL_FACE_DEPTH_TEMPLATE.schemaVersion,
+      comparisonLandmarkCount: CANONICAL_FACE_DEPTH_TEMPLATE.comparisonLandmarkIndices.length,
+      excludedLandmarkIndices: [...CANONICAL_FACE_DEPTH_TEMPLATE.excludedLandmarkIndices],
+      fit: {
+        method: "leastSquares",
+        scale: round(fit.scale),
+        offset: round(fit.offset),
+        referencePoints: fit.referencePoints,
+      },
+      irisDepthFallback: {
+        enabled: true,
+        excludedFromCanonicalComparison: true,
+        indices: [...IRIS_DEPTH_FALLBACK_INDICES],
+      },
+      canonicalDeviation: buildCanonicalDeviationDebug(landmarks, landmarks),
+    },
+  }
+}
+
+function validateCanonicalDepthTemplate(template: CanonicalFaceDepthTemplateV1): void {
+  if (
+    template.schemaVersion !== "canonical_face_depth_template_v1" ||
+    template.sourceLandmarkCount !== CANONICAL_COMPARISON_LANDMARK_COUNT ||
+    template.targetLandmarkCount !== 478 ||
+    template.canonicalDepth.length !== CANONICAL_COMPARISON_LANDMARK_COUNT
+  ) {
+    throw new Error(`${CANONICAL_FACE_DEPTH_TEMPLATE_FILE} の形式が想定と異なります。`)
+  }
+}
+
+function buildCanonicalDepthFit(
+  sourceCandidate: FittingCandidate8,
+  canonicalByIndex: Map<number, CanonicalDepthTemplatePoint>,
+): {
+  scale: number
+  offset: number
+  referencePoints: CanonicalDepthFitReferencePoint[]
+} {
+  const references = [
+    buildCanonicalFitReference("nose", 4, sourceCandidate.zByPointId.nose, canonicalByIndex),
+    buildCanonicalFitReference(
+      "leftCheek",
+      234,
+      sourceCandidate.zByPointId.leftCheek,
+      canonicalByIndex,
+    ),
+    buildCanonicalFitReference(
+      "rightCheek",
+      454,
+      sourceCandidate.zByPointId.rightCheek,
+      canonicalByIndex,
+    ),
+    buildCanonicalFitReference("mouth", [13, 14], sourceCandidate.zByPointId.mouth, canonicalByIndex),
+    buildCanonicalFitReference("chin", 152, sourceCandidate.zByPointId.chin, canonicalByIndex),
+    buildCanonicalFitReference("headTop", 10, sourceCandidate.zByPointId.headTop, canonicalByIndex),
+  ]
+  const canonicalMean = average(references.map((point) => point.canonicalZ)) ?? 0
+  const targetMean = average(references.map((point) => point.targetZ)) ?? 0
+  const variance = references.reduce(
+    (total, point) => total + Math.pow(point.canonicalZ - canonicalMean, 2),
+    0,
+  )
+  const covariance = references.reduce(
+    (total, point) => total + (point.canonicalZ - canonicalMean) * (point.targetZ - targetMean),
+    0,
+  )
+  const scale = Math.abs(variance) < EPSILON ? 1 : covariance / variance
+  const offset = targetMean - canonicalMean * scale
+
+  return {
+    scale,
+    offset,
+    referencePoints: references.map((point) => {
+      const fittedZ = point.canonicalZ * scale + offset
+      return {
+        ...point,
+        canonicalZ: round(point.canonicalZ),
+        targetZ: round(point.targetZ),
+        fittedZ: round(fittedZ),
+        error: round(fittedZ - point.targetZ),
+      }
+    }),
+  }
+}
+
+function buildCanonicalFitReference(
+  pointId: CanonicalDepthFitReferencePoint["pointId"],
+  landmarkIndex: number | number[],
+  targetZ: number,
+  canonicalByIndex: Map<number, CanonicalDepthTemplatePoint>,
+): Omit<CanonicalDepthFitReferencePoint, "fittedZ" | "error"> {
+  const indices = Array.isArray(landmarkIndex) ? landmarkIndex : [landmarkIndex]
+  const canonicalValues = indices.map((index) => {
+    const point = canonicalByIndex.get(index)
+    if (!point) {
+      throw new Error(`${CANONICAL_FACE_DEPTH_TEMPLATE_FILE} に landmark ${index} がありません。`)
+    }
+    return point.z
+  })
+  return {
+    pointId,
+    landmarkIndex,
+    canonicalZ: average(canonicalValues) ?? 0,
+    targetZ,
+  }
+}
+
+function buildCanonicalDeviationDebug(
+  generated: Generated478DepthCandidate["landmarks"],
+  fittedCanonical: Generated478DepthCandidate["landmarks"],
+): CanonicalDepthBasedDebug["canonicalDeviation"] {
+  const fittedByIndex = new Map(fittedCanonical.map((landmark) => [landmark.index, landmark.z]))
+  const errors = generated
+    .filter((landmark) => landmark.index < CANONICAL_COMPARISON_LANDMARK_COUNT)
+    .map((landmark) => Math.abs(landmark.z - (fittedByIndex.get(landmark.index) ?? landmark.z)))
+  return {
+    averageAbsError: round(average(errors) ?? 0),
+    maxAbsError: round(max(errors) ?? 0),
   }
 }
 
@@ -5177,6 +5434,7 @@ function buildDepth478CandidateComparisonEntry(
   return {
     candidateId: candidate.id,
     source8CandidateId: candidate.source8CandidateId ?? null,
+    depth478GenerationMethod: candidate.generationSettings.interpolation.method,
     totalProjectionError: projectionEvaluation.totalProjectionError,
     maxBucketScore: maxNullable(Object.values(projectionEvaluation.bucketScores)),
     depthRelationViolationCount: depthRelationDebug.violationCount,
@@ -7852,7 +8110,13 @@ function renderDepth478Prototype(prototype: Depth478PrototypeResult | null): voi
     ["zRange（奥行き範囲）", formatNumber(candidate.summary.zRange)],
     ["averageZ（平均奥行き）", formatNumber(candidate.summary.averageZ)],
     ["rotationCenter（投影用回転中心）", formatRotationCenter(candidate.rotationCenter)],
-    ["method（補間方法）", prototype.settings.interpolation.method],
+    ["depth478GenerationMethod（478点生成方式）", prototype.settings.interpolation.method],
+    [
+      "canonicalFit（標準顔奥行き fit）",
+      candidate.canonicalDepthBasedDebug
+        ? `leastSquares / scale ${formatNumber(candidate.canonicalDepthBasedDebug.fit.scale)} / offset ${formatNumber(candidate.canonicalDepthBasedDebug.fit.offset)}`
+        : "-",
+    ],
     ["epsilon（距離ゼロ除算回避値）", formatNumber(prototype.settings.interpolation.epsilon)],
     ["power（距離減衰の強さ）", formatNumber(prototype.settings.interpolation.power)],
     ["clampZ（z範囲制限）", String(prototype.settings.interpolation.clampZ)],
@@ -7991,6 +8255,7 @@ function renderDepth478CandidateComparisonTable(
         <tr>
           <th>candidateId（478点候補ID）</th>
           <th>source8Candidate（元8点候補）</th>
+          <th>depth478GenerationMethod（478点生成方式）</th>
           <th>totalProjectionError（投影誤差合計）</th>
           <th>worstBucketScore（最悪姿勢スコア）</th>
           <th>depthRelationViolationCount（奥行き関係違反数）</th>
@@ -8007,6 +8272,7 @@ function renderDepth478CandidateComparisonTable(
           <tr>
             <td><code>${escapeHtml(entry.candidateId)}</code></td>
             <td><code>${escapeHtml(entry.source8CandidateId ?? "-")}</code></td>
+            <td><code>${entry.depth478GenerationMethod}</code></td>
             <td>${formatNumber(entry.totalProjectionError)}</td>
             <td>${formatNumber(entry.maxBucketScore)}</td>
             <td>${formatNumber(entry.depthRelationViolationCount)}</td>
@@ -8403,6 +8669,7 @@ function renderQuick478DepthDebug(): void {
   statusElement.textContent = quick.message ?? formatQuick478DepthDebugMessage(quick.quickRun)
   summaryElement.innerHTML = renderStatusItems([
     ["status", quick.quickRun.status],
+    ["depth478GenerationMethod", quick.quickRun.settings.depth478GenerationMethod],
     ["noseTipGroup.z", formatNumber(quick.quickRun.summary.noseTipGroupZ)],
     ["cheekGroup.z", formatNumber(quick.quickRun.summary.cheekGroupZ)],
     ["margin", formatNumber(quick.quickRun.summary.margin)],
