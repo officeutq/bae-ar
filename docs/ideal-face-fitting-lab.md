@@ -1,5 +1,30 @@
 # IdealFace Fitting Lab
 
+## Canonical Face Depth Template
+
+`canonical-face-depth-template-v1.json` は、MediaPipe canonical face model（MediaPipe標準顔モデル）の `canonical_face_model.obj` から生成する Fitting Lab 用の奥行き参照テンプレートです。これは IdealFace（理想顔）そのものではなく、production asset export（本番用アセット書き出し）でもありません。
+
+生成は Fitting Lab 専用スクリプトで行います。
+
+```bash
+npm run generate:canonical-depth-template --workspace @bae-ar/ideal-face-fitting-lab
+```
+
+`canonical_face_model.obj` は MediaPipe の 468 点版であるため、canonical comparison（標準顔比較）はまず landmark index `0`〜`467` の 468 点だけを対象にします。Face Landmarker / Fitting Lab の 478 landmarks に含まれる `468`〜`477` の追加 10 点は iris（虹彩・目まわり追加点）として、現時点では比較対象外にします。
+
+生成 JSON には以下を明示します。
+
+```json
+{
+  "sourceLandmarkCount": 468,
+  "targetLandmarkCount": 478,
+  "comparisonLandmarkIndices": [0, 1, "...", 467],
+  "excludedLandmarkIndices": [468, 469, 470, 471, 472, 473, 474, 475, 476, 477]
+}
+```
+
+Quick Run（クイック実行）では、将来的にこの JSON を読み、標準顔奥行きを基準に候補生成・ランキングする予定です。ただし、このテンプレートの canonicalZ は正解値として採用するものではなく、478 Depth Prototype（478点奥行き試作）の参照情報として扱います。
+
 ## 8Point To 478 Depth Prototype
 
 `tools/ideal-face-fitting-lab` には、8 semantic points の候補を最終 IdealFace asset としてすぐ export するのではなく、478 landmarks の z を評価するための prototype を追加している。
