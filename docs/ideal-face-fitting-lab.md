@@ -305,3 +305,13 @@ GPU / WebGPU による探索はまだ実装しません。現時点では CPU Wo
 ```bash
 npm run start:ideal-face-fitting-lab
 ```
+
+## Candidate Stability Debug
+
+Candidate Stability Debug は、同じ Auto Sequence を異なる bucket target 数で実行し、候補がフレーム数に対して安定するかを確認するための debug 機能である。
+
+5件 / 8件 / 10件のように評価フレーム数を変えたとき、rotationCenter.y / rotationCenter.z / nose.z / score が大きく揺れる候補は、少数フレームへの過適合または評価データ不足の影響を受けている可能性がある。
+
+最終候補としては、単に少数フレームで score が良い候補ではなく、フレーム数を増やしても rotationCenter と z が安定する候補を優先する。
+
+bucket target preset を指定しても、sourceSummary.bucketCounts が不足している bucket では selected frame 数が不足する。その不足は UI / JSON に記録する。

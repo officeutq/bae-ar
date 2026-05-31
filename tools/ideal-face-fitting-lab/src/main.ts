@@ -329,6 +329,14 @@ type AutoSequencePresetId =
   | "naturalNoseBalancedSequence"
   | "naturalNoseMaxBucketSequence"
 type AutoSequenceStatus = "idle" | "running" | "completed" | "cancelled" | "error"
+type BucketTargetPresetId = "balanced5Each" | "balanced8Each" | "balanced10Each"
+type StabilityTargetPresetId = "5each" | "8each" | "10each"
+type RequestedBucketTarget = Exclude<CaptureBucket, "unknown">
+type StabilitySequencePresetId =
+  | "rotationCenterBalancedSequence"
+  | "rotationCenterMaxBucketSequence"
+  | "naturalNoseBalancedSequence"
+  | "naturalNoseMaxBucketSequence"
 
 interface LocalSearchRange {
   min: number
@@ -405,6 +413,7 @@ interface AutoSequenceSummary {
 interface AutoSequenceState {
   status: AutoSequenceStatus
   definition: AutoSequenceDefinition | null
+  bucketTargetPreset: BucketTargetPresetDefinition | null
   currentStepIndex: number
   startedAt: string | null
   completedAt: string | null
@@ -412,6 +421,84 @@ interface AutoSequenceState {
   finalCandidate: FittingCandidate8 | null
   currentBestScore: number | null
   message: string | null
+}
+
+interface BucketTargetPresetDefinition {
+  id: BucketTargetPresetId
+  label: string
+  targets: Record<CaptureBucket, number>
+  includeMixedPose: boolean
+}
+
+interface BucketTargetShortage {
+  bucket: CaptureBucket
+  required: number
+  available: number
+  selected: number
+}
+
+interface ActualSelectedFrameSummary {
+  selectedFrameCount: number
+  bucketCounts: Record<CaptureBucket, number>
+  shortage?: BucketTargetShortage[]
+}
+
+interface StabilityHistoryEntry {
+  id: string
+  generatedAt: string
+  bucketTargetPresetName: string
+  requestedBucketTargets: Record<RequestedBucketTarget, number>
+  actualSelectedFrameSummary: ActualSelectedFrameSummary
+  sequenceName: string
+  objectiveMode: ObjectiveMode
+  finalCandidate: FittingCandidate8 | null
+  scores: {
+    objectiveScore: number | null
+    totalScore: number | null
+    balancedScore: number | null
+    maxBucketScore: number | null
+    pitchAverageScore: number | null
+    yawAverageScore: number | null
+  }
+  worstBucket?: {
+    bucket: CaptureBucket
+    score: number
+  } | null
+}
+
+interface StabilitySummary {
+  sequenceName: string
+  entries: StabilityHistoryEntry[]
+  candidateDrift?: {
+    rotationCenterYRange: number | null
+    rotationCenterZRange: number | null
+    noseZRange: number | null
+    leftCheekZRange: number | null
+    rightCheekZRange: number | null
+  }
+  scoreDrift?: {
+    totalScoreRange: number | null
+    balancedScoreRange: number | null
+    maxBucketScoreRange: number | null
+    pitchAverageScoreRange: number | null
+    yawAverageScoreRange: number | null
+  }
+  interpretation?: {
+    isStableCandidate: boolean
+    notes: string[]
+  }
+}
+
+interface CandidateStabilityDebug {
+  history: StabilityHistoryEntry[]
+  summaries: StabilitySummary[]
+}
+
+interface StabilityCheckState {
+  status: "idle" | "running"
+  targetPresetIds: StabilityTargetPresetId[]
+  sequenceId: StabilitySequencePresetId | null
+  currentIndex: number
 }
 
 interface LocalSearchStepSummary {
@@ -681,6 +768,7 @@ interface AnalysisResult {
   projectionSignDebug?: ProjectionSignDebug
   rotationCenterDebug?: RotationCenterDebug
   autoSequenceSummary?: AutoSequenceSummary
+  candidateStabilityDebug?: CandidateStabilityDebug
   warnings: string[]
 }
 
@@ -711,6 +799,7 @@ interface SummaryAnalysisResult {
   projectionSignDebug?: ProjectionSignDebug
   rotationCenterDebug?: RotationCenterDebug
   autoSequenceSummary?: AutoSequenceSummary
+  candidateStabilityDebug?: CandidateStabilityDebug
   warnings: string[]
 }
 
@@ -737,6 +826,8 @@ interface AppState {
   coordinateDescentRanges: LocalSearchRanges
   autoSequence: AutoSequenceState
   autoSequenceLastAnalysis: AnalysisResult | null
+  stabilityHistory: StabilityHistoryEntry[]
+  stabilityCheck: StabilityCheckState
   presetMessage: string | null
   importMessage: string | null
   copyMessage: string | null
@@ -1330,6 +1421,15 @@ const REQUIRED_BUCKETS: CaptureBucket[] = [
   "pitchNegative",
 ]
 
+const REQUESTED_BUCKET_TARGETS: RequestedBucketTarget[] = [
+  "front",
+  "yawPositive",
+  "yawNegative",
+  "pitchPositive",
+  "pitchNegative",
+  "mixedPose",
+]
+
 const PROJECTION_SIGN_DEBUG_BUCKETS: ProjectionSignDebugBucket[] = [
   "front",
   "yawPositive",
@@ -1353,6 +1453,67 @@ const DEFAULT_PROJECTION_SIGN_NOSE_Z_CANDIDATES = [
   0.04,
   0.06,
   0.08,
+]
+
+const BUCKET_TARGET_PRESETS: BucketTargetPresetDefinition[] = [
+  {
+    id: "balanced5Each",
+    label: "Balanced 5 each",
+    targets: {
+      front: 5,
+      yawPositive: 5,
+      yawNegative: 5,
+      pitchPositive: 5,
+      pitchNegative: 5,
+      mixedPose: 0,
+      unknown: 0,
+    },
+    includeMixedPose: false,
+  },
+  {
+    id: "balanced8Each",
+    label: "Balanced 8 each",
+    targets: {
+      front: 8,
+      yawPositive: 8,
+      yawNegative: 8,
+      pitchPositive: 8,
+      pitchNegative: 8,
+      mixedPose: 0,
+      unknown: 0,
+    },
+    includeMixedPose: false,
+  },
+  {
+    id: "balanced10Each",
+    label: "Balanced 10 each",
+    targets: {
+      front: 10,
+      yawPositive: 10,
+      yawNegative: 10,
+      pitchPositive: 10,
+      pitchNegative: 10,
+      mixedPose: 0,
+      unknown: 0,
+    },
+    includeMixedPose: false,
+  },
+]
+
+const STABILITY_TARGET_PRESET_TO_BUCKET_PRESET: Record<
+  StabilityTargetPresetId,
+  BucketTargetPresetId
+> = {
+  "5each": "balanced5Each",
+  "8each": "balanced8Each",
+  "10each": "balanced10Each",
+}
+
+const STABILITY_SEQUENCE_IDS: StabilitySequencePresetId[] = [
+  "rotationCenterBalancedSequence",
+  "rotationCenterMaxBucketSequence",
+  "naturalNoseBalancedSequence",
+  "naturalNoseMaxBucketSequence",
 ]
 
 const ROTATION_CENTER_DEBUG_BASE_LABELS: Record<RotationCenterDebugBaseCandidateId, string> = {
@@ -1430,6 +1591,7 @@ function createIdleAutoSequence(): AutoSequenceState {
   return {
     status: "idle",
     definition: null,
+    bucketTargetPreset: null,
     currentStepIndex: 0,
     startedAt: null,
     completedAt: null,
@@ -1437,6 +1599,15 @@ function createIdleAutoSequence(): AutoSequenceState {
     finalCandidate: null,
     currentBestScore: null,
     message: null,
+  }
+}
+
+function createIdleStabilityCheck(): StabilityCheckState {
+  return {
+    status: "idle",
+    targetPresetIds: [],
+    sequenceId: null,
+    currentIndex: 0,
   }
 }
 
@@ -1451,6 +1622,8 @@ const state: AppState = {
   coordinateDescentRanges: DEFAULT_COORDINATE_DESCENT_RANGES,
   autoSequence: createIdleAutoSequence(),
   autoSequenceLastAnalysis: null,
+  stabilityHistory: [],
+  stabilityCheck: createIdleStabilityCheck(),
   presetMessage: null,
   importMessage: null,
   copyMessage: null,
@@ -1529,6 +1702,19 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
               <button id="cancel-auto-sequence-button" type="button" disabled>Cancel Auto Sequence</button>
             </div>
             <div id="auto-sequence-status" class="auto-sequence-status"></div>
+            <div class="controls">
+              <label>Bucket Target Preset（姿勢分類ごとの評価フレーム数プリセット）
+                <select id="bucket-target-preset-select">
+                  ${BUCKET_TARGET_PRESETS.map(
+                    (preset) => `<option value="${preset.id}">${preset.label}</option>`,
+                  ).join("")}
+                </select>
+              </label>
+            </div>
+            <div class="controls-wide">
+              <button id="apply-bucket-target-preset-button" type="button">Bucket Target Preset を適用</button>
+            </div>
+            <div id="bucket-target-warning" class="warning-list"></div>
             <div id="preset-message" class="preset-message">
               Search Preset を選び、Apply Preset で local search 設定をフォームへ反映します。
             </div>
@@ -1751,6 +1937,36 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
         </section>
 
         <section class="panel">
+          <h2>Candidate Stability Debug（候補安定性デバッグ）</h2>
+          <p class="panel-help">同じ Auto Sequence を 5件 / 8件 / 10件の bucket target で比較し、rotationCenter と z、score が評価フレーム数に対して安定するか確認します。</p>
+          <div class="controls">
+            <label>Stability Sequences
+              <select id="stability-sequence-select">
+                ${STABILITY_SEQUENCE_IDS.map((id) => {
+                  const sequence = findAutoSequence(id)
+                  return `<option value="${id}">${sequence.label}</option>`
+                }).join("")}
+              </select>
+            </label>
+          </div>
+          <div class="checkbox-grid">
+            <label><input id="stability-target-5-input" type="checkbox" checked /> 5 each</label>
+            <label><input id="stability-target-8-input" type="checkbox" checked /> 8 each</label>
+            <label><input id="stability-target-10-input" type="checkbox" checked /> 10 each</label>
+          </div>
+          <div class="controls-wide">
+            <button id="run-stability-check-button" class="primary" type="button" disabled>Run Stability Check</button>
+            <button id="add-stability-history-button" type="button" disabled>現在の結果を Stability History に追加</button>
+            <button id="clear-stability-history-button" type="button">Stability History をクリア</button>
+          </div>
+          <div id="stability-check-status" class="auto-sequence-status"></div>
+          <h3>Stability History Table（候補安定性履歴テーブル）</h3>
+          <div id="stability-history-table" class="table-wrap"></div>
+          <h3>Stability Summary</h3>
+          <div id="stability-summary" class="table-wrap"></div>
+        </section>
+
+        <section class="panel">
           <h2>bestIdealFace8</h2>
           <p class="panel-help">正面基準 x / y と bestCandidate の z から作る 8点の IdealFace3D debug artifact です。</p>
           <div id="best-ideal-face8-summary" class="summary-grid"></div>
@@ -1794,6 +2010,8 @@ renderSemanticMapping()
 renderEmptyState()
 renderSearchProgress()
 renderAutoSequenceStatus()
+renderBucketTargetWarning()
+renderCandidateStabilityDebug()
 bindEvents()
 
 function bindEvents(): void {
@@ -1808,6 +2026,10 @@ function bindEvents(): void {
   getElement<HTMLButtonElement>("apply-base-candidate-preset-button").addEventListener(
     "click",
     applySelectedBaseCandidatePreset,
+  )
+  getElement<HTMLButtonElement>("apply-bucket-target-preset-button").addEventListener(
+    "click",
+    applySelectedBucketTargetPreset,
   )
   getElement<HTMLButtonElement>("run-auto-sequence-button").addEventListener(
     "click",
@@ -1824,6 +2046,18 @@ function bindEvents(): void {
   getElement<HTMLSelectElement>("rotation-center-base-select").addEventListener(
     "change",
     updateRotationCenterDebugFromSelection,
+  )
+  getElement<HTMLButtonElement>("run-stability-check-button").addEventListener(
+    "click",
+    runStabilityCheck,
+  )
+  getElement<HTMLButtonElement>("add-stability-history-button").addEventListener(
+    "click",
+    addCurrentAnalysisToStabilityHistory,
+  )
+  getElement<HTMLButtonElement>("clear-stability-history-button").addEventListener(
+    "click",
+    clearStabilityHistory,
   )
   getElement<HTMLButtonElement>("export-full-button").addEventListener("click", () => {
     if (state.analysis) {
@@ -1848,6 +2082,8 @@ async function handleFileImport(event: Event): Promise<void> {
   state.searchProgress = createIdleSearchProgress()
   state.autoSequence = createIdleAutoSequence()
   state.autoSequenceLastAnalysis = null
+  state.stabilityCheck = createIdleStabilityCheck()
+  state.stabilityHistory = []
 
   try {
     const payload = JSON.parse(await file.text()) as unknown
@@ -1866,6 +2102,8 @@ async function handleFileImport(event: Event): Promise<void> {
     renderSourceOnly()
     renderSearchProgress()
     renderAutoSequenceStatus()
+    renderBucketTargetWarning()
+    renderCandidateStabilityDebug()
   } catch (error) {
     state.importMessage = `読み込みに失敗しました: ${error instanceof Error ? error.message : String(error)}`
     state.payload = null
@@ -1874,19 +2112,23 @@ async function handleFileImport(event: Event): Promise<void> {
     state.searchProgress = createIdleSearchProgress()
     state.autoSequence = createIdleAutoSequence()
     state.autoSequenceLastAnalysis = null
+    state.stabilityCheck = createIdleStabilityCheck()
+    state.stabilityHistory = []
     setButtons()
     renderEmptyState()
     renderSearchProgress()
     renderAutoSequenceStatus()
+    renderBucketTargetWarning()
+    renderCandidateStabilityDebug()
   }
 }
 
-function runAnalysis(): void {
+function runAnalysis(settingsOverride?: SearchSettings): void {
   if (state.frames.length === 0 || state.searchProgress.status === "running") {
     return
   }
 
-  const settings = readSettings()
+  const settings = settingsOverride ?? readSettings()
   const sourceSummary = summarizeSource(state.payload, state.frames)
   const selected = selectFrames(state.frames, settings)
   const base8Points2DSummary = buildBase8Points2D(selected.frames)
@@ -1926,6 +2168,7 @@ function runAnalysis(): void {
       depthRelation: null,
       bucketRanking: emptyBucketRanking(),
       perPointErrorSummary: emptyPointSummary(),
+      candidateStabilityDebug: buildCandidateStabilityDebug(),
       warnings: [...warnings, "front bucket の usable frame が不足しているため base8Points2D を作れません。"],
     }
     state.searchProgress = createIdleSearchProgress()
@@ -2133,6 +2376,7 @@ function completeSearchFromWorker(context: SearchWorkerContext, message: Record<
     perPointErrorSummary: bestCandidate ? bestCandidate.perPointError : emptyPointSummary(),
     projectionSignDebug,
     rotationCenterDebug,
+    candidateStabilityDebug: buildCandidateStabilityDebug(),
     warnings: [
       ...new Set([
         ...context.warnings,
@@ -3132,6 +3376,13 @@ function runAutoSequence(): void {
   const sequence = findAutoSequence(
     getElement<HTMLSelectElement>("auto-sequence-select").value,
   )
+  startAutoSequence(sequence)
+}
+
+function startAutoSequence(
+  sequence: AutoSequenceDefinition,
+  bucketTargetPreset: BucketTargetPresetDefinition | null = null,
+): void {
   const initialCandidate = getBaseCandidatePreset(sequence.baseCandidatePresetId)
   if (!initialCandidate) {
     state.autoSequence = {
@@ -3149,6 +3400,7 @@ function runAutoSequence(): void {
   state.autoSequence = {
     status: "running",
     definition: sequence,
+    bucketTargetPreset,
     currentStepIndex: 0,
     startedAt: new Date().toISOString(),
     completedAt: null,
@@ -3183,6 +3435,9 @@ function beginAutoSequenceStep(baseCandidate: FittingCandidate8): void {
   writeSelectValue("auto-sequence-select", sequence.id)
   writeSelectValue("search-preset-select", preset.id)
   applySearchPresetDefinition(preset, false)
+  if (state.autoSequence.bucketTargetPreset) {
+    applyBucketTargetPreset(state.autoSequence.bucketTargetPreset)
+  }
   writeCandidateToBaseInputs(baseCandidate)
   state.autoSequence.currentBestScore = null
   state.autoSequence.message = `Auto Sequence running: ${preset.label}`
@@ -3194,7 +3449,14 @@ function beginAutoSequenceStep(baseCandidate: FittingCandidate8): void {
   renderPresetMessage()
   renderAutoSequenceStatus()
   setButtons()
-  runAnalysis()
+  runAnalysis(resolveAutoSequenceStepSettings())
+}
+
+function resolveAutoSequenceStepSettings(): SearchSettings {
+  const settings = readSettings()
+  return state.autoSequence.bucketTargetPreset
+    ? applyBucketTargetPresetToSettings(settings, state.autoSequence.bucketTargetPreset)
+    : settings
 }
 
 function handleAutoSequenceStepComplete(analysis: AnalysisResult | null): void {
@@ -3257,15 +3519,27 @@ function finishAutoSequence(
   const summaryAnalysis = analysis ?? state.autoSequenceLastAnalysis ?? state.analysis
   if (summaryAnalysis) {
     summaryAnalysis.autoSequenceSummary = summary
+    if (status === "completed") {
+      appendStabilityHistoryFromAnalysis(summaryAnalysis)
+    } else {
+      summaryAnalysis.candidateStabilityDebug = buildCandidateStabilityDebug()
+    }
     state.analysis = summaryAnalysis
   }
   terminateSearchWorker()
+  if (status !== "completed" && state.stabilityCheck.status === "running") {
+    state.stabilityCheck = createIdleStabilityCheck()
+  }
+  if (status === "completed" && continueStabilityCheckAfterSequence()) {
+    return
+  }
   setButtons()
   if (state.analysis) {
     renderAnalysis()
   }
   renderSearchProgress()
   renderAutoSequenceStatus()
+  renderCandidateStabilityDebug()
 }
 
 function buildAutoSequenceSummary(
@@ -3284,8 +3558,312 @@ function buildAutoSequenceSummary(
   }
 }
 
+function applySelectedBucketTargetPreset(): void {
+  const preset = findBucketTargetPreset(
+    getElement<HTMLSelectElement>("bucket-target-preset-select").value,
+  )
+  applyBucketTargetPreset(preset)
+  state.presetMessage = `${preset.label} を適用しました。mixedPose は採用しません。`
+  renderPresetMessage()
+  renderBucketTargetWarning()
+}
+
+function applyBucketTargetPreset(preset: BucketTargetPresetDefinition): void {
+  const requiredFrameCount = REQUIRED_BUCKETS.reduce(
+    (total, bucket) => total + preset.targets[bucket],
+    preset.includeMixedPose ? preset.targets.mixedPose : 0,
+  )
+  writeSelectValue("bucket-target-preset-select", preset.id)
+  writeNumberInput("max-frames-input", requiredFrameCount)
+  writeNumberInput("target-front-input", preset.targets.front)
+  writeNumberInput("target-yaw-positive-input", preset.targets.yawPositive)
+  writeNumberInput("target-yaw-negative-input", preset.targets.yawNegative)
+  writeNumberInput("target-pitch-positive-input", preset.targets.pitchPositive)
+  writeNumberInput("target-pitch-negative-input", preset.targets.pitchNegative)
+  writeNumberInput("target-mixed-input", preset.targets.mixedPose)
+  writeSelectValue("include-mixed-select", preset.includeMixedPose ? "true" : "false")
+}
+
+function applyBucketTargetPresetToSettings(
+  settings: SearchSettings,
+  preset: BucketTargetPresetDefinition,
+): SearchSettings {
+  const requiredFrameCount = REQUIRED_BUCKETS.reduce(
+    (total, bucket) => total + preset.targets[bucket],
+    preset.includeMixedPose ? preset.targets.mixedPose : 0,
+  )
+  return {
+    ...settings,
+    maxFrames: requiredFrameCount,
+    targets: { ...preset.targets },
+    includeMixedPose: preset.includeMixedPose,
+  }
+}
+
+function findBucketTargetPreset(value: string): BucketTargetPresetDefinition {
+  return BUCKET_TARGET_PRESETS.find((preset) => preset.id === value) ?? BUCKET_TARGET_PRESETS[0]
+}
+
+function getCurrentBucketTargetPresetName(settings: SearchSettings): string {
+  const matched = BUCKET_TARGET_PRESETS.find(
+    (preset) =>
+      preset.includeMixedPose === settings.includeMixedPose &&
+      BUCKETS.every((bucket) => preset.targets[bucket] === settings.targets[bucket]),
+  )
+  return matched?.label ?? "Custom"
+}
+
+function runStabilityCheck(): void {
+  if (state.frames.length === 0 || state.searchProgress.status === "running") {
+    return
+  }
+  const sequenceId = readStabilitySequenceId()
+  const targetPresetIds = readSelectedStabilityTargetPresetIds()
+  if (targetPresetIds.length === 0) {
+    state.stabilityCheck = createIdleStabilityCheck()
+    renderCandidateStabilityDebug()
+    return
+  }
+  state.stabilityCheck = {
+    status: "running",
+    sequenceId,
+    targetPresetIds,
+    currentIndex: 0,
+  }
+  runCurrentStabilityCheckStep()
+}
+
+function runCurrentStabilityCheckStep(): void {
+  const stability = state.stabilityCheck
+  if (stability.status !== "running" || !stability.sequenceId) {
+    return
+  }
+  const targetPresetId = stability.targetPresetIds[stability.currentIndex]
+  const bucketPreset = findBucketTargetPreset(STABILITY_TARGET_PRESET_TO_BUCKET_PRESET[targetPresetId])
+  applyBucketTargetPreset(bucketPreset)
+  renderBucketTargetWarning()
+  writeSelectValue("auto-sequence-select", stability.sequenceId)
+  state.presetMessage = `Stability Check: ${findAutoSequence(stability.sequenceId).label} / ${bucketPreset.label}`
+  renderPresetMessage()
+  renderCandidateStabilityDebug()
+  startAutoSequence(findAutoSequence(stability.sequenceId), bucketPreset)
+}
+
+function continueStabilityCheckAfterSequence(): boolean {
+  if (state.stabilityCheck.status !== "running") {
+    return false
+  }
+  const nextIndex = state.stabilityCheck.currentIndex + 1
+  if (nextIndex >= state.stabilityCheck.targetPresetIds.length) {
+    state.stabilityCheck = createIdleStabilityCheck()
+    return false
+  }
+  state.stabilityCheck = {
+    ...state.stabilityCheck,
+    currentIndex: nextIndex,
+  }
+  runCurrentStabilityCheckStep()
+  return true
+}
+
+function readStabilitySequenceId(): StabilitySequencePresetId {
+  const value = getElement<HTMLSelectElement>("stability-sequence-select").value
+  return STABILITY_SEQUENCE_IDS.includes(value as StabilitySequencePresetId)
+    ? (value as StabilitySequencePresetId)
+    : STABILITY_SEQUENCE_IDS[0]
+}
+
+function readSelectedStabilityTargetPresetIds(): StabilityTargetPresetId[] {
+  const values: StabilityTargetPresetId[] = []
+  if (getElement<HTMLInputElement>("stability-target-5-input").checked) {
+    values.push("5each")
+  }
+  if (getElement<HTMLInputElement>("stability-target-8-input").checked) {
+    values.push("8each")
+  }
+  if (getElement<HTMLInputElement>("stability-target-10-input").checked) {
+    values.push("10each")
+  }
+  return values
+}
+
+function addCurrentAnalysisToStabilityHistory(): void {
+  if (!state.analysis) {
+    return
+  }
+  appendStabilityHistoryFromAnalysis(state.analysis)
+  renderCandidateStabilityDebug()
+  state.analysis.candidateStabilityDebug = buildCandidateStabilityDebug()
+  getElement("json-preview").textContent = JSON.stringify(createSummaryAnalysis(state.analysis), null, 2)
+}
+
+function clearStabilityHistory(): void {
+  state.stabilityHistory = []
+  if (state.analysis) {
+    state.analysis.candidateStabilityDebug = buildCandidateStabilityDebug()
+    getElement("json-preview").textContent = JSON.stringify(createSummaryAnalysis(state.analysis), null, 2)
+  }
+  renderCandidateStabilityDebug()
+}
+
+function appendStabilityHistoryFromAnalysis(analysis: AnalysisResult): void {
+  const summary = analysis.autoSequenceSummary
+  if (!summary) {
+    return
+  }
+  const finalStep = summary.steps.at(-1)
+  const bestCandidate = analysis.bestCandidate
+  const entry: StabilityHistoryEntry = {
+    id: `${Date.now()}-${state.stabilityHistory.length + 1}`,
+    generatedAt: new Date().toISOString(),
+    bucketTargetPresetName: getCurrentBucketTargetPresetName(analysis.searchSettings),
+    requestedBucketTargets: pickRequestedBucketTargets(analysis.searchSettings.targets),
+    actualSelectedFrameSummary: {
+      selectedFrameCount: analysis.selectedFrameSummary.selectedFrameCount,
+      bucketCounts: { ...analysis.selectedFrameSummary.bucketCounts },
+      shortage: buildBucketTargetShortage(
+        analysis.searchSettings.targets,
+        analysis.sourceSummary.bucketCounts,
+        analysis.selectedFrameSummary.bucketCounts,
+      ),
+    },
+    sequenceName: summary.sequenceName,
+    objectiveMode: summary.finalObjectiveMode ?? analysis.searchSettings.objectiveMode,
+    finalCandidate: summary.finalCandidate ? cloneCandidate(summary.finalCandidate) : null,
+    scores: {
+      objectiveScore: summary.finalObjectiveScore ?? null,
+      totalScore: finalStep?.totalScore ?? bestCandidate?.totalScore ?? null,
+      balancedScore:
+        finalStep?.scoreDebug?.balancedScore ?? bestCandidate?.scoreDebug?.balancedScore ?? null,
+      maxBucketScore:
+        finalStep?.scoreDebug?.maxBucketScore ?? bestCandidate?.scoreDebug?.maxBucketScore ?? null,
+      pitchAverageScore:
+        finalStep?.scoreDebug?.pitchAverageScore ?? bestCandidate?.scoreDebug?.pitchAverageScore ?? null,
+      yawAverageScore:
+        finalStep?.scoreDebug?.yawAverageScore ?? bestCandidate?.scoreDebug?.yawAverageScore ?? null,
+    },
+    worstBucket: bestCandidate ? getWorstBucket(bestCandidate.bucketScores) : null,
+  }
+
+  state.stabilityHistory = [...state.stabilityHistory, entry]
+  analysis.candidateStabilityDebug = buildCandidateStabilityDebug()
+}
+
+function buildCandidateStabilityDebug(): CandidateStabilityDebug {
+  return {
+    history: state.stabilityHistory,
+    summaries: buildStabilitySummaries(state.stabilityHistory),
+  }
+}
+
+function pickRequestedBucketTargets(
+  targets: Record<CaptureBucket, number>,
+): Record<RequestedBucketTarget, number> {
+  return Object.fromEntries(
+    REQUESTED_BUCKET_TARGETS.map((bucket) => [bucket, targets[bucket] ?? 0]),
+  ) as Record<RequestedBucketTarget, number>
+}
+
+function buildBucketTargetShortage(
+  requestedTargets: Record<CaptureBucket, number>,
+  availableCounts: Record<CaptureBucket, number>,
+  selectedCounts: Record<CaptureBucket, number>,
+): BucketTargetShortage[] | undefined {
+  const shortage = BUCKETS.flatMap((bucket) => {
+    const required = requestedTargets[bucket] ?? 0
+    if (required <= 0) {
+      return []
+    }
+    const available = availableCounts[bucket] ?? 0
+    const selected = selectedCounts[bucket] ?? 0
+    return available < required || selected < required
+      ? [{ bucket, required, available, selected }]
+      : []
+  })
+  return shortage.length > 0 ? shortage : undefined
+}
+
+function getWorstBucket(bucketScores: PoseBucketScores): { bucket: CaptureBucket; score: number } | null {
+  const entries = Object.entries(bucketScores).filter(
+    (entry): entry is [CaptureBucket, number] =>
+      typeof entry[1] === "number" && Number.isFinite(entry[1]),
+  )
+  if (entries.length === 0) {
+    return null
+  }
+  const [bucket, score] = entries.reduce((worst, current) =>
+    current[1] > worst[1] ? current : worst,
+  )
+  return { bucket, score: round(score) }
+}
+
+function buildStabilitySummaries(history: StabilityHistoryEntry[]): StabilitySummary[] {
+  const sequenceNames = [...new Set(history.map((entry) => entry.sequenceName))]
+  return sequenceNames.map((sequenceName) => {
+    const entries = history.filter((entry) => entry.sequenceName === sequenceName)
+    const candidateDrift = {
+      rotationCenterYRange: valueRange(entries.map((entry) => getHistoryRotationCenter(entry)?.y ?? null)),
+      rotationCenterZRange: valueRange(entries.map((entry) => getHistoryRotationCenter(entry)?.z ?? null)),
+      noseZRange: valueRange(entries.map((entry) => entry.finalCandidate?.zByPointId.nose ?? null)),
+      leftCheekZRange: valueRange(entries.map((entry) => entry.finalCandidate?.zByPointId.leftCheek ?? null)),
+      rightCheekZRange: valueRange(entries.map((entry) => entry.finalCandidate?.zByPointId.rightCheek ?? null)),
+    }
+    const scoreDrift = {
+      totalScoreRange: valueRange(entries.map((entry) => entry.scores.totalScore)),
+      balancedScoreRange: valueRange(entries.map((entry) => entry.scores.balancedScore)),
+      maxBucketScoreRange: valueRange(entries.map((entry) => entry.scores.maxBucketScore)),
+      pitchAverageScoreRange: valueRange(entries.map((entry) => entry.scores.pitchAverageScore)),
+      yawAverageScoreRange: valueRange(entries.map((entry) => entry.scores.yawAverageScore)),
+    }
+    return {
+      sequenceName,
+      entries,
+      candidateDrift,
+      scoreDrift,
+      interpretation: buildStabilityInterpretation(candidateDrift, scoreDrift, entries),
+    }
+  })
+}
+
+function buildStabilityInterpretation(
+  candidateDrift: StabilitySummary["candidateDrift"],
+  scoreDrift: StabilitySummary["scoreDrift"],
+  entries: StabilityHistoryEntry[],
+): { isStableCandidate: boolean; notes: string[] } {
+  const notes: string[] = []
+  const isStableCandidate =
+    (candidateDrift?.rotationCenterYRange ?? Number.POSITIVE_INFINITY) <= 0.04 &&
+    (candidateDrift?.rotationCenterZRange ?? Number.POSITIVE_INFINITY) <= 0.03 &&
+    (candidateDrift?.noseZRange ?? Number.POSITIVE_INFINITY) <= 0.03 &&
+    (scoreDrift?.maxBucketScoreRange ?? Number.POSITIVE_INFINITY) <= 0.01
+
+  notes.push(
+    isStableCandidate
+      ? "debug基準では候補は安定しています。"
+      : "debug基準では候補の揺れが大きい可能性があります。",
+  )
+  if (entries.some((entry) => (entry.actualSelectedFrameSummary.shortage?.length ?? 0) > 0)) {
+    notes.push("bucket target に対して不足している bucket があります。")
+  }
+  notes.push("production採用判定ではなく、候補安定性確認用の簡易判定です。")
+  return { isStableCandidate, notes }
+}
+
+function getHistoryRotationCenter(entry: StabilityHistoryEntry): RotationCenter | null {
+  return entry.finalCandidate ? getCandidateRotationCenter(entry.finalCandidate) : null
+}
+
+function valueRange(values: Array<number | null | undefined>): number | null {
+  const finite = values.filter((value): value is number => typeof value === "number" && Number.isFinite(value))
+  if (finite.length < 2) {
+    return null
+  }
+  return round(Math.max(...finite) - Math.min(...finite))
+}
+
 function applyCommonPresetSettings(): void {
   state.coordinateDescentParameterOrder = [...DEFAULT_COORDINATE_DESCENT_PARAMETER_ORDER]
+  writeSelectValue("bucket-target-preset-select", "balanced5Each")
   writeNumberInput("max-frames-input", 30)
   writeNumberInput("target-front-input", 5)
   writeNumberInput("target-yaw-positive-input", 5)
@@ -3533,6 +4111,11 @@ function selectFrames(
   for (const bucket of REQUIRED_BUCKETS) {
     if (bucketCounts[bucket] < Math.min(settings.targets[bucket], 1)) {
       warnings.push(`${bucket} bucket の selected frame が不足しています。`)
+    }
+    if (bucketCounts[bucket] < settings.targets[bucket]) {
+      warnings.push(
+        `${bucket} bucket target が不足しています: required ${settings.targets[bucket]}, selected ${bucketCounts[bucket]}`,
+      )
     }
   }
 
@@ -4051,6 +4634,7 @@ function createSummaryAnalysis(analysis: AnalysisResult): SummaryAnalysisResult 
     projectionSignDebug: analysis.projectionSignDebug,
     rotationCenterDebug: analysis.rotationCenterDebug,
     autoSequenceSummary: analysis.autoSequenceSummary,
+    candidateStabilityDebug: analysis.candidateStabilityDebug,
     warnings: analysis.warnings,
   }
 }
@@ -4114,6 +4698,8 @@ function renderSourceOnly(): void {
   getElement("best-candidate").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
   renderProjectionSignDebug(null)
   renderRotationCenterDebug(null)
+  renderBucketTargetWarning()
+  renderCandidateStabilityDebug()
   getElement("best-ideal-face8-summary").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
   getElement("best-ideal-face8-table").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
   getElement("depth-relation").innerHTML = renderDepthConvention(DEPTH_CONVENTION)
@@ -4204,6 +4790,8 @@ function renderAnalysis(): void {
     : `<p class="empty">候補がありません。</p>`
   renderProjectionSignDebug(analysis.projectionSignDebug ?? null)
   renderRotationCenterDebug(analysis.rotationCenterDebug ?? null)
+  renderBucketTargetWarning()
+  renderCandidateStabilityDebug()
   getElement("best-ideal-face8-summary").innerHTML = analysis.bestIdealFace8
     ? renderIdealFace8Summary(analysis.bestIdealFace8)
     : `<p class="empty">bestIdealFace8 はありません。</p>`
@@ -4343,6 +4931,189 @@ function renderAutoSequenceStepTable(steps: AutoSequenceStepSummary[]): string {
       </table>
     </div>
   `
+}
+
+function renderBucketTargetWarning(): void {
+  const element = getElement("bucket-target-warning")
+  if (state.frames.length === 0) {
+    element.textContent = "capture JSON 読み込み後に不足 bucket を確認します。"
+    return
+  }
+  const settings = readSettings()
+  const sourceSummary = summarizeSource(state.payload, state.frames)
+  const shortage = buildBucketTargetShortage(
+    settings.targets,
+    sourceSummary.bucketCounts,
+    sourceSummary.bucketCounts,
+  )
+  if (!shortage || shortage.length === 0) {
+    element.textContent = "bucket target に対する不足はありません。"
+    return
+  }
+  const presetName = getCurrentBucketTargetPresetName(settings)
+  element.textContent = [
+    `Warning: ${presetName} を指定していますが、以下の bucket が不足しています。`,
+    ...shortage.map(
+      (item) =>
+        `${item.bucket}:\n  required: ${item.required}\n  available: ${item.available}`,
+    ),
+  ].join("\n\n")
+}
+
+function renderCandidateStabilityDebug(): void {
+  const debug = buildCandidateStabilityDebug()
+  if (state.analysis) {
+    state.analysis.candidateStabilityDebug = debug
+  }
+  renderStabilityCheckStatus()
+  getElement("stability-history-table").innerHTML = renderStabilityHistoryTable(debug.history)
+  getElement("stability-summary").innerHTML = renderStabilitySummaryTable(debug.summaries)
+}
+
+function renderStabilityCheckStatus(): void {
+  const stability = state.stabilityCheck
+  const sequence = stability.sequenceId ? findAutoSequence(stability.sequenceId) : null
+  const currentPresetId =
+    stability.status === "running" ? stability.targetPresetIds[stability.currentIndex] : null
+  const currentBucketPreset = currentPresetId
+    ? findBucketTargetPreset(STABILITY_TARGET_PRESET_TO_BUCKET_PRESET[currentPresetId])
+    : null
+  getElement("stability-check-status").innerHTML = renderStatusItems([
+    ["status", stability.status],
+    ["sequence", sequence?.label ?? "-"],
+    [
+      "current preset",
+      currentBucketPreset
+        ? `${stability.currentIndex + 1} / ${stability.targetPresetIds.length}: ${currentBucketPreset.label}`
+        : "-",
+    ],
+    ["history count", String(state.stabilityHistory.length)],
+  ])
+}
+
+function renderStabilityHistoryTable(entries: StabilityHistoryEntry[]): string {
+  if (entries.length === 0) {
+    return `<p class="empty">Stability History はまだありません。</p>`
+  }
+  return `
+    <table>
+      <thead>
+        <tr>
+          <th>bucketTargetPreset</th>
+          <th>actual selected count</th>
+          <th>shortage warning</th>
+          <th>sequenceName</th>
+          <th>objectiveMode</th>
+          <th>rotationCenter.y</th>
+          <th>rotationCenter.z</th>
+          <th>nose.z</th>
+          <th>leftCheek.z</th>
+          <th>rightCheek.z</th>
+          <th>totalScore</th>
+          <th>balancedScore</th>
+          <th>maxBucketScore</th>
+          <th>pitchAverageScore</th>
+          <th>yawAverageScore</th>
+          <th>worstBucket</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${entries.map((entry) => {
+          const rotationCenter = getHistoryRotationCenter(entry)
+          return `
+            <tr>
+              <td>${escapeHtml(entry.bucketTargetPresetName)}</td>
+              <td>${entry.actualSelectedFrameSummary.selectedFrameCount}</td>
+              <td>${formatShortage(entry.actualSelectedFrameSummary.shortage)}</td>
+              <td>${escapeHtml(entry.sequenceName)}</td>
+              <td><code>${entry.objectiveMode}</code></td>
+              <td>${formatNumber(rotationCenter?.y)}</td>
+              <td>${formatNumber(rotationCenter?.z)}</td>
+              <td>${formatNumber(entry.finalCandidate?.zByPointId.nose)}</td>
+              <td>${formatNumber(entry.finalCandidate?.zByPointId.leftCheek)}</td>
+              <td>${formatNumber(entry.finalCandidate?.zByPointId.rightCheek)}</td>
+              <td>${formatNumber(entry.scores.totalScore)}</td>
+              <td>${formatNumber(entry.scores.balancedScore)}</td>
+              <td>${formatNumber(entry.scores.maxBucketScore)}</td>
+              <td>${formatNumber(entry.scores.pitchAverageScore)}</td>
+              <td>${formatNumber(entry.scores.yawAverageScore)}</td>
+              <td>${entry.worstBucket ? `${entry.worstBucket.bucket}: ${formatNumber(entry.worstBucket.score)}` : "-"}</td>
+            </tr>
+          `
+        }).join("")}
+      </tbody>
+    </table>
+  `
+}
+
+function renderStabilitySummaryTable(summaries: StabilitySummary[]): string {
+  if (summaries.length === 0) {
+    return `<p class="empty">Stability Summary はまだありません。</p>`
+  }
+  return summaries
+    .map(
+      (summary) => `
+        <h3>${escapeHtml(summary.sequenceName)}</h3>
+        <div class="summary-grid">
+          ${renderStatusItems([
+            ["rotationCenter.y range", formatNumber(summary.candidateDrift?.rotationCenterYRange)],
+            ["rotationCenter.z range", formatNumber(summary.candidateDrift?.rotationCenterZRange)],
+            ["nose.z range", formatNumber(summary.candidateDrift?.noseZRange)],
+            ["leftCheek.z range", formatNumber(summary.candidateDrift?.leftCheekZRange)],
+            ["rightCheek.z range", formatNumber(summary.candidateDrift?.rightCheekZRange)],
+            ["maxBucketScore range", formatNumber(summary.scoreDrift?.maxBucketScoreRange)],
+            ["isStableCandidate", String(summary.interpretation?.isStableCandidate ?? false)],
+            ["notes", summary.interpretation?.notes.join(" / ") ?? "-"],
+          ])}
+        </div>
+        ${renderStabilitySummaryEntries(summary.entries)}
+      `,
+    )
+    .join("")
+}
+
+function renderStabilitySummaryEntries(entries: StabilityHistoryEntry[]): string {
+  return `
+    <div class="table-wrap auto-sequence-table">
+      <table>
+        <thead>
+          <tr>
+            <th>preset</th>
+            <th>rotationCenter.y</th>
+            <th>rotationCenter.z</th>
+            <th>nose.z</th>
+            <th>maxBucketScore</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${entries.map((entry) => {
+            const rotationCenter = getHistoryRotationCenter(entry)
+            return `
+              <tr>
+                <td>${escapeHtml(entry.bucketTargetPresetName)}</td>
+                <td>${formatNumber(rotationCenter?.y)}</td>
+                <td>${formatNumber(rotationCenter?.z)}</td>
+                <td>${formatNumber(entry.finalCandidate?.zByPointId.nose)}</td>
+                <td>${formatNumber(entry.scores.maxBucketScore)}</td>
+              </tr>
+            `
+          }).join("")}
+        </tbody>
+      </table>
+    </div>
+  `
+}
+
+function formatShortage(shortage: BucketTargetShortage[] | undefined): string {
+  if (!shortage || shortage.length === 0) {
+    return "-"
+  }
+  return shortage
+    .map(
+      (item) =>
+        `${item.bucket}: required ${item.required}, available ${item.available}, selected ${item.selected}`,
+    )
+    .join("<br />")
 }
 
 function renderProjectionSignDebug(debug: ProjectionSignDebug | null): void {
@@ -4652,6 +5423,8 @@ function renderEmptyState(): void {
   getElement("best-candidate").innerHTML = `<p class="empty">未解析です。</p>`
   renderProjectionSignDebug(null)
   renderRotationCenterDebug(null)
+  renderBucketTargetWarning()
+  renderCandidateStabilityDebug()
   getElement("best-ideal-face8-summary").innerHTML = `<p class="empty">未解析です。</p>`
   getElement("best-ideal-face8-table").innerHTML = `<p class="empty">未解析です。</p>`
   getElement("depth-relation").innerHTML = renderDepthConvention(DEPTH_CONVENTION)
@@ -5010,11 +5783,18 @@ function setButtons(): void {
   getElement<HTMLButtonElement>("copy-debug-button").disabled = !state.analysis || isRunning || isAutoRunning
   getElement<HTMLButtonElement>("apply-search-preset-button").disabled = isRunning || isAutoRunning
   getElement<HTMLButtonElement>("apply-base-candidate-preset-button").disabled = isRunning || isAutoRunning
+  getElement<HTMLButtonElement>("apply-bucket-target-preset-button").disabled = isRunning || isAutoRunning
   getElement<HTMLButtonElement>("run-auto-sequence-button").disabled = state.frames.length === 0 || isRunning || isAutoRunning
   getElement<HTMLButtonElement>("cancel-auto-sequence-button").disabled = !isAutoRunning
   getElement<HTMLButtonElement>("use-best-candidate-button").disabled = !state.analysis?.bestCandidate || isRunning || isAutoRunning
   getElement<HTMLButtonElement>("export-full-button").disabled = !state.analysis || isRunning || isAutoRunning
   getElement<HTMLButtonElement>("export-summary-button").disabled = !state.analysis || isRunning || isAutoRunning
+  getElement<HTMLButtonElement>("run-stability-check-button").disabled =
+    state.frames.length === 0 || isRunning || isAutoRunning
+  getElement<HTMLButtonElement>("add-stability-history-button").disabled =
+    !state.analysis?.autoSequenceSummary || isRunning || isAutoRunning
+  getElement<HTMLButtonElement>("clear-stability-history-button").disabled =
+    isRunning || isAutoRunning || state.stabilityHistory.length === 0
 }
 
 function extractSemanticPoints2D(
