@@ -115,6 +115,7 @@ interface NormalizedFrame {
 
 interface SearchSettings {
   searchMode: SearchMode
+  objectiveMode: ObjectiveMode
   maxFrames: number
   targets: Record<CaptureBucket, number>
   includeMixedPose: boolean
@@ -288,11 +289,21 @@ interface ProjectionOptions {
 }
 
 type SearchMode = "fullGrid" | "localOneDimensional" | "coordinateDescent"
+type ObjectiveMode =
+  | "totalScore"
+  | "balancedScore"
+  | "maxBucketScore"
+  | "pitchAverageScore"
+  | "yawAverageScore"
 type LocalSearchParameter = "pivotZ" | "rotationCenter.y" | "rotationCenter.z" | `${SemanticPointName}.z`
 type SearchPresetId =
   | "coordinateDescentFine"
   | "rotationCenterFine"
+  | "rotationCenterFineBalanced"
+  | "rotationCenterFineMaxBucket"
   | "rotationCenter8PointFine"
+  | "rotationCenter8PointFineBalanced"
+  | "rotationCenter8PointFineMaxBucket"
   | "pivotZFine"
   | "noseZFine"
   | "leftCheekZFine"
@@ -313,6 +324,10 @@ type AutoSequencePresetId =
   | "pitchFocusSequence"
   | "rotationCenterFineSequence"
   | "naturalNoseRotationCenterSequence"
+  | "rotationCenterBalancedSequence"
+  | "rotationCenterMaxBucketSequence"
+  | "naturalNoseBalancedSequence"
+  | "naturalNoseMaxBucketSequence"
 type AutoSequenceStatus = "idle" | "running" | "completed" | "cancelled" | "error"
 
 interface LocalSearchRange {
@@ -338,6 +353,7 @@ interface SearchPresetDefinition {
   id: SearchPresetId
   label: string
   searchMode: SearchMode
+  objectiveMode?: ObjectiveMode
   targetParameter: LocalSearchParameter
   localMin: number
   localMax: number
@@ -360,6 +376,8 @@ interface AutoSequenceDefinition {
 interface AutoSequenceStepSummary {
   stepIndex: number
   presetName: string
+  objectiveMode: ObjectiveMode
+  objectiveScore: number | null
   baseCandidate: FittingCandidate8
   bestCandidate: FittingCandidate8 | null
   totalScore: number | null
@@ -380,6 +398,8 @@ interface AutoSequenceSummary {
   status: "completed" | "cancelled" | "error"
   steps: AutoSequenceStepSummary[]
   finalCandidate: FittingCandidate8 | null
+  finalObjectiveMode: ObjectiveMode | null
+  finalObjectiveScore: number | null
 }
 
 interface AutoSequenceState {
@@ -430,6 +450,8 @@ type PoseBucketScores = Record<
 
 interface FittingCandidate8Score {
   rank: number
+  objectiveMode: ObjectiveMode
+  objectiveScore: number
   totalScore: number
   bucketScores: PoseBucketScores
   candidate: FittingCandidate8
@@ -441,6 +463,8 @@ interface CandidateResult extends CandidateDefinition {
   perPointError: Record<SemanticPointName, number>
   bucketScores: PoseBucketScores
   scoreDebug: CandidateScoreDebug
+  objectiveMode: ObjectiveMode
+  objectiveScore: number
   totalScore: number
   sampleCount: number
   warnings: string[]
@@ -789,6 +813,14 @@ const LOCAL_SEARCH_PARAMETERS: LocalSearchParameter[] = [
   "mouth.z",
 ]
 
+const OBJECTIVE_MODES: ObjectiveMode[] = [
+  "totalScore",
+  "balancedScore",
+  "maxBucketScore",
+  "pitchAverageScore",
+  "yawAverageScore",
+]
+
 const DEFAULT_COORDINATE_DESCENT_PARAMETER_ORDER: LocalSearchParameter[] = [
   "rotationCenter.y",
   "rotationCenter.z",
@@ -905,8 +937,8 @@ const DEFAULT_LOCAL_SEARCH_BASE_CANDIDATE = BASELINE_CHEEK_DEPTH_CANDIDATE
 
 const DEFAULT_COORDINATE_DESCENT_RANGES: LocalSearchRanges = {
   pivotZ: { min: 0.06, max: 0.18, step: 0.01 },
-  "rotationCenter.y": { min: -0.14, max: -0.02, step: 0.01 },
-  "rotationCenter.z": { min: 0.02, max: 0.1, step: 0.01 },
+  "rotationCenter.y": { min: -0.24, max: 0, step: 0.01 },
+  "rotationCenter.z": { min: 0.02, max: 0.12, step: 0.01 },
   "headTop.z": { min: -0.02, max: 0.03, step: 0.01 },
   "chin.z": { min: -0.01, max: 0.03, step: 0.01 },
   "leftCheek.z": { min: 0.02, max: 0.08, step: 0.01 },
@@ -919,8 +951,8 @@ const DEFAULT_COORDINATE_DESCENT_RANGES: LocalSearchRanges = {
 
 const YAW_FOCUS_COORDINATE_DESCENT_RANGES: LocalSearchRanges = {
   pivotZ: { min: 0.1, max: 0.18, step: 0.01 },
-  "rotationCenter.y": { min: -0.14, max: -0.02, step: 0.01 },
-  "rotationCenter.z": { min: 0.02, max: 0.1, step: 0.01 },
+  "rotationCenter.y": { min: -0.24, max: 0, step: 0.01 },
+  "rotationCenter.z": { min: 0.02, max: 0.12, step: 0.01 },
   "headTop.z": { min: -0.02, max: 0.03, step: 0.01 },
   "chin.z": { min: -0.02, max: 0.03, step: 0.01 },
   "leftCheek.z": { min: 0.08, max: 0.18, step: 0.01 },
@@ -933,8 +965,8 @@ const YAW_FOCUS_COORDINATE_DESCENT_RANGES: LocalSearchRanges = {
 
 const PITCH_FOCUS_COORDINATE_DESCENT_RANGES: LocalSearchRanges = {
   pivotZ: { min: 0.04, max: 0.12, step: 0.01 },
-  "rotationCenter.y": { min: -0.14, max: -0.02, step: 0.01 },
-  "rotationCenter.z": { min: 0.02, max: 0.1, step: 0.01 },
+  "rotationCenter.y": { min: -0.24, max: 0, step: 0.01 },
+  "rotationCenter.z": { min: 0.02, max: 0.12, step: 0.01 },
   "headTop.z": { min: 0, max: 0.04, step: 0.01 },
   "chin.z": { min: 0, max: 0.04, step: 0.01 },
   "leftCheek.z": { min: 0.03, max: 0.08, step: 0.01 },
@@ -947,8 +979,8 @@ const PITCH_FOCUS_COORDINATE_DESCENT_RANGES: LocalSearchRanges = {
 
 const ROTATION_CENTER_FINE_RANGES: LocalSearchRanges = {
   ...DEFAULT_COORDINATE_DESCENT_RANGES,
-  "rotationCenter.y": { min: -0.14, max: -0.02, step: 0.005 },
-  "rotationCenter.z": { min: 0.02, max: 0.1, step: 0.005 },
+  "rotationCenter.y": { min: -0.24, max: 0, step: 0.005 },
+  "rotationCenter.z": { min: 0.02, max: 0.12, step: 0.005 },
 }
 
 const SEARCH_PRESETS: SearchPresetDefinition[] = [
@@ -956,6 +988,7 @@ const SEARCH_PRESETS: SearchPresetDefinition[] = [
     id: "coordinateDescentFine",
     label: "Coordinate Descent Fine",
     searchMode: "coordinateDescent",
+    objectiveMode: "totalScore",
     targetParameter: "pivotZ",
     localMin: -0.06,
     localMax: 0.18,
@@ -969,9 +1002,10 @@ const SEARCH_PRESETS: SearchPresetDefinition[] = [
     id: "rotationCenterFine",
     label: "Rotation Center Fine",
     searchMode: "coordinateDescent",
+    objectiveMode: "totalScore",
     targetParameter: "rotationCenter.y",
-    localMin: -0.14,
-    localMax: -0.02,
+    localMin: -0.24,
+    localMax: 0,
     localStep: 0.005,
     coordinateDescentIterations: 2,
     coordinateDescentParameterOrder: ROTATION_CENTER_ONLY_PARAMETER_ORDER,
@@ -984,9 +1018,10 @@ const SEARCH_PRESETS: SearchPresetDefinition[] = [
     id: "rotationCenter8PointFine",
     label: "Rotation Center + 8Point Fine",
     searchMode: "coordinateDescent",
+    objectiveMode: "totalScore",
     targetParameter: "rotationCenter.y",
-    localMin: -0.14,
-    localMax: -0.02,
+    localMin: -0.24,
+    localMax: 0,
     localStep: 0.01,
     coordinateDescentIterations: 2,
     coordinateDescentParameterOrder: DEFAULT_COORDINATE_DESCENT_PARAMETER_ORDER,
@@ -996,9 +1031,74 @@ const SEARCH_PRESETS: SearchPresetDefinition[] = [
       "rotationCenter.y / rotationCenter.z を先に調整し、その後 8 semantic points の z を再探索します。",
   },
   {
+    id: "rotationCenterFineBalanced",
+    label: "Rotation Center Fine - Balanced",
+    searchMode: "coordinateDescent",
+    objectiveMode: "balancedScore",
+    targetParameter: "rotationCenter.y",
+    localMin: -0.24,
+    localMax: 0,
+    localStep: 0.005,
+    coordinateDescentIterations: 2,
+    coordinateDescentParameterOrder: ROTATION_CENTER_ONLY_PARAMETER_ORDER,
+    coordinateDescentRanges: ROTATION_CENTER_FINE_RANGES,
+    baseCandidatePresetId: "rotationCenterDebugBest",
+    description:
+      "rotationCenter.y / rotationCenter.z を balancedScore 最小化で細かく調整します。",
+  },
+  {
+    id: "rotationCenterFineMaxBucket",
+    label: "Rotation Center Fine - MaxBucket",
+    searchMode: "coordinateDescent",
+    objectiveMode: "maxBucketScore",
+    targetParameter: "rotationCenter.y",
+    localMin: -0.24,
+    localMax: 0,
+    localStep: 0.005,
+    coordinateDescentIterations: 2,
+    coordinateDescentParameterOrder: ROTATION_CENTER_ONLY_PARAMETER_ORDER,
+    coordinateDescentRanges: ROTATION_CENTER_FINE_RANGES,
+    baseCandidatePresetId: "rotationCenterDebugBest",
+    description:
+      "rotationCenter.y / rotationCenter.z を maxBucketScore 最小化で細かく調整します。",
+  },
+  {
+    id: "rotationCenter8PointFineBalanced",
+    label: "Rotation Center + 8Point Fine - Balanced",
+    searchMode: "coordinateDescent",
+    objectiveMode: "balancedScore",
+    targetParameter: "rotationCenter.y",
+    localMin: -0.24,
+    localMax: 0,
+    localStep: 0.01,
+    coordinateDescentIterations: 2,
+    coordinateDescentParameterOrder: DEFAULT_COORDINATE_DESCENT_PARAMETER_ORDER,
+    coordinateDescentRanges: DEFAULT_COORDINATE_DESCENT_RANGES,
+    baseCandidatePresetId: "rotationCenterDebugBest",
+    description:
+      "rotationCenter.y / rotationCenter.z を先に調整し、その後 8 semantic points の z を balancedScore 最小化で再探索します。",
+  },
+  {
+    id: "rotationCenter8PointFineMaxBucket",
+    label: "Rotation Center + 8Point Fine - MaxBucket",
+    searchMode: "coordinateDescent",
+    objectiveMode: "maxBucketScore",
+    targetParameter: "rotationCenter.y",
+    localMin: -0.24,
+    localMax: 0,
+    localStep: 0.01,
+    coordinateDescentIterations: 2,
+    coordinateDescentParameterOrder: DEFAULT_COORDINATE_DESCENT_PARAMETER_ORDER,
+    coordinateDescentRanges: DEFAULT_COORDINATE_DESCENT_RANGES,
+    baseCandidatePresetId: "rotationCenterDebugBest",
+    description:
+      "rotationCenter.y / rotationCenter.z を先に調整し、その後 8 semantic points の z を maxBucketScore 最小化で再探索します。",
+  },
+  {
     id: "pivotZFine",
     label: "PivotZ Fine",
     searchMode: "localOneDimensional",
+    objectiveMode: "totalScore",
     targetParameter: "pivotZ",
     localMin: 0.04,
     localMax: 0.14,
@@ -1012,6 +1112,7 @@ const SEARCH_PRESETS: SearchPresetDefinition[] = [
     id: "noseZFine",
     label: "NoseZ Fine",
     searchMode: "localOneDimensional",
+    objectiveMode: "totalScore",
     targetParameter: "nose.z",
     localMin: -0.04,
     localMax: 0.08,
@@ -1025,6 +1126,7 @@ const SEARCH_PRESETS: SearchPresetDefinition[] = [
     id: "leftCheekZFine",
     label: "LeftCheekZ Fine",
     searchMode: "localOneDimensional",
+    objectiveMode: "totalScore",
     targetParameter: "leftCheek.z",
     localMin: 0.03,
     localMax: 0.12,
@@ -1038,6 +1140,7 @@ const SEARCH_PRESETS: SearchPresetDefinition[] = [
     id: "rightCheekZFine",
     label: "RightCheekZ Fine",
     searchMode: "localOneDimensional",
+    objectiveMode: "totalScore",
     targetParameter: "rightCheek.z",
     localMin: 0.03,
     localMax: 0.12,
@@ -1051,6 +1154,7 @@ const SEARCH_PRESETS: SearchPresetDefinition[] = [
     id: "mouthZFine",
     label: "MouthZ Fine",
     searchMode: "localOneDimensional",
+    objectiveMode: "totalScore",
     targetParameter: "mouth.z",
     localMin: 0,
     localMax: 0.08,
@@ -1064,6 +1168,7 @@ const SEARCH_PRESETS: SearchPresetDefinition[] = [
     id: "yawFocusFine",
     label: "Yaw Focus Fine",
     searchMode: "coordinateDescent",
+    objectiveMode: "totalScore",
     targetParameter: "pivotZ",
     localMin: -0.06,
     localMax: 0.18,
@@ -1078,6 +1183,7 @@ const SEARCH_PRESETS: SearchPresetDefinition[] = [
     id: "pitchFocusFine",
     label: "Pitch Focus Fine",
     searchMode: "coordinateDescent",
+    objectiveMode: "totalScore",
     targetParameter: "pivotZ",
     localMin: -0.06,
     localMax: 0.18,
@@ -1145,12 +1251,64 @@ const AUTO_SEQUENCE_PRESETS: AutoSequenceDefinition[] = [
       "Rotation Center Debug Best を起点に、rotationCenter を先に調整してから 8点 z を再探索します。",
   },
   {
+    id: "rotationCenterBalancedSequence",
+    label: "Rotation Center Balanced Sequence",
+    baseCandidatePresetId: "rotationCenterDebugBest",
+    steps: [
+      "rotationCenterFineBalanced",
+      "rotationCenter8PointFineBalanced",
+      "noseZFine",
+      "mouthZFine",
+    ],
+    description:
+      "Rotation Center Debug Best を起点に、balancedScore 重視で rotationCenter と 8点 z を順番に探索します。",
+  },
+  {
+    id: "rotationCenterMaxBucketSequence",
+    label: "Rotation Center MaxBucket Sequence",
+    baseCandidatePresetId: "rotationCenterDebugBest",
+    steps: [
+      "rotationCenterFineMaxBucket",
+      "rotationCenter8PointFineMaxBucket",
+      "noseZFine",
+      "mouthZFine",
+    ],
+    description:
+      "Rotation Center Debug Best を起点に、maxBucketScore 重視で一部姿勢だけ悪化する候補を確認します。",
+  },
+  {
     id: "naturalNoseRotationCenterSequence",
     label: "Natural Nose Rotation Center Sequence",
     baseCandidatePresetId: "naturalNoseWithRotationCenter",
     steps: ["rotationCenterFine", "rotationCenter8PointFine", "noseZFine", "mouthZFine"],
     description:
       "Natural Nose With Rotation Center を起点に、nose.z が自然寄りでも score が出るか確認します。",
+  },
+  {
+    id: "naturalNoseBalancedSequence",
+    label: "Natural Nose Balanced Sequence",
+    baseCandidatePresetId: "naturalNoseWithRotationCenter",
+    steps: [
+      "rotationCenterFineBalanced",
+      "rotationCenter8PointFineBalanced",
+      "noseZFine",
+      "mouthZFine",
+    ],
+    description:
+      "Natural Nose With Rotation Center を起点に、balancedScore 重視でどこに収束するか確認します。",
+  },
+  {
+    id: "naturalNoseMaxBucketSequence",
+    label: "Natural Nose MaxBucket Sequence",
+    baseCandidatePresetId: "naturalNoseWithRotationCenter",
+    steps: [
+      "rotationCenterFineMaxBucket",
+      "rotationCenter8PointFineMaxBucket",
+      "noseZFine",
+      "mouthZFine",
+    ],
+    description:
+      "Natural Nose With Rotation Center を起点に、maxBucketScore 重視でどこに収束するか確認します。",
   },
 ]
 
@@ -1210,6 +1368,7 @@ const ROTATION_CENTER_PIVOT_Z_CANDIDATES = [0.04, 0.06, 0.08, 0.1, 0.12, 0.14, 0
 
 const DEFAULT_SETTINGS: SearchSettings = {
   searchMode: "fullGrid",
+  objectiveMode: "totalScore",
   maxFrames: 30,
   targets: {
     front: 5,
@@ -1450,6 +1609,14 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
                 <option value="coordinateDescent">coordinateDescent</option>
               </select>
             </label>
+            <label>Objective Mode
+              <select id="objective-mode-select">
+                ${OBJECTIVE_MODES.map(
+                  (mode) =>
+                    `<option value="${mode}"${mode === DEFAULT_SETTINGS.objectiveMode ? " selected" : ""}>${mode}</option>`,
+                ).join("")}
+              </select>
+            </label>
             <label>localTargetParameter
               <select id="local-target-parameter-select">
                 ${LOCAL_SEARCH_PARAMETERS.map(
@@ -1471,6 +1638,7 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
               <input id="coordinate-descent-iterations-input" type="number" min="1" max="20" step="1" value="${DEFAULT_SETTINGS.localSearchSettings.coordinateDescentIterations}" />
             </label>
           </div>
+          <p class="panel-help">Objective Mode は、探索中にどのスコアを最小化するかを選ぶ設定です。totalScore は従来挙動、maxBucketScore は一部姿勢だけ悪化する候補を避けるための確認用です。</p>
           <h3>baseCandidate</h3>
           <div class="controls">
             <label>base legacy pivotZ / rotationCenter.z
@@ -2072,6 +2240,21 @@ function normalizeRankingEntries(value: unknown): RankingEntry[] {
   return Array.isArray(value)
     ? (value as RankingEntry[]).map((entry) => ({
         ...entry,
+        objectiveMode: isObjectiveMode(entry.objectiveMode)
+          ? entry.objectiveMode
+          : DEFAULT_SETTINGS.objectiveMode,
+        objectiveScore:
+          typeof entry.objectiveScore === "number"
+            ? entry.objectiveScore
+            : getObjectiveScore(
+                {
+                  totalScore: entry.totalScore,
+                  scoreDebug: entry.scoreDebug ?? calculateScoreDebug(entry.totalScore, entry.bucketScores),
+                },
+                isObjectiveMode(entry.objectiveMode)
+                  ? entry.objectiveMode
+                  : DEFAULT_SETTINGS.objectiveMode,
+              ),
         candidate: cloneCandidate({
           pivotZ: entry.candidate.pivotZ,
           rotationCenter: getCandidateRotationCenter(entry.candidate),
@@ -2083,11 +2266,21 @@ function normalizeRankingEntries(value: unknown): RankingEntry[] {
 
 function normalizeCandidateResult(candidate: CandidateResult): CandidateResult {
   const normalized = cloneCandidate(candidate)
+  const objectiveMode = isObjectiveMode(candidate.objectiveMode)
+    ? candidate.objectiveMode
+    : DEFAULT_SETTINGS.objectiveMode
+  const scoreDebug = candidate.scoreDebug ?? calculateScoreDebug(candidate.totalScore, candidate.bucketScores)
   return {
     ...candidate,
     pivotZ: normalized.pivotZ,
     rotationCenter: normalized.rotationCenter ?? getCandidateRotationCenter(normalized),
     zByPointId: normalized.zByPointId,
+    scoreDebug,
+    objectiveMode,
+    objectiveScore:
+      typeof candidate.objectiveScore === "number"
+        ? candidate.objectiveScore
+        : getObjectiveScore({ totalScore: candidate.totalScore, scoreDebug }, objectiveMode),
   }
 }
 
@@ -2768,6 +2961,7 @@ function readSettings(): SearchSettings {
   return {
     ...DEFAULT_SETTINGS,
     searchMode,
+    objectiveMode: readObjectiveMode(),
     maxFrames: readNumber("max-frames-input", DEFAULT_SETTINGS.maxFrames),
     targets: {
       front: readNumber("target-front-input", DEFAULT_SETTINGS.targets.front),
@@ -2807,6 +3001,11 @@ function readSearchMode(): SearchMode {
   return value === "localOneDimensional" || value === "coordinateDescent"
     ? value
     : "fullGrid"
+}
+
+function readObjectiveMode(): ObjectiveMode {
+  const value = getElement<HTMLSelectElement>("objective-mode-select").value
+  return isObjectiveMode(value) ? value : DEFAULT_SETTINGS.objectiveMode
 }
 
 function readLocalSearchSettings(): LocalSearchSettings {
@@ -2885,6 +3084,7 @@ function applySearchPresetDefinition(
 ): void {
   applyCommonPresetSettings()
   writeSelectValue("search-mode-select", preset.searchMode)
+  writeSelectValue("objective-mode-select", preset.objectiveMode ?? DEFAULT_SETTINGS.objectiveMode)
   writeSelectValue("local-target-parameter-select", preset.targetParameter)
   writeNumberInput("local-min-input", preset.localMin)
   writeNumberInput("local-max-input", preset.localMax)
@@ -3009,6 +3209,8 @@ function handleAutoSequenceStepComplete(analysis: AnalysisResult | null): void {
   const stepSummary: AutoSequenceStepSummary = {
     stepIndex: state.autoSequence.currentStepIndex + 1,
     presetName: preset.label,
+    objectiveMode: analysis.bestCandidate?.objectiveMode ?? analysis.searchSettings.objectiveMode,
+    objectiveScore: analysis.bestCandidate?.objectiveScore ?? null,
     baseCandidate: cloneCandidate(analysis.searchSettings.localSearchSettings.baseCandidate),
     bestCandidate,
     totalScore: analysis.bestCandidate?.totalScore ?? null,
@@ -3020,7 +3222,7 @@ function handleAutoSequenceStepComplete(analysis: AnalysisResult | null): void {
   }
 
   state.autoSequence.steps = [...state.autoSequence.steps, stepSummary]
-  state.autoSequence.currentBestScore = stepSummary.totalScore
+  state.autoSequence.currentBestScore = stepSummary.objectiveScore
   state.autoSequenceLastAnalysis = analysis
 
   if (!bestCandidate) {
@@ -3069,6 +3271,7 @@ function finishAutoSequence(
 function buildAutoSequenceSummary(
   status: "completed" | "cancelled" | "error",
 ): AutoSequenceSummary {
+  const finalStep = state.autoSequence.steps.at(-1)
   return {
     sequenceName: state.autoSequence.definition?.label ?? "-",
     startedAt: state.autoSequence.startedAt ?? new Date().toISOString(),
@@ -3076,6 +3279,8 @@ function buildAutoSequenceSummary(
     status,
     steps: state.autoSequence.steps,
     finalCandidate: state.autoSequence.finalCandidate,
+    finalObjectiveMode: finalStep?.objectiveMode ?? null,
+    finalObjectiveScore: finalStep?.objectiveScore ?? null,
   }
 }
 
@@ -3093,6 +3298,7 @@ function applyCommonPresetSettings(): void {
   writeNumberInput("blendshape-warning-input", 0.35)
   writeNumberInput("top-n-input", 100)
   writeNumberInput("focal-length-input", 2.6)
+  writeSelectValue("objective-mode-select", DEFAULT_SETTINGS.objectiveMode)
   writeNumberInput("z-min-input", -0.24)
   writeNumberInput("z-max-input", 0.24)
   writeNumberInput("z-step-input", 0.24)
@@ -3119,6 +3325,10 @@ function findAutoSequence(value: string): AutoSequenceDefinition {
     AUTO_SEQUENCE_PRESETS.find((sequence) => sequence.id === value) ??
     AUTO_SEQUENCE_PRESETS[0]
   )
+}
+
+function isObjectiveMode(value: string): value is ObjectiveMode {
+  return OBJECTIVE_MODES.includes(value as ObjectiveMode)
 }
 
 function readBaseCandidatePresetId(value: string): BaseCandidatePresetId {
@@ -3971,6 +4181,8 @@ function renderAnalysis(): void {
   getElement("best-candidate").innerHTML = analysis.bestCandidate
     ? renderStatusItems([
         ["candidateId", analysis.bestCandidate.candidateId],
+        ["objectiveMode", analysis.bestCandidate.objectiveMode],
+        ["objectiveScore", formatNumber(analysis.bestCandidate.objectiveScore)],
         ["totalScore", formatNumber(analysis.bestCandidate.totalScore)],
         ["weightedSemanticDistance", formatNumber(analysis.bestCandidate.weightedSemanticDistance)],
         ["frontScore", formatNumber(analysis.bestCandidate.bucketScores.front)],
@@ -4077,6 +4289,8 @@ function renderAutoSequenceStatus(): void {
 
   const finalScore = auto.steps.at(-1)
   if (finalScore) {
+    items.push(["final objectiveMode", finalScore.objectiveMode])
+    items.push(["final objectiveScore", formatNumber(finalScore.objectiveScore)])
     items.push(["final totalScore", formatNumber(finalScore.totalScore)])
     items.push(["final yawAverageScore", formatNumber(finalScore.scoreDebug?.yawAverageScore)])
     items.push(["final pitchAverageScore", formatNumber(finalScore.scoreDebug?.pitchAverageScore)])
@@ -4102,8 +4316,11 @@ function renderAutoSequenceStepTable(steps: AutoSequenceStepSummary[]): string {
           <tr>
             <th>step</th>
             <th>preset</th>
+            <th>objective</th>
+            <th>objectiveScore</th>
             <th>totalScore</th>
             <th>balanced</th>
+            <th>maxBucket</th>
             <th>bestCandidate</th>
           </tr>
         </thead>
@@ -4113,8 +4330,11 @@ function renderAutoSequenceStepTable(steps: AutoSequenceStepSummary[]): string {
               <tr>
                 <td>${step.stepIndex}</td>
                 <td>${escapeHtml(step.presetName)}</td>
+                <td><code>${step.objectiveMode}</code></td>
+                <td>${formatNumber(step.objectiveScore)}</td>
                 <td>${formatNumber(step.totalScore)}</td>
                 <td>${formatNumber(step.scoreDebug?.balancedScore)}</td>
+                <td>${formatNumber(step.scoreDebug?.maxBucketScore)}</td>
                 <td><code>${escapeHtml(step.bestCandidate ? formatCandidateCompact(step.bestCandidate) : "-")}</code></td>
               </tr>
             `,
@@ -4681,6 +4901,7 @@ function renderLocalSearchSummary(analysis: AnalysisResult): string {
   const latestStep = summary?.steps.at(-1) ?? null
   return renderStatusItems([
     ["searchMode", analysis.searchMode],
+    ["objectiveMode", analysis.searchSettings.objectiveMode],
     ["targetParameter", settings?.targetParameter ?? "-"],
     ["localRange", settings ? `${formatNumber(settings.localMin)} - ${formatNumber(settings.localMax)} / step ${formatNumber(settings.localStep)}` : "-"],
     ["coordinateDescentIterations", settings ? String(settings.coordinateDescentIterations) : "-"],
@@ -4707,6 +4928,8 @@ function renderRankingTable(entries: RankingEntry[]): string {
         <tr>
           <th>#</th>
           <th>candidateId</th>
+          <th>objective</th>
+          <th>objectiveScore</th>
           <th>totalScore</th>
           <th>front</th>
           <th>yaw+</th>
@@ -4727,6 +4950,8 @@ function renderRankingTable(entries: RankingEntry[]): string {
             <tr>
               <td>${entry.rank || index + 1}</td>
               <td><code>${entry.candidateId}</code></td>
+              <td><code>${entry.objectiveMode}</code></td>
+              <td>${formatNumber(entry.objectiveScore)}</td>
               <td>${formatNumber(entry.totalScore)}</td>
               <td>${formatNumber(entry.bucketScores.front)}</td>
               <td>${formatNumber(entry.bucketScores.yawPositive)}</td>
@@ -4877,12 +5102,22 @@ function normalizeBlendshape(value: unknown): BlendshapeCapture {
 }
 
 function toRankingEntry(candidate: CandidateResult, rank: number): RankingEntry {
+  const scoreDebug = candidate.scoreDebug ?? calculateScoreDebug(candidate.totalScore, candidate.bucketScores)
+  const objectiveMode = isObjectiveMode(candidate.objectiveMode)
+    ? candidate.objectiveMode
+    : DEFAULT_SETTINGS.objectiveMode
   return {
     rank,
     candidateId: candidate.candidateId,
+    objectiveMode,
+    objectiveScore: round(
+      typeof candidate.objectiveScore === "number"
+        ? candidate.objectiveScore
+        : getObjectiveScore({ totalScore: candidate.totalScore, scoreDebug }, objectiveMode),
+    ),
     totalScore: round(candidate.totalScore),
     bucketScores: roundRecord(candidate.bucketScores),
-    scoreDebug: roundScoreDebug(candidate.scoreDebug ?? calculateScoreDebug(candidate.totalScore, candidate.bucketScores)),
+    scoreDebug: roundScoreDebug(scoreDebug),
     candidate: {
       pivotZ: round(candidate.pivotZ),
       rotationCenter: getCandidateRotationCenter(candidate),
@@ -5038,6 +5273,24 @@ function calculateScoreDebug(
     pitchAverageScore: roundNullable(pitchAverageScore),
     maxBucketScore: roundNullable(maxBucketScore),
     balancedScore: round(totalScore + (maxBucketScore ?? 0) * 0.25),
+  }
+}
+
+function getObjectiveScore(
+  result: { totalScore: number; scoreDebug: CandidateScoreDebug },
+  objectiveMode: ObjectiveMode,
+): number {
+  switch (objectiveMode) {
+    case "totalScore":
+      return result.totalScore
+    case "balancedScore":
+      return result.scoreDebug.balancedScore ?? Number.POSITIVE_INFINITY
+    case "maxBucketScore":
+      return result.scoreDebug.maxBucketScore ?? Number.POSITIVE_INFINITY
+    case "pitchAverageScore":
+      return result.scoreDebug.pitchAverageScore ?? Number.POSITIVE_INFINITY
+    case "yawAverageScore":
+      return result.scoreDebug.yawAverageScore ?? Number.POSITIVE_INFINITY
   }
 }
 
