@@ -1,5 +1,158 @@
 # IdealFace Fitting Lab
 
+## Current Conclusion: 478 IdealFace Depth Generation / 現時点の結論: 478点 IdealFace 奥行き生成
+
+現時点では、`tools/ideal-face-fitting-lab` の 478点 IdealFace 奥行き生成 prototype（試作）として、以下の組み合わせを最有力方針とする。
+
+```text
+canonical-face-depth-template-v1.json
+  +
+12pt_rotation_center
+  +
+canonicalDepthBased
+  +
+perLandmarkZSearch
+```
+
+これは MediaPipe canonical face model（MediaPipe標準顔モデル）から作った `canonical-face-depth-template-v1.json`（標準顔奥行きテンプレート）を基準にし、`12pt_rotation_center`（回転中心推定向け12点）で `rotationCenter`（回転中心） / `pivotZ`（投影基準奥行き） / 主要 z を推定し、`canonicalDepthBased`（標準顔奥行きベース方式）で 478点の仮 z を作り、`perLandmarkZSearch`（ランドマーク単位 z 探索）で各 landmark（ランドマーク）の z を微調整する方針である。
+
+この章は Fitting Lab（フィッティング検証ラボ）の実験結果をまとめるものであり、Runtime（実行時SDK） / Studio（開発確認UI） / IdealFace Authoring Tool（理想顔作成ツール） / `beauty_filter_asset_v1` の仕様確定や production asset export（本番用アセット書き出し）ではない。
+
+### Adopted Prototype / 採用中の試作方針
+
+採用中の試作方針は以下とする。
+
+- `canonical-face-depth-template-v1.json`（標準顔奥行きテンプレート）を 468点 canonical comparison（標準顔比較）の基準として使う。
+- `12pt_rotation_center`（回転中心推定向け12点）を Quick Run（簡易実行）の本命 semanticPointSet（意味点セット）にする。
+- `canonicalDepthBased`（標準顔奥行きベース方式）で、478点の仮 z を生成する。
+- `perLandmarkZSearch`（ランドマーク単位 z 探索）で、各 landmark の z を `baseZ ± zRange` の 1次元探索として微調整する。
+- 468〜477 の追加10点は iris（虹彩・目まわり追加点）として canonical comparison から除外し、暫定的に iris fallback（虹彩補完）で扱う。
+
+最終確認時点の代表値は以下である。
+
+```text
+quickRun.status = passed
+semanticPointSetId = 12pt_rotation_center
+sourceSemanticPointSetId = 12pt_rotation_center
+
+noseTipGroupZ = 0.005535
+cheekGroupZ   = 0.013005
+delta          = -0.00747
+margin         = 0.005
+
+averageProjectionError = 0.031754
+rotationCenter.y = -0.14
+rotationCenter.z = 0.04
+```
+
+このラボでは `z が小さい = 手前`、`z が大きい = 奥` と扱う。そのため `noseTipGroupZ < cheekGroupZ` であり、`delta = noseTipGroupZ - cheekGroupZ` が `-margin` より小さいので、鼻先が頬より十分手前という Depth Relation Debug（奥行き関係デバッグ）を満たしている。
+
+### Why not brute-force 478 z values / 478点 z の同時総当たり探索をしない理由
+
+478点すべての z を同時に brute-force（総当たり探索）すると、候補の組み合わせが爆発するため採用しない。これは探索時間だけでなく、候補評価・メモリ・debug 出力の扱いも現実的ではなくなる。
+
+```text
+NG:
+478点すべての z の組み合わせを同時探索
+
+OK:
+canonical depth で仮 z を作り、
+各 landmark ごとに baseZ ± range を1次元探索
+```
+
+`perLandmarkZSearch`（ランドマーク単位 z 探索）は、478点を同時に探索するものではない。`canonicalDepthBased`（標準顔奥行きベース方式）で作った `baseZ`（基準奥行き）を起点に、対象 landmark 1点だけの `candidateZ`（候補奥行き）を動かして score（スコア）を比較するため、組み合わせ爆発を避けられる。
+
+### Why 12pt_rotation_center is currently preferred / 12pt_rotation_center を現時点で優先する理由
+
+8点 / 12点 / 24点 semanticPointSet（意味点セット）の比較結果は以下の整理とする。
+
+```text
+8pt_basic:
+  軽くて安定。
+  安全な比較基準として残す。
+
+12pt_rotation_center:
+  rotationCenter / pivotZ / 主要z の推定に有効。
+  depth relation を通過し、projection error も許容範囲。
+  現時点の本命。
+
+24pt_structure:
+  顔構造点を増やした比較用。
+  ただし、表情・検出ブレ・追加点の影響を拾いやすい。
+  今回の結果では warning 扱いで、現時点の本命にはしない。
+```
+
+`8pt_basic`（基本8点）は、頭頂 / 顎 / 左右頬 / 左右目 / 鼻 / 口を使うため軽く、比較基準として扱いやすい。一方で、回転中心や顔構造の推定には粗さが残る。
+
+`12pt_rotation_center`（回転中心推定向け12点）は、8点の安定性を大きく崩さずに、`rotationCenter`（回転中心）と `pivotZ`（投影基準奥行き）の推定に効く点を増やせる。Quick Run（簡易実行）で `passed` になり、Depth Relation Debug（奥行き関係デバッグ）と projection error（投影誤差）の両方が許容範囲に入ったため、現時点の推奨とする。
+
+`24pt_structure`（構造確認向け24点）は、鼻横、目尻・目頭、こめかみ、口角、下顎などを増やすため、構造情報は増える。ただし、表情差、MediaPipe 検出ブレ、追加点の局所誤差も拾いやすい。比較用として残すが、今回の結論では本命にしない。
+
+### Role of canonical-face-depth-template-v1.json / canonical-face-depth-template-v1.json の役割
+
+`canonical-face-depth-template-v1.json`（標準顔奥行きテンプレート）は、MediaPipe canonical face model（MediaPipe標準顔モデル）から作った Fitting Lab 用の depth template（奥行きテンプレート）である。
+
+役割は以下である。
+
+```text
+canonical-face-depth-template-v1.json を読み、
+標準顔の 468点 z を Fitting Lab 用の基準として使い、
+scale / offset で現在の候補に合わせ、
+478点の仮 z を生成する。
+```
+
+これは IdealFace（理想顔）そのものを確定するものではない。MediaPipe canonical face model（MediaPipe標準顔モデル）をそのまま IdealFace として採用するわけではなく、Fitting Lab で 478点 z の debug candidate（デバッグ候補）を作るための基準として使う。
+
+MediaPipe canonical face model は 468点版であるため、canonical comparison（標準顔比較）の対象は `0..467` の 468点とする。Face Landmarker / Fitting Lab の 478 landmarks に含まれる `468..477` の追加10点は iris（虹彩・目まわり追加点）として比較対象から除外し、現時点では iris fallback（虹彩補完）で扱う。
+
+### Role of perLandmarkZSearch / perLandmarkZSearch の役割
+
+`perLandmarkZSearch`（ランドマーク単位 z 探索）は、`canonicalDepthBased`（標準顔奥行きベース方式）で作った仮 z を起点に、各 landmark（ランドマーク）の z を独立に 1次元探索する方式である。
+
+```text
+baseZ = canonicalDepthBased で作った仮 z
+candidateZ = baseZ ± zRange
+score = projectionError + canonicalDeviationPenalty
+```
+
+`projectionError`（投影誤差）は selectedFrames（選択フレーム）へ投影した結果と current 2D landmark（現在顔2Dランドマーク）の差を評価する。`canonicalDeviationPenalty`（標準顔からの逸脱ペナルティ）は、2D に合うためだけに canonical depth（標準顔奥行き）から離れすぎる z を抑制する。
+
+この方式により、478点 z の同時総当たり探索をせずに、各点の z を微調整できる。ただし、現状では大きな改善を生む確定工程というより、`canonicalDepthBased` の候補を少し整える debug refinement（デバッグ用微調整）として機能している段階である。
+
+### Depth relation status / 奥行き関係ステータス
+
+8点探索側では、`nose_tip_in_front_of_cheeks`（鼻先が頬より手前）を `hardReject`（完全除外）として使うのは有効だった。
+
+一方で、478点側では group median（グループ中央値）で評価するため、微小な margin（余白）未達だけで即 rejected（却下）にしない方針にする。現時点の 478点 Depth Relation Debug（奥行き関係デバッグ）は以下の 3段階で扱う。
+
+```text
+passed:
+  方向も margin も満たす
+
+warning:
+  方向は正しいが margin に少し足りない
+
+rejected:
+  方向自体が逆
+```
+
+今回の最終候補は `passed` である。`warning`（警告）は production candidate（本番候補）として採用する意味ではなく、debug 比較で原因を確認するための状態である。
+
+### Current limitations / 現在の制約
+
+- 478点 z の最終値はまだ debug candidate（デバッグ候補）であり、production asset（本番用アセット）ではない。
+- `canonical-face-depth-template-v1.json`（標準顔奥行きテンプレート）は参照基準であり、IdealFace（理想顔）そのものではない。
+- `perLandmarkZSearch`（ランドマーク単位 z 探索）は現時点では微調整であり、最終品質を保証する工程ではない。
+- `24pt_structure`（構造確認向け24点）は比較用として残すが、表情・検出ブレ・追加点の影響を拾いやすいため現時点の本命にはしない。
+- `8pt_basic`（基本8点）は安全な比較基準として残す。
+- 現時点の推奨 semanticPointSet（意味点セット）は `12pt_rotation_center`（回転中心推定向け12点）である。
+
+### Not production export yet / まだ本番用 export ではない
+
+この結論は Fitting Lab（フィッティング検証ラボ）の実験結果であり、production asset export（本番用アセット書き出し）ではない。
+
+今回の方針は、Runtime（実行時SDK） / Studio（開発確認UI） / IdealFace Authoring Tool（理想顔作成ツール） / `beauty_filter_asset_v1` には反映しない。Engine Runtime（実行時エンジン）に authoring（作成・編集）処理を混ぜず、Fitting Lab の debug candidate（デバッグ候補）として切り分けて扱う。
+
 ## perLandmarkZSearch（ランドマーク単位 z 探索）
 
 `perLandmarkZSearch`（ランドマーク単位 z 探索）は、`canonicalDepthBased`（標準顔奥行きベース方式）で作った仮の 478 点 z を起点に、各 landmark（ランドマーク）の z だけを独立に 1 次元探索する debug prototype（試作）である。478 点を同時に総当たり探索するものではないため、組み合わせ爆発は起きない。
