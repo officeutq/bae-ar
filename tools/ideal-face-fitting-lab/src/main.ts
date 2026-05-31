@@ -957,6 +957,10 @@ interface Depth478CandidateComparisonEntry {
   totalProjectionError: number | null
   maxBucketScore: number | null
   depthRelationViolationCount: number | null
+  depthRelationHardRejectViolationCount: number | null
+  depthRelationIsRejected: boolean | null
+  hardRejectViolationCount: number | null
+  isRejected: boolean | null
   smoothnessMaxDeltaZ: number | null
   smoothnessHighDeltaEdgeCount: number | null
 }
@@ -972,6 +976,48 @@ interface Depth478PrototypeResult {
   depthRelationDebug?: Depth478RelationDebug
   smoothnessDebug?: SmoothnessDebug478
   candidateComparison?: Depth478CandidateComparisonEntry[]
+}
+
+type Quick478DepthDebugStatus = "idle" | "running" | "passed" | "rejected" | "noCandidate" | "error"
+
+interface Quick478DepthDebugSummary {
+  schemaVersion: "ideal_face_fitting_depth478_quick_debug_v1"
+  status: Exclude<Quick478DepthDebugStatus, "idle" | "running">
+  reason?: string
+  startedAt: string
+  completedAt: string
+  settings: {
+    bucketPreset: "balanced_5_each"
+    autoSearchSequence: "natural_nose_balanced"
+    depthRelationMode: "hardReject"
+    outlierFilteringEnabled: false
+    interpolationMethod: "inverseDistanceWeighting"
+  }
+  summary: {
+    noseTipGroupZ: number | null
+    cheekGroupZ: number | null
+    margin: number | null
+    violationCount: number | null
+    hardRejectViolationCount: number | null
+    isRejected: boolean | null
+    smoothnessHighDeltaEdgeCount: number | null
+    averageProjectionError: number | null
+  }
+  isRejected?: boolean
+  fallbackUsed?: boolean
+}
+
+interface Quick478DepthDebugPayload extends Depth478PrototypeResult {
+  quickRun: Quick478DepthDebugSummary
+  analysisSummary?: SummaryAnalysisResult
+}
+
+interface Quick478DepthDebugState {
+  status: Quick478DepthDebugStatus
+  message: string | null
+  startedAt: string | null
+  completedAt: string | null
+  quickRun: Quick478DepthDebugSummary | null
 }
 
 type ProjectionSignDebugBucket = Exclude<CaptureBucket, "mixedPose" | "unknown">
@@ -1200,6 +1246,7 @@ interface AppState {
   autoSequenceLastAnalysis: AnalysisResult | null
   stabilityHistory: StabilityHistoryEntry[]
   stabilityCheck: StabilityCheckState
+  quick478DepthDebug: Quick478DepthDebugState
   presetMessage: string | null
   importMessage: string | null
   copyMessage: string | null
@@ -2034,6 +2081,31 @@ const DEFAULT_DEPTH_478_INTERPOLATION_SETTINGS: DepthInterpolationSettings = {
 const DEFAULT_DEPTH_478_SMOOTHNESS_THRESHOLD = 0.03
 const DEPTH_478_NEIGHBOR_COUNT = 4
 const DEPTH_478_MAX_HIGH_DELTA_EDGES = 50
+const QUICK_DEPTH_478_NOSE_CHEEK_MARGIN = 0.005
+
+const QUICK_478_DEPTH_DEBUG_SETTINGS = {
+  bucketPreset: "balanced5Each" as BucketTargetPresetId,
+  autoSearchSequence: "naturalNoseBalancedSequence" as AutoSequencePresetId,
+  depthRelationFiltering: {
+    enabled: true,
+    mode: "hardReject" as DepthRelationMode,
+    applyToObjectiveScore: false,
+  },
+  outlierFiltering: {
+    enabled: false,
+    mode: "off" as OutlierFilteringMode,
+  },
+  interpolation: {
+    enabled: true,
+    method: "inverseDistanceWeighting",
+    epsilon: 0.0001,
+    power: 2,
+    clampZ: true,
+    zMin: -0.24,
+    zMax: 0.24,
+  } satisfies DepthInterpolationSettings,
+  smoothnessThreshold: 0.03,
+}
 
 const DEPTH_478_GROUP_DEFINITIONS: Array<{
   groupId: string
@@ -2137,6 +2209,16 @@ function createIdleStabilityCheck(): StabilityCheckState {
   }
 }
 
+function createIdleQuick478DepthDebug(): Quick478DepthDebugState {
+  return {
+    status: "idle",
+    message: null,
+    startedAt: null,
+    completedAt: null,
+    quickRun: null,
+  }
+}
+
 const state: AppState = {
   fileName: null,
   payload: null,
@@ -2150,6 +2232,7 @@ const state: AppState = {
   autoSequenceLastAnalysis: null,
   stabilityHistory: [],
   stabilityCheck: createIdleStabilityCheck(),
+  quick478DepthDebug: createIdleQuick478DepthDebug(),
   presetMessage: null,
   importMessage: null,
   copyMessage: null,
@@ -2174,18 +2257,30 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
       </ul>
     </section>
 
+    <section class="panel">
+      <h2>478 Depth Hard Reject Debug</h2>
+      <p class="panel-help">capture JSON を読み込み、Natural Nose Balanced Sequence / Balanced 5 each / Depth Relation hardReject 固定で 478点奥行き debug JSON を自動ダウンロードします。production asset export ではありません。</p>
+      <input id="capture-file-input" type="file" accept="application/json,.json" />
+      <div class="controls-wide">
+        <button id="run-quick-depth-478-button" class="primary" type="button">Run 478 Depth Hard Reject Debug（478点奥行き hardReject デバッグを実行）</button>
+      </div>
+      <p id="import-message" class="copy-status"></p>
+      <div id="quick-depth-478-status" class="auto-sequence-status">capture JSON を読み込んでから実行してください。</div>
+      <div id="quick-depth-478-summary" class="summary-grid"></div>
+    </section>
+
+    <details id="advanced-debug-ui" class="advanced-debug-ui">
+      <summary>Advanced Settings / Debug UI</summary>
     <div class="layout">
       <div class="stack">
         <section class="panel">
           <h2>入力</h2>
-          <p class="panel-help">MediaPipe Canonical Lab の captured JSON を読み込みます。478 landmarks / pose / bucket / video size / blendshapes / matrix を解釈します。</p>
-          <input id="capture-file-input" type="file" accept="application/json,.json" />
+          <p class="panel-help">capture JSON は上の主入力から読み込みます。ここには従来の手動解析ボタンだけを残しています。</p>
           <div class="controls-wide">
             <button id="run-analysis-button" class="primary" type="button" disabled>解析実行</button>
             <button id="cancel-analysis-button" type="button" disabled>キャンセル</button>
             <button id="copy-debug-button" type="button" disabled>デバッグ情報をコピー</button>
           </div>
-          <p id="import-message" class="copy-status"></p>
           <p id="copy-message" class="copy-status"></p>
         </section>
 
@@ -2688,6 +2783,7 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
         </section>
       </div>
     </div>
+    </details>
   </main>
 `
 
@@ -2697,10 +2793,15 @@ renderSearchProgress()
 renderAutoSequenceStatus()
 renderBucketTargetWarning()
 renderCandidateStabilityDebug()
+renderQuick478DepthDebug()
 bindEvents()
 
 function bindEvents(): void {
   getElement<HTMLInputElement>("capture-file-input").addEventListener("change", handleFileImport)
+  getElement<HTMLButtonElement>("run-quick-depth-478-button").addEventListener(
+    "click",
+    runQuick478DepthHardRejectDebug,
+  )
   getElement<HTMLButtonElement>("run-analysis-button").addEventListener("click", runAnalysis)
   getElement<HTMLButtonElement>("cancel-analysis-button").addEventListener("click", cancelAnalysis)
   getElement<HTMLButtonElement>("copy-debug-button").addEventListener("click", copySummaryJson)
@@ -2777,6 +2878,7 @@ async function handleFileImport(event: Event): Promise<void> {
   state.autoSequenceLastAnalysis = null
   state.stabilityCheck = createIdleStabilityCheck()
   state.stabilityHistory = []
+  state.quick478DepthDebug = createIdleQuick478DepthDebug()
 
   try {
     const payload = JSON.parse(await file.text()) as unknown
@@ -2797,6 +2899,7 @@ async function handleFileImport(event: Event): Promise<void> {
     renderAutoSequenceStatus()
     renderBucketTargetWarning()
     renderCandidateStabilityDebug()
+    renderQuick478DepthDebug()
   } catch (error) {
     state.importMessage = `読み込みに失敗しました: ${error instanceof Error ? error.message : String(error)}`
     state.payload = null
@@ -2807,12 +2910,14 @@ async function handleFileImport(event: Event): Promise<void> {
     state.autoSequenceLastAnalysis = null
     state.stabilityCheck = createIdleStabilityCheck()
     state.stabilityHistory = []
+    state.quick478DepthDebug = createIdleQuick478DepthDebug()
     setButtons()
     renderEmptyState()
     renderSearchProgress()
     renderAutoSequenceStatus()
     renderBucketTargetWarning()
     renderCandidateStabilityDebug()
+    renderQuick478DepthDebug()
   }
 }
 
@@ -3942,20 +4047,34 @@ function generateDepth478DebugCandidate(): void {
     return
   }
 
+  const source = resolveDepth478SourceCandidate(analysis, readDepth478CandidateSource())
+  const prototypeSettings = readDepth478PrototypeSettings()
+  analysis.depth478Prototype = buildDepth478PrototypeFromSource(
+    analysis,
+    source,
+    prototypeSettings,
+    analysis.depth478Prototype?.candidateComparison ?? [],
+  )
+  renderDepth478Prototype(analysis.depth478Prototype)
+  getElement("json-preview").textContent = JSON.stringify(createSummaryAnalysis(analysis), null, 2)
+  setButtons()
+}
+
+function buildDepth478PrototypeFromSource(
+  analysis: AnalysisResult,
+  source: { candidate: FittingCandidate8; source8CandidateId: string | null } | null,
+  prototypeSettings: Depth478PrototypeResult["settings"],
+  previousComparison: Depth478CandidateComparisonEntry[] = [],
+): Depth478PrototypeResult {
   const selectedFrames = getAnalysisSelectedFrames(analysis)
   const base478 = buildBase478Landmarks2D(selectedFrames)
-  const source = resolveDepth478SourceCandidate(analysis, readDepth478CandidateSource())
-  if (!base478 || !source) {
-    analysis.depth478Prototype = {
-      settings: readDepth478PrototypeSettings(),
-      candidateComparison: analysis.depth478Prototype?.candidateComparison ?? [],
+  if (!analysis.base8Points2DSummary.points || !base478 || !source) {
+    return {
+      settings: prototypeSettings,
+      candidateComparison: previousComparison,
     }
-    renderDepth478Prototype(analysis.depth478Prototype)
-    getElement("json-preview").textContent = JSON.stringify(createSummaryAnalysis(analysis), null, 2)
-    return
   }
 
-  const prototypeSettings = readDepth478PrototypeSettings()
   const generatedCandidate = buildGenerated478DepthCandidate(
     base478,
     analysis.base8Points2DSummary.points,
@@ -3983,9 +4102,8 @@ function generateDepth478DebugCandidate(): void {
     depthRelationDebug,
     smoothnessDebug,
   )
-  const previousComparison = analysis.depth478Prototype?.candidateComparison ?? []
 
-  analysis.depth478Prototype = {
+  return {
     settings: prototypeSettings,
     generatedCandidate,
     projectionEvaluation,
@@ -3993,9 +4111,6 @@ function generateDepth478DebugCandidate(): void {
     smoothnessDebug,
     candidateComparison: [...previousComparison, comparisonEntry].slice(-20),
   }
-  renderDepth478Prototype(analysis.depth478Prototype)
-  getElement("json-preview").textContent = JSON.stringify(createSummaryAnalysis(analysis), null, 2)
-  setButtons()
 }
 
 function exportDepth478DebugJson(): void {
@@ -4004,6 +4119,205 @@ function exportDepth478DebugJson(): void {
     return
   }
   downloadJson(prototype, createFileName("ideal-face-fitting-depth478-debug"))
+}
+
+function runQuick478DepthHardRejectDebug(): void {
+  if (state.searchProgress.status === "running" || state.autoSequence.status === "running") {
+    return
+  }
+  if (state.frames.length === 0) {
+    state.quick478DepthDebug = {
+      ...createIdleQuick478DepthDebug(),
+      status: "idle",
+      message: "capture JSON を読み込んでから実行してください。",
+    }
+    renderQuick478DepthDebug()
+    return
+  }
+
+  const startedAt = new Date().toISOString()
+  state.quick478DepthDebug = {
+    status: "running",
+    message: "478 Depth hardReject debug を実行中...",
+    startedAt,
+    completedAt: null,
+    quickRun: null,
+  }
+  state.importMessage = null
+  writeSelectValue("auto-sequence-select", QUICK_478_DEPTH_DEBUG_SETTINGS.autoSearchSequence)
+  writeSelectValue("bucket-target-preset-select", QUICK_478_DEPTH_DEBUG_SETTINGS.bucketPreset)
+  renderQuick478DepthDebug()
+  setButtons()
+  startAutoSequence(
+    findAutoSequence(QUICK_478_DEPTH_DEBUG_SETTINGS.autoSearchSequence),
+    findBucketTargetPreset(QUICK_478_DEPTH_DEBUG_SETTINGS.bucketPreset),
+  )
+}
+
+function createQuick478DepthPrototypeSettings(): Depth478PrototypeResult["settings"] {
+  return {
+    interpolation: { ...QUICK_478_DEPTH_DEBUG_SETTINGS.interpolation },
+    groupCorrections: cloneDepthGroupCorrections(DEFAULT_DEPTH_478_GROUP_CORRECTIONS),
+    smoothnessThreshold: QUICK_478_DEPTH_DEBUG_SETTINGS.smoothnessThreshold,
+  }
+}
+
+function completeQuick478DepthDebug(
+  autoStatus: "completed" | "cancelled" | "error",
+  message: string,
+): void {
+  const startedAt = state.quick478DepthDebug.startedAt ?? new Date().toISOString()
+  const completedAt = new Date().toISOString()
+  const analysis = state.analysis
+
+  if (!analysis || autoStatus === "cancelled") {
+    finishQuick478DepthDebug(
+      buildQuick478DepthDebugPayload(null, {
+        status: "error",
+        reason: autoStatus === "cancelled" ? "cancelled" : message,
+        startedAt,
+        completedAt,
+      }),
+    )
+    return
+  }
+
+  if (autoStatus !== "completed") {
+    const noCandidate = message.includes("bestCandidate")
+    finishQuick478DepthDebug(
+      buildQuick478DepthDebugPayload(null, {
+        status: noCandidate ? "noCandidate" : "error",
+        reason: noCandidate ? "No candidate passed depth relation hardReject" : message,
+        startedAt,
+        completedAt,
+        fallbackUsed: noCandidate ? false : undefined,
+        analysis,
+      }),
+    )
+    return
+  }
+
+  const finalCandidate = analysis.autoSequenceSummary?.finalCandidate ?? null
+  if (!finalCandidate) {
+    finishQuick478DepthDebug(
+      buildQuick478DepthDebugPayload(null, {
+        status: "noCandidate",
+        reason: "No candidate passed depth relation hardReject",
+        startedAt,
+        completedAt,
+        fallbackUsed: false,
+        analysis,
+      }),
+    )
+    return
+  }
+
+  const prototype = buildDepth478PrototypeFromSource(
+    analysis,
+    {
+      candidate: cloneCandidate(finalCandidate),
+      source8CandidateId: "autoSequenceSummary.finalCandidate",
+    },
+    createQuick478DepthPrototypeSettings(),
+  )
+  analysis.depth478Prototype = prototype
+
+  const isRejected = prototype.depthRelationDebug?.isRejected ?? false
+  const status: Quick478DepthDebugSummary["status"] = isRejected ? "rejected" : "passed"
+  finishQuick478DepthDebug(
+    buildQuick478DepthDebugPayload(prototype, {
+      status,
+      reason: isRejected ? "depthRelationHardReject" : undefined,
+      startedAt,
+      completedAt,
+      isRejected,
+      analysis,
+    }),
+  )
+}
+
+function finishQuick478DepthDebug(payload: Quick478DepthDebugPayload): void {
+  state.quick478DepthDebug = {
+    status: payload.quickRun.status,
+    message: formatQuick478DepthDebugMessage(payload.quickRun),
+    startedAt: payload.quickRun.startedAt,
+    completedAt: payload.quickRun.completedAt,
+    quickRun: payload.quickRun,
+  }
+  downloadJson(payload, createFileName("ideal-face-fitting-depth478-hardreject-debug"))
+  if (state.analysis) {
+    getElement("json-preview").textContent = JSON.stringify(createSummaryAnalysis(state.analysis), null, 2)
+  }
+  renderQuick478DepthDebug()
+  renderAnalysis()
+  setButtons()
+}
+
+function buildQuick478DepthDebugPayload(
+  prototype: Depth478PrototypeResult | null,
+  options: {
+    status: Quick478DepthDebugSummary["status"]
+    reason?: string
+    startedAt: string
+    completedAt: string
+    isRejected?: boolean
+    fallbackUsed?: boolean
+    analysis?: AnalysisResult
+  },
+): Quick478DepthDebugPayload {
+  const relation = prototype?.depthRelationDebug
+  const noseRule = relation?.ruleResults.find(
+    (rule) => rule.ruleId === "nose_tip_group_in_front_of_cheek_group",
+  )
+  const quickRun: Quick478DepthDebugSummary = {
+    schemaVersion: "ideal_face_fitting_depth478_quick_debug_v1",
+    status: options.status,
+    reason: options.reason,
+    startedAt: options.startedAt,
+    completedAt: options.completedAt,
+    settings: {
+      bucketPreset: "balanced_5_each",
+      autoSearchSequence: "natural_nose_balanced",
+      depthRelationMode: "hardReject",
+      outlierFilteringEnabled: false,
+      interpolationMethod: "inverseDistanceWeighting",
+    },
+    summary: {
+      noseTipGroupZ: relation?.groupValues.noseTipGroup?.z ?? null,
+      cheekGroupZ: relation?.groupValues.cheekGroup?.z ?? null,
+      margin: noseRule?.margin ?? QUICK_DEPTH_478_NOSE_CHEEK_MARGIN,
+      violationCount: relation?.violationCount ?? null,
+      hardRejectViolationCount: relation?.hardRejectViolationCount ?? null,
+      isRejected: relation?.isRejected ?? options.isRejected ?? null,
+      smoothnessHighDeltaEdgeCount: prototype?.smoothnessDebug?.highDeltaEdgeCount ?? null,
+      averageProjectionError: prototype?.projectionEvaluation?.averageProjectionError ?? null,
+    },
+  }
+  if (options.isRejected !== undefined) {
+    quickRun.isRejected = options.isRejected
+  }
+  if (options.fallbackUsed !== undefined) {
+    quickRun.fallbackUsed = options.fallbackUsed
+  }
+
+  return {
+    quickRun,
+    ...(prototype ?? { settings: createQuick478DepthPrototypeSettings() }),
+    analysisSummary: options.analysis ? createSummaryAnalysis(options.analysis) : undefined,
+  }
+}
+
+function formatQuick478DepthDebugMessage(quickRun: Quick478DepthDebugSummary): string {
+  if (quickRun.status === "passed") {
+    return "Debug JSON をダウンロードしました。"
+  }
+  if (quickRun.status === "rejected") {
+    return "結果: rejected（奥行き関係 hardReject）"
+  }
+  if (quickRun.status === "noCandidate") {
+    return "条件を満たす候補が見つかりませんでした。"
+  }
+  return `エラー: ${quickRun.reason ?? "quick debug failed"}`
 }
 
 function readDepth478CandidateSource(): Depth478CandidateSource {
@@ -4617,6 +4931,10 @@ function buildDepth478CandidateComparisonEntry(
     totalProjectionError: projectionEvaluation.totalProjectionError,
     maxBucketScore: maxNullable(Object.values(projectionEvaluation.bucketScores)),
     depthRelationViolationCount: depthRelationDebug.violationCount,
+    depthRelationHardRejectViolationCount: depthRelationDebug.hardRejectViolationCount,
+    depthRelationIsRejected: depthRelationDebug.isRejected,
+    hardRejectViolationCount: depthRelationDebug.hardRejectViolationCount,
+    isRejected: depthRelationDebug.isRejected,
     smoothnessMaxDeltaZ: smoothnessDebug.maxNeighborDeltaZ,
     smoothnessHighDeltaEdgeCount: smoothnessDebug.highDeltaEdgeCount,
   }
@@ -5011,6 +5329,9 @@ function startAutoSequence(
     }
     renderAutoSequenceStatus()
     setButtons()
+    if (state.quick478DepthDebug.status === "running") {
+      completeQuick478DepthDebug("error", state.autoSequence.message ?? "Auto Sequence failed")
+    }
     return
   }
 
@@ -5066,15 +5387,62 @@ function beginAutoSequenceStep(baseCandidate: FittingCandidate8): void {
   renderPresetMessage()
   renderAutoSequenceStatus()
   setButtons()
-  runAnalysis(resolveAutoSequenceStepSettings())
+  runAnalysis(resolveAutoSequenceStepSettings(baseCandidate, preset))
 }
 
-function resolveAutoSequenceStepSettings(): SearchSettings {
+function resolveAutoSequenceStepSettings(
+  baseCandidate?: FittingCandidate8,
+  preset?: SearchPresetDefinition,
+): SearchSettings {
+  if (state.quick478DepthDebug.status === "running" && baseCandidate && preset) {
+    return createQuick478DepthDebugSearchSettings(baseCandidate, preset)
+  }
   const settings = readSettings()
   const withBucketPreset = state.autoSequence.bucketTargetPreset
     ? applyBucketTargetPresetToSettings(settings, state.autoSequence.bucketTargetPreset)
     : settings
   return applyAutoSequenceDepthRelationOverride(withBucketPreset, state.autoSequence.definition)
+}
+
+function createQuick478DepthDebugSearchSettings(
+  baseCandidate: FittingCandidate8,
+  preset: SearchPresetDefinition,
+): SearchSettings {
+  const bucketPreset = findBucketTargetPreset(QUICK_478_DEPTH_DEBUG_SETTINGS.bucketPreset)
+  return applyBucketTargetPresetToSettings(
+    {
+      ...DEFAULT_SETTINGS,
+      searchMode: preset.searchMode,
+      objectiveMode: preset.objectiveMode ?? DEFAULT_SETTINGS.objectiveMode,
+      outlierFiltering: {
+        ...DEFAULT_OUTLIER_FILTERING_SETTINGS,
+        enabled: QUICK_478_DEPTH_DEBUG_SETTINGS.outlierFiltering.enabled,
+        mode: QUICK_478_DEPTH_DEBUG_SETTINGS.outlierFiltering.mode,
+        applyToObjectiveScore: false,
+      },
+      depthRelationFiltering: normalizeDepthRelationFilteringSettings({
+        ...DEFAULT_DEPTH_RELATION_FILTERING_SETTINGS,
+        enabled: QUICK_478_DEPTH_DEBUG_SETTINGS.depthRelationFiltering.enabled,
+        mode: QUICK_478_DEPTH_DEBUG_SETTINGS.depthRelationFiltering.mode,
+        applyToObjectiveScore:
+          QUICK_478_DEPTH_DEBUG_SETTINGS.depthRelationFiltering.applyToObjectiveScore,
+      }),
+      localSearchSettings: {
+        ...DEFAULT_SETTINGS.localSearchSettings,
+        baseCandidate: cloneCandidate(baseCandidate),
+        targetParameter: preset.targetParameter,
+        localMin: preset.localMin,
+        localMax: preset.localMax,
+        localStep: preset.localStep,
+        coordinateDescentIterations: preset.coordinateDescentIterations,
+        coordinateDescentParameterOrder: [
+          ...(preset.coordinateDescentParameterOrder ?? DEFAULT_COORDINATE_DESCENT_PARAMETER_ORDER),
+        ],
+        coordinateDescentRanges: cloneLocalSearchRanges(preset.coordinateDescentRanges),
+      },
+    },
+    bucketPreset,
+  )
 }
 
 function applyAutoSequenceDepthRelationOverride(
@@ -5134,6 +5502,9 @@ function handleAutoSequenceStepComplete(analysis: AnalysisResult | null): void {
   state.autoSequenceLastAnalysis = analysis
 
   if (!bestCandidate) {
+    if (state.quick478DepthDebug.status === "running") {
+      state.autoSequence.finalCandidate = null
+    }
     finishAutoSequence("error", `Step ${stepSummary.stepIndex}: ${preset.label} で bestCandidate が得られませんでした。`)
     return
   }
@@ -5180,6 +5551,10 @@ function finishAutoSequence(
     state.stabilityCheck = createIdleStabilityCheck()
   }
   if (status === "completed" && continueStabilityCheckAfterSequence()) {
+    return
+  }
+  if (state.quick478DepthDebug.status === "running") {
+    completeQuick478DepthDebug(status, message)
     return
   }
   setButtons()
@@ -6425,6 +6800,7 @@ function renderSourceOnly(): void {
     2,
   )
   renderAutoSequenceStatus()
+  renderQuick478DepthDebug()
 }
 
 function renderAnalysis(): void {
@@ -6563,6 +6939,7 @@ function renderAnalysis(): void {
   getElement("warnings").textContent = analysis.warnings.length === 0 ? "警告はありません。" : analysis.warnings.join("\n")
   getElement("json-preview").textContent = JSON.stringify(createSummaryAnalysis(analysis), null, 2)
   renderAutoSequenceStatus()
+  renderQuick478DepthDebug()
   setButtons()
 }
 
@@ -7330,6 +7707,10 @@ function renderDepth478CandidateComparisonTable(
           <th>totalProjectionError（投影誤差合計）</th>
           <th>worstBucketScore（最悪姿勢スコア）</th>
           <th>depthRelationViolationCount（奥行き関係違反数）</th>
+          <th>depthRelationHardRejectViolationCount（完全除外対象の違反数）</th>
+          <th>depthRelationIsRejected（奥行き関係で除外対象）</th>
+          <th>hardRejectViolationCount</th>
+          <th>isRejected</th>
           <th>smoothnessMaxDeltaZ（最大隣接奥行き差）</th>
           <th>smoothnessHighDeltaEdgeCount（滑らかさ違反数）</th>
         </tr>
@@ -7342,6 +7723,10 @@ function renderDepth478CandidateComparisonTable(
             <td>${formatNumber(entry.totalProjectionError)}</td>
             <td>${formatNumber(entry.maxBucketScore)}</td>
             <td>${formatNumber(entry.depthRelationViolationCount)}</td>
+            <td>${formatNumber(entry.depthRelationHardRejectViolationCount)}</td>
+            <td>${entry.depthRelationIsRejected === null ? "-" : String(entry.depthRelationIsRejected)}</td>
+            <td>${formatNumber(entry.hardRejectViolationCount)}</td>
+            <td>${entry.isRejected === null ? "-" : String(entry.isRejected)}</td>
             <td>${formatNumber(entry.smoothnessMaxDeltaZ)}</td>
             <td>${formatNumber(entry.smoothnessHighDeltaEdgeCount)}</td>
           </tr>
@@ -7709,6 +8094,39 @@ function formatRotationCenterResultCompact(result: RotationCenterDebugResult): s
   ].join(" / ")
 }
 
+function renderQuick478DepthDebug(): void {
+  const quick = state.quick478DepthDebug
+  const statusElement = getElement("quick-depth-478-status")
+  const summaryElement = getElement("quick-depth-478-summary")
+
+  if (quick.status === "running") {
+    statusElement.textContent = quick.message ?? "478 Depth hardReject debug を実行中..."
+    summaryElement.innerHTML = ""
+    return
+  }
+
+  if (!quick.quickRun) {
+    statusElement.textContent =
+      quick.message ?? "capture JSON を読み込んでから実行してください。"
+    summaryElement.innerHTML = ""
+    return
+  }
+
+  statusElement.textContent = quick.message ?? formatQuick478DepthDebugMessage(quick.quickRun)
+  summaryElement.innerHTML = renderStatusItems([
+    ["status", quick.quickRun.status],
+    ["noseTipGroup.z", formatNumber(quick.quickRun.summary.noseTipGroupZ)],
+    ["cheekGroup.z", formatNumber(quick.quickRun.summary.cheekGroupZ)],
+    ["margin", formatNumber(quick.quickRun.summary.margin)],
+    ["violationCount", formatNumber(quick.quickRun.summary.violationCount)],
+    [
+      "smoothnessHighDeltaEdgeCount",
+      formatNumber(quick.quickRun.summary.smoothnessHighDeltaEdgeCount),
+    ],
+    ["averageProjectionError", formatNumber(quick.quickRun.summary.averageProjectionError)],
+  ])
+}
+
 function renderEmptyState(): void {
   getElement("source-summary").innerHTML = `<p class="empty">captured JSON を読み込んでください。</p>`
   getElement("base-summary").innerHTML = `<p class="empty">未解析です。</p>`
@@ -7745,6 +8163,7 @@ function renderEmptyState(): void {
     2,
   )
   renderAutoSequenceStatus()
+  renderQuick478DepthDebug()
 }
 
 function renderSemanticMapping(): void {
@@ -8087,6 +8506,8 @@ function renderBucketRanking(bucketRanking: Record<CaptureBucket, RankingEntry[]
 function setButtons(): void {
   const isRunning = state.searchProgress.status === "running"
   const isAutoRunning = state.autoSequence.status === "running"
+  const isQuickRunning = state.quick478DepthDebug.status === "running"
+  getElement<HTMLButtonElement>("run-quick-depth-478-button").disabled = isRunning || isAutoRunning || isQuickRunning
   getElement<HTMLButtonElement>("run-analysis-button").disabled = state.frames.length === 0 || isRunning || isAutoRunning
   getElement<HTMLButtonElement>("cancel-analysis-button").disabled = !isRunning
   getElement<HTMLButtonElement>("copy-debug-button").disabled = !state.analysis || isRunning || isAutoRunning
