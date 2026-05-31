@@ -970,8 +970,37 @@ interface PerLandmarkZSearchSettings {
   zStep: number
   anchorZRange: number
   anchorZStep: number
+  groupRangeOverrides?: PerLandmarkZSearchGroupRangeOverride[]
   canonicalDeviationPenaltyWeight: number
   maxFrames?: number
+}
+
+interface PerLandmarkZSearchGroupRangeOverride {
+  groupId: string
+  lowerZRange: number
+  upperZRange: number
+}
+
+interface PerLandmarkZSearchRangeSummary {
+  rangeMode: "asymmetric" | "symmetric"
+  defaultRange: {
+    lower: number
+    upper: number
+  }
+  anchorDefaultRange: {
+    lower: number
+    upper: number
+  }
+  groupOverrides: PerLandmarkZSearchGroupRangeOverride[]
+}
+
+interface RangeExpansionSummary {
+  semanticPointRangeOverrides: Array<{
+    pointId: SemanticPointName
+    oldMin: number
+    newMin: number
+  }>
+  perLandmarkRangeOverrides: PerLandmarkZSearchGroupRangeOverride[]
 }
 
 type ZSearchBoundHit = "lower" | "upper" | "none"
@@ -1060,6 +1089,7 @@ interface PerLandmarkZSearchDebug {
     zStep: number
     anchorZRange: number
     anchorZStep: number
+    rangeSummary: PerLandmarkZSearchRangeSummary
     canonicalDeviationPenaltyWeight: number
     maxFrames?: number
   }
@@ -1292,6 +1322,10 @@ interface Quick478DepthDebugSummary {
     semanticPointBoundHitCount: number | null
     perLandmarkUpperBoundHitCount: number | null
     perLandmarkLowerBoundHitCount: number | null
+    jawGroupLowerBoundHitCount: number | null
+    faceBoundaryGroupLowerBoundHitCount: number | null
+    faceCenterGroupZ: number | null
+    faceBoundaryGroupZ: number | null
   }
   isRejected?: boolean
   fallbackUsed?: boolean
@@ -1333,6 +1367,7 @@ interface Quick478RejectedCandidateDebug {
 
 interface Quick478DepthDebugPayload extends Depth478PrototypeResult {
   quickRun: Quick478DepthDebugSummary
+  rangeExpansionSummary: RangeExpansionSummary
   semanticPointZSearchBoundSummary?: SemanticPointZSearchBoundSummary
   perLandmarkZSearchSummary?: PerLandmarkZSearchBoundSummary
   semanticPointSetComparison?: SemanticPointSetComparisonSummary
@@ -2058,7 +2093,14 @@ const NATURAL_NOSE_WITH_ROTATION_CENTER: FittingCandidate8 = {
 }
 
 const DEFAULT_LOCAL_SEARCH_BASE_CANDIDATE = BASELINE_CHEEK_DEPTH_CANDIDATE
-const EXPANDED_CHIN_Z_SEARCH_RANGE: LocalSearchRange = { min: -0.03, max: 0.03, step: 0.01 }
+const JAW_BOUNDARY_SEMANTIC_Z_RANGE_OVERRIDES = [
+  { pointId: "chin", oldMin: -0.03, newMin: -0.05 },
+  { pointId: "leftJaw", oldMin: 0, newMin: -0.03 },
+  { pointId: "rightJaw", oldMin: 0, newMin: -0.03 },
+] satisfies RangeExpansionSummary["semanticPointRangeOverrides"]
+
+const EXPANDED_CHIN_Z_SEARCH_RANGE: LocalSearchRange = { min: -0.05, max: 0.03, step: 0.01 }
+const EXPANDED_JAW_SIDE_Z_SEARCH_RANGE: LocalSearchRange = { min: -0.03, max: 0.08, step: 0.01 }
 
 const DEFAULT_COORDINATE_DESCENT_RANGES: LocalSearchRanges = {
   pivotZ: { min: 0.06, max: 0.18, step: 0.01 },
@@ -2073,8 +2115,8 @@ const DEFAULT_COORDINATE_DESCENT_RANGES: LocalSearchRanges = {
   "nose.z": { min: -0.02, max: 0.08, step: 0.01 },
   "mouth.z": { min: 0, max: 0.08, step: 0.01 },
   "noseBridge.z": { min: 0, max: 0.08, step: 0.01 },
-  "leftJaw.z": { min: 0, max: 0.08, step: 0.01 },
-  "rightJaw.z": { min: 0, max: 0.08, step: 0.01 },
+  "leftJaw.z": EXPANDED_JAW_SIDE_Z_SEARCH_RANGE,
+  "rightJaw.z": EXPANDED_JAW_SIDE_Z_SEARCH_RANGE,
   "upperFaceCenter.z": { min: -0.01, max: 0.06, step: 0.01 },
   "leftNoseSide.z": { min: 0, max: 0.08, step: 0.01 },
   "rightNoseSide.z": { min: 0, max: 0.08, step: 0.01 },
@@ -2742,6 +2784,19 @@ const DEFAULT_DEPTH_478_INTERPOLATION_SETTINGS: DepthInterpolationSettings = {
   zMax: 0.24,
 }
 
+const JAW_BOUNDARY_PER_LANDMARK_RANGE_OVERRIDES: PerLandmarkZSearchGroupRangeOverride[] = [
+  {
+    groupId: "jawGroup",
+    lowerZRange: 0.02,
+    upperZRange: 0.01,
+  },
+  {
+    groupId: "faceBoundaryGroup",
+    lowerZRange: 0.02,
+    upperZRange: 0.01,
+  },
+]
+
 const DEFAULT_PER_LANDMARK_Z_SEARCH_SETTINGS: PerLandmarkZSearchSettings = {
   enabled: true,
   targetIndices: "all478",
@@ -2749,7 +2804,17 @@ const DEFAULT_PER_LANDMARK_Z_SEARCH_SETTINGS: PerLandmarkZSearchSettings = {
   zStep: 0.0005,
   anchorZRange: 0.005,
   anchorZStep: 0.0005,
+  groupRangeOverrides: JAW_BOUNDARY_PER_LANDMARK_RANGE_OVERRIDES,
   canonicalDeviationPenaltyWeight: 0.1,
+}
+
+const RANGE_EXPANSION_SUMMARY: RangeExpansionSummary = {
+  semanticPointRangeOverrides: JAW_BOUNDARY_SEMANTIC_Z_RANGE_OVERRIDES.map((override) => ({
+    ...override,
+  })),
+  perLandmarkRangeOverrides: JAW_BOUNDARY_PER_LANDMARK_RANGE_OVERRIDES.map((override) => ({
+    ...override,
+  })),
 }
 
 const CANONICAL_FACE_DEPTH_TEMPLATE =
@@ -5591,6 +5656,16 @@ function buildQuick478DepthDebugPayload(
       semanticPointBoundHitCount: semanticPointZSearchBoundSummary?.boundHitCount ?? null,
       perLandmarkUpperBoundHitCount: perLandmarkZSearchSummary?.upperBoundHitCount ?? null,
       perLandmarkLowerBoundHitCount: perLandmarkZSearchSummary?.lowerBoundHitCount ?? null,
+      jawGroupLowerBoundHitCount: getPerLandmarkGroupLowerBoundHitCount(
+        perLandmarkZSearchSummary,
+        "jawGroup",
+      ),
+      faceBoundaryGroupLowerBoundHitCount: getPerLandmarkGroupLowerBoundHitCount(
+        perLandmarkZSearchSummary,
+        "faceBoundaryGroup",
+      ),
+      faceCenterGroupZ: relation?.groupValues.faceCenterGroup?.z ?? null,
+      faceBoundaryGroupZ: relation?.groupValues.faceBoundaryGroup?.z ?? null,
     },
   }
   if (options.isRejected !== undefined) {
@@ -5617,10 +5692,30 @@ function buildQuick478DepthDebugPayload(
   return {
     quickRun,
     ...(prototype ?? { settings: createQuick478DepthPrototypeSettings() }),
+    rangeExpansionSummary: cloneRangeExpansionSummary(RANGE_EXPANSION_SUMMARY),
     semanticPointZSearchBoundSummary,
     perLandmarkZSearchSummary,
     semanticPointSetComparison: options.semanticPointSetComparison,
     analysisSummary: options.analysis ? createSummaryAnalysis(options.analysis) : undefined,
+  }
+}
+
+function getPerLandmarkGroupLowerBoundHitCount(
+  summary: PerLandmarkZSearchBoundSummary | undefined,
+  groupId: string,
+): number | null {
+  const group = summary?.groupBoundHitSummary.find((item) => item.groupId === groupId)
+  return group?.lowerBoundHitCount ?? null
+}
+
+function cloneRangeExpansionSummary(summary: RangeExpansionSummary): RangeExpansionSummary {
+  return {
+    semanticPointRangeOverrides: summary.semanticPointRangeOverrides.map((override) => ({
+      ...override,
+    })),
+    perLandmarkRangeOverrides: summary.perLandmarkRangeOverrides.map((override) => ({
+      ...override,
+    })),
   }
 }
 
@@ -6364,10 +6459,10 @@ function applyPerLandmarkZSearch(
       continue
     }
     const isAnchor = semanticAnchorLandmarkIndices.has(index)
-    const range = isAnchor ? settings.anchorZRange : settings.zRange
+    const range = resolvePerLandmarkZSearchRange(index, isAnchor, settings)
     const step = isAnchor ? settings.anchorZStep : settings.zStep
     const baseZ = landmark.z
-    const rawCandidates = createNumericCandidates(baseZ - range, baseZ + range, step)
+    const rawCandidates = createNumericCandidates(baseZ - range.lower, baseZ + range.upper, step)
     const zCandidates = candidate.generationSettings.interpolation.clampZ
       ? rawCandidates.map((z) =>
           round(
@@ -6476,6 +6571,64 @@ function buildPerLandmarkZSearchTargetIndices(
     .sort((a, b) => a - b)
 }
 
+function resolvePerLandmarkZSearchRange(
+  index: number,
+  isAnchor: boolean,
+  settings: PerLandmarkZSearchSettings,
+): { lower: number; upper: number } {
+  const defaultRange = isAnchor
+    ? { lower: settings.anchorZRange, upper: settings.anchorZRange }
+    : { lower: settings.zRange, upper: settings.zRange }
+  const overrides = findPerLandmarkZSearchRangeOverrides(index, settings)
+  if (overrides.length === 0) {
+    return defaultRange
+  }
+  return overrides.reduce(
+    (range, override) => ({
+      lower: Math.max(range.lower, override.lowerZRange),
+      upper: Math.max(range.upper, override.upperZRange),
+    }),
+    defaultRange,
+  )
+}
+
+function findPerLandmarkZSearchRangeOverrides(
+  index: number,
+  settings: PerLandmarkZSearchSettings,
+): PerLandmarkZSearchGroupRangeOverride[] {
+  const overrides = settings.groupRangeOverrides ?? []
+  if (overrides.length === 0) {
+    return []
+  }
+  return overrides.filter((override) =>
+    getDepth478GroupDefinition(override.groupId).pointIndices.includes(index),
+  )
+}
+
+function buildPerLandmarkZSearchRangeSummary(
+  settings: PerLandmarkZSearchSettings,
+): PerLandmarkZSearchRangeSummary {
+  const groupOverrides = (settings.groupRangeOverrides ?? []).map((override) => ({
+    groupId: override.groupId,
+    lowerZRange: round(override.lowerZRange),
+    upperZRange: round(override.upperZRange),
+  }))
+  return {
+    rangeMode: groupOverrides.some((override) => override.lowerZRange !== override.upperZRange)
+      ? "asymmetric"
+      : "symmetric",
+    defaultRange: {
+      lower: round(settings.zRange),
+      upper: round(settings.zRange),
+    },
+    anchorDefaultRange: {
+      lower: round(settings.anchorZRange),
+      upper: round(settings.anchorZRange),
+    },
+    groupOverrides,
+  }
+}
+
 function buildSemanticAnchorLandmarkIndices(pointSetId: SemanticPointSetId): Set<number> {
   const activePointIds = new Set(getSemanticPointSet(pointSetId).pointIds)
   return new Set(
@@ -6571,6 +6724,7 @@ function buildPerLandmarkZSearchDebug(
       zStep: round(settings.zStep),
       anchorZRange: round(settings.anchorZRange),
       anchorZStep: round(settings.anchorZStep),
+      rangeSummary: buildPerLandmarkZSearchRangeSummary(settings),
       canonicalDeviationPenaltyWeight: round(settings.canonicalDeviationPenaltyWeight),
       ...(settings.maxFrames ? { maxFrames: settings.maxFrames } : {}),
     },
@@ -10233,6 +10387,14 @@ function renderQuick478DepthDebug(): void {
     [
       "perLandmark bound hits",
       `${formatNumber(quick.quickRun.summary.perLandmarkLowerBoundHitCount)} lower / ${formatNumber(quick.quickRun.summary.perLandmarkUpperBoundHitCount)} upper`,
+    ],
+    [
+      "jawGroup lower hits",
+      formatNumber(quick.quickRun.summary.jawGroupLowerBoundHitCount),
+    ],
+    [
+      "faceBoundaryGroup lower hits",
+      formatNumber(quick.quickRun.summary.faceBoundaryGroupLowerBoundHitCount),
     ],
   ])
 }
