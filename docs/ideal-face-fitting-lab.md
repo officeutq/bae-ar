@@ -315,3 +315,15 @@ Candidate Stability Debug は、同じ Auto Sequence を異なる bucket target 
 最終候補としては、単に少数フレームで score が良い候補ではなく、フレーム数を増やしても rotationCenter と z が安定する候補を優先する。
 
 bucket target preset を指定しても、sourceSummary.bucketCounts が不足している bucket では selected frame 数が不足する。その不足は UI / JSON に記録する。
+
+## Outlier Frame Debug
+
+Outlier Frame Debug は、maxBucketScore を極端に悪化させているフレームを検出するための debug 機能である。
+
+maxBucketScore は候補ランキングの主指標ではなく、外れフレーム検出・品質確認用の指標として扱う。
+
+外れフレーム除外は、スコアを良く見せるためではなく、MediaPipe の検出ズレ、強い表情、ブレ、pose誤差などにより、理想3D顔推定に使うべきでない観測値を取り除くために行う。
+
+外れフレーム除外後も、rawScore と filteredScore の両方を表示・JSON出力する。
+
+初期状態では debugOnly とし、外れ値除外はランキングに反映しない。
