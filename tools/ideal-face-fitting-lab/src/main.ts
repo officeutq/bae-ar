@@ -940,6 +940,61 @@ interface CanonicalDepthFitReferencePoint {
   error: number
 }
 
+type CanonicalDepthZSign = "raw" | "inverted"
+
+interface CanonicalDepthFitComparisonGroup {
+  id: "nose" | "cheek" | "chin" | "mouth" | "jaw" | "faceBoundary"
+  label: string
+  landmarkIndices: number[]
+  targetZ: number | null
+  canonicalZ: number | null
+  fittedZ: number | null
+  error: number | null
+}
+
+interface CanonicalDepthFitComparisonVariant {
+  id:
+    | "canonicalZ_raw"
+    | "canonicalZ_inverted"
+    | "canonicalZ_raw_12pt"
+    | "canonicalZ_inverted_12pt"
+  zSign: CanonicalDepthZSign
+  fitReferencePointSet: CanonicalDepthFitReferencePointSetId
+  fit: {
+    method: "leastSquares" | "rangeMatching"
+    scale: number
+    offset: number
+    referencePoints: CanonicalDepthFitReferencePoint[]
+  }
+  averageReferenceAbsError: number
+  maxReferenceAbsError: number
+  groupFit: Record<CanonicalDepthFitComparisonGroup["id"], CanonicalDepthFitComparisonGroup>
+  noseError: number | null
+  cheekError: number | null
+  chinError: number | null
+  mouthError: number | null
+  jawError: number | null
+  faceBoundaryError: number | null
+  averageProjectionError: number | null
+  totalProjectionError: number | null
+  maxBucketScore: number | null
+  depthRelationStatus: SemanticPointSetComparisonDepthRelationStatus
+  depthRelationViolationCount: number | null
+  depthRelationHardRejectViolationCount: number | null
+  depthRelationIsRejected: boolean | null
+  perLandmarkBoundHitCount: number | null
+  perLandmarkUpperBoundHitCount: number | null
+  perLandmarkLowerBoundHitCount: number | null
+  jawGroupLowerBoundHitCount: number | null
+  faceBoundaryGroupLowerBoundHitCount: number | null
+}
+
+interface CanonicalDepthFitComparisonDebug {
+  description: string
+  depthConvention: DepthConvention
+  variants: CanonicalDepthFitComparisonVariant[]
+}
+
 interface CanonicalDepthBasedDebug {
   templateFile: "canonical-face-depth-template-v1.json"
   templateSchemaVersion: "canonical_face_depth_template_v1"
@@ -1235,6 +1290,7 @@ interface Depth478PrototypeResult {
   depthRelationDebug?: Depth478RelationDebug
   smoothnessDebug?: SmoothnessDebug478
   candidateComparison?: Depth478CandidateComparisonEntry[]
+  canonicalDepthFitComparison?: CanonicalDepthFitComparisonDebug
 }
 
 type SemanticPointSetComparisonDepthRelationStatus = "passed" | "warning" | "rejected"
@@ -3445,6 +3501,8 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
           <h3>478 Smoothness Debug（478点滑らかさデバッグ）</h3>
           <div id="depth-478-smoothness-debug" class="summary-grid"></div>
           <div id="depth-478-smoothness-edge-table" class="table-wrap"></div>
+          <h3>canonicalDepthFitComparison</h3>
+          <div id="canonical-depth-fit-comparison" class="table-wrap"></div>
           <h3>478 Candidate Comparison（478点候補比較）</h3>
           <div id="depth-478-candidate-comparison" class="table-wrap"></div>
         </section>
@@ -4948,6 +5006,18 @@ function buildDepth478PrototypeFromSource(
     depthRelationDebug,
     smoothnessDebug,
   )
+  const canonicalDepthFitComparison =
+    prototypeSettings.interpolation.method === "canonicalDepthBased"
+      ? buildCanonicalDepthFitComparisonDebug(
+          base478,
+          source.candidate,
+          source.source8CandidateId,
+          selectedFrames,
+          analysis.searchSettings,
+          prototypeSettings,
+          frameInput.usedOutlierFilteredFrames,
+        )
+      : undefined
 
   return {
     settings: prototypeSettings,
@@ -4956,6 +5026,7 @@ function buildDepth478PrototypeFromSource(
     depthRelationDebug,
     smoothnessDebug,
     candidateComparison: [...previousComparison, comparisonEntry].slice(-20),
+    canonicalDepthFitComparison,
   }
 }
 
@@ -6013,15 +6084,19 @@ function buildCanonicalDepthBased478Landmarks(
   sourceCandidate: FittingCandidate8,
   semanticPointSetId: SemanticPointSetId,
   settings: DepthInterpolationSettings,
+  options: {
+    zSign?: CanonicalDepthZSign
+    fitReferencePointSet?: CanonicalDepthFitReferencePointSetId
+  } = {},
 ): {
   landmarks: Generated478DepthCandidate["landmarks"]
   canonicalDepthBasedDebug: CanonicalDepthBasedDebug
 } {
   validateCanonicalDepthTemplate(CANONICAL_FACE_DEPTH_TEMPLATE)
-  const canonicalByIndex = new Map(
-    CANONICAL_FACE_DEPTH_TEMPLATE.canonicalDepth.map((point) => [point.index, point]),
-  )
-  const fitReferencePointSet = resolveCanonicalDepthFitReferencePointSet(semanticPointSetId)
+  const zSign = options.zSign ?? "raw"
+  const canonicalByIndex = buildCanonicalDepthByIndex(zSign)
+  const fitReferencePointSet =
+    options.fitReferencePointSet ?? resolveCanonicalDepthFitReferencePointSet(semanticPointSetId)
   const fit = buildCanonicalDepthFit(sourceCandidate, canonicalByIndex, fitReferencePointSet)
   const landmarks = base478.map((landmark) => {
     const canonical = canonicalByIndex.get(landmark.index)
@@ -6082,6 +6157,265 @@ function buildCanonicalDepthBased478Landmarks(
       canonicalDeviation: buildCanonicalDeviationDebug(landmarks, landmarks),
     },
   }
+}
+
+function buildCanonicalDepthByIndex(
+  zSign: CanonicalDepthZSign,
+): Map<number, CanonicalDepthTemplatePoint> {
+  return new Map(
+    CANONICAL_FACE_DEPTH_TEMPLATE.canonicalDepth.map((point) => [
+      point.index,
+      {
+        ...point,
+        z: zSign === "inverted" ? -point.z : point.z,
+      },
+    ]),
+  )
+}
+
+function buildCanonicalDepthFitComparisonDebug(
+  base478: LandmarkPoint[],
+  sourceCandidate: FittingCandidate8,
+  source8CandidateId: string | null,
+  selectedFrames: NormalizedFrame[],
+  searchSettings: SearchSettings,
+  prototypeSettings: Depth478PrototypeResult["settings"],
+  usedOutlierFilteredFrames: boolean,
+): CanonicalDepthFitComparisonDebug {
+  validateCanonicalDepthTemplate(CANONICAL_FACE_DEPTH_TEMPLATE)
+  const variants: Array<{
+    id: CanonicalDepthFitComparisonVariant["id"]
+    zSign: CanonicalDepthZSign
+    fitReferencePointSet: CanonicalDepthFitReferencePointSetId
+  }> = [
+    { id: "canonicalZ_raw", zSign: "raw", fitReferencePointSet: "8pt_compatible" },
+    { id: "canonicalZ_inverted", zSign: "inverted", fitReferencePointSet: "8pt_compatible" },
+    { id: "canonicalZ_raw_12pt", zSign: "raw", fitReferencePointSet: "12pt_rotation_center" },
+    {
+      id: "canonicalZ_inverted_12pt",
+      zSign: "inverted",
+      fitReferencePointSet: "12pt_rotation_center",
+    },
+  ]
+
+  return {
+    description:
+      "canonicalZ の符号と fitReferencePointSet を変え、同じ source candidate / projection / depthRelation / perLandmarkZSearch 条件で比較します。",
+    depthConvention: DEPTH_CONVENTION,
+    variants: variants.map((variant) =>
+      buildCanonicalDepthFitComparisonVariant(
+        variant,
+        base478,
+        sourceCandidate,
+        source8CandidateId,
+        selectedFrames,
+        searchSettings,
+        prototypeSettings,
+        usedOutlierFilteredFrames,
+      ),
+    ),
+  }
+}
+
+function buildCanonicalDepthFitComparisonVariant(
+  variant: {
+    id: CanonicalDepthFitComparisonVariant["id"]
+    zSign: CanonicalDepthZSign
+    fitReferencePointSet: CanonicalDepthFitReferencePointSetId
+  },
+  base478: LandmarkPoint[],
+  sourceCandidate: FittingCandidate8,
+  source8CandidateId: string | null,
+  selectedFrames: NormalizedFrame[],
+  searchSettings: SearchSettings,
+  prototypeSettings: Depth478PrototypeResult["settings"],
+  usedOutlierFilteredFrames: boolean,
+): CanonicalDepthFitComparisonVariant {
+  const generated = buildCanonicalDepthBased478Landmarks(
+    base478,
+    sourceCandidate,
+    searchSettings.semanticPointSetId,
+    prototypeSettings.interpolation,
+    {
+      zSign: variant.zSign,
+      fitReferencePointSet: variant.fitReferencePointSet,
+    },
+  )
+  const corrected = applyDepthGroupCorrections(generated.landmarks, prototypeSettings.groupCorrections)
+  const candidateBase: Generated478DepthCandidate = {
+    id: variant.id,
+    source8CandidateId,
+    sourceSemanticPointSetId: searchSettings.semanticPointSetId,
+    generationSettings: {
+      interpolation: { ...prototypeSettings.interpolation },
+      groupCorrections: cloneDepthGroupCorrections(prototypeSettings.groupCorrections),
+    },
+    rotationCenter: getCandidateRotationCenter(sourceCandidate),
+    landmarks: corrected,
+    summary: summarizeGenerated478DepthCandidate(corrected),
+    canonicalDepthBasedDebug: {
+      ...generated.canonicalDepthBasedDebug,
+      canonicalDeviation: buildCanonicalDeviationDebug(corrected, generated.landmarks),
+    },
+  }
+  const candidate =
+    prototypeSettings.perLandmarkZSearch.enabled
+      ? applyPerLandmarkZSearch(
+          candidateBase,
+          selectedFrames,
+          searchSettings,
+          prototypeSettings.perLandmarkZSearch,
+          usedOutlierFilteredFrames,
+        )
+      : candidateBase
+  const projectionEvaluation = evaluateProjection478(candidate, selectedFrames, searchSettings)
+  const depthRelationDebug = buildDepth478RelationDebug(
+    candidate,
+    searchSettings.depthRelationFiltering,
+  )
+  const perLandmarkSummary = candidate.perLandmarkZSearchDebug?.summary
+  const referenceAbsErrors = generated.canonicalDepthBasedDebug.fit.referencePoints.map((point) =>
+    Math.abs(point.error),
+  )
+  const groupFit = buildCanonicalDepthFitComparisonGroups(
+    sourceCandidate,
+    buildCanonicalDepthByIndex(variant.zSign),
+    generated.canonicalDepthBasedDebug.fit.scale,
+    generated.canonicalDepthBasedDebug.fit.offset,
+  )
+
+  return {
+    id: variant.id,
+    zSign: variant.zSign,
+    fitReferencePointSet: variant.fitReferencePointSet,
+    fit: generated.canonicalDepthBasedDebug.fit,
+    averageReferenceAbsError: round(average(referenceAbsErrors) ?? 0),
+    maxReferenceAbsError: round(max(referenceAbsErrors) ?? 0),
+    groupFit,
+    noseError: groupFit.nose.error,
+    cheekError: groupFit.cheek.error,
+    chinError: groupFit.chin.error,
+    mouthError: groupFit.mouth.error,
+    jawError: groupFit.jaw.error,
+    faceBoundaryError: groupFit.faceBoundary.error,
+    averageProjectionError: projectionEvaluation.averageProjectionError,
+    totalProjectionError: projectionEvaluation.totalProjectionError,
+    maxBucketScore: maxNullable(Object.values(projectionEvaluation.bucketScores)),
+    depthRelationStatus: getSemanticPointSetComparisonDepthRelationStatus(depthRelationDebug),
+    depthRelationViolationCount: depthRelationDebug.violationCount,
+    depthRelationHardRejectViolationCount: depthRelationDebug.hardRejectViolationCount,
+    depthRelationIsRejected: depthRelationDebug.isRejected,
+    perLandmarkBoundHitCount:
+      perLandmarkSummary === undefined
+        ? null
+        : perLandmarkSummary.upperBoundHitCount + perLandmarkSummary.lowerBoundHitCount,
+    perLandmarkUpperBoundHitCount: perLandmarkSummary?.upperBoundHitCount ?? null,
+    perLandmarkLowerBoundHitCount: perLandmarkSummary?.lowerBoundHitCount ?? null,
+    jawGroupLowerBoundHitCount: getPerLandmarkGroupLowerBoundHitCount(
+      perLandmarkSummary,
+      "jawGroup",
+    ),
+    faceBoundaryGroupLowerBoundHitCount: getPerLandmarkGroupLowerBoundHitCount(
+      perLandmarkSummary,
+      "faceBoundaryGroup",
+    ),
+  }
+}
+
+function buildCanonicalDepthFitComparisonGroups(
+  sourceCandidate: FittingCandidate8,
+  canonicalByIndex: Map<number, CanonicalDepthTemplatePoint>,
+  scale: number,
+  offset: number,
+): CanonicalDepthFitComparisonVariant["groupFit"] {
+  const groupDefinitions: Array<{
+    id: CanonicalDepthFitComparisonGroup["id"]
+    label: string
+    landmarkIndices: number[]
+    targetPointIds: SemanticPointName[]
+    aggregation: DepthRelationAggregation
+  }> = [
+    {
+      id: "nose",
+      label: "nose",
+      landmarkIndices: [4],
+      targetPointIds: ["nose"],
+      aggregation: "median",
+    },
+    {
+      id: "cheek",
+      label: "cheek",
+      landmarkIndices: [234, 454],
+      targetPointIds: ["leftCheek", "rightCheek"],
+      aggregation: "mean",
+    },
+    {
+      id: "chin",
+      label: "chin",
+      landmarkIndices: [152],
+      targetPointIds: ["chin"],
+      aggregation: "median",
+    },
+    {
+      id: "mouth",
+      label: "mouth",
+      landmarkIndices: [13, 14],
+      targetPointIds: ["mouth"],
+      aggregation: "median",
+    },
+    {
+      id: "jaw",
+      label: "jaw",
+      landmarkIndices: getDepth478GroupDefinition("jawGroup").pointIndices,
+      targetPointIds: ["chin", "leftJaw", "rightJaw", "lowerJawLeft", "lowerJawRight"],
+      aggregation: "median",
+    },
+    {
+      id: "faceBoundary",
+      label: "faceBoundary",
+      landmarkIndices: getDepth478GroupDefinition("faceBoundaryGroup").pointIndices,
+      targetPointIds: [
+        "headTop",
+        "chin",
+        "leftCheek",
+        "rightCheek",
+        "leftJaw",
+        "rightJaw",
+        "leftTemple",
+        "rightTemple",
+        "lowerJawLeft",
+        "lowerJawRight",
+      ],
+      aggregation: "median",
+    },
+  ]
+
+  return Object.fromEntries(
+    groupDefinitions.map((group) => {
+      const canonicalValues = group.landmarkIndices
+        .map((index) => canonicalByIndex.get(index)?.z)
+        .filter((value): value is number => typeof value === "number" && Number.isFinite(value))
+      const targetValues = group.targetPointIds
+        .map((pointId) => sourceCandidate.zByPointId[pointId])
+        .filter((value): value is number => typeof value === "number" && Number.isFinite(value))
+      const canonicalZ = aggregateDepthValues(canonicalValues, group.aggregation)
+      const targetZ = aggregateDepthValues(targetValues, group.aggregation)
+      const fittedZ = canonicalZ === null ? null : round(canonicalZ * scale + offset)
+      const error = fittedZ === null || targetZ === null ? null : round(fittedZ - targetZ)
+      return [
+        group.id,
+        {
+          id: group.id,
+          label: group.label,
+          landmarkIndices: [...group.landmarkIndices],
+          targetZ,
+          canonicalZ,
+          fittedZ,
+          error,
+        },
+      ]
+    }),
+  ) as CanonicalDepthFitComparisonVariant["groupFit"]
 }
 
 function validateCanonicalDepthTemplate(template: CanonicalFaceDepthTemplateV1): void {
@@ -9791,6 +10125,7 @@ function renderDepth478Prototype(prototype: Depth478PrototypeResult | null): voi
     getElement("depth-478-relation-rule-table").innerHTML = ""
     getElement("depth-478-smoothness-debug").innerHTML = empty
     getElement("depth-478-smoothness-edge-table").innerHTML = ""
+    getElement("canonical-depth-fit-comparison").innerHTML = empty
     getElement("depth-478-candidate-comparison").innerHTML =
       renderDepth478CandidateComparisonTable(prototype?.candidateComparison ?? [])
     return
@@ -9876,9 +10211,75 @@ function renderDepth478Prototype(prototype: Depth478PrototypeResult | null): voi
   getElement("depth-478-smoothness-edge-table").innerHTML = smoothness
     ? renderDepth478SmoothnessEdgeTable(smoothness.highDeltaEdges)
     : ""
+  getElement("canonical-depth-fit-comparison").innerHTML =
+    renderCanonicalDepthFitComparison(prototype.canonicalDepthFitComparison)
   getElement("depth-478-candidate-comparison").innerHTML = renderDepth478CandidateComparisonTable(
     prototype.candidateComparison ?? [],
   )
+}
+
+function renderCanonicalDepthFitComparison(
+  debug: CanonicalDepthFitComparisonDebug | undefined,
+): string {
+  if (!debug || debug.variants.length === 0) {
+    return `<p class="empty">canonicalDepthFitComparison はまだありません。</p>`
+  }
+  return `
+    <table>
+      <thead>
+        <tr>
+          <th>id</th>
+          <th>zSign</th>
+          <th>fitReferencePointSet</th>
+          <th>averageReferenceAbsError</th>
+          <th>nose target/fitted/error</th>
+          <th>cheek target/fitted/error</th>
+          <th>chin target/fitted/error</th>
+          <th>mouth target/fitted/error</th>
+          <th>jaw target/fitted/error</th>
+          <th>faceBoundary target/fitted/error</th>
+          <th>averageProjectionError</th>
+          <th>depthRelationStatus</th>
+          <th>depthRelationViolationCount</th>
+          <th>boundHitCount</th>
+          <th>jawGroup lower hits</th>
+          <th>faceBoundaryGroup lower hits</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${debug.variants.map((variant) => `
+          <tr>
+            <td><code>${variant.id}</code></td>
+            <td><code>${variant.zSign}</code></td>
+            <td><code>${variant.fitReferencePointSet}</code></td>
+            <td>${formatNumber(variant.averageReferenceAbsError)}</td>
+            <td>${formatCanonicalDepthFitComparisonGroup(variant.groupFit.nose)}</td>
+            <td>${formatCanonicalDepthFitComparisonGroup(variant.groupFit.cheek)}</td>
+            <td>${formatCanonicalDepthFitComparisonGroup(variant.groupFit.chin)}</td>
+            <td>${formatCanonicalDepthFitComparisonGroup(variant.groupFit.mouth)}</td>
+            <td>${formatCanonicalDepthFitComparisonGroup(variant.groupFit.jaw)}</td>
+            <td>${formatCanonicalDepthFitComparisonGroup(variant.groupFit.faceBoundary)}</td>
+            <td>${formatNumber(variant.averageProjectionError)}</td>
+            <td><code>${variant.depthRelationStatus}</code></td>
+            <td>${formatNumber(variant.depthRelationViolationCount)}</td>
+            <td>${formatNumber(variant.perLandmarkBoundHitCount)}</td>
+            <td>${formatNumber(variant.jawGroupLowerBoundHitCount)}</td>
+            <td>${formatNumber(variant.faceBoundaryGroupLowerBoundHitCount)}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `
+}
+
+function formatCanonicalDepthFitComparisonGroup(
+  group: CanonicalDepthFitComparisonGroup,
+): string {
+  return [
+    formatNumber(group.targetZ),
+    formatNumber(group.fittedZ),
+    formatNumber(group.error),
+  ].join(" / ")
 }
 
 function renderDepth478GroupErrorTable(
