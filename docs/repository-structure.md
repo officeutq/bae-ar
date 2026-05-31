@@ -2,17 +2,20 @@
 
 ## `tools/ideal-face-fitting-lab`
 
-IdealFace Fitting Lab は、production 用 IdealFace asset を直接作る正式ツールではありません。captured JSON の current landmarks 478 から 8 semantic points を取り出し、front bucket 由来の `base8Points2D` を正面基準 x / y として固定したうえで、8点それぞれの z と pivotZ だけを未知数として探索する debug lab です。
+IdealFace Fitting Lab は、production 用 IdealFace asset を直接作る正式ツールではありません。captured JSON の current landmarks 478 から semanticPointSet（意味点セット）を取り出し、8点 / 12点 / 24点を比較しながら、IdealFace478 の z、`rotationCenter`（回転中心） / `pivotZ`（投影基準奥行き）、canonicalDepthBased（標準顔奥行きベース方式）、perLandmarkZSearch（ランドマーク単位 z 探索）の候補を検証する debug lab（検証ラボ）です。
 
 grid search は Web Worker で chunk 単位に実行し、ブラウザ main thread を同期的に占有しない方針です。全 candidate 配列は保持せず、overall ranking と `bucketRanking` はそれぞれ `topN` 件だけを保持します。UI では進捗率、処理済み candidate 数、推定総 candidate 数、cancel 状態を表示し、Full / Summary JSON export は探索完了後だけ有効にします。GPU / WebGPU search はまだ扱いません。
 
 扱うもの:
 
 - headTop / chin / leftCheek / rightCheek / leftEye / rightEye / nose / mouth
+- `8pt_basic` / `12pt_rotation_center` / `24pt_structure`
 - `zMin` / `zMax` / `zStep`
 - `pivotZMin` / `pivotZMax` / `pivotZStep`
 - capture frame の yaw / pitch / roll による Projection
 - projectedIdeal2D と current 2D landmarks 8点の pointError / frameScore / totalScore
+- `canonical-face-depth-template-v1.json` を基準にした 478点 z の debug candidate 生成
+- `perLandmarkZSearch` による landmark 単位の 1次元 z 探索
 - front / yawPositive / yawNegative / pitchPositive / pitchNegative / mixedPose の `bucketScores`
 - Full Fitting JSON / Summary JSON export
 - `bestCandidate` / `bestIdealFace8` / `depthRelation`
@@ -30,10 +33,10 @@ grid search は Web Worker で chunk 単位に実行し、ブラウザ main thre
 - IdealFace Authoring Tool Step 2-I の変更
 - MediaPipe Canonical Lab の実装変更
 - Runtime / Studio Projection の変更
-- 478点への拡張
-- `provisionalIdealFace478` 生成
+- production 用 478点 IdealFace export
+- `beauty_filter_asset_v1` への反映
 
-`bestIdealFace8` は `front` bucket 由来の `base8Points2D` と grid search の最良 `FittingCandidate8.zByPointId` を組み合わせた検証用成果物です。pivotZ は Projection 用の回転中心奥行きとして source に残し、各点の z には焼き込みません。478点への拡張は次段であり、この lab ではまだ生成しません。
+`bestIdealFace8` は `front` bucket 由来の `base8Points2D` と grid search の最良 `FittingCandidate8.zByPointId` を組み合わせた検証用成果物です。pivotZ は Projection 用の回転中心奥行きとして source に残し、各点の z には焼き込みません。478点 z は `canonicalDepthBased` と `perLandmarkZSearch` による debug candidate（デバッグ候補）として生成・評価しますが、production asset export（本番用アセット書き出し）ではありません。
 
 `current8` debug は `bestIdealFace8` ではなく、MediaPipe が検出した current landmarks 478 から8つの semantic points だけを抜き出した比較対象です。front と yawPositive / yawNegative などの current 2D 8 points がどの程度変化するかを確認するために使います。
 ## 現在の構成

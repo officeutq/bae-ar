@@ -2,17 +2,18 @@
 
 ## IdealFace Fitting Lab
 
-`tools/ideal-face-fitting-lab` は、8 semantic points を使って IdealFace478 の z、3D rotationOrigin / pivotZ、zScale、semantic alignment、bounds constraint の仕様判断材料を作る debug lab です。
+`tools/ideal-face-fitting-lab` は、8点 / 12点 / 24点の semanticPointSet（意味点セット）を比較し、IdealFace478 の z、3D `rotationCenter`（回転中心） / `pivotZ`（投影基準奥行き）、canonicalDepthBased（標準顔奥行きベース方式）、perLandmarkZSearch（ランドマーク単位 z 探索）の仕様判断材料を作る debug lab です。
 
 - production 用 IdealFace asset を作る正式 authoring tool ではありません。
 - `tools/ideal-face-authoring` の Step 2-I 生成フローとは分離します。
 - `tools/mediapipe-canonical-lab` の MediaPipe 座標系調査とも目的を分けます。
-- captured JSON を import し、頭頂 / 顎 / 左右頬 / 左右目 / 鼻 / 口の 8 semantic points で coarse grid search を行います。
+- captured JSON を import し、`8pt_basic` / `12pt_rotation_center` / `24pt_structure` を比較します。現時点の 478点奥行き生成 prototype（試作）の推奨は `12pt_rotation_center` です。
+- 478点 z 生成は `canonical-face-depth-template-v1.json`（標準顔奥行きテンプレート）を基準に、`canonicalDepthBased` で仮 z を作り、`perLandmarkZSearch` で各 landmark（ランドマーク）を1次元探索として微調整します。
 - Summary JSON はレビューや ChatGPT 相談用の軽量形式として出力します。
 - grid search の `bestCandidate` から `bestIdealFace8` を出力します。これは 8点だけの debug artifact であり、production 用 IdealFace asset ではありません。
 - Summary JSON にも `zProfileDefinitions` と `bestIdealFace8` を含めます。z は `zRaw`（zProfile そのもの）と `zScaled`（`zRaw * zScale`）を分け、3DIdealFace8 の実値としては `zScaled` を見ます。
 - selected frame ごとの current 2D 8 points debug を出力します。横向き時に現在顔8点が縦長になっていないか、`aspectRatio` / `cheekWidth` / `eyeDistance` / `noseX` を見て、`bestIdealFace8` の z を評価する前に比較対象の current 2D 側を確認できます。
-- 478点への補間や `provisionalIdealFace478` 生成は次段であり、今回は未実装です。
+- 478点 z の最終値は debug candidate（デバッグ候補）であり、production asset export（本番用アセット書き出し）ではありません。
 
 起動:
 
