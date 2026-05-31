@@ -3320,6 +3320,13 @@ function updateSearchProgressFromWorker(message: Record<string, unknown>): void 
   }
   renderSearchProgress()
   renderAutoSequenceStatus()
+  if (state.quick478DepthDebug.status === "running") {
+    state.quick478DepthDebug = {
+      ...state.quick478DepthDebug,
+      message: buildQuick478DepthDebugProgressMessage(),
+    }
+    renderQuick478DepthDebug()
+  }
 }
 
 function createWorkerFrames(frames: NormalizedFrame[]): Array<{
@@ -4176,7 +4183,7 @@ function runQuick478DepthHardRejectDebug(): void {
   const startedAt = new Date().toISOString()
   state.quick478DepthDebug = {
     status: "running",
-    message: "478 Depth hardReject debug を実行中...",
+    message: "478 Depth hardReject debug をバックグラウンドで実行中...",
     startedAt,
     completedAt: null,
     quickRun: null,
@@ -8211,8 +8218,9 @@ function renderQuick478DepthDebug(): void {
   const summaryElement = getElement("quick-depth-478-summary")
 
   if (quick.status === "running") {
-    statusElement.textContent = quick.message ?? "478 Depth hardReject debug を実行中..."
-    summaryElement.innerHTML = ""
+    statusElement.textContent =
+      quick.message ?? buildQuick478DepthDebugProgressMessage()
+    summaryElement.innerHTML = renderQuick478DepthDebugProgress()
     return
   }
 
@@ -8236,6 +8244,52 @@ function renderQuick478DepthDebug(): void {
     ],
     ["averageProjectionError", formatNumber(quick.quickRun.summary.averageProjectionError)],
   ])
+}
+
+function buildQuick478DepthDebugProgressMessage(): string {
+  const auto = state.autoSequence
+  const sequence = auto.definition
+  const stepCount = sequence?.steps.length ?? 0
+  const currentStep = stepCount > 0 ? Math.min(auto.currentStepIndex + 1, stepCount) : 0
+  const presetId = sequence?.steps[auto.currentStepIndex] ?? null
+  const preset = presetId ? findSearchPreset(presetId) : null
+  const progress = state.searchProgress
+  const percent = formatPercent(progress.progressRate)
+  if (auto.status === "running" && preset) {
+    return `478 Depth hardReject debug をバックグラウンドで実行中... step ${currentStep}/${stepCount}: ${preset.label} / ${percent}%`
+  }
+  return `478 Depth hardReject debug をバックグラウンドで実行中... ${percent}%`
+}
+
+function renderQuick478DepthDebugProgress(): string {
+  const auto = state.autoSequence
+  const sequence = auto.definition
+  const progress = state.searchProgress
+  const stepCount = sequence?.steps.length ?? 0
+  const currentStep = stepCount > 0 ? Math.min(auto.currentStepIndex + 1, stepCount) : 0
+  const presetId = sequence?.steps[auto.currentStepIndex] ?? null
+  const preset = presetId ? findSearchPreset(presetId) : null
+  const progressPercent = formatPercent(progress.progressRate)
+
+  return `
+    <div class="quick-progress" aria-label="Quick Run progress">
+      <div class="quick-progress-bar">
+        <div class="quick-progress-fill" style="width: ${progressPercent}%"></div>
+      </div>
+    </div>
+    ${renderStatusItems([
+      ["sequence", sequence?.label ?? "Rotation Center Balanced Sequence"],
+      ["step", stepCount > 0 ? `${currentStep} / ${stepCount}` : "-"],
+      ["preset", preset?.label ?? "-"],
+      ["progress", `${progressPercent}%`],
+      [
+        "processed candidates",
+        `${progress.processedCandidateCount} / ${progress.estimatedCandidateCount}`,
+      ],
+      ["current best score", formatNumber(auto.currentBestScore)],
+      ["updatedAt", progress.updatedAt ?? "-"],
+    ])}
+  `
 }
 
 function renderEmptyState(): void {
