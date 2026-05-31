@@ -16,8 +16,13 @@ type SemanticPointName =
   | "rightEye"
   | "nose"
   | "mouth"
+  | "noseBridge"
+  | "leftJaw"
+  | "rightJaw"
+  | "upperFaceCenter"
 
 type SemanticPointId = SemanticPointName
+type SemanticPointSetId = "8pt_basic" | "12pt_rotation_center"
 type DepthRelationAggregation = "mean" | "median"
 type DepthRelationMode = "off" | "debugOnly" | "penalty" | "hardReject"
 type DepthRelationKind = "inFrontOf" | "behind" | "near"
@@ -67,6 +72,7 @@ interface SearchFrame {
 }
 
 interface SearchSettings {
+  semanticPointSetId: SemanticPointSetId
   searchMode: SearchMode
   objectiveMode: ObjectiveMode
   outlierFiltering?: OutlierFilteringSettings
@@ -420,6 +426,29 @@ const SEMANTIC_POINT_NAMES: SemanticPointName[] = [
   "rightEye",
   "nose",
   "mouth",
+  "noseBridge",
+  "leftJaw",
+  "rightJaw",
+  "upperFaceCenter",
+]
+
+const BASIC_8_SEMANTIC_POINT_NAMES: SemanticPointName[] = [
+  "headTop",
+  "chin",
+  "leftCheek",
+  "rightCheek",
+  "leftEye",
+  "rightEye",
+  "nose",
+  "mouth",
+]
+
+const ROTATION_CENTER_12_SEMANTIC_POINT_NAMES: SemanticPointName[] = [
+  ...BASIC_8_SEMANTIC_POINT_NAMES,
+  "noseBridge",
+  "leftJaw",
+  "rightJaw",
+  "upperFaceCenter",
 ]
 
 const SCORE_WEIGHTS: Record<SemanticPointName, number> = {
@@ -431,6 +460,43 @@ const SCORE_WEIGHTS: Record<SemanticPointName, number> = {
   rightEye: 1.45,
   nose: 1.7,
   mouth: 1.2,
+  noseBridge: 1.35,
+  leftJaw: 1.15,
+  rightJaw: 1.15,
+  upperFaceCenter: 1.15,
+}
+
+function completeSemanticZ(
+  zByPointId: Record<string, number>,
+): Record<SemanticPointName, number> {
+  const leftEye = zByPointId.leftEye ?? 0
+  const rightEye = zByPointId.rightEye ?? leftEye
+  const nose = zByPointId.nose ?? 0
+  const noseBridge = zByPointId.noseBridge ?? (nose + (leftEye + rightEye) / 2) / 2
+  const leftCheek = zByPointId.leftCheek ?? 0
+  const rightCheek = zByPointId.rightCheek ?? leftCheek
+  const chin = zByPointId.chin ?? 0
+  const headTop = zByPointId.headTop ?? 0
+  return {
+    headTop: round(headTop),
+    chin: round(chin),
+    leftCheek: round(leftCheek),
+    rightCheek: round(rightCheek),
+    leftEye: round(leftEye),
+    rightEye: round(rightEye),
+    nose: round(nose),
+    mouth: round(zByPointId.mouth ?? 0),
+    noseBridge: round(noseBridge),
+    leftJaw: round(zByPointId.leftJaw ?? (chin + leftCheek) / 2),
+    rightJaw: round(zByPointId.rightJaw ?? (chin + rightCheek) / 2),
+    upperFaceCenter: round(zByPointId.upperFaceCenter ?? (headTop + noseBridge) / 2),
+  }
+}
+
+function getSemanticPointNames(pointSetId: SemanticPointSetId): SemanticPointName[] {
+  return pointSetId === "12pt_rotation_center"
+    ? ROTATION_CENTER_12_SEMANTIC_POINT_NAMES
+    : BASIC_8_SEMANTIC_POINT_NAMES
 }
 
 const DEFAULT_OUTLIER_FILTERING_SETTINGS: OutlierFilteringSettings = {
@@ -675,6 +741,7 @@ function createCandidateSource(settings: SearchSettings): CandidateSource {
 }
 
 function createFullGridCandidateSource(settings: SearchSettings): CandidateSource {
+  const semanticPointNames = getSemanticPointNames(settings.semanticPointSetId)
   const zCandidates = createNumericCandidates(settings.zMin, settings.zMax, settings.zStep)
   const pivotZCandidates = createNumericCandidates(
     settings.pivotZMin,
@@ -684,8 +751,9 @@ function createFullGridCandidateSource(settings: SearchSettings): CandidateSourc
   const estimatedCandidateCount = estimateCandidateCountFromCandidates(
     zCandidates.length,
     pivotZCandidates.length,
+    semanticPointNames.length,
   )
-  const indices = SEMANTIC_POINT_NAMES.map(() => 0)
+  const indices = semanticPointNames.map(() => 0)
   let pivotIndex = 0
   let nextIndex = 1
 
@@ -701,6 +769,7 @@ function createFullGridCandidateSource(settings: SearchSettings): CandidateSourc
         pivotIndex,
         zCandidates,
         pivotZCandidates,
+        semanticPointNames,
       )
       nextIndex += 1
       advanceCandidateCursor(indices, zCandidates.length, () => {
@@ -783,7 +852,12 @@ function createLocalOneDimensionalCandidateSource(settings: SearchSettings): Can
 function createCoordinateDescentCandidateSource(settings: SearchSettings): CandidateSource {
   const localSettings = settings.localSearchSettings
   const iterations = Math.max(1, Math.floor(localSettings.coordinateDescentIterations))
-  const parameterOrder = localSettings.coordinateDescentParameterOrder
+  const activePointParameters = new Set(
+    getSemanticPointNames(settings.semanticPointSetId).map((pointId) => `${pointId}.z`),
+  )
+  const parameterOrder = localSettings.coordinateDescentParameterOrder.filter(
+    (parameter) => !parameter.endsWith(".z") || activePointParameters.has(parameter),
+  )
   const valuesByParameter = Object.fromEntries(
     parameterOrder.map((parameter) => {
       const range = localSettings.coordinateDescentRanges[parameter]
@@ -901,15 +975,17 @@ function createCandidateFromIndices(
   pivotIndex: number,
   zCandidates: number[],
   pivotZCandidates: number[],
+  semanticPointNames: SemanticPointName[],
 ): CandidateDefinition {
-  const zByPointId = {} as Record<SemanticPointName, number>
-  for (const [pointIndex, pointName] of SEMANTIC_POINT_NAMES.entries()) {
+  const zByPointId = {} as Record<string, number>
+  for (const [pointIndex, pointName] of semanticPointNames.entries()) {
     zByPointId[pointName] = zCandidates[pointIndices[pointIndex]]
   }
+  const completedZByPointId = completeSemanticZ(zByPointId)
   const pivotZ = pivotZCandidates[pivotIndex]
   return {
-    candidateId: createCandidateId(index, zByPointId, pivotZ),
-    zByPointId,
+    candidateId: createCandidateId(index, completedZByPointId, pivotZ),
+    zByPointId: completedZByPointId,
     pivotZ,
   }
 }
@@ -920,7 +996,7 @@ function createCandidateDefinitionFromCandidate(
 ): CandidateDefinition {
   const definition: CandidateDefinition = {
     candidateId: createCandidateId(index, candidate.zByPointId, candidate.pivotZ),
-    zByPointId: { ...candidate.zByPointId },
+    zByPointId: completeSemanticZ(candidate.zByPointId),
     pivotZ: candidate.pivotZ,
   }
   if (candidate.rotationCenter) {
@@ -1084,11 +1160,12 @@ function evaluateCandidate(
   frames: SearchFrame[],
   settings: SearchSettings,
 ): CandidateResult {
-  const ideal3D = buildIdeal3D(basePoints, candidate)
+  const semanticPointNames = getSemanticPointNames(settings.semanticPointSetId)
+  const ideal3D = buildIdeal3D(basePoints, candidate, semanticPointNames)
   const perFrameResults = frames.map((frame) =>
-    evaluateCandidateOnFrame(candidate, ideal3D, frame, settings),
+    evaluateCandidateOnFrame(candidate, ideal3D, frame, settings, semanticPointNames),
   )
-  const perPointError = averagePerPointError(perFrameResults)
+  const perPointError = averagePerPointError(perFrameResults, semanticPointNames)
   const averageSemanticDistance =
     average(perFrameResults.map((result) => result.averageSemanticDistance)) ?? Number.POSITIVE_INFINITY
   const weightedSemanticDistance =
@@ -1137,14 +1214,15 @@ function evaluateCandidateOnFrame(
   ideal3D: SemanticPointSet3D,
   frame: SearchFrame,
   settings: SearchSettings,
+  semanticPointNames: SemanticPointName[],
 ): FrameEvaluation {
-  const projected = projectIdealPoints(ideal3D, frame.pose, candidate, settings)
-  const current = normalizeCurrentPointsForScoring(frame.semanticPoints, frame.bounds)
-  const perPointError = calculatePerPointErrors(projected, current)
+  const projected = projectIdealPoints(ideal3D, frame.pose, candidate, settings, undefined, semanticPointNames)
+  const current = normalizeCurrentPointsForScoring(frame.semanticPoints, frame.bounds, semanticPointNames)
+  const perPointError = calculatePerPointErrors(projected, current, semanticPointNames)
   const averageSemanticDistance =
-    average(SEMANTIC_POINT_NAMES.map((name) => perPointError[name])) ?? Number.POSITIVE_INFINITY
+    average(semanticPointNames.map((name) => perPointError[name])) ?? Number.POSITIVE_INFINITY
   const weightedSemanticDistance = weightedAverage(
-    SEMANTIC_POINT_NAMES.map((name) => ({
+    semanticPointNames.map((name) => ({
       value: perPointError[name],
       weight: SCORE_WEIGHTS[name],
     })),
@@ -1173,9 +1251,10 @@ function evaluateCandidateOnFrame(
 function buildIdeal3D(
   basePoints: SemanticPointSet2D,
   candidate: CandidateDefinition,
+  semanticPointNames = SEMANTIC_POINT_NAMES,
 ): SemanticPointSet3D {
   const points = {} as SemanticPointSet3D
-  for (const name of SEMANTIC_POINT_NAMES) {
+  for (const name of semanticPointNames) {
     points[name] = {
       x: basePoints[name].x,
       y: basePoints[name].y,
@@ -1191,10 +1270,11 @@ function projectIdealPoints(
   candidate: CandidateDefinition,
   settings: SearchSettings,
   options?: ProjectionOptions,
+  semanticPointNames = SEMANTIC_POINT_NAMES,
 ): SemanticPointSet2D {
   const rotationCenter = getProjectionRotationCenter(candidate, options)
   const points = {} as SemanticPointSet2D
-  for (const name of SEMANTIC_POINT_NAMES) {
+  for (const name of semanticPointNames) {
     const rotated = rotatePoint3D(
       {
         x: ideal3D[name].x - rotationCenter.x,
@@ -1232,9 +1312,10 @@ function getProjectionRotationCenter(
 function normalizeCurrentPointsForScoring(
   points: SemanticPointSet2D,
   bounds: Bounds2D,
+  semanticPointNames = SEMANTIC_POINT_NAMES,
 ): SemanticPointSet2D {
   const normalized = {} as SemanticPointSet2D
-  for (const name of SEMANTIC_POINT_NAMES) {
+  for (const name of semanticPointNames) {
     normalized[name] = {
       name,
       x: points[name].x - bounds.centerX,
@@ -1247,9 +1328,10 @@ function normalizeCurrentPointsForScoring(
 function calculatePerPointErrors(
   aligned: SemanticPointSet2D,
   current: SemanticPointSet2D,
+  semanticPointNames = SEMANTIC_POINT_NAMES,
 ): Record<SemanticPointName, number> {
   const result = {} as Record<SemanticPointName, number>
-  for (const name of SEMANTIC_POINT_NAMES) {
+  for (const name of semanticPointNames) {
     result[name] = distance2D(aligned[name], current[name])
   }
   return result
@@ -1816,9 +1898,12 @@ function averageBucketScore(results: FrameEvaluation[], bucket: CaptureBucket): 
   )
 }
 
-function averagePerPointError(results: FrameEvaluation[]): Record<SemanticPointName, number> {
+function averagePerPointError(
+  results: FrameEvaluation[],
+  semanticPointNames = SEMANTIC_POINT_NAMES,
+): Record<SemanticPointName, number> {
   const summary = {} as Record<SemanticPointName, number>
-  for (const name of SEMANTIC_POINT_NAMES) {
+  for (const name of semanticPointNames) {
     summary[name] = average(results.map((result) => result.perPointError[name])) ?? 0
   }
   return summary
@@ -2045,8 +2130,12 @@ function createNumericCandidates(minValue: number, maxValue: number, stepValue: 
   return Array.from(new Set(candidates))
 }
 
-function estimateCandidateCountFromCandidates(zCount: number, pivotZCount: number): number {
-  return zCount ** SEMANTIC_POINT_NAMES.length * pivotZCount
+function estimateCandidateCountFromCandidates(
+  zCount: number,
+  pivotZCount: number,
+  semanticPointCount = SEMANTIC_POINT_NAMES.length,
+): number {
+  return zCount ** semanticPointCount * pivotZCount
 }
 
 function createCandidateId(
