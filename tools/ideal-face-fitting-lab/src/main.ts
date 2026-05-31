@@ -23,9 +23,21 @@ type SemanticPointName =
   | "leftJaw"
   | "rightJaw"
   | "upperFaceCenter"
+  | "leftNoseSide"
+  | "rightNoseSide"
+  | "leftEyeOuter"
+  | "rightEyeOuter"
+  | "leftEyeInner"
+  | "rightEyeInner"
+  | "leftTemple"
+  | "rightTemple"
+  | "leftMouthCorner"
+  | "rightMouthCorner"
+  | "lowerJawLeft"
+  | "lowerJawRight"
 
 type SemanticPointId = SemanticPointName
-type SemanticPointSetId = "8pt_basic" | "12pt_rotation_center"
+type SemanticPointSetId = "8pt_basic" | "12pt_rotation_center" | "24pt_structure"
 type DepthRelationAggregation = "mean" | "median"
 type DepthRelationMode = "off" | "debugOnly" | "penalty" | "hardReject"
 type DepthRelationKind = "inFrontOf" | "behind" | "near"
@@ -34,6 +46,10 @@ type PoseBucket = CaptureBucket
 type Depth478CandidateSource = "autoSequenceFinalCandidate" | "bestCandidate"
 type Depth478GenerationMethod = "inverseDistanceWeighting" | "canonicalDepthBased"
 type PerLandmarkZSearchTargetIndices = "all478" | "canonical468Only"
+type CanonicalDepthFitReferencePointSetId =
+  | "8pt_compatible"
+  | "12pt_rotation_center"
+  | "24pt_structure"
 
 interface Point2 {
   x: number
@@ -916,7 +932,7 @@ interface CanonicalFaceDepthTemplateV1 {
 }
 
 interface CanonicalDepthFitReferencePoint {
-  pointId: "nose" | "leftCheek" | "rightCheek" | "mouth" | "chin" | "headTop"
+  pointId: SemanticPointName
   landmarkIndex: number | number[]
   canonicalZ: number
   targetZ: number
@@ -927,7 +943,7 @@ interface CanonicalDepthFitReferencePoint {
 interface CanonicalDepthBasedDebug {
   templateFile: "canonical-face-depth-template-v1.json"
   templateSchemaVersion: "canonical_face_depth_template_v1"
-  fitReferencePointSet: "8pt_compatible" | "12pt_rotation_center"
+  fitReferencePointSet: CanonicalDepthFitReferencePointSetId
   comparisonLandmarkCount: number
   excludedLandmarkIndices: number[]
   fit: {
@@ -1007,6 +1023,7 @@ interface DepthGroupCorrection {
 interface Generated478DepthCandidate {
   id: string
   source8CandidateId?: string | null
+  sourceSemanticPointSetId?: SemanticPointSetId
   generationSettings: {
     interpolation: DepthInterpolationSettings
     groupCorrections: DepthGroupCorrection[]
@@ -1124,6 +1141,49 @@ interface Depth478PrototypeResult {
   candidateComparison?: Depth478CandidateComparisonEntry[]
 }
 
+type SemanticPointSetComparisonDepthRelationStatus = "passed" | "warning" | "rejected"
+
+interface SemanticPointSetComparisonRun {
+  semanticPointSetId: SemanticPointSetId
+  pointCount: number
+  quickRunStatus: Exclude<Quick478DepthDebugStatus, "idle" | "running">
+  averageProjectionError: number | null
+  maxBucketScore: number | null
+  rotationCenter: {
+    y: number | null
+    z: number | null
+  }
+  pivotZ: number | null
+  noseZ: number | null
+  leftCheekZ: number | null
+  rightCheekZ: number | null
+  mouthZ: number | null
+  noseTipGroupZ: number | null
+  cheekGroupZ: number | null
+  noseCheekDelta: number | null
+  depthRelationStatus: SemanticPointSetComparisonDepthRelationStatus
+  depthRelationViolationCount: number | null
+  hardRejectViolationCount: number | null
+  perLandmarkAverageErrorBefore: number | null
+  perLandmarkAverageErrorAfter: number | null
+  perLandmarkAverageBestDeltaZ: number | null
+  sourceCandidateId: string | null
+  activeSemanticPointIds: SemanticPointName[]
+  activeSemanticPointCount: number
+  zByPointIdKeys: SemanticPointName[]
+  unexpectedPointIds: SemanticPointName[]
+  fitReferencePointSet: CanonicalDepthFitReferencePointSetId | null
+  usesOnlyActiveSemanticPointsForScore: boolean
+  usesOnlyActiveSemanticPointsForCandidateId: boolean
+}
+
+interface SemanticPointSetComparisonSummary {
+  enabled: boolean
+  runs: SemanticPointSetComparisonRun[]
+  recommendedSemanticPointSetId: SemanticPointSetId | null
+  recommendationReason: string
+}
+
 type Quick478DepthDebugStatus =
   | "idle"
   | "running"
@@ -1202,6 +1262,7 @@ interface Quick478RejectedCandidateDebug {
 
 interface Quick478DepthDebugPayload extends Depth478PrototypeResult {
   quickRun: Quick478DepthDebugSummary
+  semanticPointSetComparison?: SemanticPointSetComparisonSummary
   analysisSummary?: SummaryAnalysisResult
 }
 
@@ -1211,6 +1272,17 @@ interface Quick478DepthDebugState {
   startedAt: string | null
   completedAt: string | null
   quickRun: Quick478DepthDebugSummary | null
+}
+
+interface QuickSemanticPointSetComparisonState {
+  enabled: boolean
+  pointSetIds: SemanticPointSetId[]
+  activeIndex: number
+  primaryPointSetId: SemanticPointSetId
+  runs: SemanticPointSetComparisonRun[]
+  primaryAnalysis: AnalysisResult | null
+  primaryPrototype: Depth478PrototypeResult | null
+  primaryRun: SemanticPointSetComparisonRun | null
 }
 
 type ProjectionSignDebugBucket = Exclude<CaptureBucket, "mixedPose" | "unknown">
@@ -1444,6 +1516,7 @@ interface AppState {
   stabilityHistory: StabilityHistoryEntry[]
   stabilityCheck: StabilityCheckState
   quick478DepthDebug: Quick478DepthDebugState
+  quickSemanticPointSetComparison: QuickSemanticPointSetComparisonState | null
   presetMessage: string | null
   importMessage: string | null
   copyMessage: string | null
@@ -1524,6 +1597,78 @@ const SEMANTIC_DEFINITIONS: SemanticDefinition[] = [
     primaryIndices: [168],
     weight: 1.15,
   },
+  {
+    name: "leftNoseSide",
+    label: "左小鼻",
+    primaryIndices: [98],
+    weight: 1.15,
+  },
+  {
+    name: "rightNoseSide",
+    label: "右小鼻",
+    primaryIndices: [327],
+    weight: 1.15,
+  },
+  {
+    name: "leftEyeOuter",
+    label: "左目尻",
+    primaryIndices: [263],
+    weight: 1.15,
+  },
+  {
+    name: "rightEyeOuter",
+    label: "右目尻",
+    primaryIndices: [33],
+    weight: 1.15,
+  },
+  {
+    name: "leftEyeInner",
+    label: "左目頭",
+    primaryIndices: [362],
+    weight: 1.15,
+  },
+  {
+    name: "rightEyeInner",
+    label: "右目頭",
+    primaryIndices: [133],
+    weight: 1.15,
+  },
+  {
+    name: "leftTemple",
+    label: "左こめかみ",
+    primaryIndices: [356],
+    weight: 1.15,
+  },
+  {
+    name: "rightTemple",
+    label: "右こめかみ",
+    primaryIndices: [127],
+    weight: 1.15,
+  },
+  {
+    name: "leftMouthCorner",
+    label: "左口角",
+    primaryIndices: [291],
+    weight: 0.65,
+  },
+  {
+    name: "rightMouthCorner",
+    label: "右口角",
+    primaryIndices: [61],
+    weight: 0.65,
+  },
+  {
+    name: "lowerJawLeft",
+    label: "左下顎",
+    primaryIndices: [365],
+    weight: 1.15,
+  },
+  {
+    name: "lowerJawRight",
+    label: "右下顎",
+    primaryIndices: [136],
+    weight: 1.15,
+  },
 ]
 
 const SEMANTIC_POINT_NAMES = SEMANTIC_DEFINITIONS.map(
@@ -1549,6 +1694,22 @@ const ROTATION_CENTER_12_SEMANTIC_POINT_NAMES: SemanticPointName[] = [
   "upperFaceCenter",
 ]
 
+const STRUCTURE_24_SEMANTIC_POINT_NAMES: SemanticPointName[] = [
+  ...ROTATION_CENTER_12_SEMANTIC_POINT_NAMES,
+  "leftNoseSide",
+  "rightNoseSide",
+  "leftEyeOuter",
+  "rightEyeOuter",
+  "leftEyeInner",
+  "rightEyeInner",
+  "leftTemple",
+  "rightTemple",
+  "leftMouthCorner",
+  "rightMouthCorner",
+  "lowerJawLeft",
+  "lowerJawRight",
+]
+
 const SEMANTIC_POINT_SET_DEFINITIONS: Record<
   SemanticPointSetId,
   {
@@ -1564,10 +1725,19 @@ const SEMANTIC_POINT_SET_DEFINITIONS: Record<
     id: "12pt_rotation_center",
     pointIds: ROTATION_CENTER_12_SEMANTIC_POINT_NAMES,
   },
+  "24pt_structure": {
+    id: "24pt_structure",
+    pointIds: STRUCTURE_24_SEMANTIC_POINT_NAMES,
+  },
 }
 
 const DEFAULT_SEMANTIC_POINT_SET_ID: SemanticPointSetId = "8pt_basic"
 const QUICK_478_DEPTH_SEMANTIC_POINT_SET_ID: SemanticPointSetId = "12pt_rotation_center"
+const QUICK_SEMANTIC_POINT_SET_COMPARISON_IDS: SemanticPointSetId[] = [
+  "8pt_basic",
+  "12pt_rotation_center",
+  "24pt_structure",
+]
 
 function completeSemanticZ(
   zByPointId: Record<string, number>,
@@ -1593,6 +1763,18 @@ function completeSemanticZ(
     leftJaw: round(zByPointId.leftJaw ?? (chin + leftCheek) / 2),
     rightJaw: round(zByPointId.rightJaw ?? (chin + rightCheek) / 2),
     upperFaceCenter: round(zByPointId.upperFaceCenter ?? (headTop + noseBridge) / 2),
+    leftNoseSide: round(zByPointId.leftNoseSide ?? (nose + leftCheek) / 2),
+    rightNoseSide: round(zByPointId.rightNoseSide ?? (nose + rightCheek) / 2),
+    leftEyeOuter: round(zByPointId.leftEyeOuter ?? leftEye),
+    rightEyeOuter: round(zByPointId.rightEyeOuter ?? rightEye),
+    leftEyeInner: round(zByPointId.leftEyeInner ?? leftEye),
+    rightEyeInner: round(zByPointId.rightEyeInner ?? rightEye),
+    leftTemple: round(zByPointId.leftTemple ?? (headTop + leftCheek) / 2),
+    rightTemple: round(zByPointId.rightTemple ?? (headTop + rightCheek) / 2),
+    leftMouthCorner: round(zByPointId.leftMouthCorner ?? zByPointId.mouth ?? 0),
+    rightMouthCorner: round(zByPointId.rightMouthCorner ?? zByPointId.mouth ?? 0),
+    lowerJawLeft: round(zByPointId.lowerJawLeft ?? (chin + leftCheek) / 2),
+    lowerJawRight: round(zByPointId.lowerJawRight ?? (chin + rightCheek) / 2),
   }
 }
 
@@ -1652,6 +1834,18 @@ const LOCAL_SEARCH_PARAMETERS: LocalSearchParameter[] = [
   "leftJaw.z",
   "rightJaw.z",
   "upperFaceCenter.z",
+  "leftNoseSide.z",
+  "rightNoseSide.z",
+  "leftEyeOuter.z",
+  "rightEyeOuter.z",
+  "leftEyeInner.z",
+  "rightEyeInner.z",
+  "leftTemple.z",
+  "rightTemple.z",
+  "leftMouthCorner.z",
+  "rightMouthCorner.z",
+  "lowerJawLeft.z",
+  "lowerJawRight.z",
 ]
 
 const OBJECTIVE_MODES: ObjectiveMode[] = [
@@ -1677,6 +1871,18 @@ const DEFAULT_COORDINATE_DESCENT_PARAMETER_ORDER: LocalSearchParameter[] = [
   "leftJaw.z",
   "rightJaw.z",
   "upperFaceCenter.z",
+  "leftNoseSide.z",
+  "rightNoseSide.z",
+  "leftEyeOuter.z",
+  "rightEyeOuter.z",
+  "leftEyeInner.z",
+  "rightEyeInner.z",
+  "leftTemple.z",
+  "rightTemple.z",
+  "leftMouthCorner.z",
+  "rightMouthCorner.z",
+  "lowerJawLeft.z",
+  "lowerJawRight.z",
 ]
 
 const ROTATION_CENTER_ONLY_PARAMETER_ORDER: LocalSearchParameter[] = [
@@ -1796,6 +2002,18 @@ const DEFAULT_COORDINATE_DESCENT_RANGES: LocalSearchRanges = {
   "leftJaw.z": { min: 0, max: 0.08, step: 0.01 },
   "rightJaw.z": { min: 0, max: 0.08, step: 0.01 },
   "upperFaceCenter.z": { min: -0.01, max: 0.06, step: 0.01 },
+  "leftNoseSide.z": { min: 0, max: 0.08, step: 0.01 },
+  "rightNoseSide.z": { min: 0, max: 0.08, step: 0.01 },
+  "leftEyeOuter.z": { min: 0, max: 0.06, step: 0.01 },
+  "rightEyeOuter.z": { min: 0, max: 0.06, step: 0.01 },
+  "leftEyeInner.z": { min: 0, max: 0.06, step: 0.01 },
+  "rightEyeInner.z": { min: 0, max: 0.06, step: 0.01 },
+  "leftTemple.z": { min: -0.01, max: 0.06, step: 0.01 },
+  "rightTemple.z": { min: -0.01, max: 0.06, step: 0.01 },
+  "leftMouthCorner.z": { min: 0, max: 0.08, step: 0.01 },
+  "rightMouthCorner.z": { min: 0, max: 0.08, step: 0.01 },
+  "lowerJawLeft.z": { min: 0, max: 0.08, step: 0.01 },
+  "lowerJawRight.z": { min: 0, max: 0.08, step: 0.01 },
 }
 
 const YAW_FOCUS_COORDINATE_DESCENT_RANGES: LocalSearchRanges = {
@@ -1814,6 +2032,18 @@ const YAW_FOCUS_COORDINATE_DESCENT_RANGES: LocalSearchRanges = {
   "leftJaw.z": { min: 0.03, max: 0.12, step: 0.01 },
   "rightJaw.z": { min: 0.03, max: 0.12, step: 0.01 },
   "upperFaceCenter.z": { min: -0.02, max: 0.04, step: 0.01 },
+  "leftNoseSide.z": { min: -0.02, max: 0.06, step: 0.01 },
+  "rightNoseSide.z": { min: -0.02, max: 0.06, step: 0.01 },
+  "leftEyeOuter.z": { min: -0.02, max: 0.04, step: 0.01 },
+  "rightEyeOuter.z": { min: -0.02, max: 0.04, step: 0.01 },
+  "leftEyeInner.z": { min: -0.02, max: 0.04, step: 0.01 },
+  "rightEyeInner.z": { min: -0.02, max: 0.04, step: 0.01 },
+  "leftTemple.z": { min: -0.02, max: 0.05, step: 0.01 },
+  "rightTemple.z": { min: -0.02, max: 0.05, step: 0.01 },
+  "leftMouthCorner.z": { min: -0.02, max: 0.04, step: 0.01 },
+  "rightMouthCorner.z": { min: -0.02, max: 0.04, step: 0.01 },
+  "lowerJawLeft.z": { min: 0.03, max: 0.12, step: 0.01 },
+  "lowerJawRight.z": { min: 0.03, max: 0.12, step: 0.01 },
 }
 
 const PITCH_FOCUS_COORDINATE_DESCENT_RANGES: LocalSearchRanges = {
@@ -1832,6 +2062,18 @@ const PITCH_FOCUS_COORDINATE_DESCENT_RANGES: LocalSearchRanges = {
   "leftJaw.z": { min: 0.02, max: 0.08, step: 0.01 },
   "rightJaw.z": { min: 0.02, max: 0.08, step: 0.01 },
   "upperFaceCenter.z": { min: 0, max: 0.05, step: 0.01 },
+  "leftNoseSide.z": { min: 0.02, max: 0.08, step: 0.01 },
+  "rightNoseSide.z": { min: 0.02, max: 0.08, step: 0.01 },
+  "leftEyeOuter.z": { min: 0.01, max: 0.05, step: 0.01 },
+  "rightEyeOuter.z": { min: 0.01, max: 0.05, step: 0.01 },
+  "leftEyeInner.z": { min: 0.01, max: 0.05, step: 0.01 },
+  "rightEyeInner.z": { min: 0.01, max: 0.05, step: 0.01 },
+  "leftTemple.z": { min: 0, max: 0.05, step: 0.01 },
+  "rightTemple.z": { min: 0, max: 0.05, step: 0.01 },
+  "leftMouthCorner.z": { min: 0.03, max: 0.09, step: 0.01 },
+  "rightMouthCorner.z": { min: 0.03, max: 0.09, step: 0.01 },
+  "lowerJawLeft.z": { min: 0.02, max: 0.08, step: 0.01 },
+  "lowerJawRight.z": { min: 0.02, max: 0.08, step: 0.01 },
 }
 
 const ROTATION_CENTER_FINE_RANGES: LocalSearchRanges = {
@@ -2441,8 +2683,10 @@ const CANONICAL_FACE_DEPTH_TEMPLATE =
 const CANONICAL_FACE_DEPTH_TEMPLATE_FILE = "canonical-face-depth-template-v1.json" as const
 const CANONICAL_COMPARISON_LANDMARK_COUNT = 468
 const IRIS_DEPTH_FALLBACK_INDICES = [468, 469, 470, 471, 472, 473, 474, 475, 476, 477]
-const SEMANTIC_ANCHOR_LANDMARK_INDICES = new Set([10, 152, 234, 454, 4, 13, 14, 6, 172, 397, 168])
-const PER_LANDMARK_Z_SEARCH_SAMPLE_INDICES = [4, 10, 13, 14, 152, 234, 454]
+const PER_LANDMARK_Z_SEARCH_SAMPLE_INDICES = [
+  4, 10, 13, 14, 33, 61, 98, 127, 133, 136, 152, 234, 263, 291, 327, 356, 362,
+  365, 454,
+]
 
 const DEFAULT_DEPTH_478_SMOOTHNESS_THRESHOLD = 0.03
 const DEPTH_478_NEIGHBOR_COUNT = 4
@@ -2616,6 +2860,7 @@ const state: AppState = {
   stabilityHistory: [],
   stabilityCheck: createIdleStabilityCheck(),
   quick478DepthDebug: createIdleQuick478DepthDebug(),
+  quickSemanticPointSetComparison: null,
   presetMessage: null,
   importMessage: null,
   copyMessage: null,
@@ -3263,6 +3508,7 @@ async function handleFileImport(event: Event): Promise<void> {
   state.stabilityCheck = createIdleStabilityCheck()
   state.stabilityHistory = []
   state.quick478DepthDebug = createIdleQuick478DepthDebug()
+  state.quickSemanticPointSetComparison = null
 
   try {
     const payload = JSON.parse(await file.text()) as unknown
@@ -3295,6 +3541,7 @@ async function handleFileImport(event: Event): Promise<void> {
     state.stabilityCheck = createIdleStabilityCheck()
     state.stabilityHistory = []
     state.quick478DepthDebug = createIdleQuick478DepthDebug()
+    state.quickSemanticPointSetComparison = null
     setButtons()
     renderEmptyState()
     renderSearchProgress()
@@ -4528,6 +4775,7 @@ function buildDepth478PrototypeFromSource(
     analysis.base8Points2DSummary.points,
     source.candidate,
     source.source8CandidateId,
+    analysis.searchSettings.semanticPointSetId,
     prototypeSettings.interpolation,
     prototypeSettings.groupCorrections,
   )
@@ -4590,6 +4838,7 @@ function runQuick478DepthHardRejectDebug(): void {
       status: "idle",
       message: "capture JSON を読み込んでから実行してください。",
     }
+    state.quickSemanticPointSetComparison = null
     renderQuick478DepthDebug()
     return
   }
@@ -4597,17 +4846,56 @@ function runQuick478DepthHardRejectDebug(): void {
   const startedAt = new Date().toISOString()
   state.quick478DepthDebug = {
     status: "running",
-    message: "478 Depth hardReject debug をバックグラウンドで実行中...",
+    message: "8pt / 12pt / 24pt comparison running...",
     startedAt,
     completedAt: null,
     quickRun: null,
   }
+  state.quickSemanticPointSetComparison = {
+    enabled: true,
+    pointSetIds: [...QUICK_SEMANTIC_POINT_SET_COMPARISON_IDS],
+    activeIndex: 0,
+    primaryPointSetId: QUICK_478_DEPTH_SEMANTIC_POINT_SET_ID,
+    runs: [],
+    primaryAnalysis: null,
+    primaryPrototype: null,
+    primaryRun: null,
+  }
   state.importMessage = null
+  renderQuick478DepthDebug()
+  setButtons()
+  try {
+    startQuickSemanticPointSetComparisonRun()
+  } catch (error) {
+    completeQuick478DepthDebug(
+      "error",
+      error instanceof Error ? error.message : String(error),
+      {
+        failedStep: getQuick478DepthDebugCurrentStepLabel(),
+        stack: error instanceof Error ? error.stack : undefined,
+      },
+    )
+  }
+}
+
+function startQuickSemanticPointSetComparisonRun(): void {
+  const comparison = state.quickSemanticPointSetComparison
+  if (!comparison) {
+    return
+  }
+  const pointSetId = comparison.pointSetIds[comparison.activeIndex]
+  if (!pointSetId) {
+    return
+  }
+  state.quick478DepthDebug = {
+    ...state.quick478DepthDebug,
+    status: "running",
+    message: `8pt / 12pt / 24pt comparison running... ${pointSetId}`,
+  }
   applyQuick478DepthDebugSettingsToControls()
   writeSelectValue("auto-sequence-select", QUICK_478_DEPTH_DEBUG_SETTINGS.autoSearchSequence)
   writeSelectValue("bucket-target-preset-select", QUICK_478_DEPTH_DEBUG_SETTINGS.bucketPreset)
   renderQuick478DepthDebug()
-  setButtons()
   try {
     startAutoSequence(
       findAutoSequence(QUICK_478_DEPTH_DEBUG_SETTINGS.autoSearchSequence),
@@ -4624,6 +4912,14 @@ function runQuick478DepthHardRejectDebug(): void {
       },
     )
   }
+}
+
+function getQuick478ActiveSemanticPointSetId(): SemanticPointSetId {
+  return (
+    state.quickSemanticPointSetComparison?.pointSetIds[
+      state.quickSemanticPointSetComparison.activeIndex
+    ] ?? QUICK_478_DEPTH_DEBUG_SETTINGS.semanticPointSetId
+  )
 }
 
 function applyQuick478DepthDebugSettingsToControls(): void {
@@ -4659,6 +4955,11 @@ function completeQuick478DepthDebug(
   message: string,
   errorDetails?: { failedStep?: string; stack?: string },
 ): void {
+  if (state.quickSemanticPointSetComparison?.enabled) {
+    completeQuickSemanticPointSetComparisonRun(autoStatus, message, errorDetails)
+    return
+  }
+
   const startedAt = state.quick478DepthDebug.startedAt ?? new Date().toISOString()
   const completedAt = new Date().toISOString()
   const analysis = state.analysis
@@ -4739,6 +5040,318 @@ function completeQuick478DepthDebug(
   )
 }
 
+function completeQuickSemanticPointSetComparisonRun(
+  autoStatus: "completed" | "cancelled" | "error",
+  message: string,
+  errorDetails?: { failedStep?: string; stack?: string },
+): void {
+  const comparison = state.quickSemanticPointSetComparison
+  if (!comparison) {
+    return
+  }
+
+  const pointSetId = comparison.pointSetIds[comparison.activeIndex]
+  const analysis = state.analysis
+  const failedStep = errorDetails?.failedStep ?? getQuick478DepthDebugCurrentStepLabel()
+  const runResult = buildQuickSemanticPointSetComparisonRunResult(
+    pointSetId,
+    autoStatus,
+    message,
+    analysis,
+  )
+
+  comparison.runs = [...comparison.runs, runResult.run]
+  if (pointSetId === comparison.primaryPointSetId) {
+    comparison.primaryAnalysis = runResult.analysis
+    comparison.primaryPrototype = runResult.prototype
+    comparison.primaryRun = runResult.run
+    if (runResult.analysis && runResult.prototype) {
+      runResult.analysis.depth478Prototype = runResult.prototype
+    }
+  }
+
+  if (autoStatus === "cancelled") {
+    const comparisonSummary = buildSemanticPointSetComparisonSummary(comparison.runs)
+    const payload = buildQuick478DepthDebugPayload(null, {
+      status: "error",
+      reason: "cancelled",
+      failedStep,
+      stack: errorDetails?.stack,
+      startedAt: state.quick478DepthDebug.startedAt ?? new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+      semanticPointSetComparison: comparisonSummary,
+    })
+    state.quickSemanticPointSetComparison = null
+    finishQuick478DepthDebug(payload)
+    return
+  }
+
+  comparison.activeIndex += 1
+  if (comparison.activeIndex < comparison.pointSetIds.length) {
+    startQuickSemanticPointSetComparisonRun()
+    return
+  }
+
+  const comparisonSummary = buildSemanticPointSetComparisonSummary(comparison.runs)
+  const primaryAnalysis = comparison.primaryAnalysis
+  const primaryPrototype = comparison.primaryPrototype
+  const primaryRun = comparison.primaryRun
+  if (primaryAnalysis) {
+    if (primaryPrototype) {
+      primaryAnalysis.depth478Prototype = primaryPrototype
+    }
+    state.analysis = primaryAnalysis
+  }
+
+  const completedAt = new Date().toISOString()
+  const payload = buildQuick478DepthDebugPayload(primaryPrototype, {
+    status: primaryRun?.quickRunStatus ?? "error",
+    reason: buildQuick478CompletionReason(primaryRun),
+    failedStep: primaryRun?.quickRunStatus === "error" ? failedStep : undefined,
+    stack: errorDetails?.stack,
+    startedAt: state.quick478DepthDebug.startedAt ?? completedAt,
+    completedAt,
+    isRejected: primaryPrototype?.depthRelationDebug?.isRejected,
+    fallbackUsed: primaryRun?.quickRunStatus === "noCandidate" ? false : undefined,
+    analysis: primaryAnalysis ?? undefined,
+    semanticPointSetComparison: comparisonSummary,
+  })
+  state.quickSemanticPointSetComparison = null
+  finishQuick478DepthDebug(payload)
+}
+
+function buildQuickSemanticPointSetComparisonRunResult(
+  pointSetId: SemanticPointSetId,
+  autoStatus: "completed" | "cancelled" | "error",
+  message: string,
+  analysis: AnalysisResult | null,
+): {
+  run: SemanticPointSetComparisonRun
+  analysis: AnalysisResult | null
+  prototype: Depth478PrototypeResult | null
+} {
+  if (!analysis || autoStatus === "cancelled") {
+    return {
+      run: buildSemanticPointSetComparisonRun(pointSetId, "error", null, null),
+      analysis,
+      prototype: null,
+    }
+  }
+
+  if (autoStatus !== "completed") {
+    const status = message.includes("bestCandidate") ? "noCandidate" : "error"
+    return {
+      run: buildSemanticPointSetComparisonRun(pointSetId, status, analysis, null),
+      analysis,
+      prototype: null,
+    }
+  }
+
+  const finalCandidate = analysis.autoSequenceSummary?.finalCandidate ?? null
+  if (!finalCandidate) {
+    return {
+      run: buildSemanticPointSetComparisonRun(pointSetId, "noCandidate", analysis, null),
+      analysis,
+      prototype: null,
+    }
+  }
+
+  const prototype = buildDepth478PrototypeFromSource(
+    analysis,
+    {
+      candidate: cloneCandidate(finalCandidate),
+      source8CandidateId: "autoSequenceSummary.finalCandidate",
+    },
+    createQuick478DepthPrototypeSettings(),
+  )
+  analysis.depth478Prototype = prototype
+  return {
+    run: buildSemanticPointSetComparisonRun(
+      pointSetId,
+      diagnoseQuick478DepthDebugStatus(prototype.depthRelationDebug),
+      analysis,
+      prototype,
+    ),
+    analysis,
+    prototype,
+  }
+}
+
+function buildQuick478CompletionReason(
+  primaryRun: SemanticPointSetComparisonRun | null,
+): string | undefined {
+  if (!primaryRun) {
+    return "primarySemanticPointSetMissing"
+  }
+  if (primaryRun.quickRunStatus === "rejected") {
+    return "depthRelationHardReject"
+  }
+  if (primaryRun.quickRunStatus === "warning") {
+    return "depthRelationMarginWarning"
+  }
+  if (primaryRun.quickRunStatus === "noCandidate") {
+    return "No candidate passed depth relation hardReject"
+  }
+  if (primaryRun.quickRunStatus === "error") {
+    return "semanticPointSetComparisonError"
+  }
+  return undefined
+}
+
+function buildSemanticPointSetComparisonRun(
+  pointSetId: SemanticPointSetId,
+  status: Exclude<Quick478DepthDebugStatus, "idle" | "running">,
+  analysis: AnalysisResult | null,
+  prototype: Depth478PrototypeResult | null,
+): SemanticPointSetComparisonRun {
+  const finalCandidate = analysis?.autoSequenceSummary?.finalCandidate ?? analysis?.bestCandidate ?? null
+  const rotationCenter = finalCandidate ? getCandidateRotationCenter(finalCandidate) : null
+  const relation = prototype?.depthRelationDebug
+  const perLandmark = prototype?.generatedCandidate?.perLandmarkZSearchDebug?.summary
+  const noseTipGroupZ = relation?.groupValues.noseTipGroup?.z ?? null
+  const cheekGroupZ = relation?.groupValues.cheekGroup?.z ?? null
+  const activeSemanticPointIds = getSemanticPointSet(pointSetId).pointIds
+  const candidateIdPointIds = parseCandidateIdSemanticPointIds(finalCandidate?.candidateId)
+  const unexpectedPointIds = candidateIdPointIds.filter(
+    (pointId) => !activeSemanticPointIds.includes(pointId),
+  )
+  return {
+    semanticPointSetId: pointSetId,
+    pointCount: getSemanticPointSet(pointSetId).pointIds.length,
+    quickRunStatus: status,
+    averageProjectionError: prototype?.projectionEvaluation?.averageProjectionError ?? null,
+    maxBucketScore: maxNullable(Object.values(prototype?.projectionEvaluation?.bucketScores ?? {})),
+    rotationCenter: {
+      y: rotationCenter?.y ?? null,
+      z: rotationCenter?.z ?? null,
+    },
+    pivotZ: finalCandidate?.pivotZ ?? null,
+    noseZ: finalCandidate?.zByPointId.nose ?? null,
+    leftCheekZ: finalCandidate?.zByPointId.leftCheek ?? null,
+    rightCheekZ: finalCandidate?.zByPointId.rightCheek ?? null,
+    mouthZ: finalCandidate?.zByPointId.mouth ?? null,
+    noseTipGroupZ,
+    cheekGroupZ,
+    noseCheekDelta:
+      noseTipGroupZ === null || cheekGroupZ === null ? null : round(noseTipGroupZ - cheekGroupZ),
+    depthRelationStatus: getSemanticPointSetComparisonDepthRelationStatus(relation),
+    depthRelationViolationCount: relation?.violationCount ?? null,
+    hardRejectViolationCount: relation?.hardRejectViolationCount ?? null,
+    perLandmarkAverageErrorBefore: perLandmark?.averageErrorBefore ?? null,
+    perLandmarkAverageErrorAfter: perLandmark?.averageErrorAfter ?? null,
+    perLandmarkAverageBestDeltaZ: perLandmark?.averageBestDeltaZ ?? null,
+    sourceCandidateId: prototype?.generatedCandidate?.source8CandidateId ?? null,
+    activeSemanticPointIds: [...activeSemanticPointIds],
+    activeSemanticPointCount: activeSemanticPointIds.length,
+    zByPointIdKeys: [...activeSemanticPointIds],
+    unexpectedPointIds,
+    fitReferencePointSet:
+      prototype?.generatedCandidate?.canonicalDepthBasedDebug?.fitReferencePointSet ?? null,
+    usesOnlyActiveSemanticPointsForScore: true,
+    usesOnlyActiveSemanticPointsForCandidateId: unexpectedPointIds.length === 0,
+  }
+}
+
+function parseCandidateIdSemanticPointIds(candidateId: string | null | undefined): SemanticPointName[] {
+  if (!candidateId) {
+    return []
+  }
+  return SEMANTIC_POINT_NAMES.filter((pointId) => candidateId.includes(`${pointId}:`))
+}
+
+function getSemanticPointSetComparisonDepthRelationStatus(
+  relation: Depth478RelationDebug | undefined,
+): SemanticPointSetComparisonDepthRelationStatus {
+  if (!relation || relation.isRejected) {
+    return "rejected"
+  }
+  return relation.ruleResults.some((rule) => rule.severity === "warning") ? "warning" : "passed"
+}
+
+function buildSemanticPointSetComparisonSummary(
+  runs: SemanticPointSetComparisonRun[],
+): SemanticPointSetComparisonSummary {
+  const recommendation = recommendSemanticPointSet(runs)
+  return {
+    enabled: true,
+    runs,
+    recommendedSemanticPointSetId: recommendation.semanticPointSetId,
+    recommendationReason: recommendation.reason,
+  }
+}
+
+function recommendSemanticPointSet(runs: SemanticPointSetComparisonRun[]): {
+  semanticPointSetId: SemanticPointSetId | null
+  reason: string
+} {
+  const successfulRuns = runs.filter(
+    (run) => run.quickRunStatus === "passed" || run.quickRunStatus === "warning",
+  )
+  if (successfulRuns.length === 0) {
+    return {
+      semanticPointSetId: null,
+      reason: "No semantic point set produced a selectable quick run candidate.",
+    }
+  }
+
+  const passedRuns = successfulRuns.filter((run) => run.depthRelationStatus === "passed")
+  const candidates = passedRuns.length > 0 ? passedRuns : successfulRuns
+  const bestError = minNullable(candidates.map((run) => run.averageProjectionError))
+  const bestMaxBucket = minNullable(candidates.map((run) => run.maxBucketScore))
+  const errorTolerance = Math.max(0.0025, (bestError ?? 0) * 0.1)
+  const maxBucketTolerance = Math.max(0.0025, (bestMaxBucket ?? 0) * 0.1)
+  const stableCandidates = candidates.filter((run) => {
+    const errorOk =
+      bestError === null ||
+      run.averageProjectionError === null ||
+      run.averageProjectionError <= bestError + errorTolerance
+    const bucketOk =
+      bestMaxBucket === null ||
+      run.maxBucketScore === null ||
+      run.maxBucketScore <= bestMaxBucket + maxBucketTolerance
+    return errorOk && bucketOk
+  })
+  const candidatePool = stableCandidates.length > 0 ? stableCandidates : candidates
+  const run12 = candidatePool.find((run) => run.semanticPointSetId === "12pt_rotation_center")
+  const run24 = candidatePool.find((run) => run.semanticPointSetId === "24pt_structure")
+  const run8 = candidatePool.find((run) => run.semanticPointSetId === "8pt_basic")
+
+  if (run24 && run12 && improvesProjectionError(run24, run12)) {
+    return {
+      semanticPointSetId: "24pt_structure",
+      reason:
+        "24pt_structure passed depth relation and improved projection error enough to justify the extra structure points.",
+    }
+  }
+  if (run12) {
+    return {
+      semanticPointSetId: "12pt_rotation_center",
+      reason:
+        "12pt_rotation_center passed depth relation and stayed within projection/max-bucket tolerance; it is preferred when close to 24pt because it has fewer expression-sensitive points.",
+    }
+  }
+  if (run24) {
+    return {
+      semanticPointSetId: "24pt_structure",
+      reason: "24pt_structure is the best selectable run after depth relation and projection checks.",
+    }
+  }
+  return {
+    semanticPointSetId: run8?.semanticPointSetId ?? candidatePool[0]?.semanticPointSetId ?? null,
+    reason: "Only 8pt_basic remained selectable under the comparison rule.",
+  }
+}
+
+function improvesProjectionError(
+  next: SemanticPointSetComparisonRun,
+  baseline: SemanticPointSetComparisonRun,
+): boolean {
+  if (next.averageProjectionError === null || baseline.averageProjectionError === null) {
+    return false
+  }
+  return next.averageProjectionError < baseline.averageProjectionError - Math.max(0.001, baseline.averageProjectionError * 0.05)
+}
+
 function diagnoseQuick478DepthDebugStatus(
   relation: Depth478RelationDebug | undefined,
 ): Quick478DepthDebugSummary["status"] {
@@ -4791,6 +5404,7 @@ function buildQuick478DepthDebugPayload(
     isRejected?: boolean
     fallbackUsed?: boolean
     analysis?: AnalysisResult
+    semanticPointSetComparison?: SemanticPointSetComparisonSummary
   },
 ): Quick478DepthDebugPayload {
   const relation = prototype?.depthRelationDebug
@@ -4848,6 +5462,7 @@ function buildQuick478DepthDebugPayload(
   return {
     quickRun,
     ...(prototype ?? { settings: createQuick478DepthPrototypeSettings() }),
+    semanticPointSetComparison: options.semanticPointSetComparison,
     analysisSummary: options.analysis ? createSummaryAnalysis(options.analysis) : undefined,
   }
 }
@@ -5087,8 +5702,10 @@ function buildBase478Landmarks2D(frames: NormalizedFrame[]): LandmarkPoint[] | n
 function buildDepthAnchors8(
   basePoints: SemanticPointSet2D,
   candidate: FittingCandidate8,
+  semanticPointSetId: SemanticPointSetId,
 ): DepthAnchor8[] {
-  return SEMANTIC_DEFINITIONS.map((definition) => ({
+  const activePointIds = new Set(getSemanticPointSet(semanticPointSetId).pointIds)
+  return SEMANTIC_DEFINITIONS.filter((definition) => activePointIds.has(definition.name)).map((definition) => ({
     id: definition.name,
     label: definition.label,
     x: basePoints[definition.name].x,
@@ -5102,13 +5719,14 @@ function buildGenerated478DepthCandidate(
   base8Points: SemanticPointSet2D,
   sourceCandidate: FittingCandidate8,
   source8CandidateId: string | null,
+  semanticPointSetId: SemanticPointSetId,
   interpolation: DepthInterpolationSettings,
   groupCorrections: DepthGroupCorrection[],
 ): Generated478DepthCandidate {
-  const anchors = buildDepthAnchors8(base8Points, sourceCandidate)
+  const anchors = buildDepthAnchors8(base8Points, sourceCandidate, semanticPointSetId)
   const generated =
     interpolation.method === "canonicalDepthBased"
-      ? buildCanonicalDepthBased478Landmarks(base478, sourceCandidate, interpolation)
+      ? buildCanonicalDepthBased478Landmarks(base478, sourceCandidate, semanticPointSetId, interpolation)
       : {
           landmarks: base478.map((landmark) =>
             interpolateDepth478Landmark(landmark, anchors, interpolation),
@@ -5126,6 +5744,7 @@ function buildGenerated478DepthCandidate(
   return {
     id: `depth478-${Date.now()}`,
     source8CandidateId,
+    sourceSemanticPointSetId: semanticPointSetId,
     generationSettings: {
       interpolation: { ...interpolation },
       groupCorrections: cloneDepthGroupCorrections(groupCorrections),
@@ -5140,6 +5759,7 @@ function buildGenerated478DepthCandidate(
 function buildCanonicalDepthBased478Landmarks(
   base478: LandmarkPoint[],
   sourceCandidate: FittingCandidate8,
+  semanticPointSetId: SemanticPointSetId,
   settings: DepthInterpolationSettings,
 ): {
   landmarks: Generated478DepthCandidate["landmarks"]
@@ -5149,7 +5769,8 @@ function buildCanonicalDepthBased478Landmarks(
   const canonicalByIndex = new Map(
     CANONICAL_FACE_DEPTH_TEMPLATE.canonicalDepth.map((point) => [point.index, point]),
   )
-  const fit = buildCanonicalDepthFit(sourceCandidate, canonicalByIndex)
+  const fitReferencePointSet = resolveCanonicalDepthFitReferencePointSet(semanticPointSetId)
+  const fit = buildCanonicalDepthFit(sourceCandidate, canonicalByIndex, fitReferencePointSet)
   const landmarks = base478.map((landmark) => {
     const canonical = canonicalByIndex.get(landmark.index)
     if (canonical) {
@@ -5192,7 +5813,7 @@ function buildCanonicalDepthBased478Landmarks(
     canonicalDepthBasedDebug: {
       templateFile: CANONICAL_FACE_DEPTH_TEMPLATE_FILE,
       templateSchemaVersion: CANONICAL_FACE_DEPTH_TEMPLATE.schemaVersion,
-      fitReferencePointSet: "8pt_compatible",
+      fitReferencePointSet,
       comparisonLandmarkCount: CANONICAL_FACE_DEPTH_TEMPLATE.comparisonLandmarkIndices.length,
       excludedLandmarkIndices: [...CANONICAL_FACE_DEPTH_TEMPLATE.excludedLandmarkIndices],
       fit: {
@@ -5225,29 +5846,29 @@ function validateCanonicalDepthTemplate(template: CanonicalFaceDepthTemplateV1):
 function buildCanonicalDepthFit(
   sourceCandidate: FittingCandidate8,
   canonicalByIndex: Map<number, CanonicalDepthTemplatePoint>,
+  fitReferencePointSet: CanonicalDepthFitReferencePointSetId,
 ): {
   scale: number
   offset: number
   referencePoints: CanonicalDepthFitReferencePoint[]
 } {
-  const references = [
-    buildCanonicalFitReference("nose", 4, sourceCandidate.zByPointId.nose, canonicalByIndex),
-    buildCanonicalFitReference(
-      "leftCheek",
-      234,
-      sourceCandidate.zByPointId.leftCheek,
-      canonicalByIndex,
-    ),
-    buildCanonicalFitReference(
-      "rightCheek",
-      454,
-      sourceCandidate.zByPointId.rightCheek,
-      canonicalByIndex,
-    ),
-    buildCanonicalFitReference("mouth", [13, 14], sourceCandidate.zByPointId.mouth, canonicalByIndex),
-    buildCanonicalFitReference("chin", 152, sourceCandidate.zByPointId.chin, canonicalByIndex),
-    buildCanonicalFitReference("headTop", 10, sourceCandidate.zByPointId.headTop, canonicalByIndex),
-  ]
+  const references = getCanonicalDepthFitReferencePointIds(fitReferencePointSet).flatMap((pointId) => {
+    const definition = SEMANTIC_DEFINITIONS.find((item) => item.name === pointId)
+    if (!definition) {
+      throw new Error(`semantic point definition not found: ${pointId}`)
+    }
+    const landmarkIndices = getCanonicalFitReferenceIndices(definition)
+    return landmarkIndices.length === 0
+      ? []
+      : [
+          buildCanonicalFitReference(
+            pointId,
+            landmarkIndices,
+            sourceCandidate.zByPointId[pointId],
+            canonicalByIndex,
+          ),
+        ]
+  })
   const canonicalMean = average(references.map((point) => point.canonicalZ)) ?? 0
   const targetMean = average(references.map((point) => point.targetZ)) ?? 0
   const variance = references.reduce(
@@ -5297,6 +5918,36 @@ function buildCanonicalFitReference(
     canonicalZ: average(canonicalValues) ?? 0,
     targetZ,
   }
+}
+
+function resolveCanonicalDepthFitReferencePointSet(
+  semanticPointSetId: SemanticPointSetId,
+): CanonicalDepthFitReferencePointSetId {
+  return semanticPointSetId === "24pt_structure" ? "24pt_structure" : "8pt_compatible"
+}
+
+function getCanonicalDepthFitReferencePointIds(
+  fitReferencePointSet: CanonicalDepthFitReferencePointSetId,
+): SemanticPointName[] {
+  if (fitReferencePointSet === "24pt_structure") {
+    return STRUCTURE_24_SEMANTIC_POINT_NAMES
+  }
+  if (fitReferencePointSet === "12pt_rotation_center") {
+    return ROTATION_CENTER_12_SEMANTIC_POINT_NAMES
+  }
+  return BASIC_8_SEMANTIC_POINT_NAMES
+}
+
+function getCanonicalFitReferenceIndices(definition: SemanticDefinition): number[] {
+  const primary = definition.primaryIndices.filter(
+    (index) => index < CANONICAL_COMPARISON_LANDMARK_COUNT,
+  )
+  if (primary.length > 0) {
+    return primary
+  }
+  return (definition.fallbackIndices ?? []).filter(
+    (index) => index < CANONICAL_COMPARISON_LANDMARK_COUNT,
+  )
 }
 
 function buildCanonicalDeviationDebug(
@@ -5544,6 +6195,9 @@ function applyPerLandmarkZSearch(
     ]
   })
   const targetIndices = buildPerLandmarkZSearchTargetIndices(candidate.landmarks, settings)
+  const semanticAnchorLandmarkIndices = buildSemanticAnchorLandmarkIndices(
+    searchSettings.semanticPointSetId,
+  )
   const optimizedByIndex = new Map<number, number>()
   const rows: PerLandmarkZSearchDebugRow[] = []
 
@@ -5552,7 +6206,7 @@ function applyPerLandmarkZSearch(
     if (!landmark) {
       continue
     }
-    const isAnchor = SEMANTIC_ANCHOR_LANDMARK_INDICES.has(index)
+    const isAnchor = semanticAnchorLandmarkIndices.has(index)
     const range = isAnchor ? settings.anchorZRange : settings.zRange
     const step = isAnchor ? settings.anchorZStep : settings.zStep
     const baseZ = landmark.z
@@ -5649,6 +6303,15 @@ function buildPerLandmarkZSearchTargetIndices(
     .map((landmark) => landmark.index)
     .filter((index) => settings.targetIndices === "all478" || index < CANONICAL_COMPARISON_LANDMARK_COUNT)
     .sort((a, b) => a - b)
+}
+
+function buildSemanticAnchorLandmarkIndices(pointSetId: SemanticPointSetId): Set<number> {
+  const activePointIds = new Set(getSemanticPointSet(pointSetId).pointIds)
+  return new Set(
+    SEMANTIC_DEFINITIONS.filter((definition) => activePointIds.has(definition.name)).flatMap(
+      (definition) => [...definition.primaryIndices, ...(definition.fallbackIndices ?? [])],
+    ),
+  )
 }
 
 function evaluateProjectionErrorForSingleLandmarkZ(
@@ -6521,10 +7184,11 @@ function createQuick478DepthDebugSearchSettings(
   preset: SearchPresetDefinition,
 ): SearchSettings {
   const bucketPreset = findBucketTargetPreset(QUICK_478_DEPTH_DEBUG_SETTINGS.bucketPreset)
+  const semanticPointSetId = getQuick478ActiveSemanticPointSetId()
   return applyBucketTargetPresetToSettings(
     {
       ...DEFAULT_SETTINGS,
-      semanticPointSetId: QUICK_478_DEPTH_DEBUG_SETTINGS.semanticPointSetId,
+      semanticPointSetId,
       searchMode: preset.searchMode,
       objectiveMode: preset.objectiveMode ?? DEFAULT_SETTINGS.objectiveMode,
       outlierFiltering: buildOutlierFilteringSettings({
@@ -6548,7 +7212,7 @@ function createQuick478DepthDebugSearchSettings(
         coordinateDescentIterations: preset.coordinateDescentIterations,
         coordinateDescentParameterOrder: expandParameterOrderForSemanticPointSet(
           preset.coordinateDescentParameterOrder ?? DEFAULT_COORDINATE_DESCENT_PARAMETER_ORDER,
-          QUICK_478_DEPTH_DEBUG_SETTINGS.semanticPointSetId,
+          semanticPointSetId,
         ),
         coordinateDescentRanges: cloneLocalSearchRanges(preset.coordinateDescentRanges),
       },
@@ -9290,6 +9954,7 @@ function renderQuick478DepthDebug(): void {
 
 function buildQuick478DepthDebugProgressMessage(): string {
   const auto = state.autoSequence
+  const comparison = state.quickSemanticPointSetComparison
   const sequence = auto.definition
   const stepCount = sequence?.steps.length ?? 0
   const currentStep = stepCount > 0 ? Math.min(auto.currentStepIndex + 1, stepCount) : 0
@@ -9297,10 +9962,13 @@ function buildQuick478DepthDebugProgressMessage(): string {
   const preset = presetId ? findSearchPreset(presetId) : null
   const progress = state.searchProgress
   const percent = formatPercent(progress.progressRate)
+  const label = comparison
+    ? `8pt / 12pt / 24pt comparison running... ${comparison.pointSetIds[comparison.activeIndex] ?? "-"}`
+    : "478 Depth hardReject debug をバックグラウンドで実行中..."
   if (auto.status === "running" && preset) {
-    return `478 Depth hardReject debug をバックグラウンドで実行中... step ${currentStep}/${stepCount}: ${preset.label} / ${percent}%`
+    return `${label} step ${currentStep}/${stepCount}: ${preset.label} / ${percent}%`
   }
-  return `478 Depth hardReject debug をバックグラウンドで実行中... ${percent}%`
+  return `${label} ${percent}%`
 }
 
 function renderQuick478DepthDebugProgress(): string {
@@ -10081,6 +10749,11 @@ function median(values: number[]): number | null {
 
 function averageNullable(values: Array<number | null>): number | null {
   return average(values.filter((value): value is number => typeof value === "number"))
+}
+
+function minNullable(values: Array<number | null>): number | null {
+  const finite = values.filter((value): value is number => typeof value === "number" && Number.isFinite(value))
+  return finite.length === 0 ? null : Math.min(...finite)
 }
 
 function maxNullable(values: Array<number | null>): number | null {

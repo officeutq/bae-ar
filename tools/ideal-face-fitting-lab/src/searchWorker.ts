@@ -20,9 +20,21 @@ type SemanticPointName =
   | "leftJaw"
   | "rightJaw"
   | "upperFaceCenter"
+  | "leftNoseSide"
+  | "rightNoseSide"
+  | "leftEyeOuter"
+  | "rightEyeOuter"
+  | "leftEyeInner"
+  | "rightEyeInner"
+  | "leftTemple"
+  | "rightTemple"
+  | "leftMouthCorner"
+  | "rightMouthCorner"
+  | "lowerJawLeft"
+  | "lowerJawRight"
 
 type SemanticPointId = SemanticPointName
-type SemanticPointSetId = "8pt_basic" | "12pt_rotation_center"
+type SemanticPointSetId = "8pt_basic" | "12pt_rotation_center" | "24pt_structure"
 type DepthRelationAggregation = "mean" | "median"
 type DepthRelationMode = "off" | "debugOnly" | "penalty" | "hardReject"
 type DepthRelationKind = "inFrontOf" | "behind" | "near"
@@ -430,6 +442,18 @@ const SEMANTIC_POINT_NAMES: SemanticPointName[] = [
   "leftJaw",
   "rightJaw",
   "upperFaceCenter",
+  "leftNoseSide",
+  "rightNoseSide",
+  "leftEyeOuter",
+  "rightEyeOuter",
+  "leftEyeInner",
+  "rightEyeInner",
+  "leftTemple",
+  "rightTemple",
+  "leftMouthCorner",
+  "rightMouthCorner",
+  "lowerJawLeft",
+  "lowerJawRight",
 ]
 
 const BASIC_8_SEMANTIC_POINT_NAMES: SemanticPointName[] = [
@@ -451,6 +475,22 @@ const ROTATION_CENTER_12_SEMANTIC_POINT_NAMES: SemanticPointName[] = [
   "upperFaceCenter",
 ]
 
+const STRUCTURE_24_SEMANTIC_POINT_NAMES: SemanticPointName[] = [
+  ...ROTATION_CENTER_12_SEMANTIC_POINT_NAMES,
+  "leftNoseSide",
+  "rightNoseSide",
+  "leftEyeOuter",
+  "rightEyeOuter",
+  "leftEyeInner",
+  "rightEyeInner",
+  "leftTemple",
+  "rightTemple",
+  "leftMouthCorner",
+  "rightMouthCorner",
+  "lowerJawLeft",
+  "lowerJawRight",
+]
+
 const SCORE_WEIGHTS: Record<SemanticPointName, number> = {
   headTop: 0.75,
   chin: 1,
@@ -464,6 +504,46 @@ const SCORE_WEIGHTS: Record<SemanticPointName, number> = {
   leftJaw: 1.15,
   rightJaw: 1.15,
   upperFaceCenter: 1.15,
+  leftNoseSide: 1.15,
+  rightNoseSide: 1.15,
+  leftEyeOuter: 1.15,
+  rightEyeOuter: 1.15,
+  leftEyeInner: 1.15,
+  rightEyeInner: 1.15,
+  leftTemple: 1.15,
+  rightTemple: 1.15,
+  leftMouthCorner: 0.65,
+  rightMouthCorner: 0.65,
+  lowerJawLeft: 1.15,
+  lowerJawRight: 1.15,
+}
+
+const STRUCTURE_24_SCORE_WEIGHTS: Record<SemanticPointName, number> = {
+  ...SCORE_WEIGHTS,
+  headTop: 1.15,
+  chin: 1.7,
+  leftCheek: 1.7,
+  rightCheek: 1.7,
+  leftEye: 1.15,
+  rightEye: 1.15,
+  nose: 1.7,
+  mouth: 0.65,
+  noseBridge: 1.7,
+  leftJaw: 1.15,
+  rightJaw: 1.15,
+  upperFaceCenter: 1.15,
+  leftNoseSide: 1.15,
+  rightNoseSide: 1.15,
+  leftEyeOuter: 1.15,
+  rightEyeOuter: 1.15,
+  leftEyeInner: 1.15,
+  rightEyeInner: 1.15,
+  leftTemple: 1.15,
+  rightTemple: 1.15,
+  leftMouthCorner: 0.65,
+  rightMouthCorner: 0.65,
+  lowerJawLeft: 1.15,
+  lowerJawRight: 1.15,
 }
 
 function completeSemanticZ(
@@ -490,13 +570,32 @@ function completeSemanticZ(
     leftJaw: round(zByPointId.leftJaw ?? (chin + leftCheek) / 2),
     rightJaw: round(zByPointId.rightJaw ?? (chin + rightCheek) / 2),
     upperFaceCenter: round(zByPointId.upperFaceCenter ?? (headTop + noseBridge) / 2),
+    leftNoseSide: round(zByPointId.leftNoseSide ?? (nose + leftCheek) / 2),
+    rightNoseSide: round(zByPointId.rightNoseSide ?? (nose + rightCheek) / 2),
+    leftEyeOuter: round(zByPointId.leftEyeOuter ?? leftEye),
+    rightEyeOuter: round(zByPointId.rightEyeOuter ?? rightEye),
+    leftEyeInner: round(zByPointId.leftEyeInner ?? leftEye),
+    rightEyeInner: round(zByPointId.rightEyeInner ?? rightEye),
+    leftTemple: round(zByPointId.leftTemple ?? (headTop + leftCheek) / 2),
+    rightTemple: round(zByPointId.rightTemple ?? (headTop + rightCheek) / 2),
+    leftMouthCorner: round(zByPointId.leftMouthCorner ?? zByPointId.mouth ?? 0),
+    rightMouthCorner: round(zByPointId.rightMouthCorner ?? zByPointId.mouth ?? 0),
+    lowerJawLeft: round(zByPointId.lowerJawLeft ?? (chin + leftCheek) / 2),
+    lowerJawRight: round(zByPointId.lowerJawRight ?? (chin + rightCheek) / 2),
   }
 }
 
 function getSemanticPointNames(pointSetId: SemanticPointSetId): SemanticPointName[] {
+  if (pointSetId === "24pt_structure") {
+    return STRUCTURE_24_SEMANTIC_POINT_NAMES
+  }
   return pointSetId === "12pt_rotation_center"
     ? ROTATION_CENTER_12_SEMANTIC_POINT_NAMES
     : BASIC_8_SEMANTIC_POINT_NAMES
+}
+
+function getScoreWeights(pointSetId: SemanticPointSetId): Record<SemanticPointName, number> {
+  return pointSetId === "24pt_structure" ? STRUCTURE_24_SCORE_WEIGHTS : SCORE_WEIGHTS
 }
 
 const DEFAULT_OUTLIER_FILTERING_SETTINGS: OutlierFilteringSettings = {
@@ -640,7 +739,8 @@ async function runSearch(message: WorkerStartMessage): Promise<void> {
       for (const warning of result.warnings) {
         warnings.add(warning)
       }
-      insertRawTopResult(rawTopResults, result, message.settings.topN)
+      const activeSemanticPointNames = getSemanticPointNames(message.settings.semanticPointSetId)
+      insertRawTopResult(rawTopResults, result, message.settings.topN, activeSemanticPointNames)
       if (isDepthRelationRejected(result)) {
         rejectedCandidateCount += 1
         if (result.depthRelationDebug) {
@@ -653,8 +753,19 @@ async function runSearch(message: WorkerStartMessage): Promise<void> {
           }
         }
       } else {
-        insertTopResult(topResults, result, message.settings.topN, message.settings.objectiveMode)
-        insertBucketTopResults(bucketTopResults, result, message.settings.topN)
+        insertTopResult(
+          topResults,
+          result,
+          message.settings.topN,
+          message.settings.objectiveMode,
+          activeSemanticPointNames,
+        )
+        insertBucketTopResults(
+          bucketTopResults,
+          result,
+          message.settings.topN,
+          activeSemanticPointNames,
+        )
       }
       candidateSource.afterEvaluate(result)
 
@@ -813,7 +924,11 @@ function createLocalOneDimensionalCandidateSource(settings: SearchSettings): Can
         value,
       )
       valueIndex += 1
-      return createCandidateDefinitionFromCandidate(nextIndex++, candidate)
+      return createCandidateDefinitionFromCandidate(
+        nextIndex++,
+        candidate,
+        getSemanticPointNames(settings.semanticPointSetId),
+      )
     },
     afterEvaluate: (result) => {
       if (!isSelectableCandidate(result)) {
@@ -943,7 +1058,11 @@ function createCoordinateDescentCandidateSource(settings: SearchSettings): Candi
         return null
       }
       const candidate = setCandidateParameter(currentCandidate, activeStep.parameter, value)
-      return createCandidateDefinitionFromCandidate(nextIndex++, candidate)
+      return createCandidateDefinitionFromCandidate(
+        nextIndex++,
+        candidate,
+        getSemanticPointNames(settings.semanticPointSetId),
+      )
     },
     afterEvaluate: (result) => {
       if (!activeStep) {
@@ -984,7 +1103,7 @@ function createCandidateFromIndices(
   const completedZByPointId = completeSemanticZ(zByPointId)
   const pivotZ = pivotZCandidates[pivotIndex]
   return {
-    candidateId: createCandidateId(index, completedZByPointId, pivotZ),
+    candidateId: createCandidateId(index, completedZByPointId, pivotZ, semanticPointNames),
     zByPointId: completedZByPointId,
     pivotZ,
   }
@@ -993,9 +1112,10 @@ function createCandidateFromIndices(
 function createCandidateDefinitionFromCandidate(
   index: number,
   candidate: FittingCandidate8,
+  semanticPointNames: SemanticPointName[],
 ): CandidateDefinition {
   const definition: CandidateDefinition = {
-    candidateId: createCandidateId(index, candidate.zByPointId, candidate.pivotZ),
+    candidateId: createCandidateId(index, candidate.zByPointId, candidate.pivotZ, semanticPointNames),
     zByPointId: completeSemanticZ(candidate.zByPointId),
     pivotZ: candidate.pivotZ,
   }
@@ -1030,9 +1150,10 @@ function insertTopResult(
   next: CandidateResult,
   limit: number,
   objectiveMode: ObjectiveMode,
+  semanticPointNames: SemanticPointName[],
 ): void {
-  const nextKey = buildCandidateKey(next)
-  const existingIndex = results.findIndex((result) => buildCandidateKey(result) === nextKey)
+  const nextKey = buildCandidateKey(next, semanticPointNames)
+  const existingIndex = results.findIndex((result) => buildCandidateKey(result, semanticPointNames) === nextKey)
   if (existingIndex >= 0) {
     if (isBetterObjectiveResult(next, results[existingIndex], objectiveMode)) {
       results[existingIndex] = next
@@ -1052,8 +1173,15 @@ function insertRawTopResult(
   results: CandidateResult[],
   next: CandidateResult,
   limit: number,
+  semanticPointNames: SemanticPointName[],
 ): void {
-  insertResultByScore(results, next, limit, (candidate) => candidate.objectiveScoreBeforeDepthFilter)
+  insertResultByScore(
+    results,
+    next,
+    limit,
+    (candidate) => candidate.objectiveScoreBeforeDepthFilter,
+    semanticPointNames,
+  )
 }
 
 function insertResultByScore(
@@ -1061,9 +1189,10 @@ function insertResultByScore(
   next: CandidateResult,
   limit: number,
   score: (candidate: CandidateResult) => number,
+  semanticPointNames: SemanticPointName[],
 ): void {
-  const nextKey = buildCandidateKey(next)
-  const existingIndex = results.findIndex((result) => buildCandidateKey(result) === nextKey)
+  const nextKey = buildCandidateKey(next, semanticPointNames)
+  const existingIndex = results.findIndex((result) => buildCandidateKey(result, semanticPointNames) === nextKey)
   if (existingIndex >= 0) {
     if (score(next) < score(results[existingIndex])) {
       results[existingIndex] = next
@@ -1101,6 +1230,7 @@ function insertBucketTopResults(
   bucketResults: Record<CaptureBucket, CandidateResult[]>,
   next: CandidateResult,
   limit: number,
+  semanticPointNames: SemanticPointName[],
 ): void {
   for (const bucket of BUCKETS) {
     const bucketScore = scoreForBucket(next, bucket)
@@ -1108,8 +1238,8 @@ function insertBucketTopResults(
       continue
     }
     const results = bucketResults[bucket]
-    const nextKey = buildCandidateKey(next)
-    const existingIndex = results.findIndex((result) => buildCandidateKey(result) === nextKey)
+    const nextKey = buildCandidateKey(next, semanticPointNames)
+    const existingIndex = results.findIndex((result) => buildCandidateKey(result, semanticPointNames) === nextKey)
     if (existingIndex >= 0) {
       const existingScore = scoreForBucket(results[existingIndex], bucket) ?? Infinity
       if (bucketScore < existingScore) {
@@ -1221,10 +1351,11 @@ function evaluateCandidateOnFrame(
   const perPointError = calculatePerPointErrors(projected, current, semanticPointNames)
   const averageSemanticDistance =
     average(semanticPointNames.map((name) => perPointError[name])) ?? Number.POSITIVE_INFINITY
+  const scoreWeights = getScoreWeights(settings.semanticPointSetId)
   const weightedSemanticDistance = weightedAverage(
     semanticPointNames.map((name) => ({
       value: perPointError[name],
-      weight: SCORE_WEIGHTS[name],
+      weight: scoreWeights[name],
     })),
   )
 
@@ -2142,21 +2273,25 @@ function createCandidateId(
   index: number,
   zByPointId: Record<SemanticPointName, number>,
   pivotZ: number,
+  semanticPointNames: SemanticPointName[],
 ): string {
-  const zLabel = SEMANTIC_POINT_NAMES.map(
+  const zLabel = semanticPointNames.map(
     (name) => `${name}:${formatCompactNumber(zByPointId[name])}`,
   ).join(",")
   return `candidate_${String(index).padStart(5, "0")}__pivot:${formatCompactNumber(pivotZ)}__${zLabel}`
 }
 
-function buildCandidateKey(candidate: FittingCandidate8): string {
+function buildCandidateKey(
+  candidate: FittingCandidate8,
+  semanticPointNames: SemanticPointName[],
+): string {
   const rotationCenter = getCandidateRotationCenter(candidate)
   return [
     `pivotZ:${formatCandidateNumber(candidate.pivotZ)}`,
     `rotationCenter.x:${formatCandidateNumber(rotationCenter.x)}`,
     `rotationCenter.y:${formatCandidateNumber(rotationCenter.y)}`,
     `rotationCenter.z:${formatCandidateNumber(rotationCenter.z)}`,
-    ...SEMANTIC_POINT_NAMES.map(
+    ...semanticPointNames.map(
       (name) => `${name}:${formatCandidateNumber(candidate.zByPointId[name])}`,
     ),
   ].join("|")
