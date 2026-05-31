@@ -1004,6 +1004,8 @@ interface Quick478DepthDebugSummary {
   schemaVersion: "ideal_face_fitting_depth478_quick_debug_v1"
   status: Exclude<Quick478DepthDebugStatus, "idle" | "running">
   reason?: string
+  failedStep?: string
+  stack?: string
   startedAt: string
   completedAt: string
   settings: {
@@ -4215,6 +4217,10 @@ function runQuick478DepthHardRejectDebug(): void {
     completeQuick478DepthDebug(
       "error",
       error instanceof Error ? error.message : String(error),
+      {
+        failedStep: getQuick478DepthDebugCurrentStepLabel(),
+        stack: error instanceof Error ? error.stack : undefined,
+      },
     )
   }
 }
@@ -4230,16 +4236,20 @@ function createQuick478DepthPrototypeSettings(): Depth478PrototypeResult["settin
 function completeQuick478DepthDebug(
   autoStatus: "completed" | "cancelled" | "error",
   message: string,
+  errorDetails?: { failedStep?: string; stack?: string },
 ): void {
   const startedAt = state.quick478DepthDebug.startedAt ?? new Date().toISOString()
   const completedAt = new Date().toISOString()
   const analysis = state.analysis
+  const failedStep = errorDetails?.failedStep ?? getQuick478DepthDebugCurrentStepLabel()
 
   if (!analysis || autoStatus === "cancelled") {
     finishQuick478DepthDebug(
       buildQuick478DepthDebugPayload(null, {
         status: "error",
         reason: autoStatus === "cancelled" ? "cancelled" : message,
+        failedStep,
+        stack: errorDetails?.stack,
         startedAt,
         completedAt,
       }),
@@ -4253,6 +4263,8 @@ function completeQuick478DepthDebug(
       buildQuick478DepthDebugPayload(null, {
         status: noCandidate ? "noCandidate" : "error",
         reason: noCandidate ? "No candidate passed depth relation hardReject" : message,
+        failedStep: noCandidate ? undefined : failedStep,
+        stack: errorDetails?.stack,
         startedAt,
         completedAt,
         fallbackUsed: noCandidate ? false : undefined,
@@ -4301,6 +4313,17 @@ function completeQuick478DepthDebug(
   )
 }
 
+function getQuick478DepthDebugCurrentStepLabel(): string | undefined {
+  const sequence = state.autoSequence.definition
+  if (!sequence) {
+    return "startAutoSequence"
+  }
+  const stepIndex = state.autoSequence.currentStepIndex
+  const stepPresetId = sequence.steps[stepIndex]
+  const step = stepPresetId ? findSearchPreset(stepPresetId) : null
+  return step ? `${sequence.label} step ${stepIndex + 1}: ${step.label}` : sequence.label
+}
+
 function finishQuick478DepthDebug(payload: Quick478DepthDebugPayload): void {
   state.quick478DepthDebug = {
     status: payload.quickRun.status,
@@ -4323,6 +4346,8 @@ function buildQuick478DepthDebugPayload(
   options: {
     status: Quick478DepthDebugSummary["status"]
     reason?: string
+    failedStep?: string
+    stack?: string
     startedAt: string
     completedAt: string
     isRejected?: boolean
@@ -4338,6 +4363,8 @@ function buildQuick478DepthDebugPayload(
     schemaVersion: "ideal_face_fitting_depth478_quick_debug_v1",
     status: options.status,
     reason: options.reason,
+    failedStep: options.failedStep,
+    stack: options.stack,
     startedAt: options.startedAt,
     completedAt: options.completedAt,
     settings: {
@@ -5160,26 +5187,16 @@ function readSettings(): SearchSettings {
 }
 
 function readOutlierFilteringSettings(): OutlierFilteringSettings {
-  return {
+  return buildOutlierFilteringSettings({
     enabled: getElement<HTMLSelectElement>("outlier-enabled-select").value === "true",
     mode: readOutlierFilteringMode(getElement<HTMLSelectElement>("outlier-mode-select").value),
-    perBucketMaxOutliers: Math.max(
-      0,
-      Math.round(
-        readNumber(
-          "outlier-per-bucket-max-input",
-          DEFAULT_OUTLIER_FILTERING_SETTINGS.perBucketMaxOutliers,
-        ),
-      ),
+    perBucketMaxOutliers: readNumber(
+      "outlier-per-bucket-max-input",
+      DEFAULT_OUTLIER_FILTERING_SETTINGS.perBucketMaxOutliers,
     ),
-    minBucketSampleCount: Math.max(
-      1,
-      Math.round(
-        readNumber(
-          "outlier-min-bucket-sample-count-input",
-          DEFAULT_OUTLIER_FILTERING_SETTINGS.minBucketSampleCount,
-        ),
-      ),
+    minBucketSampleCount: readNumber(
+      "outlier-min-bucket-sample-count-input",
+      DEFAULT_OUTLIER_FILTERING_SETTINGS.minBucketSampleCount,
     ),
     method: readOutlierFilteringMethod(getElement<HTMLSelectElement>("outlier-method-select").value),
     medianMultiplier: readNumber(
@@ -5202,6 +5219,25 @@ function readOutlierFilteringSettings(): OutlierFilteringSettings {
     ),
     applyToObjectiveScore:
       getElement<HTMLSelectElement>("outlier-apply-to-objective-select").value === "true",
+  })
+}
+
+function buildOutlierFilteringSettings(
+  source?: Partial<OutlierFilteringSettings>,
+): OutlierFilteringSettings {
+  const merged = {
+    ...DEFAULT_OUTLIER_FILTERING_SETTINGS,
+    ...(source ?? {}),
+  }
+  return {
+    ...merged,
+    enabled: Boolean(merged.enabled),
+    mode: readOutlierFilteringMode(merged.mode),
+    perBucketMaxOutliers: Math.max(0, Math.round(merged.perBucketMaxOutliers)),
+    minBucketSampleCount: Math.max(1, Math.round(merged.minBucketSampleCount)),
+    method: readOutlierFilteringMethod(merged.method),
+    topWorstPercent: Math.max(0, Math.min(100, merged.topWorstPercent)),
+    applyToObjectiveScore: Boolean(merged.applyToObjectiveScore),
   }
 }
 
@@ -5525,7 +5561,7 @@ function createQuick478DepthDebugSearchSettings(
       ...DEFAULT_SETTINGS,
       searchMode: preset.searchMode,
       objectiveMode: preset.objectiveMode ?? DEFAULT_SETTINGS.objectiveMode,
-      outlierFiltering: normalizeOutlierFilteringSettings({
+      outlierFiltering: buildOutlierFilteringSettings({
         ...DEFAULT_OUTLIER_FILTERING_SETTINGS,
         ...QUICK_478_DEPTH_DEBUG_SETTINGS.outlierFiltering,
       }),
