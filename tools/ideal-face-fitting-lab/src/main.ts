@@ -2370,13 +2370,13 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
                 <option value="true">true</option>
               </select>
             </label>
-            <label>Depth Relation Filtering enabled
+            <label>Depth Relation Filtering enabled（奥行き関係フィルタリング有効）
               <select id="depth-relation-enabled-select">
                 <option value="true" selected>true</option>
                 <option value="false">false</option>
               </select>
             </label>
-            <label>Depth Relation mode
+            <label>Depth Relation mode（奥行き関係モード）
               <select id="depth-relation-mode-select">
                 <option value="off">off</option>
                 <option value="debugOnly" selected>debugOnly</option>
@@ -2384,16 +2384,16 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
                 <option value="hardReject">hardReject</option>
               </select>
             </label>
-            <label>Depth Relation applyToObjectiveScore
+            <label>Depth Relation applyToObjectiveScore（ペナルティを最適化スコアへ反映）
               <select id="depth-relation-apply-to-objective-select">
                 <option value="false" selected>false</option>
                 <option value="true">true</option>
               </select>
             </label>
-            <label>Depth Relation penaltyScale
+            <label>Depth Relation penaltyScale（奥行き違反ペナルティ倍率）
               <input id="depth-relation-penalty-scale-input" type="number" min="0" max="10" step="0.1" value="${DEFAULT_DEPTH_RELATION_FILTERING_SETTINGS.penaltyScale}" />
             </label>
-            <label>Depth Relation maxPenalty
+            <label>Depth Relation maxPenalty（奥行き違反ペナルティ上限）
               <input id="depth-relation-max-penalty-input" type="number" min="0" max="1" step="0.001" value="${DEFAULT_DEPTH_RELATION_FILTERING_SETTINGS.maxPenalty}" />
             </label>
             <label>localTargetParameter
@@ -2534,24 +2534,24 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
           <h2>478 Depth Prototype（478点奥行き試作）</h2>
           <p class="panel-help">8点候補を depth anchors として使い、478 landmarks の z を補間して評価する debug prototype です。最終 asset export ではありません。</p>
           <div class="controls">
-            <label>candidate source（候補ソース）
+            <label>candidate source（478点生成に使う8点候補）
               <select id="depth-478-source-select">
                 <option value="autoSequenceFinalCandidate" selected>Use Auto Sequence Final Candidate（自動探索の最終候補を使う）</option>
                 <option value="bestCandidate">Use Best Candidate（最良候補を使う）</option>
               </select>
             </label>
-            <label>Interpolation method（補間方法）
+            <label>Interpolation method（8点から478点への奥行き補間方法）
               <select id="depth-478-method-select">
                 <option value="inverseDistanceWeighting" selected>inverseDistanceWeighting</option>
               </select>
             </label>
-            <label>epsilon（ゼロ除算回避値）
+            <label>epsilon（距離ゼロ除算を避ける微小値）
               <input id="depth-478-epsilon-input" type="number" min="0.000001" max="1" step="0.0001" value="${DEFAULT_DEPTH_478_INTERPOLATION_SETTINGS.epsilon}" />
             </label>
-            <label>power（距離減衰の強さ）
+            <label>power（近い anchor をどれだけ強く効かせるか）
               <input id="depth-478-power-input" type="number" min="0.1" max="8" step="0.1" value="${DEFAULT_DEPTH_478_INTERPOLATION_SETTINGS.power}" />
             </label>
-            <label>clampZ（zを範囲内に制限）
+            <label>clampZ（補間後 z を zMin / zMax に制限）
               <select id="depth-478-clamp-z-select">
                 <option value="true" selected>true</option>
                 <option value="false">false</option>
@@ -2563,7 +2563,7 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
             <label>zMax（z最大値）
               <input id="depth-478-z-max-input" type="number" min="-3" max="3" step="0.005" value="${DEFAULT_DEPTH_478_INTERPOLATION_SETTINGS.zMax}" />
             </label>
-            <label>smoothnessThreshold（滑らかさしきい値）
+            <label>smoothnessThreshold（近傍 z 差の警告しきい値）
               <input id="depth-478-smoothness-threshold-input" type="number" min="0" max="1" step="0.001" value="${DEFAULT_DEPTH_478_SMOOTHNESS_THRESHOLD}" />
             </label>
           </div>
@@ -6583,13 +6583,16 @@ function renderResultSummary(analysis: AnalysisResult): string {
     ["autoSequenceName", autoSummary?.sequenceName ?? "-"],
     ["autoSequenceStatus", autoSummary?.status ?? "-"],
     ["autoSequenceFinalObjectiveScore", formatNumber(autoSummary?.finalObjectiveScore)],
-    ["depthRelationMode", analysis.depthRelationFiltering.mode],
-    ["depthRelationEnabled", String(analysis.depthRelationFiltering.enabled)],
-    ["depthRelationApplyToObjectiveScore", String(analysis.depthRelationFiltering.applyToObjectiveScore)],
-    ["depthRelationRuleCount", String(analysis.depthRelationFiltering.ruleCount)],
-    ["depth rejectedCandidates", String(analysis.depthRelationDebug?.rejectedCandidateCount ?? 0)],
+    ["depthRelationMode（奥行き関係モード）", analysis.depthRelationFiltering.mode],
+    ["depthRelationEnabled（奥行き関係フィルタ有効）", String(analysis.depthRelationFiltering.enabled)],
     [
-      "depth final passed",
+      "depthRelationApplyToObjectiveScore（ペナルティをスコアへ反映）",
+      String(analysis.depthRelationFiltering.applyToObjectiveScore),
+    ],
+    ["depthRelationRuleCount（奥行き関係ルール数）", String(analysis.depthRelationFiltering.ruleCount)],
+    ["depth rejectedCandidates（奥行き違反で除外された候補数）", String(analysis.depthRelationDebug?.rejectedCandidateCount ?? 0)],
+    [
+      "depth final passed（最終候補が奥行き関係を通過）",
       String((analysis.bestCandidate?.depthRelationDebug?.hardRejectViolationCount ?? 0) === 0),
     ],
     [
@@ -6619,22 +6622,22 @@ function renderAutoSequenceResult(analysis: AnalysisResult): string {
     ["sequenceName", summary.sequenceName],
     ["status", summary.status],
     ["stepCount", String(summary.steps.length)],
-    ["finalObjectiveMode", summary.finalObjectiveMode ?? "-"],
-    ["finalObjectiveScore", formatNumber(summary.finalObjectiveScore)],
-    ["finalCandidate", summary.finalCandidate ? formatCandidateCompact(summary.finalCandidate) : "-"],
-    ["final step preset", finalStep?.presetName ?? "-"],
-    ["final step totalScore", formatNumber(finalStep?.totalScore)],
-    ["final step maxBucketScore", formatNumber(finalStep?.scoreDebug?.maxBucketScore)],
-    ["final depth mode", finalStep?.depthRelationFiltering?.mode ?? "-"],
+    ["finalObjectiveMode（最終最適化モード）", summary.finalObjectiveMode ?? "-"],
+    ["finalObjectiveScore（最終最適化スコア）", formatNumber(summary.finalObjectiveScore)],
+    ["finalCandidate（最終8点候補）", summary.finalCandidate ? formatCandidateCompact(summary.finalCandidate) : "-"],
+    ["final step preset（最終ステップのプリセット）", finalStep?.presetName ?? "-"],
+    ["final step totalScore（最終ステップ全体スコア）", formatNumber(finalStep?.totalScore)],
+    ["final step maxBucketScore（最終ステップ最悪姿勢スコア）", formatNumber(finalStep?.scoreDebug?.maxBucketScore)],
+    ["final depth mode（最終ステップ奥行き関係モード）", finalStep?.depthRelationFiltering?.mode ?? "-"],
     [
-      "final depth applyToObjectiveScore",
+      "final depth applyToObjectiveScore（最終ステップのペナルティ反映）",
       finalStep?.depthRelationFiltering
         ? String(finalStep.depthRelationFiltering.applyToObjectiveScore)
         : "-",
     ],
-    ["final depth passed", String(finalStep?.depthRelationSummary?.finalCandidatePassed ?? false)],
-    ["final depth rejected", formatNumber(finalStep?.depthRelationSummary?.rejectedCandidateCount)],
-    ["final depth penalty", formatNumber(finalStep?.depthRelationSummary?.finalCandidatePenalty)],
+    ["final depth passed（最終候補が奥行き関係を通過）", String(finalStep?.depthRelationSummary?.finalCandidatePassed ?? false)],
+    ["final depth rejected（奥行き違反で除外された候補数）", formatNumber(finalStep?.depthRelationSummary?.rejectedCandidateCount)],
+    ["final depth penalty（奥行き関係ペナルティ）", formatNumber(finalStep?.depthRelationSummary?.finalCandidatePenalty)],
   ])
 }
 
@@ -6696,16 +6699,16 @@ function renderAutoSequenceStatus(): void {
 
   const finalScore = auto.steps.at(-1)
   if (finalScore) {
-    items.push(["final objectiveMode", finalScore.objectiveMode])
-    items.push(["final objectiveScore", formatNumber(finalScore.objectiveScore)])
-    items.push(["final totalScore", formatNumber(finalScore.totalScore)])
-    items.push(["final yawAverageScore", formatNumber(finalScore.scoreDebug?.yawAverageScore)])
-    items.push(["final pitchAverageScore", formatNumber(finalScore.scoreDebug?.pitchAverageScore)])
-    items.push(["final maxBucketScore", formatNumber(finalScore.scoreDebug?.maxBucketScore)])
-    items.push(["final balancedScore", formatNumber(finalScore.scoreDebug?.balancedScore)])
-    items.push(["final depth mode", finalScore.depthRelationFiltering?.mode ?? "-"])
+    items.push(["final objectiveMode（最終最適化モード）", finalScore.objectiveMode])
+    items.push(["final objectiveScore（最終最適化スコア）", formatNumber(finalScore.objectiveScore)])
+    items.push(["final totalScore（最終全体スコア）", formatNumber(finalScore.totalScore)])
+    items.push(["final yawAverageScore（左右向き平均スコア）", formatNumber(finalScore.scoreDebug?.yawAverageScore)])
+    items.push(["final pitchAverageScore（上下向き平均スコア）", formatNumber(finalScore.scoreDebug?.pitchAverageScore)])
+    items.push(["final maxBucketScore（最悪姿勢スコア）", formatNumber(finalScore.scoreDebug?.maxBucketScore)])
+    items.push(["final balancedScore（全体と最悪姿勢のバランススコア）", formatNumber(finalScore.scoreDebug?.balancedScore)])
+    items.push(["final depth mode（最終奥行き関係モード）", finalScore.depthRelationFiltering?.mode ?? "-"])
     items.push([
-      "final depth applyToObjectiveScore",
+      "final depth applyToObjectiveScore（奥行きペナルティをスコアへ反映）",
       finalScore.depthRelationFiltering
         ? String(finalScore.depthRelationFiltering.applyToObjectiveScore)
         : "-",
@@ -6731,16 +6734,16 @@ function renderAutoSequenceStepTable(steps: AutoSequenceStepSummary[]): string {
             <th>step</th>
             <th>preset</th>
             <th>objective</th>
-            <th>objectiveScore</th>
-            <th>totalScore</th>
-            <th>balanced</th>
-            <th>maxBucket</th>
-            <th>depth mode</th>
-            <th>depth apply</th>
-            <th>depth passed</th>
-            <th>depth rejected</th>
-            <th>depth penalty</th>
-            <th>bestCandidate</th>
+            <th>objectiveScore（最適化スコア）</th>
+            <th>totalScore（全体スコア）</th>
+            <th>balanced（バランススコア）</th>
+            <th>maxBucket（最悪姿勢スコア）</th>
+            <th>depth mode（奥行き関係モード）</th>
+            <th>depth apply（ペナルティ反映）</th>
+            <th>depth passed（奥行き関係通過）</th>
+            <th>depth rejected（奥行き除外数）</th>
+            <th>depth penalty（奥行きペナルティ）</th>
+            <th>bestCandidate（最良候補）</th>
           </tr>
         </thead>
         <tbody>
@@ -7177,23 +7180,23 @@ function renderDepth478Prototype(prototype: Depth478PrototypeResult | null): voi
   const relation = prototype.depthRelationDebug
   const smoothness = prototype.smoothnessDebug
   getElement("depth-478-summary").innerHTML = renderStatusItems([
-    ["candidateId", candidate.id],
-    ["source8CandidateId", candidate.source8CandidateId ?? "-"],
-    ["landmarkCount", String(candidate.summary.landmarkCount)],
-    ["zMin", formatNumber(candidate.summary.zMin)],
-    ["zMax", formatNumber(candidate.summary.zMax)],
-    ["zRange", formatNumber(candidate.summary.zRange)],
-    ["averageZ", formatNumber(candidate.summary.averageZ)],
-    ["rotationCenter", formatRotationCenter(candidate.rotationCenter)],
-    ["method", prototype.settings.interpolation.method],
-    ["epsilon", formatNumber(prototype.settings.interpolation.epsilon)],
-    ["power", formatNumber(prototype.settings.interpolation.power)],
-    ["clampZ", String(prototype.settings.interpolation.clampZ)],
+    ["candidateId（478点候補ID）", candidate.id],
+    ["source8CandidateId（元8点候補ID）", candidate.source8CandidateId ?? "-"],
+    ["landmarkCount（生成したランドマーク数）", String(candidate.summary.landmarkCount)],
+    ["zMin（最小奥行き）", formatNumber(candidate.summary.zMin)],
+    ["zMax（最大奥行き）", formatNumber(candidate.summary.zMax)],
+    ["zRange（奥行き範囲）", formatNumber(candidate.summary.zRange)],
+    ["averageZ（平均奥行き）", formatNumber(candidate.summary.averageZ)],
+    ["rotationCenter（投影用回転中心）", formatRotationCenter(candidate.rotationCenter)],
+    ["method（補間方法）", prototype.settings.interpolation.method],
+    ["epsilon（距離ゼロ除算回避値）", formatNumber(prototype.settings.interpolation.epsilon)],
+    ["power（距離減衰の強さ）", formatNumber(prototype.settings.interpolation.power)],
+    ["clampZ（z範囲制限）", String(prototype.settings.interpolation.clampZ)],
   ])
   getElement("depth-478-projection-evaluation").innerHTML = projection
     ? renderStatusItems([
-        ["totalProjectionError", formatNumber(projection.totalProjectionError)],
-        ["averageProjectionError", formatNumber(projection.averageProjectionError)],
+        ["totalProjectionError（投影誤差合計）", formatNumber(projection.totalProjectionError)],
+        ["averageProjectionError（平均投影誤差）", formatNumber(projection.averageProjectionError)],
         ["front", formatNumber(projection.bucketScores.front)],
         ["yawPositive", formatNumber(projection.bucketScores.yawPositive)],
         ["yawNegative", formatNumber(projection.bucketScores.yawNegative)],
@@ -7201,13 +7204,13 @@ function renderDepth478Prototype(prototype: Depth478PrototypeResult | null): voi
         ["pitchNegative", formatNumber(projection.bucketScores.pitchNegative)],
         ["mixedPose", formatNumber(projection.bucketScores.mixedPose)],
         [
-          "worstFrame",
+          "worstFrame（最も誤差が大きいフレーム）",
           projection.worstFrame
             ? `${projection.worstFrame.captureId} / ${projection.worstFrame.bucket} / ${formatNumber(projection.worstFrame.error)}`
             : "-",
         ],
         [
-          "worstGroup",
+          "worstGroup（最も誤差が大きいグループ）",
           projection.worstGroup
             ? `${projection.worstGroup.label} / ${formatNumber(projection.worstGroup.averageError)}`
             : "-",
@@ -7219,17 +7222,17 @@ function renderDepth478Prototype(prototype: Depth478PrototypeResult | null): voi
     : ""
   getElement("depth-478-relation-debug").innerHTML = relation
     ? renderStatusItems([
-        ["enabled", String(relation.settings.enabled)],
-        ["mode", relation.settings.mode],
-        ["applyToObjectiveScore", String(relation.settings.applyToObjectiveScore)],
-        ["ruleCount", String(relation.settings.ruleCount)],
-        ["violationCount", String(relation.violationCount)],
-        ["hardRejectViolationCount", String(relation.hardRejectViolationCount)],
-        ["isRejected", String(relation.isRejected)],
-        ["noseTipGroup.z", formatNumber(relation.groupValues.noseTipGroup?.z ?? null)],
-        ["cheekGroup.z", formatNumber(relation.groupValues.cheekGroup?.z ?? null)],
-        ["faceCenterGroup.z", formatNumber(relation.groupValues.faceCenterGroup?.z ?? null)],
-        ["faceBoundaryGroup.z", formatNumber(relation.groupValues.faceBoundaryGroup?.z ?? null)],
+        ["enabled（奥行き関係フィルタ有効）", String(relation.settings.enabled)],
+        ["mode（奥行き関係モード）", relation.settings.mode],
+        ["applyToObjectiveScore（ペナルティをスコアへ反映）", String(relation.settings.applyToObjectiveScore)],
+        ["ruleCount（奥行き関係ルール数）", String(relation.settings.ruleCount)],
+        ["violationCount（違反数）", String(relation.violationCount)],
+        ["hardRejectViolationCount（完全除外対象の違反数）", String(relation.hardRejectViolationCount)],
+        ["isRejected（478 debug 候補が除外対象か）", String(relation.isRejected)],
+        ["noseTipGroup.z（鼻先グループ奥行き）", formatNumber(relation.groupValues.noseTipGroup?.z ?? null)],
+        ["cheekGroup.z（頬グループ奥行き）", formatNumber(relation.groupValues.cheekGroup?.z ?? null)],
+        ["faceCenterGroup.z（顔中心グループ奥行き）", formatNumber(relation.groupValues.faceCenterGroup?.z ?? null)],
+        ["faceBoundaryGroup.z（顔境界グループ奥行き）", formatNumber(relation.groupValues.faceBoundaryGroup?.z ?? null)],
       ])
     : empty
   getElement("depth-478-relation-rule-table").innerHTML = relation
@@ -7237,10 +7240,10 @@ function renderDepth478Prototype(prototype: Depth478PrototypeResult | null): voi
     : ""
   getElement("depth-478-smoothness-debug").innerHTML = smoothness
     ? renderStatusItems([
-        ["averageNeighborDeltaZ", formatNumber(smoothness.averageNeighborDeltaZ)],
-        ["maxNeighborDeltaZ", formatNumber(smoothness.maxNeighborDeltaZ)],
-        ["highDeltaEdgeCount", String(smoothness.highDeltaEdgeCount)],
-        ["threshold", formatNumber(smoothness.threshold)],
+        ["averageNeighborDeltaZ（平均隣接奥行き差）", formatNumber(smoothness.averageNeighborDeltaZ)],
+        ["maxNeighborDeltaZ（最大隣接奥行き差）", formatNumber(smoothness.maxNeighborDeltaZ)],
+        ["highDeltaEdgeCount（しきい値超過エッジ数）", String(smoothness.highDeltaEdgeCount)],
+        ["threshold（滑らかさしきい値）", formatNumber(smoothness.threshold)],
       ])
     : empty
   getElement("depth-478-smoothness-edge-table").innerHTML = smoothness
@@ -7262,11 +7265,11 @@ function renderDepth478GroupErrorTable(
     <table>
       <thead>
         <tr>
-          <th>groupId</th>
-          <th>label</th>
-          <th>averageError</th>
-          <th>maxError</th>
-          <th>sampleCount</th>
+          <th>groupId（グループID）</th>
+          <th>label（表示名）</th>
+          <th>averageError（平均誤差）</th>
+          <th>maxError（最大誤差）</th>
+          <th>sampleCount（評価サンプル数）</th>
         </tr>
       </thead>
       <tbody>
@@ -7294,9 +7297,9 @@ function renderDepth478SmoothnessEdgeTable(
     <table>
       <thead>
         <tr>
-          <th>from</th>
-          <th>to</th>
-          <th>deltaZ</th>
+          <th>from（起点ランドマーク）</th>
+          <th>to（隣接ランドマーク）</th>
+          <th>deltaZ（奥行き差）</th>
         </tr>
       </thead>
       <tbody>
@@ -7322,13 +7325,13 @@ function renderDepth478CandidateComparisonTable(
     <table>
       <thead>
         <tr>
-          <th>candidateId</th>
-          <th>source8Candidate</th>
-          <th>totalProjectionError</th>
-          <th>worstBucketScore</th>
-          <th>depthRelationViolationCount</th>
-          <th>smoothnessMaxDeltaZ</th>
-          <th>smoothnessHighDeltaEdgeCount</th>
+          <th>candidateId（478点候補ID）</th>
+          <th>source8Candidate（元8点候補）</th>
+          <th>totalProjectionError（投影誤差合計）</th>
+          <th>worstBucketScore（最悪姿勢スコア）</th>
+          <th>depthRelationViolationCount（奥行き関係違反数）</th>
+          <th>smoothnessMaxDeltaZ（最大隣接奥行き差）</th>
+          <th>smoothnessHighDeltaEdgeCount（滑らかさ違反数）</th>
         </tr>
       </thead>
       <tbody>
