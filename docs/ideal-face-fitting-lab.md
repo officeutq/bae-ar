@@ -117,6 +117,48 @@ MediaPipe Canonical Lab が export した captured JSON を import します。
 
 leftEye / rightEye は iris が取得できない場合、eye corner fallback を使います。
 
+## Semantic Point Set Comparison
+
+Quick Run（`Run 478 Depth Hard Reject Debug`）では、通常出力の `quickRun.settings.semanticPointSetId` は `12pt_rotation_center` のまま維持しつつ、追加 debug として `semanticPointSetComparison` を出力する。
+
+比較対象は同じ capture JSON、同じ selected frames、同じ固定条件で実行する。
+
+```text
+8pt_basic
+12pt_rotation_center
+24pt_structure
+```
+
+固定条件は `bucketPreset: balanced_10_each`、`autoSearchSequence: rotation_center_balanced`、`depthRelationMode: hardReject`、`depth478GenerationMethod: canonicalDepthBased`、`perLandmarkZSearchEnabled: true`、`outlierFilteringEnabled: true` とする。
+
+`24pt_structure` は顔構造確認向けの 24 点セットであり、production 確定ではない。`rotationCenter`（回転中心）と projection stability（投影安定性）を検証するための比較用 point set として扱う。24点は鼻横、目尻・目頭、こめかみ、口角、下顎を追加するため、顔構造の情報は増える一方で、表情や検出ブレも拾いやすい。必ず `8pt_basic` / `12pt_rotation_center` と比較して判断する。
+
+`24pt_structure` の追加点と landmark index は以下。
+
+| point | index |
+| --- | --- |
+| leftNoseSide | 98 |
+| rightNoseSide | 327 |
+| leftEyeOuter | 263 |
+| rightEyeOuter | 33 |
+| leftEyeInner | 362 |
+| rightEyeInner | 133 |
+| leftTemple | 356 |
+| rightTemple | 127 |
+| leftMouthCorner | 291 |
+| rightMouthCorner | 61 |
+| lowerJawLeft | 365 |
+| lowerJawRight | 136 |
+
+左右の命名は Fitting Lab 既存の `leftEyeGroup` / `rightEyeGroup` と同じ向きに揃える。JSON では `analysisSummary.semanticPointSet.indexMapping` と、比較対象ごとの `semanticPointSetComparison.runs[].semanticPointSetId` / `pointCount` を確認する。
+
+`semanticPointSetComparison` の見方:
+
+- `runs[]`: 各 point set の Quick Run summary。`averageProjectionError`、`maxBucketScore`、`rotationCenter`、`pivotZ`、`depthRelationStatus`、`noseTipGroupZ`、`cheekGroupZ`、`perLandmarkAverageErrorBefore/After` を比較する。
+- `depthRelationStatus`: `passed` を優先する。`warning` は margin 不足、`rejected` は hardReject 違反として扱う。
+- `noseCheekDelta`: `noseTipGroupZ - cheekGroupZ`。このラボでは z が小さいほど手前なので、負の値は noseTipGroup が cheekGroup より手前であることを示す。
+- `recommendedSemanticPointSetId`: 単純な推奨ルールの結果。depth relation が通り、projection error と maxBucketScore が大きく悪化しないものを優先する。12点と24点が近い場合は、表情影響を拾いにくい `12pt_rotation_center` を優先する。
+
 ## 処理
 
 1. captured JSON を読み込む
