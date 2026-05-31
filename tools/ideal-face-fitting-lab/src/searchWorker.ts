@@ -75,6 +75,7 @@ interface SearchSettings {
 interface FittingCandidate8 {
   zByPointId: Record<SemanticPointName, number>
   pivotZ: number
+  rotationCenter?: RotationCenter
 }
 
 interface RotationCenter {
@@ -89,7 +90,7 @@ interface ProjectionOptions {
 }
 
 type SearchMode = "fullGrid" | "localOneDimensional" | "coordinateDescent"
-type LocalSearchParameter = "pivotZ" | `${SemanticPointName}.z`
+type LocalSearchParameter = "pivotZ" | "rotationCenter.y" | "rotationCenter.z" | `${SemanticPointName}.z`
 
 interface LocalSearchRange {
   min: number
@@ -597,11 +598,16 @@ function createCandidateDefinitionFromCandidate(
   index: number,
   candidate: FittingCandidate8,
 ): CandidateDefinition {
-  return {
+  const definition: CandidateDefinition = {
     candidateId: createCandidateId(index, candidate.zByPointId, candidate.pivotZ),
     zByPointId: { ...candidate.zByPointId },
     pivotZ: candidate.pivotZ,
   }
+  if (candidate.rotationCenter) {
+    definition.rotationCenter = roundRotationCenter(candidate.rotationCenter)
+    definition.pivotZ = definition.rotationCenter.z
+  }
+  return definition
 }
 
 function advanceCandidateCursor(
@@ -780,9 +786,9 @@ function projectIdealPoints(
   pose: Pose,
   candidate: CandidateDefinition,
   settings: SearchSettings,
-  options: ProjectionOptions = { pivotZ: candidate.pivotZ },
+  options?: ProjectionOptions,
 ): SemanticPointSet2D {
-  const rotationCenter = getProjectionRotationCenter(options)
+  const rotationCenter = getProjectionRotationCenter(candidate, options)
   const points = {} as SemanticPointSet2D
   for (const name of SEMANTIC_POINT_NAMES) {
     const rotated = rotatePoint3D(
@@ -806,8 +812,17 @@ function projectIdealPoints(
   return points
 }
 
-function getProjectionRotationCenter(options: ProjectionOptions): RotationCenter {
-  return options.rotationCenter ?? { x: 0, y: 0, z: options.pivotZ }
+function getProjectionRotationCenter(
+  candidate: FittingCandidate8,
+  options?: ProjectionOptions,
+): RotationCenter {
+  if (options?.rotationCenter) {
+    return roundRotationCenter(options.rotationCenter)
+  }
+  if (candidate.rotationCenter) {
+    return roundRotationCenter(candidate.rotationCenter)
+  }
+  return { x: 0, y: 0, z: round(options?.pivotZ ?? candidate.pivotZ) }
 }
 
 function normalizeCurrentPointsForScoring(
@@ -899,6 +914,7 @@ function toRankingEntry(candidate: CandidateResult, rank: number): RankingEntry 
     scoreDebug: roundScoreDebug(candidate.scoreDebug),
     candidate: {
       pivotZ: round(candidate.pivotZ),
+      rotationCenter: getCandidateRotationCenter(candidate),
       zByPointId: roundRecord(candidate.zByPointId),
     },
     weightedSemanticDistance: round(candidate.weightedSemanticDistance),
@@ -942,17 +958,27 @@ function emptyBucketResults(): Record<CaptureBucket, CandidateResult[]> {
 }
 
 function cloneCandidate(candidate: FittingCandidate8): FittingCandidate8 {
-  return {
+  const next: FittingCandidate8 = {
     pivotZ: round(candidate.pivotZ),
     zByPointId: roundRecord(candidate.zByPointId),
   }
+  if (candidate.rotationCenter) {
+    next.rotationCenter = roundRotationCenter(candidate.rotationCenter)
+    next.pivotZ = next.rotationCenter.z
+  }
+  return next
 }
 
 function toFittingCandidate(candidate: FittingCandidate8): FittingCandidate8 {
-  return {
+  const next: FittingCandidate8 = {
     pivotZ: round(candidate.pivotZ),
     zByPointId: roundRecord(candidate.zByPointId),
   }
+  if (candidate.rotationCenter) {
+    next.rotationCenter = roundRotationCenter(candidate.rotationCenter)
+    next.pivotZ = next.rotationCenter.z
+  }
+  return next
 }
 
 function getCandidateParameter(
@@ -961,6 +987,12 @@ function getCandidateParameter(
 ): number {
   if (parameter === "pivotZ") {
     return candidate.pivotZ
+  }
+  if (parameter === "rotationCenter.y") {
+    return getCandidateRotationCenter(candidate).y
+  }
+  if (parameter === "rotationCenter.z") {
+    return getCandidateRotationCenter(candidate).z
   }
   return candidate.zByPointId[toPointNameParameter(parameter)]
 }
@@ -973,6 +1005,25 @@ function setCandidateParameter(
   const next = cloneCandidate(candidate)
   if (parameter === "pivotZ") {
     next.pivotZ = round(value)
+    next.rotationCenter = {
+      ...getCandidateRotationCenter(next),
+      z: round(value),
+    }
+    return next
+  }
+  if (parameter === "rotationCenter.y") {
+    next.rotationCenter = {
+      ...getCandidateRotationCenter(next),
+      y: round(value),
+    }
+    return next
+  }
+  if (parameter === "rotationCenter.z") {
+    next.rotationCenter = {
+      ...getCandidateRotationCenter(next),
+      z: round(value),
+    }
+    next.pivotZ = round(value)
     return next
   }
   next.zByPointId[toPointNameParameter(parameter)] = round(value)
@@ -981,6 +1032,20 @@ function setCandidateParameter(
 
 function toPointNameParameter(parameter: LocalSearchParameter): SemanticPointName {
   return parameter.replace(".z", "") as SemanticPointName
+}
+
+function getCandidateRotationCenter(candidate: FittingCandidate8): RotationCenter {
+  return candidate.rotationCenter
+    ? roundRotationCenter(candidate.rotationCenter)
+    : { x: 0, y: 0, z: round(candidate.pivotZ) }
+}
+
+function roundRotationCenter(rotationCenter: RotationCenter): RotationCenter {
+  return {
+    x: round(rotationCenter.x),
+    y: round(rotationCenter.y),
+    z: round(rotationCenter.z),
+  }
 }
 
 function createNumericCandidates(minValue: number, maxValue: number, stepValue: number): number[] {
@@ -1019,8 +1084,12 @@ function createCandidateId(
 }
 
 function buildCandidateKey(candidate: FittingCandidate8): string {
+  const rotationCenter = getCandidateRotationCenter(candidate)
   return [
     `pivotZ:${formatCandidateNumber(candidate.pivotZ)}`,
+    `rotationCenter.x:${formatCandidateNumber(rotationCenter.x)}`,
+    `rotationCenter.y:${formatCandidateNumber(rotationCenter.y)}`,
+    `rotationCenter.z:${formatCandidateNumber(rotationCenter.z)}`,
     ...SEMANTIC_POINT_NAMES.map(
       (name) => `${name}:${formatCandidateNumber(candidate.zByPointId[name])}`,
     ),

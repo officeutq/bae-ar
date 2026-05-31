@@ -65,6 +65,11 @@ type FittingCandidate8 = {
     mouth: number
   }
   pivotZ: number
+  rotationCenter?: {
+    x: number
+    y: number
+    z: number
+  }
 }
 ```
 
@@ -207,6 +212,33 @@ rotationCenterDebug?: {
   summary: RotationCenterDebugSummary
 }
 ```
+
+## Rotation Center Search
+
+Rotation Center Search は、Rotation Center Debug で有望になった `rotationCenter.y` / `rotationCenter.z` を、local search / coordinateDescent / Auto Sequence の探索対象に昇格したものです。
+
+従来は回転中心を `(0, 0, pivotZ)` と仮定していましたが、この仮定では pitch 誤差を `nose.z` / `mouth.z` などが吸収する可能性があります。
+
+Rotation Center Search では、`rotationCenter.y` / `rotationCenter.z` を先に調整し、その後 8 semantic points の z を再探索します。
+
+`rotationCenter` は projection 用の回転中心であり、IdealFace8 `points[].z` に焼き込む値ではありません。既存互換のため `pivotZ` は残しますが、`rotationCenter.z` を探索する candidate では `pivotZ` も同じ値に揃えます。
+
+local search / coordinateDescent の parameter には以下を追加します。
+
+```text
+rotationCenter.y
+rotationCenter.z
+```
+
+Rotation Center Search 用の preset は以下です。
+
+- `Rotation Center Fine`: `rotationCenter.y` / `rotationCenter.z` だけを coordinateDescent で調整する。
+- `Rotation Center + 8Point Fine`: `rotationCenter.y` / `rotationCenter.z` を先に調整し、その後 8 semantic points の z を調整する。
+
+Auto Sequence には以下を追加します。
+
+- `Rotation Center Fine Sequence`: `Rotation Center Debug Best` を起点に、Rotation Center Fine → Rotation Center + 8Point Fine → NoseZ Fine → MouthZ Fine を実行する。
+- `Natural Nose Rotation Center Sequence`: `Natural Nose With Rotation Center` を起点に、同じ手順で nose.z が自然寄りでも score が出るか確認する。
 
 ## Worker Grid Search
 
