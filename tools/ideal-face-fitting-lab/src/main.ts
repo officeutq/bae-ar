@@ -19,6 +19,12 @@ type SemanticPointName =
   | "nose"
   | "mouth"
 
+type SemanticPointId = SemanticPointName
+type DepthRelationAggregation = "mean" | "median"
+type DepthRelationMode = "off" | "debugOnly" | "penalty" | "hardReject"
+type DepthRelationKind = "inFrontOf" | "behind" | "near"
+type DepthRelationSeverity = "ok" | "warning" | "violation"
+
 interface Point2 {
   x: number
   y: number
@@ -117,6 +123,7 @@ interface SearchSettings {
   searchMode: SearchMode
   objectiveMode: ObjectiveMode
   outlierFiltering: OutlierFilteringSettings
+  depthRelationFiltering: DepthRelationFilteringSettings
   maxFrames: number
   targets: Record<CaptureBucket, number>
   includeMixedPose: boolean
@@ -354,6 +361,35 @@ interface OutlierFilteringSettings {
   applyToObjectiveScore: boolean
 }
 
+interface DepthRelationGroup {
+  id: string
+  label: string
+  pointIds: SemanticPointId[]
+  aggregation: DepthRelationAggregation
+}
+
+interface DepthRelationRule {
+  id: string
+  label: string
+  subjectGroupId: string
+  referenceGroupId: string
+  relation: DepthRelationKind
+  margin: number
+  warningMargin: number
+  weight: number
+  mode: Exclude<DepthRelationMode, "off">
+}
+
+interface DepthRelationFilteringSettings {
+  enabled: boolean
+  mode: DepthRelationMode
+  applyToObjectiveScore: boolean
+  groups: DepthRelationGroup[]
+  rules: DepthRelationRule[]
+  penaltyScale: number
+  maxPenalty: number
+}
+
 interface LocalSearchRange {
   min: number
   max: number
@@ -411,6 +447,7 @@ interface AutoSequenceStepSummary {
     maxBucketScore?: number | null
     balancedScore?: number | null
   }
+  depthRelationSummary?: DepthRelationSummary
   processedCandidateCount: number
   estimatedCandidateCount: number
 }
@@ -421,7 +458,7 @@ interface AutoSequenceSummary {
   completedAt?: string
   status: "completed" | "cancelled" | "error"
   steps: AutoSequenceStepSummary[]
-  finalCandidate: FittingCandidate8 | null
+  finalCandidate: FittingCandidate8WithDepthRelation | null
   finalObjectiveMode: ObjectiveMode | null
   finalObjectiveScore: number | null
 }
@@ -434,7 +471,7 @@ interface AutoSequenceState {
   startedAt: string | null
   completedAt: string | null
   steps: AutoSequenceStepSummary[]
-  finalCandidate: FittingCandidate8 | null
+  finalCandidate: FittingCandidate8WithDepthRelation | null
   currentBestScore: number | null
   message: string | null
 }
@@ -481,6 +518,7 @@ interface StabilityHistoryEntry {
     score: number
   } | null
   outlierSummary?: StabilityOutlierSummary
+  depthRelationSummary?: DepthRelationSummary
 }
 
 interface StabilityOutlierSummary {
@@ -547,6 +585,10 @@ interface CandidateDefinition extends FittingCandidate8 {
   candidateId: string
 }
 
+interface FittingCandidate8WithDepthRelation extends FittingCandidate8 {
+  depthRelationDebug?: DepthRelationDebug
+}
+
 interface FrameEvaluation {
   captureId: string
   bucket: CaptureBucket
@@ -587,12 +629,14 @@ interface CandidateResult extends CandidateDefinition {
   bucketScores: PoseBucketScores
   scoreDebug: CandidateScoreDebug
   objectiveMode: ObjectiveMode
+  objectiveScoreBeforeDepthFilter?: number
   objectiveScore: number
   totalScore: number
   sampleCount: number
   warnings: string[]
   perFrameResults: FrameEvaluation[]
   outlierDebug?: CandidateOutlierDebug
+  depthRelationDebug?: DepthRelationDebug
 }
 
 interface CandidateScoreDebug {
@@ -654,6 +698,71 @@ interface CandidateOutlierDebug {
   filteredScores: CandidateScoreSnapshot | null
 }
 
+interface DepthRelationGroupValue {
+  groupId: string
+  label: string
+  pointIds: SemanticPointId[]
+  aggregation: DepthRelationAggregation
+  z: number | null
+}
+
+interface DepthRelationRuleResult {
+  ruleId: string
+  label: string
+  subjectGroupId: string
+  referenceGroupId: string
+  relation: DepthRelationKind
+  subjectZ: number | null
+  referenceZ: number | null
+  margin: number
+  delta: number | null
+  passed: boolean
+  severity: DepthRelationSeverity
+  mode: Exclude<DepthRelationMode, "off">
+  penalty: number
+  reject: boolean
+  explanation: string
+}
+
+interface DepthRelationDebug {
+  settings: DepthRelationFilteringSettings
+  groupValues: Record<string, DepthRelationGroupValue>
+  ruleResults: DepthRelationRuleResult[]
+  violationCount: number
+  hardRejectViolationCount: number
+  penalty: number
+  isRejected: boolean
+}
+
+interface RejectedCandidateSummary {
+  candidateId: string
+  originalRank?: number | null
+  candidate: FittingCandidate8
+  objectiveMode: ObjectiveMode
+  objectiveScoreBeforeDepthFilter: number
+  totalScore: number
+  scoreDebug: CandidateScoreDebug
+  depthRelationDebug: DepthRelationDebug
+  rejectReasons: string[]
+}
+
+interface AnalysisDepthRelationDebug {
+  settings: DepthRelationFilteringSettings
+  bestCandidateDepthRelation?: DepthRelationDebug
+  rejectedCandidates: RejectedCandidateSummary[]
+  rejectedCandidateCount: number
+}
+
+interface DepthRelationSummary {
+  enabled: boolean
+  mode: string
+  violationCount: number
+  hardRejectViolationCount: number
+  rejectedCandidateCount: number
+  finalCandidatePassed: boolean
+  finalCandidatePenalty: number
+}
+
 interface RankingEntry extends FittingCandidate8Score {
   candidateId: string
   weightedSemanticDistance: number
@@ -661,6 +770,8 @@ interface RankingEntry extends FittingCandidate8Score {
   scoreDebug: CandidateScoreDebug
   sampleCount: number
   idealFace8Summary?: IdealFace8CandidateSummary
+  objectiveScoreBeforeDepthFilter?: number
+  depthRelationDebug?: DepthRelationDebug
 }
 
 interface IdealFace8Source {
@@ -849,10 +960,13 @@ interface AnalysisResult {
   candidateCount: number
   processedCandidateCount: number
   estimatedCandidateCount: number
+  rawRanking: RankingEntry[]
+  depthFilteredRanking: RankingEntry[]
   topCandidates: RankingEntry[]
   bestCandidate: CandidateResult | null
   bestIdealFace8: BestIdealFace8 | null
   depthRelation: DepthRelation | null
+  depthRelationDebug?: AnalysisDepthRelationDebug
   bucketRanking: Record<CaptureBucket, RankingEntry[]>
   perPointErrorSummary: Record<SemanticPointName, number | null>
   projectionSignDebug?: ProjectionSignDebug
@@ -882,10 +996,13 @@ interface SummaryAnalysisResult {
   scoreDebugSummary: CandidateScoreDebug | null
   processedCandidateCount: number
   estimatedCandidateCount: number
+  rawRanking: RankingEntry[]
+  depthFilteredRanking: RankingEntry[]
   topCandidates: RankingEntry[]
   bestCandidate: RankingEntry | null
   bestIdealFace8: BestIdealFace8 | null
   depthRelation: DepthRelation | null
+  depthRelationDebug?: AnalysisDepthRelationDebug
   bucketRanking: Record<CaptureBucket, RankingEntry[]>
   perPointErrorSummary: Record<SemanticPointName, number | null>
   projectionSignDebug?: ProjectionSignDebug
@@ -1644,10 +1761,73 @@ const DEFAULT_OUTLIER_FILTERING_SETTINGS: OutlierFilteringSettings = {
   applyToObjectiveScore: false,
 }
 
+const DEFAULT_DEPTH_RELATION_GROUPS_8: DepthRelationGroup[] = [
+  {
+    id: "noseTip",
+    label: "鼻先",
+    pointIds: ["nose"],
+    aggregation: "median",
+  },
+  {
+    id: "cheeks",
+    label: "左右頬",
+    pointIds: ["leftCheek", "rightCheek"],
+    aggregation: "mean",
+  },
+  {
+    id: "faceCenter",
+    label: "顔中心",
+    pointIds: ["nose", "mouth", "leftEye", "rightEye"],
+    aggregation: "median",
+  },
+  {
+    id: "faceBoundary",
+    label: "顔境界",
+    pointIds: ["leftCheek", "rightCheek", "chin", "headTop"],
+    aggregation: "median",
+  },
+]
+
+const DEFAULT_DEPTH_RELATION_RULES_8: DepthRelationRule[] = [
+  {
+    id: "nose_tip_in_front_of_cheeks",
+    label: "鼻先は左右頬より手前",
+    subjectGroupId: "noseTip",
+    referenceGroupId: "cheeks",
+    relation: "inFrontOf",
+    margin: 0.005,
+    warningMargin: 0,
+    weight: 1,
+    mode: "hardReject",
+  },
+  {
+    id: "face_center_in_front_of_boundary",
+    label: "顔中心は顔境界より手前",
+    subjectGroupId: "faceCenter",
+    referenceGroupId: "faceBoundary",
+    relation: "inFrontOf",
+    margin: 0,
+    warningMargin: 0,
+    weight: 0.5,
+    mode: "debugOnly",
+  },
+]
+
+const DEFAULT_DEPTH_RELATION_FILTERING_SETTINGS: DepthRelationFilteringSettings = {
+  enabled: true,
+  mode: "debugOnly",
+  applyToObjectiveScore: false,
+  groups: DEFAULT_DEPTH_RELATION_GROUPS_8,
+  rules: DEFAULT_DEPTH_RELATION_RULES_8,
+  penaltyScale: 1,
+  maxPenalty: 0.05,
+}
+
 const DEFAULT_SETTINGS: SearchSettings = {
   searchMode: "fullGrid",
   objectiveMode: "totalScore",
   outlierFiltering: DEFAULT_OUTLIER_FILTERING_SETTINGS,
+  depthRelationFiltering: DEFAULT_DEPTH_RELATION_FILTERING_SETTINGS,
   maxFrames: 30,
   targets: {
     front: 5,
@@ -1962,6 +2142,32 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
                 <option value="true">true</option>
               </select>
             </label>
+            <label>Depth Relation Filtering enabled
+              <select id="depth-relation-enabled-select">
+                <option value="true" selected>true</option>
+                <option value="false">false</option>
+              </select>
+            </label>
+            <label>Depth Relation mode
+              <select id="depth-relation-mode-select">
+                <option value="off">off</option>
+                <option value="debugOnly" selected>debugOnly</option>
+                <option value="penalty">penalty</option>
+                <option value="hardReject">hardReject</option>
+              </select>
+            </label>
+            <label>Depth Relation applyToObjectiveScore
+              <select id="depth-relation-apply-to-objective-select">
+                <option value="false" selected>false</option>
+                <option value="true">true</option>
+              </select>
+            </label>
+            <label>Depth Relation penaltyScale
+              <input id="depth-relation-penalty-scale-input" type="number" min="0" max="10" step="0.1" value="${DEFAULT_DEPTH_RELATION_FILTERING_SETTINGS.penaltyScale}" />
+            </label>
+            <label>Depth Relation maxPenalty
+              <input id="depth-relation-max-penalty-input" type="number" min="0" max="1" step="0.001" value="${DEFAULT_DEPTH_RELATION_FILTERING_SETTINGS.maxPenalty}" />
+            </label>
             <label>localTargetParameter
               <select id="local-target-parameter-select">
                 ${LOCAL_SEARCH_PARAMETERS.map(
@@ -2080,6 +2286,20 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
           <div id="outlier-best-summary" class="summary-grid"></div>
           <h3>外れフレーム一覧</h3>
           <div id="outlier-frame-table" class="table-wrap"></div>
+        </section>
+
+        <section class="panel">
+          <h2>Depth Relation Debug（奥行き関係デバッグ）</h2>
+          <p class="panel-help">z が小さいほど手前、z が大きいほど奥として、中心側グループが境界側グループより手前にあるかを候補ごとに確認します。</p>
+          <h3>Depth Relation Filtering（奥行き関係フィルタリング）</h3>
+          <div id="depth-relation-settings-summary" class="summary-grid"></div>
+          <h3>Best Candidate（最良候補）</h3>
+          <div id="depth-relation-best-summary" class="summary-grid"></div>
+          <div id="depth-relation-warning" class="warning-list"></div>
+          <h3>Rules（ルール一覧）</h3>
+          <div id="depth-relation-rule-table" class="table-wrap"></div>
+          <h3>Rejected Candidates（除外候補）</h3>
+          <div id="depth-relation-rejected-table" class="table-wrap"></div>
         </section>
 
         <section class="panel">
@@ -2344,10 +2564,13 @@ function runAnalysis(settingsOverride?: SearchSettings): void {
       candidateCount: 0,
       processedCandidateCount: 0,
       estimatedCandidateCount: 0,
+      rawRanking: [],
+      depthFilteredRanking: [],
       topCandidates: [],
       bestCandidate: null,
       bestIdealFace8: null,
       depthRelation: null,
+      depthRelationDebug: buildAnalysisDepthRelationDebug(settings, null, null),
       bucketRanking: emptyBucketRanking(),
       perPointErrorSummary: emptyPointSummary(),
       outlierFrameDebug: buildAnalysisOutlierFrameDebug(settings, null),
@@ -2484,10 +2707,17 @@ function startSearchWorker(context: SearchWorkerContext): void {
 
 function completeSearchFromWorker(context: SearchWorkerContext, message: Record<string, unknown>): void {
   const topCandidates = normalizeRankingEntries(message.topCandidates)
+  const rawRanking = normalizeRankingEntries(message.rawRanking)
+  const depthFilteredRanking = normalizeRankingEntries(message.depthFilteredRanking)
   const bucketRanking = normalizeBucketRanking(message.bucketRanking)
   const bestCandidate = isRecord(message.bestCandidate)
     ? normalizeCandidateResult(message.bestCandidate as unknown as CandidateResult)
     : null
+  const depthRelationDebug = buildAnalysisDepthRelationDebug(
+    context.settings,
+    bestCandidate,
+    message.depthRelationDebug,
+  )
   const bestIdealFace8 =
     bestCandidate && context.base8Points2DSummary.points
       ? buildBestIdealFace8(context.base8Points2DSummary.points, bestCandidate)
@@ -2544,12 +2774,19 @@ function completeSearchFromWorker(context: SearchWorkerContext, message: Record<
     candidateCount: estimatedCandidateCount,
     processedCandidateCount,
     estimatedCandidateCount,
+    rawRanking: rawRanking.map((candidate) =>
+      attachIdealFace8Summary(candidate, context.base8Points2DSummary.points),
+    ),
+    depthFilteredRanking: (depthFilteredRanking.length > 0 ? depthFilteredRanking : topCandidates).map(
+      (candidate) => attachIdealFace8Summary(candidate, context.base8Points2DSummary.points),
+    ),
     topCandidates: topCandidates.map((candidate) =>
       attachIdealFace8Summary(candidate, context.base8Points2DSummary.points),
     ),
     bestCandidate,
     bestIdealFace8,
     depthRelation: bestIdealFace8?.summary.depthRelation ?? null,
+    depthRelationDebug,
     bucketRanking: Object.fromEntries(
       BUCKETS.map((bucket) => [
         bucket,
@@ -2687,6 +2924,11 @@ function normalizeRankingEntries(value: unknown): RankingEntry[] {
                   ? entry.objectiveMode
                   : DEFAULT_SETTINGS.objectiveMode,
               ),
+        objectiveScoreBeforeDepthFilter:
+          typeof entry.objectiveScoreBeforeDepthFilter === "number"
+            ? entry.objectiveScoreBeforeDepthFilter
+            : undefined,
+        depthRelationDebug: entry.depthRelationDebug,
         candidate: cloneCandidate({
           pivotZ: entry.candidate.pivotZ,
           rotationCenter: getCandidateRotationCenter(entry.candidate),
@@ -2709,10 +2951,15 @@ function normalizeCandidateResult(candidate: CandidateResult): CandidateResult {
     zByPointId: normalized.zByPointId,
     scoreDebug,
     objectiveMode,
+    objectiveScoreBeforeDepthFilter:
+      typeof candidate.objectiveScoreBeforeDepthFilter === "number"
+        ? candidate.objectiveScoreBeforeDepthFilter
+        : undefined,
     objectiveScore:
       typeof candidate.objectiveScore === "number"
         ? candidate.objectiveScore
         : getObjectiveScore({ totalScore: candidate.totalScore, scoreDebug }, objectiveMode),
+    depthRelationDebug: candidate.depthRelationDebug,
   }
 }
 
@@ -3411,6 +3658,33 @@ function buildAnalysisOutlierFrameDebug(
   }
 }
 
+function buildAnalysisDepthRelationDebug(
+  settings: SearchSettings,
+  bestCandidate: CandidateResult | null,
+  sourceDebug: unknown,
+): AnalysisDepthRelationDebug {
+  if (isRecord(sourceDebug)) {
+    return {
+      settings: normalizeDepthRelationFilteringSettings(
+        sourceDebug.settings as DepthRelationFilteringSettings | undefined,
+      ),
+      bestCandidateDepthRelation:
+        (sourceDebug.bestCandidateDepthRelation as DepthRelationDebug | undefined) ??
+        bestCandidate?.depthRelationDebug,
+      rejectedCandidates: Array.isArray(sourceDebug.rejectedCandidates)
+        ? (sourceDebug.rejectedCandidates as RejectedCandidateSummary[])
+        : [],
+      rejectedCandidateCount: toNumber(sourceDebug.rejectedCandidateCount, 0),
+    }
+  }
+  return {
+    settings: normalizeDepthRelationFilteringSettings(settings.depthRelationFiltering),
+    bestCandidateDepthRelation: bestCandidate?.depthRelationDebug,
+    rejectedCandidates: [],
+    rejectedCandidateCount: 0,
+  }
+}
+
 function degreesToRadians(degrees: number): number {
   return (degrees / 180) * Math.PI
 }
@@ -3422,6 +3696,7 @@ function readSettings(): SearchSettings {
     searchMode,
     objectiveMode: readObjectiveMode(),
     outlierFiltering: readOutlierFilteringSettings(),
+    depthRelationFiltering: readDepthRelationFilteringSettings(),
     maxFrames: readNumber("max-frames-input", DEFAULT_SETTINGS.maxFrames),
     targets: {
       front: readNumber("target-front-input", DEFAULT_SETTINGS.targets.front),
@@ -3510,6 +3785,71 @@ function readOutlierFilteringMethod(value: string): OutlierFilteringMethod {
   return value === "medianAbsoluteDelta" || value === "topWorstPercent"
     ? value
     : "medianMultiplier"
+}
+
+function readDepthRelationFilteringSettings(): DepthRelationFilteringSettings {
+  return normalizeDepthRelationFilteringSettings({
+    ...DEFAULT_DEPTH_RELATION_FILTERING_SETTINGS,
+    enabled: getElement<HTMLSelectElement>("depth-relation-enabled-select").value === "true",
+    mode: readDepthRelationMode(getElement<HTMLSelectElement>("depth-relation-mode-select").value),
+    applyToObjectiveScore:
+      getElement<HTMLSelectElement>("depth-relation-apply-to-objective-select").value === "true",
+    penaltyScale: readNumber(
+      "depth-relation-penalty-scale-input",
+      DEFAULT_DEPTH_RELATION_FILTERING_SETTINGS.penaltyScale,
+    ),
+    maxPenalty: readNumber(
+      "depth-relation-max-penalty-input",
+      DEFAULT_DEPTH_RELATION_FILTERING_SETTINGS.maxPenalty,
+    ),
+  })
+}
+
+function readDepthRelationMode(value: string): DepthRelationMode {
+  return value === "off" || value === "penalty" || value === "hardReject" ? value : "debugOnly"
+}
+
+function normalizeDepthRelationFilteringSettings(
+  settings?: DepthRelationFilteringSettings,
+): DepthRelationFilteringSettings {
+  const groups = Array.isArray(settings?.groups) && settings.groups.length > 0
+    ? settings.groups
+    : DEFAULT_DEPTH_RELATION_GROUPS_8
+  const groupIds = new Set(groups.map((group) => group.id))
+  const rules = Array.isArray(settings?.rules) && settings.rules.length > 0
+    ? settings.rules
+    : DEFAULT_DEPTH_RELATION_RULES_8
+  return {
+    ...DEFAULT_DEPTH_RELATION_FILTERING_SETTINGS,
+    ...(settings ?? {}),
+    mode: readDepthRelationMode(settings?.mode ?? DEFAULT_DEPTH_RELATION_FILTERING_SETTINGS.mode),
+    groups: groups.map((group) => ({
+      id: group.id,
+      label: group.label,
+      pointIds: group.pointIds.filter((pointId): pointId is SemanticPointId =>
+        SEMANTIC_POINT_NAMES.includes(pointId),
+      ),
+      aggregation: group.aggregation === "mean" ? "mean" : "median",
+    })),
+    rules: rules
+      .filter((rule) => groupIds.has(rule.subjectGroupId) && groupIds.has(rule.referenceGroupId))
+      .map((rule) => ({
+        ...rule,
+        relation: rule.relation === "behind" || rule.relation === "near" ? rule.relation : "inFrontOf",
+        margin: Math.max(0, rule.margin),
+        warningMargin: Math.max(0, rule.warningMargin),
+        weight: Math.max(0, rule.weight),
+        mode: rule.mode === "penalty" || rule.mode === "hardReject" ? rule.mode : "debugOnly",
+      })),
+    penaltyScale: Math.max(
+      0,
+      settings?.penaltyScale ?? DEFAULT_DEPTH_RELATION_FILTERING_SETTINGS.penaltyScale,
+    ),
+    maxPenalty: Math.max(
+      0,
+      settings?.maxPenalty ?? DEFAULT_DEPTH_RELATION_FILTERING_SETTINGS.maxPenalty,
+    ),
+  }
 }
 
 function readSearchMode(): SearchMode {
@@ -3742,7 +4082,12 @@ function handleAutoSequenceStepComplete(analysis: AnalysisResult | null): void {
   }
 
   const preset = findSearchPreset(sequence.steps[state.autoSequence.currentStepIndex])
-  const bestCandidate = analysis.bestCandidate ? cloneCandidate(analysis.bestCandidate) : null
+  const bestCandidate = analysis.bestCandidate
+    ? attachDepthRelationToCandidate(
+        cloneCandidate(analysis.bestCandidate),
+        analysis.bestCandidate.depthRelationDebug,
+      )
+    : null
   const stepSummary: AutoSequenceStepSummary = {
     stepIndex: state.autoSequence.currentStepIndex + 1,
     presetName: preset.label,
@@ -3754,6 +4099,10 @@ function handleAutoSequenceStepComplete(analysis: AnalysisResult | null): void {
     scoreDebug: analysis.bestCandidate?.scoreDebug
       ? roundScoreDebug(analysis.bestCandidate.scoreDebug)
       : undefined,
+    depthRelationSummary: buildDepthRelationSummary(
+      analysis.depthRelationDebug,
+      analysis.bestCandidate?.depthRelationDebug,
+    ),
     processedCandidateCount: analysis.processedCandidateCount,
     estimatedCandidateCount: analysis.estimatedCandidateCount,
   }
@@ -4022,6 +4371,10 @@ function appendStabilityHistoryFromAnalysis(analysis: AnalysisResult): void {
     },
     worstBucket: bestCandidate ? getWorstBucket(bestCandidate.bucketScores) : null,
     outlierSummary: buildStabilityOutlierSummary(bestCandidate?.outlierDebug ?? null),
+    depthRelationSummary: buildDepthRelationSummary(
+      analysis.depthRelationDebug,
+      bestCandidate?.depthRelationDebug,
+    ),
   }
 
   state.stabilityHistory = [...state.stabilityHistory, entry]
@@ -4043,6 +4396,32 @@ function buildStabilityOutlierSummary(
     rawScores: outlierDebug.rawScores,
     filteredScores: outlierDebug.filteredScores,
   }
+}
+
+function buildDepthRelationSummary(
+  analysisDebug: AnalysisDepthRelationDebug | null | undefined,
+  candidateDebug: DepthRelationDebug | null | undefined,
+): DepthRelationSummary | undefined {
+  const settings = analysisDebug?.settings ?? candidateDebug?.settings
+  if (!settings) {
+    return undefined
+  }
+  return {
+    enabled: settings.enabled,
+    mode: settings.mode,
+    violationCount: candidateDebug?.violationCount ?? 0,
+    hardRejectViolationCount: candidateDebug?.hardRejectViolationCount ?? 0,
+    rejectedCandidateCount: analysisDebug?.rejectedCandidateCount ?? 0,
+    finalCandidatePassed: candidateDebug ? candidateDebug.hardRejectViolationCount === 0 : false,
+    finalCandidatePenalty: candidateDebug?.penalty ?? 0,
+  }
+}
+
+function attachDepthRelationToCandidate(
+  candidate: FittingCandidate8,
+  depthRelationDebug: DepthRelationDebug | undefined,
+): FittingCandidate8WithDepthRelation {
+  return depthRelationDebug ? { ...candidate, depthRelationDebug } : candidate
 }
 
 function buildCandidateStabilityDebug(): CandidateStabilityDebug {
@@ -4898,12 +5277,20 @@ function createSummaryAnalysis(analysis: AnalysisResult): SummaryAnalysisResult 
     scoreDebugSummary: analysis.scoreDebugSummary,
     processedCandidateCount: analysis.processedCandidateCount,
     estimatedCandidateCount: analysis.estimatedCandidateCount,
+    rawRanking: analysis.rawRanking.slice(0, 20),
+    depthFilteredRanking: analysis.depthFilteredRanking.slice(0, 20),
     topCandidates: analysis.topCandidates.slice(0, 20),
     bestCandidate: analysis.bestCandidate
       ? attachIdealFace8Summary(toRankingEntry(analysis.bestCandidate, 1), analysis.base8Points2DSummary.points)
       : null,
     bestIdealFace8: analysis.bestIdealFace8,
     depthRelation: analysis.depthRelation,
+    depthRelationDebug: analysis.depthRelationDebug
+      ? {
+          ...analysis.depthRelationDebug,
+          rejectedCandidates: analysis.depthRelationDebug.rejectedCandidates.slice(0, 20),
+        }
+      : undefined,
     bucketRanking: Object.fromEntries(
       BUCKETS.map((bucket) => [bucket, analysis.bucketRanking[bucket].slice(0, 5)]),
     ) as Record<CaptureBucket, RankingEntry[]>,
@@ -4979,6 +5366,7 @@ function renderSourceOnly(): void {
   getElement("auto-sequence-result").innerHTML = `<p class="empty">Auto Sequence 実行後に表示します。</p>`
   getElement("best-candidate").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
   renderOutlierFrameDebug(null, readSettings().outlierFiltering)
+  renderDepthRelationDebug(null, readSettings().depthRelationFiltering)
   renderProjectionSignDebug(null)
   renderRotationCenterDebug(null)
   renderBucketTargetWarning()
@@ -5053,6 +5441,7 @@ function renderAnalysis(): void {
     ? renderStatusItems([
         ["candidateId", analysis.bestCandidate.candidateId],
         ["objectiveMode", analysis.bestCandidate.objectiveMode],
+        ["objectiveScoreBeforeDepthFilter", formatNumber(analysis.bestCandidate.objectiveScoreBeforeDepthFilter)],
         ["objectiveScore", formatNumber(analysis.bestCandidate.objectiveScore)],
         ["totalScore", formatNumber(analysis.bestCandidate.totalScore)],
         ["weightedSemanticDistance", formatNumber(analysis.bestCandidate.weightedSemanticDistance)],
@@ -5066,6 +5455,9 @@ function renderAnalysis(): void {
         ["pitchAverageScore", formatNumber(analysis.bestCandidate.scoreDebug?.pitchAverageScore)],
         ["maxBucketScore", formatNumber(analysis.bestCandidate.scoreDebug?.maxBucketScore)],
         ["balancedScore", formatNumber(analysis.bestCandidate.scoreDebug?.balancedScore)],
+        ["depth violationCount", String(analysis.bestCandidate.depthRelationDebug?.violationCount ?? 0)],
+        ["depth penalty", formatNumber(analysis.bestCandidate.depthRelationDebug?.penalty)],
+        ["depth isRejected", String(analysis.bestCandidate.depthRelationDebug?.isRejected ?? false)],
         ["raw totalScore", formatNumber(analysis.bestCandidate.outlierDebug?.rawScores.totalScore)],
         ["filtered totalScore", formatNumber(analysis.bestCandidate.outlierDebug?.filteredScores?.totalScore)],
         ["raw maxBucketScore", formatNumber(analysis.bestCandidate.outlierDebug?.rawScores.scoreDebug.maxBucketScore)],
@@ -5078,6 +5470,7 @@ function renderAnalysis(): void {
       ])
     : `<p class="empty">候補がありません。</p>`
   renderOutlierFrameDebug(analysis.outlierFrameDebug ?? null, analysis.searchSettings.outlierFiltering)
+  renderDepthRelationDebug(analysis.depthRelationDebug ?? null, analysis.searchSettings.depthRelationFiltering)
   renderProjectionSignDebug(analysis.projectionSignDebug ?? null)
   renderRotationCenterDebug(analysis.rotationCenterDebug ?? null)
   renderBucketTargetWarning()
@@ -5116,6 +5509,18 @@ function renderAnalysis(): void {
           })
         : "-",
     ],
+    [
+      "depthRelationDebug",
+      analysis.depthRelationDebug
+        ? JSON.stringify({
+            rejectedCandidateCount: analysis.depthRelationDebug.rejectedCandidateCount,
+            violationCount: analysis.bestCandidate?.depthRelationDebug?.violationCount ?? null,
+            hardRejectViolationCount:
+              analysis.bestCandidate?.depthRelationDebug?.hardRejectViolationCount ?? null,
+            penalty: analysis.bestCandidate?.depthRelationDebug?.penalty ?? null,
+          })
+        : "-",
+    ],
   ])
   getElement("warnings").textContent = analysis.warnings.length === 0 ? "警告はありません。" : analysis.warnings.join("\n")
   getElement("json-preview").textContent = JSON.stringify(createSummaryAnalysis(analysis), null, 2)
@@ -5140,6 +5545,11 @@ function renderResultSummary(analysis: AnalysisResult): string {
     ["autoSequenceName", autoSummary?.sequenceName ?? "-"],
     ["autoSequenceStatus", autoSummary?.status ?? "-"],
     ["autoSequenceFinalObjectiveScore", formatNumber(autoSummary?.finalObjectiveScore)],
+    ["depth rejectedCandidates", String(analysis.depthRelationDebug?.rejectedCandidateCount ?? 0)],
+    [
+      "depth final passed",
+      String((analysis.bestCandidate?.depthRelationDebug?.hardRejectViolationCount ?? 0) === 0),
+    ],
     [
       "autoSequenceSummary.finalCandidate",
       autoFinalCandidate ? formatCandidateCompact(autoFinalCandidate) : "-",
@@ -5173,6 +5583,9 @@ function renderAutoSequenceResult(analysis: AnalysisResult): string {
     ["final step preset", finalStep?.presetName ?? "-"],
     ["final step totalScore", formatNumber(finalStep?.totalScore)],
     ["final step maxBucketScore", formatNumber(finalStep?.scoreDebug?.maxBucketScore)],
+    ["final depth passed", String(finalStep?.depthRelationSummary?.finalCandidatePassed ?? false)],
+    ["final depth rejected", formatNumber(finalStep?.depthRelationSummary?.rejectedCandidateCount)],
+    ["final depth penalty", formatNumber(finalStep?.depthRelationSummary?.finalCandidatePenalty)],
   ])
 }
 
@@ -5266,6 +5679,9 @@ function renderAutoSequenceStepTable(steps: AutoSequenceStepSummary[]): string {
             <th>totalScore</th>
             <th>balanced</th>
             <th>maxBucket</th>
+            <th>depth passed</th>
+            <th>depth rejected</th>
+            <th>depth penalty</th>
             <th>bestCandidate</th>
           </tr>
         </thead>
@@ -5280,6 +5696,9 @@ function renderAutoSequenceStepTable(steps: AutoSequenceStepSummary[]): string {
                 <td>${formatNumber(step.totalScore)}</td>
                 <td>${formatNumber(step.scoreDebug?.balancedScore)}</td>
                 <td>${formatNumber(step.scoreDebug?.maxBucketScore)}</td>
+                <td>${String(step.depthRelationSummary?.finalCandidatePassed ?? false)}</td>
+                <td>${formatNumber(step.depthRelationSummary?.rejectedCandidateCount)}</td>
+                <td>${formatNumber(step.depthRelationSummary?.finalCandidatePenalty)}</td>
                 <td><code>${escapeHtml(step.bestCandidate ? formatCandidateCompact(step.bestCandidate) : "-")}</code></td>
               </tr>
             `,
@@ -5373,6 +5792,10 @@ function renderStabilityHistoryTable(entries: StabilityHistoryEntry[]): string {
           <th>yawAverageScore</th>
           <th>outlier count</th>
           <th>outlier buckets</th>
+          <th>depth passed</th>
+          <th>depth violations</th>
+          <th>depth rejected</th>
+          <th>depth penalty</th>
           <th>raw totalScore</th>
           <th>filtered totalScore</th>
           <th>raw maxBucketScore</th>
@@ -5402,6 +5825,10 @@ function renderStabilityHistoryTable(entries: StabilityHistoryEntry[]): string {
               <td>${formatNumber(entry.scores.yawAverageScore)}</td>
               <td>${formatNumber(entry.outlierSummary?.totalOutlierFrameCount)}</td>
               <td>${entry.outlierSummary ? formatOutlierBuckets(entry.outlierSummary.outlierFrameCountsByBucket) : "-"}</td>
+              <td>${String(entry.depthRelationSummary?.finalCandidatePassed ?? false)}</td>
+              <td>${formatNumber(entry.depthRelationSummary?.violationCount)}</td>
+              <td>${formatNumber(entry.depthRelationSummary?.rejectedCandidateCount)}</td>
+              <td>${formatNumber(entry.depthRelationSummary?.finalCandidatePenalty)}</td>
               <td>${formatNumber(entry.outlierSummary?.rawScores.totalScore)}</td>
               <td>${formatNumber(entry.outlierSummary?.filteredScores?.totalScore)}</td>
               <td>${formatNumber(entry.outlierSummary?.rawScores.scoreDebug.maxBucketScore)}</td>
@@ -5453,6 +5880,8 @@ function renderStabilitySummaryEntries(entries: StabilityHistoryEntry[]): string
             <th>nose.z</th>
             <th>maxBucketScore</th>
             <th>outlier count</th>
+            <th>depth passed</th>
+            <th>depth rejected</th>
             <th>raw maxBucketScore</th>
             <th>filtered maxBucketScore</th>
           </tr>
@@ -5468,6 +5897,8 @@ function renderStabilitySummaryEntries(entries: StabilityHistoryEntry[]): string
                 <td>${formatNumber(entry.finalCandidate?.zByPointId.nose)}</td>
                 <td>${formatNumber(entry.scores.maxBucketScore)}</td>
                 <td>${formatNumber(entry.outlierSummary?.totalOutlierFrameCount)}</td>
+                <td>${String(entry.depthRelationSummary?.finalCandidatePassed ?? false)}</td>
+                <td>${formatNumber(entry.depthRelationSummary?.rejectedCandidateCount)}</td>
                 <td>${formatNumber(entry.outlierSummary?.rawScores.scoreDebug.maxBucketScore)}</td>
                 <td>${formatNumber(entry.outlierSummary?.filteredScores?.scoreDebug.maxBucketScore)}</td>
               </tr>
@@ -5569,6 +6000,144 @@ function renderOutlierFrameTable(frames: OutlierFrameDebug[]): string {
             <td>${String(frame.excludedFromInference)}</td>
           </tr>
         `).join("")}
+      </tbody>
+    </table>
+  `
+}
+
+function renderDepthRelationDebug(
+  debug: AnalysisDepthRelationDebug | null,
+  fallbackSettings: DepthRelationFilteringSettings,
+): void {
+  const settings = debug?.settings ?? fallbackSettings
+  const best = debug?.bestCandidateDepthRelation
+  const noseRule = best?.ruleResults.find((result) => result.ruleId === "nose_tip_in_front_of_cheeks")
+  const nose = best?.groupValues.noseTip?.z ?? null
+  const cheeks = best?.groupValues.cheeks?.z ?? null
+  const delta = nose === null || cheeks === null ? null : round(nose - cheeks)
+
+  getElement("depth-relation-settings-summary").innerHTML = renderStatusItems([
+    ["enabled", String(settings.enabled)],
+    ["mode", settings.mode],
+    ["applyToObjectiveScore", String(settings.applyToObjectiveScore)],
+    ["penaltyScale", formatNumber(settings.penaltyScale)],
+    ["maxPenalty", formatNumber(settings.maxPenalty)],
+    ["rule count", String(settings.rules.length)],
+  ])
+
+  getElement("depth-relation-best-summary").innerHTML = best
+    ? renderStatusItems([
+        ["nose.z（鼻の奥行き）", formatNumber(nose)],
+        ["cheeks.z（左右頬の奥行き）", formatNumber(cheeks)],
+        ["noseMinusCheeks（鼻と頬の奥行き差）", formatNumber(delta)],
+        ["passed（通過）", String(noseRule?.passed ?? false)],
+        ["isRejected（除外対象）", String(best.isRejected)],
+        ["violationCount", String(best.violationCount)],
+        ["hardRejectViolationCount", String(best.hardRejectViolationCount)],
+        ["penalty", formatNumber(best.penalty)],
+      ])
+    : `<p class="empty">bestCandidate がないため Depth Relation Debug はありません。</p>`
+
+  getElement("depth-relation-warning").textContent =
+    noseRule && noseRule.severity === "violation"
+      ? [
+          "Warning:",
+          `nose.z（鼻の奥行き） = ${formatNumber(nose)}`,
+          `cheeks.z（左右頬の平均奥行き） = ${formatNumber(cheeks)}`,
+          "鼻が左右頬より奥にあります。",
+        ].join("\n")
+      : "Depth Relation Rule の警告はありません。"
+
+  getElement("depth-relation-rule-table").innerHTML = renderDepthRelationRuleTable(best?.ruleResults ?? [])
+  getElement("depth-relation-rejected-table").innerHTML = renderRejectedCandidateTable(
+    debug?.rejectedCandidates ?? [],
+    debug?.rejectedCandidateCount ?? 0,
+  )
+}
+
+function renderDepthRelationRuleTable(results: DepthRelationRuleResult[]): string {
+  if (results.length === 0) {
+    return `<p class="empty">Depth Relation Rule の結果はありません。</p>`
+  }
+  return `
+    <table>
+      <thead>
+        <tr>
+          <th>ruleId</th>
+          <th>label</th>
+          <th>subjectGroup</th>
+          <th>referenceGroup</th>
+          <th>relation</th>
+          <th>margin</th>
+          <th>mode</th>
+          <th>passed</th>
+          <th>delta</th>
+          <th>severity</th>
+          <th>penalty</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${results.map((result) => `
+          <tr>
+            <td><code>${escapeHtml(result.ruleId)}</code></td>
+            <td>${escapeHtml(result.label)}</td>
+            <td><code>${escapeHtml(result.subjectGroupId)}</code></td>
+            <td><code>${escapeHtml(result.referenceGroupId)}</code></td>
+            <td><code>${result.relation}</code></td>
+            <td>${formatNumber(result.margin)}</td>
+            <td><code>${result.mode}</code></td>
+            <td>${String(result.passed)}</td>
+            <td>${formatNumber(result.delta)}</td>
+            <td>${result.severity}</td>
+            <td>${formatNumber(result.penalty)}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `
+}
+
+function renderRejectedCandidateTable(
+  candidates: RejectedCandidateSummary[],
+  rejectedCandidateCount: number,
+): string {
+  if (rejectedCandidateCount === 0) {
+    return `<p class="empty">Depth Relation Filtering による除外候補はありません。</p>`
+  }
+  return `
+    <p class="empty">表示は最大20件です。total rejected: ${rejectedCandidateCount}</p>
+    <table>
+      <thead>
+        <tr>
+          <th>originalRank</th>
+          <th>candidateId</th>
+          <th>objectiveBefore</th>
+          <th>totalScore</th>
+          <th>nose.z</th>
+          <th>cheeks.z</th>
+          <th>delta</th>
+          <th>reason</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${candidates.map((candidate) => {
+          const debug = candidate.depthRelationDebug
+          const nose = debug.groupValues.noseTip?.z ?? null
+          const cheeks = debug.groupValues.cheeks?.z ?? null
+          const delta = nose === null || cheeks === null ? null : round(nose - cheeks)
+          return `
+            <tr>
+              <td>${formatNumber(candidate.originalRank ?? null)}</td>
+              <td><code>${escapeHtml(candidate.candidateId)}</code></td>
+              <td>${formatNumber(candidate.objectiveScoreBeforeDepthFilter)}</td>
+              <td>${formatNumber(candidate.totalScore)}</td>
+              <td>${formatNumber(nose)}</td>
+              <td>${formatNumber(cheeks)}</td>
+              <td>${formatNumber(delta)}</td>
+              <td>${escapeHtml(candidate.rejectReasons.join(" / ") || "-")}</td>
+            </tr>
+          `
+        }).join("")}
       </tbody>
     </table>
   `
@@ -5899,6 +6468,7 @@ function renderEmptyState(): void {
   getElement("auto-sequence-result").innerHTML = `<p class="empty">未解析です。</p>`
   getElement("best-candidate").innerHTML = `<p class="empty">未解析です。</p>`
   renderOutlierFrameDebug(null, DEFAULT_OUTLIER_FILTERING_SETTINGS)
+  renderDepthRelationDebug(null, DEFAULT_DEPTH_RELATION_FILTERING_SETTINGS)
   renderProjectionSignDebug(null)
   renderRotationCenterDebug(null)
   renderBucketTargetWarning()
@@ -6180,6 +6750,7 @@ function renderRankingTable(entries: RankingEntry[]): string {
           <th>#</th>
           <th>candidateId</th>
           <th>objective</th>
+          <th>objectiveBeforeDepth</th>
           <th>objectiveScore</th>
           <th>totalScore</th>
           <th>front</th>
@@ -6189,6 +6760,8 @@ function renderRankingTable(entries: RankingEntry[]): string {
           <th>pitch-</th>
           <th>mixed</th>
           <th>balanced</th>
+          <th>depth passed</th>
+          <th>depth penalty</th>
           <th>legacy pivotZ</th>
           <th>rotationCenter.y</th>
           <th>rotationCenter.z</th>
@@ -6202,6 +6775,7 @@ function renderRankingTable(entries: RankingEntry[]): string {
               <td>${entry.rank || index + 1}</td>
               <td><code>${entry.candidateId}</code></td>
               <td><code>${entry.objectiveMode}</code></td>
+              <td>${formatNumber(entry.objectiveScoreBeforeDepthFilter)}</td>
               <td>${formatNumber(entry.objectiveScore)}</td>
               <td>${formatNumber(entry.totalScore)}</td>
               <td>${formatNumber(entry.bucketScores.front)}</td>
@@ -6211,6 +6785,8 @@ function renderRankingTable(entries: RankingEntry[]): string {
               <td>${formatNumber(entry.bucketScores.pitchNegative)}</td>
               <td>${formatNumber(entry.bucketScores.mixedPose)}</td>
               <td>${formatNumber(entry.scoreDebug?.balancedScore)}</td>
+              <td>${String(entry.depthRelationDebug ? entry.depthRelationDebug.hardRejectViolationCount === 0 : false)}</td>
+              <td>${formatNumber(entry.depthRelationDebug?.penalty)}</td>
               <td>${formatNumber(entry.candidate.pivotZ)}</td>
               <td>${formatNumber(getCandidateRotationCenter(entry.candidate).y)}</td>
               <td>${formatNumber(getCandidateRotationCenter(entry.candidate).z)}</td>
@@ -6368,6 +6944,10 @@ function toRankingEntry(candidate: CandidateResult, rank: number): RankingEntry 
     rank,
     candidateId: candidate.candidateId,
     objectiveMode,
+    objectiveScoreBeforeDepthFilter:
+      typeof candidate.objectiveScoreBeforeDepthFilter === "number"
+        ? round(candidate.objectiveScoreBeforeDepthFilter)
+        : undefined,
     objectiveScore: round(
       typeof candidate.objectiveScore === "number"
         ? candidate.objectiveScore
@@ -6384,6 +6964,7 @@ function toRankingEntry(candidate: CandidateResult, rank: number): RankingEntry 
     weightedSemanticDistance: round(candidate.weightedSemanticDistance),
     averageSemanticDistance: round(candidate.averageSemanticDistance),
     sampleCount: candidate.sampleCount,
+    depthRelationDebug: candidate.depthRelationDebug,
   }
 }
 
@@ -6535,9 +7116,17 @@ function calculateScoreDebug(
 }
 
 function getObjectiveScore(
-  result: { totalScore: number; scoreDebug: CandidateScoreDebug },
+  result: {
+    totalScore: number
+    scoreDebug: CandidateScoreDebug
+    objectiveMode?: ObjectiveMode
+    objectiveScore?: number
+  },
   objectiveMode: ObjectiveMode,
 ): number {
+  if (result.objectiveMode === objectiveMode && typeof result.objectiveScore === "number") {
+    return result.objectiveScore
+  }
   switch (objectiveMode) {
     case "totalScore":
       return result.totalScore

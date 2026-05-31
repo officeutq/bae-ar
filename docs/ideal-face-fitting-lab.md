@@ -327,3 +327,70 @@ maxBucketScore は候補ランキングの主指標ではなく、外れフレ�
 外れフレーム除外後も、rawScore と filteredScore の両方を表示・JSON出力する。
 
 初期状態では debugOnly とし、外れ値除外はランキングに反映しない。
+
+## Depth Relation Rule
+
+Depth Relation Rule（奥行き関係ルール）は、2D score だけでは良く見えるが 3D 構造として不自然な候補を検出するための debug / scoring / candidate filtering 機能である。
+
+このラボでは、`z が小さい = 手前`、`z が大きい = 奥` として扱う。そのため、中心側の group は境界側の group より手前にあるべき、という相対的な関係を確認する。
+
+今回は Standard Face（標準顔）や Depth Template（奥行きテンプレート）は使わない。標準顔との差分ではなく、candidate 内の group 同士の相対関係だけを見る。
+
+8 semantic points では以下の group から開始する。
+
+```ts
+DEFAULT_DEPTH_RELATION_GROUPS_8 = [
+  { id: "noseTip", label: "鼻先", pointIds: ["nose"], aggregation: "median" },
+  { id: "cheeks", label: "左右頬", pointIds: ["leftCheek", "rightCheek"], aggregation: "mean" },
+  { id: "faceCenter", label: "顔中心", pointIds: ["nose", "mouth", "leftEye", "rightEye"], aggregation: "median" },
+  { id: "faceBoundary", label: "顔境界", pointIds: ["leftCheek", "rightCheek", "chin", "headTop"], aggregation: "median" },
+]
+```
+
+初期 rule は以下である。
+
+- `nose_tip_in_front_of_cheeks`: 鼻先は左右頬より手前。`noseTip.z < cheeks.z - 0.005` を満たさない場合は `hardReject` 対象。
+- `face_center_in_front_of_boundary`: 顔中心は顔境界より手前。初期状態では `debugOnly` で、ランキング除外には使わない。
+
+判定式は以下とする。
+
+- `inFrontOf`: `subjectZ < referenceZ - margin`
+- `behind`: `subjectZ > referenceZ + margin`
+- `near`: `Math.abs(subjectZ - referenceZ) <= margin`
+
+`delta` は `subjectZ - referenceZ` で記録する。`noseTip` vs `cheeks` では、`delta >= -margin` が違反である。
+
+Depth Relation Filtering は Outlier Filtering の後に適用する。スコアの流れは以下である。
+
+1. `rawScore`: 全 frame から計算した生スコア
+2. `filteredScore`: Outlier Filtering による外れフレーム除外後スコア
+3. `depthFilteredRanking`: Depth Relation Filtering 後のランキング
+
+mode の挙動は以下である。
+
+- `debugOnly`: ランキングには影響しない。`depthRelationDebug` だけを出す。
+- `penalty`: `applyToObjectiveScore = true` のときだけ、`objectiveScore = baseObjectiveScore + depthRelationPenalty` とする。
+- `hardReject`: `applyToObjectiveScore = true` のときだけ、`hardReject` rule 違反候補を ranking / local search / coordinateDescent の候補選択から除外する。
+
+除外候補は捨てず、`depthRelationDebug.rejectedCandidates` に最大20件まで保持する。すべて除外された場合、`bestCandidate` は `null` になり、UI は no valid candidate として落ちずに表示する。
+
+Full JSON / Summary JSON には以下を出力する。
+
+```ts
+searchSettings.depthRelationFiltering
+rawRanking
+depthFilteredRanking
+bestCandidate.depthRelationDebug
+depthRelationDebug.bestCandidateDepthRelation
+depthRelationDebug.rejectedCandidateCount
+depthRelationDebug.rejectedCandidates
+autoSequenceSummary.steps[].depthRelationSummary
+autoSequenceSummary.finalCandidate.depthRelationDebug
+candidateStabilityDebug.history[].depthRelationSummary
+```
+
+Auto Sequence では各 step に現在の Depth Relation Filtering settings を渡す。`mode: hardReject` かつ `applyToObjectiveScore: true` の場合、各 step の bestCandidate 選択にも反映される。
+
+Candidate Stability Debug でも同じ設定を使い、5件 / 8件 / 10件の比較で Depth Relation Rule を満たす候補へ安定して収束するか確認できる。
+
+478 landmarks へ拡張するときも、個別点専用ロジックではなく、group / rule の定義を増やして同じ評価器を使う。
