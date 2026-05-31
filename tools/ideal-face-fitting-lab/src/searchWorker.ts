@@ -61,6 +61,7 @@ interface SearchFrame {
 
 interface SearchSettings {
   searchMode: SearchMode
+  objectiveMode: ObjectiveMode
   zMin: number
   zMax: number
   zStep: number
@@ -90,6 +91,12 @@ interface ProjectionOptions {
 }
 
 type SearchMode = "fullGrid" | "localOneDimensional" | "coordinateDescent"
+type ObjectiveMode =
+  | "totalScore"
+  | "balancedScore"
+  | "maxBucketScore"
+  | "pitchAverageScore"
+  | "yawAverageScore"
 type LocalSearchParameter = "pivotZ" | "rotationCenter.y" | "rotationCenter.z" | `${SemanticPointName}.z`
 
 interface LocalSearchRange {
@@ -151,6 +158,8 @@ interface CandidateResult extends CandidateDefinition {
   perPointError: Record<SemanticPointName, number>
   bucketScores: PoseBucketScores
   scoreDebug: CandidateScoreDebug
+  objectiveMode: ObjectiveMode
+  objectiveScore: number
   totalScore: number
   sampleCount: number
   warnings: string[]
@@ -167,6 +176,8 @@ interface CandidateScoreDebug {
 interface RankingEntry {
   rank: number
   candidateId: string
+  objectiveMode: ObjectiveMode
+  objectiveScore: number
   totalScore: number
   bucketScores: PoseBucketScores
   scoreDebug: CandidateScoreDebug
@@ -306,7 +317,7 @@ async function runSearch(message: WorkerStartMessage): Promise<void> {
       for (const warning of result.warnings) {
         warnings.add(warning)
       }
-      insertTopResult(topResults, result, message.settings.topN)
+      insertTopResult(topResults, result, message.settings.topN, message.settings.objectiveMode)
       insertBucketTopResults(bucketTopResults, result, message.settings.topN)
 
       processedCandidateCount += 1
@@ -440,7 +451,7 @@ function createLocalOneDimensionalCandidateSource(settings: SearchSettings): Can
       return createCandidateDefinitionFromCandidate(nextIndex++, candidate)
     },
     afterEvaluate: (result) => {
-      if (!bestResult || result.totalScore < bestResult.totalScore) {
+      if (!bestResult || isBetterObjectiveResult(result, bestResult, settings.objectiveMode)) {
         bestResult = result
       }
     },
@@ -459,7 +470,9 @@ function createLocalOneDimensionalCandidateSource(settings: SearchSettings): Can
                 ? getCandidateParameter(bestResult, localSettings.targetParameter)
                 : previousValue,
             ),
-            bestScore: round(bestResult?.totalScore ?? Number.POSITIVE_INFINITY),
+            bestScore: round(
+              bestResult ? getObjectiveScore(bestResult, settings.objectiveMode) : Number.POSITIVE_INFINITY,
+            ),
             candidateCount: values.length,
           },
         ],
@@ -511,7 +524,11 @@ function createCoordinateDescentCandidateSource(settings: SearchSettings): Candi
       parameter: activeStep.parameter,
       previousValue: round(activeStep.previousValue),
       bestValue: round(getCandidateParameter(bestCandidate, activeStep.parameter)),
-      bestScore: round(activeStep.bestResult?.totalScore ?? Number.POSITIVE_INFINITY),
+      bestScore: round(
+        activeStep.bestResult
+          ? getObjectiveScore(activeStep.bestResult, settings.objectiveMode)
+          : Number.POSITIVE_INFINITY,
+      ),
       candidateCount: activeStep.candidateCount,
     })
     activeStep = null
@@ -559,7 +576,10 @@ function createCoordinateDescentCandidateSource(settings: SearchSettings): Candi
       if (!activeStep) {
         return
       }
-      if (!activeStep.bestResult || result.totalScore < activeStep.bestResult.totalScore) {
+      if (
+        !activeStep.bestResult ||
+        isBetterObjectiveResult(result, activeStep.bestResult, settings.objectiveMode)
+      ) {
         activeStep.bestResult = result
       }
       valueIndex += 1
@@ -629,22 +649,37 @@ function advanceCandidateCursor(
   }
 }
 
-function insertTopResult(results: CandidateResult[], next: CandidateResult, limit: number): void {
+function insertTopResult(
+  results: CandidateResult[],
+  next: CandidateResult,
+  limit: number,
+  objectiveMode: ObjectiveMode,
+): void {
   const nextKey = buildCandidateKey(next)
   const existingIndex = results.findIndex((result) => buildCandidateKey(result) === nextKey)
   if (existingIndex >= 0) {
-    if (next.totalScore < results[existingIndex].totalScore) {
+    if (isBetterObjectiveResult(next, results[existingIndex], objectiveMode)) {
       results[existingIndex] = next
     }
-    results.sort((a, b) => a.totalScore - b.totalScore)
+    results.sort((a, b) => getObjectiveScore(a, objectiveMode) - getObjectiveScore(b, objectiveMode))
     return
   }
 
   results.push(next)
-  results.sort((a, b) => a.totalScore - b.totalScore)
+  results.sort((a, b) => getObjectiveScore(a, objectiveMode) - getObjectiveScore(b, objectiveMode))
   if (results.length > limit) {
     results.length = limit
   }
+}
+
+function isBetterObjectiveResult(
+  next: CandidateResult,
+  current: CandidateResult,
+  objectiveMode: ObjectiveMode,
+): boolean {
+  const nextScore = getObjectiveScore(next, objectiveMode)
+  const currentScore = getObjectiveScore(current, objectiveMode)
+  return nextScore < currentScore
 }
 
 function insertBucketTopResults(
@@ -722,6 +757,8 @@ function evaluateCandidate(
   const bucketScores = calculateBucketScores(perFrameResults)
   const scoreDebug = calculateScoreDebug(weightedSemanticDistance, bucketScores)
   const totalScore = weightedSemanticDistance
+  const objectiveMode = normalizeObjectiveMode(settings.objectiveMode)
+  const objectiveScore = getObjectiveScore({ totalScore, scoreDebug }, objectiveMode)
 
   return {
     ...candidate,
@@ -730,6 +767,8 @@ function evaluateCandidate(
     perPointError,
     bucketScores,
     scoreDebug,
+    objectiveMode,
+    objectiveScore,
     totalScore,
     sampleCount: perFrameResults.length,
     warnings: Array.from(new Set(perFrameResults.flatMap((result) => result.warnings))),
@@ -891,6 +930,33 @@ function calculateScoreDebug(
   }
 }
 
+function getObjectiveScore(
+  result: { totalScore: number; scoreDebug: CandidateScoreDebug },
+  objectiveMode: ObjectiveMode,
+): number {
+  switch (normalizeObjectiveMode(objectiveMode)) {
+    case "totalScore":
+      return result.totalScore
+    case "balancedScore":
+      return result.scoreDebug.balancedScore ?? Number.POSITIVE_INFINITY
+    case "maxBucketScore":
+      return result.scoreDebug.maxBucketScore ?? Number.POSITIVE_INFINITY
+    case "pitchAverageScore":
+      return result.scoreDebug.pitchAverageScore ?? Number.POSITIVE_INFINITY
+    case "yawAverageScore":
+      return result.scoreDebug.yawAverageScore ?? Number.POSITIVE_INFINITY
+  }
+}
+
+function normalizeObjectiveMode(value: string | undefined): ObjectiveMode {
+  return value === "balancedScore" ||
+    value === "maxBucketScore" ||
+    value === "pitchAverageScore" ||
+    value === "yawAverageScore"
+    ? value
+    : "totalScore"
+}
+
 function averageBucketScore(results: FrameEvaluation[], bucket: CaptureBucket): number | null {
   return roundNullable(
     average(results.filter((result) => result.bucket === bucket).map((result) => result.totalScore)),
@@ -909,6 +975,8 @@ function toRankingEntry(candidate: CandidateResult, rank: number): RankingEntry 
   return {
     rank,
     candidateId: candidate.candidateId,
+    objectiveMode: candidate.objectiveMode,
+    objectiveScore: round(candidate.objectiveScore),
     totalScore: round(candidate.totalScore),
     bucketScores: roundRecord(candidate.bucketScores),
     scoreDebug: roundScoreDebug(candidate.scoreDebug),

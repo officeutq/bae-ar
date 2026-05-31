@@ -240,6 +240,36 @@ Auto Sequence には以下を追加します。
 - `Rotation Center Fine Sequence`: `Rotation Center Debug Best` を起点に、Rotation Center Fine → Rotation Center + 8Point Fine → NoseZ Fine → MouthZ Fine を実行する。
 - `Natural Nose Rotation Center Sequence`: `Natural Nose With Rotation Center` を起点に、同じ手順で nose.z が自然寄りでも score が出るか確認する。
 
+## Objective Mode
+
+Objective Mode は、探索中にどの評価指標を最小化するかを切り替えるための設定である。
+
+`totalScore` は従来挙動で、全体の 2D 誤差を最小化する。
+
+`balancedScore` は `totalScore` と `maxBucketScore` を組み合わせた既存 debug 指標を最小化する。
+
+`maxBucketScore` は `front` / `yawPositive` / `yawNegative` / `pitchPositive` / `pitchNegative` のうち、最も悪い bucket score を最小化する。これにより、総合平均は良いが一部姿勢だけ破綻する候補を見つけやすくする。
+
+`pitchAverageScore` は `pitchPositive` / `pitchNegative` の平均を、`yawAverageScore` は `yawPositive` / `yawNegative` の平均を最小化する確認用の objective である。
+
+`bestCandidate` と `topCandidates` の ranking は選択中の `objectiveMode` で比較する。JSON には比較に使った `objectiveMode` / `objectiveScore` を出しつつ、従来どおり `totalScore` / `bucketScores` / `scoreDebug` も保持する。
+
+Rotation Center Search の初期確認で `rotationCenter.y` が探索範囲下限に張り付いたため、default range は `rotationCenter.y = -0.24 .. 0.00 / step 0.01`、`rotationCenter.z = 0.02 .. 0.12 / step 0.01` に拡張する。`Rotation Center Fine` 系 preset では `rotationCenter.y = -0.24 .. 0.00 / step 0.005`、`rotationCenter.z = 0.02 .. 0.12 / step 0.005` を使う。
+
+Objective Mode 付き preset として、以下を追加する。
+
+- `Rotation Center Fine - Balanced`
+- `Rotation Center Fine - MaxBucket`
+- `Rotation Center + 8Point Fine - Balanced`
+- `Rotation Center + 8Point Fine - MaxBucket`
+
+Auto Sequence には、以下を追加する。
+
+- `Rotation Center Balanced Sequence`
+- `Rotation Center MaxBucket Sequence`
+- `Natural Nose Balanced Sequence`
+- `Natural Nose MaxBucket Sequence`
+
 ## Worker Grid Search
 
 grid search はブラウザ main thread ではなく Web Worker で実行します。
