@@ -4139,17 +4139,6 @@ function valueRange(values: Array<number | null | undefined>): number | null {
 
 function applyCommonPresetSettings(): void {
   state.coordinateDescentParameterOrder = [...DEFAULT_COORDINATE_DESCENT_PARAMETER_ORDER]
-  writeNumberInput("roll-warning-input", 12)
-  writeNumberInput("blendshape-warning-input", 0.35)
-  writeNumberInput("top-n-input", 100)
-  writeNumberInput("focal-length-input", 2.6)
-  writeSelectValue("objective-mode-select", DEFAULT_SETTINGS.objectiveMode)
-  writeNumberInput("z-min-input", -0.24)
-  writeNumberInput("z-max-input", 0.24)
-  writeNumberInput("z-step-input", 0.24)
-  writeNumberInput("pivot-z-min-input", -0.48)
-  writeNumberInput("pivot-z-max-input", 0.48)
-  writeNumberInput("pivot-z-step-input", 0.24)
 }
 
 function renderPresetMessage(): void {
