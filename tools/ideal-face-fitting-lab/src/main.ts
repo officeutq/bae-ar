@@ -19,8 +19,13 @@ type SemanticPointName =
   | "rightEye"
   | "nose"
   | "mouth"
+  | "noseBridge"
+  | "leftJaw"
+  | "rightJaw"
+  | "upperFaceCenter"
 
 type SemanticPointId = SemanticPointName
+type SemanticPointSetId = "8pt_basic" | "12pt_rotation_center"
 type DepthRelationAggregation = "mean" | "median"
 type DepthRelationMode = "off" | "debugOnly" | "penalty" | "hardReject"
 type DepthRelationKind = "inFrontOf" | "behind" | "near"
@@ -125,6 +130,7 @@ interface NormalizedFrame {
 }
 
 interface SearchSettings {
+  semanticPointSetId: SemanticPointSetId
   searchMode: SearchMode
   objectiveMode: ObjectiveMode
   outlierFiltering: OutlierFilteringSettings
@@ -181,6 +187,13 @@ interface Base8Points2DSummary {
   bounds: Bounds2D | null
   points: SemanticPointSet2D | null
   semanticIndexDebug: Record<SemanticPointName, number[]>
+}
+
+interface SemanticPointSetSummary {
+  id: SemanticPointSetId
+  pointCount: number
+  pointIds: SemanticPointName[]
+  indexMapping: Record<SemanticPointName, number[]>
 }
 
 interface Current8CoordinateSpace {
@@ -445,6 +458,8 @@ interface AutoSequenceStepSummary {
   stepIndex: number
   presetName: string
   presetId: SearchPresetId
+  semanticPointSetId: SemanticPointSetId
+  semanticPointCount: number
   searchSettings: AutoSequenceStepSearchSettings
   objectiveMode: ObjectiveMode
   objectiveScore: number | null
@@ -465,6 +480,8 @@ interface AutoSequenceStepSummary {
 }
 
 interface AutoSequenceStepSearchSettings {
+  semanticPointSetId: SemanticPointSetId
+  semanticPointCount: number
   searchMode: SearchMode
   objectiveMode: ObjectiveMode
   targetParameter?: LocalSearchParameter
@@ -910,6 +927,7 @@ interface CanonicalDepthFitReferencePoint {
 interface CanonicalDepthBasedDebug {
   templateFile: "canonical-face-depth-template-v1.json"
   templateSchemaVersion: "canonical_face_depth_template_v1"
+  fitReferencePointSet: "8pt_compatible" | "12pt_rotation_center"
   comparisonLandmarkCount: number
   excludedLandmarkIndices: number[]
   fit: {
@@ -1124,6 +1142,7 @@ interface Quick478DepthDebugSummary {
   startedAt: string
   completedAt: string
   settings: {
+    semanticPointSetId: SemanticPointSetId
     bucketPreset: "balanced_10_each"
     autoSearchSequence: "rotation_center_balanced"
     depthRelationMode: DepthRelationMode
@@ -1162,6 +1181,8 @@ interface Quick478ActualExecution {
 
 interface Quick478ActualExecutionStep {
   stepId: SearchPresetId
+  semanticPointSetId: SemanticPointSetId
+  semanticPointCount: number
   parameterOrder: LocalSearchParameter[]
   candidateCount: number
   rejectedCandidateCount: number
@@ -1308,7 +1329,9 @@ interface AnalysisResult {
   lastRunType: LastRunType
   sourceSummary: SourceSummary
   selectedFrameSummary: SelectedFrameSummary
+  semanticPointSet: SemanticPointSetSummary
   base8Points2DSummary: Base8Points2DSummary
+  baseSemanticPoints2DSummary: Base8Points2DSummary
   current8Debug: Current8DebugSummary
   current8PointsByFrame: Current8PointsFrame[]
   current8BoundsByFrame: Current8BoundsFrame[]
@@ -1350,7 +1373,9 @@ interface SummaryAnalysisResult {
   lastRunType: LastRunType
   sourceSummary: SourceSummary
   selectedFrameSummary: SelectedFrameSummary
+  semanticPointSet: SemanticPointSetSummary
   base8Points2DSummary: Base8Points2DSummary
+  baseSemanticPoints2DSummary: Base8Points2DSummary
   current8BucketSummary: Record<CaptureBucket, Current8BucketSummaryEntry>
   current8PoseComparison: Current8PoseComparison
   current8FrameSample: Current8FrameDebug[]
@@ -1475,11 +1500,141 @@ const SEMANTIC_DEFINITIONS: SemanticDefinition[] = [
     primaryIndices: [13, 14],
     weight: 1.2,
   },
+  {
+    name: "noseBridge",
+    label: "鼻筋",
+    primaryIndices: [6],
+    weight: 1.35,
+  },
+  {
+    name: "leftJaw",
+    label: "左顎ライン",
+    primaryIndices: [172],
+    weight: 1.15,
+  },
+  {
+    name: "rightJaw",
+    label: "右顎ライン",
+    primaryIndices: [397],
+    weight: 1.15,
+  },
+  {
+    name: "upperFaceCenter",
+    label: "上顔面中心",
+    primaryIndices: [168],
+    weight: 1.15,
+  },
 ]
 
 const SEMANTIC_POINT_NAMES = SEMANTIC_DEFINITIONS.map(
   (definition) => definition.name,
 ) as SemanticPointName[]
+
+const BASIC_8_SEMANTIC_POINT_NAMES: SemanticPointName[] = [
+  "headTop",
+  "chin",
+  "leftCheek",
+  "rightCheek",
+  "leftEye",
+  "rightEye",
+  "nose",
+  "mouth",
+]
+
+const ROTATION_CENTER_12_SEMANTIC_POINT_NAMES: SemanticPointName[] = [
+  ...BASIC_8_SEMANTIC_POINT_NAMES,
+  "noseBridge",
+  "leftJaw",
+  "rightJaw",
+  "upperFaceCenter",
+]
+
+const SEMANTIC_POINT_SET_DEFINITIONS: Record<
+  SemanticPointSetId,
+  {
+    id: SemanticPointSetId
+    pointIds: SemanticPointName[]
+  }
+> = {
+  "8pt_basic": {
+    id: "8pt_basic",
+    pointIds: BASIC_8_SEMANTIC_POINT_NAMES,
+  },
+  "12pt_rotation_center": {
+    id: "12pt_rotation_center",
+    pointIds: ROTATION_CENTER_12_SEMANTIC_POINT_NAMES,
+  },
+}
+
+const DEFAULT_SEMANTIC_POINT_SET_ID: SemanticPointSetId = "8pt_basic"
+const QUICK_478_DEPTH_SEMANTIC_POINT_SET_ID: SemanticPointSetId = "12pt_rotation_center"
+
+function completeSemanticZ(
+  zByPointId: Record<string, number>,
+): Record<SemanticPointName, number> {
+  const leftEye = zByPointId.leftEye ?? 0
+  const rightEye = zByPointId.rightEye ?? leftEye
+  const nose = zByPointId.nose ?? 0
+  const noseBridge = zByPointId.noseBridge ?? (nose + (leftEye + rightEye) / 2) / 2
+  const leftCheek = zByPointId.leftCheek ?? 0
+  const rightCheek = zByPointId.rightCheek ?? leftCheek
+  const chin = zByPointId.chin ?? 0
+  const headTop = zByPointId.headTop ?? 0
+  return {
+    headTop: round(headTop),
+    chin: round(chin),
+    leftCheek: round(leftCheek),
+    rightCheek: round(rightCheek),
+    leftEye: round(leftEye),
+    rightEye: round(rightEye),
+    nose: round(nose),
+    mouth: round(zByPointId.mouth ?? 0),
+    noseBridge: round(noseBridge),
+    leftJaw: round(zByPointId.leftJaw ?? (chin + leftCheek) / 2),
+    rightJaw: round(zByPointId.rightJaw ?? (chin + rightCheek) / 2),
+    upperFaceCenter: round(zByPointId.upperFaceCenter ?? (headTop + noseBridge) / 2),
+  }
+}
+
+function getSemanticPointSet(pointSetId: SemanticPointSetId): {
+  id: SemanticPointSetId
+  pointIds: SemanticPointName[]
+} {
+  return SEMANTIC_POINT_SET_DEFINITIONS[pointSetId] ?? SEMANTIC_POINT_SET_DEFINITIONS["8pt_basic"]
+}
+
+function buildSemanticPointSetSummary(pointSetId: SemanticPointSetId): SemanticPointSetSummary {
+  const pointSet = getSemanticPointSet(pointSetId)
+  return {
+    id: pointSet.id,
+    pointCount: pointSet.pointIds.length,
+    pointIds: [...pointSet.pointIds],
+    indexMapping: Object.fromEntries(
+      pointSet.pointIds.map((pointId) => [
+        pointId,
+        SEMANTIC_DEFINITIONS.find((definition) => definition.name === pointId)?.primaryIndices ?? [],
+      ]),
+    ) as Record<SemanticPointName, number[]>,
+  }
+}
+
+function expandParameterOrderForSemanticPointSet(
+  parameters: LocalSearchParameter[],
+  pointSetId: SemanticPointSetId,
+): LocalSearchParameter[] {
+  const activeZParameters = getSemanticPointSet(pointSetId).pointIds.map(
+    (pointId) => `${pointId}.z` as LocalSearchParameter,
+  )
+  const next = parameters.filter(
+    (parameter) => !parameter.endsWith(".z") || activeZParameters.includes(parameter),
+  )
+  for (const parameter of activeZParameters) {
+    if (!next.includes(parameter)) {
+      next.push(parameter)
+    }
+  }
+  return next
+}
 
 const LOCAL_SEARCH_PARAMETERS: LocalSearchParameter[] = [
   "pivotZ",
@@ -1493,6 +1648,10 @@ const LOCAL_SEARCH_PARAMETERS: LocalSearchParameter[] = [
   "rightEye.z",
   "nose.z",
   "mouth.z",
+  "noseBridge.z",
+  "leftJaw.z",
+  "rightJaw.z",
+  "upperFaceCenter.z",
 ]
 
 const OBJECTIVE_MODES: ObjectiveMode[] = [
@@ -1514,6 +1673,10 @@ const DEFAULT_COORDINATE_DESCENT_PARAMETER_ORDER: LocalSearchParameter[] = [
   "rightEye.z",
   "headTop.z",
   "chin.z",
+  "noseBridge.z",
+  "leftJaw.z",
+  "rightJaw.z",
+  "upperFaceCenter.z",
 ]
 
 const ROTATION_CENTER_ONLY_PARAMETER_ORDER: LocalSearchParameter[] = [
@@ -1523,7 +1686,7 @@ const ROTATION_CENTER_ONLY_PARAMETER_ORDER: LocalSearchParameter[] = [
 
 const BASELINE_CHEEK_DEPTH_CANDIDATE: FittingCandidate8 = {
   pivotZ: 0.12,
-  zByPointId: {
+  zByPointId: completeSemanticZ({
     headTop: 0,
     chin: 0,
     leftCheek: 0.12,
@@ -1532,12 +1695,12 @@ const BASELINE_CHEEK_DEPTH_CANDIDATE: FittingCandidate8 = {
     rightEye: 0,
     nose: 0,
     mouth: 0,
-  },
+  }),
 }
 
 const CURRENT_FINE_BEST_CANDIDATE: FittingCandidate8 = {
   pivotZ: 0.09,
-  zByPointId: {
+  zByPointId: completeSemanticZ({
     headTop: 0.01,
     chin: 0.01,
     leftCheek: 0.06,
@@ -1546,12 +1709,12 @@ const CURRENT_FINE_BEST_CANDIDATE: FittingCandidate8 = {
     rightEye: 0.03,
     nose: 0.06,
     mouth: 0.06,
-  },
+  }),
 }
 
 const PITCH_FOCUS_RAW_BEST: FittingCandidate8 = {
   pivotZ: 0.075,
-  zByPointId: {
+  zByPointId: completeSemanticZ({
     headTop: 0,
     chin: 0,
     leftCheek: 0.03,
@@ -1560,12 +1723,12 @@ const PITCH_FOCUS_RAW_BEST: FittingCandidate8 = {
     rightEye: 0.03,
     nose: 0.08,
     mouth: 0.05,
-  },
+  }),
 }
 
 const NATURAL_NOSE_CANDIDATE: FittingCandidate8 = {
   pivotZ: 0.075,
-  zByPointId: {
+  zByPointId: completeSemanticZ({
     headTop: 0,
     chin: 0,
     leftCheek: 0.03,
@@ -1574,7 +1737,7 @@ const NATURAL_NOSE_CANDIDATE: FittingCandidate8 = {
     rightEye: 0.03,
     nose: 0.02,
     mouth: 0.05,
-  },
+  }),
 }
 
 const ROTATION_CENTER_DEBUG_BEST: FittingCandidate8 = {
@@ -1584,7 +1747,7 @@ const ROTATION_CENTER_DEBUG_BEST: FittingCandidate8 = {
     y: -0.08,
     z: 0.04,
   },
-  zByPointId: {
+  zByPointId: completeSemanticZ({
     headTop: 0,
     chin: 0,
     leftCheek: 0.03,
@@ -1593,7 +1756,7 @@ const ROTATION_CENTER_DEBUG_BEST: FittingCandidate8 = {
     rightEye: 0.03,
     nose: 0.08,
     mouth: 0.05,
-  },
+  }),
 }
 
 const NATURAL_NOSE_WITH_ROTATION_CENTER: FittingCandidate8 = {
@@ -1603,7 +1766,7 @@ const NATURAL_NOSE_WITH_ROTATION_CENTER: FittingCandidate8 = {
     y: -0.08,
     z: 0.04,
   },
-  zByPointId: {
+  zByPointId: completeSemanticZ({
     headTop: 0,
     chin: 0,
     leftCheek: 0.03,
@@ -1612,7 +1775,7 @@ const NATURAL_NOSE_WITH_ROTATION_CENTER: FittingCandidate8 = {
     rightEye: 0.03,
     nose: 0.02,
     mouth: 0.05,
-  },
+  }),
 }
 
 const DEFAULT_LOCAL_SEARCH_BASE_CANDIDATE = BASELINE_CHEEK_DEPTH_CANDIDATE
@@ -1629,6 +1792,10 @@ const DEFAULT_COORDINATE_DESCENT_RANGES: LocalSearchRanges = {
   "rightEye.z": { min: 0, max: 0.06, step: 0.01 },
   "nose.z": { min: -0.02, max: 0.08, step: 0.01 },
   "mouth.z": { min: 0, max: 0.08, step: 0.01 },
+  "noseBridge.z": { min: 0, max: 0.08, step: 0.01 },
+  "leftJaw.z": { min: 0, max: 0.08, step: 0.01 },
+  "rightJaw.z": { min: 0, max: 0.08, step: 0.01 },
+  "upperFaceCenter.z": { min: -0.01, max: 0.06, step: 0.01 },
 }
 
 const YAW_FOCUS_COORDINATE_DESCENT_RANGES: LocalSearchRanges = {
@@ -1643,6 +1810,10 @@ const YAW_FOCUS_COORDINATE_DESCENT_RANGES: LocalSearchRanges = {
   "rightEye.z": { min: -0.02, max: 0.03, step: 0.01 },
   "nose.z": { min: -0.06, max: 0.03, step: 0.01 },
   "mouth.z": { min: -0.02, max: 0.04, step: 0.01 },
+  "noseBridge.z": { min: -0.03, max: 0.04, step: 0.01 },
+  "leftJaw.z": { min: 0.03, max: 0.12, step: 0.01 },
+  "rightJaw.z": { min: 0.03, max: 0.12, step: 0.01 },
+  "upperFaceCenter.z": { min: -0.02, max: 0.04, step: 0.01 },
 }
 
 const PITCH_FOCUS_COORDINATE_DESCENT_RANGES: LocalSearchRanges = {
@@ -1657,6 +1828,10 @@ const PITCH_FOCUS_COORDINATE_DESCENT_RANGES: LocalSearchRanges = {
   "rightEye.z": { min: 0.01, max: 0.05, step: 0.01 },
   "nose.z": { min: 0.03, max: 0.09, step: 0.01 },
   "mouth.z": { min: 0.03, max: 0.09, step: 0.01 },
+  "noseBridge.z": { min: 0.02, max: 0.08, step: 0.01 },
+  "leftJaw.z": { min: 0.02, max: 0.08, step: 0.01 },
+  "rightJaw.z": { min: 0.02, max: 0.08, step: 0.01 },
+  "upperFaceCenter.z": { min: 0, max: 0.05, step: 0.01 },
 }
 
 const ROTATION_CENTER_FINE_RANGES: LocalSearchRanges = {
@@ -2203,6 +2378,7 @@ const DEFAULT_DEPTH_RELATION_FILTERING_SETTINGS: DepthRelationFilteringSettings 
 }
 
 const DEFAULT_SETTINGS: SearchSettings = {
+  semanticPointSetId: DEFAULT_SEMANTIC_POINT_SET_ID,
   searchMode: "fullGrid",
   objectiveMode: "totalScore",
   outlierFiltering: DEFAULT_OUTLIER_FILTERING_SETTINGS,
@@ -2265,7 +2441,7 @@ const CANONICAL_FACE_DEPTH_TEMPLATE =
 const CANONICAL_FACE_DEPTH_TEMPLATE_FILE = "canonical-face-depth-template-v1.json" as const
 const CANONICAL_COMPARISON_LANDMARK_COUNT = 468
 const IRIS_DEPTH_FALLBACK_INDICES = [468, 469, 470, 471, 472, 473, 474, 475, 476, 477]
-const SEMANTIC_ANCHOR_LANDMARK_INDICES = new Set([10, 152, 234, 454, 4, 13, 14])
+const SEMANTIC_ANCHOR_LANDMARK_INDICES = new Set([10, 152, 234, 454, 4, 13, 14, 6, 172, 397, 168])
 const PER_LANDMARK_Z_SEARCH_SAMPLE_INDICES = [4, 10, 13, 14, 152, 234, 454]
 
 const DEFAULT_DEPTH_478_SMOOTHNESS_THRESHOLD = 0.03
@@ -2275,6 +2451,7 @@ const QUICK_DEPTH_478_NOSE_CHEEK_MARGIN = 0.005
 const QUICK_478_DEPTH_DEBUG_WORKER_CHUNK_SIZE = 50
 
 const QUICK_478_DEPTH_DEBUG_SETTINGS = {
+  semanticPointSetId: QUICK_478_DEPTH_SEMANTIC_POINT_SET_ID,
   bucketPreset: "balanced10Each" as BucketTargetPresetId,
   autoSearchSequence: "rotationCenterBalancedSequence" as AutoSequencePresetId,
   depthRelationFiltering: {
@@ -2304,6 +2481,7 @@ const QUICK_478_DEPTH_DEBUG_SETTINGS = {
 }
 
 const QUICK_478_DEPTH_DEBUG_SETTINGS_SUMMARY = {
+  semanticPointSetId: "12pt_rotation_center" as const,
   bucketPreset: "balanced_10_each" as const,
   autoSearchSequence: "rotation_center_balanced" as const,
   depthRelationMode: "hardReject" as const,
@@ -3136,6 +3314,7 @@ function runAnalysis(settingsOverride?: SearchSettings): void {
   const sourceSummary = summarizeSource(state.payload, state.frames)
   const selected = selectFrames(state.frames, settings)
   const base8Points2DSummary = buildBase8Points2D(selected.frames)
+  const semanticPointSet = buildSemanticPointSetSummary(settings.semanticPointSetId)
   const current8Debug = buildCurrent8Debug(selected.frames, settings)
   const warnings = [
     ...selected.summary.warnings,
@@ -3151,7 +3330,9 @@ function runAnalysis(settingsOverride?: SearchSettings): void {
       lastRunType: state.stabilityCheck.status === "running" ? "stabilityCheck" : "singleSearch",
       sourceSummary,
       selectedFrameSummary: selected.summary,
+      semanticPointSet,
       base8Points2DSummary,
+      baseSemanticPoints2DSummary: base8Points2DSummary,
       current8Debug,
       current8PointsByFrame: current8Debug.current8PointsByFrame,
       current8BoundsByFrame: current8Debug.current8BoundsByFrame,
@@ -3210,6 +3391,7 @@ function runAnalysis(settingsOverride?: SearchSettings): void {
     selected,
     sourceSummary,
     base8Points2DSummary,
+    semanticPointSet,
     current8Debug,
     warnings,
   })
@@ -3230,6 +3412,7 @@ interface SearchWorkerContext {
   selected: { frames: NormalizedFrame[]; summary: SelectedFrameSummary }
   sourceSummary: SourceSummary
   base8Points2DSummary: Base8Points2DSummary
+  semanticPointSet: SemanticPointSetSummary
   current8Debug: Current8DebugSummary
   warnings: string[]
 }
@@ -3372,7 +3555,9 @@ function completeSearchFromWorker(context: SearchWorkerContext, message: Record<
     lastRunType: "singleSearch",
     sourceSummary: context.sourceSummary,
     selectedFrameSummary: context.selected.summary,
+    semanticPointSet: context.semanticPointSet,
     base8Points2DSummary: context.base8Points2DSummary,
+    baseSemanticPoints2DSummary: context.base8Points2DSummary,
     current8Debug: context.current8Debug,
     current8PointsByFrame: context.current8Debug.current8PointsByFrame,
     current8BoundsByFrame: context.current8Debug.current8BoundsByFrame,
@@ -3609,9 +3794,17 @@ function estimateCandidateCount(settings: SearchSettings): number {
   }
 
   if (settings.searchMode === "coordinateDescent") {
+    const activePointParameters = new Set(
+      getSemanticPointSet(settings.semanticPointSetId).pointIds.map(
+        (pointId) => `${pointId}.z` as LocalSearchParameter,
+      ),
+    )
+    const activeParameterOrder = settings.localSearchSettings.coordinateDescentParameterOrder.filter(
+      (parameter) => !parameter.endsWith(".z") || activePointParameters.has(parameter),
+    )
     return (
       settings.localSearchSettings.coordinateDescentIterations *
-      settings.localSearchSettings.coordinateDescentParameterOrder.reduce((total, parameter) => {
+      activeParameterOrder.reduce((total, parameter) => {
         const range = settings.localSearchSettings.coordinateDescentRanges[parameter]
         return total + createNumericCandidates(range.min, range.max, range.step).length
       }, 0)
@@ -3624,7 +3817,7 @@ function estimateCandidateCount(settings: SearchSettings): number {
     settings.pivotZMax,
     settings.pivotZStep,
   ).length
-  return zCount ** SEMANTIC_POINT_NAMES.length * pivotZCount
+  return zCount ** getSemanticPointSet(settings.semanticPointSetId).pointIds.length * pivotZCount
 }
 
 function calculateProgressRate(processed: number, total: number): number {
@@ -4673,6 +4866,8 @@ function buildQuick478ActualExecution(analysis: AnalysisResult | undefined): Qui
       const rejectedCandidateCount = step.depthRelationSummary?.rejectedCandidateCount ?? 0
       return {
         stepId: step.presetId,
+        semanticPointSetId: step.semanticPointSetId,
+        semanticPointCount: step.semanticPointCount,
         parameterOrder: buildQuick478StepParameterOrder(step),
         candidateCount: step.estimatedCandidateCount,
         rejectedCandidateCount,
@@ -4997,6 +5192,7 @@ function buildCanonicalDepthBased478Landmarks(
     canonicalDepthBasedDebug: {
       templateFile: CANONICAL_FACE_DEPTH_TEMPLATE_FILE,
       templateSchemaVersion: CANONICAL_FACE_DEPTH_TEMPLATE.schemaVersion,
+      fitReferencePointSet: "8pt_compatible",
       comparisonLandmarkCount: CANONICAL_FACE_DEPTH_TEMPLATE.comparisonLandmarkIndices.length,
       excludedLandmarkIndices: [...CANONICAL_FACE_DEPTH_TEMPLATE.excludedLandmarkIndices],
       fit: {
@@ -5913,6 +6109,7 @@ function readSettings(): SearchSettings {
   const searchMode = readSearchMode()
   return {
     ...DEFAULT_SETTINGS,
+    semanticPointSetId: DEFAULT_SEMANTIC_POINT_SET_ID,
     searchMode,
     objectiveMode: readObjectiveMode(),
     outlierFiltering: readOutlierFilteringSettings(),
@@ -6306,6 +6503,12 @@ function resolveAutoSequenceStepSettings(
   baseCandidate?: FittingCandidate8,
   preset?: SearchPresetDefinition,
 ): SearchSettings {
+  if (state.quick478DepthDebug.status === "running" && baseCandidate && preset) {
+    return applyAutoSequenceDepthRelationOverride(
+      createQuick478DepthDebugSearchSettings(baseCandidate, preset),
+      state.autoSequence.definition,
+    )
+  }
   const settings = readSettings()
   const withBucketPreset = state.autoSequence.bucketTargetPreset
     ? applyBucketTargetPresetToSettings(settings, state.autoSequence.bucketTargetPreset)
@@ -6321,6 +6524,7 @@ function createQuick478DepthDebugSearchSettings(
   return applyBucketTargetPresetToSettings(
     {
       ...DEFAULT_SETTINGS,
+      semanticPointSetId: QUICK_478_DEPTH_DEBUG_SETTINGS.semanticPointSetId,
       searchMode: preset.searchMode,
       objectiveMode: preset.objectiveMode ?? DEFAULT_SETTINGS.objectiveMode,
       outlierFiltering: buildOutlierFilteringSettings({
@@ -6342,9 +6546,10 @@ function createQuick478DepthDebugSearchSettings(
         localMax: preset.localMax,
         localStep: preset.localStep,
         coordinateDescentIterations: preset.coordinateDescentIterations,
-        coordinateDescentParameterOrder: [
-          ...(preset.coordinateDescentParameterOrder ?? DEFAULT_COORDINATE_DESCENT_PARAMETER_ORDER),
-        ],
+        coordinateDescentParameterOrder: expandParameterOrderForSemanticPointSet(
+          preset.coordinateDescentParameterOrder ?? DEFAULT_COORDINATE_DESCENT_PARAMETER_ORDER,
+          QUICK_478_DEPTH_DEBUG_SETTINGS.semanticPointSetId,
+        ),
         coordinateDescentRanges: cloneLocalSearchRanges(preset.coordinateDescentRanges),
       },
     },
@@ -6386,6 +6591,8 @@ function handleAutoSequenceStepComplete(analysis: AnalysisResult | null): void {
     stepIndex: state.autoSequence.currentStepIndex + 1,
     presetName: preset.label,
     presetId: preset.id,
+    semanticPointSetId: analysis.searchSettings.semanticPointSetId,
+    semanticPointCount: getSemanticPointSet(analysis.searchSettings.semanticPointSetId).pointIds.length,
     searchSettings: buildAutoSequenceStepSearchSettings(analysis.searchSettings),
     objectiveMode: analysis.bestCandidate?.objectiveMode ?? analysis.searchSettings.objectiveMode,
     objectiveScore: analysis.bestCandidate?.objectiveScore ?? null,
@@ -6498,7 +6705,10 @@ function buildAutoSequenceSummary(
 
 function buildAutoSequenceStepSearchSettings(settings: SearchSettings): AutoSequenceStepSearchSettings {
   const local = settings.searchMode === "fullGrid" ? undefined : settings.localSearchSettings
+  const semanticPointSet = getSemanticPointSet(settings.semanticPointSetId)
   return {
+    semanticPointSetId: settings.semanticPointSetId,
+    semanticPointCount: semanticPointSet.pointIds.length,
     searchMode: settings.searchMode,
     objectiveMode: settings.objectiveMode,
     targetParameter: local?.targetParameter,
@@ -7591,7 +7801,9 @@ function createSummaryAnalysis(analysis: AnalysisResult): SummaryAnalysisResult 
     lastRunType: analysis.lastRunType,
     sourceSummary: analysis.sourceSummary,
     selectedFrameSummary: analysis.selectedFrameSummary,
+    semanticPointSet: analysis.semanticPointSet,
     base8Points2DSummary: analysis.base8Points2DSummary,
+    baseSemanticPoints2DSummary: analysis.baseSemanticPoints2DSummary,
     current8BucketSummary: analysis.current8BucketSummary,
     current8PoseComparison: analysis.current8PoseComparison,
     current8FrameSample: createCurrent8FrameSample(
@@ -9061,6 +9273,7 @@ function renderQuick478DepthDebug(): void {
   statusElement.textContent = quick.message ?? formatQuick478DepthDebugMessage(quick.quickRun)
   summaryElement.innerHTML = renderStatusItems([
     ["status", quick.quickRun.status],
+    ["semanticPointSetId", quick.quickRun.settings.semanticPointSetId],
     ["depth478GenerationMethod", quick.quickRun.settings.depth478GenerationMethod],
     ["perLandmarkZSearchEnabled", String(quick.quickRun.settings.perLandmarkZSearchEnabled)],
     ["noseTipGroup.z", formatNumber(quick.quickRun.summary.noseTipGroupZ)],
@@ -9664,6 +9877,10 @@ function emptyPointSummary(): Record<SemanticPointName, null> {
     rightEye: null,
     nose: null,
     mouth: null,
+    noseBridge: null,
+    leftJaw: null,
+    rightJaw: null,
+    upperFaceCenter: null,
   }
 }
 
