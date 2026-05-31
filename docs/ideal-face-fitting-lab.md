@@ -1,5 +1,41 @@
 # IdealFace Fitting Lab
 
+## 8Point To 478 Depth Prototype
+
+`tools/ideal-face-fitting-lab` には、8 semantic points の候補を最終 IdealFace asset としてすぐ export するのではなく、478 landmarks の z を評価するための prototype を追加している。
+
+現在の主導線は `Run 478 Depth Hard Reject Debug` です。このボタンは、capture JSON 読み込み後に `Balanced 5 each`、`Natural Nose Balanced Sequence`、Depth Relation `hardReject`、Outlier Filtering off の固定設定で 8点探索から 478点奥行き debug candidate 生成までを一括実行し、`depth478` debug JSON を自動ダウンロードする。
+
+この出力は production asset export ではない。UI 表示は手動操作を減らすために簡略化し、詳細 debug result は UI ではなくダウンロードされる JSON を正とする。従来の探索設定、ranking、per-frame table、478 Projection / Depth Relation / Smoothness / Candidate Comparison の詳細表示は `Advanced Settings / Debug UI` に折りたたむ。
+
+`hardReject` の結果、478 debug candidate が `rejected` になっても、原因確認のため JSON は出力する。JSON の `quickRun.status` が `rejected` の候補は production candidate として採用してはいけない。`hardReject` を満たす 8点 candidate が見つからない場合も silent fallback は行わず、`quickRun.status: "noCandidate"` と `fallbackUsed: false` を出力する。
+
+この prototype では、8点候補を `depthAnchors` として扱う。
+
+- `headTop.z`
+- `chin.z`
+- `leftCheek.z`
+- `rightCheek.z`
+- `leftEye.z`
+- `rightEye.z`
+- `nose.z`
+- `mouth.z`
+
+478点それぞれの z は個別探索しない。初期実装では、front bucket の selected frames から 478点の x / y を同じ座標系で平均し、8つの depth anchor から `inverseDistanceWeighting` で z を補間する。必要な微調整は、個別 landmark の自由探索ではなく `DepthGroupCorrection` による group correction として扱う。
+
+8点から478点へ拡張した候補は、まだ production asset ではない。`Generated478DepthCandidate` は debug candidate であり、候補評価後に採用判断する。UI でも `Generate 478 Debug Candidate` / `Export 478 Debug JSON` として扱い、Final Export とは呼ばない。
+
+処理フローの 5 と 6 の間には、以下の評価工程を置く。
+
+- `478 Projection Evaluation`: 補正後478点候補を selected frames の pose へ投影し、current 478 landmarks と比較する。478 landmarks がない frame は評価から除外する。
+- `478 Depth Relation Debug`: `noseTipGroup` が `cheekGroup` より手前、`faceCenterGroup` が `faceBoundaryGroup` より手前かを debug として確認する。
+- `478 Smoothness Debug`: 近傍 landmark 間の z 差を見て、z が不自然にガタついていないかを確認する。
+- `478 Candidate Comparison`: candidate id、元8点候補、投影誤差、奥行き関係違反数、smoothness の最大差としきい値超過数を比較する。
+
+最終的な export は、478候補の評価・比較後に別工程で行う。現段階では Runtime、IdealFace Authoring Tool、asset schema、Standard Face、MediaPipe canonical face model との比較には組み込まない。
+
+478候補の `depthRelationDebug` には、候補生成時の search settings 由来の Depth Relation Filtering summary を出す。`mode: hardReject` の場合、478 debug rule result でも `reject: true` を出せる。ただし 478 Depth Prototype は単一 debug candidate の評価であり、478点 z の個別自由探索や production asset export は行わない。
+
 `tools/ideal-face-fitting-lab` は、production 用 IdealFace asset を直接作る正式ツールではありません。
 
 まずは 8 semantic points について、正面基準 x / y を固定し、8点それぞれの z と pivotZ だけを未知数として探索する検証ラボです。正面2Dだけでは z は決められないため、複数姿勢の capture frame へ candidate を回転・投影し、current 2D landmarks 8点との誤差でランキングします。
@@ -370,7 +406,7 @@ mode の挙動は以下である。
 
 - `debugOnly`: ランキングには影響しない。`depthRelationDebug` だけを出す。
 - `penalty`: `applyToObjectiveScore = true` のときだけ、`objectiveScore = baseObjectiveScore + depthRelationPenalty` とする。
-- `hardReject`: `applyToObjectiveScore = true` のときだけ、`hardReject` rule 違反候補を ranking / local search / coordinateDescent の候補選択から除外する。
+- `hardReject`: `applyToObjectiveScore` とは独立して、`hardReject` rule 違反候補を ranking / local search / coordinateDescent の候補選択から除外する。`applyToObjectiveScore` は penalty を score に加えるかどうかの設定であり、reject の有効・無効には使わない。
 
 除外候補は捨てず、`depthRelationDebug.rejectedCandidates` に最大20件まで保持する。すべて除外された場合、`bestCandidate` は `null` になり、UI は no valid candidate として落ちずに表示する。
 
@@ -389,7 +425,17 @@ autoSequenceSummary.finalCandidate.depthRelationDebug
 candidateStabilityDebug.history[].depthRelationSummary
 ```
 
-Auto Sequence では各 step に現在の Depth Relation Filtering settings を渡す。`mode: hardReject` かつ `applyToObjectiveScore: true` の場合、各 step の bestCandidate 選択にも反映される。
+Auto Sequence では各 step に現在の Depth Relation Filtering settings を渡す。`mode: hardReject` の場合、各 step の bestCandidate 選択にも反映される。
+
+Natural Nose Balanced Sequence / Natural Nose MaxBucket Sequence は、nose depth relation を自然寄りに保つ確認用 sequence として、step 実行時に以下を明示する。
+
+```text
+Depth Relation Filtering enabled = true
+Depth Relation mode = hardReject
+Depth Relation applyToObjectiveScore = false
+```
+
+この設定では penalty は objective score に加えないが、`nose_tip_in_front_of_cheeks` の `hardReject` 違反候補は除外する。
 
 Candidate Stability Debug でも同じ設定を使い、5件 / 8件 / 10件の比較で Depth Relation Rule を満たす候補へ安定して収束するか確認できる。
 

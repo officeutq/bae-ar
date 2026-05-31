@@ -609,6 +609,13 @@ async function runSearch(message: WorkerStartMessage): Promise<void> {
     if (processedCandidateCount >= estimatedCandidateCount) {
       const rawRanking = toRankingEntries(rawTopResults)
       const rejectedWithRank = attachOriginalRanksToRejectedCandidates(rejectedCandidates, rawRanking)
+      if (
+        topResults.length === 0 &&
+        rejectedCandidateCount > 0 &&
+        normalizeDepthRelationFilteringSettings(message.settings.depthRelationFiltering).mode === "hardReject"
+      ) {
+        warnings.add("No candidate passed depth relation hardReject")
+      }
       postMessageToMain({
         type: "complete",
         processedCandidateCount,
@@ -1468,8 +1475,7 @@ function buildCandidateDepthRelationDebug(
     (result) => result.severity === "violation" && result.mode === "hardReject",
   ).length
   const isRejected = Boolean(
-    settings.applyToObjectiveScore &&
-      settings.mode === "hardReject" &&
+    settings.mode === "hardReject" &&
       ruleResults.some((result) => result.reject),
   )
 
@@ -1522,7 +1528,6 @@ function evaluateDepthRelationRule(
       ? Math.max(0, violationDistance) * Math.max(0, rule.weight) * settings.penaltyScale
       : 0
   const reject =
-    settings.applyToObjectiveScore &&
     settings.mode === "hardReject" &&
     effectiveMode === "hardReject" &&
     severity === "violation"
@@ -1678,6 +1683,9 @@ function normalizeDepthRelationFilteringSettings(
 }
 
 function normalizeDepthRelationMode(value: string | undefined): DepthRelationMode {
+  if (value === "reject") {
+    return "hardReject"
+  }
   return value === "off" || value === "penalty" || value === "hardReject" ? value : "debugOnly"
 }
 

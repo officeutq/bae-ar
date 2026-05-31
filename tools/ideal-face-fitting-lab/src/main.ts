@@ -24,6 +24,8 @@ type DepthRelationAggregation = "mean" | "median"
 type DepthRelationMode = "off" | "debugOnly" | "penalty" | "hardReject"
 type DepthRelationKind = "inFrontOf" | "behind" | "near"
 type DepthRelationSeverity = "ok" | "warning" | "violation"
+type PoseBucket = CaptureBucket
+type Depth478CandidateSource = "autoSequenceFinalCandidate" | "bestCandidate"
 
 interface Point2 {
   x: number
@@ -430,6 +432,9 @@ interface AutoSequenceDefinition {
   label: string
   baseCandidatePresetId: BaseCandidatePresetId
   steps: SearchPresetId[]
+  depthRelationFilteringOverride?: Partial<
+    Pick<DepthRelationFilteringSettings, "enabled" | "mode" | "applyToObjectiveScore">
+  >
   description: string
 }
 
@@ -448,6 +453,7 @@ interface AutoSequenceStepSummary {
     balancedScore?: number | null
   }
   depthRelationSummary?: DepthRelationSummary
+  depthRelationFiltering?: DepthRelationFilteringSummary
   processedCandidateCount: number
   estimatedCandidateCount: number
 }
@@ -763,6 +769,13 @@ interface DepthRelationSummary {
   finalCandidatePenalty: number
 }
 
+interface DepthRelationFilteringSummary {
+  enabled: boolean
+  mode: DepthRelationMode
+  applyToObjectiveScore: boolean
+  ruleCount: number
+}
+
 interface RankingEntry extends FittingCandidate8Score {
   candidateId: string
   weightedSemanticDistance: number
@@ -826,6 +839,185 @@ interface BestIdealFace8 {
   }
   points: IdealFace8Point[]
   summary: IdealFace8Summary
+}
+
+interface DepthAnchor8 {
+  id: SemanticPointId
+  label: string
+  x: number
+  y: number
+  z: number
+}
+
+interface DepthInterpolationSettings {
+  enabled: boolean
+  method: "inverseDistanceWeighting"
+  epsilon: number
+  power: number
+  clampZ: boolean
+  zMin: number
+  zMax: number
+}
+
+interface DepthGroupCorrection {
+  groupId: string
+  label: string
+  pointIndices: number[]
+  offset: number
+  strength: number
+  falloff?: number
+}
+
+interface Generated478DepthCandidate {
+  id: string
+  source8CandidateId?: string | null
+  generationSettings: {
+    interpolation: DepthInterpolationSettings
+    groupCorrections: DepthGroupCorrection[]
+  }
+  rotationCenter: RotationCenter
+  landmarks: Array<{
+    index: number
+    x: number
+    y: number
+    z: number
+    sourceDebug?: {
+      nearestAnchorId?: string
+      anchorWeights?: Record<string, number>
+      groupCorrectionOffset?: number
+    }
+  }>
+  summary: {
+    landmarkCount: number
+    zMin: number
+    zMax: number
+    zRange: number
+    averageZ: number
+  }
+}
+
+interface ProjectionEvaluation478 {
+  totalProjectionError: number
+  averageProjectionError: number
+  bucketScores: Record<PoseBucket, number | null>
+  perGroupError: Record<
+    string,
+    {
+      groupId: string
+      label: string
+      averageError: number | null
+      maxError: number | null
+      sampleCount: number
+    }
+  >
+  worstFrame: {
+    captureId: string
+    bucket: PoseBucket
+    error: number
+  } | null
+  worstGroup: {
+    groupId: string
+    label: string
+    averageError: number
+  } | null
+}
+
+interface Depth478GroupValue {
+  groupId: string
+  label: string
+  pointIndices: number[]
+  aggregation: DepthRelationAggregation
+  z: number | null
+}
+
+interface Depth478RelationDebug {
+  settings: DepthRelationFilteringSummary
+  groupValues: Record<string, Depth478GroupValue>
+  ruleResults: DepthRelationRuleResult[]
+  violationCount: number
+  hardRejectViolationCount: number
+  isRejected: boolean
+}
+
+interface SmoothnessDebug478 {
+  averageNeighborDeltaZ: number | null
+  maxNeighborDeltaZ: number | null
+  highDeltaEdgeCount: number
+  highDeltaEdges: Array<{
+    from: number
+    to: number
+    deltaZ: number
+  }>
+  threshold: number
+}
+
+interface Depth478CandidateComparisonEntry {
+  candidateId: string
+  source8CandidateId?: string | null
+  totalProjectionError: number | null
+  maxBucketScore: number | null
+  depthRelationViolationCount: number | null
+  depthRelationHardRejectViolationCount: number | null
+  depthRelationIsRejected: boolean | null
+  hardRejectViolationCount: number | null
+  isRejected: boolean | null
+  smoothnessMaxDeltaZ: number | null
+  smoothnessHighDeltaEdgeCount: number | null
+}
+
+interface Depth478PrototypeResult {
+  settings: {
+    interpolation: DepthInterpolationSettings
+    groupCorrections: DepthGroupCorrection[]
+    smoothnessThreshold: number
+  }
+  generatedCandidate?: Generated478DepthCandidate
+  projectionEvaluation?: ProjectionEvaluation478
+  depthRelationDebug?: Depth478RelationDebug
+  smoothnessDebug?: SmoothnessDebug478
+  candidateComparison?: Depth478CandidateComparisonEntry[]
+}
+
+type Quick478DepthDebugStatus = "idle" | "running" | "passed" | "rejected" | "noCandidate" | "error"
+
+interface Quick478DepthDebugSummary {
+  schemaVersion: "ideal_face_fitting_depth478_quick_debug_v1"
+  status: Exclude<Quick478DepthDebugStatus, "idle" | "running">
+  reason?: string
+  startedAt: string
+  completedAt: string
+  settings: {
+    bucketPreset: "balanced_5_each"
+    autoSearchSequence: "natural_nose_balanced"
+    depthRelationMode: "hardReject"
+    outlierFilteringEnabled: false
+    interpolationMethod: "inverseDistanceWeighting"
+  }
+  summary: {
+    noseTipGroupZ: number | null
+    cheekGroupZ: number | null
+    margin: number | null
+    violationCount: number | null
+    hardRejectViolationCount: number | null
+    isRejected: boolean | null
+    smoothnessHighDeltaEdgeCount: number | null
+    averageProjectionError: number | null
+  }
+  isRejected?: boolean
+  fallbackUsed?: boolean
+}
+
+interface Quick478DepthDebugPayload extends Depth478PrototypeResult {
+  quickRun: Quick478DepthDebugSummary
+  analysisSummary?: SummaryAnalysisResult
+}
+
+interface Quick478DepthDebugState {
+  status: Quick478DepthDebugStatus
+  message: string | null
+  startedAt: string | null
+  completedAt: string | null
+  quickRun: Quick478DepthDebugSummary | null
 }
 
 type ProjectionSignDebugBucket = Exclude<CaptureBucket, "mixedPose" | "unknown">
@@ -954,6 +1146,7 @@ interface AnalysisResult {
   depthConvention: DepthConvention
   searchMode: SearchMode
   searchSettings: SearchSettings
+  depthRelationFiltering: DepthRelationFilteringSummary
   localSearchSettings?: LocalSearchSettings
   localSearchSummary?: LocalSearchSummary
   scoreDebugSummary: CandidateScoreDebug | null
@@ -974,6 +1167,7 @@ interface AnalysisResult {
   outlierFrameDebug?: AnalysisOutlierFrameDebug
   autoSequenceSummary?: AutoSequenceSummary
   candidateStabilityDebug?: CandidateStabilityDebug
+  depth478Prototype?: Depth478PrototypeResult
   warnings: string[]
 }
 
@@ -991,6 +1185,7 @@ interface SummaryAnalysisResult {
   depthConvention: DepthConvention
   searchMode: SearchMode
   searchSettings: SearchSettings
+  depthRelationFiltering: DepthRelationFilteringSummary
   localSearchSettings?: LocalSearchSettings
   localSearchSummary?: LocalSearchSummary
   scoreDebugSummary: CandidateScoreDebug | null
@@ -1012,6 +1207,7 @@ interface SummaryAnalysisResult {
   autoSequenceSummaryFinalCandidate?: FittingCandidate8 | null
   autoSequenceStepCount: number
   candidateStabilityDebug?: CandidateStabilityDebug
+  depth478Prototype?: Depth478PrototypeResult
   warnings: string[]
 }
 
@@ -1050,6 +1246,7 @@ interface AppState {
   autoSequenceLastAnalysis: AnalysisResult | null
   stabilityHistory: StabilityHistoryEntry[]
   stabilityCheck: StabilityCheckState
+  quick478DepthDebug: Quick478DepthDebugState
   presetMessage: string | null
   importMessage: string | null
   copyMessage: string | null
@@ -1607,6 +1804,11 @@ const AUTO_SEQUENCE_PRESETS: AutoSequenceDefinition[] = [
       "noseZFine",
       "mouthZFine",
     ],
+    depthRelationFilteringOverride: {
+      enabled: true,
+      mode: "hardReject",
+      applyToObjectiveScore: false,
+    },
     description:
       "Natural Nose With Rotation Center を起点に、balancedScore 重視でどこに収束するか確認します。",
   },
@@ -1620,6 +1822,11 @@ const AUTO_SEQUENCE_PRESETS: AutoSequenceDefinition[] = [
       "noseZFine",
       "mouthZFine",
     ],
+    depthRelationFilteringOverride: {
+      enabled: true,
+      mode: "hardReject",
+      applyToObjectiveScore: false,
+    },
     description:
       "Natural Nose With Rotation Center を起点に、maxBucketScore 重視でどこに収束するか確認します。",
   },
@@ -1861,6 +2068,99 @@ const DEFAULT_SETTINGS: SearchSettings = {
   },
 }
 
+const DEFAULT_DEPTH_478_INTERPOLATION_SETTINGS: DepthInterpolationSettings = {
+  enabled: true,
+  method: "inverseDistanceWeighting",
+  epsilon: 0.0001,
+  power: 2,
+  clampZ: true,
+  zMin: -0.24,
+  zMax: 0.24,
+}
+
+const DEFAULT_DEPTH_478_SMOOTHNESS_THRESHOLD = 0.03
+const DEPTH_478_NEIGHBOR_COUNT = 4
+const DEPTH_478_MAX_HIGH_DELTA_EDGES = 50
+const QUICK_DEPTH_478_NOSE_CHEEK_MARGIN = 0.005
+
+const QUICK_478_DEPTH_DEBUG_SETTINGS = {
+  bucketPreset: "balanced5Each" as BucketTargetPresetId,
+  autoSearchSequence: "naturalNoseBalancedSequence" as AutoSequencePresetId,
+  depthRelationFiltering: {
+    enabled: true,
+    mode: "hardReject" as DepthRelationMode,
+    applyToObjectiveScore: false,
+  },
+  outlierFiltering: {
+    enabled: false,
+    mode: "off" as OutlierFilteringMode,
+  },
+  interpolation: {
+    enabled: true,
+    method: "inverseDistanceWeighting",
+    epsilon: 0.0001,
+    power: 2,
+    clampZ: true,
+    zMin: -0.24,
+    zMax: 0.24,
+  } satisfies DepthInterpolationSettings,
+  smoothnessThreshold: 0.03,
+}
+
+const DEPTH_478_GROUP_DEFINITIONS: Array<{
+  groupId: string
+  label: string
+  pointIndices: number[]
+  aggregation: DepthRelationAggregation
+}> = [
+  { groupId: "noseTipGroup", label: "鼻先グループ", pointIndices: [1, 2, 4, 5, 98, 327], aggregation: "median" },
+  { groupId: "noseBridgeGroup", label: "鼻筋グループ", pointIndices: [6, 168, 197, 195], aggregation: "median" },
+  {
+    groupId: "leftCheekGroup",
+    label: "左頬グループ",
+    pointIndices: [50, 100, 101, 117, 118, 119, 123, 132, 147, 187, 203, 205, 234],
+    aggregation: "median",
+  },
+  {
+    groupId: "rightCheekGroup",
+    label: "右頬グループ",
+    pointIndices: [329, 330, 346, 347, 348, 352, 361, 376, 411, 423, 425, 454],
+    aggregation: "median",
+  },
+  {
+    groupId: "mouthGroup",
+    label: "口グループ",
+    pointIndices: [
+      0, 13, 14, 17, 37, 39, 40, 61, 78, 80, 81, 82, 87, 88, 91, 95, 146, 178, 181, 185,
+      191, 267, 269, 270, 291, 308, 310, 311, 312, 317, 318, 321, 324, 375, 402, 405,
+      409, 415,
+    ],
+    aggregation: "median",
+  },
+  { groupId: "leftEyeGroup", label: "左目グループ", pointIndices: [249, 263, 362, 373, 374, 380, 381, 382, 384, 385, 386, 387, 388, 390, 398, 466, 469, 470, 471, 472], aggregation: "median" },
+  { groupId: "rightEyeGroup", label: "右目グループ", pointIndices: [7, 33, 133, 144, 145, 153, 154, 155, 157, 158, 159, 160, 161, 163, 173, 246, 474, 475, 476, 477], aggregation: "median" },
+  { groupId: "jawGroup", label: "顎グループ", pointIndices: [58, 132, 136, 148, 149, 150, 152, 172, 176, 288, 361, 365, 377, 378, 379, 397, 400], aggregation: "median" },
+  {
+    groupId: "faceBoundaryGroup",
+    label: "顔境界グループ",
+    pointIndices: [
+      10, 21, 54, 58, 67, 93, 103, 109, 127, 132, 136, 148, 149, 150, 152, 162, 172,
+      176, 234, 251, 284, 288, 297, 323, 332, 338, 356, 361, 365, 377, 378, 379, 389,
+      397, 400, 454,
+    ],
+    aggregation: "median",
+  },
+]
+
+const DEFAULT_DEPTH_478_GROUP_CORRECTIONS: DepthGroupCorrection[] =
+  DEPTH_478_GROUP_DEFINITIONS.map((group) => ({
+    groupId: group.groupId,
+    label: group.label,
+    pointIndices: group.pointIndices,
+    offset: 0,
+    strength: 0,
+  }))
+
 const EPSILON = 1e-8
 const DEPTH_CONVENTION: DepthConvention = {
   smallerZ: "front / 手前",
@@ -1909,6 +2209,16 @@ function createIdleStabilityCheck(): StabilityCheckState {
   }
 }
 
+function createIdleQuick478DepthDebug(): Quick478DepthDebugState {
+  return {
+    status: "idle",
+    message: null,
+    startedAt: null,
+    completedAt: null,
+    quickRun: null,
+  }
+}
+
 const state: AppState = {
   fileName: null,
   payload: null,
@@ -1922,6 +2232,7 @@ const state: AppState = {
   autoSequenceLastAnalysis: null,
   stabilityHistory: [],
   stabilityCheck: createIdleStabilityCheck(),
+  quick478DepthDebug: createIdleQuick478DepthDebug(),
   presetMessage: null,
   importMessage: null,
   copyMessage: null,
@@ -1946,18 +2257,30 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
       </ul>
     </section>
 
+    <section class="panel">
+      <h2>478 Depth Hard Reject Debug</h2>
+      <p class="panel-help">capture JSON を読み込み、Natural Nose Balanced Sequence / Balanced 5 each / Depth Relation hardReject 固定で 478点奥行き debug JSON を自動ダウンロードします。production asset export ではありません。</p>
+      <input id="capture-file-input" type="file" accept="application/json,.json" />
+      <div class="controls-wide">
+        <button id="run-quick-depth-478-button" class="primary" type="button">Run 478 Depth Hard Reject Debug（478点奥行き hardReject デバッグを実行）</button>
+      </div>
+      <p id="import-message" class="copy-status"></p>
+      <div id="quick-depth-478-status" class="auto-sequence-status">capture JSON を読み込んでから実行してください。</div>
+      <div id="quick-depth-478-summary" class="summary-grid"></div>
+    </section>
+
+    <details id="advanced-debug-ui" class="advanced-debug-ui">
+      <summary>Advanced Settings / Debug UI</summary>
     <div class="layout">
       <div class="stack">
         <section class="panel">
           <h2>入力</h2>
-          <p class="panel-help">MediaPipe Canonical Lab の captured JSON を読み込みます。478 landmarks / pose / bucket / video size / blendshapes / matrix を解釈します。</p>
-          <input id="capture-file-input" type="file" accept="application/json,.json" />
+          <p class="panel-help">capture JSON は上の主入力から読み込みます。ここには従来の手動解析ボタンだけを残しています。</p>
           <div class="controls-wide">
             <button id="run-analysis-button" class="primary" type="button" disabled>解析実行</button>
             <button id="cancel-analysis-button" type="button" disabled>キャンセル</button>
             <button id="copy-debug-button" type="button" disabled>デバッグ情報をコピー</button>
           </div>
-          <p id="import-message" class="copy-status"></p>
           <p id="copy-message" class="copy-status"></p>
         </section>
 
@@ -2142,13 +2465,13 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
                 <option value="true">true</option>
               </select>
             </label>
-            <label>Depth Relation Filtering enabled
+            <label>Depth Relation Filtering enabled（奥行き関係フィルタリング有効）
               <select id="depth-relation-enabled-select">
                 <option value="true" selected>true</option>
                 <option value="false">false</option>
               </select>
             </label>
-            <label>Depth Relation mode
+            <label>Depth Relation mode（奥行き関係モード）
               <select id="depth-relation-mode-select">
                 <option value="off">off</option>
                 <option value="debugOnly" selected>debugOnly</option>
@@ -2156,16 +2479,16 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
                 <option value="hardReject">hardReject</option>
               </select>
             </label>
-            <label>Depth Relation applyToObjectiveScore
+            <label>Depth Relation applyToObjectiveScore（ペナルティを最適化スコアへ反映）
               <select id="depth-relation-apply-to-objective-select">
                 <option value="false" selected>false</option>
                 <option value="true">true</option>
               </select>
             </label>
-            <label>Depth Relation penaltyScale
+            <label>Depth Relation penaltyScale（奥行き違反ペナルティ倍率）
               <input id="depth-relation-penalty-scale-input" type="number" min="0" max="10" step="0.1" value="${DEFAULT_DEPTH_RELATION_FILTERING_SETTINGS.penaltyScale}" />
             </label>
-            <label>Depth Relation maxPenalty
+            <label>Depth Relation maxPenalty（奥行き違反ペナルティ上限）
               <input id="depth-relation-max-penalty-input" type="number" min="0" max="1" step="0.001" value="${DEFAULT_DEPTH_RELATION_FILTERING_SETTINGS.maxPenalty}" />
             </label>
             <label>localTargetParameter
@@ -2303,6 +2626,62 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
         </section>
 
         <section class="panel">
+          <h2>478 Depth Prototype（478点奥行き試作）</h2>
+          <p class="panel-help">8点候補を depth anchors として使い、478 landmarks の z を補間して評価する debug prototype です。最終 asset export ではありません。</p>
+          <div class="controls">
+            <label>candidate source（478点生成に使う8点候補）
+              <select id="depth-478-source-select">
+                <option value="autoSequenceFinalCandidate" selected>Use Auto Sequence Final Candidate（自動探索の最終候補を使う）</option>
+                <option value="bestCandidate">Use Best Candidate（最良候補を使う）</option>
+              </select>
+            </label>
+            <label>Interpolation method（8点から478点への奥行き補間方法）
+              <select id="depth-478-method-select">
+                <option value="inverseDistanceWeighting" selected>inverseDistanceWeighting</option>
+              </select>
+            </label>
+            <label>epsilon（距離ゼロ除算を避ける微小値）
+              <input id="depth-478-epsilon-input" type="number" min="0.000001" max="1" step="0.0001" value="${DEFAULT_DEPTH_478_INTERPOLATION_SETTINGS.epsilon}" />
+            </label>
+            <label>power（近い anchor をどれだけ強く効かせるか）
+              <input id="depth-478-power-input" type="number" min="0.1" max="8" step="0.1" value="${DEFAULT_DEPTH_478_INTERPOLATION_SETTINGS.power}" />
+            </label>
+            <label>clampZ（補間後 z を zMin / zMax に制限）
+              <select id="depth-478-clamp-z-select">
+                <option value="true" selected>true</option>
+                <option value="false">false</option>
+              </select>
+            </label>
+            <label>zMin（z最小値）
+              <input id="depth-478-z-min-input" type="number" min="-3" max="3" step="0.005" value="${DEFAULT_DEPTH_478_INTERPOLATION_SETTINGS.zMin}" />
+            </label>
+            <label>zMax（z最大値）
+              <input id="depth-478-z-max-input" type="number" min="-3" max="3" step="0.005" value="${DEFAULT_DEPTH_478_INTERPOLATION_SETTINGS.zMax}" />
+            </label>
+            <label>smoothnessThreshold（近傍 z 差の警告しきい値）
+              <input id="depth-478-smoothness-threshold-input" type="number" min="0" max="1" step="0.001" value="${DEFAULT_DEPTH_478_SMOOTHNESS_THRESHOLD}" />
+            </label>
+          </div>
+          <div class="controls-wide">
+            <button id="generate-depth-478-button" class="primary" type="button" disabled>Generate 478 Debug Candidate（478点デバッグ候補を生成）</button>
+            <button id="export-depth-478-button" type="button" disabled>Export 478 Debug JSON（478点デバッグJSONを書き出し）</button>
+          </div>
+          <h3>Generated 478 Summary（生成478点概要）</h3>
+          <div id="depth-478-summary" class="summary-grid"></div>
+          <h3>478 Projection Evaluation（478点投影評価）</h3>
+          <div id="depth-478-projection-evaluation" class="summary-grid"></div>
+          <div id="depth-478-group-error-table" class="table-wrap"></div>
+          <h3>478 Depth Relation Debug（478点奥行き関係デバッグ）</h3>
+          <div id="depth-478-relation-debug" class="summary-grid"></div>
+          <div id="depth-478-relation-rule-table" class="table-wrap"></div>
+          <h3>478 Smoothness Debug（478点滑らかさデバッグ）</h3>
+          <div id="depth-478-smoothness-debug" class="summary-grid"></div>
+          <div id="depth-478-smoothness-edge-table" class="table-wrap"></div>
+          <h3>478 Candidate Comparison（478点候補比較）</h3>
+          <div id="depth-478-candidate-comparison" class="table-wrap"></div>
+        </section>
+
+        <section class="panel">
           <h2>Projection Sign Debug</h2>
           <p class="panel-help">selected frame の各 bucket 先頭フレームを使い、baseCandidate の nose.z だけを変えて projection の符号と yaw / pitch 応答を確認します。score 式と bestCandidate 選定は変更しません。</p>
           <h3>selected frame by bucket</h3>
@@ -2404,6 +2783,7 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
         </section>
       </div>
     </div>
+    </details>
   </main>
 `
 
@@ -2413,10 +2793,15 @@ renderSearchProgress()
 renderAutoSequenceStatus()
 renderBucketTargetWarning()
 renderCandidateStabilityDebug()
+renderQuick478DepthDebug()
 bindEvents()
 
 function bindEvents(): void {
   getElement<HTMLInputElement>("capture-file-input").addEventListener("change", handleFileImport)
+  getElement<HTMLButtonElement>("run-quick-depth-478-button").addEventListener(
+    "click",
+    runQuick478DepthHardRejectDebug,
+  )
   getElement<HTMLButtonElement>("run-analysis-button").addEventListener("click", runAnalysis)
   getElement<HTMLButtonElement>("cancel-analysis-button").addEventListener("click", cancelAnalysis)
   getElement<HTMLButtonElement>("copy-debug-button").addEventListener("click", copySummaryJson)
@@ -2447,6 +2832,14 @@ function bindEvents(): void {
   getElement<HTMLSelectElement>("rotation-center-base-select").addEventListener(
     "change",
     updateRotationCenterDebugFromSelection,
+  )
+  getElement<HTMLButtonElement>("generate-depth-478-button").addEventListener(
+    "click",
+    generateDepth478DebugCandidate,
+  )
+  getElement<HTMLButtonElement>("export-depth-478-button").addEventListener(
+    "click",
+    exportDepth478DebugJson,
   )
   getElement<HTMLButtonElement>("run-stability-check-button").addEventListener(
     "click",
@@ -2485,6 +2878,7 @@ async function handleFileImport(event: Event): Promise<void> {
   state.autoSequenceLastAnalysis = null
   state.stabilityCheck = createIdleStabilityCheck()
   state.stabilityHistory = []
+  state.quick478DepthDebug = createIdleQuick478DepthDebug()
 
   try {
     const payload = JSON.parse(await file.text()) as unknown
@@ -2505,6 +2899,7 @@ async function handleFileImport(event: Event): Promise<void> {
     renderAutoSequenceStatus()
     renderBucketTargetWarning()
     renderCandidateStabilityDebug()
+    renderQuick478DepthDebug()
   } catch (error) {
     state.importMessage = `読み込みに失敗しました: ${error instanceof Error ? error.message : String(error)}`
     state.payload = null
@@ -2515,12 +2910,14 @@ async function handleFileImport(event: Event): Promise<void> {
     state.autoSequenceLastAnalysis = null
     state.stabilityCheck = createIdleStabilityCheck()
     state.stabilityHistory = []
+    state.quick478DepthDebug = createIdleQuick478DepthDebug()
     setButtons()
     renderEmptyState()
     renderSearchProgress()
     renderAutoSequenceStatus()
     renderBucketTargetWarning()
     renderCandidateStabilityDebug()
+    renderQuick478DepthDebug()
   }
 }
 
@@ -2558,6 +2955,7 @@ function runAnalysis(settingsOverride?: SearchSettings): void {
       depthConvention: DEPTH_CONVENTION,
       searchMode: settings.searchMode,
       searchSettings: settings,
+      depthRelationFiltering: summarizeDepthRelationFilteringSettings(settings.depthRelationFiltering),
       localSearchSettings: settings.searchMode === "fullGrid" ? undefined : settings.localSearchSettings,
       localSearchSummary: undefined,
       scoreDebugSummary: null,
@@ -2767,6 +3165,9 @@ function completeSearchFromWorker(context: SearchWorkerContext, message: Record<
     depthConvention: DEPTH_CONVENTION,
     searchMode: context.settings.searchMode,
     searchSettings: context.settings,
+    depthRelationFiltering: summarizeDepthRelationFilteringSettings(
+      context.settings.depthRelationFiltering,
+    ),
     localSearchSettings:
       context.settings.searchMode === "fullGrid" ? undefined : context.settings.localSearchSettings,
     localSearchSummary,
@@ -3640,6 +4041,922 @@ function getAnalysisSelectedFrames(analysis: AnalysisResult): NormalizedFrame[] 
   return state.frames.filter((frame) => selectedIds.has(frame.captureId))
 }
 
+function generateDepth478DebugCandidate(): void {
+  const analysis = state.analysis
+  if (!analysis?.base8Points2DSummary.points) {
+    return
+  }
+
+  const source = resolveDepth478SourceCandidate(analysis, readDepth478CandidateSource())
+  const prototypeSettings = readDepth478PrototypeSettings()
+  analysis.depth478Prototype = buildDepth478PrototypeFromSource(
+    analysis,
+    source,
+    prototypeSettings,
+    analysis.depth478Prototype?.candidateComparison ?? [],
+  )
+  renderDepth478Prototype(analysis.depth478Prototype)
+  getElement("json-preview").textContent = JSON.stringify(createSummaryAnalysis(analysis), null, 2)
+  setButtons()
+}
+
+function buildDepth478PrototypeFromSource(
+  analysis: AnalysisResult,
+  source: { candidate: FittingCandidate8; source8CandidateId: string | null } | null,
+  prototypeSettings: Depth478PrototypeResult["settings"],
+  previousComparison: Depth478CandidateComparisonEntry[] = [],
+): Depth478PrototypeResult {
+  const selectedFrames = getAnalysisSelectedFrames(analysis)
+  const base478 = buildBase478Landmarks2D(selectedFrames)
+  if (!analysis.base8Points2DSummary.points || !base478 || !source) {
+    return {
+      settings: prototypeSettings,
+      candidateComparison: previousComparison,
+    }
+  }
+
+  const generatedCandidate = buildGenerated478DepthCandidate(
+    base478,
+    analysis.base8Points2DSummary.points,
+    source.candidate,
+    source.source8CandidateId,
+    prototypeSettings.interpolation,
+    prototypeSettings.groupCorrections,
+  )
+  const projectionEvaluation = evaluateProjection478(
+    generatedCandidate,
+    selectedFrames,
+    analysis.searchSettings,
+  )
+  const depthRelationDebug = buildDepth478RelationDebug(
+    generatedCandidate,
+    analysis.searchSettings.depthRelationFiltering,
+  )
+  const smoothnessDebug = buildSmoothnessDebug478(
+    generatedCandidate,
+    prototypeSettings.smoothnessThreshold,
+  )
+  const comparisonEntry = buildDepth478CandidateComparisonEntry(
+    generatedCandidate,
+    projectionEvaluation,
+    depthRelationDebug,
+    smoothnessDebug,
+  )
+
+  return {
+    settings: prototypeSettings,
+    generatedCandidate,
+    projectionEvaluation,
+    depthRelationDebug,
+    smoothnessDebug,
+    candidateComparison: [...previousComparison, comparisonEntry].slice(-20),
+  }
+}
+
+function exportDepth478DebugJson(): void {
+  const prototype = state.analysis?.depth478Prototype
+  if (!prototype) {
+    return
+  }
+  downloadJson(prototype, createFileName("ideal-face-fitting-depth478-debug"))
+}
+
+function runQuick478DepthHardRejectDebug(): void {
+  if (state.searchProgress.status === "running" || state.autoSequence.status === "running") {
+    return
+  }
+  if (state.frames.length === 0) {
+    state.quick478DepthDebug = {
+      ...createIdleQuick478DepthDebug(),
+      status: "idle",
+      message: "capture JSON を読み込んでから実行してください。",
+    }
+    renderQuick478DepthDebug()
+    return
+  }
+
+  const startedAt = new Date().toISOString()
+  state.quick478DepthDebug = {
+    status: "running",
+    message: "478 Depth hardReject debug を実行中...",
+    startedAt,
+    completedAt: null,
+    quickRun: null,
+  }
+  state.importMessage = null
+  writeSelectValue("auto-sequence-select", QUICK_478_DEPTH_DEBUG_SETTINGS.autoSearchSequence)
+  writeSelectValue("bucket-target-preset-select", QUICK_478_DEPTH_DEBUG_SETTINGS.bucketPreset)
+  renderQuick478DepthDebug()
+  setButtons()
+  startAutoSequence(
+    findAutoSequence(QUICK_478_DEPTH_DEBUG_SETTINGS.autoSearchSequence),
+    findBucketTargetPreset(QUICK_478_DEPTH_DEBUG_SETTINGS.bucketPreset),
+  )
+}
+
+function createQuick478DepthPrototypeSettings(): Depth478PrototypeResult["settings"] {
+  return {
+    interpolation: { ...QUICK_478_DEPTH_DEBUG_SETTINGS.interpolation },
+    groupCorrections: cloneDepthGroupCorrections(DEFAULT_DEPTH_478_GROUP_CORRECTIONS),
+    smoothnessThreshold: QUICK_478_DEPTH_DEBUG_SETTINGS.smoothnessThreshold,
+  }
+}
+
+function completeQuick478DepthDebug(
+  autoStatus: "completed" | "cancelled" | "error",
+  message: string,
+): void {
+  const startedAt = state.quick478DepthDebug.startedAt ?? new Date().toISOString()
+  const completedAt = new Date().toISOString()
+  const analysis = state.analysis
+
+  if (!analysis || autoStatus === "cancelled") {
+    finishQuick478DepthDebug(
+      buildQuick478DepthDebugPayload(null, {
+        status: "error",
+        reason: autoStatus === "cancelled" ? "cancelled" : message,
+        startedAt,
+        completedAt,
+      }),
+    )
+    return
+  }
+
+  if (autoStatus !== "completed") {
+    const noCandidate = message.includes("bestCandidate")
+    finishQuick478DepthDebug(
+      buildQuick478DepthDebugPayload(null, {
+        status: noCandidate ? "noCandidate" : "error",
+        reason: noCandidate ? "No candidate passed depth relation hardReject" : message,
+        startedAt,
+        completedAt,
+        fallbackUsed: noCandidate ? false : undefined,
+        analysis,
+      }),
+    )
+    return
+  }
+
+  const finalCandidate = analysis.autoSequenceSummary?.finalCandidate ?? null
+  if (!finalCandidate) {
+    finishQuick478DepthDebug(
+      buildQuick478DepthDebugPayload(null, {
+        status: "noCandidate",
+        reason: "No candidate passed depth relation hardReject",
+        startedAt,
+        completedAt,
+        fallbackUsed: false,
+        analysis,
+      }),
+    )
+    return
+  }
+
+  const prototype = buildDepth478PrototypeFromSource(
+    analysis,
+    {
+      candidate: cloneCandidate(finalCandidate),
+      source8CandidateId: "autoSequenceSummary.finalCandidate",
+    },
+    createQuick478DepthPrototypeSettings(),
+  )
+  analysis.depth478Prototype = prototype
+
+  const isRejected = prototype.depthRelationDebug?.isRejected ?? false
+  const status: Quick478DepthDebugSummary["status"] = isRejected ? "rejected" : "passed"
+  finishQuick478DepthDebug(
+    buildQuick478DepthDebugPayload(prototype, {
+      status,
+      reason: isRejected ? "depthRelationHardReject" : undefined,
+      startedAt,
+      completedAt,
+      isRejected,
+      analysis,
+    }),
+  )
+}
+
+function finishQuick478DepthDebug(payload: Quick478DepthDebugPayload): void {
+  state.quick478DepthDebug = {
+    status: payload.quickRun.status,
+    message: formatQuick478DepthDebugMessage(payload.quickRun),
+    startedAt: payload.quickRun.startedAt,
+    completedAt: payload.quickRun.completedAt,
+    quickRun: payload.quickRun,
+  }
+  downloadJson(payload, createFileName("ideal-face-fitting-depth478-hardreject-debug"))
+  if (state.analysis) {
+    getElement("json-preview").textContent = JSON.stringify(createSummaryAnalysis(state.analysis), null, 2)
+  }
+  renderQuick478DepthDebug()
+  renderAnalysis()
+  setButtons()
+}
+
+function buildQuick478DepthDebugPayload(
+  prototype: Depth478PrototypeResult | null,
+  options: {
+    status: Quick478DepthDebugSummary["status"]
+    reason?: string
+    startedAt: string
+    completedAt: string
+    isRejected?: boolean
+    fallbackUsed?: boolean
+    analysis?: AnalysisResult
+  },
+): Quick478DepthDebugPayload {
+  const relation = prototype?.depthRelationDebug
+  const noseRule = relation?.ruleResults.find(
+    (rule) => rule.ruleId === "nose_tip_group_in_front_of_cheek_group",
+  )
+  const quickRun: Quick478DepthDebugSummary = {
+    schemaVersion: "ideal_face_fitting_depth478_quick_debug_v1",
+    status: options.status,
+    reason: options.reason,
+    startedAt: options.startedAt,
+    completedAt: options.completedAt,
+    settings: {
+      bucketPreset: "balanced_5_each",
+      autoSearchSequence: "natural_nose_balanced",
+      depthRelationMode: "hardReject",
+      outlierFilteringEnabled: false,
+      interpolationMethod: "inverseDistanceWeighting",
+    },
+    summary: {
+      noseTipGroupZ: relation?.groupValues.noseTipGroup?.z ?? null,
+      cheekGroupZ: relation?.groupValues.cheekGroup?.z ?? null,
+      margin: noseRule?.margin ?? QUICK_DEPTH_478_NOSE_CHEEK_MARGIN,
+      violationCount: relation?.violationCount ?? null,
+      hardRejectViolationCount: relation?.hardRejectViolationCount ?? null,
+      isRejected: relation?.isRejected ?? options.isRejected ?? null,
+      smoothnessHighDeltaEdgeCount: prototype?.smoothnessDebug?.highDeltaEdgeCount ?? null,
+      averageProjectionError: prototype?.projectionEvaluation?.averageProjectionError ?? null,
+    },
+  }
+  if (options.isRejected !== undefined) {
+    quickRun.isRejected = options.isRejected
+  }
+  if (options.fallbackUsed !== undefined) {
+    quickRun.fallbackUsed = options.fallbackUsed
+  }
+
+  return {
+    quickRun,
+    ...(prototype ?? { settings: createQuick478DepthPrototypeSettings() }),
+    analysisSummary: options.analysis ? createSummaryAnalysis(options.analysis) : undefined,
+  }
+}
+
+function formatQuick478DepthDebugMessage(quickRun: Quick478DepthDebugSummary): string {
+  if (quickRun.status === "passed") {
+    return "Debug JSON をダウンロードしました。"
+  }
+  if (quickRun.status === "rejected") {
+    return "結果: rejected（奥行き関係 hardReject）"
+  }
+  if (quickRun.status === "noCandidate") {
+    return "条件を満たす候補が見つかりませんでした。"
+  }
+  return `エラー: ${quickRun.reason ?? "quick debug failed"}`
+}
+
+function readDepth478CandidateSource(): Depth478CandidateSource {
+  const value = getElement<HTMLSelectElement>("depth-478-source-select").value
+  return value === "bestCandidate" ? "bestCandidate" : "autoSequenceFinalCandidate"
+}
+
+function readDepth478PrototypeSettings(): Depth478PrototypeResult["settings"] {
+  return {
+    interpolation: {
+      enabled: true,
+      method: "inverseDistanceWeighting",
+      epsilon: Math.max(
+        0.000001,
+        readNumber("depth-478-epsilon-input", DEFAULT_DEPTH_478_INTERPOLATION_SETTINGS.epsilon),
+      ),
+      power: Math.max(
+        0.1,
+        readNumber("depth-478-power-input", DEFAULT_DEPTH_478_INTERPOLATION_SETTINGS.power),
+      ),
+      clampZ: getElement<HTMLSelectElement>("depth-478-clamp-z-select").value === "true",
+      zMin: readNumber("depth-478-z-min-input", DEFAULT_DEPTH_478_INTERPOLATION_SETTINGS.zMin),
+      zMax: readNumber("depth-478-z-max-input", DEFAULT_DEPTH_478_INTERPOLATION_SETTINGS.zMax),
+    },
+    groupCorrections: cloneDepthGroupCorrections(DEFAULT_DEPTH_478_GROUP_CORRECTIONS),
+    smoothnessThreshold: Math.max(
+      0,
+      readNumber("depth-478-smoothness-threshold-input", DEFAULT_DEPTH_478_SMOOTHNESS_THRESHOLD),
+    ),
+  }
+}
+
+function resolveDepth478SourceCandidate(
+  analysis: AnalysisResult,
+  source: Depth478CandidateSource,
+): { candidate: FittingCandidate8; source8CandidateId: string | null } | null {
+  if (source === "bestCandidate") {
+    if (analysis.bestCandidate) {
+      return {
+        candidate: cloneCandidate(analysis.bestCandidate),
+        source8CandidateId: analysis.bestCandidate.candidateId,
+      }
+    }
+    if (analysis.autoSequenceSummary?.finalCandidate) {
+      return {
+        candidate: cloneCandidate(analysis.autoSequenceSummary.finalCandidate),
+        source8CandidateId: "autoSequenceSummary.finalCandidate",
+      }
+    }
+    return null
+  }
+
+  if (analysis.autoSequenceSummary?.finalCandidate) {
+    return {
+      candidate: cloneCandidate(analysis.autoSequenceSummary.finalCandidate),
+      source8CandidateId: "autoSequenceSummary.finalCandidate",
+    }
+  }
+  if (analysis.bestCandidate) {
+    return {
+      candidate: cloneCandidate(analysis.bestCandidate),
+      source8CandidateId: analysis.bestCandidate.candidateId,
+    }
+  }
+  return null
+}
+
+function buildBase478Landmarks2D(frames: NormalizedFrame[]): LandmarkPoint[] | null {
+  const frontFrames = frames.filter(
+    (frame) => frame.bucket === "front" && frame.bounds && frame.landmarks.length === 478,
+  )
+  const sourceFrames =
+    frontFrames.length > 0
+      ? frontFrames
+      : frames.filter((frame) => frame.bounds && frame.landmarks.length === 478)
+  if (sourceFrames.length === 0) {
+    return null
+  }
+
+  const boundsCenter = averagePoint2D(
+    sourceFrames.map((frame) => ({
+      x: frame.bounds!.centerX,
+      y: frame.bounds!.centerY,
+    })),
+  )
+  const landmarks: LandmarkPoint[] = []
+  for (let index = 0; index < 478; index += 1) {
+    const samples = sourceFrames
+      .map((frame) => frame.landmarks.find((landmark) => landmark.index === index))
+      .filter((landmark): landmark is LandmarkPoint => Boolean(landmark))
+    if (samples.length !== sourceFrames.length) {
+      return null
+    }
+    const normalizedSamples = sourceFrames.map((frame) => {
+      const landmark = frame.landmarks.find((point) => point.index === index)!
+      return {
+        x: toSameUnitX(landmark.x, frame.aspectRatio) - boundsCenter.x,
+        y: landmark.y - 0.5 - boundsCenter.y,
+      }
+    })
+    landmarks.push({
+      index,
+      x: round(average(normalizedSamples.map((point) => point.x)) ?? 0),
+      y: round(average(normalizedSamples.map((point) => point.y)) ?? 0),
+      z: 0,
+    })
+  }
+  return landmarks
+}
+
+function buildDepthAnchors8(
+  basePoints: SemanticPointSet2D,
+  candidate: FittingCandidate8,
+): DepthAnchor8[] {
+  return SEMANTIC_DEFINITIONS.map((definition) => ({
+    id: definition.name,
+    label: definition.label,
+    x: basePoints[definition.name].x,
+    y: basePoints[definition.name].y,
+    z: candidate.zByPointId[definition.name],
+  }))
+}
+
+function buildGenerated478DepthCandidate(
+  base478: LandmarkPoint[],
+  base8Points: SemanticPointSet2D,
+  sourceCandidate: FittingCandidate8,
+  source8CandidateId: string | null,
+  interpolation: DepthInterpolationSettings,
+  groupCorrections: DepthGroupCorrection[],
+): Generated478DepthCandidate {
+  const anchors = buildDepthAnchors8(base8Points, sourceCandidate)
+  const interpolated = base478.map((landmark) =>
+    interpolateDepth478Landmark(landmark, anchors, interpolation),
+  )
+  const corrected = applyDepthGroupCorrections(interpolated, groupCorrections)
+  return {
+    id: `depth478-${Date.now()}`,
+    source8CandidateId,
+    generationSettings: {
+      interpolation: { ...interpolation },
+      groupCorrections: cloneDepthGroupCorrections(groupCorrections),
+    },
+    rotationCenter: getCandidateRotationCenter(sourceCandidate),
+    landmarks: corrected,
+    summary: summarizeGenerated478DepthCandidate(corrected),
+  }
+}
+
+function interpolateDepth478Landmark(
+  landmark: LandmarkPoint,
+  anchors: DepthAnchor8[],
+  settings: DepthInterpolationSettings,
+): Generated478DepthCandidate["landmarks"][number] {
+  const weights = anchors.map((anchor) => {
+    const distance = distance2D(landmark, anchor)
+    return {
+      anchor,
+      rawWeight: 1 / Math.pow(distance + settings.epsilon, settings.power),
+      distance,
+    }
+  })
+  const weightTotal = weights.reduce((total, item) => total + item.rawWeight, 0)
+  const anchorWeights = Object.fromEntries(
+    weights.map((item) => [item.anchor.id, round(item.rawWeight / weightTotal)]),
+  )
+  const nearest = weights.reduce((best, item) => (item.distance < best.distance ? item : best))
+  const rawZ = weights.reduce(
+    (total, item) => total + item.anchor.z * (item.rawWeight / weightTotal),
+    0,
+  )
+  const z = settings.clampZ
+    ? clamp(rawZ, Math.min(settings.zMin, settings.zMax), Math.max(settings.zMin, settings.zMax))
+    : rawZ
+
+  return {
+    index: landmark.index,
+    x: round(landmark.x),
+    y: round(landmark.y),
+    z: round(z),
+    sourceDebug: {
+      nearestAnchorId: nearest.anchor.id,
+      anchorWeights,
+      groupCorrectionOffset: 0,
+    },
+  }
+}
+
+function applyDepthGroupCorrections(
+  landmarks: Generated478DepthCandidate["landmarks"],
+  corrections: DepthGroupCorrection[],
+): Generated478DepthCandidate["landmarks"] {
+  return landmarks.map((landmark) => {
+    const correctionOffset = corrections.reduce((total, correction) => {
+      const directHit = correction.pointIndices.includes(landmark.index)
+      if (!directHit && (!correction.falloff || correction.falloff <= 0)) {
+        return total
+      }
+      const directWeight = directHit ? 1 : calculateDepthGroupFalloffWeight(landmark, landmarks, correction)
+      return total + correction.offset * correction.strength * directWeight
+    }, 0)
+    return {
+      ...landmark,
+      z: round(landmark.z + correctionOffset),
+      sourceDebug: {
+        ...landmark.sourceDebug,
+        groupCorrectionOffset: round(correctionOffset),
+      },
+    }
+  })
+}
+
+function calculateDepthGroupFalloffWeight(
+  landmark: Point2,
+  landmarks: Generated478DepthCandidate["landmarks"],
+  correction: DepthGroupCorrection,
+): number {
+  if (!correction.falloff || correction.falloff <= 0) {
+    return 0
+  }
+  const groupPoints = correction.pointIndices
+    .map((index) => landmarks.find((point) => point.index === index))
+    .filter((point): point is Generated478DepthCandidate["landmarks"][number] => Boolean(point))
+  if (groupPoints.length === 0) {
+    return 0
+  }
+  const minDistance = Math.min(...groupPoints.map((point) => distance2D(landmark, point)))
+  return clamp(1 - minDistance / correction.falloff, 0, 1)
+}
+
+function summarizeGenerated478DepthCandidate(
+  landmarks: Generated478DepthCandidate["landmarks"],
+): Generated478DepthCandidate["summary"] {
+  const zValues = landmarks.map((landmark) => landmark.z)
+  const zMin = min(zValues) ?? 0
+  const zMax = max(zValues) ?? 0
+  return {
+    landmarkCount: landmarks.length,
+    zMin: round(zMin),
+    zMax: round(zMax),
+    zRange: round(zMax - zMin),
+    averageZ: round(average(zValues) ?? 0),
+  }
+}
+
+function evaluateProjection478(
+  candidate: Generated478DepthCandidate,
+  frames: NormalizedFrame[],
+  settings: SearchSettings,
+): ProjectionEvaluation478 {
+  const frameResults = frames.flatMap((frame) => {
+    const current = normalizeCurrent478LandmarksForScoring(frame)
+    if (!current) {
+      return []
+    }
+    const projected = projectGenerated478Candidate(candidate, frame.pose, settings)
+    const currentByIndex = new Map(current.map((landmark) => [landmark.index, landmark]))
+    const distances = projected.flatMap((point) => {
+      const currentPoint = currentByIndex.get(point.index)
+      return currentPoint ? [distance2D(point, currentPoint)] : []
+    })
+    const error = round(average(distances) ?? 0)
+    return [
+      {
+        captureId: frame.captureId,
+        bucket: frame.bucket,
+        error,
+        projected,
+        current,
+      },
+    ]
+  })
+
+  const totalProjectionError = round(
+    frameResults.reduce((total, result) => total + result.error, 0),
+  )
+  const averageProjectionError = round(average(frameResults.map((result) => result.error)) ?? 0)
+  const bucketScores = Object.fromEntries(
+    BUCKETS.map((bucket) => [
+      bucket,
+      roundNullable(
+        average(frameResults.filter((result) => result.bucket === bucket).map((result) => result.error)),
+      ),
+    ]),
+  ) as Record<PoseBucket, number | null>
+  const perGroupError = buildProjection478GroupErrors(frameResults)
+  const worstFrame =
+    frameResults.length === 0
+      ? null
+      : frameResults.reduce((worst, result) => (result.error > worst.error ? result : worst))
+  const worstGroup = Object.values(perGroupError)
+    .filter(
+      (group): group is ProjectionEvaluation478["perGroupError"][string] & { averageError: number } =>
+        typeof group.averageError === "number",
+    )
+    .reduce<ProjectionEvaluation478["worstGroup"]>(
+      (worst, group) =>
+        !worst || group.averageError > worst.averageError
+          ? { groupId: group.groupId, label: group.label, averageError: group.averageError }
+          : worst,
+      null,
+    )
+
+  return {
+    totalProjectionError,
+    averageProjectionError,
+    bucketScores,
+    perGroupError,
+    worstFrame: worstFrame
+      ? {
+          captureId: worstFrame.captureId,
+          bucket: worstFrame.bucket,
+          error: worstFrame.error,
+        }
+      : null,
+    worstGroup,
+  }
+}
+
+function normalizeCurrent478LandmarksForScoring(frame: NormalizedFrame): LandmarkPoint[] | null {
+  if (!frame.bounds || frame.landmarks.length !== 478) {
+    return null
+  }
+  return frame.landmarks.map((landmark) => ({
+    index: landmark.index,
+    x: round(toSameUnitX(landmark.x, frame.aspectRatio) - frame.bounds!.centerX),
+    y: round(landmark.y - 0.5 - frame.bounds!.centerY),
+    z: round(landmark.z),
+  }))
+}
+
+function projectGenerated478Candidate(
+  candidate: Generated478DepthCandidate,
+  pose: Pose,
+  settings: SearchSettings,
+): LandmarkPoint[] {
+  const rotationCenter = candidate.rotationCenter
+  return candidate.landmarks.map((landmark) => {
+    const rotated = rotatePoint3D(
+      {
+        x: landmark.x - rotationCenter.x,
+        y: landmark.y - rotationCenter.y,
+        z: landmark.z - rotationCenter.z,
+      },
+      pose,
+    )
+    const projectedX = rotated.x + rotationCenter.x
+    const projectedY = rotated.y + rotationCenter.y
+    const z = rotated.z + rotationCenter.z
+    const perspective = settings.focalLength / Math.max(settings.focalLength + z, 0.2)
+    return {
+      index: landmark.index,
+      x: round(projectedX * perspective),
+      y: round(projectedY * perspective),
+      z: round(z),
+    }
+  })
+}
+
+function buildProjection478GroupErrors(
+  frameResults: Array<{
+    projected: LandmarkPoint[]
+    current: LandmarkPoint[]
+  }>,
+): ProjectionEvaluation478["perGroupError"] {
+  return Object.fromEntries(
+    DEPTH_478_GROUP_DEFINITIONS.map((group) => {
+      const errors = frameResults.flatMap((result) => {
+        const projectedByIndex = new Map(result.projected.map((point) => [point.index, point]))
+        const currentByIndex = new Map(result.current.map((point) => [point.index, point]))
+        return group.pointIndices.flatMap((index) => {
+          const projected = projectedByIndex.get(index)
+          const current = currentByIndex.get(index)
+          return projected && current ? [distance2D(projected, current)] : []
+        })
+      })
+      return [
+        group.groupId,
+        {
+          groupId: group.groupId,
+          label: group.label,
+          averageError: roundNullable(average(errors)),
+          maxError: roundNullable(max(errors)),
+          sampleCount: errors.length,
+        },
+      ]
+    }),
+  )
+}
+
+function buildDepth478RelationDebug(
+  candidate: Generated478DepthCandidate,
+  sourceSettings: DepthRelationFilteringSettings,
+): Depth478RelationDebug {
+  const settings = normalizeDepthRelationFilteringSettings(sourceSettings)
+  const groups = [
+    ...DEPTH_478_GROUP_DEFINITIONS,
+    {
+      groupId: "cheekGroup",
+      label: "頬グループ",
+      pointIndices: [
+        ...getDepth478GroupDefinition("leftCheekGroup").pointIndices,
+        ...getDepth478GroupDefinition("rightCheekGroup").pointIndices,
+      ],
+      aggregation: "median" as DepthRelationAggregation,
+    },
+    {
+      groupId: "faceCenterGroup",
+      label: "顔中心グループ",
+      pointIndices: [
+        ...getDepth478GroupDefinition("noseTipGroup").pointIndices,
+        ...getDepth478GroupDefinition("noseBridgeGroup").pointIndices,
+        ...getDepth478GroupDefinition("mouthGroup").pointIndices,
+        ...getDepth478GroupDefinition("leftEyeGroup").pointIndices,
+        ...getDepth478GroupDefinition("rightEyeGroup").pointIndices,
+      ],
+      aggregation: "median" as DepthRelationAggregation,
+    },
+  ]
+  const groupValues = Object.fromEntries(
+    groups.map((group) => [group.groupId, buildDepth478GroupValue(candidate, group)]),
+  )
+  const ruleResults = [
+    buildDepth478RelationRuleResult(
+      "nose_tip_group_in_front_of_cheek_group",
+      "noseTipGroup は cheekGroup より手前",
+      "noseTipGroup",
+      "cheekGroup",
+      "inFrontOf",
+      0.005,
+      groupValues,
+      settings,
+      "hardReject",
+    ),
+    buildDepth478RelationRuleResult(
+      "face_center_group_in_front_of_boundary_group",
+      "faceCenterGroup は faceBoundaryGroup より手前",
+      "faceCenterGroup",
+      "faceBoundaryGroup",
+      "inFrontOf",
+      0,
+      groupValues,
+      settings,
+      "debugOnly",
+    ),
+  ]
+  const hardRejectViolationCount = ruleResults.filter(
+    (result) => result.severity === "violation" && result.mode === "hardReject",
+  ).length
+  return {
+    settings: summarizeDepthRelationFilteringSettings(settings),
+    groupValues,
+    ruleResults,
+    violationCount: ruleResults.filter((result) => !result.passed).length,
+    hardRejectViolationCount,
+    isRejected: settings.mode === "hardReject" && ruleResults.some((result) => result.reject),
+  }
+}
+
+function getDepth478GroupDefinition(
+  groupId: string,
+): (typeof DEPTH_478_GROUP_DEFINITIONS)[number] {
+  return (
+    DEPTH_478_GROUP_DEFINITIONS.find((group) => group.groupId === groupId) ??
+    DEPTH_478_GROUP_DEFINITIONS[0]
+  )
+}
+
+function buildDepth478GroupValue(
+  candidate: Generated478DepthCandidate,
+  group: (typeof DEPTH_478_GROUP_DEFINITIONS)[number],
+): Depth478GroupValue {
+  const byIndex = new Map(candidate.landmarks.map((landmark) => [landmark.index, landmark]))
+  const values = group.pointIndices
+    .map((index) => byIndex.get(index)?.z)
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value))
+  return {
+    groupId: group.groupId,
+    label: group.label,
+    pointIndices: group.pointIndices,
+    aggregation: group.aggregation,
+    z: aggregateDepthValues(values, group.aggregation),
+  }
+}
+
+function buildDepth478RelationRuleResult(
+  ruleId: string,
+  label: string,
+  subjectGroupId: string,
+  referenceGroupId: string,
+  relation: DepthRelationKind,
+  margin: number,
+  groupValues: Record<string, Depth478GroupValue>,
+  settings: DepthRelationFilteringSettings,
+  ruleMode: Exclude<DepthRelationMode, "off">,
+): DepthRelationRuleResult {
+  const subjectZ = groupValues[subjectGroupId]?.z ?? null
+  const referenceZ = groupValues[referenceGroupId]?.z ?? null
+  const delta = subjectZ === null || referenceZ === null ? null : round(subjectZ - referenceZ)
+  const effectiveMode = getDepth478EffectiveRuleMode(settings.mode, ruleMode)
+  const passed =
+    subjectZ !== null &&
+    referenceZ !== null &&
+    evaluateDepthRelation(subjectZ, referenceZ, relation, margin)
+  const severity = passed ? "ok" : "violation"
+  return {
+    ruleId,
+    label,
+    subjectGroupId,
+    referenceGroupId,
+    relation,
+    subjectZ,
+    referenceZ,
+    margin,
+    delta,
+    passed,
+    severity,
+    mode: effectiveMode,
+    penalty: 0,
+    reject: settings.mode === "hardReject" && effectiveMode === "hardReject" && severity === "violation",
+    explanation:
+      subjectZ === null || referenceZ === null
+        ? "group z が不足しています。"
+        : `${subjectGroupId}.z=${formatNumber(subjectZ)} / ${referenceGroupId}.z=${formatNumber(referenceZ)} / delta=${formatNumber(delta)}`,
+  }
+}
+
+function getDepth478EffectiveRuleMode(
+  globalMode: DepthRelationMode,
+  ruleMode: Exclude<DepthRelationMode, "off">,
+): Exclude<DepthRelationMode, "off"> {
+  if (globalMode === "off" || globalMode === "debugOnly" || ruleMode === "debugOnly") {
+    return "debugOnly"
+  }
+  if (globalMode === "penalty") {
+    return "penalty"
+  }
+  return ruleMode
+}
+
+function evaluateDepthRelation(
+  subjectZ: number,
+  referenceZ: number,
+  relation: DepthRelationKind,
+  margin: number,
+): boolean {
+  if (relation === "inFrontOf") {
+    return subjectZ < referenceZ - margin
+  }
+  if (relation === "behind") {
+    return subjectZ > referenceZ + margin
+  }
+  return Math.abs(subjectZ - referenceZ) <= margin
+}
+
+function buildSmoothnessDebug478(
+  candidate: Generated478DepthCandidate,
+  threshold: number,
+): SmoothnessDebug478 {
+  const edges = buildDepth478NeighborEdges(candidate.landmarks)
+  const deltas = edges.map((edge) => ({
+    ...edge,
+    deltaZ: round(
+      Math.abs(candidate.landmarks[edge.from].z - candidate.landmarks[edge.to].z),
+    ),
+  }))
+  const highDeltaEdges = deltas
+    .filter((edge) => edge.deltaZ > threshold)
+    .sort((a, b) => b.deltaZ - a.deltaZ)
+    .slice(0, DEPTH_478_MAX_HIGH_DELTA_EDGES)
+
+  return {
+    averageNeighborDeltaZ: roundNullable(average(deltas.map((edge) => edge.deltaZ))),
+    maxNeighborDeltaZ: roundNullable(max(deltas.map((edge) => edge.deltaZ))),
+    highDeltaEdgeCount: deltas.filter((edge) => edge.deltaZ > threshold).length,
+    highDeltaEdges,
+    threshold: round(threshold),
+  }
+}
+
+function buildDepth478NeighborEdges(
+  landmarks: Generated478DepthCandidate["landmarks"],
+): Array<{ from: number; to: number }> {
+  const edges = new Map<string, { from: number; to: number }>()
+  landmarks.forEach((landmark, position) => {
+    const nearest = landmarks
+      .map((other, otherPosition) => ({
+        otherPosition,
+        distance: position === otherPosition ? Number.POSITIVE_INFINITY : distance2D(landmark, other),
+      }))
+      .sort((a, b) => a.distance - b.distance)
+      .slice(0, DEPTH_478_NEIGHBOR_COUNT)
+    for (const item of nearest) {
+      const from = Math.min(position, item.otherPosition)
+      const to = Math.max(position, item.otherPosition)
+      edges.set(`${from}:${to}`, { from, to })
+    }
+  })
+  return Array.from(edges.values())
+}
+
+function buildDepth478CandidateComparisonEntry(
+  candidate: Generated478DepthCandidate,
+  projectionEvaluation: ProjectionEvaluation478,
+  depthRelationDebug: Depth478RelationDebug,
+  smoothnessDebug: SmoothnessDebug478,
+): Depth478CandidateComparisonEntry {
+  return {
+    candidateId: candidate.id,
+    source8CandidateId: candidate.source8CandidateId ?? null,
+    totalProjectionError: projectionEvaluation.totalProjectionError,
+    maxBucketScore: maxNullable(Object.values(projectionEvaluation.bucketScores)),
+    depthRelationViolationCount: depthRelationDebug.violationCount,
+    depthRelationHardRejectViolationCount: depthRelationDebug.hardRejectViolationCount,
+    depthRelationIsRejected: depthRelationDebug.isRejected,
+    hardRejectViolationCount: depthRelationDebug.hardRejectViolationCount,
+    isRejected: depthRelationDebug.isRejected,
+    smoothnessMaxDeltaZ: smoothnessDebug.maxNeighborDeltaZ,
+    smoothnessHighDeltaEdgeCount: smoothnessDebug.highDeltaEdgeCount,
+  }
+}
+
+function cloneDepthGroupCorrections(corrections: DepthGroupCorrection[]): DepthGroupCorrection[] {
+  return corrections.map((correction) => ({
+    ...correction,
+    pointIndices: [...correction.pointIndices],
+  }))
+}
+
+function aggregateDepthValues(
+  values: number[],
+  aggregation: DepthRelationAggregation,
+): number | null {
+  if (values.length === 0) {
+    return null
+  }
+  return aggregation === "median" ? round(median(values) ?? 0) : round(average(values) ?? 0)
+}
+
 function buildAnalysisOutlierFrameDebug(
   settings: SearchSettings,
   bestCandidate: CandidateResult | null,
@@ -3806,6 +5123,9 @@ function readDepthRelationFilteringSettings(): DepthRelationFilteringSettings {
 }
 
 function readDepthRelationMode(value: string): DepthRelationMode {
+  if (value === "reject") {
+    return "hardReject"
+  }
   return value === "off" || value === "penalty" || value === "hardReject" ? value : "debugOnly"
 }
 
@@ -4009,6 +5329,9 @@ function startAutoSequence(
     }
     renderAutoSequenceStatus()
     setButtons()
+    if (state.quick478DepthDebug.status === "running") {
+      completeQuick478DepthDebug("error", state.autoSequence.message ?? "Auto Sequence failed")
+    }
     return
   }
 
@@ -4064,14 +5387,78 @@ function beginAutoSequenceStep(baseCandidate: FittingCandidate8): void {
   renderPresetMessage()
   renderAutoSequenceStatus()
   setButtons()
-  runAnalysis(resolveAutoSequenceStepSettings())
+  runAnalysis(resolveAutoSequenceStepSettings(baseCandidate, preset))
 }
 
-function resolveAutoSequenceStepSettings(): SearchSettings {
+function resolveAutoSequenceStepSettings(
+  baseCandidate?: FittingCandidate8,
+  preset?: SearchPresetDefinition,
+): SearchSettings {
+  if (state.quick478DepthDebug.status === "running" && baseCandidate && preset) {
+    return createQuick478DepthDebugSearchSettings(baseCandidate, preset)
+  }
   const settings = readSettings()
-  return state.autoSequence.bucketTargetPreset
+  const withBucketPreset = state.autoSequence.bucketTargetPreset
     ? applyBucketTargetPresetToSettings(settings, state.autoSequence.bucketTargetPreset)
     : settings
+  return applyAutoSequenceDepthRelationOverride(withBucketPreset, state.autoSequence.definition)
+}
+
+function createQuick478DepthDebugSearchSettings(
+  baseCandidate: FittingCandidate8,
+  preset: SearchPresetDefinition,
+): SearchSettings {
+  const bucketPreset = findBucketTargetPreset(QUICK_478_DEPTH_DEBUG_SETTINGS.bucketPreset)
+  return applyBucketTargetPresetToSettings(
+    {
+      ...DEFAULT_SETTINGS,
+      searchMode: preset.searchMode,
+      objectiveMode: preset.objectiveMode ?? DEFAULT_SETTINGS.objectiveMode,
+      outlierFiltering: {
+        ...DEFAULT_OUTLIER_FILTERING_SETTINGS,
+        enabled: QUICK_478_DEPTH_DEBUG_SETTINGS.outlierFiltering.enabled,
+        mode: QUICK_478_DEPTH_DEBUG_SETTINGS.outlierFiltering.mode,
+        applyToObjectiveScore: false,
+      },
+      depthRelationFiltering: normalizeDepthRelationFilteringSettings({
+        ...DEFAULT_DEPTH_RELATION_FILTERING_SETTINGS,
+        enabled: QUICK_478_DEPTH_DEBUG_SETTINGS.depthRelationFiltering.enabled,
+        mode: QUICK_478_DEPTH_DEBUG_SETTINGS.depthRelationFiltering.mode,
+        applyToObjectiveScore:
+          QUICK_478_DEPTH_DEBUG_SETTINGS.depthRelationFiltering.applyToObjectiveScore,
+      }),
+      localSearchSettings: {
+        ...DEFAULT_SETTINGS.localSearchSettings,
+        baseCandidate: cloneCandidate(baseCandidate),
+        targetParameter: preset.targetParameter,
+        localMin: preset.localMin,
+        localMax: preset.localMax,
+        localStep: preset.localStep,
+        coordinateDescentIterations: preset.coordinateDescentIterations,
+        coordinateDescentParameterOrder: [
+          ...(preset.coordinateDescentParameterOrder ?? DEFAULT_COORDINATE_DESCENT_PARAMETER_ORDER),
+        ],
+        coordinateDescentRanges: cloneLocalSearchRanges(preset.coordinateDescentRanges),
+      },
+    },
+    bucketPreset,
+  )
+}
+
+function applyAutoSequenceDepthRelationOverride(
+  settings: SearchSettings,
+  sequence: AutoSequenceDefinition | null,
+): SearchSettings {
+  if (!sequence?.depthRelationFilteringOverride) {
+    return settings
+  }
+  return {
+    ...settings,
+    depthRelationFiltering: normalizeDepthRelationFilteringSettings({
+      ...settings.depthRelationFiltering,
+      ...sequence.depthRelationFilteringOverride,
+    }),
+  }
 }
 
 function handleAutoSequenceStepComplete(analysis: AnalysisResult | null): void {
@@ -4103,6 +5490,9 @@ function handleAutoSequenceStepComplete(analysis: AnalysisResult | null): void {
       analysis.depthRelationDebug,
       analysis.bestCandidate?.depthRelationDebug,
     ),
+    depthRelationFiltering: summarizeDepthRelationFilteringSettings(
+      analysis.searchSettings.depthRelationFiltering,
+    ),
     processedCandidateCount: analysis.processedCandidateCount,
     estimatedCandidateCount: analysis.estimatedCandidateCount,
   }
@@ -4112,6 +5502,9 @@ function handleAutoSequenceStepComplete(analysis: AnalysisResult | null): void {
   state.autoSequenceLastAnalysis = analysis
 
   if (!bestCandidate) {
+    if (state.quick478DepthDebug.status === "running") {
+      state.autoSequence.finalCandidate = null
+    }
     finishAutoSequence("error", `Step ${stepSummary.stepIndex}: ${preset.label} で bestCandidate が得られませんでした。`)
     return
   }
@@ -4158,6 +5551,10 @@ function finishAutoSequence(
     state.stabilityCheck = createIdleStabilityCheck()
   }
   if (status === "completed" && continueStabilityCheckAfterSequence()) {
+    return
+  }
+  if (state.quick478DepthDebug.status === "running") {
+    completeQuick478DepthDebug(status, message)
     return
   }
   setButtons()
@@ -4414,6 +5811,18 @@ function buildDepthRelationSummary(
     rejectedCandidateCount: analysisDebug?.rejectedCandidateCount ?? 0,
     finalCandidatePassed: candidateDebug ? candidateDebug.hardRejectViolationCount === 0 : false,
     finalCandidatePenalty: candidateDebug?.penalty ?? 0,
+  }
+}
+
+function summarizeDepthRelationFilteringSettings(
+  settings: DepthRelationFilteringSettings,
+): DepthRelationFilteringSummary {
+  const normalized = normalizeDepthRelationFilteringSettings(settings)
+  return {
+    enabled: normalized.enabled,
+    mode: normalized.mode,
+    applyToObjectiveScore: normalized.applyToObjectiveScore,
+    ruleCount: normalized.rules.length,
   }
 }
 
@@ -5272,6 +6681,7 @@ function createSummaryAnalysis(analysis: AnalysisResult): SummaryAnalysisResult 
     depthConvention: analysis.depthConvention,
     searchMode: analysis.searchMode,
     searchSettings: analysis.searchSettings,
+    depthRelationFiltering: analysis.depthRelationFiltering,
     localSearchSettings: analysis.localSearchSettings,
     localSearchSummary: analysis.localSearchSummary,
     scoreDebugSummary: analysis.scoreDebugSummary,
@@ -5302,6 +6712,7 @@ function createSummaryAnalysis(analysis: AnalysisResult): SummaryAnalysisResult 
     autoSequenceSummaryFinalCandidate: analysis.autoSequenceSummary?.finalCandidate ?? null,
     autoSequenceStepCount: analysis.autoSequenceSummary?.steps.length ?? 0,
     candidateStabilityDebug: analysis.candidateStabilityDebug,
+    depth478Prototype: analysis.depth478Prototype,
     warnings: analysis.warnings,
   }
 }
@@ -5367,6 +6778,7 @@ function renderSourceOnly(): void {
   getElement("best-candidate").innerHTML = `<p class="empty">解析実行後に表示します。</p>`
   renderOutlierFrameDebug(null, readSettings().outlierFiltering)
   renderDepthRelationDebug(null, readSettings().depthRelationFiltering)
+  renderDepth478Prototype(null)
   renderProjectionSignDebug(null)
   renderRotationCenterDebug(null)
   renderBucketTargetWarning()
@@ -5388,6 +6800,7 @@ function renderSourceOnly(): void {
     2,
   )
   renderAutoSequenceStatus()
+  renderQuick478DepthDebug()
 }
 
 function renderAnalysis(): void {
@@ -5471,6 +6884,7 @@ function renderAnalysis(): void {
     : `<p class="empty">候補がありません。</p>`
   renderOutlierFrameDebug(analysis.outlierFrameDebug ?? null, analysis.searchSettings.outlierFiltering)
   renderDepthRelationDebug(analysis.depthRelationDebug ?? null, analysis.searchSettings.depthRelationFiltering)
+  renderDepth478Prototype(analysis.depth478Prototype ?? null)
   renderProjectionSignDebug(analysis.projectionSignDebug ?? null)
   renderRotationCenterDebug(analysis.rotationCenterDebug ?? null)
   renderBucketTargetWarning()
@@ -5525,6 +6939,7 @@ function renderAnalysis(): void {
   getElement("warnings").textContent = analysis.warnings.length === 0 ? "警告はありません。" : analysis.warnings.join("\n")
   getElement("json-preview").textContent = JSON.stringify(createSummaryAnalysis(analysis), null, 2)
   renderAutoSequenceStatus()
+  renderQuick478DepthDebug()
   setButtons()
 }
 
@@ -5545,9 +6960,16 @@ function renderResultSummary(analysis: AnalysisResult): string {
     ["autoSequenceName", autoSummary?.sequenceName ?? "-"],
     ["autoSequenceStatus", autoSummary?.status ?? "-"],
     ["autoSequenceFinalObjectiveScore", formatNumber(autoSummary?.finalObjectiveScore)],
-    ["depth rejectedCandidates", String(analysis.depthRelationDebug?.rejectedCandidateCount ?? 0)],
+    ["depthRelationMode（奥行き関係モード）", analysis.depthRelationFiltering.mode],
+    ["depthRelationEnabled（奥行き関係フィルタ有効）", String(analysis.depthRelationFiltering.enabled)],
     [
-      "depth final passed",
+      "depthRelationApplyToObjectiveScore（ペナルティをスコアへ反映）",
+      String(analysis.depthRelationFiltering.applyToObjectiveScore),
+    ],
+    ["depthRelationRuleCount（奥行き関係ルール数）", String(analysis.depthRelationFiltering.ruleCount)],
+    ["depth rejectedCandidates（奥行き違反で除外された候補数）", String(analysis.depthRelationDebug?.rejectedCandidateCount ?? 0)],
+    [
+      "depth final passed（最終候補が奥行き関係を通過）",
       String((analysis.bestCandidate?.depthRelationDebug?.hardRejectViolationCount ?? 0) === 0),
     ],
     [
@@ -5577,15 +6999,22 @@ function renderAutoSequenceResult(analysis: AnalysisResult): string {
     ["sequenceName", summary.sequenceName],
     ["status", summary.status],
     ["stepCount", String(summary.steps.length)],
-    ["finalObjectiveMode", summary.finalObjectiveMode ?? "-"],
-    ["finalObjectiveScore", formatNumber(summary.finalObjectiveScore)],
-    ["finalCandidate", summary.finalCandidate ? formatCandidateCompact(summary.finalCandidate) : "-"],
-    ["final step preset", finalStep?.presetName ?? "-"],
-    ["final step totalScore", formatNumber(finalStep?.totalScore)],
-    ["final step maxBucketScore", formatNumber(finalStep?.scoreDebug?.maxBucketScore)],
-    ["final depth passed", String(finalStep?.depthRelationSummary?.finalCandidatePassed ?? false)],
-    ["final depth rejected", formatNumber(finalStep?.depthRelationSummary?.rejectedCandidateCount)],
-    ["final depth penalty", formatNumber(finalStep?.depthRelationSummary?.finalCandidatePenalty)],
+    ["finalObjectiveMode（最終最適化モード）", summary.finalObjectiveMode ?? "-"],
+    ["finalObjectiveScore（最終最適化スコア）", formatNumber(summary.finalObjectiveScore)],
+    ["finalCandidate（最終8点候補）", summary.finalCandidate ? formatCandidateCompact(summary.finalCandidate) : "-"],
+    ["final step preset（最終ステップのプリセット）", finalStep?.presetName ?? "-"],
+    ["final step totalScore（最終ステップ全体スコア）", formatNumber(finalStep?.totalScore)],
+    ["final step maxBucketScore（最終ステップ最悪姿勢スコア）", formatNumber(finalStep?.scoreDebug?.maxBucketScore)],
+    ["final depth mode（最終ステップ奥行き関係モード）", finalStep?.depthRelationFiltering?.mode ?? "-"],
+    [
+      "final depth applyToObjectiveScore（最終ステップのペナルティ反映）",
+      finalStep?.depthRelationFiltering
+        ? String(finalStep.depthRelationFiltering.applyToObjectiveScore)
+        : "-",
+    ],
+    ["final depth passed（最終候補が奥行き関係を通過）", String(finalStep?.depthRelationSummary?.finalCandidatePassed ?? false)],
+    ["final depth rejected（奥行き違反で除外された候補数）", formatNumber(finalStep?.depthRelationSummary?.rejectedCandidateCount)],
+    ["final depth penalty（奥行き関係ペナルティ）", formatNumber(finalStep?.depthRelationSummary?.finalCandidatePenalty)],
   ])
 }
 
@@ -5647,13 +7076,20 @@ function renderAutoSequenceStatus(): void {
 
   const finalScore = auto.steps.at(-1)
   if (finalScore) {
-    items.push(["final objectiveMode", finalScore.objectiveMode])
-    items.push(["final objectiveScore", formatNumber(finalScore.objectiveScore)])
-    items.push(["final totalScore", formatNumber(finalScore.totalScore)])
-    items.push(["final yawAverageScore", formatNumber(finalScore.scoreDebug?.yawAverageScore)])
-    items.push(["final pitchAverageScore", formatNumber(finalScore.scoreDebug?.pitchAverageScore)])
-    items.push(["final maxBucketScore", formatNumber(finalScore.scoreDebug?.maxBucketScore)])
-    items.push(["final balancedScore", formatNumber(finalScore.scoreDebug?.balancedScore)])
+    items.push(["final objectiveMode（最終最適化モード）", finalScore.objectiveMode])
+    items.push(["final objectiveScore（最終最適化スコア）", formatNumber(finalScore.objectiveScore)])
+    items.push(["final totalScore（最終全体スコア）", formatNumber(finalScore.totalScore)])
+    items.push(["final yawAverageScore（左右向き平均スコア）", formatNumber(finalScore.scoreDebug?.yawAverageScore)])
+    items.push(["final pitchAverageScore（上下向き平均スコア）", formatNumber(finalScore.scoreDebug?.pitchAverageScore)])
+    items.push(["final maxBucketScore（最悪姿勢スコア）", formatNumber(finalScore.scoreDebug?.maxBucketScore)])
+    items.push(["final balancedScore（全体と最悪姿勢のバランススコア）", formatNumber(finalScore.scoreDebug?.balancedScore)])
+    items.push(["final depth mode（最終奥行き関係モード）", finalScore.depthRelationFiltering?.mode ?? "-"])
+    items.push([
+      "final depth applyToObjectiveScore（奥行きペナルティをスコアへ反映）",
+      finalScore.depthRelationFiltering
+        ? String(finalScore.depthRelationFiltering.applyToObjectiveScore)
+        : "-",
+    ])
   }
 
   getElement("auto-sequence-status").innerHTML = `
@@ -5675,14 +7111,16 @@ function renderAutoSequenceStepTable(steps: AutoSequenceStepSummary[]): string {
             <th>step</th>
             <th>preset</th>
             <th>objective</th>
-            <th>objectiveScore</th>
-            <th>totalScore</th>
-            <th>balanced</th>
-            <th>maxBucket</th>
-            <th>depth passed</th>
-            <th>depth rejected</th>
-            <th>depth penalty</th>
-            <th>bestCandidate</th>
+            <th>objectiveScore（最適化スコア）</th>
+            <th>totalScore（全体スコア）</th>
+            <th>balanced（バランススコア）</th>
+            <th>maxBucket（最悪姿勢スコア）</th>
+            <th>depth mode（奥行き関係モード）</th>
+            <th>depth apply（ペナルティ反映）</th>
+            <th>depth passed（奥行き関係通過）</th>
+            <th>depth rejected（奥行き除外数）</th>
+            <th>depth penalty（奥行きペナルティ）</th>
+            <th>bestCandidate（最良候補）</th>
           </tr>
         </thead>
         <tbody>
@@ -5696,6 +7134,8 @@ function renderAutoSequenceStepTable(steps: AutoSequenceStepSummary[]): string {
                 <td>${formatNumber(step.totalScore)}</td>
                 <td>${formatNumber(step.scoreDebug?.balancedScore)}</td>
                 <td>${formatNumber(step.scoreDebug?.maxBucketScore)}</td>
+                <td><code>${step.depthRelationFiltering?.mode ?? "-"}</code></td>
+                <td>${String(step.depthRelationFiltering?.applyToObjectiveScore ?? false)}</td>
                 <td>${String(step.depthRelationSummary?.finalCandidatePassed ?? false)}</td>
                 <td>${formatNumber(step.depthRelationSummary?.rejectedCandidateCount)}</td>
                 <td>${formatNumber(step.depthRelationSummary?.finalCandidatePenalty)}</td>
@@ -6097,6 +7537,205 @@ function renderDepthRelationRuleTable(results: DepthRelationRuleResult[]): strin
   `
 }
 
+function renderDepth478Prototype(prototype: Depth478PrototypeResult | null): void {
+  const empty = `<p class="empty">478点デバッグ候補はまだ生成されていません。</p>`
+  if (!prototype?.generatedCandidate) {
+    getElement("depth-478-summary").innerHTML = empty
+    getElement("depth-478-projection-evaluation").innerHTML = empty
+    getElement("depth-478-group-error-table").innerHTML = ""
+    getElement("depth-478-relation-debug").innerHTML = empty
+    getElement("depth-478-relation-rule-table").innerHTML = ""
+    getElement("depth-478-smoothness-debug").innerHTML = empty
+    getElement("depth-478-smoothness-edge-table").innerHTML = ""
+    getElement("depth-478-candidate-comparison").innerHTML =
+      renderDepth478CandidateComparisonTable(prototype?.candidateComparison ?? [])
+    return
+  }
+
+  const candidate = prototype.generatedCandidate
+  const projection = prototype.projectionEvaluation
+  const relation = prototype.depthRelationDebug
+  const smoothness = prototype.smoothnessDebug
+  getElement("depth-478-summary").innerHTML = renderStatusItems([
+    ["candidateId（478点候補ID）", candidate.id],
+    ["source8CandidateId（元8点候補ID）", candidate.source8CandidateId ?? "-"],
+    ["landmarkCount（生成したランドマーク数）", String(candidate.summary.landmarkCount)],
+    ["zMin（最小奥行き）", formatNumber(candidate.summary.zMin)],
+    ["zMax（最大奥行き）", formatNumber(candidate.summary.zMax)],
+    ["zRange（奥行き範囲）", formatNumber(candidate.summary.zRange)],
+    ["averageZ（平均奥行き）", formatNumber(candidate.summary.averageZ)],
+    ["rotationCenter（投影用回転中心）", formatRotationCenter(candidate.rotationCenter)],
+    ["method（補間方法）", prototype.settings.interpolation.method],
+    ["epsilon（距離ゼロ除算回避値）", formatNumber(prototype.settings.interpolation.epsilon)],
+    ["power（距離減衰の強さ）", formatNumber(prototype.settings.interpolation.power)],
+    ["clampZ（z範囲制限）", String(prototype.settings.interpolation.clampZ)],
+  ])
+  getElement("depth-478-projection-evaluation").innerHTML = projection
+    ? renderStatusItems([
+        ["totalProjectionError（投影誤差合計）", formatNumber(projection.totalProjectionError)],
+        ["averageProjectionError（平均投影誤差）", formatNumber(projection.averageProjectionError)],
+        ["front", formatNumber(projection.bucketScores.front)],
+        ["yawPositive", formatNumber(projection.bucketScores.yawPositive)],
+        ["yawNegative", formatNumber(projection.bucketScores.yawNegative)],
+        ["pitchPositive", formatNumber(projection.bucketScores.pitchPositive)],
+        ["pitchNegative", formatNumber(projection.bucketScores.pitchNegative)],
+        ["mixedPose", formatNumber(projection.bucketScores.mixedPose)],
+        [
+          "worstFrame（最も誤差が大きいフレーム）",
+          projection.worstFrame
+            ? `${projection.worstFrame.captureId} / ${projection.worstFrame.bucket} / ${formatNumber(projection.worstFrame.error)}`
+            : "-",
+        ],
+        [
+          "worstGroup（最も誤差が大きいグループ）",
+          projection.worstGroup
+            ? `${projection.worstGroup.label} / ${formatNumber(projection.worstGroup.averageError)}`
+            : "-",
+        ],
+      ])
+    : empty
+  getElement("depth-478-group-error-table").innerHTML = projection
+    ? renderDepth478GroupErrorTable(projection.perGroupError)
+    : ""
+  getElement("depth-478-relation-debug").innerHTML = relation
+    ? renderStatusItems([
+        ["enabled（奥行き関係フィルタ有効）", String(relation.settings.enabled)],
+        ["mode（奥行き関係モード）", relation.settings.mode],
+        ["applyToObjectiveScore（ペナルティをスコアへ反映）", String(relation.settings.applyToObjectiveScore)],
+        ["ruleCount（奥行き関係ルール数）", String(relation.settings.ruleCount)],
+        ["violationCount（違反数）", String(relation.violationCount)],
+        ["hardRejectViolationCount（完全除外対象の違反数）", String(relation.hardRejectViolationCount)],
+        ["isRejected（478 debug 候補が除外対象か）", String(relation.isRejected)],
+        ["noseTipGroup.z（鼻先グループ奥行き）", formatNumber(relation.groupValues.noseTipGroup?.z ?? null)],
+        ["cheekGroup.z（頬グループ奥行き）", formatNumber(relation.groupValues.cheekGroup?.z ?? null)],
+        ["faceCenterGroup.z（顔中心グループ奥行き）", formatNumber(relation.groupValues.faceCenterGroup?.z ?? null)],
+        ["faceBoundaryGroup.z（顔境界グループ奥行き）", formatNumber(relation.groupValues.faceBoundaryGroup?.z ?? null)],
+      ])
+    : empty
+  getElement("depth-478-relation-rule-table").innerHTML = relation
+    ? renderDepthRelationRuleTable(relation.ruleResults)
+    : ""
+  getElement("depth-478-smoothness-debug").innerHTML = smoothness
+    ? renderStatusItems([
+        ["averageNeighborDeltaZ（平均隣接奥行き差）", formatNumber(smoothness.averageNeighborDeltaZ)],
+        ["maxNeighborDeltaZ（最大隣接奥行き差）", formatNumber(smoothness.maxNeighborDeltaZ)],
+        ["highDeltaEdgeCount（しきい値超過エッジ数）", String(smoothness.highDeltaEdgeCount)],
+        ["threshold（滑らかさしきい値）", formatNumber(smoothness.threshold)],
+      ])
+    : empty
+  getElement("depth-478-smoothness-edge-table").innerHTML = smoothness
+    ? renderDepth478SmoothnessEdgeTable(smoothness.highDeltaEdges)
+    : ""
+  getElement("depth-478-candidate-comparison").innerHTML = renderDepth478CandidateComparisonTable(
+    prototype.candidateComparison ?? [],
+  )
+}
+
+function renderDepth478GroupErrorTable(
+  perGroupError: ProjectionEvaluation478["perGroupError"],
+): string {
+  const groups = Object.values(perGroupError)
+  if (groups.length === 0) {
+    return `<p class="empty">478 group error はありません。</p>`
+  }
+  return `
+    <table>
+      <thead>
+        <tr>
+          <th>groupId（グループID）</th>
+          <th>label（表示名）</th>
+          <th>averageError（平均誤差）</th>
+          <th>maxError（最大誤差）</th>
+          <th>sampleCount（評価サンプル数）</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${groups.map((group) => `
+          <tr>
+            <td><code>${escapeHtml(group.groupId)}</code></td>
+            <td>${escapeHtml(group.label)}</td>
+            <td>${formatNumber(group.averageError)}</td>
+            <td>${formatNumber(group.maxError)}</td>
+            <td>${group.sampleCount}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `
+}
+
+function renderDepth478SmoothnessEdgeTable(
+  edges: SmoothnessDebug478["highDeltaEdges"],
+): string {
+  if (edges.length === 0) {
+    return `<p class="empty">しきい値を超える近傍 z 差はありません。</p>`
+  }
+  return `
+    <table>
+      <thead>
+        <tr>
+          <th>from（起点ランドマーク）</th>
+          <th>to（隣接ランドマーク）</th>
+          <th>deltaZ（奥行き差）</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${edges.map((edge) => `
+          <tr>
+            <td><code>${edge.from}</code></td>
+            <td><code>${edge.to}</code></td>
+            <td>${formatNumber(edge.deltaZ)}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `
+}
+
+function renderDepth478CandidateComparisonTable(
+  entries: Depth478CandidateComparisonEntry[],
+): string {
+  if (entries.length === 0) {
+    return `<p class="empty">478点候補比較はまだありません。</p>`
+  }
+  return `
+    <table>
+      <thead>
+        <tr>
+          <th>candidateId（478点候補ID）</th>
+          <th>source8Candidate（元8点候補）</th>
+          <th>totalProjectionError（投影誤差合計）</th>
+          <th>worstBucketScore（最悪姿勢スコア）</th>
+          <th>depthRelationViolationCount（奥行き関係違反数）</th>
+          <th>depthRelationHardRejectViolationCount（完全除外対象の違反数）</th>
+          <th>depthRelationIsRejected（奥行き関係で除外対象）</th>
+          <th>hardRejectViolationCount</th>
+          <th>isRejected</th>
+          <th>smoothnessMaxDeltaZ（最大隣接奥行き差）</th>
+          <th>smoothnessHighDeltaEdgeCount（滑らかさ違反数）</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${entries.map((entry) => `
+          <tr>
+            <td><code>${escapeHtml(entry.candidateId)}</code></td>
+            <td><code>${escapeHtml(entry.source8CandidateId ?? "-")}</code></td>
+            <td>${formatNumber(entry.totalProjectionError)}</td>
+            <td>${formatNumber(entry.maxBucketScore)}</td>
+            <td>${formatNumber(entry.depthRelationViolationCount)}</td>
+            <td>${formatNumber(entry.depthRelationHardRejectViolationCount)}</td>
+            <td>${entry.depthRelationIsRejected === null ? "-" : String(entry.depthRelationIsRejected)}</td>
+            <td>${formatNumber(entry.hardRejectViolationCount)}</td>
+            <td>${entry.isRejected === null ? "-" : String(entry.isRejected)}</td>
+            <td>${formatNumber(entry.smoothnessMaxDeltaZ)}</td>
+            <td>${formatNumber(entry.smoothnessHighDeltaEdgeCount)}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `
+}
+
 function renderRejectedCandidateTable(
   candidates: RejectedCandidateSummary[],
   rejectedCandidateCount: number,
@@ -6455,6 +8094,39 @@ function formatRotationCenterResultCompact(result: RotationCenterDebugResult): s
   ].join(" / ")
 }
 
+function renderQuick478DepthDebug(): void {
+  const quick = state.quick478DepthDebug
+  const statusElement = getElement("quick-depth-478-status")
+  const summaryElement = getElement("quick-depth-478-summary")
+
+  if (quick.status === "running") {
+    statusElement.textContent = quick.message ?? "478 Depth hardReject debug を実行中..."
+    summaryElement.innerHTML = ""
+    return
+  }
+
+  if (!quick.quickRun) {
+    statusElement.textContent =
+      quick.message ?? "capture JSON を読み込んでから実行してください。"
+    summaryElement.innerHTML = ""
+    return
+  }
+
+  statusElement.textContent = quick.message ?? formatQuick478DepthDebugMessage(quick.quickRun)
+  summaryElement.innerHTML = renderStatusItems([
+    ["status", quick.quickRun.status],
+    ["noseTipGroup.z", formatNumber(quick.quickRun.summary.noseTipGroupZ)],
+    ["cheekGroup.z", formatNumber(quick.quickRun.summary.cheekGroupZ)],
+    ["margin", formatNumber(quick.quickRun.summary.margin)],
+    ["violationCount", formatNumber(quick.quickRun.summary.violationCount)],
+    [
+      "smoothnessHighDeltaEdgeCount",
+      formatNumber(quick.quickRun.summary.smoothnessHighDeltaEdgeCount),
+    ],
+    ["averageProjectionError", formatNumber(quick.quickRun.summary.averageProjectionError)],
+  ])
+}
+
 function renderEmptyState(): void {
   getElement("source-summary").innerHTML = `<p class="empty">captured JSON を読み込んでください。</p>`
   getElement("base-summary").innerHTML = `<p class="empty">未解析です。</p>`
@@ -6469,6 +8141,7 @@ function renderEmptyState(): void {
   getElement("best-candidate").innerHTML = `<p class="empty">未解析です。</p>`
   renderOutlierFrameDebug(null, DEFAULT_OUTLIER_FILTERING_SETTINGS)
   renderDepthRelationDebug(null, DEFAULT_DEPTH_RELATION_FILTERING_SETTINGS)
+  renderDepth478Prototype(null)
   renderProjectionSignDebug(null)
   renderRotationCenterDebug(null)
   renderBucketTargetWarning()
@@ -6490,6 +8163,7 @@ function renderEmptyState(): void {
     2,
   )
   renderAutoSequenceStatus()
+  renderQuick478DepthDebug()
 }
 
 function renderSemanticMapping(): void {
@@ -6832,6 +8506,8 @@ function renderBucketRanking(bucketRanking: Record<CaptureBucket, RankingEntry[]
 function setButtons(): void {
   const isRunning = state.searchProgress.status === "running"
   const isAutoRunning = state.autoSequence.status === "running"
+  const isQuickRunning = state.quick478DepthDebug.status === "running"
+  getElement<HTMLButtonElement>("run-quick-depth-478-button").disabled = isRunning || isAutoRunning || isQuickRunning
   getElement<HTMLButtonElement>("run-analysis-button").disabled = state.frames.length === 0 || isRunning || isAutoRunning
   getElement<HTMLButtonElement>("cancel-analysis-button").disabled = !isRunning
   getElement<HTMLButtonElement>("copy-debug-button").disabled = !state.analysis || isRunning || isAutoRunning
@@ -6841,6 +8517,10 @@ function setButtons(): void {
   getElement<HTMLButtonElement>("run-auto-sequence-button").disabled = state.frames.length === 0 || isRunning || isAutoRunning
   getElement<HTMLButtonElement>("cancel-auto-sequence-button").disabled = !isAutoRunning
   getElement<HTMLButtonElement>("use-best-candidate-button").disabled = !state.analysis?.bestCandidate || isRunning || isAutoRunning
+  getElement<HTMLButtonElement>("generate-depth-478-button").disabled =
+    !state.analysis || isRunning || isAutoRunning
+  getElement<HTMLButtonElement>("export-depth-478-button").disabled =
+    !state.analysis?.depth478Prototype?.generatedCandidate || isRunning || isAutoRunning
   getElement<HTMLButtonElement>("export-full-button").disabled = !state.analysis || isRunning || isAutoRunning
   getElement<HTMLButtonElement>("export-summary-button").disabled = !state.analysis || isRunning || isAutoRunning
   getElement<HTMLButtonElement>("run-stability-check-button").disabled =
@@ -7177,6 +8857,17 @@ function average(values: number[]): number | null {
     : finite.reduce((total, value) => total + value, 0) / finite.length
 }
 
+function median(values: number[]): number | null {
+  const finite = values.filter(Number.isFinite).sort((a, b) => a - b)
+  if (finite.length === 0) {
+    return null
+  }
+  const middle = Math.floor(finite.length / 2)
+  return finite.length % 2 === 0
+    ? (finite[middle - 1] + finite[middle]) / 2
+    : finite[middle]
+}
+
 function averageNullable(values: Array<number | null>): number | null {
   return average(values.filter((value): value is number => typeof value === "number"))
 }
@@ -7193,6 +8884,10 @@ function readNumber(id: string, fallback: number): number {
 
 function toNumber(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? value : Number(value) || fallback
+}
+
+function clamp(value: number, minValue: number, maxValue: number): number {
+  return Math.min(Math.max(value, minValue), maxValue)
 }
 
 function round(value: number): number {
