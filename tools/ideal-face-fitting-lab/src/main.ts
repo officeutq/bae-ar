@@ -974,15 +974,81 @@ interface PerLandmarkZSearchSettings {
   maxFrames?: number
 }
 
+type ZSearchBoundHit = "lower" | "upper" | "none"
+type ZSearchNearBound = "lower" | "upper" | "none"
+
+interface SemanticPointZSearchBoundHit {
+  pointId: SemanticPointName
+  z: number
+  min: number
+  max: number
+  hit: Exclude<ZSearchBoundHit, "none">
+}
+
+interface SemanticPointZSearchBoundSummary {
+  pointCount: number
+  boundHitCount: number
+  lowerBoundHitCount: number
+  upperBoundHitCount: number
+  hits: SemanticPointZSearchBoundHit[]
+}
+
 interface PerLandmarkZSearchDebugRow {
   index: number
   baseZ: number
   bestZ: number
+  minZ: number
+  maxZ: number
+  deltaFromBaseZ: number
   deltaZ: number
+  hit: ZSearchBoundHit
+  score: number
+  projectionError: number
+  canonicalDeviationPenalty: number
   errorBefore: number
   errorAfter: number
   bestScore: number
   candidateCount: number
+}
+
+interface PerLandmarkZSearchNearBoundRow extends PerLandmarkZSearchDebugRow {
+  nearBound: Exclude<ZSearchNearBound, "none">
+}
+
+interface PerLandmarkZSearchNearBoundThreshold {
+  mode: "step"
+  value: number
+  step: number
+}
+
+interface PerLandmarkZSearchGroupBoundHitSummary {
+  groupId: string
+  label: string
+  landmarkCount: number
+  upperBoundHitCount: number
+  lowerBoundHitCount: number
+  nearUpperBoundCount: number
+  nearLowerBoundCount: number
+}
+
+interface PerLandmarkZSearchBoundSummary {
+  searchedLandmarkCount: number
+  excludedLandmarkCount: number
+  upperBoundHitCount: number
+  lowerBoundHitCount: number
+  nearUpperBoundCount: number
+  nearLowerBoundCount: number
+  upperBoundHitRatio: number
+  lowerBoundHitRatio: number
+  nearUpperBoundRatio: number
+  nearLowerBoundRatio: number
+  maxPositiveDeltaFromBaseZ: number
+  maxNegativeDeltaFromBaseZ: number
+  averageAbsDeltaFromBaseZ: number
+  nearBoundThreshold: PerLandmarkZSearchNearBoundThreshold
+  boundHitLandmarks: PerLandmarkZSearchDebugRow[]
+  nearBoundLandmarks: PerLandmarkZSearchNearBoundRow[]
+  groupBoundHitSummary: PerLandmarkZSearchGroupBoundHitSummary[]
 }
 
 interface PerLandmarkZSearchDebug {
@@ -997,7 +1063,7 @@ interface PerLandmarkZSearchDebug {
     canonicalDeviationPenaltyWeight: number
     maxFrames?: number
   }
-  summary: {
+  summary: PerLandmarkZSearchBoundSummary & {
     optimizedLandmarkCount: number
     totalEvaluatedCandidates: number
     averageBestDeltaZ: number
@@ -1167,6 +1233,8 @@ interface SemanticPointSetComparisonRun {
   perLandmarkAverageErrorBefore: number | null
   perLandmarkAverageErrorAfter: number | null
   perLandmarkAverageBestDeltaZ: number | null
+  semanticPointZSearchBoundSummary?: SemanticPointZSearchBoundSummary
+  perLandmarkZSearchSummary?: PerLandmarkZSearchBoundSummary
   sourceCandidateId: string | null
   activeSemanticPointIds: SemanticPointName[]
   activeSemanticPointCount: number
@@ -1221,6 +1289,9 @@ interface Quick478DepthDebugSummary {
     isRejected: boolean | null
     smoothnessHighDeltaEdgeCount: number | null
     averageProjectionError: number | null
+    semanticPointBoundHitCount: number | null
+    perLandmarkUpperBoundHitCount: number | null
+    perLandmarkLowerBoundHitCount: number | null
   }
   isRejected?: boolean
   fallbackUsed?: boolean
@@ -1262,6 +1333,8 @@ interface Quick478RejectedCandidateDebug {
 
 interface Quick478DepthDebugPayload extends Depth478PrototypeResult {
   quickRun: Quick478DepthDebugSummary
+  semanticPointZSearchBoundSummary?: SemanticPointZSearchBoundSummary
+  perLandmarkZSearchSummary?: PerLandmarkZSearchBoundSummary
   semanticPointSetComparison?: SemanticPointSetComparisonSummary
   analysisSummary?: SummaryAnalysisResult
 }
@@ -1985,13 +2058,14 @@ const NATURAL_NOSE_WITH_ROTATION_CENTER: FittingCandidate8 = {
 }
 
 const DEFAULT_LOCAL_SEARCH_BASE_CANDIDATE = BASELINE_CHEEK_DEPTH_CANDIDATE
+const EXPANDED_CHIN_Z_SEARCH_RANGE: LocalSearchRange = { min: -0.03, max: 0.03, step: 0.01 }
 
 const DEFAULT_COORDINATE_DESCENT_RANGES: LocalSearchRanges = {
   pivotZ: { min: 0.06, max: 0.18, step: 0.01 },
   "rotationCenter.y": { min: -0.24, max: 0, step: 0.01 },
   "rotationCenter.z": { min: 0.02, max: 0.12, step: 0.01 },
   "headTop.z": { min: -0.02, max: 0.03, step: 0.01 },
-  "chin.z": { min: -0.01, max: 0.03, step: 0.01 },
+  "chin.z": EXPANDED_CHIN_Z_SEARCH_RANGE,
   "leftCheek.z": { min: 0.02, max: 0.08, step: 0.01 },
   "rightCheek.z": { min: 0.02, max: 0.08, step: 0.01 },
   "leftEye.z": { min: 0, max: 0.06, step: 0.01 },
@@ -5208,6 +5282,7 @@ function buildSemanticPointSetComparisonRun(
   const rotationCenter = finalCandidate ? getCandidateRotationCenter(finalCandidate) : null
   const relation = prototype?.depthRelationDebug
   const perLandmark = prototype?.generatedCandidate?.perLandmarkZSearchDebug?.summary
+  const semanticPointZSearchBoundSummary = buildSemanticPointZSearchBoundSummary(analysis)
   const noseTipGroupZ = relation?.groupValues.noseTipGroup?.z ?? null
   const cheekGroupZ = relation?.groupValues.cheekGroup?.z ?? null
   const activeSemanticPointIds = getSemanticPointSet(pointSetId).pointIds
@@ -5240,6 +5315,8 @@ function buildSemanticPointSetComparisonRun(
     perLandmarkAverageErrorBefore: perLandmark?.averageErrorBefore ?? null,
     perLandmarkAverageErrorAfter: perLandmark?.averageErrorAfter ?? null,
     perLandmarkAverageBestDeltaZ: perLandmark?.averageBestDeltaZ ?? null,
+    semanticPointZSearchBoundSummary,
+    perLandmarkZSearchSummary: perLandmark,
     sourceCandidateId: prototype?.generatedCandidate?.source8CandidateId ?? null,
     activeSemanticPointIds: [...activeSemanticPointIds],
     activeSemanticPointCount: activeSemanticPointIds.length,
@@ -5250,6 +5327,78 @@ function buildSemanticPointSetComparisonRun(
     usesOnlyActiveSemanticPointsForScore: true,
     usesOnlyActiveSemanticPointsForCandidateId: unexpectedPointIds.length === 0,
   }
+}
+
+function buildSemanticPointZSearchBoundSummary(
+  analysis: AnalysisResult | null | undefined,
+): SemanticPointZSearchBoundSummary | undefined {
+  if (!analysis) {
+    return undefined
+  }
+  const finalCandidate = analysis.autoSequenceSummary?.finalCandidate ?? analysis.bestCandidate
+  if (!finalCandidate) {
+    return undefined
+  }
+  const ranges = collectSemanticPointZSearchRanges(analysis)
+  const hits = getSemanticPointSet(analysis.searchSettings.semanticPointSetId).pointIds.flatMap(
+    (pointId) => {
+      const range = ranges.get(`${pointId}.z`)
+      if (!range) {
+        return []
+      }
+      const z = finalCandidate.zByPointId[pointId]
+      const hit = getZSearchBoundHit(z, range.min, range.max)
+      return hit === "none"
+        ? []
+        : [
+            {
+              pointId,
+              z: round(z),
+              min: round(range.min),
+              max: round(range.max),
+              hit,
+            },
+          ]
+    },
+  )
+  return {
+    pointCount: getSemanticPointSet(analysis.searchSettings.semanticPointSetId).pointIds.length,
+    boundHitCount: hits.length,
+    lowerBoundHitCount: hits.filter((hit) => hit.hit === "lower").length,
+    upperBoundHitCount: hits.filter((hit) => hit.hit === "upper").length,
+    hits,
+  }
+}
+
+function collectSemanticPointZSearchRanges(
+  analysis: AnalysisResult,
+): Map<LocalSearchParameter, LocalSearchRange> {
+  const ranges = new Map<LocalSearchParameter, LocalSearchRange>()
+  const sequenceSteps = analysis.autoSequenceSummary?.steps ?? []
+  for (const step of sequenceSteps) {
+    const stepRanges = step.searchSettings.coordinateDescentRanges
+    if (!stepRanges) {
+      continue
+    }
+    for (const [parameter, range] of Object.entries(stepRanges) as Array<
+      [LocalSearchParameter, LocalSearchRange]
+    >) {
+      if (parameter.endsWith(".z")) {
+        ranges.set(parameter, range)
+      }
+    }
+  }
+  const localRanges = analysis.searchSettings.localSearchSettings?.coordinateDescentRanges
+  if (ranges.size === 0 && localRanges) {
+    for (const [parameter, range] of Object.entries(localRanges) as Array<
+      [LocalSearchParameter, LocalSearchRange]
+    >) {
+      if (parameter.endsWith(".z")) {
+        ranges.set(parameter, range)
+      }
+    }
+  }
+  return ranges
 }
 
 function parseCandidateIdSemanticPointIds(candidateId: string | null | undefined): SemanticPointName[] {
@@ -5408,6 +5557,9 @@ function buildQuick478DepthDebugPayload(
   },
 ): Quick478DepthDebugPayload {
   const relation = prototype?.depthRelationDebug
+  const semanticPointZSearchBoundSummary = buildSemanticPointZSearchBoundSummary(options.analysis)
+  const perLandmarkZSearchSummary =
+    prototype?.generatedCandidate?.perLandmarkZSearchDebug?.summary
   const noseRule = relation?.ruleResults.find(
     (rule) => rule.ruleId === "nose_tip_group_in_front_of_cheek_group",
   )
@@ -5436,6 +5588,9 @@ function buildQuick478DepthDebugPayload(
       isRejected: relation?.isRejected ?? options.isRejected ?? null,
       smoothnessHighDeltaEdgeCount: prototype?.smoothnessDebug?.highDeltaEdgeCount ?? null,
       averageProjectionError: prototype?.projectionEvaluation?.averageProjectionError ?? null,
+      semanticPointBoundHitCount: semanticPointZSearchBoundSummary?.boundHitCount ?? null,
+      perLandmarkUpperBoundHitCount: perLandmarkZSearchSummary?.upperBoundHitCount ?? null,
+      perLandmarkLowerBoundHitCount: perLandmarkZSearchSummary?.lowerBoundHitCount ?? null,
     },
   }
   if (options.isRejected !== undefined) {
@@ -5462,6 +5617,8 @@ function buildQuick478DepthDebugPayload(
   return {
     quickRun,
     ...(prototype ?? { settings: createQuick478DepthPrototypeSettings() }),
+    semanticPointZSearchBoundSummary,
+    perLandmarkZSearchSummary,
     semanticPointSetComparison: options.semanticPointSetComparison,
     analysisSummary: options.analysis ? createSummaryAnalysis(options.analysis) : undefined,
   }
@@ -6228,7 +6385,9 @@ function applyPerLandmarkZSearch(
           ),
         )
       : rawCandidates
-    const uniqueCandidates = Array.from(new Set(zCandidates))
+    const uniqueCandidates = Array.from(new Set(zCandidates)).sort((a, b) => a - b)
+    const minZ = min(uniqueCandidates) ?? baseZ
+    const maxZ = max(uniqueCandidates) ?? baseZ
     const errorBefore = evaluateProjectionErrorForSingleLandmarkZ(
       landmark,
       baseZ,
@@ -6239,6 +6398,8 @@ function applyPerLandmarkZSearch(
     let bestZ = baseZ
     let bestError = errorBefore
     let bestScore = Number.POSITIVE_INFINITY
+    let bestProjectionError = errorBefore
+    let bestCanonicalDeviationPenalty = 0
 
     for (const candidateZ of uniqueCandidates) {
       const projectionError = evaluateProjectionErrorForSingleLandmarkZ(
@@ -6258,6 +6419,8 @@ function applyPerLandmarkZSearch(
         bestZ = candidateZ
         bestError = projectionError
         bestScore = score
+        bestProjectionError = projectionError
+        bestCanonicalDeviationPenalty = canonicalDeviationPenalty
       }
     }
 
@@ -6266,7 +6429,14 @@ function applyPerLandmarkZSearch(
       index,
       baseZ: round(baseZ),
       bestZ: round(bestZ),
+      minZ: round(minZ),
+      maxZ: round(maxZ),
+      deltaFromBaseZ: round(bestZ - baseZ),
       deltaZ: round(bestZ - baseZ),
+      hit: getZSearchBoundHit(bestZ, minZ, maxZ),
+      score: round(bestScore),
+      projectionError: round(bestProjectionError),
+      canonicalDeviationPenalty: round(bestCanonicalDeviationPenalty),
       errorBefore: round(errorBefore),
       errorAfter: round(bestError),
       bestScore: round(bestScore),
@@ -6291,6 +6461,7 @@ function applyPerLandmarkZSearch(
       settings,
       rows,
       usedOutlierFilteredFrames,
+      candidate.landmarks.length,
     ),
   }
 }
@@ -6372,6 +6543,7 @@ function buildPerLandmarkZSearchDebug(
   settings: PerLandmarkZSearchSettings,
   rows: PerLandmarkZSearchDebugRow[],
   usedOutlierFilteredFrames: boolean,
+  totalLandmarkCount: number,
 ): PerLandmarkZSearchDebug {
   const sortedByImprovement = [...rows]
     .sort((a, b) => b.errorBefore - b.errorAfter - (a.errorBefore - a.errorAfter))
@@ -6384,6 +6556,11 @@ function buildPerLandmarkZSearchDebug(
     return row ? [row] : []
   })
   const fallbackSamples = sampleRows.length > 0 ? sampleRows : rows.slice(0, 10)
+  const boundSummary = buildPerLandmarkZSearchBoundSummary(
+    rows,
+    Math.max(0, totalLandmarkCount - rows.length),
+    settings.zStep,
+  )
 
   return {
     enabled: settings.enabled,
@@ -6398,6 +6575,7 @@ function buildPerLandmarkZSearchDebug(
       ...(settings.maxFrames ? { maxFrames: settings.maxFrames } : {}),
     },
     summary: {
+      ...boundSummary,
       optimizedLandmarkCount: rows.length,
       totalEvaluatedCandidates: rows.reduce((total, row) => total + row.candidateCount, 0),
       averageBestDeltaZ: round(average(rows.map((row) => Math.abs(row.deltaZ))) ?? 0),
@@ -6409,6 +6587,105 @@ function buildPerLandmarkZSearchDebug(
     largestDeltaLandmarks: sortedByDelta,
     sampleRows: fallbackSamples,
   }
+}
+
+function buildPerLandmarkZSearchBoundSummary(
+  rows: PerLandmarkZSearchDebugRow[],
+  excludedLandmarkCount: number,
+  zStep: number,
+): PerLandmarkZSearchBoundSummary {
+  const searchedLandmarkCount = rows.length
+  const thresholdStep = Math.max(EPSILON, Math.abs(zStep))
+  const boundHitLandmarks = rows.filter((row) => row.hit !== "none")
+  const nearBoundLandmarks = rows.flatMap((row) => {
+    const nearBound = getZSearchNearBound(row, thresholdStep)
+    return nearBound === "none" ? [] : [{ ...row, nearBound }]
+  })
+  const upperBoundHitCount = boundHitLandmarks.filter((row) => row.hit === "upper").length
+  const lowerBoundHitCount = boundHitLandmarks.filter((row) => row.hit === "lower").length
+  const nearUpperBoundCount = nearBoundLandmarks.filter((row) => row.nearBound === "upper").length
+  const nearLowerBoundCount = nearBoundLandmarks.filter((row) => row.nearBound === "lower").length
+  const deltas = rows.map((row) => row.deltaFromBaseZ)
+  const divisor = searchedLandmarkCount || 1
+  return {
+    searchedLandmarkCount,
+    excludedLandmarkCount,
+    upperBoundHitCount,
+    lowerBoundHitCount,
+    nearUpperBoundCount,
+    nearLowerBoundCount,
+    upperBoundHitRatio: round(upperBoundHitCount / divisor),
+    lowerBoundHitRatio: round(lowerBoundHitCount / divisor),
+    nearUpperBoundRatio: round(nearUpperBoundCount / divisor),
+    nearLowerBoundRatio: round(nearLowerBoundCount / divisor),
+    maxPositiveDeltaFromBaseZ: round(max(deltas.filter((delta) => delta > 0)) ?? 0),
+    maxNegativeDeltaFromBaseZ: round(min(deltas.filter((delta) => delta < 0)) ?? 0),
+    averageAbsDeltaFromBaseZ: round(average(deltas.map((delta) => Math.abs(delta))) ?? 0),
+    nearBoundThreshold: {
+      mode: "step",
+      value: 1,
+      step: round(thresholdStep),
+    },
+    boundHitLandmarks,
+    nearBoundLandmarks,
+    groupBoundHitSummary: buildPerLandmarkZSearchGroupBoundHitSummary(
+      rows,
+      nearBoundLandmarks,
+    ),
+  }
+}
+
+function buildPerLandmarkZSearchGroupBoundHitSummary(
+  rows: PerLandmarkZSearchDebugRow[],
+  nearBoundLandmarks: PerLandmarkZSearchNearBoundRow[],
+): PerLandmarkZSearchGroupBoundHitSummary[] {
+  const rowByIndex = new Map(rows.map((row) => [row.index, row]))
+  const nearByIndex = new Map(nearBoundLandmarks.map((row) => [row.index, row]))
+  return DEPTH_478_GROUP_DEFINITIONS.map((group) => {
+    const groupRows = group.pointIndices.flatMap((index) => {
+      const row = rowByIndex.get(index)
+      return row ? [row] : []
+    })
+    const groupNearRows = group.pointIndices.flatMap((index) => {
+      const row = nearByIndex.get(index)
+      return row ? [row] : []
+    })
+    return {
+      groupId: group.groupId,
+      label: group.label,
+      landmarkCount: group.pointIndices.length,
+      upperBoundHitCount: groupRows.filter((row) => row.hit === "upper").length,
+      lowerBoundHitCount: groupRows.filter((row) => row.hit === "lower").length,
+      nearUpperBoundCount: groupNearRows.filter((row) => row.nearBound === "upper").length,
+      nearLowerBoundCount: groupNearRows.filter((row) => row.nearBound === "lower").length,
+    }
+  })
+}
+
+function getZSearchBoundHit(bestZ: number, minZ: number, maxZ: number): ZSearchBoundHit {
+  if (Math.abs(bestZ - minZ) <= EPSILON) {
+    return "lower"
+  }
+  if (Math.abs(bestZ - maxZ) <= EPSILON) {
+    return "upper"
+  }
+  return "none"
+}
+
+function getZSearchNearBound(
+  row: PerLandmarkZSearchDebugRow,
+  thresholdStep: number,
+): ZSearchNearBound {
+  if (row.hit !== "none") {
+    return "none"
+  }
+  if (Math.abs(row.bestZ - row.minZ) <= thresholdStep + EPSILON) {
+    return "lower"
+  }
+  if (Math.abs(row.maxZ - row.bestZ) <= thresholdStep + EPSILON) {
+    return "upper"
+  }
+  return "none"
 }
 
 function buildProjection478GroupErrors(
@@ -9949,6 +10226,14 @@ function renderQuick478DepthDebug(): void {
       formatNumber(quick.quickRun.summary.smoothnessHighDeltaEdgeCount),
     ],
     ["averageProjectionError", formatNumber(quick.quickRun.summary.averageProjectionError)],
+    [
+      "semantic point bound hits",
+      formatNumber(quick.quickRun.summary.semanticPointBoundHitCount),
+    ],
+    [
+      "perLandmark bound hits",
+      `${formatNumber(quick.quickRun.summary.perLandmarkLowerBoundHitCount)} lower / ${formatNumber(quick.quickRun.summary.perLandmarkUpperBoundHitCount)} upper`,
+    ],
   ])
 }
 
