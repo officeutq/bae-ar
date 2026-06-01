@@ -46,6 +46,8 @@ type ManualLandmarkAdjustment = {
   dy: number
 }
 
+type ManualAdjustmentsByFrame = Record<number, ManualLandmarkAdjustment[]>
+
 type ExcludedFrame = {
   frameIndex: number
   timeSec: number
@@ -68,7 +70,7 @@ type AppState = {
   summary: MediaPipeFrameSummary | null
   pose: Pose | null
   observed12pt: LandmarkSummaryPoint[]
-  manualAdjustments: ManualLandmarkAdjustment[]
+  manualAdjustmentsByFrame: ManualAdjustmentsByFrame
   selectedLandmarkSummaryPointId: string | null
   draggingLandmarkSummaryPointId: string | null
   showLandmarkSummaryOverlay: boolean
@@ -80,6 +82,7 @@ const RAD_TO_DEG = 180 / Math.PI
 const MATRIX_PREVIEW_COUNT = 8
 const FRAME_STEP_SECONDS = 1 / 30
 const EXCLUDED_FRAMES_PREVIEW_LIMIT = 20
+const MANUAL_ADJUSTMENTS_BY_FRAME_PREVIEW_LIMIT = 20
 const OVERLAY_POINT_RADIUS = 5
 const OVERLAY_SELECTED_POINT_RADIUS = 8
 const OVERLAY_HIT_RADIUS = 12
@@ -108,7 +111,7 @@ const state: AppState = {
   summary: null,
   pose: null,
   observed12pt: [],
-  manualAdjustments: [],
+  manualAdjustmentsByFrame: {},
   selectedLandmarkSummaryPointId: null,
   draggingLandmarkSummaryPointId: null,
   showLandmarkSummaryOverlay: true,
@@ -180,7 +183,7 @@ app.innerHTML = `
           選択点をリセット
         </button>
         <button id="resetAllLandmarksButton" type="button" class="secondary-button">
-          全調整をリセット
+          現在フレームの全調整をリセット
         </button>
       </div>
       <div id="landmarkSummaryGrid" class="landmark-summary-grid"></div>
@@ -225,7 +228,7 @@ resetSelectedLandmarkButton.addEventListener("click", () => {
 })
 
 resetAllLandmarksButton.addEventListener("click", () => {
-  state.manualAdjustments = []
+  resetCurrentFrameLandmarkAdjustments()
   renderThumbnailCanvas()
   render()
 })
@@ -333,7 +336,6 @@ async function handleFile(file: File | null): Promise<void> {
       error: state.fileError,
     }
     state.observed12pt = []
-    state.manualAdjustments = []
     state.selectedLandmarkSummaryPointId = null
     state.draggingLandmarkSummaryPointId = null
     renderThumbnailCanvas()
@@ -348,7 +350,7 @@ function resetFrameState(): void {
   state.summary = null
   state.pose = null
   state.observed12pt = []
-  state.manualAdjustments = []
+  state.manualAdjustmentsByFrame = {}
   state.selectedLandmarkSummaryPointId = null
   state.draggingLandmarkSummaryPointId = null
   state.currentFrameIndex = 0
@@ -404,7 +406,6 @@ function resetPerFrameState(): void {
   state.summary = null
   state.pose = null
   state.observed12pt = []
-  state.manualAdjustments = []
   state.selectedLandmarkSummaryPointId = null
   state.draggingLandmarkSummaryPointId = null
 }
@@ -602,7 +603,6 @@ function analyzeFirstFrame(): MediaPipeFrameSummary {
     state.pose = estimateFacePoseFromMatrix(matrix)
     state.observed12pt = detected ? buildLandmarkSummary(landmarks) : []
     if (!detected) {
-      state.manualAdjustments = []
       state.selectedLandmarkSummaryPointId = null
       state.draggingLandmarkSummaryPointId = null
     }
@@ -620,7 +620,6 @@ function analyzeFirstFrame(): MediaPipeFrameSummary {
   } catch (error) {
     state.pose = null
     state.observed12pt = []
-    state.manualAdjustments = []
     state.selectedLandmarkSummaryPointId = null
     state.draggingLandmarkSummaryPointId = null
     return {
@@ -649,28 +648,49 @@ function getAdjusted12pt(): LandmarkSummaryPoint[] {
 }
 
 function getManualAdjustment(pointId: string): ManualLandmarkAdjustment | null {
-  return state.manualAdjustments.find((adjustment) => adjustment.id === pointId) ?? null
+  return getCurrentManualAdjustments().find((adjustment) => adjustment.id === pointId) ?? null
+}
+
+function getCurrentManualAdjustments(): ManualLandmarkAdjustment[] {
+  return state.manualAdjustmentsByFrame[state.currentFrameIndex] ?? []
+}
+
+function setCurrentManualAdjustments(adjustments: ManualLandmarkAdjustment[]): void {
+  if (adjustments.length === 0) {
+    const remaining = { ...state.manualAdjustmentsByFrame }
+    delete remaining[state.currentFrameIndex]
+    state.manualAdjustmentsByFrame = remaining
+    return
+  }
+
+  state.manualAdjustmentsByFrame = {
+    ...state.manualAdjustmentsByFrame,
+    [state.currentFrameIndex]: adjustments,
+  }
 }
 
 function setManualAdjustment(pointId: string, dx: number, dy: number): void {
+  const currentManualAdjustments = getCurrentManualAdjustments()
   const nextAdjustment = {
     id: pointId,
     dx: roundDebugNumber(dx),
     dy: roundDebugNumber(dy),
   }
 
-  const existingIndex = state.manualAdjustments.findIndex(
+  const existingIndex = currentManualAdjustments.findIndex(
     (adjustment) => adjustment.id === pointId,
   )
 
   if (existingIndex >= 0) {
-    state.manualAdjustments = state.manualAdjustments.map((adjustment, index) =>
-      index === existingIndex ? nextAdjustment : adjustment,
+    setCurrentManualAdjustments(
+      currentManualAdjustments.map((adjustment, index) =>
+        index === existingIndex ? nextAdjustment : adjustment,
+      ),
     )
     return
   }
 
-  state.manualAdjustments = [...state.manualAdjustments, nextAdjustment]
+  setCurrentManualAdjustments([...currentManualAdjustments, nextAdjustment])
 }
 
 function resetSelectedLandmarkAdjustment(): void {
@@ -679,11 +699,15 @@ function resetSelectedLandmarkAdjustment(): void {
     return
   }
 
-  state.manualAdjustments = state.manualAdjustments.filter(
-    (adjustment) => adjustment.id !== selectedId,
+  setCurrentManualAdjustments(
+    getCurrentManualAdjustments().filter((adjustment) => adjustment.id !== selectedId),
   )
   renderThumbnailCanvas()
   render()
+}
+
+function resetCurrentFrameLandmarkAdjustments(): void {
+  setCurrentManualAdjustments([])
 }
 
 function buildLandmarkSummary(landmarks: NormalizedLandmark[]): LandmarkSummaryPoint[] {
@@ -915,6 +939,7 @@ function clearCanvas(): void {
 
 function render(): void {
   const adjusted12pt = getAdjusted12pt()
+  const currentManualAdjustments = getCurrentManualAdjustments()
   const frameState = getFrameStateDebug()
   const frameBusy = state.loadStatus === "読込中" || state.loadStatus === "解析中"
 
@@ -939,6 +964,8 @@ function render(): void {
     ["除外状態", state.metadata ? (isCurrentFrameExcluded() ? "除外済み" : "対象") : "-"],
     ["推定フレーム数", state.metadata ? String(getEstimatedFrameCount()) : "-"],
     ["除外フレーム数", String(state.excludedFrames.length)],
+    ["現在フレームの手動調整数", String(currentManualAdjustments.length)],
+    ["手動調整済みフレーム数", String(getManualAdjustmentFrameCount())],
   ])
 
   summaryGrid.innerHTML = renderStatusItems([
@@ -983,10 +1010,10 @@ function render(): void {
     : "12点サマリを表示"
   resetSelectedLandmarkButton.disabled =
     !state.selectedLandmarkSummaryPointId ||
-    !state.manualAdjustments.some(
+    !currentManualAdjustments.some(
       (adjustment) => adjustment.id === state.selectedLandmarkSummaryPointId,
     )
-  resetAllLandmarksButton.disabled = state.manualAdjustments.length === 0
+  resetAllLandmarksButton.disabled = currentManualAdjustments.length === 0
   previousFrameButton.disabled = !state.metadata || state.currentFrameIndex <= 0 || frameBusy
   nextFrameButton.disabled = !state.metadata || state.currentFrameIndex >= getMaxFrameIndex() || frameBusy
   excludeFrameButton.disabled = !state.metadata || frameBusy
@@ -998,8 +1025,10 @@ function render(): void {
       mediaPipeFrameSummary: state.summary,
       landmarkSummaryPointCount: adjusted12pt.length,
       observed12pt: state.observed12pt,
-      manualAdjustmentCount: state.manualAdjustments.length,
-      manualAdjustments: state.manualAdjustments,
+      manualAdjustmentCount: currentManualAdjustments.length,
+      manualAdjustments: currentManualAdjustments,
+      manualAdjustmentFrameCount: getManualAdjustmentFrameCount(),
+      manualAdjustmentsByFramePreview: getManualAdjustmentsByFramePreview(),
       adjustedLandmarkSummary: adjusted12pt,
       pose: state.pose
         ? {
@@ -1032,6 +1061,28 @@ function getFrameStateDebug(): {
     excludedFrameCount: state.excludedFrames.length,
     excludedFramesPreview: state.excludedFrames.slice(0, EXCLUDED_FRAMES_PREVIEW_LIMIT),
   }
+}
+
+function getManualAdjustmentFrameCount(): number {
+  return Object.values(state.manualAdjustmentsByFrame).filter(
+    (adjustments) => adjustments.length > 0,
+  ).length
+}
+
+function getManualAdjustmentsByFramePreview(): Array<{
+  frameIndex: number
+  adjustmentCount: number
+  adjustments: ManualLandmarkAdjustment[]
+}> {
+  return Object.entries(state.manualAdjustmentsByFrame)
+    .map(([frameIndex, adjustments]) => ({
+      frameIndex: Number(frameIndex),
+      adjustmentCount: adjustments.length,
+      adjustments,
+    }))
+    .filter((entry) => entry.adjustmentCount > 0)
+    .sort((left, right) => left.frameIndex - right.frameIndex)
+    .slice(0, MANUAL_ADJUSTMENTS_BY_FRAME_PREVIEW_LIMIT)
 }
 
 function renderStatusItems(items: Array<[string, string]>): string {
