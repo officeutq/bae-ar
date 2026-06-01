@@ -7,6 +7,7 @@
 - production 用 IdealFace asset を作る正式 authoring tool ではありません。
 - `tools/ideal-face-authoring` の Step 2-I 生成フローとは分離します。
 - `tools/mediapipe-canonical-lab` の MediaPipe 座標系調査とも目的を分けます。
+- 次段の `tools/mediapipe-render-consistency-lab` は、mesh / render / MediaPipe re-detection 前提で `projectionFitZ` と `meshReadyZ` の違いを検証する debug lab として扱います。詳細は [MediaPipe Render Consistency Lab](docs/mediapipe-render-consistency-lab.md) を参照してください。
 - captured JSON を import し、`8pt_basic` / `12pt_rotation_center` / `24pt_structure` を比較します。現時点の 478点奥行き生成 prototype（試作）の推奨は `12pt_rotation_center` です。
 - 478点 z 生成は `canonical-face-depth-template-v1.json`（標準顔奥行きテンプレート）を基準に、`canonicalDepthBased` で仮 z を作り、`perLandmarkZSearch` で各 landmark（ランドマーク）を1次元探索として微調整します。
 - Summary JSON はレビューや ChatGPT 相談用の軽量形式として出力します。
@@ -327,6 +328,7 @@ npm run start:ideal-face-authoring
 - [landmarkGroups v1](docs/landmark-groups-v1.md)
 - [Shape Warp production 方針](docs/shape-warp-production-direction.md)
 - [beauty_filter_asset_v1 方針](docs/beauty-filter-asset-v1.md)
+- [MediaPipe Render Consistency Lab](docs/mediapipe-render-consistency-lab.md)
 - [仕様書とロードマップ](docs/bae_ar_beauty_engine_spec_and_roadmap_2026_05.md)
 
 ## 今回 README で扱わないこと

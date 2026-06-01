@@ -275,6 +275,7 @@ Layer Mask Authoring Tool を置く想定の場所です。
 - `shape-warp-production-direction.md`: Shape Warp v1 debug prototype と production candidate の違い、WebGL mesh warp 方針、段階分け
 - `beauty-filter-asset-v1.md`: 最終フィルター / プリセットを `idealFace` / `landmarkGroups` / `correctionProfile` / `shapeWarpSettings` / `colorLayers` に分けつつ、1つの `beauty_filter_asset_v1` JSON として配布する方向性
 - `mediapipe-canonical-lab.md`: MediaPipe Canonical Lab の位置づけ、empirical 478 analysis 暫定結論、`facialTransformationMatrix` inverse の扱い、Full / Summary Analysis JSON export 方針
+- `mediapipe-render-consistency-lab.md`: Render Consistency Lab の位置づけ、Fitting Lab との違い、`projectionFitZ` / `meshReadyZ`、mesh / render / MediaPipe re-detection 前提の評価方針
 
 ## `tools/ideal-face-authoring` detailed scan
 
