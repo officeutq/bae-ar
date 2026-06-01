@@ -78,6 +78,25 @@ h2:first-child {
   white-space: nowrap;
 }
 
+.secondary-button {
+  background: #ffffff;
+  border: 1px solid #aab6c2;
+  border-radius: 6px;
+  color: #26313b;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  min-height: 32px;
+  padding: 6px 9px;
+}
+
+.secondary-button:disabled {
+  color: #8b96a1;
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
 .file-picker {
   display: grid;
   gap: 8px;
@@ -133,8 +152,10 @@ input[type="file"] {
 }
 
 canvas {
+  cursor: crosshair;
   height: 100%;
   object-fit: contain;
+  touch-action: none;
   width: 100%;
 }
 
@@ -170,11 +191,25 @@ video {
   gap: 6px;
 }
 
+.summary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: -2px 0 10px;
+}
+
 .landmark-summary-item {
   border-bottom: 1px solid #edf1f4;
+  border-left: 3px solid transparent;
   display: grid;
   gap: 3px;
   padding: 5px 0 8px;
+}
+
+.landmark-summary-item.selected {
+  background: #fff8e6;
+  border-left-color: #ffd166;
+  padding-left: 8px;
 }
 
 .landmark-summary-item code {

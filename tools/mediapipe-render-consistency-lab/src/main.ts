@@ -40,6 +40,12 @@ type LandmarkSummaryPoint = {
   sourceIndices: number[]
 }
 
+type ManualLandmarkAdjustment = {
+  id: string
+  dx: number
+  dy: number
+}
+
 type SemanticPointDefinition = {
   id: string
   label: string
@@ -55,7 +61,10 @@ type AppState = {
   metadata: VideoMetadata | null
   summary: MediaPipeFrameSummary | null
   pose: Pose | null
-  landmarkSummary: LandmarkSummaryPoint[]
+  observed12pt: LandmarkSummaryPoint[]
+  manualAdjustments: ManualLandmarkAdjustment[]
+  selectedLandmarkSummaryPointId: string | null
+  draggingLandmarkSummaryPointId: string | null
   showLandmarkSummaryOverlay: boolean
 }
 
@@ -63,6 +72,8 @@ const RAD_TO_DEG = 180 / Math.PI
 const MATRIX_PREVIEW_COUNT = 8
 const FIRST_FRAME_SEEK_TIME = 0.001
 const OVERLAY_POINT_RADIUS = 5
+const OVERLAY_SELECTED_POINT_RADIUS = 8
+const OVERLAY_HIT_RADIUS = 12
 
 const ROTATION_CENTER_12_SEMANTIC_DEFINITIONS: SemanticPointDefinition[] = [
   { id: "headTop", label: "頭頂", primaryIndices: [10] },
@@ -87,7 +98,10 @@ const state: AppState = {
   metadata: null,
   summary: null,
   pose: null,
-  landmarkSummary: [],
+  observed12pt: [],
+  manualAdjustments: [],
+  selectedLandmarkSummaryPointId: null,
+  draggingLandmarkSummaryPointId: null,
   showLandmarkSummaryOverlay: true,
 }
 
@@ -143,6 +157,14 @@ app.innerHTML = `
       <div id="poseGrid" class="status-grid"></div>
 
       <h2>12点ランドマークサマリ</h2>
+      <div class="summary-actions">
+        <button id="resetSelectedLandmarkButton" type="button" class="secondary-button">
+          選択点をリセット
+        </button>
+        <button id="resetAllLandmarksButton" type="button" class="secondary-button">
+          全調整をリセット
+        </button>
+      </div>
       <div id="landmarkSummaryGrid" class="landmark-summary-grid"></div>
 
       <h2>rawDebug</h2>
@@ -162,6 +184,8 @@ const poseGrid = getElement("poseGrid")
 const landmarkSummaryGrid = getElement("landmarkSummaryGrid")
 const rawDebug = getElement<HTMLPreElement>("rawDebug")
 const toggleLandmarkSummaryButton = getElement<HTMLButtonElement>("toggleLandmarkSummaryButton")
+const resetSelectedLandmarkButton = getElement<HTMLButtonElement>("resetSelectedLandmarkButton")
+const resetAllLandmarksButton = getElement<HTMLButtonElement>("resetAllLandmarksButton")
 
 fileInput.addEventListener("change", () => {
   const file = fileInput.files?.[0] ?? null
@@ -172,6 +196,32 @@ toggleLandmarkSummaryButton.addEventListener("click", () => {
   state.showLandmarkSummaryOverlay = !state.showLandmarkSummaryOverlay
   renderThumbnailCanvas()
   render()
+})
+
+resetSelectedLandmarkButton.addEventListener("click", () => {
+  resetSelectedLandmarkAdjustment()
+})
+
+resetAllLandmarksButton.addEventListener("click", () => {
+  state.manualAdjustments = []
+  renderThumbnailCanvas()
+  render()
+})
+
+canvas.addEventListener("pointerdown", (event) => {
+  handleCanvasPointerDown(event)
+})
+
+canvas.addEventListener("pointermove", (event) => {
+  handleCanvasPointerMove(event)
+})
+
+canvas.addEventListener("pointerup", (event) => {
+  handleCanvasPointerEnd(event)
+})
+
+canvas.addEventListener("pointercancel", (event) => {
+  handleCanvasPointerEnd(event)
 })
 
 render()
@@ -259,7 +309,10 @@ async function handleFile(file: File | null): Promise<void> {
       hasFacialTransformationMatrix: false,
       error: state.fileError,
     }
-    state.landmarkSummary = []
+    state.observed12pt = []
+    state.manualAdjustments = []
+    state.selectedLandmarkSummaryPointId = null
+    state.draggingLandmarkSummaryPointId = null
     renderThumbnailCanvas()
   }
 
@@ -271,7 +324,10 @@ function resetFrameState(): void {
   state.metadata = null
   state.summary = null
   state.pose = null
-  state.landmarkSummary = []
+  state.observed12pt = []
+  state.manualAdjustments = []
+  state.selectedLandmarkSummaryPointId = null
+  state.draggingLandmarkSummaryPointId = null
   clearCanvas()
 }
 
@@ -345,8 +401,9 @@ function renderThumbnailCanvas(): void {
   context.clearRect(0, 0, canvas.width, canvas.height)
   context.drawImage(video, 0, 0, canvas.width, canvas.height)
 
-  if (state.showLandmarkSummaryOverlay && state.landmarkSummary.length > 0) {
-    drawLandmarkSummaryOverlay(context, state.landmarkSummary)
+  const adjusted12pt = getAdjusted12pt()
+  if (state.showLandmarkSummaryOverlay && adjusted12pt.length > 0) {
+    drawLandmarkSummaryOverlay(context, adjusted12pt)
   }
 
   thumbnailEmpty.hidden = true
@@ -372,7 +429,12 @@ function analyzeFirstFrame(): MediaPipeFrameSummary {
     const detected = result.faceLandmarks.length > 0
 
     state.pose = estimateFacePoseFromMatrix(matrix)
-    state.landmarkSummary = detected ? buildLandmarkSummary(landmarks) : []
+    state.observed12pt = detected ? buildLandmarkSummary(landmarks) : []
+    if (!detected) {
+      state.manualAdjustments = []
+      state.selectedLandmarkSummaryPointId = null
+      state.draggingLandmarkSummaryPointId = null
+    }
 
     return {
       detected,
@@ -386,7 +448,10 @@ function analyzeFirstFrame(): MediaPipeFrameSummary {
     }
   } catch (error) {
     state.pose = null
-    state.landmarkSummary = []
+    state.observed12pt = []
+    state.manualAdjustments = []
+    state.selectedLandmarkSummaryPointId = null
+    state.draggingLandmarkSummaryPointId = null
     return {
       detected: false,
       landmarkCount: 0,
@@ -395,6 +460,59 @@ function analyzeFirstFrame(): MediaPipeFrameSummary {
       error: error instanceof Error ? error.message : String(error),
     }
   }
+}
+
+function getAdjusted12pt(): LandmarkSummaryPoint[] {
+  return state.observed12pt.map((point) => {
+    const adjustment = getManualAdjustment(point.id)
+    if (!adjustment) {
+      return point
+    }
+
+    return {
+      ...point,
+      x: roundDebugNumber(clamp(point.x + adjustment.dx, 0, 1)),
+      y: roundDebugNumber(clamp(point.y + adjustment.dy, 0, 1)),
+    }
+  })
+}
+
+function getManualAdjustment(pointId: string): ManualLandmarkAdjustment | null {
+  return state.manualAdjustments.find((adjustment) => adjustment.id === pointId) ?? null
+}
+
+function setManualAdjustment(pointId: string, dx: number, dy: number): void {
+  const nextAdjustment = {
+    id: pointId,
+    dx: roundDebugNumber(dx),
+    dy: roundDebugNumber(dy),
+  }
+
+  const existingIndex = state.manualAdjustments.findIndex(
+    (adjustment) => adjustment.id === pointId,
+  )
+
+  if (existingIndex >= 0) {
+    state.manualAdjustments = state.manualAdjustments.map((adjustment, index) =>
+      index === existingIndex ? nextAdjustment : adjustment,
+    )
+    return
+  }
+
+  state.manualAdjustments = [...state.manualAdjustments, nextAdjustment]
+}
+
+function resetSelectedLandmarkAdjustment(): void {
+  const selectedId = state.selectedLandmarkSummaryPointId
+  if (!selectedId) {
+    return
+  }
+
+  state.manualAdjustments = state.manualAdjustments.filter(
+    (adjustment) => adjustment.id !== selectedId,
+  )
+  renderThumbnailCanvas()
+  render()
 }
 
 function buildLandmarkSummary(landmarks: NormalizedLandmark[]): LandmarkSummaryPoint[] {
@@ -457,13 +575,33 @@ function drawLandmarkSummaryOverlay(
   for (const point of points) {
     const x = point.x * canvas.width
     const y = point.y * canvas.height
-    const label = point.id
+    const label = point.label
+    const observed = state.observed12pt.find((item) => item.id === point.id)
+    const adjustment = getManualAdjustment(point.id)
+    const isAdjusted = Boolean(adjustment)
+    const isSelected = point.id === state.selectedLandmarkSummaryPointId
+
+    if (observed && isAdjusted) {
+      context.beginPath()
+      context.moveTo(observed.x * canvas.width, observed.y * canvas.height)
+      context.lineTo(x, y)
+      context.strokeStyle = "rgba(35, 93, 159, 0.45)"
+      context.lineWidth = 2
+      context.stroke()
+      context.lineWidth = 3
+    }
 
     context.beginPath()
-    context.arc(x, y, OVERLAY_POINT_RADIUS, 0, Math.PI * 2)
-    context.fillStyle = "#e83f6f"
+    context.arc(
+      x,
+      y,
+      isSelected ? OVERLAY_SELECTED_POINT_RADIUS : OVERLAY_POINT_RADIUS,
+      0,
+      Math.PI * 2,
+    )
+    context.fillStyle = isAdjusted ? "#235d9f" : "#e83f6f"
     context.fill()
-    context.strokeStyle = "#ffffff"
+    context.strokeStyle = isSelected ? "#ffd166" : "#ffffff"
     context.stroke()
 
     const textX = Math.min(x + 8, canvas.width - 120)
@@ -472,10 +610,100 @@ function drawLandmarkSummaryOverlay(
     context.fillStyle = "rgba(255, 255, 255, 0.86)"
     context.fillRect(textX - 3, textY - 9, metrics.width + 6, 18)
     context.fillStyle = "#15202b"
+    context.font = isSelected ? "700 13px sans-serif" : "13px sans-serif"
     context.fillText(label, textX, textY)
   }
 
   context.restore()
+}
+
+function handleCanvasPointerDown(event: PointerEvent): void {
+  if (!state.showLandmarkSummaryOverlay || getAdjusted12pt().length === 0) {
+    return
+  }
+
+  const pointer = getCanvasPixelPoint(event)
+  const point = findNearestSummaryPoint(pointer.x, pointer.y)
+  if (!point) {
+    state.selectedLandmarkSummaryPointId = null
+    state.draggingLandmarkSummaryPointId = null
+    renderThumbnailCanvas()
+    render()
+    return
+  }
+
+  state.selectedLandmarkSummaryPointId = point.id
+  state.draggingLandmarkSummaryPointId = point.id
+  canvas.setPointerCapture(event.pointerId)
+  event.preventDefault()
+  renderThumbnailCanvas()
+  render()
+}
+
+function handleCanvasPointerMove(event: PointerEvent): void {
+  const draggingId = state.draggingLandmarkSummaryPointId
+  if (!draggingId) {
+    return
+  }
+
+  const observed = state.observed12pt.find((point) => point.id === draggingId)
+  if (!observed) {
+    return
+  }
+
+  const normalized = getCanvasNormalizedPoint(event)
+  setManualAdjustment(
+    draggingId,
+    normalized.x - observed.x,
+    normalized.y - observed.y,
+  )
+  event.preventDefault()
+  renderThumbnailCanvas()
+  render()
+}
+
+function handleCanvasPointerEnd(event: PointerEvent): void {
+  if (state.draggingLandmarkSummaryPointId) {
+    state.draggingLandmarkSummaryPointId = null
+    if (canvas.hasPointerCapture(event.pointerId)) {
+      canvas.releasePointerCapture(event.pointerId)
+    }
+    renderThumbnailCanvas()
+    render()
+  }
+}
+
+function getCanvasPixelPoint(event: PointerEvent): { x: number; y: number } {
+  const rect = canvas.getBoundingClientRect()
+  return {
+    x: ((event.clientX - rect.left) / rect.width) * canvas.width,
+    y: ((event.clientY - rect.top) / rect.height) * canvas.height,
+  }
+}
+
+function getCanvasNormalizedPoint(event: PointerEvent): { x: number; y: number } {
+  const pixel = getCanvasPixelPoint(event)
+  return {
+    x: clamp(pixel.x / canvas.width, 0, 1),
+    y: clamp(pixel.y / canvas.height, 0, 1),
+  }
+}
+
+function findNearestSummaryPoint(x: number, y: number): LandmarkSummaryPoint | null {
+  let nearestPoint: LandmarkSummaryPoint | null = null
+  let nearestDistance = Number.POSITIVE_INFINITY
+
+  for (const point of getAdjusted12pt()) {
+    const pointX = point.x * canvas.width
+    const pointY = point.y * canvas.height
+    const distance = Math.hypot(pointX - x, pointY - y)
+    if (distance <= OVERLAY_HIT_RADIUS && distance < nearestDistance) {
+      nearestPoint = point
+      nearestDistance = distance
+    }
+  }
+
+  return nearestPoint
 }
 
 function estimateFacePoseFromMatrix(matrix: Matrix | undefined): Pose | null {
@@ -515,6 +743,8 @@ function clearCanvas(): void {
 }
 
 function render(): void {
+  const adjusted12pt = getAdjusted12pt()
+
   statusGrid.innerHTML = renderStatusItems([
     ["読み込み状態", state.loadStatus],
     ["MediaPipe 状態", state.detectorStatus],
@@ -534,7 +764,7 @@ function render(): void {
     ["顔検出", state.summary ? formatJapaneseBoolean(state.summary.detected) : "-"],
     ["ランドマーク数", state.summary ? String(state.summary.landmarkCount) : "-"],
     ["ブレンドシェイプ数", state.summary ? String(state.summary.blendshapeCount) : "-"],
-    ["12点サマリ数", String(state.landmarkSummary.length)],
+    ["12点サマリ数", String(adjusted12pt.length)],
     [
       "顔変換行列",
       state.summary ? formatJapaneseBoolean(state.summary.hasFacialTransformationMatrix) : "-",
@@ -554,29 +784,38 @@ function render(): void {
   ])
 
   landmarkSummaryGrid.innerHTML =
-    state.landmarkSummary.length > 0
-      ? state.landmarkSummary
+    adjusted12pt.length > 0
+      ? adjusted12pt
           .map(
             (point) => `
-              <div class="landmark-summary-item">
+              <div class="landmark-summary-item ${point.id === state.selectedLandmarkSummaryPointId ? "selected" : ""}">
                 <code>${escapeHtml(point.label)}</code>
                 <span>${escapeHtml(formatLandmarkSummaryPoint(point))}</span>
               </div>
             `,
           )
           .join("")
-      : `<div class="landmark-summary-item empty">12点 summary はありません。</div>`
+      : `<div class="landmark-summary-item empty">12点サマリはありません。</div>`
 
   toggleLandmarkSummaryButton.textContent = state.showLandmarkSummaryOverlay
     ? "12点サマリを非表示"
     : "12点サマリを表示"
+  resetSelectedLandmarkButton.disabled =
+    !state.selectedLandmarkSummaryPointId ||
+    !state.manualAdjustments.some(
+      (adjustment) => adjustment.id === state.selectedLandmarkSummaryPointId,
+    )
+  resetAllLandmarksButton.disabled = state.manualAdjustments.length === 0
 
   rawDebug.textContent = JSON.stringify(
     {
       metadata: state.metadata,
       mediaPipeFrameSummary: state.summary,
-      landmarkSummaryPointCount: state.landmarkSummary.length,
-      landmarkSummary: state.landmarkSummary,
+      landmarkSummaryPointCount: adjusted12pt.length,
+      observed12pt: state.observed12pt,
+      manualAdjustmentCount: state.manualAdjustments.length,
+      manualAdjustments: state.manualAdjustments,
+      adjustedLandmarkSummary: adjusted12pt,
       pose: state.pose
         ? {
             yaw: roundDebugNumber(state.pose.yaw),
@@ -626,9 +865,21 @@ function formatFileSize(size: number): string {
 }
 
 function formatLandmarkSummaryPoint(point: LandmarkSummaryPoint): string {
-  return `横 ${formatNumber(point.x)} / 縦 ${formatNumber(point.y)} / 奥行き ${
+  const observed = state.observed12pt.find((item) => item.id === point.id)
+  const adjustment = getManualAdjustment(point.id)
+  const coordinateSummary =
+    observed && adjustment
+      ? `横 ${formatNumber(observed.x)} → ${formatNumber(point.x)} / 縦 ${formatNumber(
+          observed.y,
+        )} → ${formatNumber(point.y)}`
+      : `横 ${formatNumber(point.x)} / 縦 ${formatNumber(point.y)}`
+  const manualSummary = adjustment
+    ? ` / 手動調整あり dx ${formatNumber(adjustment.dx)} / dy ${formatNumber(adjustment.dy)}`
+    : " / 手動調整なし"
+
+  return `識別子 ${point.id} / ${coordinateSummary} / 奥行き ${
     point.z === undefined ? "-" : formatNumber(point.z)
-  } / 参照番号 ${point.sourceIndices.join(", ")}`
+  } / 参照番号 ${point.sourceIndices.join(", ")}${manualSummary}`
 }
 
 function average(values: number[]): number {
@@ -640,6 +891,10 @@ function average(values: number[]): number {
 
 function roundDebugNumber(value: number): number {
   return Number.isFinite(value) ? Number(value.toFixed(6)) : value
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max)
 }
 
 function escapeHtml(value: string): string {
