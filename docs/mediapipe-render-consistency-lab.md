@@ -207,6 +207,9 @@ RC-0.6:
 RC-0.7:
   12pt landmark summary manual drag adjustment / observed12pt / adjusted12pt / manualAdjustments
 
+RC-0.8:
+  frame navigation prototype / currentFrameIndex / currentTimeSec / manual excludedFrames
+
 RC-1:
   canonical / Fitting Lab candidate 3D478 を読み込み、topology で mesh 化する
 
@@ -239,6 +242,10 @@ RC-0 は docs 整理、RC-0.5 と RC-0.6 は `tools/mediapipe-render-consistency
 - 12pt landmark summary の手動ドラッグ調整
 - observed12pt / adjusted12pt / manualAdjustments の一時保持
 - reset selected / reset all
+- frame navigation prototype
+- currentFrameIndex / currentTimeSec
+- manual excludedFrames
+- previous / delete / next controls
 
 RC-1 以降で実装する場合も、Runtime / Studio / IdealFace Authoring Tool / Fitting Lab の実装を直接変更せず、`tools/mediapipe-render-consistency-lab` の責務として切り分けます。保存 / export、mesh 化、render、MediaPipe re-detection、residual evaluation、`meshReadyZ` candidate 探索はまだ未実装です。
 
@@ -253,6 +260,8 @@ RC-1 以降で実装する場合も、Runtime / Studio / IdealFace Authoring Too
 - production asset export
 - `beauty_filter_asset_v1` schema 変更
 - 12点手動調整の保存 / export
+- 除外フレームの保存 / export
+- 全フレーム事前スキャン
 - 478点すべての landmarks overlay
 - 478点 mesh 化
 - render

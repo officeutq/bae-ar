@@ -46,6 +46,12 @@ type ManualLandmarkAdjustment = {
   dy: number
 }
 
+type ExcludedFrame = {
+  frameIndex: number
+  timeSec: number
+  reason: "manual"
+}
+
 type SemanticPointDefinition = {
   id: string
   label: string
@@ -66,11 +72,14 @@ type AppState = {
   selectedLandmarkSummaryPointId: string | null
   draggingLandmarkSummaryPointId: string | null
   showLandmarkSummaryOverlay: boolean
+  currentFrameIndex: number
+  excludedFrames: ExcludedFrame[]
 }
 
 const RAD_TO_DEG = 180 / Math.PI
 const MATRIX_PREVIEW_COUNT = 8
-const FIRST_FRAME_SEEK_TIME = 0.001
+const FRAME_STEP_SECONDS = 1 / 30
+const EXCLUDED_FRAMES_PREVIEW_LIMIT = 20
 const OVERLAY_POINT_RADIUS = 5
 const OVERLAY_SELECTED_POINT_RADIUS = 8
 const OVERLAY_HIT_RADIUS = 12
@@ -103,6 +112,8 @@ const state: AppState = {
   selectedLandmarkSummaryPointId: null,
   draggingLandmarkSummaryPointId: null,
   showLandmarkSummaryOverlay: true,
+  currentFrameIndex: 0,
+  excludedFrames: [],
 }
 
 let faceLandmarker: FaceLandmarker | null = null
@@ -146,6 +157,13 @@ app.innerHTML = `
         <canvas id="thumbnailCanvas" width="1280" height="720"></canvas>
         <p id="thumbnailEmpty" class="empty-message">MP4 を読み込むとサムネイルを表示します。</p>
       </div>
+      <div class="frame-controls">
+        <button id="previousFrameButton" type="button" class="frame-button">前へ</button>
+        <button id="excludeFrameButton" type="button" class="frame-button danger">削除</button>
+        <button id="nextFrameButton" type="button" class="frame-button">次へ</button>
+      </div>
+      <p class="frame-help">削除 = このフレームを検証対象から除外</p>
+      <div id="frameInfoGrid" class="status-grid frame-info-grid"></div>
       <video id="sourceVideo" muted playsinline preload="metadata"></video>
     </section>
 
@@ -179,11 +197,15 @@ const canvas = getElement<HTMLCanvasElement>("thumbnailCanvas")
 const thumbnailEmpty = getElement<HTMLParagraphElement>("thumbnailEmpty")
 const statusGrid = getElement("statusGrid")
 const metadataGrid = getElement("metadataGrid")
+const frameInfoGrid = getElement("frameInfoGrid")
 const summaryGrid = getElement("summaryGrid")
 const poseGrid = getElement("poseGrid")
 const landmarkSummaryGrid = getElement("landmarkSummaryGrid")
 const rawDebug = getElement<HTMLPreElement>("rawDebug")
 const toggleLandmarkSummaryButton = getElement<HTMLButtonElement>("toggleLandmarkSummaryButton")
+const previousFrameButton = getElement<HTMLButtonElement>("previousFrameButton")
+const excludeFrameButton = getElement<HTMLButtonElement>("excludeFrameButton")
+const nextFrameButton = getElement<HTMLButtonElement>("nextFrameButton")
 const resetSelectedLandmarkButton = getElement<HTMLButtonElement>("resetSelectedLandmarkButton")
 const resetAllLandmarksButton = getElement<HTMLButtonElement>("resetAllLandmarksButton")
 
@@ -206,6 +228,18 @@ resetAllLandmarksButton.addEventListener("click", () => {
   state.manualAdjustments = []
   renderThumbnailCanvas()
   render()
+})
+
+previousFrameButton.addEventListener("click", () => {
+  void moveFrameBy(-1)
+})
+
+nextFrameButton.addEventListener("click", () => {
+  void moveFrameBy(1)
+})
+
+excludeFrameButton.addEventListener("click", () => {
+  void excludeCurrentFrame()
 })
 
 canvas.addEventListener("pointerdown", (event) => {
@@ -285,20 +319,9 @@ async function handleFile(file: File | null): Promise<void> {
       videoHeight: video.videoHeight,
     }
 
-    await seekVideoToFirstFrame()
-    prepareThumbnailCanvas()
-    renderThumbnailCanvas()
-
-    state.loadStatus = "解析中"
-    render()
-
-    if (detectorReadyPromise) {
-      await detectorReadyPromise
-    }
-
-    state.summary = analyzeFirstFrame()
-    renderThumbnailCanvas()
-    state.loadStatus = "完了"
+    state.currentFrameIndex = 0
+    state.excludedFrames = []
+    await loadCurrentFrame()
   } catch (error) {
     state.loadStatus = "エラー"
     state.fileError = error instanceof Error ? error.message : String(error)
@@ -328,6 +351,8 @@ function resetFrameState(): void {
   state.manualAdjustments = []
   state.selectedLandmarkSummaryPointId = null
   state.draggingLandmarkSummaryPointId = null
+  state.currentFrameIndex = 0
+  state.excludedFrames = []
   clearCanvas()
 }
 
@@ -355,7 +380,40 @@ function loadVideoMetadata(url: string): Promise<void> {
   })
 }
 
-function seekVideoToFirstFrame(): Promise<void> {
+async function loadCurrentFrame(): Promise<void> {
+  resetPerFrameState()
+
+  await seekVideoToCurrentFrame()
+  prepareThumbnailCanvas()
+  renderThumbnailCanvas()
+
+  state.loadStatus = "解析中"
+  render()
+
+  if (detectorReadyPromise) {
+    await detectorReadyPromise
+  }
+
+  state.summary = analyzeFirstFrame()
+  renderThumbnailCanvas()
+  state.loadStatus = "完了"
+  render()
+}
+
+function resetPerFrameState(): void {
+  state.summary = null
+  state.pose = null
+  state.observed12pt = []
+  state.manualAdjustments = []
+  state.selectedLandmarkSummaryPointId = null
+  state.draggingLandmarkSummaryPointId = null
+}
+
+function seekVideoToCurrentFrame(): Promise<void> {
+  return seekVideoToTime(getCurrentFrameTimeSec())
+}
+
+function seekVideoToTime(timeSec: number): Promise<void> {
   return new Promise((resolve, reject) => {
     const cleanup = (): void => {
       video.removeEventListener("seeked", handleSeeked)
@@ -369,13 +427,126 @@ function seekVideoToFirstFrame(): Promise<void> {
 
     const handleError = (): void => {
       cleanup()
-      reject(new Error("1フレーム目へ seek できませんでした。"))
+      reject(new Error("対象フレームへ seek できませんでした。"))
     }
 
     video.addEventListener("seeked", handleSeeked, { once: true })
     video.addEventListener("error", handleError, { once: true })
-    video.currentTime = Math.min(FIRST_FRAME_SEEK_TIME, Math.max(video.duration - 0.001, 0))
+
+    const targetTime = clamp(timeSec, 0, Math.max(video.duration, 0))
+    if (Math.abs(video.currentTime - targetTime) < 0.0001) {
+      cleanup()
+      requestAnimationFrame(() => resolve())
+      return
+    }
+
+    video.currentTime = targetTime
   })
+}
+
+async function moveFrameBy(delta: number): Promise<void> {
+  if (!state.metadata) {
+    return
+  }
+
+  await goToFrame(state.currentFrameIndex + delta)
+}
+
+async function goToFrame(frameIndex: number): Promise<void> {
+  if (!state.metadata) {
+    return
+  }
+
+  state.currentFrameIndex = clampFrameIndex(frameIndex)
+
+  try {
+    await loadCurrentFrame()
+  } catch (error) {
+    state.loadStatus = "エラー"
+    state.fileError = error instanceof Error ? error.message : String(error)
+    resetPerFrameState()
+    state.summary = {
+      detected: false,
+      landmarkCount: 0,
+      blendshapeCount: 0,
+      hasFacialTransformationMatrix: false,
+      error: state.fileError,
+    }
+    renderThumbnailCanvas()
+    render()
+  }
+}
+
+async function excludeCurrentFrame(): Promise<void> {
+  if (!state.metadata) {
+    return
+  }
+
+  if (!isCurrentFrameExcluded()) {
+    state.excludedFrames = [
+      ...state.excludedFrames,
+      {
+        frameIndex: state.currentFrameIndex,
+        timeSec: roundDebugNumber(getCurrentFrameTimeSec()),
+        reason: "manual",
+      },
+    ].sort((left, right) => left.frameIndex - right.frameIndex)
+  }
+
+  const nextFrameIndex = findNextUnexcludedFrameIndex(state.currentFrameIndex + 1)
+  if (nextFrameIndex !== null) {
+    await goToFrame(nextFrameIndex)
+    return
+  }
+
+  render()
+}
+
+function findNextUnexcludedFrameIndex(startFrameIndex: number): number | null {
+  const maxFrameIndex = getMaxFrameIndex()
+  for (let index = clampFrameIndex(startFrameIndex); index <= maxFrameIndex; index += 1) {
+    if (!isFrameExcluded(index)) {
+      return index
+    }
+  }
+  return null
+}
+
+function getCurrentFrameTimeSec(): number {
+  if (!state.metadata) {
+    return 0
+  }
+  return clamp(
+    state.currentFrameIndex * FRAME_STEP_SECONDS,
+    0,
+    Math.max(state.metadata.duration, 0),
+  )
+}
+
+function getEstimatedFrameCount(): number {
+  if (!state.metadata) {
+    return 0
+  }
+  return Math.max(1, Math.floor(state.metadata.duration / FRAME_STEP_SECONDS))
+}
+
+function getMaxFrameIndex(): number {
+  if (!state.metadata) {
+    return 0
+  }
+  return Math.max(0, Math.floor(state.metadata.duration / FRAME_STEP_SECONDS))
+}
+
+function clampFrameIndex(frameIndex: number): number {
+  return Math.trunc(clamp(frameIndex, 0, getMaxFrameIndex()))
+}
+
+function isCurrentFrameExcluded(): boolean {
+  return isFrameExcluded(state.currentFrameIndex)
+}
+
+function isFrameExcluded(frameIndex: number): boolean {
+  return state.excludedFrames.some((frame) => frame.frameIndex === frameIndex)
 }
 
 function prepareThumbnailCanvas(): void {
@@ -744,6 +915,8 @@ function clearCanvas(): void {
 
 function render(): void {
   const adjusted12pt = getAdjusted12pt()
+  const frameState = getFrameStateDebug()
+  const frameBusy = state.loadStatus === "読込中" || state.loadStatus === "解析中"
 
   statusGrid.innerHTML = renderStatusItems([
     ["読み込み状態", state.loadStatus],
@@ -758,6 +931,14 @@ function render(): void {
     ["duration", state.metadata ? `${state.metadata.duration.toFixed(3)} 秒` : "-"],
     ["videoWidth", state.metadata ? String(state.metadata.videoWidth) : "-"],
     ["videoHeight", state.metadata ? String(state.metadata.videoHeight) : "-"],
+  ])
+
+  frameInfoGrid.innerHTML = renderStatusItems([
+    ["現在フレーム", state.metadata ? String(state.currentFrameIndex) : "-"],
+    ["時刻", state.metadata ? `${formatNumber(getCurrentFrameTimeSec())} 秒` : "-"],
+    ["除外状態", state.metadata ? (isCurrentFrameExcluded() ? "除外済み" : "対象") : "-"],
+    ["推定フレーム数", state.metadata ? String(getEstimatedFrameCount()) : "-"],
+    ["除外フレーム数", String(state.excludedFrames.length)],
   ])
 
   summaryGrid.innerHTML = renderStatusItems([
@@ -806,10 +987,14 @@ function render(): void {
       (adjustment) => adjustment.id === state.selectedLandmarkSummaryPointId,
     )
   resetAllLandmarksButton.disabled = state.manualAdjustments.length === 0
+  previousFrameButton.disabled = !state.metadata || state.currentFrameIndex <= 0 || frameBusy
+  nextFrameButton.disabled = !state.metadata || state.currentFrameIndex >= getMaxFrameIndex() || frameBusy
+  excludeFrameButton.disabled = !state.metadata || frameBusy
 
   rawDebug.textContent = JSON.stringify(
     {
       metadata: state.metadata,
+      frameState,
       mediaPipeFrameSummary: state.summary,
       landmarkSummaryPointCount: adjusted12pt.length,
       observed12pt: state.observed12pt,
@@ -827,6 +1012,26 @@ function render(): void {
     null,
     2,
   )
+}
+
+function getFrameStateDebug(): {
+  currentFrameIndex: number
+  currentTimeSec: number
+  frameStepSeconds: number
+  estimatedFrameCount: number
+  currentFrameExcluded: boolean
+  excludedFrameCount: number
+  excludedFramesPreview: ExcludedFrame[]
+} {
+  return {
+    currentFrameIndex: state.currentFrameIndex,
+    currentTimeSec: roundDebugNumber(getCurrentFrameTimeSec()),
+    frameStepSeconds: roundDebugNumber(FRAME_STEP_SECONDS),
+    estimatedFrameCount: getEstimatedFrameCount(),
+    currentFrameExcluded: isCurrentFrameExcluded(),
+    excludedFrameCount: state.excludedFrames.length,
+    excludedFramesPreview: state.excludedFrames.slice(0, EXCLUDED_FRAMES_PREVIEW_LIMIT),
+  }
 }
 
 function renderStatusItems(items: Array<[string, string]>): string {
