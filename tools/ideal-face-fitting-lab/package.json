@@ -6,7 +6,8 @@
   "scripts": {
     "start": "vite --host 127.0.0.1",
     "build": "vite build",
-    "generate:canonical-depth-template": "node --experimental-strip-types scripts/generate-canonical-depth-template.ts"
+    "generate:canonical-depth-template": "node --experimental-strip-types scripts/generate-canonical-depth-template.ts",
+    "generate:canonical-xyz-template": "node --experimental-strip-types scripts/generate-canonical-xyz-template.ts"
   },
   "devDependencies": {
     "vite": "^7.2.7"
