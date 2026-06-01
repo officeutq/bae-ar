@@ -273,10 +273,8 @@ RC-0 は docs 整理、RC-0.5 と RC-0.6 は `tools/mediapipe-render-consistency
 - frontCandidate badge
 - yaw / pitch / roll による正面候補判定
 - 初期閾値: |yaw| <= 3, |pitch| <= 3, |roll| <= 3
-- 表情を除外 button
 - acceptedFrames の expressionSummary
-- expressionTooStrong による excluded=true
-- excludedReason: expressionTooStrong
+- 表情が大きい frame は excluded にせず、expressionTooStrong badge を付ける
 
 RC-1 以降で実装する場合も、Runtime / Studio / IdealFace Authoring Tool / Fitting Lab の実装を直接変更せず、`tools/mediapipe-render-consistency-lab` の責務として切り分けます。保存 / export、mesh 化、render、MediaPipe re-detection、residual evaluation、`meshReadyZ` candidate 探索はまだ未実装です。
 
@@ -292,7 +290,7 @@ Render Consistency Lab では UI の肥大化を避けるため、現在は `bro
 
 `frontCandidate` は `frontReference` ではありません。`frontCandidate` は yaw / pitch / roll の初期閾値で自動判定した正面候補であり、手動で基準フレームとして確定したものではありません。
 
-`expressionTooStrong` による除外は production の除外ロジック確定ではありません。Render Consistency Lab 内で accepted frame をレビューしやすくするための debug / review 補助として扱います。
+`表情を除外` button は廃止しました。`expressionTooStrong` は production の除外判定ではありません。Render Consistency Lab 内で accepted frame をレビューしやすくするための debug / review 補助 badge として扱い、auto scan 時点で `expressionSummary` から判定します。表情が大きい frame でも自動では `excluded=true` にしません。
 
 ## 11. 今回やらないこと
 
