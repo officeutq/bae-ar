@@ -224,25 +224,26 @@ app.innerHTML = `
         <p>MediaPipe レンダー一貫性検証ラボ</p>
       </div>
 
-      <label class="file-picker">
-        <span>MP4 ファイル</span>
-        <input id="mp4Input" type="file" accept="video/mp4,.mp4" />
-      </label>
-
-      <section>
-        <h2>読み込み状態</h2>
-        <div id="statusGrid" class="status-grid"></div>
+      <section class="controls-section">
+        <h2>Input / Controls（入力・操作）</h2>
+        <label class="file-picker">
+          <span>MP4 ファイル</span>
+          <input id="mp4Input" type="file" accept="video/mp4,.mp4" />
+        </label>
       </section>
 
-      <section>
-        <h2>動画メタ情報</h2>
-        <div id="metadataGrid" class="status-grid"></div>
-      </section>
-
-      <section>
-        <h2>スキャン</h2>
+      <section class="controls-section">
+        <h2>Scan（スキャン）</h2>
+        <p id="controlStatus" class="control-status">状態: 未読込</p>
         <button id="stopScanButton" type="button" class="secondary-button">
           自動スキャン停止
+        </button>
+      </section>
+
+      <section class="controls-section">
+        <h2>Overlay（表示）</h2>
+        <button id="toggleLandmarkSummaryButton" type="button" class="toggle-button">
+          12点サマリを非表示
         </button>
       </section>
     </section>
@@ -250,9 +251,6 @@ app.innerHTML = `
     <section class="center-panel panel">
       <div class="panel-heading">
         <h2>1フレーム目サムネイル</h2>
-        <button id="toggleLandmarkSummaryButton" type="button" class="toggle-button">
-          12点サマリを非表示
-        </button>
       </div>
       <div class="thumbnail-frame">
         <canvas id="thumbnailCanvas" width="1280" height="720"></canvas>
@@ -287,8 +285,7 @@ const fileInput = getElement<HTMLInputElement>("mp4Input")
 const video = getElement<HTMLVideoElement>("sourceVideo")
 const canvas = getElement<HTMLCanvasElement>("thumbnailCanvas")
 const thumbnailEmpty = getElement<HTMLParagraphElement>("thumbnailEmpty")
-const statusGrid = getElement("statusGrid")
-const metadataGrid = getElement("metadataGrid")
+const controlStatus = getElement("controlStatus")
 const frameInfoGrid = getElement("frameInfoGrid")
 const consoleContent = getElement("consoleContent")
 const toggleLandmarkSummaryButton = getElement<HTMLButtonElement>("toggleLandmarkSummaryButton")
@@ -1355,20 +1352,7 @@ function render(): void {
     frameState,
   )
 
-  statusGrid.innerHTML = renderStatusItems([
-    ["読み込み状態", state.loadStatus],
-    ["MediaPipe 状態", state.detectorStatus],
-    ["MediaPipe エラー", state.detectorError ?? "-"],
-    ["ファイルエラー", state.fileError ?? "-"],
-  ])
-
-  metadataGrid.innerHTML = renderStatusItems([
-    ["fileName", state.metadata?.fileName ?? "-"],
-    ["fileSize", state.metadata ? formatFileSize(state.metadata.fileSize) : "-"],
-    ["duration", state.metadata ? `${state.metadata.duration.toFixed(3)} 秒` : "-"],
-    ["videoWidth", state.metadata ? String(state.metadata.videoWidth) : "-"],
-    ["videoHeight", state.metadata ? String(state.metadata.videoHeight) : "-"],
-  ])
+  controlStatus.textContent = `状態: ${formatControlStatus()}`
 
   frameInfoGrid.innerHTML = renderStatusItems([
     [
@@ -1404,6 +1388,12 @@ function createRawDebugPayload(
   frameState: ReturnType<typeof getFrameStateDebug>,
 ): Record<string, unknown> {
   return {
+    status: {
+      loadStatus: state.loadStatus,
+      mediaPipeStatus: state.detectorStatus,
+      mediaPipeError: state.detectorError,
+      fileError: state.fileError,
+    },
     metadata: state.metadata,
     frameState,
     scanState: getScanStateDebug(),
@@ -1465,6 +1455,25 @@ function renderSummaryConsole(
   const currentFrame = getCurrentAcceptedFrame()
   return [
     renderConsoleSection(
+      "File / Video",
+      renderStatusItems([
+        ["fileName", state.metadata?.fileName ?? "-"],
+        ["fileSize", state.metadata ? formatFileSize(state.metadata.fileSize) : "-"],
+        ["duration", state.metadata ? `${state.metadata.duration.toFixed(3)} 秒` : "-"],
+        ["videoWidth", state.metadata ? String(state.metadata.videoWidth) : "-"],
+        ["videoHeight", state.metadata ? String(state.metadata.videoHeight) : "-"],
+      ]),
+    ),
+    renderConsoleSection(
+      "Status",
+      renderStatusItems([
+        ["loadStatus", state.loadStatus],
+        ["mediaPipeStatus", state.detectorStatus],
+        ["mediaPipeError", state.detectorError ?? "-"],
+        ["fileError", state.fileError ?? "-"],
+      ]),
+    ),
+    renderConsoleSection(
       "Current frame",
       renderStatusItems([
         [
@@ -1473,9 +1482,8 @@ function renderSummaryConsole(
         ],
         ["source frame index", currentFrame ? String(currentFrame.sourceFrameIndex) : "-"],
         ["timeSec", currentFrame ? formatNumber(currentFrame.timeSec) : "-"],
-        ["除外状態", currentFrame ? (currentFrame.excluded ? "除外済み" : "対象") : "-"],
-        ["推定フレーム数", state.metadata ? String(getEstimatedFrameCount()) : "-"],
-        ["除外フレーム数", String(getExcludedAcceptedFrameCount())],
+        ["excluded", currentFrame ? formatJapaneseBoolean(currentFrame.excluded) : "-"],
+        ["badges", currentFrame ? formatFrameBadges(currentFrame.badges) : "-"],
       ]),
     ),
     renderConsoleSection(
@@ -1831,6 +1839,25 @@ function renderStatusItems(items: Array<[string, string]>): string {
       `,
     )
     .join("")
+}
+
+function formatControlStatus(): string {
+  if (state.fileError) {
+    return "エラー"
+  }
+  if (state.scanState.status === "running") {
+    return "スキャン中"
+  }
+  if (state.scanState.status === "completed") {
+    return "完了"
+  }
+  if (state.scanState.status === "cancelled") {
+    return "停止済み"
+  }
+  if (state.scanState.status === "error") {
+    return "エラー"
+  }
+  return state.loadStatus
 }
 
 function formatBoolean(value: boolean): string {

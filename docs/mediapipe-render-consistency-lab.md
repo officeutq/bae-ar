@@ -253,9 +253,13 @@ RC-0 は docs 整理、RC-0.5 と RC-0.6 は `tools/mediapipe-render-consistency
 - browEyeAnchor 固定による leftEye / rightEye の安定化
 - browEyeAnchor を z 推定 / 顔形状推定用の初期推奨 eye point として扱う
 - 右側 debug 表示は Debug Console（デバッグコンソール）に統合する
-- Console tabs: Summary / 12pt / Adjustments / Scan / Raw
+- Console tabs: Summary / 12pt / Adjustments / Scan / Pose / Raw
 - 中央はサムネイルと手動調整の作業エリアに寄せる
 - auto scan の状態は Scan tab で扱う
+- 左ペインは Input / Controls（入力・操作）に整理する
+- 状態表示、動画メタ情報、MediaPipe summary は Debug Console に集約する
+- Summary タブに File / Video、Status、Current frame、MediaPipe の要約を表示する
+- Scan 関連の詳細は Scan タブへ集約する
 - MP4 読み込み直後の auto scan prototype
 - maxScanDurationSec = 300
 - maxScanFrames = 9000

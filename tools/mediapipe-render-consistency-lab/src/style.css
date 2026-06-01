@@ -56,6 +56,26 @@ h2:first-child {
   margin-top: 0;
 }
 
+.controls-section {
+  display: grid;
+  gap: 10px;
+}
+
+.controls-section + .controls-section {
+  margin-top: 22px;
+}
+
+.controls-section h2 {
+  margin: 0;
+}
+
+.control-status {
+  color: #4d5863;
+  font-size: 13px;
+  font-weight: 700;
+  margin: 0;
+}
+
 .panel-heading {
   align-items: center;
   display: flex;
