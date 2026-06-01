@@ -1,5 +1,6 @@
 import "./style.css"
 import canonicalFaceDepthTemplate from "../data/canonical-face-depth-template-v1.json"
+import canonicalFaceXyzTemplate from "../data/canonical-face-xyz-template-v1.json"
 import canonicalFaceModelObj from "../data/canonical_face_model.obj?raw"
 
 type CaptureBucket =
@@ -1782,6 +1783,152 @@ interface Candidate12ptCanonicalFitComparison {
   comparisons: Candidate12ptCanonicalFitComparisonEntry[]
 }
 
+type CanonicalToCandidateZSign = "raw" | "inverted"
+type CanonicalToCandidateDepthRelationStatus = "passed" | "warning" | "failed"
+type CanonicalToCandidateXYFitQuality = "good" | "warning" | "poor"
+type CanonicalToCandidateXYFitVariantId =
+  | "canonicalXY_to_candidateXY"
+  | "canonicalXY_to_candidateXNegY"
+  | "canonicalXNegY_to_candidateXY"
+
+interface CanonicalFaceXyzTemplateLandmark {
+  index: number
+  x: number
+  y: number
+  z: number
+  source: "obj_raw" | "interpolated" | string
+}
+
+interface CanonicalFaceXyzTemplateV1 {
+  schemaVersion: "canonical_face_xyz_template_v1"
+  landmarks: CanonicalFaceXyzTemplateLandmark[]
+}
+
+interface CanonicalToCandidateXYFitPoint {
+  pointId: SemanticPointName
+  landmarkIndex: number[]
+  canonicalRaw: Point3
+  candidate: Point3
+}
+
+interface CanonicalToCandidatePairOrderViolation {
+  pointA: SemanticPointName
+  pointB: SemanticPointName
+  fittedCanonicalDeltaZ: number
+  candidateDeltaZ: number
+  note: string
+}
+
+interface CanonicalToCandidateZFitVariant {
+  zSign: CanonicalToCandidateZSign
+  zScale: number
+  zOffset: number
+  averageAbsZError: number
+  maxAbsZError: number
+  canonicalCorrelationZ: number | null
+  depthRelationStatus: CanonicalToCandidateDepthRelationStatus
+  pairOrderViolations: CanonicalToCandidatePairOrderViolation[]
+}
+
+interface CanonicalToCandidateXYUniformFit {
+  scale: number
+  offsetX: number
+  offsetY: number
+  averageXYError: number
+  maxXYError: number
+  zFit: {
+    zScaleSource: "xyUniformFit.scale"
+    variants: CanonicalToCandidateZFitVariant[]
+  }
+}
+
+interface CanonicalToCandidateXYNonUniformFit {
+  scaleX: number
+  scaleY: number
+  offsetX: number
+  offsetY: number
+  averageXYError: number
+  maxXYError: number
+  zScaleMethod: "average_abs_scale_xy"
+  zFit: {
+    zScaleSource: "average(abs(xyNonUniformFit.scaleX), abs(xyNonUniformFit.scaleY))"
+    variants: CanonicalToCandidateZFitVariant[]
+  }
+}
+
+interface CanonicalToCandidateYFlip {
+  canonicalY: boolean
+  candidateY: boolean
+}
+
+interface CanonicalToCandidateInterpretationThresholds {
+  xyAverageErrorGoodMax: number
+  xyAverageErrorWarningMax: number
+  zCorrelationPositiveMin: number
+  maxPairOrderViolationsForConsistent: number
+  zAverageAbsErrorExtremeMultiplier: number
+}
+
+interface CanonicalToCandidateXYFitInterpretation {
+  xyFitQuality: CanonicalToCandidateXYFitQuality
+  thresholds: CanonicalToCandidateInterpretationThresholds
+  bestZSign: CanonicalToCandidateZSign | null
+  candidateZConsistentWithCanonicalXYScale: boolean
+  notes: string[]
+}
+
+interface CanonicalToCandidateXYFitVariant {
+  variantId: CanonicalToCandidateXYFitVariantId
+  description: string
+  yFlip: CanonicalToCandidateYFlip
+  xyUniformFit: CanonicalToCandidateXYUniformFit
+  xyNonUniformFit: CanonicalToCandidateXYNonUniformFit
+  interpretation: CanonicalToCandidateXYFitInterpretation
+}
+
+interface CanonicalToCandidateBestVariant {
+  variantId: CanonicalToCandidateXYFitVariantId
+  reason: string
+  xyUniformAverageError: number
+  bestZSign: CanonicalToCandidateZSign | null
+  candidateZConsistentWithCanonicalXYScale: boolean
+  notes: string[]
+}
+
+interface CanonicalToCandidateXYFitTarget {
+  targetId: string
+  candidateId: string | null
+  pointSetId: "12pt_rotation_center"
+  pointCount: number
+  candidateCoordinateSource: CanonicalToCandidateXYFit["candidateCoordinateSource"]
+  points: CanonicalToCandidateXYFitPoint[]
+  xyUniformFit: CanonicalToCandidateXYUniformFit
+  xyNonUniformFit: CanonicalToCandidateXYNonUniformFit
+  interpretation: CanonicalToCandidateXYFitInterpretation
+  variants: CanonicalToCandidateXYFitVariant[]
+  bestVariant: CanonicalToCandidateBestVariant | null
+}
+
+interface CanonicalToCandidateXYFit {
+  enabled: boolean
+  templateFile: "canonical-face-xyz-template-v1.json"
+  templateSchemaVersion: "canonical_face_xyz_template_v1"
+  coordinateConvention: {
+    candidateXY: string
+    candidateZ: string
+    canonicalXYZ: string
+    note: string
+  }
+  candidateCoordinateSource: {
+    x: "front_reference_semantic_point_same_unit"
+    y: "front_reference_semantic_point_same_unit"
+    z: "search_candidate_depth_z"
+    note: string
+  }
+  thresholds: CanonicalToCandidateInterpretationThresholds
+  targets: CanonicalToCandidateXYFitTarget[]
+}
+
 type Quick478DepthDebugStatus =
   | "idle"
   | "running"
@@ -1838,6 +1985,18 @@ interface Quick478DepthDebugSummary {
     wouldChangeFinalCandidate?: boolean | null
     structureAwareWouldScore?: number | null
     noseBridgeMappingUnified?: boolean
+    canonicalToCandidateXYFitEnabled?: boolean
+    current12ptBestZSign?: CanonicalToCandidateZSign | null
+    current12ptCandidateZConsistentWithCanonicalXYScale?: boolean | null
+    structureAware12ptBestZSign?: CanonicalToCandidateZSign | null
+    structureAware12ptCandidateZConsistentWithCanonicalXYScale?: boolean | null
+    canonicalToCandidateXYFitYFlipEnabled?: boolean
+    current12ptBestXYFitVariant?: CanonicalToCandidateXYFitVariantId | null
+    current12ptBestXYFitZSign?: CanonicalToCandidateZSign | null
+    current12ptBestXYFitConsistent?: boolean | null
+    structureAware12ptBestXYFitVariant?: CanonicalToCandidateXYFitVariantId | null
+    structureAware12ptBestXYFitZSign?: CanonicalToCandidateZSign | null
+    structureAware12ptBestXYFitConsistent?: boolean | null
   }
   isRejected?: boolean
   fallbackUsed?: boolean
@@ -1887,6 +2046,7 @@ interface Quick478DepthDebugPayload extends Depth478PrototypeResult {
   bruteforce8ptCanonicalBaseline?: BruteForce8ptCanonicalBaseline
   candidateComparison8ptVs12pt?: CandidateComparison8ptVs12pt
   candidate12ptCanonicalFitComparison?: Candidate12ptCanonicalFitComparison
+  canonicalToCandidateXYFit?: CanonicalToCandidateXYFit
   canonicalMappingDebug?: CanonicalMappingDebug
   analysisSummary?: SummaryAnalysisResult
 }
@@ -3337,6 +3497,9 @@ const RANGE_EXPANSION_SUMMARY: RangeExpansionSummary = {
 const CANONICAL_FACE_DEPTH_TEMPLATE =
   canonicalFaceDepthTemplate as unknown as CanonicalFaceDepthTemplateV1
 const CANONICAL_FACE_DEPTH_TEMPLATE_FILE = "canonical-face-depth-template-v1.json" as const
+const CANONICAL_FACE_XYZ_TEMPLATE =
+  canonicalFaceXyzTemplate as unknown as CanonicalFaceXyzTemplateV1
+const CANONICAL_FACE_XYZ_TEMPLATE_FILE = "canonical-face-xyz-template-v1.json" as const
 const CANONICAL_COMPARISON_LANDMARK_COUNT = 468
 const IRIS_DEPTH_FALLBACK_INDICES = [468, 469, 470, 471, 472, 473, 474, 475, 476, 477]
 const PER_LANDMARK_Z_SEARCH_SAMPLE_INDICES = [
@@ -3405,7 +3568,7 @@ const CANONICAL_COMPATIBLE_8PT_POINT_IDS = Object.keys(
   CANONICAL_COMPATIBLE_8PT,
 ) as CanonicalCompatible8PointId[]
 
-const CANONICAL_COMPATIBLE_12PT = {
+const CANONICAL_TO_CANDIDATE_12PT = {
   headTop: [10],
   chin: [152],
   leftCheek: [234],
@@ -3419,6 +3582,8 @@ const CANONICAL_COMPATIBLE_12PT = {
   rightJaw: [397],
   upperFaceCenter: [168],
 } satisfies Record<(typeof ROTATION_CENTER_12_SEMANTIC_POINT_NAMES)[number], number[]>
+
+const CANONICAL_COMPATIBLE_12PT = CANONICAL_TO_CANDIDATE_12PT
 
 const BRUTEFORCE_8PT_CANONICAL_RANGES = {
   headTop: [-0.02, 0, 0.02],
@@ -3438,6 +3603,35 @@ const STRUCTURE_AWARE_CORRELATION_WARNING_THRESHOLD = 0.25
 const STRUCTURE_AWARE_CORRELATION_NEGATIVE_PENALTY = 0.05
 const STRUCTURE_AWARE_CANONICAL_AVERAGE_DELTA_FREE = 0.03
 const STRUCTURE_AWARE_CANONICAL_MAX_DELTA_FREE = 0.08
+const CANONICAL_TO_CANDIDATE_XY_FIT_THRESHOLDS: CanonicalToCandidateInterpretationThresholds = {
+  xyAverageErrorGoodMax: 0.02,
+  xyAverageErrorWarningMax: 0.05,
+  zCorrelationPositiveMin: 0.1,
+  maxPairOrderViolationsForConsistent: 2,
+  zAverageAbsErrorExtremeMultiplier: 3,
+}
+const CANONICAL_TO_CANDIDATE_Z_PAIR_ORDER_MARGIN = 0.0025
+const CANONICAL_TO_CANDIDATE_XY_FIT_VARIANTS: Array<{
+  variantId: CanonicalToCandidateXYFitVariantId
+  description: string
+  yFlip: CanonicalToCandidateYFlip
+}> = [
+  {
+    variantId: "canonicalXY_to_candidateXY",
+    description: "標準顔 x/y を候補 x/y に合わせる",
+    yFlip: { canonicalY: false, candidateY: false },
+  },
+  {
+    variantId: "canonicalXY_to_candidateXNegY",
+    description: "標準顔 x/y を候補 x/-y に合わせる",
+    yFlip: { canonicalY: false, candidateY: true },
+  },
+  {
+    variantId: "canonicalXNegY_to_candidateXY",
+    description: "標準顔 x/-y を候補 x/y に合わせる",
+    yFlip: { canonicalY: true, candidateY: false },
+  },
+]
 const STRUCTURE_AWARE_BOUND_HIT_PENALTY = 0.002
 const STRUCTURE_AWARE_IMPORTANT_BOUND_HIT_PENALTY = 0.006
 const STRUCTURE_AWARE_TOP_N = 20
@@ -8151,6 +8345,540 @@ function buildCandidate12ptCanonicalFitInterpretation(
   }
 }
 
+function buildCanonicalToCandidateXYFit(
+  analysis: AnalysisResult | undefined,
+  prototype: Depth478PrototypeResult | null,
+): CanonicalToCandidateXYFit | undefined {
+  if (!analysis?.base8Points2DSummary.points) {
+    return undefined
+  }
+  const candidateXy = analysis.base8Points2DSummary.points
+  const finalCandidate = analysis.autoSequenceSummary?.finalCandidate ?? null
+  const targets = [
+    finalCandidate
+      ? buildCanonicalToCandidateXYFitTarget(
+          "current12ptFinalCandidate",
+          final12ptCandidateIdFromAnalysis(analysis, prototype),
+          finalCandidate,
+          candidateXy,
+        )
+      : null,
+    buildStructureAwareCanonicalToCandidateXYFitTarget(analysis, candidateXy),
+  ].filter((target): target is CanonicalToCandidateXYFitTarget => Boolean(target))
+
+  return {
+    enabled: true,
+    templateFile: CANONICAL_FACE_XYZ_TEMPLATE_FILE,
+    templateSchemaVersion: CANONICAL_FACE_XYZ_TEMPLATE.schemaVersion,
+    coordinateConvention: {
+      candidateXY: "front reference semantic points in same-unit coordinate / 前面基準の意味点を同一単位座標で表した x/y",
+      candidateZ: "Fitting Lab search depth z / Fitting Lab の探索済み奥行き z",
+      canonicalXYZ: "MediaPipe canonical face model OBJ raw x/y/z / MediaPipe標準顔モデルOBJの生 x/y/z",
+      note: "canonical x/y is fitted to candidate x/y; z scale is derived from xy fit / 標準顔 x/y を候補 x/y へ当てはめ、z 倍率は x/y 当てはめから決めます",
+    },
+    candidateCoordinateSource: buildCanonicalToCandidateCoordinateSource(),
+    thresholds: CANONICAL_TO_CANDIDATE_XY_FIT_THRESHOLDS,
+    targets,
+  }
+}
+
+function buildStructureAwareCanonicalToCandidateXYFitTarget(
+  analysis: AnalysisResult,
+  candidateXy: SemanticPointSet2D,
+): CanonicalToCandidateXYFitTarget | null {
+  const candidate = analysis.autoSequenceSummary?.structureAwareReranking?.topCandidates[0] ?? null
+  return candidate
+    ? buildCanonicalToCandidateXYFitTarget(
+        "structureAware12ptWouldSelectCandidate",
+        candidate.candidateId,
+        candidate.candidate,
+        candidateXy,
+      )
+    : null
+}
+
+function buildCanonicalToCandidateCoordinateSource(): CanonicalToCandidateXYFit["candidateCoordinateSource"] {
+  return {
+    x: "front_reference_semantic_point_same_unit",
+    y: "front_reference_semantic_point_same_unit",
+    z: "search_candidate_depth_z",
+    note: "x/y は capture JSON 由来、z は Fitting Lab の探索値",
+  }
+}
+
+function buildCanonicalToCandidateXYFitTarget(
+  targetId: string,
+  candidateId: string | null,
+  candidate: FittingCandidate8,
+  candidateXy: SemanticPointSet2D,
+): CanonicalToCandidateXYFitTarget | null {
+  const points = buildCanonicalToCandidateXYFitPoints(candidate, candidateXy)
+  if (points.length < 2) {
+    return null
+  }
+  const variants = CANONICAL_TO_CANDIDATE_XY_FIT_VARIANTS.map((variant) =>
+    buildCanonicalToCandidateXYFitVariant(points, variant),
+  )
+  const defaultVariant = variants.find(
+    (variant) => variant.variantId === "canonicalXY_to_candidateXY",
+  ) ?? variants[0]
+  const bestVariant = buildCanonicalToCandidateBestVariant(variants)
+  return {
+    targetId,
+    candidateId,
+    pointSetId: "12pt_rotation_center",
+    pointCount: points.length,
+    candidateCoordinateSource: buildCanonicalToCandidateCoordinateSource(),
+    points,
+    xyUniformFit: defaultVariant.xyUniformFit,
+    xyNonUniformFit: defaultVariant.xyNonUniformFit,
+    interpretation: defaultVariant.interpretation,
+    variants,
+    bestVariant,
+  }
+}
+
+function buildCanonicalToCandidateXYFitVariant(
+  points: CanonicalToCandidateXYFitPoint[],
+  variant: {
+    variantId: CanonicalToCandidateXYFitVariantId
+    description: string
+    yFlip: CanonicalToCandidateYFlip
+  },
+): CanonicalToCandidateXYFitVariant {
+  const xyUniformFit = buildCanonicalToCandidateXYUniformFit(points, variant.yFlip)
+  const xyNonUniformFit = buildCanonicalToCandidateXYNonUniformFit(points, variant.yFlip)
+  const interpretation = buildCanonicalToCandidateXYFitInterpretation(
+    xyUniformFit,
+    xyNonUniformFit,
+    points,
+    variant,
+  )
+  return {
+    variantId: variant.variantId,
+    description: variant.description,
+    yFlip: { ...variant.yFlip },
+    xyUniformFit,
+    xyNonUniformFit,
+    interpretation,
+  }
+}
+
+function buildCanonicalToCandidateXYFitPoints(
+  candidate: FittingCandidate8,
+  candidateXy: SemanticPointSet2D,
+): CanonicalToCandidateXYFitPoint[] {
+  const canonicalByIndex = buildCanonicalXyzPointByIndex()
+  return ROTATION_CENTER_12_SEMANTIC_POINT_NAMES.flatMap((pointId) => {
+    const landmarkIndex = CANONICAL_TO_CANDIDATE_12PT[pointId].filter(
+      (index) => index < CANONICAL_COMPARISON_LANDMARK_COUNT,
+    )
+    const canonicalPoints = landmarkIndex
+      .map((index) => canonicalByIndex.get(index))
+      .filter((point): point is Point3 => Boolean(point))
+    const candidatePoint = candidateXy[pointId]
+    const candidateZ = candidate.zByPointId[pointId]
+    if (
+      canonicalPoints.length === 0 ||
+      !candidatePoint ||
+      typeof candidateZ !== "number" ||
+      !Number.isFinite(candidateZ)
+    ) {
+      return []
+    }
+    return [
+      {
+        pointId,
+        landmarkIndex,
+        canonicalRaw: roundPoint3D({
+          x: average(canonicalPoints.map((point) => point.x)) ?? 0,
+          y: average(canonicalPoints.map((point) => point.y)) ?? 0,
+          z: average(canonicalPoints.map((point) => point.z)) ?? 0,
+        }),
+        candidate: roundPoint3D({
+          x: candidatePoint.x,
+          y: candidatePoint.y,
+          z: candidateZ,
+        }),
+      },
+    ]
+  })
+}
+
+function buildCanonicalXyzPointByIndex(): Map<number, Point3> {
+  return new Map(
+    CANONICAL_FACE_XYZ_TEMPLATE.landmarks.flatMap((landmark) => {
+      if (
+        landmark.index >= CANONICAL_COMPARISON_LANDMARK_COUNT ||
+        landmark.source !== "obj_raw" ||
+        !Number.isFinite(landmark.x) ||
+        !Number.isFinite(landmark.y) ||
+        !Number.isFinite(landmark.z)
+      ) {
+        return []
+      }
+      return [[landmark.index, { x: landmark.x, y: landmark.y, z: landmark.z }]]
+    }),
+  )
+}
+
+function buildCanonicalToCandidateXYUniformFit(
+  points: CanonicalToCandidateXYFitPoint[],
+  yFlip: CanonicalToCandidateYFlip,
+): CanonicalToCandidateXYUniformFit {
+  const canonicalFitPoints = points.map((point) => getCanonicalToCandidateFitCanonicalXY(point, yFlip))
+  const candidateFitPoints = points.map((point) => getCanonicalToCandidateFitCandidateXY(point, yFlip))
+  const canonicalMean = averagePoint2D(canonicalFitPoints)
+  const candidateMean = averagePoint2D(candidateFitPoints)
+  const variance = points.reduce(
+    (total, point) =>
+      total +
+      Math.pow(getCanonicalToCandidateFitCanonicalXY(point, yFlip).x - canonicalMean.x, 2) +
+      Math.pow(getCanonicalToCandidateFitCanonicalXY(point, yFlip).y - canonicalMean.y, 2),
+    0,
+  )
+  const covariance = points.reduce(
+    (total, point) => {
+      const canonicalFitPoint = getCanonicalToCandidateFitCanonicalXY(point, yFlip)
+      const candidateFitPoint = getCanonicalToCandidateFitCandidateXY(point, yFlip)
+      return (
+        total +
+        (canonicalFitPoint.x - canonicalMean.x) * (candidateFitPoint.x - candidateMean.x) +
+        (canonicalFitPoint.y - canonicalMean.y) * (candidateFitPoint.y - candidateMean.y)
+      )
+    },
+    0,
+  )
+  const scale = Math.abs(variance) < EPSILON ? 1 : covariance / variance
+  const offsetX = candidateMean.x - canonicalMean.x * scale
+  const offsetY = candidateMean.y - canonicalMean.y * scale
+  const xyErrors = points.map((point) =>
+    distance2D(
+      {
+        x: getCanonicalToCandidateFitCanonicalXY(point, yFlip).x * scale + offsetX,
+        y: getCanonicalToCandidateFitCanonicalXY(point, yFlip).y * scale + offsetY,
+      },
+      getCanonicalToCandidateFitCandidateXY(point, yFlip),
+    ),
+  )
+  return {
+    scale: round(scale),
+    offsetX: round(offsetX),
+    offsetY: round(offsetY),
+    averageXYError: round(average(xyErrors) ?? 0),
+    maxXYError: round(max(xyErrors) ?? 0),
+    zFit: {
+      zScaleSource: "xyUniformFit.scale",
+      variants: buildCanonicalToCandidateZFitVariants(points, scale),
+    },
+  }
+}
+
+function buildCanonicalToCandidateXYNonUniformFit(
+  points: CanonicalToCandidateXYFitPoint[],
+  yFlip: CanonicalToCandidateYFlip,
+): CanonicalToCandidateXYNonUniformFit {
+  const fitX = fitLinearScaleOffset(
+    points.map((point) => getCanonicalToCandidateFitCanonicalXY(point, yFlip).x),
+    points.map((point) => getCanonicalToCandidateFitCandidateXY(point, yFlip).x),
+  )
+  const fitY = fitLinearScaleOffset(
+    points.map((point) => getCanonicalToCandidateFitCanonicalXY(point, yFlip).y),
+    points.map((point) => getCanonicalToCandidateFitCandidateXY(point, yFlip).y),
+  )
+  const xyErrors = points.map((point) =>
+    distance2D(
+      {
+        x: getCanonicalToCandidateFitCanonicalXY(point, yFlip).x * fitX.scale + fitX.offset,
+        y: getCanonicalToCandidateFitCanonicalXY(point, yFlip).y * fitY.scale + fitY.offset,
+      },
+      getCanonicalToCandidateFitCandidateXY(point, yFlip),
+    ),
+  )
+  const zScale = (Math.abs(fitX.scale) + Math.abs(fitY.scale)) / 2
+  return {
+    scaleX: round(fitX.scale),
+    scaleY: round(fitY.scale),
+    offsetX: round(fitX.offset),
+    offsetY: round(fitY.offset),
+    averageXYError: round(average(xyErrors) ?? 0),
+    maxXYError: round(max(xyErrors) ?? 0),
+    zScaleMethod: "average_abs_scale_xy",
+    zFit: {
+      zScaleSource: "average(abs(xyNonUniformFit.scaleX), abs(xyNonUniformFit.scaleY))",
+      variants: buildCanonicalToCandidateZFitVariants(points, zScale),
+    },
+  }
+}
+
+function getCanonicalToCandidateFitCanonicalXY(
+  point: CanonicalToCandidateXYFitPoint,
+  yFlip: CanonicalToCandidateYFlip,
+): Point2 {
+  return {
+    x: point.canonicalRaw.x,
+    y: yFlip.canonicalY ? -point.canonicalRaw.y : point.canonicalRaw.y,
+  }
+}
+
+function getCanonicalToCandidateFitCandidateXY(
+  point: CanonicalToCandidateXYFitPoint,
+  yFlip: CanonicalToCandidateYFlip,
+): Point2 {
+  return {
+    x: point.candidate.x,
+    y: yFlip.candidateY ? -point.candidate.y : point.candidate.y,
+  }
+}
+
+function buildCanonicalToCandidateZFitVariants(
+  points: CanonicalToCandidateXYFitPoint[],
+  zScale: number,
+): CanonicalToCandidateZFitVariant[] {
+  return [
+    buildCanonicalToCandidateZFitVariant(points, "raw", zScale),
+    buildCanonicalToCandidateZFitVariant(points, "inverted", zScale),
+  ]
+}
+
+function buildCanonicalToCandidateZFitVariant(
+  points: CanonicalToCandidateXYFitPoint[],
+  zSign: CanonicalToCandidateZSign,
+  zScale: number,
+): CanonicalToCandidateZFitVariant {
+  const sign = zSign === "raw" ? 1 : -1
+  const zOffset =
+    average(points.map((point) => point.candidate.z - point.canonicalRaw.z * sign * zScale)) ?? 0
+  const fittedZ = points.map((point) => point.canonicalRaw.z * sign * zScale + zOffset)
+  const zErrors = fittedZ.map((z, index) => z - points[index].candidate.z)
+  const pairOrderViolations = buildCanonicalToCandidatePairOrderViolations(points, fittedZ)
+  return {
+    zSign,
+    zScale: round(zScale),
+    zOffset: round(zOffset),
+    averageAbsZError: round(average(zErrors.map((error) => Math.abs(error))) ?? 0),
+    maxAbsZError: round(max(zErrors.map((error) => Math.abs(error))) ?? 0),
+    canonicalCorrelationZ: calculatePointCorrelation(
+      fittedZ,
+      points.map((point) => point.candidate.z),
+    ),
+    depthRelationStatus: getCanonicalToCandidateDepthRelationStatus(pairOrderViolations),
+    pairOrderViolations,
+  }
+}
+
+function buildCanonicalToCandidatePairOrderViolations(
+  points: CanonicalToCandidateXYFitPoint[],
+  fittedZ: number[],
+): CanonicalToCandidatePairOrderViolation[] {
+  const violations: CanonicalToCandidatePairOrderViolation[] = []
+  for (let i = 0; i < points.length; i += 1) {
+    for (let j = i + 1; j < points.length; j += 1) {
+      const fittedCanonicalDeltaZ = fittedZ[i] - fittedZ[j]
+      const candidateDeltaZ = points[i].candidate.z - points[j].candidate.z
+      if (
+        Math.abs(fittedCanonicalDeltaZ) <= CANONICAL_TO_CANDIDATE_Z_PAIR_ORDER_MARGIN ||
+        Math.abs(candidateDeltaZ) <= CANONICAL_TO_CANDIDATE_Z_PAIR_ORDER_MARGIN ||
+        Math.sign(fittedCanonicalDeltaZ) === Math.sign(candidateDeltaZ)
+      ) {
+        continue
+      }
+      violations.push({
+        pointA: points[i].pointId,
+        pointB: points[j].pointId,
+        fittedCanonicalDeltaZ: round(fittedCanonicalDeltaZ),
+        candidateDeltaZ: round(candidateDeltaZ),
+        note: "z smaller = front / z が小さい = 手前 の順序が fitted canonical と candidate で逆です",
+      })
+    }
+  }
+  return violations
+}
+
+function getCanonicalToCandidateDepthRelationStatus(
+  pairOrderViolations: CanonicalToCandidatePairOrderViolation[],
+): CanonicalToCandidateDepthRelationStatus {
+  if (pairOrderViolations.length === 0) {
+    return "passed"
+  }
+  if (pairOrderViolations.length <= CANONICAL_TO_CANDIDATE_XY_FIT_THRESHOLDS.maxPairOrderViolationsForConsistent) {
+    return "warning"
+  }
+  return "failed"
+}
+
+function buildCanonicalToCandidateXYFitInterpretation(
+  xyUniformFit: CanonicalToCandidateXYUniformFit,
+  xyNonUniformFit: CanonicalToCandidateXYNonUniformFit,
+  points: CanonicalToCandidateXYFitPoint[],
+  variant: {
+    variantId: CanonicalToCandidateXYFitVariantId
+    yFlip: CanonicalToCandidateYFlip
+  },
+): CanonicalToCandidateXYFitInterpretation {
+  const thresholds = CANONICAL_TO_CANDIDATE_XY_FIT_THRESHOLDS
+  const bestXYAverageError = Math.min(xyUniformFit.averageXYError, xyNonUniformFit.averageXYError)
+  const bestZVariant = getBestCanonicalToCandidateZFitVariant([
+    ...xyUniformFit.zFit.variants,
+    ...xyNonUniformFit.zFit.variants,
+  ])
+  const candidateZRange =
+    (max(points.map((point) => point.candidate.z)) ?? 0) -
+    (min(points.map((point) => point.candidate.z)) ?? 0)
+  const zExtremeThreshold = Math.max(
+    0.02,
+    candidateZRange * thresholds.zAverageAbsErrorExtremeMultiplier,
+  )
+  const candidateZConsistentWithCanonicalXYScale = Boolean(
+    bestZVariant &&
+      (bestZVariant.canonicalCorrelationZ ?? 0) > thresholds.zCorrelationPositiveMin &&
+      bestZVariant.depthRelationStatus === "passed" &&
+      bestZVariant.pairOrderViolations.length <= thresholds.maxPairOrderViolationsForConsistent &&
+      bestZVariant.averageAbsZError <= zExtremeThreshold,
+  )
+  const notes: string[] = []
+  if (!bestZVariant) {
+    notes.push("zSign 比較に使える variant がありません。")
+  } else if (!candidateZConsistentWithCanonicalXYScale) {
+    notes.push(
+      "candidate z は canonical x/y scale から見て要確認です。診断のみで選定には使っていません。",
+    )
+  }
+  if (xyUniformFit.scale < 0 || xyNonUniformFit.scaleY < 0) {
+    notes.push("x/y fit に負の scale が含まれます。canonical と candidate の軸向き差の可能性があります。")
+  }
+  if (variant.yFlip.canonicalY || variant.yFlip.candidateY) {
+    notes.push(
+      `yFlip enabled / y軸反転あり: ${variant.variantId}`,
+    )
+  }
+  return {
+    xyFitQuality: getCanonicalToCandidateXYFitQuality(bestXYAverageError),
+    thresholds,
+    bestZSign: bestZVariant?.zSign ?? null,
+    candidateZConsistentWithCanonicalXYScale,
+    notes,
+  }
+}
+
+function buildCanonicalToCandidateBestVariant(
+  variants: CanonicalToCandidateXYFitVariant[],
+): CanonicalToCandidateBestVariant | null {
+  const best = [...variants].sort(compareCanonicalToCandidateXYFitVariants)[0] ?? null
+  if (!best) {
+    return null
+  }
+  const defaultVariant = variants.find(
+    (variant) => variant.variantId === "canonicalXY_to_candidateXY",
+  )
+  const bestZVariant = getBestCanonicalToCandidateZFitVariantForXYVariant(best)
+  const defaultError = defaultVariant?.xyUniformFit.averageXYError ?? Number.POSITIVE_INFINITY
+  const improvedByYFlip =
+    best.variantId !== "canonicalXY_to_candidateXY" &&
+    best.xyUniformFit.averageXYError < defaultError * 0.8
+  const notes: string[] = []
+  if (improvedByYFlip) {
+    notes.push("yFlip likely needed: y軸反転が必要な可能性あり")
+    if (best.interpretation.candidateZConsistentWithCanonicalXYScale) {
+      notes.push("yFlip improves both xy and z: y軸反転により、x/y当てはめとz整合性の両方が改善")
+    } else {
+      notes.push("yFlip improves xy fit but candidate z is still inconsistent: y軸反転でx/y当てはめは改善するが、候補zはまだ不自然")
+    }
+  }
+  return {
+    variantId: best.variantId,
+    reason: buildCanonicalToCandidateBestVariantReason(best, improvedByYFlip),
+    xyUniformAverageError: best.xyUniformFit.averageXYError,
+    bestZSign: best.interpretation.bestZSign,
+    candidateZConsistentWithCanonicalXYScale:
+      best.interpretation.candidateZConsistentWithCanonicalXYScale,
+    notes,
+  }
+}
+
+function compareCanonicalToCandidateXYFitVariants(
+  a: CanonicalToCandidateXYFitVariant,
+  b: CanonicalToCandidateXYFitVariant,
+): number {
+  const xyErrorDelta = a.xyUniformFit.averageXYError - b.xyUniformFit.averageXYError
+  if (Math.abs(xyErrorDelta) > EPSILON) {
+    return xyErrorDelta
+  }
+  if (
+    a.interpretation.candidateZConsistentWithCanonicalXYScale !==
+    b.interpretation.candidateZConsistentWithCanonicalXYScale
+  ) {
+    return a.interpretation.candidateZConsistentWithCanonicalXYScale ? -1 : 1
+  }
+  const aBestZ = getBestCanonicalToCandidateZFitVariantForXYVariant(a)
+  const bBestZ = getBestCanonicalToCandidateZFitVariantForXYVariant(b)
+  const correlationDelta =
+    (bBestZ?.canonicalCorrelationZ ?? Number.NEGATIVE_INFINITY) -
+    (aBestZ?.canonicalCorrelationZ ?? Number.NEGATIVE_INFINITY)
+  if (Math.abs(correlationDelta) > EPSILON) {
+    return correlationDelta
+  }
+  const pairViolationDelta =
+    (aBestZ?.pairOrderViolations.length ?? Number.POSITIVE_INFINITY) -
+    (bBestZ?.pairOrderViolations.length ?? Number.POSITIVE_INFINITY)
+  if (pairViolationDelta !== 0) {
+    return pairViolationDelta
+  }
+  return (
+    (aBestZ?.averageAbsZError ?? Number.POSITIVE_INFINITY) -
+    (bBestZ?.averageAbsZError ?? Number.POSITIVE_INFINITY)
+  )
+}
+
+function getBestCanonicalToCandidateZFitVariantForXYVariant(
+  variant: CanonicalToCandidateXYFitVariant,
+): CanonicalToCandidateZFitVariant | null {
+  return getBestCanonicalToCandidateZFitVariant([
+    ...variant.xyUniformFit.zFit.variants,
+    ...variant.xyNonUniformFit.zFit.variants,
+  ])
+}
+
+function buildCanonicalToCandidateBestVariantReason(
+  variant: CanonicalToCandidateXYFitVariant,
+  improvedByYFlip: boolean,
+): string {
+  if (improvedByYFlip) {
+    return "y flip improves xyUniformFit error / y軸反転で xyUniformFit（x/y共通倍率当てはめ）の誤差が改善"
+  }
+  if (variant.interpretation.candidateZConsistentWithCanonicalXYScale) {
+    return "lowest xyUniformFit error with consistent z / xyUniformFit誤差が最小で z も整合"
+  }
+  return "lowest xyUniformFit error among variants / 比較パターン内で xyUniformFit誤差が最小"
+}
+
+function getBestCanonicalToCandidateZFitVariant(
+  variants: CanonicalToCandidateZFitVariant[],
+): CanonicalToCandidateZFitVariant | null {
+  return (
+    [...variants].sort((a, b) => {
+      const errorDelta = a.averageAbsZError - b.averageAbsZError
+      if (Math.abs(errorDelta) > EPSILON) {
+        return errorDelta
+      }
+      return (b.canonicalCorrelationZ ?? Number.NEGATIVE_INFINITY) -
+        (a.canonicalCorrelationZ ?? Number.NEGATIVE_INFINITY)
+    })[0] ?? null
+  )
+}
+
+function getCanonicalToCandidateXYFitQuality(
+  averageXYError: number,
+): CanonicalToCandidateXYFitQuality {
+  if (averageXYError <= CANONICAL_TO_CANDIDATE_XY_FIT_THRESHOLDS.xyAverageErrorGoodMax) {
+    return "good"
+  }
+  if (averageXYError <= CANONICAL_TO_CANDIDATE_XY_FIT_THRESHOLDS.xyAverageErrorWarningMax) {
+    return "warning"
+  }
+  return "poor"
+}
+
 function fitLinearScaleOffset(source: number[], target: number[]): { scale: number; offset: number } {
   const sourceMean = average(source) ?? 0
   const targetMean = average(target) ?? 0
@@ -8439,7 +9167,15 @@ function buildQuick478DepthDebugPayload(
     options.analysis,
     bruteforce8ptCanonicalBaseline,
   )
+  const canonicalToCandidateXYFit = buildCanonicalToCandidateXYFit(options.analysis, prototype)
   const canonicalMappingDebug = buildCanonicalMappingDebug()
+  const current12ptXYFitTarget =
+    canonicalToCandidateXYFit?.targets.find((target) => target.targetId === "current12ptFinalCandidate") ??
+    null
+  const structureAware12ptXYFitTarget =
+    canonicalToCandidateXYFit?.targets.find(
+      (target) => target.targetId === "structureAware12ptWouldSelectCandidate",
+    ) ?? null
   const noseRule = relation?.ruleResults.find(
     (rule) => rule.ruleId === "nose_tip_group_in_front_of_cheek_group",
   )
@@ -8511,6 +9247,28 @@ function buildQuick478DepthDebugPayload(
         options.analysis?.autoSequenceSummary?.structureAwareDiagnosticSelection
           ?.wouldSelectCandidate.structureAwareScore ?? null,
       noseBridgeMappingUnified: canonicalMappingDebug.noseBridge.mappingUnified,
+      canonicalToCandidateXYFitEnabled: canonicalToCandidateXYFit?.enabled ?? false,
+      current12ptBestZSign: current12ptXYFitTarget?.interpretation.bestZSign ?? null,
+      current12ptCandidateZConsistentWithCanonicalXYScale:
+        current12ptXYFitTarget?.interpretation.candidateZConsistentWithCanonicalXYScale ?? null,
+      structureAware12ptBestZSign:
+        structureAware12ptXYFitTarget?.interpretation.bestZSign ?? null,
+      structureAware12ptCandidateZConsistentWithCanonicalXYScale:
+        structureAware12ptXYFitTarget?.interpretation.candidateZConsistentWithCanonicalXYScale ?? null,
+      canonicalToCandidateXYFitYFlipEnabled:
+        canonicalToCandidateXYFit?.targets.some((target) =>
+          target.variants.some((variant) => variant.yFlip.canonicalY || variant.yFlip.candidateY),
+        ) ?? false,
+      current12ptBestXYFitVariant: current12ptXYFitTarget?.bestVariant?.variantId ?? null,
+      current12ptBestXYFitZSign: current12ptXYFitTarget?.bestVariant?.bestZSign ?? null,
+      current12ptBestXYFitConsistent:
+        current12ptXYFitTarget?.bestVariant?.candidateZConsistentWithCanonicalXYScale ?? null,
+      structureAware12ptBestXYFitVariant:
+        structureAware12ptXYFitTarget?.bestVariant?.variantId ?? null,
+      structureAware12ptBestXYFitZSign:
+        structureAware12ptXYFitTarget?.bestVariant?.bestZSign ?? null,
+      structureAware12ptBestXYFitConsistent:
+        structureAware12ptXYFitTarget?.bestVariant?.candidateZConsistentWithCanonicalXYScale ?? null,
     },
   }
   if (options.isRejected !== undefined) {
@@ -8544,6 +9302,7 @@ function buildQuick478DepthDebugPayload(
     bruteforce8ptCanonicalBaseline,
     candidateComparison8ptVs12pt,
     candidate12ptCanonicalFitComparison,
+    canonicalToCandidateXYFit,
     canonicalMappingDebug,
     analysisSummary: options.analysis ? createSummaryAnalysis(options.analysis) : undefined,
   }
@@ -13702,6 +14461,53 @@ function renderQuick478DepthDebug(): void {
       quick.quickRun.summary.noseBridgeMappingUnified === undefined
         ? "-"
         : String(quick.quickRun.summary.noseBridgeMappingUnified),
+    ],
+    [
+      "canonicalToCandidateXYFit enabled",
+      quick.quickRun.summary.canonicalToCandidateXYFitEnabled === undefined
+        ? "-"
+        : String(quick.quickRun.summary.canonicalToCandidateXYFitEnabled),
+    ],
+    ["current12pt bestZSign", quick.quickRun.summary.current12ptBestZSign ?? "-"],
+    [
+      "current12pt z consistent",
+      quick.quickRun.summary.current12ptCandidateZConsistentWithCanonicalXYScale === null ||
+      quick.quickRun.summary.current12ptCandidateZConsistentWithCanonicalXYScale === undefined
+        ? "-"
+        : String(quick.quickRun.summary.current12ptCandidateZConsistentWithCanonicalXYScale),
+    ],
+    ["structureAware12pt bestZSign", quick.quickRun.summary.structureAware12ptBestZSign ?? "-"],
+    [
+      "structureAware12pt z consistent",
+      quick.quickRun.summary.structureAware12ptCandidateZConsistentWithCanonicalXYScale === null ||
+      quick.quickRun.summary.structureAware12ptCandidateZConsistentWithCanonicalXYScale === undefined
+        ? "-"
+        : String(quick.quickRun.summary.structureAware12ptCandidateZConsistentWithCanonicalXYScale),
+    ],
+    [
+      "canonicalToCandidateXYFit yFlip enabled",
+      quick.quickRun.summary.canonicalToCandidateXYFitYFlipEnabled === undefined
+        ? "-"
+        : String(quick.quickRun.summary.canonicalToCandidateXYFitYFlipEnabled),
+    ],
+    ["current12ptBestXYFitVariant", quick.quickRun.summary.current12ptBestXYFitVariant ?? "-"],
+    [
+      "current12ptBestXYFitConsistent",
+      quick.quickRun.summary.current12ptBestXYFitConsistent === null ||
+      quick.quickRun.summary.current12ptBestXYFitConsistent === undefined
+        ? "-"
+        : String(quick.quickRun.summary.current12ptBestXYFitConsistent),
+    ],
+    [
+      "structureAware12ptBestXYFitVariant",
+      quick.quickRun.summary.structureAware12ptBestXYFitVariant ?? "-",
+    ],
+    [
+      "structureAware12ptBestXYFitConsistent",
+      quick.quickRun.summary.structureAware12ptBestXYFitConsistent === null ||
+      quick.quickRun.summary.structureAware12ptBestXYFitConsistent === undefined
+        ? "-"
+        : String(quick.quickRun.summary.structureAware12ptBestXYFitConsistent),
     ],
   ])
 }
