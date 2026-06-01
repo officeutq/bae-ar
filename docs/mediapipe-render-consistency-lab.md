@@ -264,6 +264,11 @@ RC-0 は docs 整理、RC-0.5 と RC-0.6 は `tools/mediapipe-render-consistency
 - 顔なし / invalid landmarks の破棄
 - accepted frame の thumbnail snapshot + observed12pt 保持
 - Debug Console の Scan tab
+- Debug Console の Pose tab
+- poseBucketSummary
+- frontCandidate badge
+- yaw / pitch / roll による正面候補判定
+- 初期閾値: |yaw| <= 3, |pitch| <= 3, |roll| <= 3
 
 RC-1 以降で実装する場合も、Runtime / Studio / IdealFace Authoring Tool / Fitting Lab の実装を直接変更せず、`tools/mediapipe-render-consistency-lab` の責務として切り分けます。保存 / export、mesh 化、render、MediaPipe re-detection、residual evaluation、`meshReadyZ` candidate 探索はまだ未実装です。
 
@@ -276,6 +281,8 @@ RC-1 以降で実装する場合も、Runtime / Studio / IdealFace Authoring Too
 `browEyeAnchor` は目輪郭中心から眉代表点へ少し寄せた、眉と目の間くらいの固定点です。z 推定 / 顔形状推定用の初期推奨とします。
 
 Render Consistency Lab では UI の肥大化を避けるため、現在は `browEyeAnchor` を固定で使います。これは debug lab 側だけの変更であり、`tools/ideal-face-fitting-lab` の既存実装は変更しません。
+
+`frontCandidate` は `frontReference` ではありません。`frontCandidate` は yaw / pitch / roll の初期閾値で自動判定した正面候補であり、手動で基準フレームとして確定したものではありません。
 
 ## 11. 今回やらないこと
 

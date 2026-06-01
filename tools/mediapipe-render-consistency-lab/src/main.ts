@@ -51,6 +51,19 @@ type EyePointMode = "irisCenter" | "eyeContourCenter" | "browEyeAnchor"
 
 type ManualAdjustmentsByFrame = Record<number, ManualLandmarkAdjustment[]>
 
+type PoseBucket =
+  | "frontCandidate"
+  | "yawCandidate"
+  | "pitchCandidate"
+  | "mixedPoseCandidate"
+  | "other"
+
+type FrameBadge = {
+  id: string
+  label: string
+  description: string
+}
+
 type AcceptedFrameSnapshot = {
   sourceFrameIndex: number
   timeSec: number
@@ -60,6 +73,8 @@ type AcceptedFrameSnapshot = {
   observed12pt: LandmarkSummaryPoint[]
   excluded: boolean
   excludedReason?: "manual"
+  poseBucket: PoseBucket
+  badges: FrameBadge[]
 }
 
 type ScanStatus = "idle" | "running" | "completed" | "cancelled" | "error"
@@ -77,7 +92,7 @@ type ScanState = {
   error?: string
 }
 
-type ConsoleTab = "summary" | "landmarks12pt" | "adjustments" | "raw" | "scan"
+type ConsoleTab = "summary" | "landmarks12pt" | "adjustments" | "raw" | "scan" | "pose"
 
 type SemanticPointDefinition = {
   id: string
@@ -117,6 +132,23 @@ const OVERLAY_POINT_RADIUS = 5
 const OVERLAY_SELECTED_POINT_RADIUS = 8
 const OVERLAY_HIT_RADIUS = 12
 const DEFAULT_EYE_POINT_MODE: EyePointMode = "browEyeAnchor"
+const FRONT_CANDIDATE_THRESHOLDS = {
+  maxAbsYaw: 3,
+  maxAbsPitch: 3,
+  maxAbsRoll: 3,
+} as const
+const POSE_BUCKET_THRESHOLDS = {
+  yawAbsMin: 8,
+  pitchAbsMin: 8,
+  rollAbsMax: 12,
+} as const
+const POSE_BUCKET_LABELS: Record<PoseBucket, string> = {
+  frontCandidate: "正面候補 frontCandidate",
+  yawCandidate: "左右向き候補 yawCandidate",
+  pitchCandidate: "上下向き候補 pitchCandidate",
+  mixedPoseCandidate: "混合姿勢候補 mixedPoseCandidate",
+  other: "その他 other",
+}
 const EYE_POINT_INDICES = {
   leftIris: [474, 475, 476, 477],
   rightIris: [469, 470, 471, 472],
@@ -243,6 +275,7 @@ app.innerHTML = `
         <button type="button" class="console-tab-button" data-console-tab="landmarks12pt">12pt</button>
         <button type="button" class="console-tab-button" data-console-tab="adjustments">Adjustments</button>
         <button type="button" class="console-tab-button" data-console-tab="scan">Scan</button>
+        <button type="button" class="console-tab-button" data-console-tab="pose">Pose（姿勢）</button>
         <button type="button" class="console-tab-button" data-console-tab="raw">Raw</button>
       </div>
       <div id="consoleContent" class="console-content"></div>
@@ -774,6 +807,7 @@ function analyzeCanvasForAcceptedFrame(
 
     const pose = estimateFacePoseFromMatrix(matrix)
     const observed12pt = detected ? buildLandmarkSummary(landmarks) : []
+    const poseClassification = classifyPoseBucket(pose)
     const mediaPipeSummary = {
       detected,
       landmarkCount: landmarks.length,
@@ -793,6 +827,8 @@ function analyzeCanvasForAcceptedFrame(
       pose,
       observed12pt,
       excluded: false,
+      poseBucket: poseClassification.poseBucket,
+      badges: poseClassification.badges,
     }
   } catch (error) {
     state.scanState = {
@@ -827,6 +863,75 @@ function createInvalidMediaPipeSummary(error?: string): MediaPipeFrameSummary {
     blendshapeCount: 0,
     hasFacialTransformationMatrix: false,
     error,
+  }
+}
+
+function classifyPoseBucket(pose: Pose | null): {
+  poseBucket: PoseBucket
+  badges: FrameBadge[]
+} {
+  if (!pose) {
+    return {
+      poseBucket: "other",
+      badges: [],
+    }
+  }
+
+  const absYaw = Math.abs(pose.yaw)
+  const absPitch = Math.abs(pose.pitch)
+  const absRoll = Math.abs(pose.roll)
+  const frontCandidate =
+    absYaw <= FRONT_CANDIDATE_THRESHOLDS.maxAbsYaw &&
+    absPitch <= FRONT_CANDIDATE_THRESHOLDS.maxAbsPitch &&
+    absRoll <= FRONT_CANDIDATE_THRESHOLDS.maxAbsRoll
+
+  if (frontCandidate) {
+    return {
+      poseBucket: "frontCandidate",
+      badges: [
+        {
+          id: "frontCandidate",
+          label: "正面候補 frontCandidate",
+          description: "|yaw| <= 3, |pitch| <= 3, |roll| <= 3 の自動判定候補",
+        },
+      ],
+    }
+  }
+
+  if (absRoll > POSE_BUCKET_THRESHOLDS.rollAbsMax) {
+    return {
+      poseBucket: "other",
+      badges: [],
+    }
+  }
+
+  if (
+    absYaw >= POSE_BUCKET_THRESHOLDS.yawAbsMin &&
+    absPitch >= POSE_BUCKET_THRESHOLDS.pitchAbsMin
+  ) {
+    return {
+      poseBucket: "mixedPoseCandidate",
+      badges: [],
+    }
+  }
+
+  if (absYaw >= POSE_BUCKET_THRESHOLDS.yawAbsMin) {
+    return {
+      poseBucket: "yawCandidate",
+      badges: [],
+    }
+  }
+
+  if (absPitch >= POSE_BUCKET_THRESHOLDS.pitchAbsMin) {
+    return {
+      poseBucket: "pitchCandidate",
+      badges: [],
+    }
+  }
+
+  return {
+    poseBucket: "other",
+    badges: [],
   }
 }
 
@@ -1273,6 +1378,7 @@ function render(): void {
     ["source frame index", currentFrame ? String(currentFrame.sourceFrameIndex) : "-"],
     ["time", currentFrame ? `${formatNumber(currentFrame.timeSec)} sec` : "-"],
     ["excluded", currentFrame ? formatJapaneseBoolean(currentFrame.excluded) : "-"],
+    ["badge", currentFrame ? formatFrameBadges(currentFrame.badges) : "-"],
   ])
 
   renderConsoleTabs()
@@ -1301,6 +1407,7 @@ function createRawDebugPayload(
     metadata: state.metadata,
     frameState,
     scanState: getScanStateDebug(),
+    poseBucketSummary: getPoseBucketSummary(),
     acceptedFramesPreview: getAcceptedFramesPreview(),
     mediaPipeFrameSummary: state.summary,
     landmarkSummaryPointCount: adjusted12pt.length,
@@ -1341,6 +1448,8 @@ function renderConsoleTabContent(
       return renderAdjustmentsConsole(currentManualAdjustments)
     case "scan":
       return renderScanConsole()
+    case "pose":
+      return renderPoseConsole()
     case "raw":
       return renderRawConsole(rawDebugPayload)
     case "summary":
@@ -1390,6 +1499,13 @@ function renderSummaryConsole(
       renderStatusItems([
         ["12点サマリ数", String(adjusted12pt.length)],
         ["現在フレームの手動調整数", String(currentManualAdjustments.length)],
+      ]),
+    ),
+    renderConsoleSection(
+      "Pose",
+      renderStatusItems([
+        ["Pose bucket", currentFrame ? POSE_BUCKET_LABELS[currentFrame.poseBucket] : "-"],
+        ["Frame badges", currentFrame ? formatFrameBadges(currentFrame.badges) : "-"],
       ]),
     ),
     renderConsoleSection(
@@ -1498,6 +1614,43 @@ function renderScanConsole(): string {
   ].join("")
 }
 
+function renderPoseConsole(): string {
+  const summary = getPoseBucketSummary()
+  return [
+    renderConsoleSection(
+      "Pose（姿勢）",
+      renderStatusItems([
+        ["accepted frame count", String(summary.acceptedFrameCount)],
+        ["frontCandidate", formatPoseBucketCount(summary.frontCandidateCount, summary.acceptedFrameCount)],
+        ["yawCandidate", formatPoseBucketCount(summary.yawCandidateCount, summary.acceptedFrameCount)],
+        ["pitchCandidate", formatPoseBucketCount(summary.pitchCandidateCount, summary.acceptedFrameCount)],
+        [
+          "mixedPoseCandidate",
+          formatPoseBucketCount(summary.mixedPoseCandidateCount, summary.acceptedFrameCount),
+        ],
+        ["other", formatPoseBucketCount(summary.otherCount, summary.acceptedFrameCount)],
+        ["excluded count", String(summary.excludedCount)],
+      ]),
+    ),
+    renderConsoleSection(
+      "frontCandidate thresholds",
+      renderStatusItems([
+        ["|yaw|", `<= ${FRONT_CANDIDATE_THRESHOLDS.maxAbsYaw}`],
+        ["|pitch|", `<= ${FRONT_CANDIDATE_THRESHOLDS.maxAbsPitch}`],
+        ["|roll|", `<= ${FRONT_CANDIDATE_THRESHOLDS.maxAbsRoll}`],
+      ]),
+    ),
+    renderConsoleSection(
+      "pose bucket thresholds",
+      renderStatusItems([
+        ["|yaw|", `>= ${POSE_BUCKET_THRESHOLDS.yawAbsMin}`],
+        ["|pitch|", `>= ${POSE_BUCKET_THRESHOLDS.pitchAbsMin}`],
+        ["|roll|", `other if > ${POSE_BUCKET_THRESHOLDS.rollAbsMax}`],
+      ]),
+    ),
+  ].join("")
+}
+
 function renderRawConsole(rawDebugPayload: Record<string, unknown>): string {
   return renderConsoleSection(
     "rawDebug",
@@ -1576,6 +1729,47 @@ function getExcludedAcceptedFrameCount(): number {
   return state.acceptedFrames.filter((frame) => frame.excluded).length
 }
 
+function getPoseBucketSummary(): {
+  acceptedFrameCount: number
+  frontCandidateCount: number
+  yawCandidateCount: number
+  pitchCandidateCount: number
+  mixedPoseCandidateCount: number
+  otherCount: number
+  excludedCount: number
+  thresholds: {
+    frontCandidate: typeof FRONT_CANDIDATE_THRESHOLDS
+    poseBucket: typeof POSE_BUCKET_THRESHOLDS
+  }
+} {
+  return {
+    acceptedFrameCount: state.acceptedFrames.length,
+    frontCandidateCount: countPoseBucket("frontCandidate"),
+    yawCandidateCount: countPoseBucket("yawCandidate"),
+    pitchCandidateCount: countPoseBucket("pitchCandidate"),
+    mixedPoseCandidateCount: countPoseBucket("mixedPoseCandidate"),
+    otherCount: countPoseBucket("other"),
+    excludedCount: getExcludedAcceptedFrameCount(),
+    thresholds: {
+      frontCandidate: FRONT_CANDIDATE_THRESHOLDS,
+      poseBucket: POSE_BUCKET_THRESHOLDS,
+    },
+  }
+}
+
+function countPoseBucket(poseBucket: PoseBucket): number {
+  return state.acceptedFrames.filter((frame) => frame.poseBucket === poseBucket).length
+}
+
+function formatPoseBucketCount(count: number, total: number): string {
+  const rate = total > 0 ? (count / total) * 100 : 0
+  return `${count} / ${total} (${rate.toFixed(2)}%)`
+}
+
+function formatFrameBadges(badges: FrameBadge[]): string {
+  return badges.length > 0 ? badges.map((badge) => badge.label).join(", ") : "なし"
+}
+
 function getManualAdjustmentFrameCount(): number {
   return Object.values(state.manualAdjustmentsByFrame).filter(
     (adjustments) => adjustments.length > 0,
@@ -1606,6 +1800,8 @@ function getAcceptedFramesPreview(): Array<{
   yaw?: number
   pitch?: number
   roll?: number
+  poseBucket: PoseBucket
+  badges: string[]
   excluded: boolean
 }> {
   return state.acceptedFrames
@@ -1617,6 +1813,8 @@ function getAcceptedFramesPreview(): Array<{
       yaw: frame.pose?.yaw,
       pitch: frame.pose?.pitch,
       roll: frame.pose?.roll,
+      poseBucket: frame.poseBucket,
+      badges: frame.badges.map((badge) => badge.id),
       excluded: frame.excluded,
     }))
     .slice(0, ACCEPTED_FRAMES_PREVIEW_LIMIT)
