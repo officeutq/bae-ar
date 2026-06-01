@@ -2058,6 +2058,101 @@ interface PoseProjectionEvaluation12pt {
   targets: PoseProjectionEvaluation12ptTarget[]
 }
 
+interface PoseWeightedProjectionEvaluation12ptMetricSummary {
+  weightedAverageDistance: number | null
+  weightedAverageAbsDx: number | null
+  weightedAverageAbsDy: number | null
+  totalWeight: number
+  frameCount: number
+}
+
+interface PoseWeightedProjectionEvaluation12ptPointSummary
+  extends PoseWeightedProjectionEvaluation12ptMetricSummary {
+  pointId: SemanticPointName
+  landmarkIndex: number[]
+}
+
+interface PoseWeightedProjectionEvaluation12ptGroupSummary
+  extends PoseWeightedProjectionEvaluation12ptMetricSummary {
+  groupId: string
+  label: string
+}
+
+interface PoseWeightedProjectionEvaluation12ptBucketSummary
+  extends PoseWeightedProjectionEvaluation12ptMetricSummary {
+  bucketId: PoseProjectionEvaluation12ptBucket
+  label: string
+}
+
+interface PoseWeightedProjectionEvaluation12ptWeightedSummary
+  extends PoseWeightedProjectionEvaluation12ptMetricSummary {
+  status: "ok"
+  worstBucketId: PoseProjectionEvaluation12ptBucket | null
+  worstPointId: SemanticPointName | null
+  byBucket: PoseWeightedProjectionEvaluation12ptBucketSummary[]
+  byPoint: PoseWeightedProjectionEvaluation12ptPointSummary[]
+  byGroup: PoseWeightedProjectionEvaluation12ptGroupSummary[]
+}
+
+interface PoseWeightedProjectionEvaluation12ptTarget {
+  targetId: PoseProjectionEvaluation12ptTarget["targetId"]
+  candidateId: string | null
+  unweighted: {
+    averageDistance: number | null
+    averageAbsDx: number | null
+    averageAbsDy: number | null
+    worstBucketId: PoseProjectionEvaluation12ptBucket | null
+    worstPointId: SemanticPointName | null
+    byBucket: PoseProjectionEvaluation12ptBucketSummary[]
+    byPoint: PoseProjectionEvaluation12ptPointSummary[]
+    byGroup: PoseProjectionEvaluation12ptGroupSummary[]
+  }
+  angleMagnitudeWeighted: PoseWeightedProjectionEvaluation12ptWeightedSummary
+  bucketWeighted: PoseWeightedProjectionEvaluation12ptWeightedSummary
+}
+
+interface PoseWeightedProjectionEvaluation12ptRankingEntry {
+  rank: number
+  targetId: PoseProjectionEvaluation12ptTarget["targetId"]
+  candidateId: string | null
+  averageDistance?: number | null
+  weightedAverageDistance?: number | null
+}
+
+interface PoseWeightedProjectionEvaluation12pt {
+  enabled: boolean
+  pointSetId: "12pt_rotation_center"
+  coordinateSpace: PoseProjectionEvaluation12pt["coordinateSpace"]
+  terminology: Record<string, string>
+  settings: {
+    angleMagnitudeWeighted: {
+      enabled: true
+      poseMagnitudeMethod: "max_abs_yaw_pitch"
+      poseWeightStrength: number
+      normalization: "divide_by_max_pose_magnitude_after_outlier_filter"
+      maxPoseMagnitude: number | null
+    }
+    bucketWeighted: {
+      enabled: true
+      bucketWeights: Record<PoseProjectionEvaluation12ptBucket, number>
+    }
+    qualityWeight: {
+      enabled: false
+      reason: string
+    }
+    outlierFiltering: {
+      usesAfterOutlierFilterFrames: true
+    }
+  }
+  targets: PoseWeightedProjectionEvaluation12ptTarget[]
+  candidateRankingComparison: {
+    unweighted: PoseWeightedProjectionEvaluation12ptRankingEntry[]
+    angleMagnitudeWeighted: PoseWeightedProjectionEvaluation12ptRankingEntry[]
+    bucketWeighted: PoseWeightedProjectionEvaluation12ptRankingEntry[]
+    rankingChanged: boolean
+  }
+}
+
 type Quick478DepthDebugStatus =
   | "idle"
   | "running"
@@ -2133,6 +2228,14 @@ interface Quick478DepthDebugSummary {
     structureAware12ptProjectionAverageDistance?: number | null
     structureAware12ptProjectionWorstBucket?: PoseProjectionEvaluation12ptBucket | null
     structureAware12ptProjectionWorstPoint?: SemanticPointName | null
+    poseWeightedProjectionEvaluation12ptEnabled?: boolean
+    current12ptPoseWeightedAverageDistance?: number | null
+    current12ptPoseWeightedWorstBucket?: PoseProjectionEvaluation12ptBucket | null
+    current12ptPoseWeightedWorstPoint?: SemanticPointName | null
+    structureAware12ptPoseWeightedAverageDistance?: number | null
+    structureAware12ptPoseWeightedWorstBucket?: PoseProjectionEvaluation12ptBucket | null
+    structureAware12ptPoseWeightedWorstPoint?: SemanticPointName | null
+    poseWeightedRankingChanged?: boolean
   }
   isRejected?: boolean
   fallbackUsed?: boolean
@@ -2184,6 +2287,7 @@ interface Quick478DepthDebugPayload extends Depth478PrototypeResult {
   candidate12ptCanonicalFitComparison?: Candidate12ptCanonicalFitComparison
   canonicalToCandidateXYFit?: CanonicalToCandidateXYFit
   poseProjectionEvaluation12pt?: PoseProjectionEvaluation12pt
+  poseWeightedProjectionEvaluation12pt?: PoseWeightedProjectionEvaluation12pt
   canonicalMappingDebug?: CanonicalMappingDebug
   analysisSummary?: SummaryAnalysisResult
 }
@@ -3740,6 +3844,19 @@ const POSE_PROJECTION_EVALUATION_12PT_BUCKET_LABELS: Record<
   pitchPositive: "上向き、または正方向 pitch（上下向き）",
   pitchNegative: "下向き、または負方向 pitch（上下向き）",
 }
+
+const POSE_WEIGHTED_PROJECTION_EVALUATION_12PT_BUCKET_WEIGHTS: Record<
+  PoseProjectionEvaluation12ptBucket,
+  number
+> = {
+  front: 1,
+  yawPositive: 1.5,
+  yawNegative: 1.5,
+  pitchPositive: 1.3,
+  pitchNegative: 1.3,
+}
+
+const POSE_WEIGHTED_PROJECTION_EVALUATION_12PT_POSE_WEIGHT_STRENGTH = 1
 
 const POSE_PROJECTION_EVALUATION_12PT_GROUPS = [
   {
@@ -8643,6 +8760,315 @@ function buildPoseProjectionEvaluation12pt(
   }
 }
 
+function buildPoseWeightedProjectionEvaluation12pt(
+  evaluation: PoseProjectionEvaluation12pt | undefined,
+): PoseWeightedProjectionEvaluation12pt | undefined {
+  if (!evaluation) {
+    return undefined
+  }
+
+  const maxPoseMagnitude =
+    max(
+      evaluation.targets.flatMap((target) =>
+        target.frames.map((frame) => calculatePoseProjection12ptPoseMagnitude(frame.pose)),
+      ),
+    ) ?? null
+  const targets = evaluation.targets.map((target) =>
+    buildPoseWeightedProjectionEvaluation12ptTarget(target, maxPoseMagnitude),
+  )
+  const candidateRankingComparison = buildPoseWeightedProjectionEvaluation12ptRankingComparison(targets)
+
+  return {
+    enabled: true,
+    pointSetId: "12pt_rotation_center",
+    coordinateSpace: evaluation.coordinateSpace,
+    terminology: {
+      ...evaluation.terminology,
+      poseWeight: "姿勢重み",
+      poseWeighted: "姿勢重み付き",
+      projectionObjective: "投影誤差ベースの目的スコア",
+      captureLandmarksJa: "キャプチャされたランドマーク",
+      semanticPointJa: "意味点",
+      projectionResidualJa: "投影残差",
+      yawJa: "左右向き",
+      pitchJa: "上下向き",
+      rollJa: "傾き",
+      bucketJa: "姿勢分類",
+      outlierFilteringJa: "外れフレーム除外",
+      qualityWeight: "品質重み",
+      structureAwareJa: "構造考慮",
+    },
+    settings: {
+      angleMagnitudeWeighted: {
+        enabled: true,
+        poseMagnitudeMethod: "max_abs_yaw_pitch",
+        poseWeightStrength: POSE_WEIGHTED_PROJECTION_EVALUATION_12PT_POSE_WEIGHT_STRENGTH,
+        normalization: "divide_by_max_pose_magnitude_after_outlier_filter",
+        maxPoseMagnitude: roundNullable(maxPoseMagnitude),
+      },
+      bucketWeighted: {
+        enabled: true,
+        bucketWeights: { ...POSE_WEIGHTED_PROJECTION_EVALUATION_12PT_BUCKET_WEIGHTS },
+      },
+      qualityWeight: {
+        enabled: false,
+        reason: "outlier filtering is already applied",
+      },
+      outlierFiltering: {
+        usesAfterOutlierFilterFrames: true,
+      },
+    },
+    targets,
+    candidateRankingComparison,
+  }
+}
+
+function buildPoseWeightedProjectionEvaluation12ptTarget(
+  target: PoseProjectionEvaluation12ptTarget,
+  maxPoseMagnitude: number | null,
+): PoseWeightedProjectionEvaluation12ptTarget {
+  return {
+    targetId: target.targetId,
+    candidateId: target.candidateId,
+    unweighted: {
+      averageDistance: target.summary.averageDistance,
+      averageAbsDx: target.summary.averageAbsDx,
+      averageAbsDy: target.summary.averageAbsDy,
+      worstBucketId: target.summary.worstBucketId,
+      worstPointId: target.summary.worstPointId,
+      byBucket: target.byBucket,
+      byPoint: target.byPoint,
+      byGroup: target.byGroup,
+    },
+    angleMagnitudeWeighted: buildPoseWeightedProjectionEvaluation12ptWeightedSummary(
+      target.frames,
+      (frame) => calculatePoseProjection12ptAngleMagnitudeWeight(frame, maxPoseMagnitude),
+    ),
+    bucketWeighted: buildPoseWeightedProjectionEvaluation12ptWeightedSummary(
+      target.frames,
+      (frame) => POSE_WEIGHTED_PROJECTION_EVALUATION_12PT_BUCKET_WEIGHTS[frame.bucketId],
+    ),
+  }
+}
+
+function buildPoseWeightedProjectionEvaluation12ptWeightedSummary(
+  frames: PoseProjectionEvaluation12ptFrame[],
+  getFrameWeight: (frame: PoseProjectionEvaluation12ptFrame) => number,
+): PoseWeightedProjectionEvaluation12ptWeightedSummary {
+  const residuals = flattenPoseWeightedProjection12ptResiduals(frames, getFrameWeight)
+  const byBucket = POSE_PROJECTION_EVALUATION_12PT_BUCKETS.map((bucketId) =>
+    buildPoseWeightedProjectionEvaluation12ptBucketSummary(bucketId, frames, residuals),
+  )
+  const byPoint = buildPoseWeightedProjectionEvaluation12ptPointSummaries(frames, residuals)
+  const byGroup = buildPoseWeightedProjectionEvaluation12ptGroupSummaries(frames, residuals)
+  const metrics = calculatePoseWeightedProjection12ptMetrics(frames, residuals)
+  const worstBucket = byBucket
+    .filter((bucket) => typeof bucket.weightedAverageDistance === "number")
+    .reduce<PoseWeightedProjectionEvaluation12ptBucketSummary | null>(
+      (worst, bucket) =>
+        !worst ||
+        (bucket.weightedAverageDistance ?? 0) > (worst.weightedAverageDistance ?? 0)
+          ? bucket
+          : worst,
+      null,
+    )
+  const worstPoint = byPoint
+    .filter((point) => typeof point.weightedAverageDistance === "number")
+    .reduce<PoseWeightedProjectionEvaluation12ptPointSummary | null>(
+      (worst, point) =>
+        !worst || (point.weightedAverageDistance ?? 0) > (worst.weightedAverageDistance ?? 0)
+          ? point
+          : worst,
+      null,
+    )
+
+  return {
+    status: "ok",
+    ...metrics,
+    worstBucketId: worstBucket?.bucketId ?? null,
+    worstPointId: worstPoint?.pointId ?? null,
+    byBucket,
+    byPoint,
+    byGroup,
+  }
+}
+
+function buildPoseWeightedProjectionEvaluation12ptBucketSummary(
+  bucketId: PoseProjectionEvaluation12ptBucket,
+  frames: PoseProjectionEvaluation12ptFrame[],
+  residuals: PoseWeightedProjection12ptResidual[],
+): PoseWeightedProjectionEvaluation12ptBucketSummary {
+  const bucketFrames = frames.filter((frame) => frame.bucketId === bucketId)
+  return {
+    bucketId,
+    label: POSE_PROJECTION_EVALUATION_12PT_BUCKET_LABELS[bucketId],
+    ...calculatePoseWeightedProjection12ptMetrics(
+      bucketFrames,
+      residuals.filter((item) => item.bucketId === bucketId),
+    ),
+  }
+}
+
+function buildPoseWeightedProjectionEvaluation12ptPointSummaries(
+  frames: PoseProjectionEvaluation12ptFrame[],
+  residuals: PoseWeightedProjection12ptResidual[],
+): PoseWeightedProjectionEvaluation12ptPointSummary[] {
+  return ROTATION_CENTER_12_SEMANTIC_POINT_NAMES.map((pointId) => ({
+    pointId,
+    landmarkIndex: [...CANONICAL_TO_CANDIDATE_12PT[pointId]],
+    ...calculatePoseWeightedProjection12ptMetrics(
+      frames.filter((frame) => frame.points.some((point) => point.pointId === pointId)),
+      residuals.filter((item) => item.pointId === pointId),
+    ),
+  }))
+}
+
+function buildPoseWeightedProjectionEvaluation12ptGroupSummaries(
+  frames: PoseProjectionEvaluation12ptFrame[],
+  residuals: PoseWeightedProjection12ptResidual[],
+): PoseWeightedProjectionEvaluation12ptGroupSummary[] {
+  return POSE_PROJECTION_EVALUATION_12PT_GROUPS.map((group) => ({
+    groupId: group.groupId,
+    label: group.label,
+    ...calculatePoseWeightedProjection12ptMetrics(
+      frames.filter((frame) => frame.points.some((point) => group.pointIds.includes(point.pointId))),
+      residuals.filter((item) => group.pointIds.includes(item.pointId)),
+    ),
+  }))
+}
+
+type PoseWeightedProjection12ptResidual = PoseProjectionEvaluation12ptResidual & {
+  frameId: string
+  bucketId: PoseProjectionEvaluation12ptBucket
+  pointId: SemanticPointName
+  weight: number
+}
+
+function flattenPoseWeightedProjection12ptResiduals(
+  frames: PoseProjectionEvaluation12ptFrame[],
+  getFrameWeight: (frame: PoseProjectionEvaluation12ptFrame) => number,
+): PoseWeightedProjection12ptResidual[] {
+  return frames.flatMap((frame) => {
+    const weight = Math.max(getFrameWeight(frame), 0)
+    return frame.points.map((point) => ({
+      frameId: frame.frameId,
+      bucketId: frame.bucketId,
+      pointId: point.pointId,
+      weight,
+      ...point.residual,
+    }))
+  })
+}
+
+function calculatePoseWeightedProjection12ptMetrics(
+  frames: PoseProjectionEvaluation12ptFrame[],
+  residuals: PoseWeightedProjection12ptResidual[],
+): PoseWeightedProjectionEvaluation12ptMetricSummary {
+  const totalWeight = residuals.reduce((total, item) => total + item.weight, 0)
+  return {
+    weightedAverageDistance: roundNullable(
+      calculateWeightedAverageNullable(residuals.map((item) => ({ value: item.distance, weight: item.weight }))),
+    ),
+    weightedAverageAbsDx: roundNullable(
+      calculateWeightedAverageNullable(residuals.map((item) => ({ value: item.absDx, weight: item.weight }))),
+    ),
+    weightedAverageAbsDy: roundNullable(
+      calculateWeightedAverageNullable(residuals.map((item) => ({ value: item.absDy, weight: item.weight }))),
+    ),
+    totalWeight: round(totalWeight),
+    frameCount: frames.length,
+  }
+}
+
+function calculateWeightedAverageNullable(items: Array<{ value: number; weight: number }>): number | null {
+  const validItems = items.filter(
+    (item) => Number.isFinite(item.value) && Number.isFinite(item.weight) && item.weight > 0,
+  )
+  if (validItems.length === 0) {
+    return null
+  }
+  return weightedAverage(validItems)
+}
+
+function calculatePoseProjection12ptAngleMagnitudeWeight(
+  frame: PoseProjectionEvaluation12ptFrame,
+  maxPoseMagnitude: number | null,
+): number {
+  const normalizedPoseMagnitude =
+    maxPoseMagnitude && maxPoseMagnitude > EPSILON
+      ? calculatePoseProjection12ptPoseMagnitude(frame.pose) / maxPoseMagnitude
+      : 0
+  return (
+    1 +
+    POSE_WEIGHTED_PROJECTION_EVALUATION_12PT_POSE_WEIGHT_STRENGTH *
+      clamp(normalizedPoseMagnitude, 0, 1)
+  )
+}
+
+function calculatePoseProjection12ptPoseMagnitude(pose: Pose): number {
+  return Math.max(Math.abs(pose.yaw), Math.abs(pose.pitch))
+}
+
+function buildPoseWeightedProjectionEvaluation12ptRankingComparison(
+  targets: PoseWeightedProjectionEvaluation12ptTarget[],
+): PoseWeightedProjectionEvaluation12pt["candidateRankingComparison"] {
+  const unweighted = rankPoseWeightedProjectionEvaluation12ptTargets(
+    targets,
+    (target) => target.unweighted.averageDistance,
+    "averageDistance",
+  )
+  const angleMagnitudeWeighted = rankPoseWeightedProjectionEvaluation12ptTargets(
+    targets,
+    (target) => target.angleMagnitudeWeighted.weightedAverageDistance,
+    "weightedAverageDistance",
+  )
+  const bucketWeighted = rankPoseWeightedProjectionEvaluation12ptTargets(
+    targets,
+    (target) => target.bucketWeighted.weightedAverageDistance,
+    "weightedAverageDistance",
+  )
+  return {
+    unweighted,
+    angleMagnitudeWeighted,
+    bucketWeighted,
+    rankingChanged:
+      hasPoseWeightedProjectionEvaluation12ptRankingChanged(unweighted, angleMagnitudeWeighted) ||
+      hasPoseWeightedProjectionEvaluation12ptRankingChanged(unweighted, bucketWeighted),
+  }
+}
+
+function rankPoseWeightedProjectionEvaluation12ptTargets(
+  targets: PoseWeightedProjectionEvaluation12ptTarget[],
+  getScore: (target: PoseWeightedProjectionEvaluation12ptTarget) => number | null,
+  scoreKey: "averageDistance" | "weightedAverageDistance",
+): PoseWeightedProjectionEvaluation12ptRankingEntry[] {
+  return targets
+    .map((target) => ({
+      target,
+      score: getScore(target),
+    }))
+    .filter((item): item is { target: PoseWeightedProjectionEvaluation12ptTarget; score: number } =>
+      typeof item.score === "number" && Number.isFinite(item.score),
+    )
+    .sort((a, b) => a.score - b.score)
+    .map((item, index) => ({
+      rank: index + 1,
+      targetId: item.target.targetId,
+      candidateId: item.target.candidateId,
+      [scoreKey]: item.score,
+    }))
+}
+
+function hasPoseWeightedProjectionEvaluation12ptRankingChanged(
+  baseRanking: PoseWeightedProjectionEvaluation12ptRankingEntry[],
+  weightedRanking: PoseWeightedProjectionEvaluation12ptRankingEntry[],
+): boolean {
+  if (baseRanking.length !== weightedRanking.length) {
+    return true
+  }
+  return baseRanking.some((entry, index) => entry.targetId !== weightedRanking[index]?.targetId)
+}
+
 function buildPoseProjection12ptCoordinateSpace(): PoseProjectionEvaluation12pt["coordinateSpace"] {
   return {
     projected: "same-unit centered coordinate used by searchWorker projection evaluation / searchWorker の projection evaluation（投影評価）と同じ same-unit center 減算座標",
@@ -9894,6 +10320,8 @@ function buildQuick478DepthDebugPayload(
     prototype,
     bruteforce8ptCanonicalBaseline,
   )
+  const poseWeightedProjectionEvaluation12pt =
+    buildPoseWeightedProjectionEvaluation12pt(poseProjectionEvaluation12pt)
   const canonicalMappingDebug = buildCanonicalMappingDebug()
   const current12ptXYFitTarget =
     canonicalToCandidateXYFit?.targets.find((target) => target.targetId === "current12ptFinalCandidate") ??
@@ -9908,6 +10336,14 @@ function buildQuick478DepthDebugPayload(
     ) ?? null
   const structureAware12ptProjectionTarget =
     poseProjectionEvaluation12pt?.targets.find(
+      (target) => target.targetId === "structureAware12ptWouldSelectCandidate",
+    ) ?? null
+  const current12ptPoseWeightedProjectionTarget =
+    poseWeightedProjectionEvaluation12pt?.targets.find(
+      (target) => target.targetId === "current12ptFinalCandidate",
+    ) ?? null
+  const structureAware12ptPoseWeightedProjectionTarget =
+    poseWeightedProjectionEvaluation12pt?.targets.find(
       (target) => target.targetId === "structureAware12ptWouldSelectCandidate",
     ) ?? null
   const noseRule = relation?.ruleResults.find(
@@ -10014,6 +10450,24 @@ function buildQuick478DepthDebugPayload(
         structureAware12ptProjectionTarget?.summary.worstBucketId ?? null,
       structureAware12ptProjectionWorstPoint:
         structureAware12ptProjectionTarget?.summary.worstPointId ?? null,
+      poseWeightedProjectionEvaluation12ptEnabled:
+        poseWeightedProjectionEvaluation12pt?.enabled ?? false,
+      current12ptPoseWeightedAverageDistance:
+        current12ptPoseWeightedProjectionTarget?.angleMagnitudeWeighted
+          .weightedAverageDistance ?? null,
+      current12ptPoseWeightedWorstBucket:
+        current12ptPoseWeightedProjectionTarget?.angleMagnitudeWeighted.worstBucketId ?? null,
+      current12ptPoseWeightedWorstPoint:
+        current12ptPoseWeightedProjectionTarget?.angleMagnitudeWeighted.worstPointId ?? null,
+      structureAware12ptPoseWeightedAverageDistance:
+        structureAware12ptPoseWeightedProjectionTarget?.angleMagnitudeWeighted
+          .weightedAverageDistance ?? null,
+      structureAware12ptPoseWeightedWorstBucket:
+        structureAware12ptPoseWeightedProjectionTarget?.angleMagnitudeWeighted.worstBucketId ?? null,
+      structureAware12ptPoseWeightedWorstPoint:
+        structureAware12ptPoseWeightedProjectionTarget?.angleMagnitudeWeighted.worstPointId ?? null,
+      poseWeightedRankingChanged:
+        poseWeightedProjectionEvaluation12pt?.candidateRankingComparison.rankingChanged ?? false,
     },
   }
   if (options.isRejected !== undefined) {
@@ -10049,6 +10503,7 @@ function buildQuick478DepthDebugPayload(
     candidate12ptCanonicalFitComparison,
     canonicalToCandidateXYFit,
     poseProjectionEvaluation12pt,
+    poseWeightedProjectionEvaluation12pt,
     canonicalMappingDebug,
     analysisSummary: options.analysis ? createSummaryAnalysis(options.analysis) : undefined,
   }
@@ -15284,6 +15739,42 @@ function renderQuick478DepthDebug(): void {
     [
       "structureAware12ptProjectionWorstPoint",
       quick.quickRun.summary.structureAware12ptProjectionWorstPoint ?? "-",
+    ],
+    [
+      "poseWeightedProjectionEvaluation12ptEnabled",
+      quick.quickRun.summary.poseWeightedProjectionEvaluation12ptEnabled === undefined
+        ? "-"
+        : String(quick.quickRun.summary.poseWeightedProjectionEvaluation12ptEnabled),
+    ],
+    [
+      "current12ptPoseWeightedAverageDistance",
+      formatNumber(quick.quickRun.summary.current12ptPoseWeightedAverageDistance),
+    ],
+    [
+      "current12ptPoseWeightedWorstBucket",
+      quick.quickRun.summary.current12ptPoseWeightedWorstBucket ?? "-",
+    ],
+    [
+      "current12ptPoseWeightedWorstPoint",
+      quick.quickRun.summary.current12ptPoseWeightedWorstPoint ?? "-",
+    ],
+    [
+      "structureAware12ptPoseWeightedAverageDistance",
+      formatNumber(quick.quickRun.summary.structureAware12ptPoseWeightedAverageDistance),
+    ],
+    [
+      "structureAware12ptPoseWeightedWorstBucket",
+      quick.quickRun.summary.structureAware12ptPoseWeightedWorstBucket ?? "-",
+    ],
+    [
+      "structureAware12ptPoseWeightedWorstPoint",
+      quick.quickRun.summary.structureAware12ptPoseWeightedWorstPoint ?? "-",
+    ],
+    [
+      "poseWeightedRankingChanged",
+      quick.quickRun.summary.poseWeightedRankingChanged === undefined
+        ? "-"
+        : String(quick.quickRun.summary.poseWeightedRankingChanged),
     ],
   ])
 }
