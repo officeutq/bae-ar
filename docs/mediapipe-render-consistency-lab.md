@@ -201,6 +201,9 @@ RC-0:
 RC-0.5:
   MP4 import / first frame thumbnail / MediaPipe metadata summary
 
+RC-0.6:
+  12pt landmark summary overlay / overlay show-hide toggle
+
 RC-1:
   canonical / Fitting Lab candidate 3D478 を読み込み、topology で mesh 化する
 
@@ -223,7 +226,13 @@ RC-7:
   pose sweep / batch evaluation を行う
 ```
 
-RC-0 は docs 整理、RC-0.5 は `tools/mediapipe-render-consistency-lab` の初期土台として実装済みです。RC-0.5 では MP4 読み込み、1フレーム目サムネイル表示、MediaPipe Face Landmarker の基本 metadata summary 表示だけを扱います。
+RC-0 は docs 整理、RC-0.5 と RC-0.6 は `tools/mediapipe-render-consistency-lab` の初期土台として実装済みです。現在は以下を扱います。
+
+- MP4 import
+- first frame thumbnail
+- MediaPipe metadata summary
+- 12pt landmark summary overlay
+- overlay show / hide toggle
 
 RC-1 以降で実装する場合も、Runtime / Studio / IdealFace Authoring Tool / Fitting Lab の実装を直接変更せず、`tools/mediapipe-render-consistency-lab` の責務として切り分けます。mesh 化、render、MediaPipe re-detection、residual evaluation、`meshReadyZ` candidate 探索はまだ未実装です。
 
@@ -237,7 +246,7 @@ RC-1 以降で実装する場合も、Runtime / Studio / IdealFace Authoring Too
 - Fitting Lab 実装変更
 - production asset export
 - `beauty_filter_asset_v1` schema 変更
-- landmarks overlay
+- 478点すべての landmarks overlay
 - 478点 mesh 化
 - render
 - MediaPipe re-detection
