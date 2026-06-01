@@ -80,6 +80,11 @@ bae-ar/
 │     └─ src/
 │        └─ main.ts
 │
+│  └─ mediapipe-render-consistency-lab/
+│     ├─ package.json
+│     └─ src/
+│        └─ main.ts
+│
 └─ docs/
    ├─ overview.md
    ├─ architecture.md
@@ -98,7 +103,7 @@ tools/
    └─ Layer Mask Authoring Tool
 ```
 
-`tools/ideal-face-authoring` は Step 2-I-A/B/C と Step 2-H まで実装済みです。`tools/mediapipe-canonical-lab` は MediaPipe Face Landmarker の 478 landmarks / `facialTransformationMatrix` / pose / blendshapes を調査する debug lab です。`tools/layer-mask-authoring` は将来予定です。
+`tools/ideal-face-authoring` は Step 2-I-A/B/C と Step 2-H まで実装済みです。`tools/mediapipe-canonical-lab` は MediaPipe Face Landmarker の 478 landmarks / `facialTransformationMatrix` / pose / blendshapes を調査する debug lab です。`tools/mediapipe-render-consistency-lab` は MP4 import、1フレーム目サムネイル、MediaPipe metadata summary を確認する debug lab です。`tools/layer-mask-authoring` は将来予定です。
 
 ## `packages/engine`
 
@@ -243,6 +248,27 @@ MediaPipe Canonical Lab は、IdealFace を作る tool ではなく、MediaPipe 
 `empiricalCanonical478` は実測から作った標準顔 478 候補ですが、debug artifact であり、そのまま production asset にしません。最新の empirical 478 analysis では、41 captures、478 landmarks、matrix available 41、video size `1280x720` で検証し、Runtime compatible ranking も含めて `face_bounds_normalized_no_matrix` が現時点の best candidate です。これは `facialTransformationMatrix` を使わず、顔の外枠で中心合わせし、顔の大きさでスケールを揃える方式です。
 
 `facialTransformationMatrix` は yaw / pitch / roll、pose bucket、frame weighting、debug comparison には使います。ただし、matrix inverse で current landmarks を production の IdealFace 3D478 作成主導線へ戻す方式は採用しません。詳細は [MediaPipe Canonical Lab](mediapipe-canonical-lab.md) を参照してください。
+
+## `tools/mediapipe-render-consistency-lab`
+
+MediaPipe Render Consistency Lab は、mesh / render / MediaPipe re-detection 前提で `projectionFitZ` と `meshReadyZ` の違いを検証するための debug lab です。
+
+現在含まれるもの:
+
+- MP4 import
+- 1フレーム目サムネイル表示
+- MediaPipe Face Landmarker metadata summary 表示
+
+まだ含まないもの:
+
+- landmarks overlay
+- 478点 mesh 化
+- render
+- MediaPipe re-detection
+- residual evaluation
+- `meshReadyZ` candidate 探索
+
+Runtime / Studio / IdealFace Authoring Tool / Fitting Lab の実装には依存せず、lab 内で必要な最小の MediaPipe Face Landmarker 初期化だけを行います。詳細は [MediaPipe Render Consistency Lab](mediapipe-render-consistency-lab.md) を参照してください。
 
 ## `tools/layer-mask-authoring`
 

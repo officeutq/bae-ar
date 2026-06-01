@@ -5,6 +5,7 @@
     "start": "npm run start --workspace @bae-ar/studio",
     "start:ideal-face-authoring": "npm run start --workspace @bae-ar/ideal-face-authoring",
     "start:mediapipe-canonical-lab": "npm run start --workspace @bae-ar/mediapipe-canonical-lab",
+    "start:mediapipe-render-consistency-lab": "npm exec --workspace @bae-ar/mediapipe-render-consistency-lab vite -- --host 0.0.0.0",
     "start:ideal-face-fitting-lab": "npm run start --workspace @bae-ar/ideal-face-fitting-lab",
     "build:mediapipe-canonical-lab": "npm exec --workspace @bae-ar/mediapipe-canonical-lab -- vite build"
   },

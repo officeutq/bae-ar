@@ -198,6 +198,18 @@ yawPositive / yawNegative comparison:
 RC-0:
   docs direction / lab responsibility
 
+RC-0.5:
+  MP4 import / first frame thumbnail / MediaPipe metadata summary
+
+RC-0.6:
+  12pt landmark summary overlay / overlay show-hide toggle
+
+RC-0.7:
+  12pt landmark summary manual drag adjustment / observed12pt / adjusted12pt / manualAdjustments
+
+RC-0.8:
+  frame navigation prototype / currentFrameIndex / currentTimeSec / manual excludedFrames
+
 RC-1:
   canonical / Fitting Lab candidate 3D478 を読み込み、topology で mesh 化する
 
@@ -220,7 +232,65 @@ RC-7:
   pose sweep / batch evaluation を行う
 ```
 
-RC-0 は今回の docs 整理です。RC-1 以降で実装する場合も、Runtime / Studio / IdealFace Authoring Tool / Fitting Lab の実装を直接変更せず、`tools/mediapipe-render-consistency-lab` の責務として切り分けます。
+RC-0 は docs 整理、RC-0.5 と RC-0.6 は `tools/mediapipe-render-consistency-lab` の初期土台として実装済みです。現在は以下を扱います。
+
+- MP4 import
+- first frame thumbnail
+- MediaPipe metadata summary
+- 12pt landmark summary overlay
+- overlay show / hide toggle
+- 12pt landmark summary の手動ドラッグ調整
+- observed12pt / adjusted12pt / manualAdjustments の一時保持
+- reset selected / reset all
+- frame navigation prototype
+- currentFrameIndex / currentTimeSec
+- manual excludedFrames
+- previous / delete / next controls
+- manualAdjustmentsByFrame によるフレーム別手動調整の一時保持
+- フレーム移動時に調整済み12点を復元
+- observed12ptByFrame による初回 MediaPipe 解析結果のフレーム別一時保持
+- 同じ frameIndex に戻った場合、初回解析時の observed12pt を再利用
+- browEyeAnchor 固定による leftEye / rightEye の安定化
+- browEyeAnchor を z 推定 / 顔形状推定用の初期推奨 eye point として扱う
+- 右側 debug 表示は Debug Console（デバッグコンソール）に統合する
+- Console tabs: Summary / 12pt / Adjustments / Scan / Pose / Raw
+- 中央はサムネイルと手動調整の作業エリアに寄せる
+- auto scan の状態は Scan tab で扱う
+- 左ペインは Input / Controls（入力・操作）に整理する
+- 状態表示、動画メタ情報、MediaPipe summary は Debug Console に集約する
+- Summary タブに File / Video、Status、Current frame、MediaPipe の要約を表示する
+- Scan 関連の詳細は Scan タブへ集約する
+- MP4 読み込み直後の auto scan prototype
+- maxScanDurationSec = 300
+- maxScanFrames = 9000
+- acceptedFrames
+- currentReviewIndex による accepted frame review
+- 顔なし / invalid landmarks の破棄
+- accepted frame の thumbnail snapshot + observed12pt 保持
+- Debug Console の Scan tab
+- Debug Console の Pose tab
+- poseBucketSummary
+- frontCandidate badge
+- yaw / pitch / roll による正面候補判定
+- 初期閾値: |yaw| <= 3, |pitch| <= 3, |roll| <= 3
+- acceptedFrames の expressionSummary
+- 表情が大きい frame は excluded にせず、expressionTooStrong badge を付ける
+
+RC-1 以降で実装する場合も、Runtime / Studio / IdealFace Authoring Tool / Fitting Lab の実装を直接変更せず、`tools/mediapipe-render-consistency-lab` の責務として切り分けます。保存 / export、mesh 化、render、MediaPipe re-detection、residual evaluation、`meshReadyZ` candidate 探索はまだ未実装です。
+
+### eyePointMode
+
+`irisCenter` は従来方式で、虹彩・眼球中心を使います。視線移動に追随するため、z 推定用の eye point としては不安定ですが、比較用として残します。
+
+`eyeContourCenter` は目頭・目尻の目輪郭中心を使います。虹彩中心より安定しますが、まばたきや目の開きには影響されます。
+
+`browEyeAnchor` は目輪郭中心から眉代表点へ少し寄せた、眉と目の間くらいの固定点です。z 推定 / 顔形状推定用の初期推奨とします。
+
+Render Consistency Lab では UI の肥大化を避けるため、現在は `browEyeAnchor` を固定で使います。これは debug lab 側だけの変更であり、`tools/ideal-face-fitting-lab` の既存実装は変更しません。
+
+`frontCandidate` は `frontReference` ではありません。`frontCandidate` は yaw / pitch / roll の初期閾値で自動判定した正面候補であり、手動で基準フレームとして確定したものではありません。
+
+`表情を除外` button は廃止しました。`expressionTooStrong` は production の除外判定ではありません。Render Consistency Lab 内で accepted frame をレビューしやすくするための debug / review 補助 badge として扱い、auto scan 時点で `expressionSummary` から判定します。表情が大きい frame でも自動では `excluded=true` にしません。
 
 ## 11. 今回やらないこと
 
@@ -232,6 +302,14 @@ RC-0 は今回の docs 整理です。RC-1 以降で実装する場合も、Runt
 - Fitting Lab 実装変更
 - production asset export
 - `beauty_filter_asset_v1` schema 変更
+- 12点手動調整の保存 / export
+- 除外フレームの保存 / export
+- 全フレーム事前スキャン
+- 478点すべての landmarks overlay
+- 478点 mesh 化
+- render
+- MediaPipe re-detection
+- residual evaluation
 - いきなり `meshReadyZ` 探索実装
 - FLAME / 3DMM 導入
 - NeRF / Gaussian Splatting 導入
