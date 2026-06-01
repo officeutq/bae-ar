@@ -335,3 +335,9 @@ Render Consistency Lab は、最初から production asset を作る工程では
 - IdealFace Authoring Tool の Step 2-I production 本線を直接変更しません。
 - MediaPipe canonical face model そのものを BAE AR IdealFace として採用しません。
 - MediaPipe returned landmarks を検証しますが、それを即 production asset に昇格しません。
+
+## UI 方針: Debug Console の役割整理
+
+- Debug Console に Current Frame（現在フレーム）タブを追加
+- 現在表示中フレームの review position / badges / pose / MediaPipe summary / expression summary / 12pt count / manual adjustment count を Current Frame タブへ集約
+- Summary は全体要約、Pose は姿勢集計、Scan は auto scan 状態、12pt は12点詳細、Adjustments は手動調整詳細に役割分担する

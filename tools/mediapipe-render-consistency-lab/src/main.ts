@@ -116,7 +116,14 @@ type ScanState = {
   error?: string
 }
 
-type ConsoleTab = "summary" | "landmarks12pt" | "adjustments" | "raw" | "scan" | "pose"
+type ConsoleTab =
+  | "summary"
+  | "currentFrame"
+  | "landmarks12pt"
+  | "adjustments"
+  | "raw"
+  | "scan"
+  | "pose"
 
 type SemanticPointDefinition = {
   id: string
@@ -327,6 +334,7 @@ app.innerHTML = `
       <h2>Debug Console（デバッグコンソール）</h2>
       <div class="console-tabs" role="tablist" aria-label="Debug Console">
         <button type="button" class="console-tab-button" data-console-tab="summary">Summary</button>
+        <button type="button" class="console-tab-button" data-console-tab="currentFrame">Current</button>
         <button type="button" class="console-tab-button" data-console-tab="landmarks12pt">12pt</button>
         <button type="button" class="console-tab-button" data-console-tab="adjustments">Adjustments</button>
         <button type="button" class="console-tab-button" data-console-tab="scan">Scan</button>
@@ -1565,6 +1573,8 @@ function renderConsoleTabContent(
   switch (state.consoleTab) {
     case "landmarks12pt":
       return renderLandmarks12ptConsole(adjusted12pt)
+    case "currentFrame":
+      return renderCurrentFrameConsole(currentManualAdjustments)
     case "adjustments":
       return renderAdjustmentsConsole(currentManualAdjustments)
     case "scan":
@@ -1575,15 +1585,13 @@ function renderConsoleTabContent(
       return renderRawConsole(rawDebugPayload)
     case "summary":
     default:
-      return renderSummaryConsole(adjusted12pt, currentManualAdjustments)
+      return renderSummaryConsole()
   }
 }
 
-function renderSummaryConsole(
-  adjusted12pt: LandmarkSummaryPoint[],
-  currentManualAdjustments: ManualLandmarkAdjustment[],
-): string {
+function renderSummaryConsole(): string {
   const currentFrame = getCurrentAcceptedFrame()
+  const poseBucketSummary = getPoseBucketSummary()
   return [
     renderConsoleSection(
       "File / Video",
@@ -1605,54 +1613,125 @@ function renderSummaryConsole(
       ]),
     ),
     renderConsoleSection(
-      "Current frame",
+      "Scan status brief",
+      renderStatusItems([
+        ["scan status", state.scanState.status],
+        ["progress", `${Math.round(state.scanState.progress * 100)}%`],
+        ["scannedFrameCount", String(state.scanState.scannedFrameCount)],
+        ["acceptedFrameCount", String(state.scanState.acceptedFrameCount)],
+        ["discardedNoFaceCount", String(state.scanState.discardedNoFaceCount)],
+        [
+          "discardedInvalidLandmarkCount",
+          String(state.scanState.discardedInvalidLandmarkCount),
+        ],
+        ["expressionTooStrongCount", String(getExpressionTooStrongCount())],
+      ]),
+    ),
+    renderConsoleSection(
+      "Accepted frames",
+      renderStatusItems([
+        ["acceptedFrames", String(state.acceptedFrames.length)],
+        ["excluded accepted frames", String(getExcludedAcceptedFrameCount())],
+        ["手動調整済みフレーム数", String(getManualAdjustmentFrameCount())],
+      ]),
+    ),
+    renderConsoleSection(
+      "Pose bucket summary brief",
+      renderStatusItems([
+        [
+          "frontCandidate",
+          formatPoseBucketCount(poseBucketSummary.frontCandidateCount, poseBucketSummary.acceptedFrameCount),
+        ],
+        [
+          "yawCandidate",
+          formatPoseBucketCount(poseBucketSummary.yawCandidateCount, poseBucketSummary.acceptedFrameCount),
+        ],
+        [
+          "pitchCandidate",
+          formatPoseBucketCount(poseBucketSummary.pitchCandidateCount, poseBucketSummary.acceptedFrameCount),
+        ],
+        [
+          "mixedPoseCandidate",
+          formatPoseBucketCount(
+            poseBucketSummary.mixedPoseCandidateCount,
+            poseBucketSummary.acceptedFrameCount,
+          ),
+        ],
+        ["other", formatPoseBucketCount(poseBucketSummary.otherCount, poseBucketSummary.acceptedFrameCount)],
+      ]),
+    ),
+    renderConsoleSection(
+      "Current frame brief",
       renderStatusItems([
         [
           "review index",
           currentFrame ? `${state.currentReviewIndex + 1} / ${state.acceptedFrames.length}` : "-",
         ],
-        ["source frame index", currentFrame ? String(currentFrame.sourceFrameIndex) : "-"],
-        ["timeSec", currentFrame ? formatNumber(currentFrame.timeSec) : "-"],
-        ["excluded", currentFrame ? formatJapaneseBoolean(currentFrame.excluded) : "-"],
+        ["badges count", currentFrame ? String(currentFrame.badges.length) : "-"],
+      ]),
+    ),
+  ].join("")
+}
+
+function renderCurrentFrameConsole(currentManualAdjustments: ManualLandmarkAdjustment[]): string {
+  const currentFrame = getCurrentAcceptedFrame()
+  const mediaPipeSummary = currentFrame?.mediaPipeSummary
+  const pose = currentFrame?.pose
+  return [
+    renderConsoleSection(
+      "Current Frame（現在フレーム）",
+      renderStatusItems([
+        [
+          "Review",
+          currentFrame ? `${state.currentReviewIndex + 1} / ${state.acceptedFrames.length}` : "-",
+        ],
+        ["reviewIndex", currentFrame ? String(state.currentReviewIndex + 1) : "-"],
+        ["reviewCount", String(state.acceptedFrames.length)],
+        ["sourceFrameIndex", currentFrame ? String(currentFrame.sourceFrameIndex) : "-"],
+        ["time", currentFrame ? `${formatNumber(currentFrame.timeSec)} sec` : "-"],
+        ["excluded", currentFrame ? formatBoolean(currentFrame.excluded) : "-"],
         ["excludedReason", currentFrame ? formatExcludedReason(currentFrame.excludedReason) : "-"],
-        ["badges", currentFrame ? formatFrameBadges(currentFrame.badges) : "-"],
+      ]),
+    ),
+    renderConsoleSection("Badges", currentFrame ? renderFrameBadgesList(currentFrame.badges) : "なし"),
+    renderConsoleSection(
+      "Pose（姿勢）",
+      renderStatusItems([
+        ["poseBucket", currentFrame ? POSE_BUCKET_LABELS[currentFrame.poseBucket] : "-"],
+        ["左右向き yaw", pose ? formatNumber(pose.yaw) : "-"],
+        ["上下向き pitch", pose ? formatNumber(pose.pitch) : "-"],
+        ["傾き roll", pose ? formatNumber(pose.roll) : "-"],
       ]),
     ),
     renderConsoleSection(
       "MediaPipe",
       renderStatusItems([
-        ["顔検出", state.summary ? formatJapaneseBoolean(state.summary.detected) : "-"],
-        ["ランドマーク数", state.summary ? String(state.summary.landmarkCount) : "-"],
-        ["ブレンドシェイプ数", state.summary ? String(state.summary.blendshapeCount) : "-"],
+        ["detected", mediaPipeSummary ? formatBoolean(mediaPipeSummary.detected) : "-"],
+        ["landmarkCount", mediaPipeSummary ? String(mediaPipeSummary.landmarkCount) : "-"],
+        ["blendshapeCount", mediaPipeSummary ? String(mediaPipeSummary.blendshapeCount) : "-"],
         [
-          "顔変換行列",
-          state.summary ? formatJapaneseBoolean(state.summary.hasFacialTransformationMatrix) : "-",
+          "hasFacialTransformationMatrix",
+          mediaPipeSummary ? formatBoolean(mediaPipeSummary.hasFacialTransformationMatrix) : "-",
         ],
-        ["左右向き", state.pose ? formatNumber(state.pose.yaw) : "-"],
-        ["上下向き", state.pose ? formatNumber(state.pose.pitch) : "-"],
-        ["傾き", state.pose ? formatNumber(state.pose.roll) : "-"],
-        ["エラー", state.summary?.error ?? "-"],
+        ["error", mediaPipeSummary?.error ?? "-"],
       ]),
+    ),
+    renderConsoleSection(
+      "Expression（表情）",
+      renderExpressionSummary(currentFrame?.expressionSummary, currentFrame),
     ),
     renderConsoleSection(
       "12pt",
       renderStatusItems([
-        ["12点サマリ数", String(adjusted12pt.length)],
-        ["現在フレームの手動調整数", String(currentManualAdjustments.length)],
+        ["pointCount", currentFrame ? String(currentFrame.observed12pt.length) : "-"],
+        ["adjustedPointCount", String(currentManualAdjustments.length)],
       ]),
     ),
     renderConsoleSection(
-      "Pose",
+      "Manual adjustments（手動調整）",
       renderStatusItems([
-        ["Pose bucket", currentFrame ? POSE_BUCKET_LABELS[currentFrame.poseBucket] : "-"],
-        ["Frame badges", currentFrame ? formatFrameBadges(currentFrame.badges) : "-"],
-      ]),
-    ),
-    renderConsoleSection(
-      "Cache",
-      renderStatusItems([
-        ["acceptedFrames", String(state.acceptedFrames.length)],
-        ["手動調整済みフレーム数", String(getManualAdjustmentFrameCount())],
+        ["currentFrameAdjustmentCount", String(currentManualAdjustments.length)],
+        ["adjusted point ids", formatAdjustedPointIds(currentManualAdjustments)],
       ]),
     ),
   ].join("")
@@ -1815,6 +1894,55 @@ function renderRawConsole(rawDebugPayload: Record<string, unknown>): string {
     "rawDebug",
     `<pre class="console-json">${escapeHtml(JSON.stringify(rawDebugPayload, null, 2))}</pre>`,
   )
+}
+
+function renderFrameBadgesList(badges: FrameBadge[]): string {
+  if (badges.length === 0) {
+    return `<div class="landmark-summary-item empty">なし</div>`
+  }
+
+  return `
+    <div class="landmark-summary-grid">
+      ${badges
+        .map(
+          (badge) => `
+            <div class="landmark-summary-item">
+              <code>${escapeHtml(badge.label)}</code>
+              <span>${escapeHtml(badge.description)}</span>
+            </div>
+          `,
+        )
+        .join("")}
+    </div>
+  `
+}
+
+function renderExpressionSummary(
+  expressionSummary: ExpressionScoreSummary | undefined,
+  currentFrame: AcceptedFrameSnapshot | null,
+): string {
+  if (!expressionSummary) {
+    return `<div class="landmark-summary-item empty">なし</div>`
+  }
+
+  const expressionScoreItems = EXPRESSION_CATEGORY_NAMES.flatMap((categoryName) => {
+    const score = expressionSummary[categoryName]
+    return score === undefined ? [] : [[categoryName, formatNumber(score)] as [string, string]]
+  })
+
+  return renderStatusItems([
+    ["maxScore", formatNumber(expressionSummary.maxScore)],
+    ["maxCategoryName", expressionSummary.maxCategoryName ?? "-"],
+    [
+      "expressionTooStrong",
+      currentFrame ? formatBoolean(hasFrameBadge(currentFrame, "expressionTooStrong")) : "-",
+    ],
+    ...expressionScoreItems,
+  ])
+}
+
+function formatAdjustedPointIds(adjustments: ManualLandmarkAdjustment[]): string {
+  return adjustments.length > 0 ? adjustments.map((adjustment) => adjustment.id).join(", ") : "なし"
 }
 
 function renderConsoleSection(title: string, body: string): string {
