@@ -302,6 +302,12 @@ video {
   gap: 6px;
 }
 
+.pose-bucket-list {
+  max-height: 420px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
 .summary-actions {
   display: flex;
   flex-wrap: wrap;
