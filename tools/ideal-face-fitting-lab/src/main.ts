@@ -523,6 +523,7 @@ interface AutoSequenceSummary {
   finalCandidate: FittingCandidate8WithDepthRelation | null
   finalObjectiveMode: ObjectiveMode | null
   finalObjectiveScore: number | null
+  structureAwareReranking?: StructureAwareRerankingSummary
 }
 
 interface AutoSequenceState {
@@ -1338,6 +1339,276 @@ interface SemanticPointSetComparisonSummary {
   recommendationReason: string
 }
 
+type CanonicalCompatible8PointId =
+  | "headTop"
+  | "chin"
+  | "leftCheek"
+  | "rightCheek"
+  | "leftEye"
+  | "rightEye"
+  | "nose"
+  | "mouth"
+
+type BruteForce8ptDepthRelationStatus = "passed" | "warning" | "rejected"
+
+interface BruteForce8ptCanonicalComparisonPoint {
+  pointId: SemanticPointName
+  landmarkIndex: number[]
+  candidateZ: number
+  canonicalZ: number
+  delta: number
+}
+
+interface BruteForce8ptCanonicalComparison {
+  averageAbsDelta: number
+  maxAbsDelta: number
+  points: BruteForce8ptCanonicalComparisonPoint[]
+}
+
+interface StructureAwarePenaltyViolation {
+  ruleId: string
+  label: string
+  penalty: number
+  details: Record<string, number | string | boolean | null>
+}
+
+interface DepthRelationPenaltyDebug {
+  value: number
+  violations: StructureAwarePenaltyViolation[]
+}
+
+interface CanonicalPairOrderViolation {
+  pairId: string
+  label: string
+  candidateDelta: number | null
+  canonicalDelta: number | null
+  penalty: number
+}
+
+interface CanonicalPairOrderPenaltyDebug {
+  value: number
+  violations: CanonicalPairOrderViolation[]
+}
+
+interface CanonicalDeltaPenaltyDebug {
+  averageAbsDelta: number
+  maxAbsDelta: number
+  penalty: number
+}
+
+interface CanonicalStructurePenaltyDebug {
+  value: number
+  canonicalCorrelation: number | null
+  correlationPenalty: number
+  isInvertedLike: boolean
+  canonicalPairOrderPenalty: CanonicalPairOrderPenaltyDebug
+  canonicalDeltaPenalty: CanonicalDeltaPenaltyDebug
+}
+
+interface BoundHitPenaltyDebug {
+  value: number
+  boundHitCount: number
+  hits: Array<{
+    pointId: SemanticPointName | string
+    z: number
+    min?: number
+    max?: number
+    hit: "lower" | "upper"
+    penalty: number
+  }>
+}
+
+interface StructureAwareScoreBreakdown {
+  projectionScore: number
+  depthRelationPenalty: DepthRelationPenaltyDebug
+  canonicalStructurePenalty: CanonicalStructurePenaltyDebug
+  boundHitPenalty: BoundHitPenaltyDebug
+  structureAwareScore: number
+  hardRejected: boolean
+  hardRejectReasons: string[]
+}
+
+interface StructureAwareRanking<TCandidate> {
+  description: string
+  settings: {
+    enabled: boolean
+    useDepthRelationPenalty: boolean
+    useCanonicalStructurePenalty: boolean
+    useBoundHitPenalty: boolean
+  }
+  topCandidates: TCandidate[]
+}
+
+interface BruteForce8ptDepthRelationCheck {
+  passed: boolean
+  status: BruteForce8ptDepthRelationStatus
+  subjectZ: number | null
+  referenceZ: number | null
+  delta: number | null
+  margin: number
+  explanation: string
+}
+
+interface BruteForce8ptDepthStructureDebug {
+  noseVsCheek: BruteForce8ptDepthRelationCheck
+  centerVsBoundary: BruteForce8ptDepthRelationCheck
+  chinTooFront: BruteForce8ptDepthRelationCheck
+  jawVsCheek: BruteForce8ptDepthRelationCheck
+  score: {
+    status: BruteForce8ptDepthRelationStatus
+    violationCount: number
+    warningCount: number
+  }
+}
+
+interface BruteForce8ptTopCandidate {
+  candidateId: string
+  rank: number
+  rawProjectionRank?: number | null
+  structureAwareRank?: number | null
+  totalScore: number
+  objectiveScore: number
+  objectiveScoreBeforeDepthFilter: number
+  rawProjectionScore: number
+  structureAwareScore: number
+  scoreBreakdown: StructureAwareScoreBreakdown
+  averageProjectionError: number
+  bucketScores: PoseBucketScores
+  scoreDebug: CandidateScoreDebug
+  zByPointId: Record<CanonicalCompatible8PointId, number>
+  canonicalComparison: BruteForce8ptCanonicalComparison
+  depthStructureDebug8pt: BruteForce8ptDepthStructureDebug
+}
+
+interface BruteForce8ptCanonicalBaseline {
+  enabled: boolean
+  pointSetId: "8pt_canonical_compatible"
+  candidateCount: number
+  evaluatedCandidateCount: number
+  rejectedCandidateCount: number
+  topCandidates: BruteForce8ptTopCandidate[]
+  rawProjectionRanking: {
+    description: string
+    topCandidates: BruteForce8ptTopCandidate[]
+  }
+  structureAwareRanking: StructureAwareRanking<BruteForce8ptTopCandidate>
+  finalCandidateSelection: {
+    selectedFrom: "structureAwareRanking"
+    selectedCandidateId: string | null
+    rawProjectionRank: number | null
+    structureAwareRank: number | null
+    reason: string
+  }
+  summary: {
+    bestCandidateId: string | null
+    bestScore: number | null
+    bestCanonicalAverageAbsDelta: number | null
+    bestCanonicalMaxAbsDelta: number | null
+    bestDepthRelationStatus: BruteForce8ptDepthRelationStatus | null
+    topNCount: number
+  }
+  settings: {
+    pointLandmarkIndices: Record<CanonicalCompatible8PointId, number[]>
+    zRanges: Record<CanonicalCompatible8PointId, number[]>
+    fixedRotationCenterSource: "naturalNoseWithRotationCenter"
+    fixedPivotZ: number
+    fixedRotationCenter: RotationCenter
+    objectiveMode: ObjectiveMode
+    outlierFilteringEnabled: boolean
+    depthRelationMode: DepthRelationMode
+  }
+}
+
+interface BruteForce8ptFrame {
+  captureId: string
+  bucket: CaptureBucket
+  rawBucket: string
+  pose: Pose
+  semanticPoints: Record<CanonicalCompatible8PointId, SemanticPoint2D>
+  bounds: Bounds2D
+  warnings: string[]
+}
+
+interface BruteForce8ptFrameEvaluation {
+  captureId: string
+  bucket: CaptureBucket
+  rawBucket: string
+  frameError: number
+  averageSemanticDistance: number
+  weightedSemanticDistance: number
+  perPointError: Record<CanonicalCompatible8PointId, number>
+}
+
+interface BruteForce8ptCandidateResult {
+  candidateId: string
+  candidate: FittingCandidate8
+  totalScore: number
+  averageProjectionError: number
+  bucketScores: PoseBucketScores
+  scoreDebug: CandidateScoreDebug
+  objectiveScoreBeforeDepthFilter: number
+  objectiveScore: number
+  depthStructureDebug8pt: BruteForce8ptDepthStructureDebug
+  canonicalComparison: BruteForce8ptCanonicalComparison
+  rawProjectionRank?: number
+  structureAwareRank?: number
+  scoreBreakdown: StructureAwareScoreBreakdown
+}
+
+interface CandidateComparison8ptVs12pt {
+  best8ptBruteforce?: {
+    candidateId: string | null
+    averageProjectionError: number | null
+    canonicalAverageAbsDelta: number | null
+    depthRelationStatus: BruteForce8ptDepthRelationStatus | null
+  }
+  final12ptSequence?: {
+    candidateId: string | null
+    averageProjectionError: number | null
+    canonicalAverageAbsDelta: number | null
+    depthRelationStatus: SemanticPointSetComparisonDepthRelationStatus | null
+  }
+  best8ptRawProjection: CandidateComparisonEntry
+  best8ptStructureAware: CandidateComparisonEntry
+  final12ptCurrent: CandidateComparisonEntry
+  best12ptStructureAware: CandidateComparisonEntry
+  notes: string[]
+}
+
+interface CandidateComparisonEntry {
+  candidateId: string | null
+  averageProjectionError: number | null
+  canonicalAverageAbsDelta: number | null
+  canonicalCorrelation: number | null
+  depthRelationStatus: BruteForce8ptDepthRelationStatus | SemanticPointSetComparisonDepthRelationStatus | null
+  structureAwareScore: number | null
+  rawProjectionScore: number | null
+  boundHitCount: number | null
+}
+
+interface StructureAwareRerankingCandidate {
+  candidateId: string
+  rawProjectionRank: number | null
+  structureAwareRank: number
+  rawProjectionScore: number
+  structureAwareScore: number
+  averageProjectionError: number
+  canonicalComparison: BruteForce8ptCanonicalComparison | null
+  depthRelationStatus: BruteForce8ptDepthRelationStatus
+  boundHitCount: number
+  scoreBreakdown: StructureAwareScoreBreakdown
+  candidate: FittingCandidate8
+}
+
+interface StructureAwareRerankingSummary {
+  enabled: boolean
+  description: string
+  topCandidates: StructureAwareRerankingCandidate[]
+  wouldSelectCandidateId: string | null
+  currentFinalCandidateId: string | null
+  wouldChangeFinalCandidate: boolean
+}
+
 type Quick478DepthDebugStatus =
   | "idle"
   | "running"
@@ -1382,6 +1653,16 @@ interface Quick478DepthDebugSummary {
     faceBoundaryGroupLowerBoundHitCount: number | null
     faceCenterGroupZ: number | null
     faceBoundaryGroupZ: number | null
+    bruteforce8ptCandidateCount?: number
+    best8ptScore?: number | null
+    best8ptCanonicalAverageAbsDelta?: number | null
+    best12ptScore?: number | null
+    best12ptCanonicalAverageAbsDelta?: number | null
+    rawBestScore?: number | null
+    structureAwareBestScore?: number | null
+    rawBestDepthStatus?: BruteForce8ptDepthRelationStatus | null
+    structureAwareBestDepthStatus?: BruteForce8ptDepthRelationStatus | null
+    wouldChangeFinalCandidate?: boolean | null
   }
   isRejected?: boolean
   fallbackUsed?: boolean
@@ -1427,6 +1708,8 @@ interface Quick478DepthDebugPayload extends Depth478PrototypeResult {
   semanticPointZSearchBoundSummary?: SemanticPointZSearchBoundSummary
   perLandmarkZSearchSummary?: PerLandmarkZSearchBoundSummary
   semanticPointSetComparison?: SemanticPointSetComparisonSummary
+  bruteforce8ptCanonicalBaseline?: BruteForce8ptCanonicalBaseline
+  candidateComparison8ptVs12pt?: CandidateComparison8ptVs12pt
   analysisSummary?: SummaryAnalysisResult
 }
 
@@ -2928,6 +3211,43 @@ const QUICK_478_DEPTH_DEBUG_SETTINGS_SUMMARY = {
   perLandmarkZSearchEnabled: true,
   interpolationMethod: "canonicalDepthBased" as const,
 }
+
+const CANONICAL_COMPATIBLE_8PT = {
+  headTop: [10],
+  chin: [152],
+  leftCheek: [234],
+  rightCheek: [454],
+  leftEye: [263, 362],
+  rightEye: [33, 133],
+  nose: [4],
+  mouth: [13, 14],
+} satisfies Record<CanonicalCompatible8PointId, number[]>
+
+const CANONICAL_COMPATIBLE_8PT_POINT_IDS = Object.keys(
+  CANONICAL_COMPATIBLE_8PT,
+) as CanonicalCompatible8PointId[]
+
+const BRUTEFORCE_8PT_CANONICAL_RANGES = {
+  headTop: [-0.02, 0, 0.02],
+  chin: [-0.05, -0.03, -0.01, 0.01],
+  leftCheek: [0.02, 0.04, 0.06],
+  rightCheek: [0.02, 0.04, 0.06],
+  leftEye: [0, 0.02, 0.04],
+  rightEye: [0, 0.02, 0.04],
+  nose: [-0.02, 0, 0.02, 0.04],
+  mouth: [0, 0.02, 0.04, 0.06],
+} satisfies Record<CanonicalCompatible8PointId, number[]>
+
+const BRUTEFORCE_8PT_CANONICAL_TOP_N = 20
+const BRUTEFORCE_8PT_CHIN_TOO_FRONT_MARGIN = 0.03
+const BRUTEFORCE_8PT_JAW_CHEEK_MARGIN = 0.03
+const STRUCTURE_AWARE_CORRELATION_WARNING_THRESHOLD = 0.25
+const STRUCTURE_AWARE_CORRELATION_NEGATIVE_PENALTY = 0.05
+const STRUCTURE_AWARE_CANONICAL_AVERAGE_DELTA_FREE = 0.03
+const STRUCTURE_AWARE_CANONICAL_MAX_DELTA_FREE = 0.08
+const STRUCTURE_AWARE_BOUND_HIT_PENALTY = 0.002
+const STRUCTURE_AWARE_IMPORTANT_BOUND_HIT_PENALTY = 0.006
+const STRUCTURE_AWARE_TOP_N = 20
 
 const DEPTH_478_GROUP_DEFINITIONS: Array<{
   groupId: string
@@ -5565,6 +5885,1479 @@ function buildSemanticPointSetComparisonSummary(
   }
 }
 
+function buildBruteforce8ptCanonicalBaseline(
+  analysis: AnalysisResult | undefined,
+): BruteForce8ptCanonicalBaseline {
+  const topN = BRUTEFORCE_8PT_CANONICAL_TOP_N
+  const fixedBase = cloneCandidate(NATURAL_NOSE_WITH_ROTATION_CENTER)
+  const fixedRotationCenter = getCandidateRotationCenter(fixedBase)
+  const settings = analysis
+    ? {
+        ...analysis.searchSettings,
+        semanticPointSetId: "8pt_basic" as const,
+        objectiveMode: analysis.searchSettings.objectiveMode,
+        outlierFiltering: buildOutlierFilteringSettings({
+          ...DEFAULT_OUTLIER_FILTERING_SETTINGS,
+          ...QUICK_478_DEPTH_DEBUG_SETTINGS.outlierFiltering,
+        }),
+        depthRelationFiltering: normalizeDepthRelationFilteringSettings({
+          ...DEFAULT_DEPTH_RELATION_FILTERING_SETTINGS,
+          enabled: QUICK_478_DEPTH_DEBUG_SETTINGS.depthRelationFiltering.enabled,
+          mode: QUICK_478_DEPTH_DEBUG_SETTINGS.depthRelationFiltering.mode,
+          applyToObjectiveScore:
+            QUICK_478_DEPTH_DEBUG_SETTINGS.depthRelationFiltering.applyToObjectiveScore,
+        }),
+      }
+    : createQuick478DepthDebugSearchSettings(fixedBase, findSearchPreset("rotationCenter8PointFineBalanced"))
+  const selected = selectFrames(state.frames, settings).frames
+  const frames = buildBruteforce8ptFrames(selected)
+  const basePoints = buildBruteforce8ptBasePoints(frames)
+  const candidateCount = getBruteforce8ptCanonicalCandidateCount()
+  const rawTopResults: BruteForce8ptCandidateResult[] = []
+  const structureAwareTopResults: BruteForce8ptCandidateResult[] = []
+  let evaluatedCandidateCount = 0
+  let rejectedCandidateCount = 0
+  let candidateIndex = 0
+
+  if (!basePoints) {
+    return createEmptyBruteforce8ptCanonicalBaseline(candidateCount, fixedBase, settings, topN)
+  }
+
+  for (const headTop of BRUTEFORCE_8PT_CANONICAL_RANGES.headTop) {
+    for (const chin of BRUTEFORCE_8PT_CANONICAL_RANGES.chin) {
+      for (const leftCheek of BRUTEFORCE_8PT_CANONICAL_RANGES.leftCheek) {
+        for (const rightCheek of BRUTEFORCE_8PT_CANONICAL_RANGES.rightCheek) {
+          for (const leftEye of BRUTEFORCE_8PT_CANONICAL_RANGES.leftEye) {
+            for (const rightEye of BRUTEFORCE_8PT_CANONICAL_RANGES.rightEye) {
+              for (const nose of BRUTEFORCE_8PT_CANONICAL_RANGES.nose) {
+                for (const mouth of BRUTEFORCE_8PT_CANONICAL_RANGES.mouth) {
+                  candidateIndex += 1
+                  evaluatedCandidateCount += 1
+                  const candidate = {
+                    pivotZ: fixedBase.pivotZ,
+                    rotationCenter: fixedRotationCenter,
+                    zByPointId: completeSemanticZ({
+                      headTop,
+                      chin,
+                      leftCheek,
+                      rightCheek,
+                      leftEye,
+                      rightEye,
+                      nose,
+                      mouth,
+                    }),
+                  }
+                  const result = evaluateBruteforce8ptCandidate(
+                    candidate,
+                    `8pt_bruteforce_${String(candidateIndex).padStart(6, "0")}`,
+                    basePoints,
+                    frames,
+                    settings,
+                  )
+                  insertBruteforce8ptRawTopResult(rawTopResults, result, topN)
+                  if (result.depthStructureDebug8pt.noseVsCheek.status === "rejected") {
+                    rejectedCandidateCount += 1
+                    continue
+                  }
+                  insertBruteforce8ptStructureAwareTopResult(structureAwareTopResults, result, topN)
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  const rawSorted = rawTopResults.sort(
+    (a, b) => a.objectiveScoreBeforeDepthFilter - b.objectiveScoreBeforeDepthFilter,
+  )
+  rawSorted.forEach((result, index) => {
+    result.rawProjectionRank = index + 1
+  })
+  const structureSorted = structureAwareTopResults.sort(
+    (a, b) => a.scoreBreakdown.structureAwareScore - b.scoreBreakdown.structureAwareScore,
+  )
+  structureSorted.forEach((result, index) => {
+    result.structureAwareRank = index + 1
+    const rawMatch = rawSorted.find((raw) => raw.candidateId === result.candidateId)
+    if (rawMatch?.rawProjectionRank) {
+      result.rawProjectionRank = rawMatch.rawProjectionRank
+    }
+  })
+  const rawProjectionTopCandidates = rawSorted.map((result, index) =>
+    toBruteforce8ptTopCandidate(result, index + 1, "rawProjection"),
+  )
+  const structureAwareTopCandidates = structureSorted.map((result, index) =>
+    toBruteforce8ptTopCandidate(result, index + 1, "structureAware"),
+  )
+  const best = structureAwareTopCandidates[0] ?? null
+  const rawBest = rawProjectionTopCandidates[0] ?? null
+  const finalCandidateSelection = buildBruteforce8ptFinalCandidateSelection(rawBest, best)
+
+  return {
+    enabled: true,
+    pointSetId: "8pt_canonical_compatible",
+    candidateCount,
+    evaluatedCandidateCount,
+    rejectedCandidateCount,
+    topCandidates: structureAwareTopCandidates,
+    rawProjectionRanking: {
+      description: "投影誤差中心のデバッグ用ランキング。finalCandidate選定には使わない。",
+      topCandidates: rawProjectionTopCandidates,
+    },
+    structureAwareRanking: {
+      description: "構造考慮ランキング。finalCandidate選定に使う。",
+      settings: buildStructureAwareRankingSettings(),
+      topCandidates: structureAwareTopCandidates,
+    },
+    finalCandidateSelection,
+    summary: {
+      bestCandidateId: best?.candidateId ?? null,
+      bestScore: best?.structureAwareScore ?? null,
+      bestCanonicalAverageAbsDelta: best?.canonicalComparison.averageAbsDelta ?? null,
+      bestCanonicalMaxAbsDelta: best?.canonicalComparison.maxAbsDelta ?? null,
+      bestDepthRelationStatus: best?.depthStructureDebug8pt.score.status ?? null,
+      topNCount: topN,
+    },
+    settings: {
+      pointLandmarkIndices: cloneCanonicalCompatible8ptMapping(),
+      zRanges: cloneBruteforce8ptRanges(),
+      fixedRotationCenterSource: "naturalNoseWithRotationCenter",
+      fixedPivotZ: round(fixedBase.pivotZ),
+      fixedRotationCenter,
+      objectiveMode: settings.objectiveMode,
+      outlierFilteringEnabled: settings.outlierFiltering.enabled,
+      depthRelationMode: settings.depthRelationFiltering.mode,
+    },
+  }
+}
+
+function createEmptyBruteforce8ptCanonicalBaseline(
+  candidateCount: number,
+  fixedBase: FittingCandidate8,
+  settings: SearchSettings,
+  topN: number,
+): BruteForce8ptCanonicalBaseline {
+  return {
+    enabled: true,
+    pointSetId: "8pt_canonical_compatible",
+    candidateCount,
+    evaluatedCandidateCount: 0,
+    rejectedCandidateCount: 0,
+    topCandidates: [],
+    rawProjectionRanking: {
+      description: "投影誤差中心のデバッグ用ランキング。finalCandidate選定には使わない。",
+      topCandidates: [],
+    },
+    structureAwareRanking: {
+      description: "構造考慮ランキング。finalCandidate選定に使う。",
+      settings: buildStructureAwareRankingSettings(),
+      topCandidates: [],
+    },
+    finalCandidateSelection: {
+      selectedFrom: "structureAwareRanking",
+      selectedCandidateId: null,
+      rawProjectionRank: null,
+      structureAwareRank: null,
+      reason: "8pt canonical compatible base points could not be built.",
+    },
+    summary: {
+      bestCandidateId: null,
+      bestScore: null,
+      bestCanonicalAverageAbsDelta: null,
+      bestCanonicalMaxAbsDelta: null,
+      bestDepthRelationStatus: null,
+      topNCount: topN,
+    },
+    settings: {
+      pointLandmarkIndices: cloneCanonicalCompatible8ptMapping(),
+      zRanges: cloneBruteforce8ptRanges(),
+      fixedRotationCenterSource: "naturalNoseWithRotationCenter",
+      fixedPivotZ: round(fixedBase.pivotZ),
+      fixedRotationCenter: getCandidateRotationCenter(fixedBase),
+      objectiveMode: settings.objectiveMode,
+      outlierFilteringEnabled: settings.outlierFiltering.enabled,
+      depthRelationMode: settings.depthRelationFiltering.mode,
+    },
+  }
+}
+
+function buildBruteforce8ptFrames(frames: NormalizedFrame[]): BruteForce8ptFrame[] {
+  return frames.flatMap((frame) => {
+    if (!frame.bounds || frame.landmarks.length < CANONICAL_COMPARISON_LANDMARK_COUNT) {
+      return []
+    }
+    const semanticPoints = extractCanonicalCompatible8ptPoints2D(frame.landmarks, frame.aspectRatio)
+    if (!semanticPoints) {
+      return []
+    }
+    return [
+      {
+        captureId: frame.captureId,
+        bucket: frame.bucket,
+        rawBucket: frame.rawBucket,
+        pose: frame.pose,
+        semanticPoints,
+        bounds: frame.bounds,
+        warnings: frame.warnings,
+      },
+    ]
+  })
+}
+
+function extractCanonicalCompatible8ptPoints2D(
+  landmarks: LandmarkPoint[],
+  aspectRatio: number,
+): Record<CanonicalCompatible8PointId, SemanticPoint2D> | null {
+  const points = {} as Record<CanonicalCompatible8PointId, SemanticPoint2D>
+  for (const pointId of CANONICAL_COMPATIBLE_8PT_POINT_IDS) {
+    const point = averageByIndices(landmarks, CANONICAL_COMPATIBLE_8PT[pointId])
+    if (!point) {
+      return null
+    }
+    points[pointId] = {
+      name: pointId,
+      x: toSameUnitX(point.x, aspectRatio),
+      y: point.y - 0.5,
+    }
+  }
+  return points
+}
+
+function buildBruteforce8ptBasePoints(
+  frames: BruteForce8ptFrame[],
+): Record<CanonicalCompatible8PointId, SemanticPoint2D> | null {
+  const frontFrames = frames.filter((frame) => frame.bucket === "front")
+  if (frontFrames.length === 0) {
+    return null
+  }
+  const boundsCenter = averagePoint2D(
+    frontFrames.map((frame) => ({
+      x: frame.bounds.centerX,
+      y: frame.bounds.centerY,
+    })),
+  )
+  return Object.fromEntries(
+    CANONICAL_COMPATIBLE_8PT_POINT_IDS.map((pointId) => {
+      const averagePoint = averagePoint2D(
+        frontFrames.map((frame) => frame.semanticPoints[pointId]),
+      )
+      return [
+        pointId,
+        {
+          name: pointId,
+          x: round(averagePoint.x - boundsCenter.x),
+          y: round(averagePoint.y - boundsCenter.y),
+        },
+      ]
+    }),
+  ) as Record<CanonicalCompatible8PointId, SemanticPoint2D>
+}
+
+function evaluateBruteforce8ptCandidate(
+  candidate: FittingCandidate8,
+  candidateId: string,
+  basePoints: Record<CanonicalCompatible8PointId, SemanticPoint2D>,
+  frames: BruteForce8ptFrame[],
+  settings: SearchSettings,
+): BruteForce8ptCandidateResult {
+  const ideal3D = Object.fromEntries(
+    CANONICAL_COMPATIBLE_8PT_POINT_IDS.map((pointId) => [
+      pointId,
+      {
+        x: basePoints[pointId].x,
+        y: basePoints[pointId].y,
+        z: candidate.zByPointId[pointId],
+      },
+    ]),
+  ) as Record<CanonicalCompatible8PointId, Point3>
+  const perFrameResults = frames.map((frame) =>
+    evaluateBruteforce8ptCandidateOnFrame(candidate, ideal3D, frame, settings),
+  )
+  const rawTotalScore =
+    average(perFrameResults.map((result) => result.weightedSemanticDistance)) ??
+    Number.POSITIVE_INFINITY
+  const rawBucketScores = calculateBruteforce8ptBucketScores(perFrameResults)
+  const rawScoreDebug = calculateScoreDebug(rawTotalScore, rawBucketScores)
+  const filteredScoreSnapshot = buildBruteforce8ptFilteredScoreSnapshot(
+    perFrameResults,
+    {
+      totalScore: rawTotalScore,
+      bucketScores: rawBucketScores,
+      scoreDebug: rawScoreDebug,
+    },
+    settings.outlierFiltering,
+  )
+  const scoreForObjective = filteredScoreSnapshot ?? {
+    totalScore: rawTotalScore,
+    bucketScores: rawBucketScores,
+    scoreDebug: rawScoreDebug,
+  }
+  const objectiveScoreBeforeDepthFilter = getObjectiveScore(scoreForObjective, settings.objectiveMode)
+  const depthStructureDebug8pt = buildDepthStructureDebug8pt(candidate)
+  const canonicalComparison = buildCanonicalComparisonForCandidate(
+    candidate,
+    CANONICAL_COMPATIBLE_8PT,
+    CANONICAL_COMPATIBLE_8PT_POINT_IDS,
+  )
+  const scoreBreakdown = buildStructureAwareScoreBreakdown({
+    candidate,
+    pointIds: CANONICAL_COMPATIBLE_8PT_POINT_IDS,
+    canonicalComparison,
+    projectionScore: objectiveScoreBeforeDepthFilter,
+    depthStructureDebug: depthStructureDebug8pt,
+    boundRanges: BRUTEFORCE_8PT_CANONICAL_RANGES,
+    hardRejectRuleIds: ["nose_vs_cheek"],
+  })
+  const objectiveScore = scoreBreakdown.hardRejected
+    ? Number.POSITIVE_INFINITY
+    : objectiveScoreBeforeDepthFilter
+
+  return {
+    candidateId,
+    candidate,
+    totalScore: round(scoreForObjective.totalScore),
+    averageProjectionError: round(
+      average(perFrameResults.map((result) => result.averageSemanticDistance)) ??
+        Number.POSITIVE_INFINITY,
+    ),
+    bucketScores: roundRecord(scoreForObjective.bucketScores),
+    scoreDebug: roundScoreDebug(scoreForObjective.scoreDebug),
+    objectiveScoreBeforeDepthFilter: round(objectiveScoreBeforeDepthFilter),
+    objectiveScore: round(objectiveScore),
+    depthStructureDebug8pt,
+    canonicalComparison,
+    scoreBreakdown,
+  }
+}
+
+function evaluateBruteforce8ptCandidateOnFrame(
+  candidate: FittingCandidate8,
+  ideal3D: Record<CanonicalCompatible8PointId, Point3>,
+  frame: BruteForce8ptFrame,
+  settings: SearchSettings,
+): BruteForce8ptFrameEvaluation {
+  const rotationCenter = getCandidateRotationCenter(candidate)
+  const projected = Object.fromEntries(
+    CANONICAL_COMPATIBLE_8PT_POINT_IDS.map((pointId) => {
+      const point = ideal3D[pointId]
+      const rotated = rotatePoint3D(
+        {
+          x: point.x - rotationCenter.x,
+          y: point.y - rotationCenter.y,
+          z: point.z - rotationCenter.z,
+        },
+        frame.pose,
+      )
+      const projectedX = rotated.x + rotationCenter.x
+      const projectedY = rotated.y + rotationCenter.y
+      const z = rotated.z + rotationCenter.z
+      const perspective = settings.focalLength / Math.max(settings.focalLength + z, 0.2)
+      return [
+        pointId,
+        {
+          name: pointId,
+          x: round(projectedX * perspective),
+          y: round(projectedY * perspective),
+        },
+      ]
+    }),
+  ) as Record<CanonicalCompatible8PointId, SemanticPoint2D>
+  const current = Object.fromEntries(
+    CANONICAL_COMPATIBLE_8PT_POINT_IDS.map((pointId) => [
+      pointId,
+      {
+        name: pointId,
+        x: round(frame.semanticPoints[pointId].x - frame.bounds.centerX),
+        y: round(frame.semanticPoints[pointId].y - frame.bounds.centerY),
+      },
+    ]),
+  ) as Record<CanonicalCompatible8PointId, SemanticPoint2D>
+  const perPointError = Object.fromEntries(
+    CANONICAL_COMPATIBLE_8PT_POINT_IDS.map((pointId) => [
+      pointId,
+      round(distance2D(projected[pointId], current[pointId])),
+    ]),
+  ) as Record<CanonicalCompatible8PointId, number>
+  const averageSemanticDistance =
+    average(CANONICAL_COMPATIBLE_8PT_POINT_IDS.map((pointId) => perPointError[pointId])) ??
+    Number.POSITIVE_INFINITY
+  const weightedSemanticDistance = weightedAverage(
+    CANONICAL_COMPATIBLE_8PT_POINT_IDS.map((pointId) => ({
+      value: perPointError[pointId],
+      weight: getSemanticPointWeight(pointId),
+    })),
+  )
+
+  return {
+    captureId: frame.captureId,
+    bucket: frame.bucket,
+    rawBucket: frame.rawBucket,
+    frameError: weightedSemanticDistance,
+    averageSemanticDistance,
+    weightedSemanticDistance,
+    perPointError,
+  }
+}
+
+function calculateBruteforce8ptBucketScores(
+  results: BruteForce8ptFrameEvaluation[],
+): PoseBucketScores {
+  return {
+    front: averageBruteforce8ptBucketScore(results, "front"),
+    yawPositive: averageBruteforce8ptBucketScore(results, "yawPositive"),
+    yawNegative: averageBruteforce8ptBucketScore(results, "yawNegative"),
+    pitchPositive: averageBruteforce8ptBucketScore(results, "pitchPositive"),
+    pitchNegative: averageBruteforce8ptBucketScore(results, "pitchNegative"),
+    mixedPose: averageBruteforce8ptBucketScore(results, "mixedPose"),
+  }
+}
+
+function averageBruteforce8ptBucketScore(
+  results: BruteForce8ptFrameEvaluation[],
+  bucket: CaptureBucket,
+): number | null {
+  return roundNullable(
+    average(results.filter((result) => result.bucket === bucket).map((result) => result.frameError)),
+  )
+}
+
+function buildBruteforce8ptFilteredScoreSnapshot(
+  perFrameResults: BruteForce8ptFrameEvaluation[],
+  rawScores: CandidateScoreSnapshot,
+  settings: OutlierFilteringSettings,
+): CandidateScoreSnapshot | null {
+  if (
+    !settings.enabled ||
+    settings.mode !== "excludeFromInference" ||
+    !settings.applyToObjectiveScore
+  ) {
+    return null
+  }
+  const outlierIds = new Set<string>()
+  for (const bucket of BUCKETS) {
+    const bucketResults = perFrameResults.filter((result) => result.bucket === bucket)
+    if (bucketResults.length < settings.minBucketSampleCount) {
+      continue
+    }
+    const sortedWorstFirst = [...bucketResults].sort((a, b) => b.frameError - a.frameError)
+    const bucketMedianError = median(bucketResults.map((result) => result.frameError))
+    const outliers = selectBruteforce8ptOutliers(
+      sortedWorstFirst,
+      bucketMedianError,
+      settings,
+    )
+    for (const outlier of outliers) {
+      outlierIds.add(`${outlier.bucket}:${outlier.captureId}`)
+    }
+  }
+  if (outlierIds.size === 0) {
+    return roundScoreSnapshot(rawScores)
+  }
+  const filteredResults = perFrameResults.filter(
+    (result) => !outlierIds.has(`${result.bucket}:${result.captureId}`),
+  )
+  const totalScore =
+    average(filteredResults.map((result) => result.weightedSemanticDistance)) ??
+    Number.POSITIVE_INFINITY
+  const bucketScores = calculateBruteforce8ptBucketScores(filteredResults)
+  return roundScoreSnapshot({
+    totalScore,
+    bucketScores,
+    scoreDebug: calculateScoreDebug(totalScore, bucketScores),
+  })
+}
+
+function selectBruteforce8ptOutliers(
+  sortedWorstFirst: BruteForce8ptFrameEvaluation[],
+  bucketMedianError: number | null,
+  settings: OutlierFilteringSettings,
+): BruteForce8ptFrameEvaluation[] {
+  const maxOutliers = Math.max(0, Math.round(settings.perBucketMaxOutliers))
+  if (maxOutliers === 0 || sortedWorstFirst.length === 0) {
+    return []
+  }
+  if (settings.method === "topWorstPercent") {
+    const percentCount = Math.ceil(sortedWorstFirst.length * Math.max(0, settings.topWorstPercent) / 100)
+    return sortedWorstFirst.slice(0, Math.min(maxOutliers, percentCount))
+  }
+  if (bucketMedianError === null) {
+    return []
+  }
+  if (settings.method === "medianAbsoluteDelta") {
+    const threshold = bucketMedianError + settings.absoluteDeltaThreshold
+    return sortedWorstFirst
+      .filter((result) => result.frameError > threshold)
+      .slice(0, maxOutliers)
+  }
+  const threshold = bucketMedianError * settings.medianMultiplier
+  return sortedWorstFirst
+    .filter((result) => result.frameError > threshold)
+    .slice(0, maxOutliers)
+}
+
+function roundScoreSnapshot(snapshot: CandidateScoreSnapshot): CandidateScoreSnapshot {
+  return {
+    totalScore: round(snapshot.totalScore),
+    bucketScores: roundRecord(snapshot.bucketScores),
+    scoreDebug: roundScoreDebug(snapshot.scoreDebug),
+  }
+}
+
+function buildDepthStructureDebug8pt(candidate: FittingCandidate8): BruteForce8ptDepthStructureDebug {
+  const z = candidate.zByPointId
+  const cheekZ = average([z.leftCheek, z.rightCheek]) ?? null
+  const centerZ = average([z.nose, z.mouth, z.leftEye, z.rightEye]) ?? null
+  const boundaryZ = average([z.headTop, z.chin, z.leftCheek, z.rightCheek]) ?? null
+  const checks = {
+    noseVsCheek: buildBruteforce8ptRelationCheck(
+      "nose",
+      z.nose,
+      "cheeks",
+      cheekZ,
+      QUICK_DEPTH_478_NOSE_CHEEK_MARGIN,
+      "inFrontOf",
+    ),
+    centerVsBoundary: buildBruteforce8ptRelationCheck(
+      "faceCenter",
+      centerZ,
+      "faceBoundary",
+      boundaryZ,
+      0,
+      "inFrontOf",
+    ),
+    chinTooFront: buildBruteforce8ptRelationCheck(
+      "chin",
+      z.chin,
+      "nose",
+      z.nose,
+      BRUTEFORCE_8PT_CHIN_TOO_FRONT_MARGIN,
+      "notTooFarInFrontOf",
+    ),
+    jawVsCheek: buildBruteforce8ptRelationCheck(
+      "chinAsJaw",
+      z.chin,
+      "cheeks",
+      cheekZ,
+      BRUTEFORCE_8PT_JAW_CHEEK_MARGIN,
+      "notTooFarInFrontOf",
+    ),
+  }
+  const values = Object.values(checks)
+  const violationCount = values.filter((check) => check.status === "rejected").length
+  const warningCount = values.filter((check) => check.status === "warning").length
+  return {
+    ...checks,
+    score: {
+      status: violationCount > 0 ? "rejected" : warningCount > 0 ? "warning" : "passed",
+      violationCount,
+      warningCount,
+    },
+  }
+}
+
+function buildBruteforce8ptRelationCheck(
+  subjectId: string,
+  subjectZ: number | null,
+  referenceId: string,
+  referenceZ: number | null,
+  margin: number,
+  relation: "inFrontOf" | "notTooFarInFrontOf",
+): BruteForce8ptDepthRelationCheck {
+  const delta = subjectZ === null || referenceZ === null ? null : round(subjectZ - referenceZ)
+  const passed =
+    delta !== null &&
+    (relation === "inFrontOf" ? delta < -margin : delta >= -margin)
+  const directionOk =
+    delta !== null &&
+    (relation === "inFrontOf" ? delta < 0 : delta >= -margin * 1.5)
+  const status: BruteForce8ptDepthRelationStatus = passed
+    ? "passed"
+    : directionOk
+      ? "warning"
+      : "rejected"
+  return {
+    passed,
+    status,
+    subjectZ: roundNullable(subjectZ),
+    referenceZ: roundNullable(referenceZ),
+    delta,
+    margin: round(margin),
+    explanation:
+      delta === null
+        ? `${subjectId}.z or ${referenceId}.z is missing`
+        : `${subjectId}.z=${formatNumber(subjectZ)} / ${referenceId}.z=${formatNumber(referenceZ)} / delta=${formatNumber(delta)}`,
+  }
+}
+
+function buildCanonicalComparisonForCandidate(
+  candidate: FittingCandidate8,
+  indexMapping: Record<string, number[]>,
+  pointIds: SemanticPointName[],
+): BruteForce8ptCanonicalComparison {
+  validateCanonicalDepthTemplate(CANONICAL_FACE_DEPTH_TEMPLATE)
+  const canonicalByIndex = buildCanonicalDepthByIndex("raw")
+  const points = pointIds.flatMap((pointId) => {
+    const landmarkIndex = indexMapping[pointId] ?? []
+    const canonicalValues = landmarkIndex
+      .map((index) => canonicalByIndex.get(index)?.z)
+      .filter((value): value is number => typeof value === "number" && Number.isFinite(value))
+    if (canonicalValues.length === 0) {
+      return []
+    }
+    const canonicalZ = average(canonicalValues) ?? 0
+    const candidateZ = candidate.zByPointId[pointId]
+    return [
+      {
+        pointId,
+        landmarkIndex: [...landmarkIndex],
+        candidateZ: round(candidateZ),
+        canonicalZ: round(canonicalZ),
+        delta: round(candidateZ - canonicalZ),
+      },
+    ]
+  })
+  const absDeltas = points.map((point) => Math.abs(point.delta))
+  return {
+    averageAbsDelta: round(average(absDeltas) ?? 0),
+    maxAbsDelta: round(max(absDeltas) ?? 0),
+    points,
+  }
+}
+
+function buildCanonicalComparisonForSemanticPointSetCandidate(
+  candidate: FittingCandidate8 | null | undefined,
+  pointSetId: SemanticPointSetId,
+): BruteForce8ptCanonicalComparison | null {
+  if (!candidate) {
+    return null
+  }
+  const pointIds = getSemanticPointSet(pointSetId).pointIds
+  return buildCanonicalComparisonForSemanticPointIds(candidate, pointIds)
+}
+
+function insertBruteforce8ptRawTopResult(
+  results: BruteForce8ptCandidateResult[],
+  next: BruteForce8ptCandidateResult,
+  topN: number,
+): void {
+  results.push(next)
+  results.sort((a, b) => a.objectiveScoreBeforeDepthFilter - b.objectiveScoreBeforeDepthFilter)
+  if (results.length > topN) {
+    results.length = topN
+  }
+}
+
+function insertBruteforce8ptStructureAwareTopResult(
+  results: BruteForce8ptCandidateResult[],
+  next: BruteForce8ptCandidateResult,
+  topN: number,
+): void {
+  results.push(next)
+  results.sort((a, b) => a.scoreBreakdown.structureAwareScore - b.scoreBreakdown.structureAwareScore)
+  if (results.length > topN) {
+    results.length = topN
+  }
+}
+
+function toBruteforce8ptTopCandidate(
+  result: BruteForce8ptCandidateResult,
+  rank: number,
+  rankingType: "rawProjection" | "structureAware",
+): BruteForce8ptTopCandidate {
+  return {
+    candidateId: result.candidateId,
+    rank,
+    rawProjectionRank: result.rawProjectionRank ?? (rankingType === "rawProjection" ? rank : null),
+    structureAwareRank:
+      result.structureAwareRank ?? (rankingType === "structureAware" ? rank : null),
+    totalScore: round(result.totalScore),
+    objectiveScore: round(result.objectiveScore),
+    objectiveScoreBeforeDepthFilter: round(result.objectiveScoreBeforeDepthFilter),
+    rawProjectionScore: round(result.objectiveScoreBeforeDepthFilter),
+    structureAwareScore: round(result.scoreBreakdown.structureAwareScore),
+    scoreBreakdown: result.scoreBreakdown,
+    averageProjectionError: round(result.averageProjectionError),
+    bucketScores: roundRecord(result.bucketScores),
+    scoreDebug: roundScoreDebug(result.scoreDebug),
+    zByPointId: pickCanonicalCompatible8ptZ(result.candidate),
+    canonicalComparison: result.canonicalComparison,
+    depthStructureDebug8pt: result.depthStructureDebug8pt,
+  }
+}
+
+function pickCanonicalCompatible8ptZ(
+  candidate: FittingCandidate8,
+): Record<CanonicalCompatible8PointId, number> {
+  return Object.fromEntries(
+    CANONICAL_COMPATIBLE_8PT_POINT_IDS.map((pointId) => [
+      pointId,
+      round(candidate.zByPointId[pointId]),
+    ]),
+  ) as Record<CanonicalCompatible8PointId, number>
+}
+
+function getBruteforce8ptCanonicalCandidateCount(): number {
+  return CANONICAL_COMPATIBLE_8PT_POINT_IDS.reduce(
+    (total, pointId) => total * BRUTEFORCE_8PT_CANONICAL_RANGES[pointId].length,
+    1,
+  )
+}
+
+function cloneCanonicalCompatible8ptMapping(): Record<CanonicalCompatible8PointId, number[]> {
+  return Object.fromEntries(
+    CANONICAL_COMPATIBLE_8PT_POINT_IDS.map((pointId) => [
+      pointId,
+      [...CANONICAL_COMPATIBLE_8PT[pointId]],
+    ]),
+  ) as Record<CanonicalCompatible8PointId, number[]>
+}
+
+function cloneBruteforce8ptRanges(): Record<CanonicalCompatible8PointId, number[]> {
+  return Object.fromEntries(
+    CANONICAL_COMPATIBLE_8PT_POINT_IDS.map((pointId) => [
+      pointId,
+      [...BRUTEFORCE_8PT_CANONICAL_RANGES[pointId]],
+    ]),
+  ) as Record<CanonicalCompatible8PointId, number[]>
+}
+
+function getSemanticPointWeight(pointId: SemanticPointName): number {
+  return SEMANTIC_DEFINITIONS.find((definition) => definition.name === pointId)?.weight ?? 1
+}
+
+function buildStructureAwareRankingSettings(): StructureAwareRanking<unknown>["settings"] {
+  return {
+    enabled: true,
+    useDepthRelationPenalty: true,
+    useCanonicalStructurePenalty: true,
+    useBoundHitPenalty: true,
+  }
+}
+
+function buildStructureAwareScoreBreakdown(options: {
+  candidate: FittingCandidate8
+  pointIds: SemanticPointName[]
+  canonicalComparison: BruteForce8ptCanonicalComparison | null
+  projectionScore: number
+  depthStructureDebug?: BruteForce8ptDepthStructureDebug
+  boundRanges?: Partial<Record<SemanticPointName, number[]>>
+  semanticBoundRanges?: Map<LocalSearchParameter, LocalSearchRange>
+  hardRejectRuleIds?: string[]
+}): StructureAwareScoreBreakdown {
+  const depthRelationPenalty = buildDepthRelationPenaltyDebug(
+    options.depthStructureDebug ?? buildDepthStructureDebugForPointSet(options.candidate, options.pointIds),
+  )
+  const canonicalStructurePenalty = buildCanonicalStructurePenaltyDebug(
+    options.candidate,
+    options.pointIds,
+    options.canonicalComparison,
+  )
+  const boundHitPenalty = buildBoundHitPenaltyDebug(
+    options.candidate,
+    options.pointIds,
+    options.boundRanges,
+    options.semanticBoundRanges,
+  )
+  const hardRejectReasons = depthRelationPenalty.violations
+    .filter((violation) => options.hardRejectRuleIds?.includes(violation.ruleId))
+    .map((violation) => violation.label)
+  const structureAwareScore = round(
+    options.projectionScore +
+      depthRelationPenalty.value +
+      canonicalStructurePenalty.value +
+      boundHitPenalty.value,
+  )
+  return {
+    projectionScore: round(options.projectionScore),
+    depthRelationPenalty,
+    canonicalStructurePenalty,
+    boundHitPenalty,
+    structureAwareScore,
+    hardRejected: hardRejectReasons.length > 0,
+    hardRejectReasons,
+  }
+}
+
+function buildDepthRelationPenaltyDebug(
+  debug: BruteForce8ptDepthStructureDebug,
+): DepthRelationPenaltyDebug {
+  const checks: Array<{
+    ruleId: string
+    label: string
+    check: BruteForce8ptDepthRelationCheck
+  }> = [
+    { ruleId: "nose_vs_cheek", label: "鼻が頬より手前ではない", check: debug.noseVsCheek },
+    {
+      ruleId: "center_vs_boundary",
+      label: "顔中心が顔境界より手前ではない",
+      check: debug.centerVsBoundary,
+    },
+    { ruleId: "chin_too_front", label: "顎が手前に出すぎ", check: debug.chinTooFront },
+    {
+      ruleId: "jaw_vs_cheek",
+      label: "顎・顔境界が頬より手前に出すぎ",
+      check: debug.jawVsCheek,
+    },
+  ]
+  const violations = checks.flatMap(({ ruleId, label, check }) => {
+    if (check.status === "passed") {
+      return []
+    }
+    const distance = calculateStructureRelationViolationDistance(ruleId, check)
+    const multiplier = check.status === "rejected" ? 0.7 : 0.25
+    const penalty = round(Math.max(0.002, distance * multiplier))
+    return [
+      {
+        ruleId,
+        label,
+        penalty,
+        details: {
+          status: check.status,
+          subjectZ: check.subjectZ,
+          referenceZ: check.referenceZ,
+          delta: check.delta,
+          margin: check.margin,
+        },
+      },
+    ]
+  })
+  return {
+    value: round(violations.reduce((total, violation) => total + violation.penalty, 0)),
+    violations,
+  }
+}
+
+function calculateStructureRelationViolationDistance(
+  ruleId: string,
+  check: BruteForce8ptDepthRelationCheck,
+): number {
+  if (check.delta === null) {
+    return 0.01
+  }
+  if (ruleId === "nose_vs_cheek" || ruleId === "center_vs_boundary") {
+    return Math.max(0, check.delta + check.margin)
+  }
+  return Math.max(0, -check.margin - check.delta)
+}
+
+function buildCanonicalStructurePenaltyDebug(
+  candidate: FittingCandidate8,
+  pointIds: SemanticPointName[],
+  canonicalComparison: BruteForce8ptCanonicalComparison | null,
+): CanonicalStructurePenaltyDebug {
+  const comparison =
+    canonicalComparison ??
+    buildCanonicalComparisonForSemanticPointIds(candidate, pointIds)
+  const canonicalCorrelation = calculateCanonicalCorrelation(comparison)
+  const correlationPenalty =
+    canonicalCorrelation === null
+      ? 0.02
+      : canonicalCorrelation < 0
+        ? Math.min(0.09, Math.abs(canonicalCorrelation) * STRUCTURE_AWARE_CORRELATION_NEGATIVE_PENALTY + 0.02)
+        : canonicalCorrelation < STRUCTURE_AWARE_CORRELATION_WARNING_THRESHOLD
+          ? round((STRUCTURE_AWARE_CORRELATION_WARNING_THRESHOLD - canonicalCorrelation) * 0.04)
+          : 0
+  const canonicalPairOrderPenalty = buildCanonicalPairOrderPenalty(candidate, comparison, pointIds)
+  const canonicalDeltaPenalty = buildCanonicalDeltaPenalty(comparison)
+  return {
+    value: round(correlationPenalty + canonicalPairOrderPenalty.value + canonicalDeltaPenalty.penalty),
+    canonicalCorrelation,
+    correlationPenalty: round(correlationPenalty),
+    isInvertedLike: canonicalCorrelation !== null && canonicalCorrelation < 0,
+    canonicalPairOrderPenalty,
+    canonicalDeltaPenalty,
+  }
+}
+
+function buildCanonicalComparisonForSemanticPointIds(
+  candidate: FittingCandidate8,
+  pointIds: SemanticPointName[],
+): BruteForce8ptCanonicalComparison {
+  const indexMapping = Object.fromEntries(
+    pointIds.map((pointId) => {
+      if (pointId === "leftEye") {
+        return [pointId, CANONICAL_COMPATIBLE_8PT.leftEye]
+      }
+      if (pointId === "rightEye") {
+        return [pointId, CANONICAL_COMPATIBLE_8PT.rightEye]
+      }
+      const definition = SEMANTIC_DEFINITIONS.find((item) => item.name === pointId)
+      return [pointId, definition ? getCanonicalFitReferenceIndices(definition) : []]
+    }),
+  ) as Record<string, number[]>
+  return buildCanonicalComparisonForCandidate(candidate, indexMapping, pointIds)
+}
+
+function calculateCanonicalCorrelation(
+  comparison: BruteForce8ptCanonicalComparison | null,
+): number | null {
+  const points = comparison?.points ?? []
+  if (points.length < 2) {
+    return null
+  }
+  const candidateValues = points.map((point) => point.candidateZ)
+  const canonicalValues = points.map((point) => point.canonicalZ)
+  const candidateMean = average(candidateValues) ?? 0
+  const canonicalMean = average(canonicalValues) ?? 0
+  const covariance = points.reduce(
+    (total, point) =>
+      total + (point.candidateZ - candidateMean) * (point.canonicalZ - canonicalMean),
+    0,
+  )
+  const candidateVariance = candidateValues.reduce(
+    (total, value) => total + Math.pow(value - candidateMean, 2),
+    0,
+  )
+  const canonicalVariance = canonicalValues.reduce(
+    (total, value) => total + Math.pow(value - canonicalMean, 2),
+    0,
+  )
+  if (candidateVariance <= EPSILON || canonicalVariance <= EPSILON) {
+    return null
+  }
+  return round(covariance / Math.sqrt(candidateVariance * canonicalVariance))
+}
+
+function buildCanonicalPairOrderPenalty(
+  candidate: FittingCandidate8,
+  comparison: BruteForce8ptCanonicalComparison,
+  pointIds: SemanticPointName[],
+): CanonicalPairOrderPenaltyDebug {
+  const canonicalByPointId = new Map(
+    comparison.points.map((point) => [point.pointId, point.canonicalZ]),
+  )
+  const has = (pointId: SemanticPointName): boolean => pointIds.includes(pointId)
+  const cheekCandidate = average([candidate.zByPointId.leftCheek, candidate.zByPointId.rightCheek])
+  const cheekCanonical = average([
+    canonicalByPointId.get("leftCheek") ?? Number.NaN,
+    canonicalByPointId.get("rightCheek") ?? Number.NaN,
+  ].filter(Number.isFinite))
+  const hasJawPoints = has("leftJaw") && has("rightJaw")
+  const jawCandidate = hasJawPoints
+    ? average([candidate.zByPointId.leftJaw, candidate.zByPointId.rightJaw]) ?? candidate.zByPointId.chin
+    : candidate.zByPointId.chin
+  const jawCanonical = hasJawPoints
+    ? average(
+        [canonicalByPointId.get("leftJaw"), canonicalByPointId.get("rightJaw")]
+          .filter((value): value is number => typeof value === "number" && Number.isFinite(value)),
+      )
+    : canonicalByPointId.get("chin") ?? null
+  const pairChecks: Array<{
+    pairId: string
+    label: string
+    candidateDelta: number | null
+    canonicalDelta: number | null
+    allowed: (candidateDelta: number, canonicalDelta: number | null) => boolean
+    penaltyDistance: (candidateDelta: number, canonicalDelta: number | null) => number
+  }> = [
+    {
+      pairId: "nose_vs_cheek",
+      label: "鼻は頬より手前",
+      candidateDelta: cheekCandidate === null ? null : candidate.zByPointId.nose - cheekCandidate,
+      canonicalDelta:
+        cheekCanonical === null || canonicalByPointId.get("nose") === undefined
+          ? null
+          : canonicalByPointId.get("nose")! - cheekCanonical,
+      allowed: (delta) => delta < 0,
+      penaltyDistance: (delta) => Math.max(0, delta),
+    },
+    ...(has("noseBridge")
+      ? [
+          {
+            pairId: "nose_bridge_vs_cheek",
+            label: "鼻筋は頬より手前",
+            candidateDelta:
+              cheekCandidate === null ? null : candidate.zByPointId.noseBridge - cheekCandidate,
+            canonicalDelta:
+              cheekCanonical === null || canonicalByPointId.get("noseBridge") === undefined
+                ? null
+                : canonicalByPointId.get("noseBridge")! - cheekCanonical,
+            allowed: (delta: number) => delta < 0.01,
+            penaltyDistance: (delta: number) => Math.max(0, delta - 0.01),
+          },
+        ]
+      : []),
+    {
+      pairId: "chin_vs_nose",
+      label: "顎が鼻より手前に出すぎ",
+      candidateDelta: candidate.zByPointId.chin - candidate.zByPointId.nose,
+      canonicalDelta:
+        canonicalByPointId.get("chin") === undefined || canonicalByPointId.get("nose") === undefined
+          ? null
+          : canonicalByPointId.get("chin")! - canonicalByPointId.get("nose")!,
+      allowed: (delta) => delta >= -BRUTEFORCE_8PT_CHIN_TOO_FRONT_MARGIN,
+      penaltyDistance: (delta) => Math.max(0, -BRUTEFORCE_8PT_CHIN_TOO_FRONT_MARGIN - delta),
+    },
+    {
+      pairId: "jaw_vs_cheek",
+      label: "顎・顎横が頬より手前に出すぎ",
+      candidateDelta: cheekCandidate === null ? null : jawCandidate - cheekCandidate,
+      canonicalDelta: cheekCanonical === null || jawCanonical === null ? null : jawCanonical - cheekCanonical,
+      allowed: (delta) => delta >= -BRUTEFORCE_8PT_JAW_CHEEK_MARGIN,
+      penaltyDistance: (delta) => Math.max(0, -BRUTEFORCE_8PT_JAW_CHEEK_MARGIN - delta),
+    },
+    ...(has("noseBridge")
+      ? [
+          {
+            pairId: "mouth_vs_nose_bridge",
+            label: "口が鼻筋より奥に行きすぎ",
+            candidateDelta: candidate.zByPointId.mouth - candidate.zByPointId.noseBridge,
+            canonicalDelta:
+              canonicalByPointId.get("mouth") === undefined ||
+              canonicalByPointId.get("noseBridge") === undefined
+                ? null
+                : canonicalByPointId.get("mouth")! - canonicalByPointId.get("noseBridge")!,
+            allowed: (delta: number, canonicalDelta: number | null) =>
+              delta <= Math.max(0.06, (canonicalDelta ?? 0) + 0.04),
+            penaltyDistance: (delta: number, canonicalDelta: number | null) =>
+              Math.max(0, delta - Math.max(0.06, (canonicalDelta ?? 0) + 0.04)),
+          },
+        ]
+      : []),
+  ]
+  const violations = pairChecks.flatMap((check) => {
+    if (check.candidateDelta === null || check.allowed(check.candidateDelta, check.canonicalDelta)) {
+      return []
+    }
+    const penalty = round(Math.max(0.002, check.penaltyDistance(check.candidateDelta, check.canonicalDelta) * 0.6))
+    return [
+      {
+        pairId: check.pairId,
+        label: check.label,
+        candidateDelta: roundNullable(check.candidateDelta),
+        canonicalDelta: roundNullable(check.canonicalDelta),
+        penalty,
+      },
+    ]
+  })
+  return {
+    value: round(violations.reduce((total, violation) => total + violation.penalty, 0)),
+    violations,
+  }
+}
+
+function buildCanonicalDeltaPenalty(
+  comparison: BruteForce8ptCanonicalComparison,
+): CanonicalDeltaPenaltyDebug {
+  const averagePenalty = Math.max(
+    0,
+    comparison.averageAbsDelta - STRUCTURE_AWARE_CANONICAL_AVERAGE_DELTA_FREE,
+  ) * 0.15
+  const maxPenalty = Math.max(
+    0,
+    comparison.maxAbsDelta - STRUCTURE_AWARE_CANONICAL_MAX_DELTA_FREE,
+  ) * 0.05
+  return {
+    averageAbsDelta: comparison.averageAbsDelta,
+    maxAbsDelta: comparison.maxAbsDelta,
+    penalty: round(averagePenalty + maxPenalty),
+  }
+}
+
+function buildBoundHitPenaltyDebug(
+  candidate: FittingCandidate8,
+  pointIds: SemanticPointName[],
+  boundRanges?: Partial<Record<SemanticPointName, number[]>>,
+  semanticBoundRanges?: Map<LocalSearchParameter, LocalSearchRange>,
+): BoundHitPenaltyDebug {
+  const hits = pointIds.flatMap((pointId) => {
+    const z = candidate.zByPointId[pointId]
+    const explicitRange = boundRanges?.[pointId]
+    const minValue = explicitRange ? min(explicitRange) : semanticBoundRanges?.get(`${pointId}.z`)?.min
+    const maxValue = explicitRange ? max(explicitRange) : semanticBoundRanges?.get(`${pointId}.z`)?.max
+    if (minValue === null || minValue === undefined || maxValue === null || maxValue === undefined) {
+      return []
+    }
+    const hit = Math.abs(z - minValue) <= EPSILON
+      ? "lower"
+      : Math.abs(z - maxValue) <= EPSILON
+        ? "upper"
+        : null
+    if (!hit) {
+      return []
+    }
+    const important =
+      hit === "lower" &&
+      ["chin", "leftJaw", "rightJaw", "lowerJawLeft", "lowerJawRight"].includes(pointId)
+    const penalty = important
+      ? STRUCTURE_AWARE_IMPORTANT_BOUND_HIT_PENALTY
+      : STRUCTURE_AWARE_BOUND_HIT_PENALTY
+    return [
+      {
+        pointId,
+        z: round(z),
+        min: round(minValue),
+        max: round(maxValue),
+        hit,
+        penalty,
+      },
+    ]
+  })
+  return {
+    value: round(hits.reduce((total, hit) => total + hit.penalty, 0)),
+    boundHitCount: hits.length,
+    hits,
+  }
+}
+
+function buildDepthStructureDebugForPointSet(
+  candidate: FittingCandidate8,
+  pointIds: SemanticPointName[],
+): BruteForce8ptDepthStructureDebug {
+  const z = candidate.zByPointId
+  const cheekZ = average([z.leftCheek, z.rightCheek]) ?? null
+  const centerPointIds = pointIds.filter((pointId) =>
+    ["nose", "mouth", "leftEye", "rightEye", "noseBridge", "upperFaceCenter"].includes(pointId),
+  )
+  const boundaryPointIds = pointIds.filter((pointId) =>
+    ["headTop", "chin", "leftCheek", "rightCheek", "leftJaw", "rightJaw"].includes(pointId),
+  )
+  const centerZ = average(centerPointIds.map((pointId) => z[pointId])) ?? null
+  const boundaryZ = average(boundaryPointIds.map((pointId) => z[pointId])) ?? null
+  const jawZ =
+    pointIds.includes("leftJaw") && pointIds.includes("rightJaw")
+      ? average([z.leftJaw, z.rightJaw]) ?? z.chin
+      : z.chin
+  const checks = {
+    noseVsCheek: buildBruteforce8ptRelationCheck(
+      "nose",
+      z.nose,
+      "cheeks",
+      cheekZ,
+      QUICK_DEPTH_478_NOSE_CHEEK_MARGIN,
+      "inFrontOf",
+    ),
+    centerVsBoundary: buildBruteforce8ptRelationCheck(
+      "faceCenter",
+      centerZ,
+      "faceBoundary",
+      boundaryZ,
+      0,
+      "inFrontOf",
+    ),
+    chinTooFront: buildBruteforce8ptRelationCheck(
+      "chin",
+      z.chin,
+      "nose",
+      z.nose,
+      BRUTEFORCE_8PT_CHIN_TOO_FRONT_MARGIN,
+      "notTooFarInFrontOf",
+    ),
+    jawVsCheek: buildBruteforce8ptRelationCheck(
+      "jaw",
+      jawZ,
+      "cheeks",
+      cheekZ,
+      BRUTEFORCE_8PT_JAW_CHEEK_MARGIN,
+      "notTooFarInFrontOf",
+    ),
+  }
+  const values = Object.values(checks)
+  const violationCount = values.filter((check) => check.status === "rejected").length
+  const warningCount = values.filter((check) => check.status === "warning").length
+  return {
+    ...checks,
+    score: {
+      status: violationCount > 0 ? "rejected" : warningCount > 0 ? "warning" : "passed",
+      violationCount,
+      warningCount,
+    },
+  }
+}
+
+function buildBruteforce8ptFinalCandidateSelection(
+  rawBest: BruteForce8ptTopCandidate | null,
+  structureBest: BruteForce8ptTopCandidate | null,
+): BruteForce8ptCanonicalBaseline["finalCandidateSelection"] {
+  if (!structureBest) {
+    return {
+      selectedFrom: "structureAwareRanking",
+      selectedCandidateId: null,
+      rawProjectionRank: rawBest?.rank ?? null,
+      structureAwareRank: null,
+      reason: "structureAwareRanking に hardReject 通過候補がありません。",
+    }
+  }
+  if (!rawBest || rawBest.candidateId === structureBest.candidateId) {
+    return {
+      selectedFrom: "structureAwareRanking",
+      selectedCandidateId: structureBest.candidateId,
+      rawProjectionRank: structureBest.rawProjectionRank ?? null,
+      structureAwareRank: structureBest.structureAwareRank ?? structureBest.rank,
+      reason: "rawProjectionRanking と structureAwareRanking の最上位が一致しました。",
+    }
+  }
+  const topPenalty = rawBest.scoreBreakdown.depthRelationPenalty.violations[0]
+    ?? rawBest.scoreBreakdown.canonicalStructurePenalty.canonicalPairOrderPenalty.violations[0]
+  const topPenaltyId = topPenalty
+    ? "ruleId" in topPenalty
+      ? topPenalty.ruleId
+      : topPenalty.pairId
+    : "structurePenalty"
+  return {
+    selectedFrom: "structureAwareRanking",
+    selectedCandidateId: structureBest.candidateId,
+    rawProjectionRank: structureBest.rawProjectionRank ?? null,
+    structureAwareRank: structureBest.structureAwareRank ?? structureBest.rank,
+    reason: `raw rank 1 は ${topPenaltyId} の構造ペナルティが大きいため不採用`,
+  }
+}
+
+function buildStructureAwareReranking(
+  analysis: AnalysisResult,
+): StructureAwareRerankingSummary | undefined {
+  const auto = analysis.autoSequenceSummary
+  if (!auto || analysis.rawRanking.length === 0) {
+    return undefined
+  }
+  const pointIds = getSemanticPointSet(analysis.searchSettings.semanticPointSetId).pointIds
+  const semanticBoundRanges = collectSemanticPointZSearchRanges(analysis)
+  const rawRanks = new Map(analysis.rawRanking.map((entry) => [entry.candidateId, entry.rank]))
+  const candidates = analysis.rawRanking.flatMap((entry) => {
+    const breakdown = buildStructureAwareScoreBreakdownForRankingEntry(
+      entry,
+      pointIds,
+      analysis,
+      semanticBoundRanges,
+    )
+    if (breakdown.hardRejected) {
+      return []
+    }
+    const canonicalComparison = buildCanonicalComparisonForSemanticPointIds(
+      entry.candidate,
+      pointIds,
+    )
+    const depthDebug = buildDepthStructureDebugForPointSet(entry.candidate, pointIds)
+    return [
+      {
+        candidateId: entry.candidateId,
+        rawProjectionRank: rawRanks.get(entry.candidateId) ?? null,
+        structureAwareRank: 0,
+        rawProjectionScore: breakdown.projectionScore,
+        structureAwareScore: breakdown.structureAwareScore,
+        averageProjectionError: entry.averageSemanticDistance,
+        canonicalComparison,
+        depthRelationStatus: depthDebug.score.status,
+        boundHitCount: breakdown.boundHitPenalty.boundHitCount,
+        scoreBreakdown: breakdown,
+        candidate: cloneCandidate(entry.candidate),
+      },
+    ]
+  })
+  const topCandidates = candidates
+    .sort((a, b) => a.structureAwareScore - b.structureAwareScore)
+    .slice(0, STRUCTURE_AWARE_TOP_N)
+    .map((candidate, index) => ({
+      ...candidate,
+      structureAwareRank: index + 1,
+    }))
+  const wouldSelectCandidateId = topCandidates[0]?.candidateId ?? null
+  const currentFinalCandidateId =
+    auto.steps.at(-1)?.bestCandidateId ?? null
+  return {
+    enabled: true,
+    description: "構造考慮ランキング。現時点では既存 finalCandidate は維持し、wouldSelectCandidateId として比較します。",
+    topCandidates,
+    wouldSelectCandidateId,
+    currentFinalCandidateId,
+    wouldChangeFinalCandidate:
+      Boolean(wouldSelectCandidateId && currentFinalCandidateId) &&
+      wouldSelectCandidateId !== currentFinalCandidateId,
+  }
+}
+
+function buildStructureAwareScoreBreakdownForRankingEntry(
+  entry: RankingEntry,
+  pointIds: SemanticPointName[],
+  analysis: AnalysisResult,
+  semanticBoundRanges: Map<LocalSearchParameter, LocalSearchRange>,
+): StructureAwareScoreBreakdown {
+  return buildStructureAwareScoreBreakdown({
+    candidate: entry.candidate,
+    pointIds,
+    canonicalComparison: buildCanonicalComparisonForSemanticPointIds(entry.candidate, pointIds),
+    projectionScore: entry.objectiveScoreBeforeDepthFilter ?? entry.objectiveScore,
+    depthStructureDebug: buildDepthStructureDebugForPointSet(entry.candidate, pointIds),
+    semanticBoundRanges,
+    hardRejectRuleIds: ["nose_vs_cheek"],
+  })
+}
+
+function buildStructureAwareScoreBreakdownForRankingCandidate(
+  candidateId: string,
+  candidate: FittingCandidate8,
+  analysis: AnalysisResult | undefined,
+): StructureAwareScoreBreakdown | null {
+  if (!analysis) {
+    return null
+  }
+  const pointIds = getSemanticPointSet(analysis.searchSettings.semanticPointSetId).pointIds
+  const matchingEntry =
+    analysis.rawRanking.find((entry) => entry.candidateId === candidateId) ??
+    analysis.topCandidates.find((entry) => entry.candidateId === candidateId)
+  const projectionScore =
+    matchingEntry?.objectiveScoreBeforeDepthFilter ??
+    matchingEntry?.objectiveScore ??
+    analysis.autoSequenceSummary?.finalObjectiveScore ??
+    0
+  return buildStructureAwareScoreBreakdown({
+    candidate,
+    pointIds,
+    canonicalComparison: buildCanonicalComparisonForSemanticPointIds(candidate, pointIds),
+    projectionScore,
+    depthStructureDebug: buildDepthStructureDebugForPointSet(candidate, pointIds),
+    semanticBoundRanges: collectSemanticPointZSearchRanges(analysis),
+    hardRejectRuleIds: ["nose_vs_cheek"],
+  })
+}
+
+function buildCandidateComparison8ptVs12pt(
+  baseline: BruteForce8ptCanonicalBaseline,
+  analysis: AnalysisResult | undefined,
+  prototype: Depth478PrototypeResult | null,
+  primaryRun: SemanticPointSetComparisonRun | null | undefined,
+): CandidateComparison8ptVs12pt {
+  const best8ptRaw = baseline.rawProjectionRanking.topCandidates[0] ?? null
+  const best8ptStructure = baseline.structureAwareRanking.topCandidates[0] ?? null
+  const best8pt = best8ptStructure
+  const final12ptCandidate = analysis?.autoSequenceSummary?.finalCandidate ?? null
+  const final12ptCanonical = buildCanonicalComparisonForSemanticPointSetCandidate(
+    final12ptCandidate,
+    "12pt_rotation_center",
+  )
+  const final12ptBreakdown = final12ptCandidate
+    ? buildStructureAwareScoreBreakdownForRankingCandidate(
+        final12ptCandidateIdFromAnalysis(analysis, prototype),
+        final12ptCandidate,
+        analysis,
+      )
+    : null
+  const best12ptStructure = analysis?.autoSequenceSummary?.structureAwareReranking?.topCandidates[0] ?? null
+  const final12ptCandidateId =
+    analysis?.autoSequenceSummary?.steps.at(-1)?.bestCandidateId ??
+    prototype?.generatedCandidate?.source8CandidateId ??
+    null
+  const notes: string[] = []
+  if (!best8pt) {
+    notes.push("8pt structureAwareRanking produced no candidate after hardReject filtering.")
+  }
+  if (!final12ptCandidate) {
+    notes.push("12pt finalCandidate is missing.")
+  }
+  notes.push("rawProjectionRankingは投影誤差デバッグ用")
+  notes.push("finalCandidateはstructureAwareRankingから選ぶべき")
+  if (best8pt && final12ptCanonical) {
+    if (best8pt.depthStructureDebug8pt.score.status === "rejected") {
+      notes.push("Best 8pt candidate is rejected by 8pt depth structure debug.")
+    }
+    if (
+      final12ptCanonical.averageAbsDelta >
+      best8pt.canonicalComparison.averageAbsDelta + 0.02
+    ) {
+      notes.push("12pt finalCandidate is farther from canonicalZ than the best 8pt brute force candidate.")
+    }
+  }
+
+  return {
+    best8ptBruteforce: {
+      candidateId: best8pt?.candidateId ?? null,
+      averageProjectionError: best8pt?.averageProjectionError ?? null,
+      canonicalAverageAbsDelta: best8pt?.canonicalComparison.averageAbsDelta ?? null,
+      depthRelationStatus: best8pt?.depthStructureDebug8pt.score.status ?? null,
+    },
+    final12ptSequence: {
+      candidateId: final12ptCandidateId,
+      averageProjectionError:
+        prototype?.projectionEvaluation?.averageProjectionError ??
+        primaryRun?.averageProjectionError ??
+        null,
+      canonicalAverageAbsDelta: final12ptCanonical?.averageAbsDelta ?? null,
+      depthRelationStatus: prototype?.depthRelationDebug
+        ? getSemanticPointSetComparisonDepthRelationStatus(prototype.depthRelationDebug)
+        : primaryRun?.depthRelationStatus ?? null,
+    },
+    best8ptRawProjection: buildComparisonEntryFrom8ptCandidate(best8ptRaw),
+    best8ptStructureAware: buildComparisonEntryFrom8ptCandidate(best8ptStructure),
+    final12ptCurrent: {
+      candidateId: final12ptCandidateId,
+      averageProjectionError:
+        prototype?.projectionEvaluation?.averageProjectionError ??
+        primaryRun?.averageProjectionError ??
+        null,
+      canonicalAverageAbsDelta: final12ptCanonical?.averageAbsDelta ?? null,
+      canonicalCorrelation: calculateCanonicalCorrelation(final12ptCanonical),
+      depthRelationStatus: prototype?.depthRelationDebug
+        ? getSemanticPointSetComparisonDepthRelationStatus(prototype.depthRelationDebug)
+        : primaryRun?.depthRelationStatus ?? null,
+      structureAwareScore: final12ptBreakdown?.structureAwareScore ?? null,
+      rawProjectionScore:
+        analysis?.autoSequenceSummary?.finalObjectiveScore ??
+        primaryRun?.averageProjectionError ??
+        null,
+      boundHitCount: final12ptBreakdown?.boundHitPenalty.boundHitCount ?? null,
+    },
+    best12ptStructureAware: best12ptStructure
+      ? {
+          candidateId: best12ptStructure.candidateId,
+          averageProjectionError: best12ptStructure.averageProjectionError,
+          canonicalAverageAbsDelta:
+            best12ptStructure.canonicalComparison?.averageAbsDelta ?? null,
+          canonicalCorrelation:
+            best12ptStructure.scoreBreakdown.canonicalStructurePenalty.canonicalCorrelation,
+          depthRelationStatus: best12ptStructure.depthRelationStatus,
+          structureAwareScore: best12ptStructure.structureAwareScore,
+          rawProjectionScore: best12ptStructure.rawProjectionScore,
+          boundHitCount: best12ptStructure.boundHitCount,
+        }
+      : emptyCandidateComparisonEntry(),
+    notes,
+  }
+}
+
+function buildComparisonEntryFrom8ptCandidate(
+  candidate: BruteForce8ptTopCandidate | null,
+): CandidateComparisonEntry {
+  if (!candidate) {
+    return emptyCandidateComparisonEntry()
+  }
+  return {
+    candidateId: candidate.candidateId,
+    averageProjectionError: candidate.averageProjectionError,
+    canonicalAverageAbsDelta: candidate.canonicalComparison.averageAbsDelta,
+    canonicalCorrelation: candidate.scoreBreakdown.canonicalStructurePenalty.canonicalCorrelation,
+    depthRelationStatus: candidate.depthStructureDebug8pt.score.status,
+    structureAwareScore: candidate.structureAwareScore,
+    rawProjectionScore: candidate.rawProjectionScore,
+    boundHitCount: candidate.scoreBreakdown.boundHitPenalty.boundHitCount,
+  }
+}
+
+function emptyCandidateComparisonEntry(): CandidateComparisonEntry {
+  return {
+    candidateId: null,
+    averageProjectionError: null,
+    canonicalAverageAbsDelta: null,
+    canonicalCorrelation: null,
+    depthRelationStatus: null,
+    structureAwareScore: null,
+    rawProjectionScore: null,
+    boundHitCount: null,
+  }
+}
+
+function final12ptCandidateIdFromAnalysis(
+  analysis: AnalysisResult | undefined,
+  prototype: Depth478PrototypeResult | null,
+): string {
+  return (
+    analysis?.autoSequenceSummary?.steps.at(-1)?.bestCandidateId ??
+    prototype?.generatedCandidate?.source8CandidateId ??
+    "autoSequenceSummary.finalCandidate"
+  )
+}
+
 function recommendSemanticPointSet(runs: SemanticPointSetComparisonRun[]): {
   semanticPointSetId: SemanticPointSetId | null
   reason: string
@@ -5696,6 +7489,19 @@ function buildQuick478DepthDebugPayload(
   const semanticPointZSearchBoundSummary = buildSemanticPointZSearchBoundSummary(options.analysis)
   const perLandmarkZSearchSummary =
     prototype?.generatedCandidate?.perLandmarkZSearchDebug?.summary
+  const bruteforce8ptCanonicalBaseline = options.analysis
+    ? buildBruteforce8ptCanonicalBaseline(options.analysis)
+    : undefined
+  const candidateComparison8ptVs12pt = bruteforce8ptCanonicalBaseline
+    ? buildCandidateComparison8ptVs12pt(
+        bruteforce8ptCanonicalBaseline,
+        options.analysis,
+        prototype,
+        options.semanticPointSetComparison?.runs.find(
+          (run) => run.semanticPointSetId === "12pt_rotation_center",
+        ),
+      )
+    : undefined
   const noseRule = relation?.ruleResults.find(
     (rule) => rule.ruleId === "nose_tip_group_in_front_of_cheek_group",
   )
@@ -5737,6 +7543,31 @@ function buildQuick478DepthDebugPayload(
       ),
       faceCenterGroupZ: relation?.groupValues.faceCenterGroup?.z ?? null,
       faceBoundaryGroupZ: relation?.groupValues.faceBoundaryGroup?.z ?? null,
+      bruteforce8ptCandidateCount: bruteforce8ptCanonicalBaseline?.candidateCount,
+      best8ptScore: bruteforce8ptCanonicalBaseline?.summary.bestScore,
+      best8ptCanonicalAverageAbsDelta:
+        bruteforce8ptCanonicalBaseline?.summary.bestCanonicalAverageAbsDelta,
+      best12ptScore:
+        options.semanticPointSetComparison?.runs.find(
+          (run) => run.semanticPointSetId === "12pt_rotation_center",
+        )?.averageProjectionError ?? prototype?.projectionEvaluation?.averageProjectionError ?? null,
+      best12ptCanonicalAverageAbsDelta:
+        candidateComparison8ptVs12pt?.final12ptSequence?.canonicalAverageAbsDelta ?? null,
+      rawBestScore:
+        bruteforce8ptCanonicalBaseline?.rawProjectionRanking.topCandidates[0]?.rawProjectionScore ??
+        null,
+      structureAwareBestScore:
+        bruteforce8ptCanonicalBaseline?.structureAwareRanking.topCandidates[0]?.structureAwareScore ??
+        null,
+      rawBestDepthStatus:
+        bruteforce8ptCanonicalBaseline?.rawProjectionRanking.topCandidates[0]?.depthStructureDebug8pt
+          .score.status ?? null,
+      structureAwareBestDepthStatus:
+        bruteforce8ptCanonicalBaseline?.structureAwareRanking.topCandidates[0]?.depthStructureDebug8pt
+          .score.status ?? null,
+      wouldChangeFinalCandidate:
+        options.analysis?.autoSequenceSummary?.structureAwareReranking?.wouldChangeFinalCandidate ??
+        null,
     },
   }
   if (options.isRejected !== undefined) {
@@ -5767,6 +7598,8 @@ function buildQuick478DepthDebugPayload(
     semanticPointZSearchBoundSummary,
     perLandmarkZSearchSummary,
     semanticPointSetComparison: options.semanticPointSetComparison,
+    bruteforce8ptCanonicalBaseline,
+    candidateComparison8ptVs12pt,
     analysisSummary: options.analysis ? createSummaryAnalysis(options.analysis) : undefined,
   }
 }
@@ -8085,6 +9918,10 @@ function finishAutoSequence(
     summaryAnalysis.lastRunType =
       isStabilityCheckRun && status === "completed" ? "stabilityCheck" : "autoSequence"
     summaryAnalysis.autoSequenceSummary = summary
+    if (status === "completed") {
+      summaryAnalysis.autoSequenceSummary.structureAwareReranking =
+        buildStructureAwareReranking(summaryAnalysis)
+    }
     if (status === "completed") {
       appendStabilityHistoryFromAnalysis(summaryAnalysis)
     } else {
@@ -10796,6 +12633,34 @@ function renderQuick478DepthDebug(): void {
     [
       "faceBoundaryGroup lower hits",
       formatNumber(quick.quickRun.summary.faceBoundaryGroupLowerBoundHitCount),
+    ],
+    [
+      "8pt brute force candidate count",
+      formatNumber(quick.quickRun.summary.bruteforce8ptCandidateCount),
+    ],
+    ["best8pt score", formatNumber(quick.quickRun.summary.best8ptScore)],
+    [
+      "best8pt canonical delta",
+      formatNumber(quick.quickRun.summary.best8ptCanonicalAverageAbsDelta),
+    ],
+    ["best12pt score", formatNumber(quick.quickRun.summary.best12ptScore)],
+    [
+      "best12pt canonical delta",
+      formatNumber(quick.quickRun.summary.best12ptCanonicalAverageAbsDelta),
+    ],
+    ["raw best score", formatNumber(quick.quickRun.summary.rawBestScore)],
+    ["structure-aware best score", formatNumber(quick.quickRun.summary.structureAwareBestScore)],
+    ["raw best depth status", quick.quickRun.summary.rawBestDepthStatus ?? "-"],
+    [
+      "structure-aware best depth status",
+      quick.quickRun.summary.structureAwareBestDepthStatus ?? "-",
+    ],
+    [
+      "wouldChangeFinalCandidate",
+      quick.quickRun.summary.wouldChangeFinalCandidate === null ||
+      quick.quickRun.summary.wouldChangeFinalCandidate === undefined
+        ? "-"
+        : String(quick.quickRun.summary.wouldChangeFinalCandidate),
     ],
   ])
 }
