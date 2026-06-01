@@ -110,11 +110,6 @@ const OVERLAY_POINT_RADIUS = 5
 const OVERLAY_SELECTED_POINT_RADIUS = 8
 const OVERLAY_HIT_RADIUS = 12
 const DEFAULT_EYE_POINT_MODE: EyePointMode = "browEyeAnchor"
-const EYE_POINT_MODE_LABELS: Record<EyePointMode, string> = {
-  browEyeAnchor: "眉目間アンカー browEyeAnchor",
-  eyeContourCenter: "目輪郭中心 eyeContourCenter",
-  irisCenter: "虹彩中心 irisCenter",
-}
 const EYE_POINT_INDICES = {
   leftIris: [474, 475, 476, 477],
   rightIris: [469, 470, 471, 472],
@@ -196,14 +191,6 @@ app.innerHTML = `
           12点サマリを非表示
         </button>
       </div>
-      <label class="eye-point-mode-control">
-        <span>目点モード eyePointMode</span>
-        <select id="eyePointModeSelect">
-          <option value="browEyeAnchor">眉目間アンカー browEyeAnchor</option>
-          <option value="eyeContourCenter">目輪郭中心 eyeContourCenter</option>
-          <option value="irisCenter">虹彩中心 irisCenter</option>
-        </select>
-      </label>
       <div class="thumbnail-frame">
         <canvas id="thumbnailCanvas" width="1280" height="720"></canvas>
         <p id="thumbnailEmpty" class="empty-message">MP4 を読み込むとサムネイルを表示します。</p>
@@ -226,7 +213,6 @@ app.innerHTML = `
       <div id="poseGrid" class="status-grid"></div>
 
       <h2>12点ランドマークサマリ</h2>
-      <div id="landmarkSummaryModeGrid" class="status-grid mode-status-grid"></div>
       <div class="summary-actions">
         <button id="resetSelectedLandmarkButton" type="button" class="secondary-button">
           選択点をリセット
@@ -253,10 +239,8 @@ const frameInfoGrid = getElement("frameInfoGrid")
 const summaryGrid = getElement("summaryGrid")
 const poseGrid = getElement("poseGrid")
 const landmarkSummaryGrid = getElement("landmarkSummaryGrid")
-const landmarkSummaryModeGrid = getElement("landmarkSummaryModeGrid")
 const rawDebug = getElement<HTMLPreElement>("rawDebug")
 const toggleLandmarkSummaryButton = getElement<HTMLButtonElement>("toggleLandmarkSummaryButton")
-const eyePointModeSelect = getElement<HTMLSelectElement>("eyePointModeSelect")
 const previousFrameButton = getElement<HTMLButtonElement>("previousFrameButton")
 const excludeFrameButton = getElement<HTMLButtonElement>("excludeFrameButton")
 const nextFrameButton = getElement<HTMLButtonElement>("nextFrameButton")
@@ -271,17 +255,6 @@ fileInput.addEventListener("change", () => {
 toggleLandmarkSummaryButton.addEventListener("click", () => {
   state.showLandmarkSummaryOverlay = !state.showLandmarkSummaryOverlay
   renderThumbnailCanvas()
-  render()
-})
-
-eyePointModeSelect.addEventListener("change", () => {
-  state.eyePointMode = eyePointModeSelect.value as EyePointMode
-  state.selectedLandmarkSummaryPointId = null
-  state.draggingLandmarkSummaryPointId = null
-  if (state.metadata) {
-    void loadCurrentFrame()
-    return
-  }
   render()
 })
 
@@ -1196,11 +1169,6 @@ function render(): void {
     ],
   ])
 
-  landmarkSummaryModeGrid.innerHTML = renderStatusItems([
-    ["eyePointMode", state.eyePointMode],
-    ["目点モード", EYE_POINT_MODE_LABELS[state.eyePointMode]],
-  ])
-
   landmarkSummaryGrid.innerHTML =
     adjusted12pt.length > 0
       ? adjusted12pt
@@ -1218,7 +1186,6 @@ function render(): void {
   toggleLandmarkSummaryButton.textContent = state.showLandmarkSummaryOverlay
     ? "12点サマリを非表示"
     : "12点サマリを表示"
-  eyePointModeSelect.value = state.eyePointMode
   resetSelectedLandmarkButton.disabled =
     !state.selectedLandmarkSummaryPointId ||
     !currentManualAdjustments.some(
@@ -1233,7 +1200,6 @@ function render(): void {
     {
       metadata: state.metadata,
       frameState,
-      eyePointMode: state.eyePointMode,
       mediaPipeFrameSummary: state.summary,
       landmarkSummaryPointCount: adjusted12pt.length,
       observed12pt: state.observed12pt,
@@ -1409,11 +1375,10 @@ function formatLandmarkSummaryPoint(point: LandmarkSummaryPoint): string {
   const manualSummary = adjustment
     ? ` / 手動調整あり dx ${formatNumber(adjustment.dx)} / dy ${formatNumber(adjustment.dy)}`
     : " / 手動調整なし"
-  const sourceModeSummary = point.sourceMode ? ` / 目点モード ${point.sourceMode}` : ""
 
   return `識別子 ${point.id} / ${coordinateSummary} / 奥行き ${
     point.z === undefined ? "-" : formatNumber(point.z)
-  } / 参照番号 ${point.sourceIndices.join(", ")}${sourceModeSummary}${manualSummary}`
+  } / 参照番号 ${point.sourceIndices.join(", ")}${manualSummary}`
 }
 
 function average(values: number[]): number {
