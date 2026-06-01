@@ -269,10 +269,11 @@ RC-0 は docs 整理、RC-0.5 と RC-0.6 は `tools/mediapipe-render-consistency
 - accepted frame の thumbnail snapshot + observed12pt 保持
 - Debug Console の Scan tab
 - Debug Console の Pose tab
-- poseBucketSummary
-- frontCandidate badge
-- yaw / pitch / roll による正面候補判定
-- 初期閾値: |yaw| <= 3, |pitch| <= 3, |roll| <= 3
+- 粗い poseBucket 分類は廃止
+- yaw / pitch / roll をそれぞれ5分類し、poseBucket125 として扱う
+- 125 bucket は将来、姿勢バランスよくフレーム採用するための土台
+- frontCandidate は poseBucket125 の center / center / center に付く badge として扱う
+- Pose タブは poseBucket125 の non-empty bucket 集計を表示する
 - acceptedFrames の expressionSummary
 - 表情が大きい frame は excluded にせず、expressionTooStrong badge を付ける
 
@@ -288,7 +289,7 @@ RC-1 以降で実装する場合も、Runtime / Studio / IdealFace Authoring Too
 
 Render Consistency Lab では UI の肥大化を避けるため、現在は `browEyeAnchor` を固定で使います。これは debug lab 側だけの変更であり、`tools/ideal-face-fitting-lab` の既存実装は変更しません。
 
-`frontCandidate` は `frontReference` ではありません。`frontCandidate` は yaw / pitch / roll の初期閾値で自動判定した正面候補であり、手動で基準フレームとして確定したものではありません。
+`frontCandidate` は `frontReference` ではありません。`frontCandidate` は `poseBucket125` が `yaw_center__pitch_center__roll_center` の frame に付く自動判定 badge であり、手動で基準フレームとして確定したものではありません。
 
 `表情を除外` button は廃止しました。`expressionTooStrong` は production の除外判定ではありません。Render Consistency Lab 内で accepted frame をレビューしやすくするための debug / review 補助 badge として扱い、auto scan 時点で `expressionSummary` から判定します。表情が大きい frame でも自動では `excluded=true` にしません。
 
@@ -341,3 +342,11 @@ Render Consistency Lab は、最初から production asset を作る工程では
 - Debug Console に Current Frame（現在フレーム）タブを追加
 - 現在表示中フレームの review position / badges / pose / MediaPipe summary / expression summary / 12pt count / manual adjustment count を Current Frame タブへ集約
 - Summary は全体要約、Pose は姿勢集計、Scan は auto scan 状態、12pt は12点詳細、Adjustments は手動調整詳細に役割分担する
+
+## UI 方針: poseBucket125
+
+- 粗い poseBucket 分類は廃止
+- yaw / pitch / roll をそれぞれ5分類し、poseBucket125 として扱う
+- 125 bucket は将来、姿勢バランスよくフレーム採用するための土台
+- frontCandidate は poseBucket125 の center / center / center に付く badge として扱う
+- Pose タブは poseBucket125 の non-empty bucket 集計を表示する

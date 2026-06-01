@@ -53,12 +53,19 @@ type EyePointMode = "irisCenter" | "eyeContourCenter" | "browEyeAnchor"
 
 type ManualAdjustmentsByFrame = Record<number, ManualLandmarkAdjustment[]>
 
-type PoseBucket =
-  | "frontCandidate"
-  | "yawCandidate"
-  | "pitchCandidate"
-  | "mixedPoseCandidate"
-  | "other"
+type PoseAxisBin =
+  | "negativeLarge"
+  | "negativeSmall"
+  | "center"
+  | "positiveSmall"
+  | "positiveLarge"
+
+type PoseBucket125 = {
+  id: string
+  yawBin: PoseAxisBin
+  pitchBin: PoseAxisBin
+  rollBin: PoseAxisBin
+}
 
 type FrameBadge = {
   id: string
@@ -96,7 +103,7 @@ type AcceptedFrameSnapshot = {
   observed12pt: LandmarkSummaryPoint[]
   excluded: boolean
   excludedReason?: ExcludedReason
-  poseBucket: PoseBucket
+  poseBucket125: PoseBucket125 | null
   badges: FrameBadge[]
   expressionSummary?: ExpressionScoreSummary
 }
@@ -163,16 +170,20 @@ const OVERLAY_POINT_RADIUS = 5
 const OVERLAY_SELECTED_POINT_RADIUS = 8
 const OVERLAY_HIT_RADIUS = 12
 const DEFAULT_EYE_POINT_MODE: EyePointMode = "browEyeAnchor"
-const FRONT_CANDIDATE_THRESHOLDS = {
-  maxAbsYaw: 3,
-  maxAbsPitch: 3,
-  maxAbsRoll: 3,
+const POSE_AXIS_BIN_THRESHOLDS = {
+  centerAbsMax: 3,
+  smallAbsMax: 10,
 } as const
-const POSE_BUCKET_THRESHOLDS = {
-  yawAbsMin: 8,
-  pitchAbsMin: 8,
-  rollAbsMax: 12,
-} as const
+const POSE_AXIS_BINS: PoseAxisBin[] = [
+  "negativeLarge",
+  "negativeSmall",
+  "center",
+  "positiveSmall",
+  "positiveLarge",
+]
+const POSE_BUCKET_125_TOTAL_COUNT = POSE_AXIS_BINS.length ** 3
+const FRONT_CANDIDATE_POSE_BUCKET_125_ID =
+  "yaw_center__pitch_center__roll_center"
 const EXPRESSION_TOO_STRONG_THRESHOLDS = {
   mouth: 0.35,
   eye: 0.35,
@@ -206,13 +217,6 @@ const EXPRESSION_CATEGORY_NAMES = [
   ...EXPRESSION_EYE_CATEGORY_NAMES,
   ...EXPRESSION_BROW_CATEGORY_NAMES,
 ] as const
-const POSE_BUCKET_LABELS: Record<PoseBucket, string> = {
-  frontCandidate: "正面候補 frontCandidate",
-  yawCandidate: "左右向き候補 yawCandidate",
-  pitchCandidate: "上下向き候補 pitchCandidate",
-  mixedPoseCandidate: "混合姿勢候補 mixedPoseCandidate",
-  other: "その他 other",
-}
 const EYE_POINT_INDICES = {
   leftIris: [474, 475, 476, 477],
   rightIris: [469, 470, 471, 472],
@@ -869,9 +873,9 @@ function analyzeCanvasForAcceptedFrame(
 
     const pose = estimateFacePoseFromMatrix(matrix)
     const observed12pt = detected ? buildLandmarkSummary(landmarks) : []
-    const poseClassification = classifyPoseBucket(pose)
+    const poseBucket125 = buildPoseBucket125(pose)
     const expressionSummary = buildExpressionScoreSummary(blendshapes)
-    const badges = buildFrameBadges(poseClassification.badges, expressionSummary)
+    const badges = buildFrameBadges(buildPoseBucket125Badges(poseBucket125), expressionSummary)
     const mediaPipeSummary = {
       detected,
       landmarkCount: landmarks.length,
@@ -891,7 +895,7 @@ function analyzeCanvasForAcceptedFrame(
       pose,
       observed12pt,
       excluded: false,
-      poseBucket: poseClassification.poseBucket,
+      poseBucket125,
       badges,
       expressionSummary,
     }
@@ -931,73 +935,58 @@ function createInvalidMediaPipeSummary(error?: string): MediaPipeFrameSummary {
   }
 }
 
-function classifyPoseBucket(pose: Pose | null): {
-  poseBucket: PoseBucket
-  badges: FrameBadge[]
-} {
+function buildPoseBucket125(pose: Pose | null): PoseBucket125 | null {
   if (!pose) {
-    return {
-      poseBucket: "other",
-      badges: [],
-    }
+    return null
   }
 
-  const absYaw = Math.abs(pose.yaw)
-  const absPitch = Math.abs(pose.pitch)
-  const absRoll = Math.abs(pose.roll)
-  const frontCandidate =
-    absYaw <= FRONT_CANDIDATE_THRESHOLDS.maxAbsYaw &&
-    absPitch <= FRONT_CANDIDATE_THRESHOLDS.maxAbsPitch &&
-    absRoll <= FRONT_CANDIDATE_THRESHOLDS.maxAbsRoll
-
-  if (frontCandidate) {
-    return {
-      poseBucket: "frontCandidate",
-      badges: [
-        {
-          id: "frontCandidate",
-          label: "正面候補 frontCandidate",
-          description: "|yaw| <= 3, |pitch| <= 3, |roll| <= 3 の自動判定候補",
-        },
-      ],
-    }
-  }
-
-  if (absRoll > POSE_BUCKET_THRESHOLDS.rollAbsMax) {
-    return {
-      poseBucket: "other",
-      badges: [],
-    }
-  }
-
-  if (
-    absYaw >= POSE_BUCKET_THRESHOLDS.yawAbsMin &&
-    absPitch >= POSE_BUCKET_THRESHOLDS.pitchAbsMin
-  ) {
-    return {
-      poseBucket: "mixedPoseCandidate",
-      badges: [],
-    }
-  }
-
-  if (absYaw >= POSE_BUCKET_THRESHOLDS.yawAbsMin) {
-    return {
-      poseBucket: "yawCandidate",
-      badges: [],
-    }
-  }
-
-  if (absPitch >= POSE_BUCKET_THRESHOLDS.pitchAbsMin) {
-    return {
-      poseBucket: "pitchCandidate",
-      badges: [],
-    }
-  }
-
+  const yawBin = classifyPoseAxisBin(pose.yaw)
+  const pitchBin = classifyPoseAxisBin(pose.pitch)
+  const rollBin = classifyPoseAxisBin(pose.roll)
   return {
-    poseBucket: "other",
-    badges: [],
+    id: formatPoseBucket125Id(yawBin, pitchBin, rollBin),
+    yawBin,
+    pitchBin,
+    rollBin,
   }
+}
+
+function classifyPoseAxisBin(angle: number): PoseAxisBin {
+  if (angle < -POSE_AXIS_BIN_THRESHOLDS.smallAbsMax) {
+    return "negativeLarge"
+  }
+  if (angle < -POSE_AXIS_BIN_THRESHOLDS.centerAbsMax) {
+    return "negativeSmall"
+  }
+  if (angle <= POSE_AXIS_BIN_THRESHOLDS.centerAbsMax) {
+    return "center"
+  }
+  if (angle <= POSE_AXIS_BIN_THRESHOLDS.smallAbsMax) {
+    return "positiveSmall"
+  }
+  return "positiveLarge"
+}
+
+function formatPoseBucket125Id(
+  yawBin: PoseAxisBin,
+  pitchBin: PoseAxisBin,
+  rollBin: PoseAxisBin,
+): string {
+  return `yaw_${yawBin}__pitch_${pitchBin}__roll_${rollBin}`
+}
+
+function buildPoseBucket125Badges(poseBucket125: PoseBucket125 | null): FrameBadge[] {
+  if (poseBucket125?.id !== FRONT_CANDIDATE_POSE_BUCKET_125_ID) {
+    return []
+  }
+
+  return [
+    {
+      id: "frontCandidate",
+      label: "正面候補",
+      description: "yaw / pitch / roll が center の正面候補",
+    },
+  ]
 }
 
 function buildExpressionScoreSummary(
@@ -1536,7 +1525,7 @@ function createRawDebugPayload(
     scanState: getScanStateDebug(),
     expressionTooStrongThresholds: EXPRESSION_TOO_STRONG_THRESHOLDS,
     expressionTooStrongCount: getExpressionTooStrongCount(),
-    poseBucketSummary: getPoseBucketSummary(),
+    poseBucket125Summary: getPoseBucket125Summary(),
     acceptedFramesPreview: getAcceptedFramesPreview(),
     mediaPipeFrameSummary: state.summary,
     landmarkSummaryPointCount: adjusted12pt.length,
@@ -1591,7 +1580,7 @@ function renderConsoleTabContent(
 
 function renderSummaryConsole(): string {
   const currentFrame = getCurrentAcceptedFrame()
-  const poseBucketSummary = getPoseBucketSummary()
+  const poseBucket125Summary = getPoseBucket125Summary()
   return [
     renderConsoleSection(
       "File / Video",
@@ -1639,25 +1628,27 @@ function renderSummaryConsole(): string {
       "Pose bucket summary brief",
       renderStatusItems([
         [
+          "poseBucket125 non-empty",
+          `${poseBucket125Summary.nonEmptyBucketCount} / ${poseBucket125Summary.totalBucketCount}`,
+        ],
+        [
           "frontCandidate",
-          formatPoseBucketCount(poseBucketSummary.frontCandidateCount, poseBucketSummary.acceptedFrameCount),
-        ],
-        [
-          "yawCandidate",
-          formatPoseBucketCount(poseBucketSummary.yawCandidateCount, poseBucketSummary.acceptedFrameCount),
-        ],
-        [
-          "pitchCandidate",
-          formatPoseBucketCount(poseBucketSummary.pitchCandidateCount, poseBucketSummary.acceptedFrameCount),
-        ],
-        [
-          "mixedPoseCandidate",
           formatPoseBucketCount(
-            poseBucketSummary.mixedPoseCandidateCount,
-            poseBucketSummary.acceptedFrameCount,
+            poseBucket125Summary.frontCandidateCount,
+            poseBucket125Summary.acceptedFrameCount,
           ),
         ],
-        ["other", formatPoseBucketCount(poseBucketSummary.otherCount, poseBucketSummary.acceptedFrameCount)],
+        [
+          "expressionTooStrong",
+          formatPoseBucketCount(
+            poseBucket125Summary.expressionTooStrongCount,
+            poseBucket125Summary.acceptedFrameCount,
+          ),
+        ],
+        [
+          "current poseBucket125",
+          currentFrame?.poseBucket125?.id ?? "-",
+        ],
       ]),
     ),
     renderConsoleSection(
@@ -1697,7 +1688,10 @@ function renderCurrentFrameConsole(currentManualAdjustments: ManualLandmarkAdjus
     renderConsoleSection(
       "Pose（姿勢）",
       renderStatusItems([
-        ["poseBucket", currentFrame ? POSE_BUCKET_LABELS[currentFrame.poseBucket] : "-"],
+        ["Pose bucket 125", currentFrame?.poseBucket125?.id ?? "-"],
+        ["yawBin", currentFrame?.poseBucket125?.yawBin ?? "-"],
+        ["pitchBin", currentFrame?.poseBucket125?.pitchBin ?? "-"],
+        ["rollBin", currentFrame?.poseBucket125?.rollBin ?? "-"],
         ["左右向き yaw", pose ? formatNumber(pose.yaw) : "-"],
         ["上下向き pitch", pose ? formatNumber(pose.pitch) : "-"],
         ["傾き roll", pose ? formatNumber(pose.roll) : "-"],
@@ -1835,57 +1829,44 @@ function renderScanConsole(): string {
 }
 
 function renderPoseConsole(): string {
-  const summary = getPoseBucketSummary()
+  const summary = getPoseBucket125Summary()
   return [
     renderConsoleSection(
       "Pose（姿勢）",
       renderStatusItems([
         ["accepted frame count", String(summary.acceptedFrameCount)],
+        ["poseBucket125 non-empty count", String(summary.nonEmptyBucketCount)],
+        ["poseBucket125 total count", String(summary.totalBucketCount)],
         ["frontCandidate", formatPoseBucketCount(summary.frontCandidateCount, summary.acceptedFrameCount)],
         [
           "expressionTooStrong",
-          formatPoseBucketCount(getExpressionTooStrongCount(), summary.acceptedFrameCount),
+          formatPoseBucketCount(summary.expressionTooStrongCount, summary.acceptedFrameCount),
         ],
         [
           "frontCandidate + expressionTooStrong",
           formatPoseBucketCount(
-            getFrontCandidateExpressionTooStrongCount(),
+            summary.frontCandidateExpressionTooStrongCount,
             summary.acceptedFrameCount,
           ),
         ],
         [
           "frontCandidate + 表情大ではない",
           formatPoseBucketCount(
-            getFrontCandidateWithoutExpressionTooStrongCount(),
+            summary.frontCandidateNotExpressionTooStrongCount,
             summary.acceptedFrameCount,
           ),
         ],
-        ["yawCandidate", formatPoseBucketCount(summary.yawCandidateCount, summary.acceptedFrameCount)],
-        ["pitchCandidate", formatPoseBucketCount(summary.pitchCandidateCount, summary.acceptedFrameCount)],
-        [
-          "mixedPoseCandidate",
-          formatPoseBucketCount(summary.mixedPoseCandidateCount, summary.acceptedFrameCount),
-        ],
-        ["other", formatPoseBucketCount(summary.otherCount, summary.acceptedFrameCount)],
         ["excluded count", String(summary.excludedCount)],
       ]),
     ),
     renderConsoleSection(
-      "frontCandidate thresholds",
+      "poseBucket125 thresholds",
       renderStatusItems([
-        ["|yaw|", `<= ${FRONT_CANDIDATE_THRESHOLDS.maxAbsYaw}`],
-        ["|pitch|", `<= ${FRONT_CANDIDATE_THRESHOLDS.maxAbsPitch}`],
-        ["|roll|", `<= ${FRONT_CANDIDATE_THRESHOLDS.maxAbsRoll}`],
+        ["centerAbsMax", String(summary.thresholds.centerAbsMax)],
+        ["smallAbsMax", String(summary.thresholds.smallAbsMax)],
       ]),
     ),
-    renderConsoleSection(
-      "pose bucket thresholds",
-      renderStatusItems([
-        ["|yaw|", `>= ${POSE_BUCKET_THRESHOLDS.yawAbsMin}`],
-        ["|pitch|", `>= ${POSE_BUCKET_THRESHOLDS.pitchAbsMin}`],
-        ["|roll|", `other if > ${POSE_BUCKET_THRESHOLDS.rollAbsMax}`],
-      ]),
-    ),
+    renderConsoleSection("Pose bucket 125", renderPoseBucket125List(summary.buckets)),
   ].join("")
 }
 
@@ -1894,6 +1875,27 @@ function renderRawConsole(rawDebugPayload: Record<string, unknown>): string {
     "rawDebug",
     `<pre class="console-json">${escapeHtml(JSON.stringify(rawDebugPayload, null, 2))}</pre>`,
   )
+}
+
+function renderPoseBucket125List(buckets: Array<PoseBucket125 & { count: number }>): string {
+  if (buckets.length === 0) {
+    return `<div class="landmark-summary-item empty">non-empty bucket はありません。</div>`
+  }
+
+  return `
+    <div class="landmark-summary-grid">
+      ${buckets
+        .map(
+          (bucket) => `
+            <div class="landmark-summary-item">
+              <code>${escapeHtml(bucket.id)}</code>
+              <span>${String(bucket.count)}</span>
+            </div>
+          `,
+        )
+        .join("")}
+    </div>
+  `
 }
 
 function renderFrameBadgesList(badges: FrameBadge[]): string {
@@ -1907,7 +1909,7 @@ function renderFrameBadgesList(badges: FrameBadge[]): string {
         .map(
           (badge) => `
             <div class="landmark-summary-item">
-              <code>${escapeHtml(badge.label)}</code>
+              <code>${escapeHtml(formatBadgeDisplayLabel(badge))}</code>
               <span>${escapeHtml(badge.description)}</span>
             </div>
           `,
@@ -2016,36 +2018,59 @@ function getExcludedAcceptedFrameCount(): number {
   return state.acceptedFrames.filter((frame) => frame.excluded).length
 }
 
-function getPoseBucketSummary(): {
+function getPoseBucket125Summary(): {
   acceptedFrameCount: number
+  totalBucketCount: number
+  nonEmptyBucketCount: number
   frontCandidateCount: number
-  yawCandidateCount: number
-  pitchCandidateCount: number
-  mixedPoseCandidateCount: number
-  otherCount: number
+  expressionTooStrongCount: number
+  frontCandidateExpressionTooStrongCount: number
+  frontCandidateNotExpressionTooStrongCount: number
   excludedCount: number
-  thresholds: {
-    frontCandidate: typeof FRONT_CANDIDATE_THRESHOLDS
-    poseBucket: typeof POSE_BUCKET_THRESHOLDS
-  }
+  thresholds: typeof POSE_AXIS_BIN_THRESHOLDS
+  buckets: Array<PoseBucket125 & { count: number }>
 } {
+  const bucketCountById = new Map<string, PoseBucket125 & { count: number }>()
+  for (const frame of state.acceptedFrames) {
+    if (!frame.poseBucket125) {
+      continue
+    }
+
+    const current = bucketCountById.get(frame.poseBucket125.id)
+    if (current) {
+      current.count += 1
+      continue
+    }
+
+    bucketCountById.set(frame.poseBucket125.id, {
+      ...frame.poseBucket125,
+      count: 1,
+    })
+  }
+
+  const buckets = Array.from(bucketCountById.values()).sort((left, right) => {
+    if (right.count !== left.count) {
+      return right.count - left.count
+    }
+    return left.id.localeCompare(right.id)
+  })
+
   return {
     acceptedFrameCount: state.acceptedFrames.length,
-    frontCandidateCount: countPoseBucket("frontCandidate"),
-    yawCandidateCount: countPoseBucket("yawCandidate"),
-    pitchCandidateCount: countPoseBucket("pitchCandidate"),
-    mixedPoseCandidateCount: countPoseBucket("mixedPoseCandidate"),
-    otherCount: countPoseBucket("other"),
+    totalBucketCount: POSE_BUCKET_125_TOTAL_COUNT,
+    nonEmptyBucketCount: buckets.length,
+    frontCandidateCount: getFrontCandidateCount(),
+    expressionTooStrongCount: getExpressionTooStrongCount(),
+    frontCandidateExpressionTooStrongCount: getFrontCandidateExpressionTooStrongCount(),
+    frontCandidateNotExpressionTooStrongCount: getFrontCandidateWithoutExpressionTooStrongCount(),
     excludedCount: getExcludedAcceptedFrameCount(),
-    thresholds: {
-      frontCandidate: FRONT_CANDIDATE_THRESHOLDS,
-      poseBucket: POSE_BUCKET_THRESHOLDS,
-    },
+    thresholds: POSE_AXIS_BIN_THRESHOLDS,
+    buckets,
   }
 }
 
-function countPoseBucket(poseBucket: PoseBucket): number {
-  return state.acceptedFrames.filter((frame) => frame.poseBucket === poseBucket).length
+function getFrontCandidateCount(): number {
+  return state.acceptedFrames.filter((frame) => hasFrameBadge(frame, "frontCandidate")).length
 }
 
 function getExpressionTooStrongCount(): number {
@@ -2054,14 +2079,14 @@ function getExpressionTooStrongCount(): number {
 
 function getFrontCandidateExpressionTooStrongCount(): number {
   return state.acceptedFrames.filter(
-    (frame) => frame.poseBucket === "frontCandidate" && hasFrameBadge(frame, "expressionTooStrong"),
+    (frame) => hasFrameBadge(frame, "frontCandidate") && hasFrameBadge(frame, "expressionTooStrong"),
   ).length
 }
 
 function getFrontCandidateWithoutExpressionTooStrongCount(): number {
   return state.acceptedFrames.filter(
     (frame) =>
-      frame.poseBucket === "frontCandidate" && !hasFrameBadge(frame, "expressionTooStrong"),
+      hasFrameBadge(frame, "frontCandidate") && !hasFrameBadge(frame, "expressionTooStrong"),
   ).length
 }
 
@@ -2075,7 +2100,11 @@ function formatPoseBucketCount(count: number, total: number): string {
 }
 
 function formatFrameBadges(badges: FrameBadge[]): string {
-  return badges.length > 0 ? badges.map((badge) => badge.label).join(", ") : "なし"
+  return badges.length > 0 ? badges.map(formatBadgeDisplayLabel).join(", ") : "なし"
+}
+
+function formatBadgeDisplayLabel(badge: FrameBadge): string {
+  return badge.label.includes(badge.id) ? badge.label : `${badge.label} ${badge.id}`
 }
 
 function formatExcludedReason(reason?: ExcludedReason): string {
@@ -2115,7 +2144,7 @@ function getAcceptedFramesPreview(): Array<{
   yaw?: number
   pitch?: number
   roll?: number
-  poseBucket: PoseBucket
+  poseBucket125?: string
   badges: string[]
   excluded: boolean
   excludedReason?: ExcludedReason
@@ -2131,7 +2160,7 @@ function getAcceptedFramesPreview(): Array<{
       yaw: frame.pose?.yaw,
       pitch: frame.pose?.pitch,
       roll: frame.pose?.roll,
-      poseBucket: frame.poseBucket,
+      poseBucket125: frame.poseBucket125?.id,
       badges: frame.badges.map((badge) => badge.id),
       excluded: frame.excluded,
       excludedReason: frame.excludedReason,
