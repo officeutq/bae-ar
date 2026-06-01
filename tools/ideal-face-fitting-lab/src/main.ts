@@ -1,5 +1,6 @@
 import "./style.css"
 import canonicalFaceDepthTemplate from "../data/canonical-face-depth-template-v1.json"
+import canonicalFaceModelObj from "../data/canonical_face_model.obj?raw"
 
 type CaptureBucket =
   | "front"
@@ -490,6 +491,7 @@ interface AutoSequenceStepSummary {
   }
   depthRelationSummary?: DepthRelationSummary
   depthRelationFiltering?: DepthRelationFilteringSummary
+  outlierFilteringDebug?: StepOutlierFilteringDebug
   processedCandidateCount: number
   estimatedCandidateCount: number
   bestCandidateId?: string | null
@@ -759,6 +761,32 @@ interface CandidateOutlierDebug {
   outlierFrames: OutlierFrameDebug[]
   rawScores: CandidateScoreSnapshot
   filteredScores: CandidateScoreSnapshot | null
+}
+
+type OutlierObjectiveScoreSource = "rawScores" | "filteredScores"
+
+interface StepOutlierFilteringBucketDebug {
+  bucketId: CaptureBucket
+  beforeCount: number
+  afterCount: number
+  excludedFrameIds: string[]
+  medianError: number | null
+  threshold: number | null
+}
+
+interface StepOutlierFilteringDebug {
+  debugTarget: "stepBestCandidate"
+  candidateId: string | null
+  enabled: boolean
+  mode: OutlierFilteringMode
+  applyToObjectiveScore: boolean
+  usedOutlierFilteredObjectiveScore: boolean
+  objectiveScoreSource: OutlierObjectiveScoreSource
+  scoringFrameCountBeforeOutlierFilter: number
+  scoringFrameCountAfterOutlierFilter: number
+  excludedFrameIds: string[]
+  excludedFrameCount: number
+  perBucket: StepOutlierFilteringBucketDebug[]
 }
 
 interface DepthRelationGroupValue {
@@ -1609,6 +1637,86 @@ interface StructureAwareRerankingSummary {
   wouldChangeFinalCandidate: boolean
 }
 
+interface Candidate12ptCanonicalFitPoint {
+  pointId: SemanticPointName
+  landmarkIndex: number[]
+  canonical: Point3
+  candidate: Point3
+}
+
+interface Candidate12ptZOnlyFit {
+  status: "ok" | "skipped"
+  reason?: string
+  scaleZ?: number
+  offsetZ?: number
+  averageAbsZError?: number
+  maxAbsZError?: number
+  canonicalCorrelationZ?: number | null
+  scaleSign?: "positive" | "negative" | "zero"
+}
+
+interface Candidate12ptXyzUniformFit {
+  status: "ok" | "skipped"
+  reason?: string
+  scale?: number
+  offset?: Point3
+  average3DError?: number
+  averageAbsZErrorAfterFit?: number
+  maxAbsZErrorAfterFit?: number
+  canonicalCorrelationZAfterFit?: number | null
+  scaleSign?: "positive" | "negative" | "zero"
+}
+
+interface Candidate12ptXyzNonUniformFit {
+  status: "ok" | "skipped"
+  reason?: string
+  scale?: Point3
+  offset?: Point3
+  average3DError?: number
+  averageAbsZErrorAfterFit?: number
+  maxAbsZErrorAfterFit?: number
+  canonicalCorrelationZAfterFit?: number | null
+  scaleZSign?: "positive" | "negative" | "zero"
+}
+
+interface Candidate12ptCanonicalFitComparisonEntry {
+  label: string
+  targetCandidateId: string | null
+  pointSetId: SemanticPointSetId
+  canonicalPointSetId: "12pt_canonical_compatible"
+  candidateXySource: string
+  coordinateConvention: {
+    z: string
+  }
+  points: Candidate12ptCanonicalFitPoint[]
+  zOnlyFit: Candidate12ptZOnlyFit
+  xyzUniformFit: Candidate12ptXyzUniformFit
+  xyzNonUniformFit: Candidate12ptXyzNonUniformFit
+  interpretation: {
+    zOnlySuggestsInversion: boolean
+    xyzFitReducesZError: boolean
+    coordinateSystemMismatchLikely: boolean
+    candidateStructureMismatchLikely: boolean
+    notes: string[]
+  }
+}
+
+interface Candidate12ptCanonicalFitComparison {
+  enabled: boolean
+  targetCandidateId: string | null
+  pointSetId: SemanticPointSetId
+  canonicalPointSetId: "12pt_canonical_compatible"
+  coordinateConvention: {
+    z: string
+  }
+  points: Candidate12ptCanonicalFitPoint[]
+  zOnlyFit: Candidate12ptZOnlyFit
+  xyzUniformFit: Candidate12ptXyzUniformFit
+  xyzNonUniformFit: Candidate12ptXyzNonUniformFit
+  interpretation: Candidate12ptCanonicalFitComparisonEntry["interpretation"]
+  comparisons: Candidate12ptCanonicalFitComparisonEntry[]
+}
+
 type Quick478DepthDebugStatus =
   | "idle"
   | "running"
@@ -1691,6 +1799,7 @@ interface Quick478ActualExecutionStep {
   passedCandidateCount: number
   bestCandidateId: string | null
   stopReason: string | null
+  outlierFilteringDebug?: StepOutlierFilteringDebug
 }
 
 interface Quick478RejectedCandidateDebug {
@@ -1710,6 +1819,7 @@ interface Quick478DepthDebugPayload extends Depth478PrototypeResult {
   semanticPointSetComparison?: SemanticPointSetComparisonSummary
   bruteforce8ptCanonicalBaseline?: BruteForce8ptCanonicalBaseline
   candidateComparison8ptVs12pt?: CandidateComparison8ptVs12pt
+  candidate12ptCanonicalFitComparison?: Candidate12ptCanonicalFitComparison
   analysisSummary?: SummaryAnalysisResult
 }
 
@@ -3226,6 +3336,21 @@ const CANONICAL_COMPATIBLE_8PT = {
 const CANONICAL_COMPATIBLE_8PT_POINT_IDS = Object.keys(
   CANONICAL_COMPATIBLE_8PT,
 ) as CanonicalCompatible8PointId[]
+
+const CANONICAL_COMPATIBLE_12PT = {
+  headTop: [10],
+  chin: [152],
+  leftCheek: [234],
+  rightCheek: [454],
+  leftEye: [263, 362],
+  rightEye: [33, 133],
+  nose: [4],
+  mouth: [13, 14],
+  noseBridge: [6, 168, 197, 195],
+  leftJaw: [172],
+  rightJaw: [397],
+  upperFaceCenter: [168],
+} satisfies Record<(typeof ROTATION_CENTER_12_SEMANTIC_POINT_NAMES)[number], number[]>
 
 const BRUTEFORCE_8PT_CANONICAL_RANGES = {
   headTop: [-0.02, 0, 0.02],
@@ -7316,6 +7441,432 @@ function buildCandidateComparison8ptVs12pt(
   }
 }
 
+function buildCandidate12ptCanonicalFitComparison(
+  analysis: AnalysisResult | undefined,
+  baseline: BruteForce8ptCanonicalBaseline | undefined,
+): Candidate12ptCanonicalFitComparison | undefined {
+  if (!analysis?.base8Points2DSummary.points) {
+    return undefined
+  }
+  const finalCandidate = analysis.autoSequenceSummary?.finalCandidate ?? null
+  const finalCandidateId = analysis.autoSequenceSummary?.steps.at(-1)?.bestCandidateId ?? null
+  const candidates = [
+    finalCandidate
+      ? {
+          label: "12pt current finalCandidate",
+          candidateId: finalCandidateId,
+          candidate: cloneCandidate(finalCandidate),
+        }
+      : null,
+    buildStructureAware12ptFitTarget(analysis),
+    buildBruteforce8ptFitTarget(baseline),
+  ].filter((item): item is {
+    label: string
+    candidateId: string | null
+    candidate: FittingCandidate8
+  } => Boolean(item))
+  const comparisons = candidates.map((target) =>
+    buildCandidate12ptCanonicalFitComparisonEntry(
+      target.label,
+      target.candidateId,
+      target.candidate,
+      analysis.base8Points2DSummary.points!,
+    ),
+  )
+  const primary = comparisons[0]
+  if (!primary) {
+    return undefined
+  }
+  return {
+    enabled: true,
+    targetCandidateId: primary.targetCandidateId,
+    pointSetId: primary.pointSetId,
+    canonicalPointSetId: primary.canonicalPointSetId,
+    coordinateConvention: primary.coordinateConvention,
+    points: primary.points,
+    zOnlyFit: primary.zOnlyFit,
+    xyzUniformFit: primary.xyzUniformFit,
+    xyzNonUniformFit: primary.xyzNonUniformFit,
+    interpretation: primary.interpretation,
+    comparisons,
+  }
+}
+
+function buildStructureAware12ptFitTarget(
+  analysis: AnalysisResult,
+): { label: string; candidateId: string | null; candidate: FittingCandidate8 } | null {
+  const candidate = analysis.autoSequenceSummary?.structureAwareReranking?.topCandidates[0] ?? null
+  return candidate
+    ? {
+        label: "12pt structureAware wouldSelectCandidate",
+        candidateId: candidate.candidateId,
+        candidate: cloneCandidate(candidate.candidate),
+      }
+    : null
+}
+
+function buildBruteforce8ptFitTarget(
+  baseline: BruteForce8ptCanonicalBaseline | undefined,
+): { label: string; candidateId: string | null; candidate: FittingCandidate8 } | null {
+  const candidate = baseline?.structureAwareRanking.topCandidates[0] ?? null
+  return candidate
+    ? {
+        label: "8pt bruteforce structureAware best",
+        candidateId: candidate.candidateId,
+        candidate: {
+          pivotZ: baseline.settings.fixedPivotZ,
+          rotationCenter: baseline.settings.fixedRotationCenter,
+          zByPointId: completeSemanticZ(candidate.zByPointId),
+        },
+      }
+    : null
+}
+
+function buildCandidate12ptCanonicalFitComparisonEntry(
+  label: string,
+  targetCandidateId: string | null,
+  candidate: FittingCandidate8,
+  candidateXy: SemanticPointSet2D,
+): Candidate12ptCanonicalFitComparisonEntry {
+  const points = buildCandidate12ptCanonicalFitPoints(candidate, candidateXy)
+  const zOnlyFit = buildCandidate12ptZOnlyFit(points)
+  const xyzUniformFit = buildCandidate12ptXyzUniformFit(points)
+  const xyzNonUniformFit = buildCandidate12ptXyzNonUniformFit(points)
+  const interpretation = buildCandidate12ptCanonicalFitInterpretation(
+    zOnlyFit,
+    xyzUniformFit,
+    xyzNonUniformFit,
+    candidate,
+  )
+  return {
+    label,
+    targetCandidateId,
+    pointSetId: "12pt_rotation_center",
+    canonicalPointSetId: "12pt_canonical_compatible",
+    candidateXySource: "analysis.base8Points2DSummary.points",
+    coordinateConvention: {
+      z: "smaller = front / 手前",
+    },
+    points,
+    zOnlyFit,
+    xyzUniformFit,
+    xyzNonUniformFit,
+    interpretation,
+  }
+}
+
+function buildCandidate12ptCanonicalFitPoints(
+  candidate: FittingCandidate8,
+  candidateXy: SemanticPointSet2D,
+): Candidate12ptCanonicalFitPoint[] {
+  const canonicalByIndex = buildCanonical12ptPointByIndex()
+  return ROTATION_CENTER_12_SEMANTIC_POINT_NAMES.flatMap((pointId) => {
+    const landmarkIndex = CANONICAL_COMPATIBLE_12PT[pointId].filter(
+      (index) => index < CANONICAL_COMPARISON_LANDMARK_COUNT,
+    )
+    const canonicalPoints = landmarkIndex
+      .map((index) => canonicalByIndex.get(index))
+      .filter((point): point is Point3 => Boolean(point))
+    const candidatePoint = candidateXy[pointId]
+    const candidateZ = candidate.zByPointId[pointId]
+    if (
+      canonicalPoints.length === 0 ||
+      !candidatePoint ||
+      typeof candidateZ !== "number" ||
+      !Number.isFinite(candidateZ)
+    ) {
+      return []
+    }
+    return [
+      {
+        pointId,
+        landmarkIndex,
+        canonical: roundPoint3D({
+          x: average(canonicalPoints.map((point) => point.x)) ?? 0,
+          y: average(canonicalPoints.map((point) => point.y)) ?? 0,
+          z: average(canonicalPoints.map((point) => point.z)) ?? 0,
+        }),
+        candidate: roundPoint3D({
+          x: candidatePoint.x,
+          y: candidatePoint.y,
+          z: candidateZ,
+        }),
+      },
+    ]
+  })
+}
+
+function buildCanonical12ptPointByIndex(): Map<number, Point3> {
+  const canonicalDepthByIndex = buildCanonicalDepthByIndex("raw")
+  return new Map(
+    parseCanonicalFaceModelVertices().flatMap((vertex, index) => {
+      const depth = canonicalDepthByIndex.get(index)
+      if (!depth || index >= CANONICAL_COMPARISON_LANDMARK_COUNT) {
+        return []
+      }
+      return [[index, { x: vertex.x, y: vertex.y, z: depth.z }]]
+    }),
+  )
+}
+
+function parseCanonicalFaceModelVertices(): Point3[] {
+  return canonicalFaceModelObj
+    .split(/\r?\n/)
+    .flatMap((line) => {
+      if (!line.startsWith("v ")) {
+        return []
+      }
+      const [, x, y, z] = line.trim().split(/\s+/)
+      return [
+        {
+          x: Number(x),
+          y: Number(y),
+          z: Number(z),
+        },
+      ]
+    })
+    .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y) && Number.isFinite(point.z))
+}
+
+function buildCandidate12ptZOnlyFit(
+  points: Candidate12ptCanonicalFitPoint[],
+): Candidate12ptZOnlyFit {
+  if (points.length < 2) {
+    return { status: "skipped", reason: "not enough comparable points" }
+  }
+  const fit = fitLinearScaleOffset(
+    points.map((point) => point.canonical.z),
+    points.map((point) => point.candidate.z),
+  )
+  const errors = points.map((point) => fit.scale * point.canonical.z + fit.offset - point.candidate.z)
+  return {
+    status: "ok",
+    scaleZ: round(fit.scale),
+    offsetZ: round(fit.offset),
+    averageAbsZError: round(average(errors.map((error) => Math.abs(error))) ?? 0),
+    maxAbsZError: round(max(errors.map((error) => Math.abs(error))) ?? 0),
+    canonicalCorrelationZ: calculatePointCorrelation(
+      points.map((point) => point.canonical.z),
+      points.map((point) => point.candidate.z),
+    ),
+    scaleSign: getScaleSign(fit.scale),
+  }
+}
+
+function buildCandidate12ptXyzUniformFit(
+  points: Candidate12ptCanonicalFitPoint[],
+): Candidate12ptXyzUniformFit {
+  if (points.length < 2) {
+    return { status: "skipped", reason: "not enough comparable points" }
+  }
+  const fit = fitUniformScaleOffset3D(points)
+  const fitted = points.map((point) => ({
+    x: fit.scale * point.canonical.x + fit.offset.x,
+    y: fit.scale * point.canonical.y + fit.offset.y,
+    z: fit.scale * point.canonical.z + fit.offset.z,
+  }))
+  const errors3D = fitted.map((point, index) => distance3D(point, points[index].candidate))
+  const zErrors = fitted.map((point, index) => point.z - points[index].candidate.z)
+  return {
+    status: "ok",
+    scale: round(fit.scale),
+    offset: roundPoint3D(fit.offset),
+    average3DError: round(average(errors3D) ?? 0),
+    averageAbsZErrorAfterFit: round(average(zErrors.map((error) => Math.abs(error))) ?? 0),
+    maxAbsZErrorAfterFit: round(max(zErrors.map((error) => Math.abs(error))) ?? 0),
+    canonicalCorrelationZAfterFit: calculatePointCorrelation(
+      fitted.map((point) => point.z),
+      points.map((point) => point.candidate.z),
+    ),
+    scaleSign: getScaleSign(fit.scale),
+  }
+}
+
+function buildCandidate12ptXyzNonUniformFit(
+  points: Candidate12ptCanonicalFitPoint[],
+): Candidate12ptXyzNonUniformFit {
+  if (points.length < 2) {
+    return { status: "skipped", reason: "not enough comparable points" }
+  }
+  const fit = {
+    x: fitLinearScaleOffset(
+      points.map((point) => point.canonical.x),
+      points.map((point) => point.candidate.x),
+    ),
+    y: fitLinearScaleOffset(
+      points.map((point) => point.canonical.y),
+      points.map((point) => point.candidate.y),
+    ),
+    z: fitLinearScaleOffset(
+      points.map((point) => point.canonical.z),
+      points.map((point) => point.candidate.z),
+    ),
+  }
+  const fitted = points.map((point) => ({
+    x: fit.x.scale * point.canonical.x + fit.x.offset,
+    y: fit.y.scale * point.canonical.y + fit.y.offset,
+    z: fit.z.scale * point.canonical.z + fit.z.offset,
+  }))
+  const errors3D = fitted.map((point, index) => distance3D(point, points[index].candidate))
+  const zErrors = fitted.map((point, index) => point.z - points[index].candidate.z)
+  return {
+    status: "ok",
+    scale: roundPoint3D({ x: fit.x.scale, y: fit.y.scale, z: fit.z.scale }),
+    offset: roundPoint3D({ x: fit.x.offset, y: fit.y.offset, z: fit.z.offset }),
+    average3DError: round(average(errors3D) ?? 0),
+    averageAbsZErrorAfterFit: round(average(zErrors.map((error) => Math.abs(error))) ?? 0),
+    maxAbsZErrorAfterFit: round(max(zErrors.map((error) => Math.abs(error))) ?? 0),
+    canonicalCorrelationZAfterFit: calculatePointCorrelation(
+      fitted.map((point) => point.z),
+      points.map((point) => point.candidate.z),
+    ),
+    scaleZSign: getScaleSign(fit.z.scale),
+  }
+}
+
+function buildCandidate12ptCanonicalFitInterpretation(
+  zOnlyFit: Candidate12ptZOnlyFit,
+  xyzUniformFit: Candidate12ptXyzUniformFit,
+  xyzNonUniformFit: Candidate12ptXyzNonUniformFit,
+  candidate: FittingCandidate8,
+): Candidate12ptCanonicalFitComparisonEntry["interpretation"] {
+  const zOnlySuggestsInversion = Boolean(
+    zOnlyFit.status === "ok" &&
+      ((zOnlyFit.scaleZ ?? 0) < 0 ||
+        (zOnlyFit.canonicalCorrelationZ ?? 0) < 0),
+  )
+  const zOnlyError = zOnlyFit.averageAbsZError ?? Number.POSITIVE_INFINITY
+  const xyzErrors = [
+    xyzUniformFit.averageAbsZErrorAfterFit,
+    xyzNonUniformFit.averageAbsZErrorAfterFit,
+  ].filter((value): value is number => typeof value === "number" && Number.isFinite(value))
+  const bestXyzError = min(xyzErrors) ?? Number.POSITIVE_INFINITY
+  const xyzFitReducesZError = Number.isFinite(zOnlyError) && bestXyzError < zOnlyError * 0.8
+  const structure = buildDepthStructureDebugForPointSet(
+    candidate,
+    ROTATION_CENTER_12_SEMANTIC_POINT_NAMES,
+  )
+  const afterFitCorrelation =
+    xyzNonUniformFit.canonicalCorrelationZAfterFit ??
+    xyzUniformFit.canonicalCorrelationZAfterFit ??
+    null
+  const candidateStructureMismatchLikely = Boolean(
+    (afterFitCorrelation !== null && afterFitCorrelation < 0) ||
+      structure.score.violationCount >= 2,
+  )
+  const notes: string[] = []
+  if (zOnlySuggestsInversion) {
+    notes.push("zOnlyFit shows negative scale or correlation.")
+  }
+  if (xyzFitReducesZError) {
+    notes.push("xyz fit reduces z error compared with zOnlyFit.")
+  }
+  if (candidateStructureMismatchLikely) {
+    notes.push("Depth pair order still looks inconsistent after xyz fit.")
+  }
+  return {
+    zOnlySuggestsInversion,
+    xyzFitReducesZError,
+    coordinateSystemMismatchLikely: xyzFitReducesZError,
+    candidateStructureMismatchLikely,
+    notes,
+  }
+}
+
+function fitLinearScaleOffset(source: number[], target: number[]): { scale: number; offset: number } {
+  const sourceMean = average(source) ?? 0
+  const targetMean = average(target) ?? 0
+  const variance = source.reduce((total, value) => total + Math.pow(value - sourceMean, 2), 0)
+  const covariance = source.reduce(
+    (total, value, index) => total + (value - sourceMean) * (target[index] - targetMean),
+    0,
+  )
+  const scale = Math.abs(variance) < EPSILON ? 1 : covariance / variance
+  return {
+    scale,
+    offset: targetMean - sourceMean * scale,
+  }
+}
+
+function fitUniformScaleOffset3D(
+  points: Candidate12ptCanonicalFitPoint[],
+): { scale: number; offset: Point3 } {
+  const canonicalMean = averagePoint3D(points.map((point) => point.canonical))
+  const candidateMean = averagePoint3D(points.map((point) => point.candidate))
+  const axes: Array<keyof Point3> = ["x", "y", "z"]
+  const variance = points.reduce(
+    (total, point) =>
+      total + axes.reduce((sum, axis) => sum + Math.pow(point.canonical[axis] - canonicalMean[axis], 2), 0),
+    0,
+  )
+  const covariance = points.reduce(
+    (total, point) =>
+      total +
+      axes.reduce(
+        (sum, axis) =>
+          sum +
+          (point.canonical[axis] - canonicalMean[axis]) *
+            (point.candidate[axis] - candidateMean[axis]),
+        0,
+      ),
+    0,
+  )
+  const scale = Math.abs(variance) < EPSILON ? 1 : covariance / variance
+  return {
+    scale,
+    offset: {
+      x: candidateMean.x - canonicalMean.x * scale,
+      y: candidateMean.y - canonicalMean.y * scale,
+      z: candidateMean.z - canonicalMean.z * scale,
+    },
+  }
+}
+
+function calculatePointCorrelation(source: number[], target: number[]): number | null {
+  if (source.length < 2 || source.length !== target.length) {
+    return null
+  }
+  const sourceMean = average(source) ?? 0
+  const targetMean = average(target) ?? 0
+  const covariance = source.reduce(
+    (total, value, index) => total + (value - sourceMean) * (target[index] - targetMean),
+    0,
+  )
+  const sourceVariance = source.reduce((total, value) => total + Math.pow(value - sourceMean, 2), 0)
+  const targetVariance = target.reduce((total, value) => total + Math.pow(value - targetMean, 2), 0)
+  if (sourceVariance <= EPSILON || targetVariance <= EPSILON) {
+    return null
+  }
+  return round(covariance / Math.sqrt(sourceVariance * targetVariance))
+}
+
+function getScaleSign(scale: number): "positive" | "negative" | "zero" {
+  if (Math.abs(scale) <= EPSILON) {
+    return "zero"
+  }
+  return scale > 0 ? "positive" : "negative"
+}
+
+function distance3D(a: Point3, b: Point3): number {
+  return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z)
+}
+
+function averagePoint3D(points: Point3[]): Point3 {
+  return {
+    x: average(points.map((point) => point.x)) ?? 0,
+    y: average(points.map((point) => point.y)) ?? 0,
+    z: average(points.map((point) => point.z)) ?? 0,
+  }
+}
+
+function roundPoint3D(point: Point3): Point3 {
+  return {
+    x: round(point.x),
+    y: round(point.y),
+    z: round(point.z),
+  }
+}
+
 function buildComparisonEntryFrom8ptCandidate(
   candidate: BruteForce8ptTopCandidate | null,
 ): CandidateComparisonEntry {
@@ -7502,6 +8053,10 @@ function buildQuick478DepthDebugPayload(
         ),
       )
     : undefined
+  const candidate12ptCanonicalFitComparison = buildCandidate12ptCanonicalFitComparison(
+    options.analysis,
+    bruteforce8ptCanonicalBaseline,
+  )
   const noseRule = relation?.ruleResults.find(
     (rule) => rule.ruleId === "nose_tip_group_in_front_of_cheek_group",
   )
@@ -7600,6 +8155,7 @@ function buildQuick478DepthDebugPayload(
     semanticPointSetComparison: options.semanticPointSetComparison,
     bruteforce8ptCanonicalBaseline,
     candidateComparison8ptVs12pt,
+    candidate12ptCanonicalFitComparison,
     analysisSummary: options.analysis ? createSummaryAnalysis(options.analysis) : undefined,
   }
 }
@@ -7645,6 +8201,7 @@ function buildQuick478ActualExecution(analysis: AnalysisResult | undefined): Qui
         passedCandidateCount: Math.max(0, step.processedCandidateCount - rejectedCandidateCount),
         bestCandidateId: step.bestCandidateId ?? null,
         stopReason: step.bestCandidate ? null : "noCandidate",
+        outlierFilteringDebug: step.outlierFilteringDebug,
       }
     }),
   }
@@ -9331,6 +9888,74 @@ function buildAnalysisOutlierFrameDebug(
   }
 }
 
+function buildStepOutlierFilteringDebug(
+  settings: SearchSettings,
+  bestCandidate: CandidateResult | null,
+): StepOutlierFilteringDebug {
+  const outlierDebug = bestCandidate?.outlierDebug
+  const outlierSettings = outlierDebug?.settings ?? settings.outlierFiltering
+  const usedOutlierFilteredObjectiveScore = Boolean(
+    outlierSettings.enabled &&
+      outlierSettings.mode === "excludeFromInference" &&
+      outlierSettings.applyToObjectiveScore &&
+      outlierDebug?.filteredScores,
+  )
+  const bucketSummaries = outlierDebug?.bucketSummaries ?? []
+  const perBucket = BUCKETS.map((bucket) => {
+    const summary = bucketSummaries.find((item) => item.bucket === bucket)
+    const excludedFrameIds = summary?.outlierFrames
+      .filter((frame) => frame.excludedFromInference)
+      .map((frame) => frame.captureId) ?? []
+    const beforeCount = summary?.sampleCount ?? 0
+    return {
+      bucketId: bucket,
+      beforeCount,
+      afterCount: Math.max(0, beforeCount - excludedFrameIds.length),
+      excludedFrameIds,
+      medianError: summary?.rawMedianError ?? null,
+      threshold: calculateOutlierThreshold(summary?.rawMedianError ?? null, outlierSettings),
+    }
+  })
+  const excludedFrameIds = Array.from(
+    new Set(perBucket.flatMap((bucket) => bucket.excludedFrameIds)),
+  )
+  const scoringFrameCountBeforeOutlierFilter =
+    bucketSummaries.length > 0
+      ? bucketSummaries.reduce((total, summary) => total + summary.sampleCount, 0)
+      : bestCandidate?.sampleCount ?? 0
+
+  return {
+    debugTarget: "stepBestCandidate",
+    candidateId: bestCandidate?.candidateId ?? null,
+    enabled: outlierSettings.enabled,
+    mode: outlierSettings.mode,
+    applyToObjectiveScore: outlierSettings.applyToObjectiveScore,
+    usedOutlierFilteredObjectiveScore,
+    objectiveScoreSource: usedOutlierFilteredObjectiveScore ? "filteredScores" : "rawScores",
+    scoringFrameCountBeforeOutlierFilter,
+    scoringFrameCountAfterOutlierFilter: Math.max(
+      0,
+      scoringFrameCountBeforeOutlierFilter - excludedFrameIds.length,
+    ),
+    excludedFrameIds,
+    excludedFrameCount: excludedFrameIds.length,
+    perBucket,
+  }
+}
+
+function calculateOutlierThreshold(
+  bucketMedianError: number | null,
+  settings: OutlierFilteringSettings,
+): number | null {
+  if (settings.method === "topWorstPercent" || bucketMedianError === null) {
+    return null
+  }
+  if (settings.method === "medianAbsoluteDelta") {
+    return round(bucketMedianError + settings.absoluteDeltaThreshold)
+  }
+  return round(bucketMedianError * settings.medianMultiplier)
+}
+
 function buildAnalysisDepthRelationDebug(
   settings: SearchSettings,
   bestCandidate: CandidateResult | null,
@@ -9870,6 +10495,10 @@ function handleAutoSequenceStepComplete(analysis: AnalysisResult | null): void {
     ),
     depthRelationFiltering: summarizeDepthRelationFilteringSettings(
       analysis.searchSettings.depthRelationFiltering,
+    ),
+    outlierFilteringDebug: buildStepOutlierFilteringDebug(
+      analysis.searchSettings,
+      analysis.bestCandidate,
     ),
     processedCandidateCount: analysis.processedCandidateCount,
     estimatedCandidateCount: analysis.estimatedCandidateCount,
