@@ -190,6 +190,20 @@ npm run generate:canonical-depth-template --workspace @bae-ar/ideal-face-fitting
 
 Quick Run（クイック実行）では、この JSON を読み、標準顔奥行きを基準に 478 Depth Prototype（478点奥行き試作）の debug candidate を生成できます。ただし、このテンプレートの canonicalZ は正解値として採用するものではなく、478 Depth Prototype の参照情報として扱います。
 
+## Canonical Face XYZ Template
+
+`canonical-face-xyz-template-v1.json`（標準顔XYZテンプレート）は、`canonical_face_model.obj` の raw x/y/z を保持する診断用テンプレートです。Fitting Lab 側で canonical face（標準顔）を 12点 candidate（12点候補）の x/y 座標系へ fit（当てはめ）し、その fit 結果を使って z の自然さを比較するための入力として使います。
+
+このテンプレートでは x/y/z の正規化、scale（倍率）、offset（平行移動）は行いません。0〜467 は OBJ 由来の raw vertex として保持し、OBJ に存在しない 468〜477 は iris fallback（虹彩補完）として eye proxy（目代理点）から補完します。補完点は `comparison.defaultExcludedLandmarkIndices` に含め、構造比較の既定除外対象として扱います。
+
+既存の `canonical-face-depth-template-v1.json`（標準顔奥行きテンプレート）は互換性のため残し、`canonicalDepthBased`（標準顔奥行きベース方式）などの既存処理では引き続き depth template を参照します。
+
+生成は Fitting Lab 専用スクリプトで行います。
+
+```bash
+npm run generate:canonical-xyz-template --workspace @bae-ar/ideal-face-fitting-lab
+```
+
 ## 8Point To 478 Depth Prototype
 
 ### canonicalDepthBased
