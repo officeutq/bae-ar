@@ -47,6 +47,8 @@ type ManualLandmarkAdjustment = {
   dy: number
 }
 
+type ExcludedReason = "manual" | "expressionTooStrong"
+
 type EyePointMode = "irisCenter" | "eyeContourCenter" | "browEyeAnchor"
 
 type ManualAdjustmentsByFrame = Record<number, ManualLandmarkAdjustment[]>
@@ -64,6 +66,27 @@ type FrameBadge = {
   description: string
 }
 
+type ExpressionScoreSummary = {
+  maxScore: number
+  maxCategoryName?: string
+  jawOpen?: number
+  mouthSmileLeft?: number
+  mouthSmileRight?: number
+  mouthPucker?: number
+  mouthFunnel?: number
+  mouthShrugUpper?: number
+  mouthShrugLower?: number
+  eyeBlinkLeft?: number
+  eyeBlinkRight?: number
+  eyeSquintLeft?: number
+  eyeSquintRight?: number
+  browDownLeft?: number
+  browDownRight?: number
+  browInnerUp?: number
+  browOuterUpLeft?: number
+  browOuterUpRight?: number
+}
+
 type AcceptedFrameSnapshot = {
   sourceFrameIndex: number
   timeSec: number
@@ -72,9 +95,10 @@ type AcceptedFrameSnapshot = {
   pose: Pose | null
   observed12pt: LandmarkSummaryPoint[]
   excluded: boolean
-  excludedReason?: "manual"
+  excludedReason?: ExcludedReason
   poseBucket: PoseBucket
   badges: FrameBadge[]
+  expressionSummary?: ExpressionScoreSummary
 }
 
 type ScanStatus = "idle" | "running" | "completed" | "cancelled" | "error"
@@ -93,6 +117,19 @@ type ScanState = {
 }
 
 type ConsoleTab = "summary" | "landmarks12pt" | "adjustments" | "raw" | "scan" | "pose"
+
+type ExpressionExcludeStatus = "idle" | "running" | "completed" | "error"
+
+type ExpressionExcludeSummary = {
+  status: ExpressionExcludeStatus
+  scannedFrameCount: number
+  newlyExcludedCount: number
+  alreadyExcludedCount: number
+  manualExcludedSkippedCount: number
+  expressionTooStrongCount: number
+  lastRunAt?: string
+  error?: string
+}
 
 type SemanticPointDefinition = {
   id: string
@@ -114,6 +151,7 @@ type AppState = {
   acceptedFrames: AcceptedFrameSnapshot[]
   currentReviewIndex: number
   scanState: ScanState
+  expressionExcludeSummary: ExpressionExcludeSummary
   manualAdjustmentsByFrame: ManualAdjustmentsByFrame
   selectedLandmarkSummaryPointId: string | null
   draggingLandmarkSummaryPointId: string | null
@@ -142,6 +180,39 @@ const POSE_BUCKET_THRESHOLDS = {
   pitchAbsMin: 8,
   rollAbsMax: 12,
 } as const
+const EXPRESSION_EXCLUDE_THRESHOLDS = {
+  mouth: 0.35,
+  eye: 0.35,
+  brow: 0.35,
+  maxAny: 0.45,
+} as const
+const EXPRESSION_MOUTH_CATEGORY_NAMES = [
+  "jawOpen",
+  "mouthSmileLeft",
+  "mouthSmileRight",
+  "mouthPucker",
+  "mouthFunnel",
+  "mouthShrugUpper",
+  "mouthShrugLower",
+] as const
+const EXPRESSION_EYE_CATEGORY_NAMES = [
+  "eyeBlinkLeft",
+  "eyeBlinkRight",
+  "eyeSquintLeft",
+  "eyeSquintRight",
+] as const
+const EXPRESSION_BROW_CATEGORY_NAMES = [
+  "browDownLeft",
+  "browDownRight",
+  "browInnerUp",
+  "browOuterUpLeft",
+  "browOuterUpRight",
+] as const
+const EXPRESSION_CATEGORY_NAMES = [
+  ...EXPRESSION_MOUTH_CATEGORY_NAMES,
+  ...EXPRESSION_EYE_CATEGORY_NAMES,
+  ...EXPRESSION_BROW_CATEGORY_NAMES,
+] as const
 const POSE_BUCKET_LABELS: Record<PoseBucket, string> = {
   frontCandidate: "正面候補 frontCandidate",
   yawCandidate: "左右向き候補 yawCandidate",
@@ -187,6 +258,19 @@ function createInitialScanState(status: ScanStatus = "idle"): ScanState {
   }
 }
 
+function createInitialExpressionExcludeSummary(
+  status: ExpressionExcludeStatus = "idle",
+): ExpressionExcludeSummary {
+  return {
+    status,
+    scannedFrameCount: 0,
+    newlyExcludedCount: 0,
+    alreadyExcludedCount: 0,
+    manualExcludedSkippedCount: 0,
+    expressionTooStrongCount: 0,
+  }
+}
+
 const state: AppState = {
   loadStatus: "未読込",
   detectorStatus: "未初期化",
@@ -200,6 +284,7 @@ const state: AppState = {
   acceptedFrames: [],
   currentReviewIndex: 0,
   scanState: createInitialScanState(),
+  expressionExcludeSummary: createInitialExpressionExcludeSummary(),
   manualAdjustmentsByFrame: {},
   selectedLandmarkSummaryPointId: null,
   draggingLandmarkSummaryPointId: null,
@@ -238,6 +323,10 @@ app.innerHTML = `
         <button id="stopScanButton" type="button" class="secondary-button">
           自動スキャン停止
         </button>
+        <button id="excludeExpressionButton" type="button" class="secondary-button">
+          表情を除外
+        </button>
+        <p class="control-help">表情が大きいフレームを検証対象から除外</p>
       </section>
 
       <section class="controls-section">
@@ -293,6 +382,7 @@ const previousFrameButton = getElement<HTMLButtonElement>("previousFrameButton")
 const excludeFrameButton = getElement<HTMLButtonElement>("excludeFrameButton")
 const nextFrameButton = getElement<HTMLButtonElement>("nextFrameButton")
 const stopScanButton = getElement<HTMLButtonElement>("stopScanButton")
+const excludeExpressionButton = getElement<HTMLButtonElement>("excludeExpressionButton")
 const consoleTabButtons = Array.from(
   document.querySelectorAll<HTMLButtonElement>("[data-console-tab]"),
 )
@@ -322,6 +412,10 @@ excludeFrameButton.addEventListener("click", () => {
 
 stopScanButton.addEventListener("click", () => {
   scanCancelRequested = true
+})
+
+excludeExpressionButton.addEventListener("click", () => {
+  excludeStrongExpressionFrames()
 })
 
 canvas.addEventListener("pointerdown", (event) => {
@@ -462,6 +556,7 @@ function resetFrameState(): void {
   state.acceptedFrames = []
   state.currentReviewIndex = 0
   state.scanState = createInitialScanState()
+  state.expressionExcludeSummary = createInitialExpressionExcludeSummary()
   state.manualAdjustmentsByFrame = {}
   state.selectedLandmarkSummaryPointId = null
   state.draggingLandmarkSummaryPointId = null
@@ -677,6 +772,76 @@ async function excludeCurrentFrame(): Promise<void> {
   render()
 }
 
+function excludeStrongExpressionFrames(): void {
+  if (
+    state.scanState.status === "running" ||
+    state.acceptedFrames.length === 0 ||
+    state.expressionExcludeSummary.status === "running"
+  ) {
+    return
+  }
+
+  state.expressionExcludeSummary = {
+    ...createInitialExpressionExcludeSummary("running"),
+    scannedFrameCount: state.acceptedFrames.length,
+  }
+  render()
+
+  try {
+    let newlyExcludedCount = 0
+    let alreadyExcludedCount = 0
+    let manualExcludedSkippedCount = 0
+    let expressionTooStrongCount = 0
+
+    state.acceptedFrames = state.acceptedFrames.map((frame) => {
+      const expressionTooStrong = isExpressionTooStrong(frame.expressionSummary)
+      if (expressionTooStrong) {
+        expressionTooStrongCount += 1
+      }
+
+      if (frame.excluded) {
+        alreadyExcludedCount += 1
+        if (frame.excludedReason === "manual" && expressionTooStrong) {
+          manualExcludedSkippedCount += 1
+        }
+        return frame
+      }
+
+      if (!expressionTooStrong) {
+        return frame
+      }
+
+      newlyExcludedCount += 1
+      return {
+        ...frame,
+        excluded: true,
+        excludedReason: "expressionTooStrong" as const,
+      }
+    })
+
+    state.expressionExcludeSummary = {
+      status: "completed",
+      scannedFrameCount: state.acceptedFrames.length,
+      newlyExcludedCount,
+      alreadyExcludedCount,
+      manualExcludedSkippedCount,
+      expressionTooStrongCount,
+      lastRunAt: new Date().toISOString(),
+    }
+  } catch (error) {
+    state.expressionExcludeSummary = {
+      ...state.expressionExcludeSummary,
+      status: "error",
+      error: error instanceof Error ? error.message : String(error),
+      lastRunAt: new Date().toISOString(),
+    }
+  }
+
+  applyCurrentAcceptedFrame()
+  renderThumbnailCanvas()
+  render()
+}
+
 function findNextUnexcludedReviewIndex(startReviewIndex: number): number | null {
   for (
     let index = Math.max(0, startReviewIndex);
@@ -805,6 +970,7 @@ function analyzeCanvasForAcceptedFrame(
     const pose = estimateFacePoseFromMatrix(matrix)
     const observed12pt = detected ? buildLandmarkSummary(landmarks) : []
     const poseClassification = classifyPoseBucket(pose)
+    const expressionSummary = buildExpressionScoreSummary(blendshapes)
     const mediaPipeSummary = {
       detected,
       landmarkCount: landmarks.length,
@@ -826,6 +992,7 @@ function analyzeCanvasForAcceptedFrame(
       excluded: false,
       poseBucket: poseClassification.poseBucket,
       badges: poseClassification.badges,
+      expressionSummary,
     }
   } catch (error) {
     state.scanState = {
@@ -930,6 +1097,56 @@ function classifyPoseBucket(pose: Pose | null): {
     poseBucket: "other",
     badges: [],
   }
+}
+
+function buildExpressionScoreSummary(
+  categories: Array<{ categoryName?: string; score?: number }>,
+): ExpressionScoreSummary {
+  const scoreByCategory = new Map<string, number>()
+  for (const category of categories) {
+    if (!category.categoryName || !Number.isFinite(category.score)) {
+      continue
+    }
+    scoreByCategory.set(category.categoryName, category.score ?? 0)
+  }
+
+  const summary: ExpressionScoreSummary = {
+    maxScore: 0,
+  }
+
+  for (const categoryName of EXPRESSION_CATEGORY_NAMES) {
+    const score = scoreByCategory.get(categoryName)
+    if (score === undefined) {
+      continue
+    }
+    summary[categoryName] = roundDebugNumber(score)
+    if (score > summary.maxScore) {
+      summary.maxScore = score
+      summary.maxCategoryName = categoryName
+    }
+  }
+
+  summary.maxScore = roundDebugNumber(summary.maxScore)
+  return summary
+}
+
+function isExpressionTooStrong(summary?: ExpressionScoreSummary): boolean {
+  if (!summary) {
+    return false
+  }
+
+  return (
+    EXPRESSION_MOUTH_CATEGORY_NAMES.some(
+      (categoryName) => (summary[categoryName] ?? 0) >= EXPRESSION_EXCLUDE_THRESHOLDS.mouth,
+    ) ||
+    EXPRESSION_EYE_CATEGORY_NAMES.some(
+      (categoryName) => (summary[categoryName] ?? 0) >= EXPRESSION_EXCLUDE_THRESHOLDS.eye,
+    ) ||
+    EXPRESSION_BROW_CATEGORY_NAMES.some(
+      (categoryName) => (summary[categoryName] ?? 0) >= EXPRESSION_EXCLUDE_THRESHOLDS.brow,
+    ) ||
+    summary.maxScore >= EXPRESSION_EXCLUDE_THRESHOLDS.maxAny
+  )
 }
 
 function getAdjusted12pt(): LandmarkSummaryPoint[] {
@@ -1362,6 +1579,7 @@ function render(): void {
     ["source frame index", currentFrame ? String(currentFrame.sourceFrameIndex) : "-"],
     ["time", currentFrame ? `${formatNumber(currentFrame.timeSec)} sec` : "-"],
     ["excluded", currentFrame ? formatJapaneseBoolean(currentFrame.excluded) : "-"],
+    ["excluded reason", currentFrame ? formatExcludedReason(currentFrame.excludedReason) : "-"],
     ["badge", currentFrame ? formatFrameBadges(currentFrame.badges) : "-"],
   ])
 
@@ -1380,6 +1598,10 @@ function render(): void {
     !state.metadata || state.currentReviewIndex >= state.acceptedFrames.length - 1 || frameBusy
   excludeFrameButton.disabled = !state.metadata || !currentFrame || frameBusy
   stopScanButton.disabled = state.scanState.status !== "running"
+  excludeExpressionButton.disabled =
+    state.scanState.status === "running" ||
+    state.acceptedFrames.length === 0 ||
+    state.expressionExcludeSummary.status === "running"
 }
 
 function createRawDebugPayload(
@@ -1397,6 +1619,8 @@ function createRawDebugPayload(
     metadata: state.metadata,
     frameState,
     scanState: getScanStateDebug(),
+    expressionExcludeSummary: state.expressionExcludeSummary,
+    expressionExcludeThresholds: EXPRESSION_EXCLUDE_THRESHOLDS,
     poseBucketSummary: getPoseBucketSummary(),
     acceptedFramesPreview: getAcceptedFramesPreview(),
     mediaPipeFrameSummary: state.summary,
@@ -1483,6 +1707,7 @@ function renderSummaryConsole(
         ["source frame index", currentFrame ? String(currentFrame.sourceFrameIndex) : "-"],
         ["timeSec", currentFrame ? formatNumber(currentFrame.timeSec) : "-"],
         ["excluded", currentFrame ? formatJapaneseBoolean(currentFrame.excluded) : "-"],
+        ["excludedReason", currentFrame ? formatExcludedReason(currentFrame.excludedReason) : "-"],
         ["badges", currentFrame ? formatFrameBadges(currentFrame.badges) : "-"],
       ]),
     ),
@@ -1611,6 +1836,22 @@ function renderScanConsole(): string {
         ["maxScanDurationSec", String(state.scanState.maxScanDurationSec)],
         ["maxScanFrames", String(state.scanState.maxScanFrames)],
         ["error", state.scanState.error ?? "-"],
+      ]),
+    ),
+    renderConsoleSection(
+      "Expression exclude summary",
+      renderStatusItems([
+        ["表情除外状態", state.expressionExcludeSummary.status],
+        ["走査フレーム数", String(state.expressionExcludeSummary.scannedFrameCount)],
+        ["新規除外数", String(state.expressionExcludeSummary.newlyExcludedCount)],
+        ["既に除外済み数", String(state.expressionExcludeSummary.alreadyExcludedCount)],
+        [
+          "manual 除外のためスキップした数",
+          String(state.expressionExcludeSummary.manualExcludedSkippedCount),
+        ],
+        ["表情大フレーム数", String(state.expressionExcludeSummary.expressionTooStrongCount)],
+        ["lastRunAt", state.expressionExcludeSummary.lastRunAt ?? "-"],
+        ["error", state.expressionExcludeSummary.error ?? "-"],
       ]),
     ),
     renderConsoleSection(
@@ -1778,6 +2019,16 @@ function formatFrameBadges(badges: FrameBadge[]): string {
   return badges.length > 0 ? badges.map((badge) => badge.label).join(", ") : "なし"
 }
 
+function formatExcludedReason(reason?: ExcludedReason): string {
+  if (reason === "manual") {
+    return "手動 manual"
+  }
+  if (reason === "expressionTooStrong") {
+    return "表情が大きい expressionTooStrong"
+  }
+  return "-"
+}
+
 function getManualAdjustmentFrameCount(): number {
   return Object.values(state.manualAdjustmentsByFrame).filter(
     (adjustments) => adjustments.length > 0,
@@ -1811,6 +2062,9 @@ function getAcceptedFramesPreview(): Array<{
   poseBucket: PoseBucket
   badges: string[]
   excluded: boolean
+  excludedReason?: ExcludedReason
+  expressionMaxScore?: number
+  expressionMaxCategoryName?: string
 }> {
   return state.acceptedFrames
     .map((frame) => ({
@@ -1824,6 +2078,9 @@ function getAcceptedFramesPreview(): Array<{
       poseBucket: frame.poseBucket,
       badges: frame.badges.map((badge) => badge.id),
       excluded: frame.excluded,
+      excludedReason: frame.excludedReason,
+      expressionMaxScore: frame.expressionSummary?.maxScore,
+      expressionMaxCategoryName: frame.expressionSummary?.maxCategoryName,
     }))
     .slice(0, ACCEPTED_FRAMES_PREVIEW_LIMIT)
 }

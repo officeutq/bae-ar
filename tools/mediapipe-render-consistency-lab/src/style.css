@@ -76,6 +76,12 @@ h2:first-child {
   margin: 0;
 }
 
+.control-help {
+  color: #687481;
+  font-size: 12px;
+  margin: -4px 0 0;
+}
+
 .panel-heading {
   align-items: center;
   display: flex;
