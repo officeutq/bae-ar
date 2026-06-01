@@ -544,9 +544,9 @@ function render(): void {
   ])
 
   poseGrid.innerHTML = renderStatusItems([
-    ["ヨー", state.pose ? formatNumber(state.pose.yaw) : "-"],
-    ["ピッチ", state.pose ? formatNumber(state.pose.pitch) : "-"],
-    ["ロール", state.pose ? formatNumber(state.pose.roll) : "-"],
+    ["左右向き", state.pose ? formatNumber(state.pose.yaw) : "-"],
+    ["上下向き", state.pose ? formatNumber(state.pose.pitch) : "-"],
+    ["傾き", state.pose ? formatNumber(state.pose.roll) : "-"],
     [
       "顔変換行列",
       state.summary ? formatJapaneseBoolean(state.summary.hasFacialTransformationMatrix) : "-",
