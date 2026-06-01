@@ -136,7 +136,7 @@ app.innerHTML = `
     </section>
 
     <section class="right-panel panel">
-      <h2>MediaPipe metadata summary</h2>
+      <h2>MediaPipe メタ情報サマリ</h2>
       <div id="summaryGrid" class="status-grid"></div>
 
       <h2>pose</h2>
@@ -531,16 +531,16 @@ function render(): void {
   ])
 
   summaryGrid.innerHTML = renderStatusItems([
-    ["detected", state.summary ? formatBoolean(state.summary.detected) : "-"],
-    ["landmarkCount", state.summary ? String(state.summary.landmarkCount) : "-"],
-    ["blendshapeCount", state.summary ? String(state.summary.blendshapeCount) : "-"],
-    ["landmarkSummaryPointCount", String(state.landmarkSummary.length)],
+    ["顔検出", state.summary ? formatJapaneseBoolean(state.summary.detected) : "-"],
+    ["ランドマーク数", state.summary ? String(state.summary.landmarkCount) : "-"],
+    ["ブレンドシェイプ数", state.summary ? String(state.summary.blendshapeCount) : "-"],
+    ["12点サマリ数", String(state.landmarkSummary.length)],
     [
-      "hasFacialTransformationMatrix",
-      state.summary ? formatBoolean(state.summary.hasFacialTransformationMatrix) : "-",
+      "顔変換行列",
+      state.summary ? formatJapaneseBoolean(state.summary.hasFacialTransformationMatrix) : "-",
     ],
-    ["matrixPreview", state.summary?.matrixPreview?.join(", ") ?? "-"],
-    ["error", state.summary?.error ?? "-"],
+    ["行列プレビュー", state.summary?.matrixPreview?.join(", ") ?? "-"],
+    ["エラー", state.summary?.error ?? "-"],
   ])
 
   poseGrid.innerHTML = renderStatusItems([
@@ -602,6 +602,10 @@ function renderStatusItems(items: Array<[string, string]>): string {
 
 function formatBoolean(value: boolean): string {
   return value ? "true" : "false"
+}
+
+function formatJapaneseBoolean(value: boolean): string {
+  return value ? "はい" : "いいえ"
 }
 
 function formatNumber(value: number): string {
