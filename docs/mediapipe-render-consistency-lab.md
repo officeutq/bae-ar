@@ -250,8 +250,20 @@ RC-0 は docs 整理、RC-0.5 と RC-0.6 は `tools/mediapipe-render-consistency
 - フレーム移動時に調整済み12点を復元
 - observed12ptByFrame による初回 MediaPipe 解析結果のフレーム別一時保持
 - 同じ frameIndex に戻った場合、初回解析時の observed12pt を再利用
+- eyePointMode による leftEye / rightEye の比較
+- browEyeAnchor を z 推定 / 顔形状推定用の初期推奨 eye point として扱う
 
 RC-1 以降で実装する場合も、Runtime / Studio / IdealFace Authoring Tool / Fitting Lab の実装を直接変更せず、`tools/mediapipe-render-consistency-lab` の責務として切り分けます。保存 / export、mesh 化、render、MediaPipe re-detection、residual evaluation、`meshReadyZ` candidate 探索はまだ未実装です。
+
+### eyePointMode
+
+`irisCenter` は従来方式で、虹彩・眼球中心を使います。視線移動に追随するため、z 推定用の eye point としては不安定ですが、比較用として残します。
+
+`eyeContourCenter` は目頭・目尻の目輪郭中心を使います。虹彩中心より安定しますが、まばたきや目の開きには影響されます。
+
+`browEyeAnchor` は目輪郭中心から眉代表点へ少し寄せた、眉と目の間くらいの固定点です。z 推定 / 顔形状推定用の初期推奨とします。
+
+Render Consistency Lab では `eyePointMode` を切り替えて比較できます。これは debug lab 側だけの比較用変更であり、`tools/ideal-face-fitting-lab` の既存実装は変更しません。
 
 ## 11. 今回やらないこと
 

@@ -38,6 +38,7 @@ type LandmarkSummaryPoint = {
   y: number
   z?: number
   sourceIndices: number[]
+  sourceMode?: EyePointMode
 }
 
 type ManualLandmarkAdjustment = {
@@ -46,17 +47,23 @@ type ManualLandmarkAdjustment = {
   dy: number
 }
 
-type ManualAdjustmentsByFrame = Record<number, ManualLandmarkAdjustment[]>
+type EyePointMode = "irisCenter" | "eyeContourCenter" | "browEyeAnchor"
+
+type FrameModeKey = `${number}:${EyePointMode}`
+
+type ManualAdjustmentsByFrame = Record<FrameModeKey, ManualLandmarkAdjustment[]>
 
 type Observed12ptFrameSnapshot = {
+  key: FrameModeKey
   frameIndex: number
   timeSec: number
+  eyePointMode: EyePointMode
   observed12pt: LandmarkSummaryPoint[]
   mediaPipeSummary: MediaPipeFrameSummary
   pose: Pose | null
 }
 
-type Observed12ptByFrame = Record<number, Observed12ptFrameSnapshot>
+type Observed12ptByFrame = Record<FrameModeKey, Observed12ptFrameSnapshot>
 
 type Observed12ptSource = "none" | "newlyAnalyzed" | "cached"
 
@@ -84,6 +91,7 @@ type AppState = {
   observed12pt: LandmarkSummaryPoint[]
   observed12ptByFrame: Observed12ptByFrame
   observed12ptSource: Observed12ptSource
+  eyePointMode: EyePointMode
   manualAdjustmentsByFrame: ManualAdjustmentsByFrame
   selectedLandmarkSummaryPointId: string | null
   draggingLandmarkSummaryPointId: string | null
@@ -101,6 +109,20 @@ const OBSERVED_12PT_BY_FRAME_PREVIEW_LIMIT = 20
 const OVERLAY_POINT_RADIUS = 5
 const OVERLAY_SELECTED_POINT_RADIUS = 8
 const OVERLAY_HIT_RADIUS = 12
+const DEFAULT_EYE_POINT_MODE: EyePointMode = "browEyeAnchor"
+const EYE_POINT_MODE_LABELS: Record<EyePointMode, string> = {
+  browEyeAnchor: "眉目間アンカー browEyeAnchor",
+  eyeContourCenter: "目輪郭中心 eyeContourCenter",
+  irisCenter: "虹彩中心 irisCenter",
+}
+const EYE_POINT_INDICES = {
+  leftIris: [474, 475, 476, 477],
+  rightIris: [469, 470, 471, 472],
+  leftContour: [263, 362],
+  rightContour: [33, 133],
+  leftBrow: [276, 282, 283, 285, 295],
+  rightBrow: [46, 52, 53, 55, 65],
+} as const
 
 const ROTATION_CENTER_12_SEMANTIC_DEFINITIONS: SemanticPointDefinition[] = [
   { id: "headTop", label: "頭頂", primaryIndices: [10] },
@@ -128,6 +150,7 @@ const state: AppState = {
   observed12pt: [],
   observed12ptByFrame: {},
   observed12ptSource: "none",
+  eyePointMode: DEFAULT_EYE_POINT_MODE,
   manualAdjustmentsByFrame: {},
   selectedLandmarkSummaryPointId: null,
   draggingLandmarkSummaryPointId: null,
@@ -173,6 +196,14 @@ app.innerHTML = `
           12点サマリを非表示
         </button>
       </div>
+      <label class="eye-point-mode-control">
+        <span>目点モード eyePointMode</span>
+        <select id="eyePointModeSelect">
+          <option value="browEyeAnchor">眉目間アンカー browEyeAnchor</option>
+          <option value="eyeContourCenter">目輪郭中心 eyeContourCenter</option>
+          <option value="irisCenter">虹彩中心 irisCenter</option>
+        </select>
+      </label>
       <div class="thumbnail-frame">
         <canvas id="thumbnailCanvas" width="1280" height="720"></canvas>
         <p id="thumbnailEmpty" class="empty-message">MP4 を読み込むとサムネイルを表示します。</p>
@@ -195,6 +226,7 @@ app.innerHTML = `
       <div id="poseGrid" class="status-grid"></div>
 
       <h2>12点ランドマークサマリ</h2>
+      <div id="landmarkSummaryModeGrid" class="status-grid mode-status-grid"></div>
       <div class="summary-actions">
         <button id="resetSelectedLandmarkButton" type="button" class="secondary-button">
           選択点をリセット
@@ -221,8 +253,10 @@ const frameInfoGrid = getElement("frameInfoGrid")
 const summaryGrid = getElement("summaryGrid")
 const poseGrid = getElement("poseGrid")
 const landmarkSummaryGrid = getElement("landmarkSummaryGrid")
+const landmarkSummaryModeGrid = getElement("landmarkSummaryModeGrid")
 const rawDebug = getElement<HTMLPreElement>("rawDebug")
 const toggleLandmarkSummaryButton = getElement<HTMLButtonElement>("toggleLandmarkSummaryButton")
+const eyePointModeSelect = getElement<HTMLSelectElement>("eyePointModeSelect")
 const previousFrameButton = getElement<HTMLButtonElement>("previousFrameButton")
 const excludeFrameButton = getElement<HTMLButtonElement>("excludeFrameButton")
 const nextFrameButton = getElement<HTMLButtonElement>("nextFrameButton")
@@ -237,6 +271,17 @@ fileInput.addEventListener("change", () => {
 toggleLandmarkSummaryButton.addEventListener("click", () => {
   state.showLandmarkSummaryOverlay = !state.showLandmarkSummaryOverlay
   renderThumbnailCanvas()
+  render()
+})
+
+eyePointModeSelect.addEventListener("change", () => {
+  state.eyePointMode = eyePointModeSelect.value as EyePointMode
+  state.selectedLandmarkSummaryPointId = null
+  state.draggingLandmarkSummaryPointId = null
+  if (state.metadata) {
+    void loadCurrentFrame()
+    return
+  }
   render()
 })
 
@@ -408,9 +453,10 @@ async function loadCurrentFrame(): Promise<void> {
   await seekVideoToCurrentFrame()
   prepareThumbnailCanvas()
   renderThumbnailCanvas()
-  const cachedSnapshot = state.observed12ptByFrame[state.currentFrameIndex]
+  const cachedSnapshot = state.observed12ptByFrame[getCurrentFrameModeKey()]
   if (cachedSnapshot) {
     applyObserved12ptFrameSnapshot(cachedSnapshot, "cached")
+    state.loadStatus = "完了"
     renderThumbnailCanvas()
     render()
     return
@@ -426,7 +472,7 @@ async function loadCurrentFrame(): Promise<void> {
   const snapshot = analyzeCurrentFrameSnapshot()
   state.observed12ptByFrame = {
     ...state.observed12ptByFrame,
-    [snapshot.frameIndex]: snapshot,
+    [snapshot.key]: snapshot,
   }
   applyObserved12ptFrameSnapshot(snapshot, "newlyAnalyzed")
   renderThumbnailCanvas()
@@ -662,8 +708,10 @@ function createObserved12ptFrameSnapshot(
   pose: Pose | null,
 ): Observed12ptFrameSnapshot {
   return {
+    key: getCurrentFrameModeKey(),
     frameIndex: state.currentFrameIndex,
     timeSec: roundDebugNumber(getCurrentFrameTimeSec()),
+    eyePointMode: state.eyePointMode,
     observed12pt,
     mediaPipeSummary,
     pose,
@@ -705,21 +753,30 @@ function getManualAdjustment(pointId: string): ManualLandmarkAdjustment | null {
 }
 
 function getCurrentManualAdjustments(): ManualLandmarkAdjustment[] {
-  return state.manualAdjustmentsByFrame[state.currentFrameIndex] ?? []
+  return state.manualAdjustmentsByFrame[getCurrentFrameModeKey()] ?? []
 }
 
 function setCurrentManualAdjustments(adjustments: ManualLandmarkAdjustment[]): void {
+  const key = getCurrentFrameModeKey()
   if (adjustments.length === 0) {
     const remaining = { ...state.manualAdjustmentsByFrame }
-    delete remaining[state.currentFrameIndex]
+    delete remaining[key]
     state.manualAdjustmentsByFrame = remaining
     return
   }
 
   state.manualAdjustmentsByFrame = {
     ...state.manualAdjustmentsByFrame,
-    [state.currentFrameIndex]: adjustments,
+    [key]: adjustments,
   }
+}
+
+function getCurrentFrameModeKey(): FrameModeKey {
+  return getFrameModeKey(state.currentFrameIndex, state.eyePointMode)
+}
+
+function getFrameModeKey(frameIndex: number, eyePointMode: EyePointMode): FrameModeKey {
+  return `${frameIndex}:${eyePointMode}`
 }
 
 function setManualAdjustment(pointId: string, dx: number, dy: number): void {
@@ -765,6 +822,10 @@ function resetCurrentFrameLandmarkAdjustments(): void {
 
 function buildLandmarkSummary(landmarks: NormalizedLandmark[]): LandmarkSummaryPoint[] {
   return ROTATION_CENTER_12_SEMANTIC_DEFINITIONS.map((definition) => {
+    if (definition.id === "leftEye" || definition.id === "rightEye") {
+      return buildEyeSummaryPoint(landmarks, definition)
+    }
+
     const primaryPoint = averageLandmarks(landmarks, definition.primaryIndices)
     const fallbackPoint = definition.fallbackIndices
       ? averageLandmarks(landmarks, definition.fallbackIndices)
@@ -789,6 +850,94 @@ function buildLandmarkSummary(landmarks: NormalizedLandmark[]): LandmarkSummaryP
       sourceIndices,
     }
   }).filter((point): point is LandmarkSummaryPoint => Boolean(point))
+}
+
+function buildEyeSummaryPoint(
+  landmarks: NormalizedLandmark[],
+  definition: SemanticPointDefinition,
+): LandmarkSummaryPoint | null {
+  const side = definition.id === "leftEye" ? "left" : "right"
+  const irisIndices =
+    side === "left" ? EYE_POINT_INDICES.leftIris : EYE_POINT_INDICES.rightIris
+  const contourIndices =
+    side === "left" ? EYE_POINT_INDICES.leftContour : EYE_POINT_INDICES.rightContour
+  const browIndices =
+    side === "left" ? EYE_POINT_INDICES.leftBrow : EYE_POINT_INDICES.rightBrow
+
+  if (state.eyePointMode === "irisCenter") {
+    const irisPoint = averageLandmarks(landmarks, [...irisIndices])
+    const contourFallback = averageLandmarks(landmarks, [...contourIndices])
+    return createLandmarkSummaryPoint(
+      definition,
+      irisPoint ?? contourFallback,
+      irisPoint ? [...irisIndices] : [...contourIndices],
+      state.eyePointMode,
+    )
+  }
+
+  const contourPoint = averageLandmarks(landmarks, [...contourIndices])
+  if (state.eyePointMode === "eyeContourCenter") {
+    return createLandmarkSummaryPoint(
+      definition,
+      contourPoint,
+      [...contourIndices],
+      state.eyePointMode,
+    )
+  }
+
+  const browPoint = averageLandmarks(landmarks, [...browIndices])
+  if (!contourPoint || !browPoint) {
+    return createLandmarkSummaryPoint(
+      definition,
+      contourPoint,
+      contourPoint ? [...contourIndices] : [],
+      state.eyePointMode,
+    )
+  }
+
+  // 暫定 brow-eye anchor: 目輪郭中心から眉代表点へ寄せ、眼球ではなく顔側に固定される点として扱う。
+  return createLandmarkSummaryPoint(
+    definition,
+    interpolateLandmark(contourPoint, browPoint, 0.45),
+    [...contourIndices, ...browIndices],
+    state.eyePointMode,
+  )
+}
+
+function createLandmarkSummaryPoint(
+  definition: SemanticPointDefinition,
+  point: NormalizedLandmark | null,
+  sourceIndices: number[],
+  sourceMode?: EyePointMode,
+): LandmarkSummaryPoint | null {
+  if (!point) {
+    return null
+  }
+
+  return {
+    id: definition.id,
+    label: definition.label,
+    x: roundDebugNumber(point.x),
+    y: roundDebugNumber(point.y),
+    z: roundDebugNumber(point.z),
+    sourceIndices,
+    sourceMode,
+  }
+}
+
+function interpolateLandmark(
+  from: NormalizedLandmark,
+  to: NormalizedLandmark,
+  ratio: number,
+): NormalizedLandmark {
+  return {
+    x: from.x + (to.x - from.x) * ratio,
+    y: from.y + (to.y - from.y) * ratio,
+    z: from.z + (to.z - from.z) * ratio,
+    visibility: from.visibility === undefined || to.visibility === undefined
+      ? undefined
+      : from.visibility + (to.visibility - from.visibility) * ratio,
+  }
 }
 
 function averageLandmarks(
@@ -1047,6 +1196,11 @@ function render(): void {
     ],
   ])
 
+  landmarkSummaryModeGrid.innerHTML = renderStatusItems([
+    ["eyePointMode", state.eyePointMode],
+    ["目点モード", EYE_POINT_MODE_LABELS[state.eyePointMode]],
+  ])
+
   landmarkSummaryGrid.innerHTML =
     adjusted12pt.length > 0
       ? adjusted12pt
@@ -1064,6 +1218,7 @@ function render(): void {
   toggleLandmarkSummaryButton.textContent = state.showLandmarkSummaryOverlay
     ? "12点サマリを非表示"
     : "12点サマリを表示"
+  eyePointModeSelect.value = state.eyePointMode
   resetSelectedLandmarkButton.disabled =
     !state.selectedLandmarkSummaryPointId ||
     !currentManualAdjustments.some(
@@ -1078,6 +1233,7 @@ function render(): void {
     {
       metadata: state.metadata,
       frameState,
+      eyePointMode: state.eyePointMode,
       mediaPipeFrameSummary: state.summary,
       landmarkSummaryPointCount: adjusted12pt.length,
       observed12pt: state.observed12pt,
@@ -1128,18 +1284,22 @@ function getManualAdjustmentFrameCount(): number {
 }
 
 function getManualAdjustmentsByFramePreview(): Array<{
+  key: FrameModeKey
   frameIndex: number
+  eyePointMode: EyePointMode
   adjustmentCount: number
   adjustments: ManualLandmarkAdjustment[]
 }> {
   return Object.entries(state.manualAdjustmentsByFrame)
-    .map(([frameIndex, adjustments]) => ({
-      frameIndex: Number(frameIndex),
+    .map(([key, adjustments]) => ({
+      key: key as FrameModeKey,
+      frameIndex: parseFrameModeKey(key as FrameModeKey).frameIndex,
+      eyePointMode: parseFrameModeKey(key as FrameModeKey).eyePointMode,
       adjustmentCount: adjustments.length,
       adjustments,
     }))
     .filter((entry) => entry.adjustmentCount > 0)
-    .sort((left, right) => left.frameIndex - right.frameIndex)
+    .sort(compareFrameModeEntries)
     .slice(0, MANUAL_ADJUSTMENTS_BY_FRAME_PREVIEW_LIMIT)
 }
 
@@ -1158,25 +1318,48 @@ function formatObserved12ptSource(): string {
 }
 
 function getObserved12ptByFramePreview(): Array<{
+  key: FrameModeKey
   frameIndex: number
   timeSec: number
+  eyePointMode: EyePointMode
   detected: boolean
   observedPointCount: number
   landmarkCount: number
   hasFacialTransformationMatrix: boolean
 }> {
   return Object.entries(state.observed12ptByFrame)
-    .map(([frameIndex, snapshot]) => ({
-      frameIndex: Number(frameIndex),
+    .map(([key, snapshot]) => ({
+      key: key as FrameModeKey,
+      frameIndex: snapshot.frameIndex,
       timeSec: snapshot.timeSec,
+      eyePointMode: snapshot.eyePointMode,
       detected: snapshot.mediaPipeSummary.detected,
       observedPointCount: snapshot.observed12pt.length,
       landmarkCount: snapshot.mediaPipeSummary.landmarkCount,
       hasFacialTransformationMatrix:
         snapshot.mediaPipeSummary.hasFacialTransformationMatrix,
     }))
-    .sort((left, right) => left.frameIndex - right.frameIndex)
+    .sort(compareFrameModeEntries)
     .slice(0, OBSERVED_12PT_BY_FRAME_PREVIEW_LIMIT)
+}
+
+function parseFrameModeKey(key: FrameModeKey): {
+  frameIndex: number
+  eyePointMode: EyePointMode
+} {
+  const [frameIndex, eyePointMode] = key.split(":") as [string, EyePointMode]
+  return {
+    frameIndex: Number(frameIndex),
+    eyePointMode,
+  }
+}
+
+function compareFrameModeEntries(
+  left: { frameIndex: number; eyePointMode: EyePointMode },
+  right: { frameIndex: number; eyePointMode: EyePointMode },
+): number {
+  return left.frameIndex - right.frameIndex ||
+    left.eyePointMode.localeCompare(right.eyePointMode)
 }
 
 function renderStatusItems(items: Array<[string, string]>): string {
@@ -1226,10 +1409,11 @@ function formatLandmarkSummaryPoint(point: LandmarkSummaryPoint): string {
   const manualSummary = adjustment
     ? ` / 手動調整あり dx ${formatNumber(adjustment.dx)} / dy ${formatNumber(adjustment.dy)}`
     : " / 手動調整なし"
+  const sourceModeSummary = point.sourceMode ? ` / 目点モード ${point.sourceMode}` : ""
 
   return `識別子 ${point.id} / ${coordinateSummary} / 奥行き ${
     point.z === undefined ? "-" : formatNumber(point.z)
-  } / 参照番号 ${point.sourceIndices.join(", ")}${manualSummary}`
+  } / 参照番号 ${point.sourceIndices.join(", ")}${sourceModeSummary}${manualSummary}`
 }
 
 function average(values: number[]): number {

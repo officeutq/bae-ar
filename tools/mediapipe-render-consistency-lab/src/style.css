@@ -119,6 +119,31 @@ input[type="file"] {
   padding: 9px;
 }
 
+.eye-point-mode-control {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.eye-point-mode-control span {
+  color: #4d5863;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.eye-point-mode-control select {
+  background: #ffffff;
+  border: 1px solid #aab6c2;
+  border-radius: 6px;
+  color: #26313b;
+  font: inherit;
+  font-size: 13px;
+  min-height: 34px;
+  padding: 6px 8px;
+}
+
 .status-grid {
   display: grid;
   gap: 8px;
@@ -240,6 +265,10 @@ video {
   flex-wrap: wrap;
   gap: 8px;
   margin: -2px 0 10px;
+}
+
+.mode-status-grid {
+  margin-bottom: 10px;
 }
 
 .landmark-summary-item {
