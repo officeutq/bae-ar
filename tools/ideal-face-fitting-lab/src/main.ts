@@ -495,6 +495,44 @@ interface AutoSequenceStepSummary {
   processedCandidateCount: number
   estimatedCandidateCount: number
   bestCandidateId?: string | null
+  structureAwareDiagnostic?: AutoSequenceStepStructureAwareDiagnostic
+}
+
+interface StructureAwareScoreBreakdownSummary {
+  projectionScore: number | null
+  depthRelationPenalty: number | null
+  canonicalStructurePenalty: number | null
+  boundHitPenalty: number | null
+  total: number | null
+  violations: Array<{
+    ruleId: string
+    label: string
+    penalty: number
+  }>
+}
+
+interface StructureAwareCandidateDiagnostic {
+  candidateId: string | null
+  projectionScore: number | null
+  depthRelationStatus: BruteForce8ptDepthRelationStatus | null
+  canonicalAverageAbsDelta: number | null
+  canonicalCorrelation: number | null
+  structureAwareScore: number | null
+  structureAwareScoreBreakdown: StructureAwareScoreBreakdownSummary | null
+}
+
+interface AutoSequenceStepStructureAwareDiagnostic {
+  stepId: SearchPresetId
+  projectionObjectiveBest: StructureAwareCandidateDiagnostic
+  structureAwareBest: StructureAwareCandidateDiagnostic
+  wouldChangeStepBest: boolean
+  selectionDifference: {
+    projectionScoreDelta: number | null
+    structureAwareScoreDelta: number | null
+    canonicalAverageAbsDeltaDelta: number | null
+    canonicalCorrelationDelta: number | null
+    notes: string[]
+  }
 }
 
 interface AutoSequenceStepSearchSettings {
@@ -526,6 +564,7 @@ interface AutoSequenceSummary {
   finalObjectiveMode: ObjectiveMode | null
   finalObjectiveScore: number | null
   structureAwareReranking?: StructureAwareRerankingSummary
+  structureAwareDiagnosticSelection?: StructureAwareDiagnosticSelectionSummary
 }
 
 interface AutoSequenceState {
@@ -652,6 +691,8 @@ interface CandidateDefinition extends FittingCandidate8 {
 
 interface FittingCandidate8WithDepthRelation extends FittingCandidate8 {
   depthRelationDebug?: DepthRelationDebug
+  candidateId?: string | null
+  selectedBy?: "projectionObjective"
 }
 
 interface FrameEvaluation {
@@ -1598,6 +1639,7 @@ interface CandidateComparison8ptVs12pt {
   }
   best8ptRawProjection: CandidateComparisonEntry
   best8ptStructureAware: CandidateComparisonEntry
+  final12ptProjectionObjective: CandidateComparisonEntry
   final12ptCurrent: CandidateComparisonEntry
   best12ptStructureAware: CandidateComparisonEntry
   notes: string[]
@@ -1605,6 +1647,7 @@ interface CandidateComparison8ptVs12pt {
 
 interface CandidateComparisonEntry {
   candidateId: string | null
+  projectionScore: number | null
   averageProjectionError: number | null
   canonicalAverageAbsDelta: number | null
   canonicalCorrelation: number | null
@@ -1612,6 +1655,7 @@ interface CandidateComparisonEntry {
   structureAwareScore: number | null
   rawProjectionScore: number | null
   boundHitCount: number | null
+  structureAwareScoreBreakdown?: StructureAwareScoreBreakdownSummary | null
 }
 
 interface StructureAwareRerankingCandidate {
@@ -1635,6 +1679,27 @@ interface StructureAwareRerankingSummary {
   wouldSelectCandidateId: string | null
   currentFinalCandidateId: string | null
   wouldChangeFinalCandidate: boolean
+}
+
+interface StructureAwareDiagnosticSelectionSummary {
+  enabled: boolean
+  wouldSelectCandidateId: string | null
+  wouldChangeFinalCandidate: boolean
+  currentFinalCandidate: StructureAwareCandidateDiagnostic
+  wouldSelectCandidate: StructureAwareCandidateDiagnostic
+  reason: string
+}
+
+interface CanonicalMappingDebug {
+  noseBridge: {
+    usedForCandidateGeneration: number[]
+    usedForCanonicalComparison: number[]
+    mappingUnified: boolean
+  }
+  upperFaceCenter: {
+    usedForCandidateGeneration: number[]
+    usedForCanonicalComparison: number[]
+  }
 }
 
 interface Candidate12ptCanonicalFitPoint {
@@ -1771,6 +1836,8 @@ interface Quick478DepthDebugSummary {
     rawBestDepthStatus?: BruteForce8ptDepthRelationStatus | null
     structureAwareBestDepthStatus?: BruteForce8ptDepthRelationStatus | null
     wouldChangeFinalCandidate?: boolean | null
+    structureAwareWouldScore?: number | null
+    noseBridgeMappingUnified?: boolean
   }
   isRejected?: boolean
   fallbackUsed?: boolean
@@ -1820,6 +1887,7 @@ interface Quick478DepthDebugPayload extends Depth478PrototypeResult {
   bruteforce8ptCanonicalBaseline?: BruteForce8ptCanonicalBaseline
   candidateComparison8ptVs12pt?: CandidateComparison8ptVs12pt
   candidate12ptCanonicalFitComparison?: Candidate12ptCanonicalFitComparison
+  canonicalMappingDebug?: CanonicalMappingDebug
   analysisSummary?: SummaryAnalysisResult
 }
 
@@ -3346,7 +3414,7 @@ const CANONICAL_COMPATIBLE_12PT = {
   rightEye: [33, 133],
   nose: [4],
   mouth: [13, 14],
-  noseBridge: [6, 168, 197, 195],
+  noseBridge: [6],
   leftJaw: [172],
   rightJaw: [397],
   upperFaceCenter: [168],
@@ -6752,6 +6820,33 @@ function getSemanticPointWeight(pointId: SemanticPointName): number {
   return SEMANTIC_DEFINITIONS.find((definition) => definition.name === pointId)?.weight ?? 1
 }
 
+function getSemanticDefinitionIndices(pointId: SemanticPointName): number[] {
+  return [
+    ...(SEMANTIC_DEFINITIONS.find((definition) => definition.name === pointId)?.primaryIndices ?? []),
+  ]
+}
+
+function buildCanonicalMappingDebug(): CanonicalMappingDebug {
+  const noseBridgeCandidateGeneration = getSemanticDefinitionIndices("noseBridge")
+  const noseBridgeCanonicalComparison = [...CANONICAL_COMPATIBLE_12PT.noseBridge]
+  return {
+    noseBridge: {
+      usedForCandidateGeneration: noseBridgeCandidateGeneration,
+      usedForCanonicalComparison: noseBridgeCanonicalComparison,
+      mappingUnified:
+        arraysEqual(noseBridgeCandidateGeneration, noseBridgeCanonicalComparison),
+    },
+    upperFaceCenter: {
+      usedForCandidateGeneration: getSemanticDefinitionIndices("upperFaceCenter"),
+      usedForCanonicalComparison: [...CANONICAL_COMPATIBLE_12PT.upperFaceCenter],
+    },
+  }
+}
+
+function arraysEqual(left: readonly number[], right: readonly number[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index])
+}
+
 function buildStructureAwareRankingSettings(): StructureAwareRanking<unknown>["settings"] {
   return {
     enabled: true,
@@ -7293,6 +7388,276 @@ function buildStructureAwareReranking(
   }
 }
 
+function buildAutoSequenceStepStructureAwareDiagnostic(
+  stepId: SearchPresetId,
+  analysis: AnalysisResult,
+): AutoSequenceStepStructureAwareDiagnostic {
+  const pointIds = getSemanticPointSet(analysis.searchSettings.semanticPointSetId).pointIds
+  const semanticBoundRanges = collectSemanticPointZSearchRanges(analysis)
+  const projectionObjectiveBest = analysis.bestCandidate
+    ? buildStructureAwareCandidateDiagnosticFromCandidateResult(
+        analysis.bestCandidate.candidateId,
+        analysis.bestCandidate,
+        pointIds,
+        analysis,
+        semanticBoundRanges,
+      )
+    : emptyStructureAwareCandidateDiagnostic()
+  const structureAwareBest =
+    buildStructureAwareBestDiagnosticFromRanking(analysis, pointIds, semanticBoundRanges) ??
+    emptyStructureAwareCandidateDiagnostic()
+  const notes: string[] = []
+  if (!analysis.bestCandidate) {
+    notes.push("projection objective best is missing.")
+  }
+  if (!structureAwareBest.candidateId) {
+    notes.push("structure-aware best is missing after hardReject filtering.")
+  }
+  return {
+    stepId,
+    projectionObjectiveBest,
+    structureAwareBest,
+    wouldChangeStepBest:
+      Boolean(projectionObjectiveBest.candidateId && structureAwareBest.candidateId) &&
+      projectionObjectiveBest.candidateId !== structureAwareBest.candidateId,
+    selectionDifference: buildStructureAwareSelectionDifference(
+      projectionObjectiveBest,
+      structureAwareBest,
+      notes,
+    ),
+  }
+}
+
+function buildStructureAwareBestDiagnosticFromRanking(
+  analysis: AnalysisResult,
+  pointIds: SemanticPointName[],
+  semanticBoundRanges: Map<LocalSearchParameter, LocalSearchRange>,
+): StructureAwareCandidateDiagnostic | null {
+  const ranked = analysis.rawRanking.flatMap((entry) => {
+    const breakdown = buildStructureAwareScoreBreakdownForRankingEntry(
+      entry,
+      pointIds,
+      analysis,
+      semanticBoundRanges,
+    )
+    if (breakdown.hardRejected) {
+      return []
+    }
+    return [
+      {
+        entry,
+        breakdown,
+      },
+    ]
+  })
+  ranked.sort((a, b) => a.breakdown.structureAwareScore - b.breakdown.structureAwareScore)
+  const best = ranked[0]
+  if (!best) {
+    return null
+  }
+  return buildStructureAwareCandidateDiagnostic(
+    best.entry.candidateId,
+    best.entry.candidate,
+    best.breakdown,
+    pointIds,
+  )
+}
+
+function buildStructureAwareCandidateDiagnosticFromCandidateResult(
+  candidateId: string,
+  candidate: CandidateResult,
+  pointIds: SemanticPointName[],
+  analysis: AnalysisResult,
+  semanticBoundRanges: Map<LocalSearchParameter, LocalSearchRange>,
+): StructureAwareCandidateDiagnostic {
+  const rankingEntry =
+    analysis.rawRanking.find((entry) => entry.candidateId === candidateId) ??
+    toRankingEntry(candidate, 1)
+  const breakdown = buildStructureAwareScoreBreakdownForRankingEntry(
+    rankingEntry,
+    pointIds,
+    analysis,
+    semanticBoundRanges,
+  )
+  return buildStructureAwareCandidateDiagnostic(
+    candidateId,
+    candidate,
+    breakdown,
+    pointIds,
+  )
+}
+
+function buildStructureAwareCandidateDiagnostic(
+  candidateId: string | null,
+  candidate: FittingCandidate8,
+  breakdown: StructureAwareScoreBreakdown,
+  pointIds: SemanticPointName[],
+): StructureAwareCandidateDiagnostic {
+  const canonicalComparison = buildCanonicalComparisonForSemanticPointIds(candidate, pointIds)
+  const depthDebug = buildDepthStructureDebugForPointSet(candidate, pointIds)
+  return {
+    candidateId,
+    projectionScore: breakdown.projectionScore,
+    depthRelationStatus: depthDebug.score.status,
+    canonicalAverageAbsDelta: canonicalComparison.averageAbsDelta,
+    canonicalCorrelation: breakdown.canonicalStructurePenalty.canonicalCorrelation,
+    structureAwareScore: breakdown.structureAwareScore,
+    structureAwareScoreBreakdown: summarizeStructureAwareScoreBreakdown(breakdown),
+  }
+}
+
+function emptyStructureAwareCandidateDiagnostic(): StructureAwareCandidateDiagnostic {
+  return {
+    candidateId: null,
+    projectionScore: null,
+    depthRelationStatus: null,
+    canonicalAverageAbsDelta: null,
+    canonicalCorrelation: null,
+    structureAwareScore: null,
+    structureAwareScoreBreakdown: null,
+  }
+}
+
+function buildStructureAwareSelectionDifference(
+  projectionObjectiveBest: StructureAwareCandidateDiagnostic,
+  structureAwareBest: StructureAwareCandidateDiagnostic,
+  notes: string[],
+): AutoSequenceStepStructureAwareDiagnostic["selectionDifference"] {
+  return {
+    projectionScoreDelta: subtractNullable(
+      structureAwareBest.projectionScore,
+      projectionObjectiveBest.projectionScore,
+    ),
+    structureAwareScoreDelta: subtractNullable(
+      structureAwareBest.structureAwareScore,
+      projectionObjectiveBest.structureAwareScore,
+    ),
+    canonicalAverageAbsDeltaDelta: subtractNullable(
+      structureAwareBest.canonicalAverageAbsDelta,
+      projectionObjectiveBest.canonicalAverageAbsDelta,
+    ),
+    canonicalCorrelationDelta: subtractNullable(
+      structureAwareBest.canonicalCorrelation,
+      projectionObjectiveBest.canonicalCorrelation,
+    ),
+    notes,
+  }
+}
+
+function subtractNullable(left: number | null, right: number | null): number | null {
+  if (left === null || right === null) {
+    return null
+  }
+  return round(left - right)
+}
+
+function summarizeStructureAwareScoreBreakdown(
+  breakdown: StructureAwareScoreBreakdown | null | undefined,
+): StructureAwareScoreBreakdownSummary | null {
+  if (!breakdown) {
+    return null
+  }
+  const violations = [
+    ...breakdown.depthRelationPenalty.violations.map((violation) => ({
+      ruleId: violation.ruleId,
+      label: violation.label,
+      penalty: violation.penalty,
+    })),
+    ...(breakdown.canonicalStructurePenalty.canonicalCorrelation !== null &&
+    breakdown.canonicalStructurePenalty.canonicalCorrelation < 0
+      ? [
+          {
+            ruleId: "canonical_correlation_negative",
+            label: "標準顔との相関が負",
+            penalty: breakdown.canonicalStructurePenalty.correlationPenalty,
+          },
+        ]
+      : []),
+    ...breakdown.canonicalStructurePenalty.canonicalPairOrderPenalty.violations.map((violation) => ({
+      ruleId: violation.pairId,
+      label: violation.label,
+      penalty: violation.penalty,
+    })),
+    ...(breakdown.canonicalStructurePenalty.canonicalDeltaPenalty.penalty > 0
+      ? [
+          {
+            ruleId: "canonical_delta_large",
+            label: "標準顔との差分が大きい",
+            penalty: breakdown.canonicalStructurePenalty.canonicalDeltaPenalty.penalty,
+          },
+        ]
+      : []),
+    ...breakdown.boundHitPenalty.hits.map((hit) => ({
+      ruleId: `bound_hit_${hit.pointId}_${hit.hit}`,
+      label: `${hit.pointId} reached ${hit.hit} bound`,
+      penalty: hit.penalty,
+    })),
+  ]
+  return {
+    projectionScore: breakdown.projectionScore,
+    depthRelationPenalty: breakdown.depthRelationPenalty.value,
+    canonicalStructurePenalty: breakdown.canonicalStructurePenalty.value,
+    boundHitPenalty: breakdown.boundHitPenalty.value,
+    total: breakdown.structureAwareScore,
+    violations,
+  }
+}
+
+function buildStructureAwareDiagnosticSelection(
+  analysis: AnalysisResult,
+): StructureAwareDiagnosticSelectionSummary | undefined {
+  const auto = analysis.autoSequenceSummary
+  if (!auto) {
+    return undefined
+  }
+  const pointIds = getSemanticPointSet(analysis.searchSettings.semanticPointSetId).pointIds
+  const currentFinalCandidateId = auto.steps.at(-1)?.bestCandidateId ?? null
+  const currentFinalCandidate = auto.finalCandidate
+    ? buildStructureAwareDiagnosticForCandidate(
+        currentFinalCandidateId,
+        auto.finalCandidate,
+        analysis,
+        pointIds,
+      )
+    : emptyStructureAwareCandidateDiagnostic()
+  const wouldSelect = auto.structureAwareReranking?.topCandidates[0] ?? null
+  const wouldSelectCandidate = wouldSelect
+    ? buildStructureAwareCandidateDiagnostic(
+        wouldSelect.candidateId,
+        wouldSelect.candidate,
+        wouldSelect.scoreBreakdown,
+        pointIds,
+      )
+    : emptyStructureAwareCandidateDiagnostic()
+  const wouldSelectCandidateId = wouldSelectCandidate.candidateId
+  return {
+    enabled: true,
+    wouldSelectCandidateId,
+    wouldChangeFinalCandidate:
+      Boolean(wouldSelectCandidateId && currentFinalCandidateId) &&
+      wouldSelectCandidateId !== currentFinalCandidateId,
+    currentFinalCandidate,
+    wouldSelectCandidate,
+    reason: "structure-aware diagnostic only; finalCandidate not changed",
+  }
+}
+
+function buildStructureAwareDiagnosticForCandidate(
+  candidateId: string | null,
+  candidate: FittingCandidate8,
+  analysis: AnalysisResult,
+  pointIds: SemanticPointName[],
+): StructureAwareCandidateDiagnostic {
+  const breakdown = buildStructureAwareScoreBreakdownForRankingCandidate(
+    candidateId ?? "autoSequenceSummary.finalCandidate",
+    candidate,
+    analysis,
+  )
+  return breakdown
+    ? buildStructureAwareCandidateDiagnostic(candidateId, candidate, breakdown, pointIds)
+    : emptyStructureAwareCandidateDiagnostic()
+}
+
 function buildStructureAwareScoreBreakdownForRankingEntry(
   entry: RankingEntry,
   pointIds: SemanticPointName[],
@@ -7364,6 +7729,31 @@ function buildCandidateComparison8ptVs12pt(
     analysis?.autoSequenceSummary?.steps.at(-1)?.bestCandidateId ??
     prototype?.generatedCandidate?.source8CandidateId ??
     null
+  const final12ptProjectionObjective: CandidateComparisonEntry = {
+    candidateId: final12ptCandidateId,
+    projectionScore:
+      final12ptBreakdown?.projectionScore ??
+      analysis?.autoSequenceSummary?.finalObjectiveScore ??
+      primaryRun?.averageProjectionError ??
+      null,
+    averageProjectionError:
+      prototype?.projectionEvaluation?.averageProjectionError ??
+      primaryRun?.averageProjectionError ??
+      null,
+    canonicalAverageAbsDelta: final12ptCanonical?.averageAbsDelta ?? null,
+    canonicalCorrelation: calculateCanonicalCorrelation(final12ptCanonical),
+    depthRelationStatus: prototype?.depthRelationDebug
+      ? getSemanticPointSetComparisonDepthRelationStatus(prototype.depthRelationDebug)
+      : primaryRun?.depthRelationStatus ?? null,
+    structureAwareScore: final12ptBreakdown?.structureAwareScore ?? null,
+    rawProjectionScore:
+      final12ptBreakdown?.projectionScore ??
+      analysis?.autoSequenceSummary?.finalObjectiveScore ??
+      primaryRun?.averageProjectionError ??
+      null,
+    boundHitCount: final12ptBreakdown?.boundHitPenalty.boundHitCount ?? null,
+    structureAwareScoreBreakdown: summarizeStructureAwareScoreBreakdown(final12ptBreakdown),
+  }
   const notes: string[] = []
   if (!best8pt) {
     notes.push("8pt structureAwareRanking produced no candidate after hardReject filtering.")
@@ -7405,27 +7795,12 @@ function buildCandidateComparison8ptVs12pt(
     },
     best8ptRawProjection: buildComparisonEntryFrom8ptCandidate(best8ptRaw),
     best8ptStructureAware: buildComparisonEntryFrom8ptCandidate(best8ptStructure),
-    final12ptCurrent: {
-      candidateId: final12ptCandidateId,
-      averageProjectionError:
-        prototype?.projectionEvaluation?.averageProjectionError ??
-        primaryRun?.averageProjectionError ??
-        null,
-      canonicalAverageAbsDelta: final12ptCanonical?.averageAbsDelta ?? null,
-      canonicalCorrelation: calculateCanonicalCorrelation(final12ptCanonical),
-      depthRelationStatus: prototype?.depthRelationDebug
-        ? getSemanticPointSetComparisonDepthRelationStatus(prototype.depthRelationDebug)
-        : primaryRun?.depthRelationStatus ?? null,
-      structureAwareScore: final12ptBreakdown?.structureAwareScore ?? null,
-      rawProjectionScore:
-        analysis?.autoSequenceSummary?.finalObjectiveScore ??
-        primaryRun?.averageProjectionError ??
-        null,
-      boundHitCount: final12ptBreakdown?.boundHitPenalty.boundHitCount ?? null,
-    },
+    final12ptProjectionObjective,
+    final12ptCurrent: final12ptProjectionObjective,
     best12ptStructureAware: best12ptStructure
       ? {
           candidateId: best12ptStructure.candidateId,
+          projectionScore: best12ptStructure.rawProjectionScore,
           averageProjectionError: best12ptStructure.averageProjectionError,
           canonicalAverageAbsDelta:
             best12ptStructure.canonicalComparison?.averageAbsDelta ?? null,
@@ -7435,6 +7810,9 @@ function buildCandidateComparison8ptVs12pt(
           structureAwareScore: best12ptStructure.structureAwareScore,
           rawProjectionScore: best12ptStructure.rawProjectionScore,
           boundHitCount: best12ptStructure.boundHitCount,
+          structureAwareScoreBreakdown: summarizeStructureAwareScoreBreakdown(
+            best12ptStructure.scoreBreakdown,
+          ),
         }
       : emptyCandidateComparisonEntry(),
     notes,
@@ -7875,6 +8253,7 @@ function buildComparisonEntryFrom8ptCandidate(
   }
   return {
     candidateId: candidate.candidateId,
+    projectionScore: candidate.rawProjectionScore,
     averageProjectionError: candidate.averageProjectionError,
     canonicalAverageAbsDelta: candidate.canonicalComparison.averageAbsDelta,
     canonicalCorrelation: candidate.scoreBreakdown.canonicalStructurePenalty.canonicalCorrelation,
@@ -7882,12 +8261,14 @@ function buildComparisonEntryFrom8ptCandidate(
     structureAwareScore: candidate.structureAwareScore,
     rawProjectionScore: candidate.rawProjectionScore,
     boundHitCount: candidate.scoreBreakdown.boundHitPenalty.boundHitCount,
+    structureAwareScoreBreakdown: summarizeStructureAwareScoreBreakdown(candidate.scoreBreakdown),
   }
 }
 
 function emptyCandidateComparisonEntry(): CandidateComparisonEntry {
   return {
     candidateId: null,
+    projectionScore: null,
     averageProjectionError: null,
     canonicalAverageAbsDelta: null,
     canonicalCorrelation: null,
@@ -7895,6 +8276,7 @@ function emptyCandidateComparisonEntry(): CandidateComparisonEntry {
     structureAwareScore: null,
     rawProjectionScore: null,
     boundHitCount: null,
+    structureAwareScoreBreakdown: null,
   }
 }
 
@@ -8057,6 +8439,7 @@ function buildQuick478DepthDebugPayload(
     options.analysis,
     bruteforce8ptCanonicalBaseline,
   )
+  const canonicalMappingDebug = buildCanonicalMappingDebug()
   const noseRule = relation?.ruleResults.find(
     (rule) => rule.ruleId === "nose_tip_group_in_front_of_cheek_group",
   )
@@ -8121,8 +8504,13 @@ function buildQuick478DepthDebugPayload(
         bruteforce8ptCanonicalBaseline?.structureAwareRanking.topCandidates[0]?.depthStructureDebug8pt
           .score.status ?? null,
       wouldChangeFinalCandidate:
-        options.analysis?.autoSequenceSummary?.structureAwareReranking?.wouldChangeFinalCandidate ??
+        options.analysis?.autoSequenceSummary?.structureAwareDiagnosticSelection
+          ?.wouldChangeFinalCandidate ??
         null,
+      structureAwareWouldScore:
+        options.analysis?.autoSequenceSummary?.structureAwareDiagnosticSelection
+          ?.wouldSelectCandidate.structureAwareScore ?? null,
+      noseBridgeMappingUnified: canonicalMappingDebug.noseBridge.mappingUnified,
     },
   }
   if (options.isRejected !== undefined) {
@@ -8156,6 +8544,7 @@ function buildQuick478DepthDebugPayload(
     bruteforce8ptCanonicalBaseline,
     candidateComparison8ptVs12pt,
     candidate12ptCanonicalFitComparison,
+    canonicalMappingDebug,
     analysisSummary: options.analysis ? createSummaryAnalysis(options.analysis) : undefined,
   }
 }
@@ -10503,6 +10892,7 @@ function handleAutoSequenceStepComplete(analysis: AnalysisResult | null): void {
     processedCandidateCount: analysis.processedCandidateCount,
     estimatedCandidateCount: analysis.estimatedCandidateCount,
     bestCandidateId: analysis.bestCandidate?.candidateId ?? null,
+    structureAwareDiagnostic: buildAutoSequenceStepStructureAwareDiagnostic(preset.id, analysis),
   }
 
   state.autoSequence.steps = [...state.autoSequence.steps, stepSummary]
@@ -10550,6 +10940,8 @@ function finishAutoSequence(
     if (status === "completed") {
       summaryAnalysis.autoSequenceSummary.structureAwareReranking =
         buildStructureAwareReranking(summaryAnalysis)
+      summaryAnalysis.autoSequenceSummary.structureAwareDiagnosticSelection =
+        buildStructureAwareDiagnosticSelection(summaryAnalysis)
     }
     if (status === "completed") {
       appendStabilityHistoryFromAnalysis(summaryAnalysis)
@@ -10592,7 +10984,13 @@ function buildAutoSequenceSummary(
     completedAt: state.autoSequence.completedAt ?? new Date().toISOString(),
     status,
     steps: state.autoSequence.steps,
-    finalCandidate: state.autoSequence.finalCandidate,
+    finalCandidate: state.autoSequence.finalCandidate
+      ? {
+          ...state.autoSequence.finalCandidate,
+          candidateId: finalStep?.bestCandidateId ?? null,
+          selectedBy: "projectionObjective",
+        }
+      : null,
     finalObjectiveMode: finalStep?.objectiveMode ?? null,
     finalObjectiveScore: finalStep?.objectiveScore ?? null,
   }
@@ -13279,6 +13677,14 @@ function renderQuick478DepthDebug(): void {
     ],
     ["raw best score", formatNumber(quick.quickRun.summary.rawBestScore)],
     ["structure-aware best score", formatNumber(quick.quickRun.summary.structureAwareBestScore)],
+    [
+      "12pt current final score",
+      formatNumber(quick.quickRun.summary.best12ptScore),
+    ],
+    [
+      "12pt structure-aware would score",
+      formatNumber(quick.quickRun.summary.structureAwareWouldScore),
+    ],
     ["raw best depth status", quick.quickRun.summary.rawBestDepthStatus ?? "-"],
     [
       "structure-aware best depth status",
@@ -13290,6 +13696,12 @@ function renderQuick478DepthDebug(): void {
       quick.quickRun.summary.wouldChangeFinalCandidate === undefined
         ? "-"
         : String(quick.quickRun.summary.wouldChangeFinalCandidate),
+    ],
+    [
+      "noseBridge mapping unified",
+      quick.quickRun.summary.noseBridgeMappingUnified === undefined
+        ? "-"
+        : String(quick.quickRun.summary.noseBridgeMappingUnified),
     ],
   ])
 }
