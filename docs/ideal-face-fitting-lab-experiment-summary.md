@@ -178,6 +178,8 @@ perLandmarkZSearch
 
 次に作る `tools/mediapipe-render-consistency-lab` の目的は、3D 顔メッシュを機械的に yaw / pitch / roll で回転・投影した 2D landmarks と、そのレンダリング画像を MediaPipe に通して返ってきた 2D landmarks が一致するのかを検証することです。
 
+設計方針、`projectionFitZ` と `meshReadyZ` の違い、mesh / render / MediaPipe re-detection 前提の評価方針は [MediaPipe Render Consistency Lab](mediapipe-render-consistency-lab.md) に整理します。
+
 最初の段階では、MediaPipe 再解析までは入れません。まず以下を実装します。
 
 1. 3D メッシュを camera へ投影する
