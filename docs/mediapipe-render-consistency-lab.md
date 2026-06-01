@@ -353,3 +353,8 @@ Render Consistency Lab は、最初から production asset を作る工程では
 - Pose タブでは poseBucket125 の全125 bucket を 0件 bucket も含めて表示する
 - nonEmptyBucketCount は引き続き summary として表示する
 - 125 bucket の一覧は将来の均等採用の確認用であり、現時点では採用処理は行わない
+- poseBucket125 の center は正面候補の意味を保つため、yaw / pitch / roll とも ±3 に固定する
+- small / large の境界は yaw / pitch / roll 個別に設定できる
+- 現時点の初期値では、pitch positive 側が不足しやすいため pitch.positiveSmallMax を 6 にする
+- yaw / roll は従来どおり positiveSmallMax / negativeSmallMax を 10 とする
+- この閾値は review / coverage 診断用であり、production の最終分類ではない
