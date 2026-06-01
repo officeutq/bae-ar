@@ -49,31 +49,35 @@ type ManualLandmarkAdjustment = {
 
 type EyePointMode = "irisCenter" | "eyeContourCenter" | "browEyeAnchor"
 
-type FrameModeKey = `${number}:${EyePointMode}`
+type ManualAdjustmentsByFrame = Record<number, ManualLandmarkAdjustment[]>
 
-type ManualAdjustmentsByFrame = Record<FrameModeKey, ManualLandmarkAdjustment[]>
-
-type Observed12ptFrameSnapshot = {
-  key: FrameModeKey
-  frameIndex: number
+type AcceptedFrameSnapshot = {
+  sourceFrameIndex: number
   timeSec: number
-  eyePointMode: EyePointMode
-  observed12pt: LandmarkSummaryPoint[]
+  thumbnailDataUrl: string
   mediaPipeSummary: MediaPipeFrameSummary
   pose: Pose | null
+  observed12pt: LandmarkSummaryPoint[]
+  excluded: boolean
+  excludedReason?: "manual"
 }
 
-type Observed12ptByFrame = Record<FrameModeKey, Observed12ptFrameSnapshot>
+type ScanStatus = "idle" | "running" | "completed" | "cancelled" | "error"
 
-type Observed12ptSource = "none" | "newlyAnalyzed" | "cached"
-
-type ConsoleTab = "summary" | "landmarks12pt" | "adjustments" | "raw"
-
-type ExcludedFrame = {
-  frameIndex: number
-  timeSec: number
-  reason: "manual"
+type ScanState = {
+  status: ScanStatus
+  scanFrameStepSeconds: number
+  maxScanDurationSec: number
+  maxScanFrames: number
+  scannedFrameCount: number
+  acceptedFrameCount: number
+  discardedNoFaceCount: number
+  discardedInvalidLandmarkCount: number
+  progress: number
+  error?: string
 }
+
+type ConsoleTab = "summary" | "landmarks12pt" | "adjustments" | "raw" | "scan"
 
 type SemanticPointDefinition = {
   id: string
@@ -91,24 +95,24 @@ type AppState = {
   summary: MediaPipeFrameSummary | null
   pose: Pose | null
   observed12pt: LandmarkSummaryPoint[]
-  observed12ptByFrame: Observed12ptByFrame
-  observed12ptSource: Observed12ptSource
   eyePointMode: EyePointMode
+  acceptedFrames: AcceptedFrameSnapshot[]
+  currentReviewIndex: number
+  scanState: ScanState
   manualAdjustmentsByFrame: ManualAdjustmentsByFrame
   selectedLandmarkSummaryPointId: string | null
   draggingLandmarkSummaryPointId: string | null
   showLandmarkSummaryOverlay: boolean
-  currentFrameIndex: number
-  excludedFrames: ExcludedFrame[]
   consoleTab: ConsoleTab
 }
 
 const RAD_TO_DEG = 180 / Math.PI
 const MATRIX_PREVIEW_COUNT = 8
-const FRAME_STEP_SECONDS = 1 / 30
-const EXCLUDED_FRAMES_PREVIEW_LIMIT = 20
+const SCAN_FRAME_STEP_SECONDS = 1 / 30
+const MAX_SCAN_DURATION_SEC = 300
+const MAX_SCAN_FRAMES = 9000
+const ACCEPTED_FRAMES_PREVIEW_LIMIT = 20
 const MANUAL_ADJUSTMENTS_BY_FRAME_PREVIEW_LIMIT = 20
-const OBSERVED_12PT_BY_FRAME_PREVIEW_LIMIT = 20
 const OVERLAY_POINT_RADIUS = 5
 const OVERLAY_SELECTED_POINT_RADIUS = 8
 const OVERLAY_HIT_RADIUS = 12
@@ -137,6 +141,20 @@ const ROTATION_CENTER_12_SEMANTIC_DEFINITIONS: SemanticPointDefinition[] = [
   { id: "upperFaceCenter", label: "上顔面中心", primaryIndices: [168] },
 ]
 
+function createInitialScanState(status: ScanStatus = "idle"): ScanState {
+  return {
+    status,
+    scanFrameStepSeconds: SCAN_FRAME_STEP_SECONDS,
+    maxScanDurationSec: MAX_SCAN_DURATION_SEC,
+    maxScanFrames: MAX_SCAN_FRAMES,
+    scannedFrameCount: 0,
+    acceptedFrameCount: 0,
+    discardedNoFaceCount: 0,
+    discardedInvalidLandmarkCount: 0,
+    progress: 0,
+  }
+}
+
 const state: AppState = {
   loadStatus: "未読込",
   detectorStatus: "未初期化",
@@ -146,21 +164,23 @@ const state: AppState = {
   summary: null,
   pose: null,
   observed12pt: [],
-  observed12ptByFrame: {},
-  observed12ptSource: "none",
   eyePointMode: DEFAULT_EYE_POINT_MODE,
+  acceptedFrames: [],
+  currentReviewIndex: 0,
+  scanState: createInitialScanState(),
   manualAdjustmentsByFrame: {},
   selectedLandmarkSummaryPointId: null,
   draggingLandmarkSummaryPointId: null,
   showLandmarkSummaryOverlay: true,
-  currentFrameIndex: 0,
-  excludedFrames: [],
   consoleTab: "summary",
 }
 
 let faceLandmarker: FaceLandmarker | null = null
 let objectUrl: string | null = null
 let detectorReadyPromise: Promise<void> | null = null
+let scanCancelRequested = false
+let activeScanId = 0
+let thumbnailRenderToken = 0
 
 const app = getElement("app")
 
@@ -185,6 +205,13 @@ app.innerHTML = `
       <section>
         <h2>動画メタ情報</h2>
         <div id="metadataGrid" class="status-grid"></div>
+      </section>
+
+      <section>
+        <h2>スキャン</h2>
+        <button id="stopScanButton" type="button" class="secondary-button">
+          自動スキャン停止
+        </button>
       </section>
     </section>
 
@@ -215,6 +242,7 @@ app.innerHTML = `
         <button type="button" class="console-tab-button" data-console-tab="summary">Summary</button>
         <button type="button" class="console-tab-button" data-console-tab="landmarks12pt">12pt</button>
         <button type="button" class="console-tab-button" data-console-tab="adjustments">Adjustments</button>
+        <button type="button" class="console-tab-button" data-console-tab="scan">Scan</button>
         <button type="button" class="console-tab-button" data-console-tab="raw">Raw</button>
       </div>
       <div id="consoleContent" class="console-content"></div>
@@ -234,6 +262,7 @@ const toggleLandmarkSummaryButton = getElement<HTMLButtonElement>("toggleLandmar
 const previousFrameButton = getElement<HTMLButtonElement>("previousFrameButton")
 const excludeFrameButton = getElement<HTMLButtonElement>("excludeFrameButton")
 const nextFrameButton = getElement<HTMLButtonElement>("nextFrameButton")
+const stopScanButton = getElement<HTMLButtonElement>("stopScanButton")
 const consoleTabButtons = Array.from(
   document.querySelectorAll<HTMLButtonElement>("[data-console-tab]"),
 )
@@ -259,6 +288,10 @@ nextFrameButton.addEventListener("click", () => {
 
 excludeFrameButton.addEventListener("click", () => {
   void excludeCurrentFrame()
+})
+
+stopScanButton.addEventListener("click", () => {
+  scanCancelRequested = true
 })
 
 canvas.addEventListener("pointerdown", (event) => {
@@ -336,6 +369,8 @@ async function initializeDetector(): Promise<void> {
 }
 
 async function handleFile(file: File | null): Promise<void> {
+  activeScanId += 1
+  scanCancelRequested = true
   resetFrameState()
 
   if (!file) {
@@ -363,12 +398,15 @@ async function handleFile(file: File | null): Promise<void> {
       videoHeight: video.videoHeight,
     }
 
-    state.currentFrameIndex = 0
-    state.excludedFrames = []
-    await loadCurrentFrame()
+    await startAutoScan()
   } catch (error) {
     state.loadStatus = "エラー"
     state.fileError = error instanceof Error ? error.message : String(error)
+    state.scanState = {
+      ...state.scanState,
+      status: "error",
+      error: state.fileError,
+    }
     state.summary = {
       detected: false,
       landmarkCount: 0,
@@ -377,10 +415,9 @@ async function handleFile(file: File | null): Promise<void> {
       error: state.fileError,
     }
     state.observed12pt = []
-    state.observed12ptSource = "none"
     state.selectedLandmarkSummaryPointId = null
     state.draggingLandmarkSummaryPointId = null
-    renderThumbnailCanvas()
+    clearCanvas()
   }
 
   render()
@@ -392,13 +429,12 @@ function resetFrameState(): void {
   state.summary = null
   state.pose = null
   state.observed12pt = []
-  state.observed12ptByFrame = {}
-  state.observed12ptSource = "none"
+  state.acceptedFrames = []
+  state.currentReviewIndex = 0
+  state.scanState = createInitialScanState()
   state.manualAdjustmentsByFrame = {}
   state.selectedLandmarkSummaryPointId = null
   state.draggingLandmarkSummaryPointId = null
-  state.currentFrameIndex = 0
-  state.excludedFrames = []
   clearCanvas()
 }
 
@@ -426,50 +462,108 @@ function loadVideoMetadata(url: string): Promise<void> {
   })
 }
 
-async function loadCurrentFrame(): Promise<void> {
-  resetPerFrameState()
-
-  await seekVideoToCurrentFrame()
-  prepareThumbnailCanvas()
-  renderThumbnailCanvas()
-  const cachedSnapshot = state.observed12ptByFrame[getCurrentFrameModeKey()]
-  if (cachedSnapshot) {
-    applyObserved12ptFrameSnapshot(cachedSnapshot, "cached")
-    state.loadStatus = "完了"
-    renderThumbnailCanvas()
-    render()
-    return
-  }
-
+async function startAutoScan(): Promise<void> {
+  const scanId = activeScanId
+  scanCancelRequested = false
+  state.acceptedFrames = []
+  state.currentReviewIndex = 0
+  state.summary = null
+  state.pose = null
+  state.observed12pt = []
+  state.selectedLandmarkSummaryPointId = null
+  state.draggingLandmarkSummaryPointId = null
   state.loadStatus = "解析中"
+  state.scanState = createInitialScanState("running")
+  clearCanvas()
   render()
 
   if (detectorReadyPromise) {
     await detectorReadyPromise
   }
 
-  const snapshot = analyzeCurrentFrameSnapshot()
-  state.observed12ptByFrame = {
-    ...state.observed12ptByFrame,
-    [snapshot.key]: snapshot,
+  if (!faceLandmarker) {
+    throw new Error("MediaPipe Face Landmarker が初期化されていません。")
   }
-  applyObserved12ptFrameSnapshot(snapshot, "newlyAnalyzed")
-  renderThumbnailCanvas()
+
+  prepareThumbnailCanvas()
+  const scanDurationSec = Math.min(video.duration, MAX_SCAN_DURATION_SEC)
+  const scanFrameLimit = Math.min(
+    MAX_SCAN_FRAMES,
+    Math.max(0, Math.ceil(scanDurationSec / SCAN_FRAME_STEP_SECONDS)),
+  )
+
+  for (let sourceFrameIndex = 0; sourceFrameIndex < scanFrameLimit; sourceFrameIndex += 1) {
+    if (scanId !== activeScanId) {
+      return
+    }
+
+    if (scanCancelRequested) {
+      state.scanState = {
+        ...state.scanState,
+        status: "cancelled",
+      }
+      break
+    }
+
+    const timeSec = sourceFrameIndex * SCAN_FRAME_STEP_SECONDS
+    if (timeSec >= scanDurationSec) {
+      break
+    }
+
+    await seekVideoToTime(timeSec)
+    if (scanId !== activeScanId) {
+      return
+    }
+    if (scanCancelRequested) {
+      state.scanState = {
+        ...state.scanState,
+        status: "cancelled",
+      }
+      break
+    }
+
+    drawVideoFrameToCanvas()
+
+    const acceptedFrame = analyzeCanvasForAcceptedFrame(
+      sourceFrameIndex,
+      roundDebugNumber(timeSec),
+    )
+
+    state.scanState = {
+      ...state.scanState,
+      scannedFrameCount: state.scanState.scannedFrameCount + 1,
+      progress: scanFrameLimit > 0
+        ? roundDebugNumber((sourceFrameIndex + 1) / scanFrameLimit)
+        : 1,
+    }
+
+    if (acceptedFrame) {
+      state.acceptedFrames = [...state.acceptedFrames, acceptedFrame]
+      state.scanState = {
+        ...state.scanState,
+        acceptedFrameCount: state.acceptedFrames.length,
+      }
+    }
+
+    if (sourceFrameIndex % 10 === 0 || acceptedFrame) {
+      render()
+      await new Promise((resolve) => requestAnimationFrame(resolve))
+    }
+  }
+
+  if (state.scanState.status === "running") {
+    state.scanState = {
+      ...state.scanState,
+      status: "completed",
+      progress: 1,
+    }
+  }
+
+  state.currentReviewIndex = 0
+  applyCurrentAcceptedFrame()
   state.loadStatus = "完了"
+  renderThumbnailCanvas()
   render()
-}
-
-function resetPerFrameState(): void {
-  state.summary = null
-  state.pose = null
-  state.observed12pt = []
-  state.observed12ptSource = "none"
-  state.selectedLandmarkSummaryPointId = null
-  state.draggingLandmarkSummaryPointId = null
-}
-
-function seekVideoToCurrentFrame(): Promise<void> {
-  return seekVideoToTime(getCurrentFrameTimeSec())
 }
 
 function seekVideoToTime(timeSec: number): Promise<void> {
@@ -504,67 +598,62 @@ function seekVideoToTime(timeSec: number): Promise<void> {
 }
 
 async function moveFrameBy(delta: number): Promise<void> {
-  if (!state.metadata) {
+  if (!state.metadata || state.scanState.status === "running") {
     return
   }
 
-  await goToFrame(state.currentFrameIndex + delta)
+  goToReviewIndex(state.currentReviewIndex + delta)
 }
 
-async function goToFrame(frameIndex: number): Promise<void> {
-  if (!state.metadata) {
+function goToReviewIndex(reviewIndex: number): void {
+  if (!state.metadata || state.acceptedFrames.length === 0) {
     return
   }
 
-  state.currentFrameIndex = clampFrameIndex(frameIndex)
-
-  try {
-    await loadCurrentFrame()
-  } catch (error) {
-    state.loadStatus = "エラー"
-    state.fileError = error instanceof Error ? error.message : String(error)
-    resetPerFrameState()
-    state.summary = {
-      detected: false,
-      landmarkCount: 0,
-      blendshapeCount: 0,
-      hasFacialTransformationMatrix: false,
-      error: state.fileError,
-    }
-    renderThumbnailCanvas()
-    render()
-  }
-}
-
-async function excludeCurrentFrame(): Promise<void> {
-  if (!state.metadata) {
-    return
-  }
-
-  if (!isCurrentFrameExcluded()) {
-    state.excludedFrames = [
-      ...state.excludedFrames,
-      {
-        frameIndex: state.currentFrameIndex,
-        timeSec: roundDebugNumber(getCurrentFrameTimeSec()),
-        reason: "manual",
-      },
-    ].sort((left, right) => left.frameIndex - right.frameIndex)
-  }
-
-  const nextFrameIndex = findNextUnexcludedFrameIndex(state.currentFrameIndex + 1)
-  if (nextFrameIndex !== null) {
-    await goToFrame(nextFrameIndex)
-    return
-  }
-
+  state.currentReviewIndex = Math.trunc(
+    clamp(reviewIndex, 0, state.acceptedFrames.length - 1),
+  )
+  state.selectedLandmarkSummaryPointId = null
+  state.draggingLandmarkSummaryPointId = null
+  applyCurrentAcceptedFrame()
+  renderThumbnailCanvas()
   render()
 }
 
-function findNextUnexcludedFrameIndex(startFrameIndex: number): number | null {
-  const maxFrameIndex = getMaxFrameIndex()
-  for (let index = clampFrameIndex(startFrameIndex); index <= maxFrameIndex; index += 1) {
-    if (!isFrameExcluded(index)) {
+async function excludeCurrentFrame(): Promise<void> {
+  if (!state.metadata || state.scanState.status === "running") {
+    return
+  }
+
+  const currentFrame = getCurrentAcceptedFrame()
+  if (!currentFrame) {
+    return
+  }
+
+  state.acceptedFrames = state.acceptedFrames.map((frame, index) =>
+    index === state.currentReviewIndex
+      ? { ...frame, excluded: true, excludedReason: "manual" }
+      : frame,
+  )
+
+  const nextReviewIndex = findNextUnexcludedReviewIndex(state.currentReviewIndex + 1)
+  if (nextReviewIndex !== null) {
+    goToReviewIndex(nextReviewIndex)
+    return
+  }
+
+  applyCurrentAcceptedFrame()
+  renderThumbnailCanvas()
+  render()
+}
+
+function findNextUnexcludedReviewIndex(startReviewIndex: number): number | null {
+  for (
+    let index = Math.max(0, startReviewIndex);
+    index < state.acceptedFrames.length;
+    index += 1
+  ) {
+    if (!state.acceptedFrames[index].excluded) {
       return index
     }
   }
@@ -572,40 +661,25 @@ function findNextUnexcludedFrameIndex(startFrameIndex: number): number | null {
 }
 
 function getCurrentFrameTimeSec(): number {
-  if (!state.metadata) {
-    return 0
-  }
-  return clamp(
-    state.currentFrameIndex * FRAME_STEP_SECONDS,
-    0,
-    Math.max(state.metadata.duration, 0),
-  )
+  return getCurrentAcceptedFrame()?.timeSec ?? 0
 }
 
 function getEstimatedFrameCount(): number {
   if (!state.metadata) {
     return 0
   }
-  return Math.max(1, Math.floor(state.metadata.duration / FRAME_STEP_SECONDS))
-}
-
-function getMaxFrameIndex(): number {
-  if (!state.metadata) {
-    return 0
-  }
-  return Math.max(0, Math.floor(state.metadata.duration / FRAME_STEP_SECONDS))
-}
-
-function clampFrameIndex(frameIndex: number): number {
-  return Math.trunc(clamp(frameIndex, 0, getMaxFrameIndex()))
+  return Math.max(
+    1,
+    Math.floor(Math.min(state.metadata.duration, MAX_SCAN_DURATION_SEC) / SCAN_FRAME_STEP_SECONDS),
+  )
 }
 
 function isCurrentFrameExcluded(): boolean {
-  return isFrameExcluded(state.currentFrameIndex)
+  return getCurrentAcceptedFrame()?.excluded ?? false
 }
 
-function isFrameExcluded(frameIndex: number): boolean {
-  return state.excludedFrames.some((frame) => frame.frameIndex === frameIndex)
+function getCurrentAcceptedFrame(): AcceptedFrameSnapshot | null {
+  return state.acceptedFrames[state.currentReviewIndex] ?? null
 }
 
 function prepareThumbnailCanvas(): void {
@@ -618,11 +692,40 @@ function prepareThumbnailCanvas(): void {
 }
 
 function renderThumbnailCanvas(): void {
-  if (video.videoWidth <= 0 || video.videoHeight <= 0) {
+  const currentFrame = getCurrentAcceptedFrame()
+  if (!currentFrame) {
     clearCanvas()
     return
   }
 
+  const renderToken = ++thumbnailRenderToken
+  const image = new Image()
+  image.addEventListener("load", () => {
+    if (renderToken !== thumbnailRenderToken) {
+      return
+    }
+
+    canvas.width = image.naturalWidth
+    canvas.height = image.naturalHeight
+    const context = canvas.getContext("2d")
+    if (!context) {
+      throw new Error("canvas context を取得できませんでした。")
+    }
+
+    context.clearRect(0, 0, canvas.width, canvas.height)
+    context.drawImage(image, 0, 0, canvas.width, canvas.height)
+
+    const adjusted12pt = getAdjusted12pt()
+    if (state.showLandmarkSummaryOverlay && adjusted12pt.length > 0) {
+      drawLandmarkSummaryOverlay(context, adjusted12pt)
+    }
+
+    thumbnailEmpty.hidden = true
+  })
+  image.src = currentFrame.thumbnailDataUrl
+}
+
+function drawVideoFrameToCanvas(): void {
   const context = canvas.getContext("2d")
   if (!context) {
     throw new Error("canvas context を取得できませんでした。")
@@ -630,37 +733,48 @@ function renderThumbnailCanvas(): void {
 
   context.clearRect(0, 0, canvas.width, canvas.height)
   context.drawImage(video, 0, 0, canvas.width, canvas.height)
-
-  const adjusted12pt = getAdjusted12pt()
-  if (state.showLandmarkSummaryOverlay && adjusted12pt.length > 0) {
-    drawLandmarkSummaryOverlay(context, adjusted12pt)
-  }
-
   thumbnailEmpty.hidden = true
 }
 
-function analyzeCurrentFrameSnapshot(): Observed12ptFrameSnapshot {
+function analyzeCanvasForAcceptedFrame(
+  sourceFrameIndex: number,
+  timeSec: number,
+): AcceptedFrameSnapshot | null {
   if (!faceLandmarker) {
-    return createObserved12ptFrameSnapshot({
-      detected: false,
-      landmarkCount: 0,
-      blendshapeCount: 0,
-      hasFacialTransformationMatrix: false,
-      error: "MediaPipe Face Landmarker が初期化されていません。",
-    }, [], null)
+    state.scanState = {
+      ...state.scanState,
+      discardedInvalidLandmarkCount: state.scanState.discardedInvalidLandmarkCount + 1,
+    }
+    return null
   }
 
   try {
-    const result = faceLandmarker.detectForVideo(video, performance.now())
+    const result = faceLandmarker.detectForVideo(canvas, performance.now())
     const landmarks = result.faceLandmarks[0] ?? []
     const blendshapes = result.faceBlendshapes[0]?.categories ?? []
     const matrix = result.facialTransformationMatrixes[0]
     const matrixValues = matrix ? Array.from(matrix.data) : []
     const detected = result.faceLandmarks.length > 0
+
+    if (!detected) {
+      state.scanState = {
+        ...state.scanState,
+        discardedNoFaceCount: state.scanState.discardedNoFaceCount + 1,
+      }
+      return null
+    }
+
+    if (landmarks.length !== 478) {
+      state.scanState = {
+        ...state.scanState,
+        discardedInvalidLandmarkCount: state.scanState.discardedInvalidLandmarkCount + 1,
+      }
+      return null
+    }
+
     const pose = estimateFacePoseFromMatrix(matrix)
     const observed12pt = detected ? buildLandmarkSummary(landmarks) : []
-
-    return createObserved12ptFrameSnapshot({
+    const mediaPipeSummary = {
       detected,
       landmarkCount: landmarks.length,
       blendshapeCount: blendshapes.length,
@@ -669,46 +783,50 @@ function analyzeCurrentFrameSnapshot(): Observed12ptFrameSnapshot {
         matrixValues.length > 0
           ? matrixValues.slice(0, MATRIX_PREVIEW_COUNT).map(roundDebugNumber)
           : undefined,
-    }, observed12pt, pose)
+    }
+
+    return {
+      sourceFrameIndex,
+      timeSec,
+      thumbnailDataUrl: canvas.toDataURL("image/jpeg", 0.82),
+      mediaPipeSummary,
+      pose,
+      observed12pt,
+      excluded: false,
+    }
   } catch (error) {
-    return createObserved12ptFrameSnapshot({
-      detected: false,
-      landmarkCount: 0,
-      blendshapeCount: 0,
-      hasFacialTransformationMatrix: false,
+    state.scanState = {
+      ...state.scanState,
+      discardedInvalidLandmarkCount: state.scanState.discardedInvalidLandmarkCount + 1,
       error: error instanceof Error ? error.message : String(error),
-    }, [], null)
+    }
+    return null
   }
 }
 
-function createObserved12ptFrameSnapshot(
-  mediaPipeSummary: MediaPipeFrameSummary,
-  observed12pt: LandmarkSummaryPoint[],
-  pose: Pose | null,
-): Observed12ptFrameSnapshot {
-  return {
-    key: getCurrentFrameModeKey(),
-    frameIndex: state.currentFrameIndex,
-    timeSec: roundDebugNumber(getCurrentFrameTimeSec()),
-    eyePointMode: state.eyePointMode,
-    observed12pt,
-    mediaPipeSummary,
-    pose,
-  }
-}
-
-function applyObserved12ptFrameSnapshot(
-  snapshot: Observed12ptFrameSnapshot,
-  source: Observed12ptSource,
-): void {
-  state.summary = snapshot.mediaPipeSummary
-  state.pose = snapshot.pose
-  state.observed12pt = snapshot.observed12pt
-  state.observed12ptSource = source
-
-  if (!snapshot.mediaPipeSummary.detected) {
+function applyCurrentAcceptedFrame(): void {
+  const currentFrame = getCurrentAcceptedFrame()
+  if (!currentFrame) {
+    state.summary = createInvalidMediaPipeSummary()
+    state.pose = null
+    state.observed12pt = []
     state.selectedLandmarkSummaryPointId = null
     state.draggingLandmarkSummaryPointId = null
+    return
+  }
+
+  state.summary = currentFrame.mediaPipeSummary
+  state.pose = currentFrame.pose
+  state.observed12pt = currentFrame.observed12pt
+}
+
+function createInvalidMediaPipeSummary(error?: string): MediaPipeFrameSummary {
+  return {
+    detected: false,
+    landmarkCount: 0,
+    blendshapeCount: 0,
+    hasFacialTransformationMatrix: false,
+    error,
   }
 }
 
@@ -732,11 +850,19 @@ function getManualAdjustment(pointId: string): ManualLandmarkAdjustment | null {
 }
 
 function getCurrentManualAdjustments(): ManualLandmarkAdjustment[] {
-  return state.manualAdjustmentsByFrame[getCurrentFrameModeKey()] ?? []
+  const currentFrame = getCurrentAcceptedFrame()
+  return currentFrame
+    ? state.manualAdjustmentsByFrame[currentFrame.sourceFrameIndex] ?? []
+    : []
 }
 
 function setCurrentManualAdjustments(adjustments: ManualLandmarkAdjustment[]): void {
-  const key = getCurrentFrameModeKey()
+  const currentFrame = getCurrentAcceptedFrame()
+  if (!currentFrame) {
+    return
+  }
+
+  const key = currentFrame.sourceFrameIndex
   if (adjustments.length === 0) {
     const remaining = { ...state.manualAdjustmentsByFrame }
     delete remaining[key]
@@ -748,14 +874,6 @@ function setCurrentManualAdjustments(adjustments: ManualLandmarkAdjustment[]): v
     ...state.manualAdjustmentsByFrame,
     [key]: adjustments,
   }
-}
-
-function getCurrentFrameModeKey(): FrameModeKey {
-  return getFrameModeKey(state.currentFrameIndex, state.eyePointMode)
-}
-
-function getFrameModeKey(frameIndex: number, eyePointMode: EyePointMode): FrameModeKey {
-  return `${frameIndex}:${eyePointMode}`
 }
 
 function setManualAdjustment(pointId: string, dx: number, dy: number): void {
@@ -1113,6 +1231,7 @@ function estimateFacePoseFromMatrix(matrix: Matrix | undefined): Pose | null {
 }
 
 function clearCanvas(): void {
+  thumbnailRenderToken += 1
   const context = canvas.getContext("2d")
   context?.clearRect(0, 0, canvas.width, canvas.height)
   thumbnailEmpty.hidden = false
@@ -1122,13 +1241,13 @@ function render(): void {
   const adjusted12pt = getAdjusted12pt()
   const currentManualAdjustments = getCurrentManualAdjustments()
   const frameState = getFrameStateDebug()
-  const observed12ptFrameCount = getObserved12ptFrameCount()
-  const frameBusy = state.loadStatus === "読込中" || state.loadStatus === "解析中"
+  const currentFrame = getCurrentAcceptedFrame()
+  const frameBusy =
+    state.loadStatus === "読込中" || state.scanState.status === "running"
   const rawDebugPayload = createRawDebugPayload(
     adjusted12pt,
     currentManualAdjustments,
     frameState,
-    observed12ptFrameCount,
   )
 
   statusGrid.innerHTML = renderStatusItems([
@@ -1147,9 +1266,13 @@ function render(): void {
   ])
 
   frameInfoGrid.innerHTML = renderStatusItems([
-    ["現在フレーム", state.metadata ? String(state.currentFrameIndex) : "-"],
-    ["時刻", state.metadata ? `${formatNumber(getCurrentFrameTimeSec())} 秒` : "-"],
-    ["除外状態", state.metadata ? (isCurrentFrameExcluded() ? "除外済み" : "対象") : "-"],
+    [
+      "review index",
+      currentFrame ? `${state.currentReviewIndex + 1} / accepted ${state.acceptedFrames.length}` : "-",
+    ],
+    ["source frame index", currentFrame ? String(currentFrame.sourceFrameIndex) : "-"],
+    ["time", currentFrame ? `${formatNumber(currentFrame.timeSec)} sec` : "-"],
+    ["excluded", currentFrame ? formatJapaneseBoolean(currentFrame.excluded) : "-"],
   ])
 
   renderConsoleTabs()
@@ -1162,25 +1285,26 @@ function render(): void {
   toggleLandmarkSummaryButton.textContent = state.showLandmarkSummaryOverlay
     ? "12点サマリを非表示"
     : "12点サマリを表示"
-  previousFrameButton.disabled = !state.metadata || state.currentFrameIndex <= 0 || frameBusy
-  nextFrameButton.disabled = !state.metadata || state.currentFrameIndex >= getMaxFrameIndex() || frameBusy
-  excludeFrameButton.disabled = !state.metadata || frameBusy
+  previousFrameButton.disabled = !state.metadata || state.currentReviewIndex <= 0 || frameBusy
+  nextFrameButton.disabled =
+    !state.metadata || state.currentReviewIndex >= state.acceptedFrames.length - 1 || frameBusy
+  excludeFrameButton.disabled = !state.metadata || !currentFrame || frameBusy
+  stopScanButton.disabled = state.scanState.status !== "running"
 }
 
 function createRawDebugPayload(
   adjusted12pt: LandmarkSummaryPoint[],
   currentManualAdjustments: ManualLandmarkAdjustment[],
   frameState: ReturnType<typeof getFrameStateDebug>,
-  observed12ptFrameCount: number,
 ): Record<string, unknown> {
   return {
     metadata: state.metadata,
     frameState,
+    scanState: getScanStateDebug(),
+    acceptedFramesPreview: getAcceptedFramesPreview(),
     mediaPipeFrameSummary: state.summary,
     landmarkSummaryPointCount: adjusted12pt.length,
     observed12pt: state.observed12pt,
-    observed12ptFrameCount,
-    observed12ptByFramePreview: getObserved12ptByFramePreview(),
     manualAdjustmentCount: currentManualAdjustments.length,
     manualAdjustments: currentManualAdjustments,
     manualAdjustmentFrameCount: getManualAdjustmentFrameCount(),
@@ -1215,6 +1339,8 @@ function renderConsoleTabContent(
       return renderLandmarks12ptConsole(adjusted12pt)
     case "adjustments":
       return renderAdjustmentsConsole(currentManualAdjustments)
+    case "scan":
+      return renderScanConsole()
     case "raw":
       return renderRawConsole(rawDebugPayload)
     case "summary":
@@ -1227,16 +1353,20 @@ function renderSummaryConsole(
   adjusted12pt: LandmarkSummaryPoint[],
   currentManualAdjustments: ManualLandmarkAdjustment[],
 ): string {
+  const currentFrame = getCurrentAcceptedFrame()
   return [
     renderConsoleSection(
       "Current frame",
       renderStatusItems([
-        ["表示フレーム", state.metadata ? String(state.currentFrameIndex) : "-"],
-        ["source frame index", state.metadata ? String(state.currentFrameIndex) : "-"],
-        ["時刻", state.metadata ? `${formatNumber(getCurrentFrameTimeSec())} 秒` : "-"],
-        ["除外状態", state.metadata ? (isCurrentFrameExcluded() ? "除外済み" : "対象") : "-"],
+        [
+          "review index",
+          currentFrame ? `${state.currentReviewIndex + 1} / ${state.acceptedFrames.length}` : "-",
+        ],
+        ["source frame index", currentFrame ? String(currentFrame.sourceFrameIndex) : "-"],
+        ["timeSec", currentFrame ? formatNumber(currentFrame.timeSec) : "-"],
+        ["除外状態", currentFrame ? (currentFrame.excluded ? "除外済み" : "対象") : "-"],
         ["推定フレーム数", state.metadata ? String(getEstimatedFrameCount()) : "-"],
-        ["除外フレーム数", String(state.excludedFrames.length)],
+        ["除外フレーム数", String(getExcludedAcceptedFrameCount())],
       ]),
     ),
     renderConsoleSection(
@@ -1260,13 +1390,12 @@ function renderSummaryConsole(
       renderStatusItems([
         ["12点サマリ数", String(adjusted12pt.length)],
         ["現在フレームの手動調整数", String(currentManualAdjustments.length)],
-        ["12点解析状態", formatObserved12ptSource()],
       ]),
     ),
     renderConsoleSection(
       "Cache",
       renderStatusItems([
-        ["解析済みフレーム数", String(getObserved12ptFrameCount())],
+        ["acceptedFrames", String(state.acceptedFrames.length)],
         ["手動調整済みフレーム数", String(getManualAdjustmentFrameCount())],
       ]),
     ),
@@ -1341,6 +1470,34 @@ function renderAdjustmentsConsole(
   ].join("")
 }
 
+function renderScanConsole(): string {
+  return [
+    renderConsoleSection(
+      "Scan",
+      renderStatusItems([
+        ["scan status", state.scanState.status],
+        ["progress", `${Math.round(state.scanState.progress * 100)}%`],
+        ["scannedFrameCount", String(state.scanState.scannedFrameCount)],
+        ["acceptedFrameCount", String(state.scanState.acceptedFrameCount)],
+        ["discardedNoFaceCount", String(state.scanState.discardedNoFaceCount)],
+        [
+          "discardedInvalidLandmarkCount",
+          String(state.scanState.discardedInvalidLandmarkCount),
+        ],
+        ["maxScanDurationSec", String(state.scanState.maxScanDurationSec)],
+        ["maxScanFrames", String(state.scanState.maxScanFrames)],
+        ["error", state.scanState.error ?? "-"],
+      ]),
+    ),
+    renderConsoleSection(
+      "acceptedFramesPreview",
+      `<pre class="console-json">${escapeHtml(
+        JSON.stringify(getAcceptedFramesPreview(), null, 2),
+      )}</pre>`,
+    ),
+  ].join("")
+}
+
 function renderRawConsole(rawDebugPayload: Record<string, unknown>): string {
   return renderConsoleSection(
     "rawDebug",
@@ -1381,23 +1538,42 @@ function renderManualAdjustmentsList(
 }
 
 function getFrameStateDebug(): {
-  currentFrameIndex: number
+  currentReviewIndex: number
+  currentSourceFrameIndex?: number
   currentTimeSec: number
-  frameStepSeconds: number
+  scanFrameStepSeconds: number
   estimatedFrameCount: number
   currentFrameExcluded: boolean
   excludedFrameCount: number
-  excludedFramesPreview: ExcludedFrame[]
 } {
+  const currentFrame = getCurrentAcceptedFrame()
   return {
-    currentFrameIndex: state.currentFrameIndex,
-    currentTimeSec: roundDebugNumber(getCurrentFrameTimeSec()),
-    frameStepSeconds: roundDebugNumber(FRAME_STEP_SECONDS),
+    currentReviewIndex: state.currentReviewIndex,
+    currentSourceFrameIndex: currentFrame?.sourceFrameIndex,
+    currentTimeSec: roundDebugNumber(currentFrame?.timeSec ?? 0),
+    scanFrameStepSeconds: roundDebugNumber(SCAN_FRAME_STEP_SECONDS),
     estimatedFrameCount: getEstimatedFrameCount(),
     currentFrameExcluded: isCurrentFrameExcluded(),
-    excludedFrameCount: state.excludedFrames.length,
-    excludedFramesPreview: state.excludedFrames.slice(0, EXCLUDED_FRAMES_PREVIEW_LIMIT),
+    excludedFrameCount: getExcludedAcceptedFrameCount(),
   }
+}
+
+function getScanStateDebug(): ScanState & {
+  currentReviewIndex: number
+  currentSourceFrameIndex?: number
+  currentTimeSec?: number
+} {
+  const currentFrame = getCurrentAcceptedFrame()
+  return {
+    ...state.scanState,
+    currentReviewIndex: state.currentReviewIndex,
+    currentSourceFrameIndex: currentFrame?.sourceFrameIndex,
+    currentTimeSec: currentFrame?.timeSec,
+  }
+}
+
+function getExcludedAcceptedFrameCount(): number {
+  return state.acceptedFrames.filter((frame) => frame.excluded).length
 }
 
 function getManualAdjustmentFrameCount(): number {
@@ -1407,82 +1583,43 @@ function getManualAdjustmentFrameCount(): number {
 }
 
 function getManualAdjustmentsByFramePreview(): Array<{
-  key: FrameModeKey
-  frameIndex: number
-  eyePointMode: EyePointMode
+  sourceFrameIndex: number
   adjustmentCount: number
   adjustments: ManualLandmarkAdjustment[]
 }> {
   return Object.entries(state.manualAdjustmentsByFrame)
-    .map(([key, adjustments]) => ({
-      key: key as FrameModeKey,
-      frameIndex: parseFrameModeKey(key as FrameModeKey).frameIndex,
-      eyePointMode: parseFrameModeKey(key as FrameModeKey).eyePointMode,
+    .map(([sourceFrameIndex, adjustments]) => ({
+      sourceFrameIndex: Number(sourceFrameIndex),
       adjustmentCount: adjustments.length,
       adjustments,
     }))
     .filter((entry) => entry.adjustmentCount > 0)
-    .sort(compareFrameModeEntries)
+    .sort((left, right) => left.sourceFrameIndex - right.sourceFrameIndex)
     .slice(0, MANUAL_ADJUSTMENTS_BY_FRAME_PREVIEW_LIMIT)
 }
 
-function getObserved12ptFrameCount(): number {
-  return Object.keys(state.observed12ptByFrame).length
-}
-
-function formatObserved12ptSource(): string {
-  if (!state.metadata || state.observed12ptSource === "none") {
-    return "-"
-  }
-
-  return state.observed12ptSource === "cached"
-    ? "解析済みキャッシュ使用"
-    : "初回解析"
-}
-
-function getObserved12ptByFramePreview(): Array<{
-  key: FrameModeKey
-  frameIndex: number
+function getAcceptedFramesPreview(): Array<{
+  sourceFrameIndex: number
   timeSec: number
-  eyePointMode: EyePointMode
   detected: boolean
   observedPointCount: number
-  landmarkCount: number
-  hasFacialTransformationMatrix: boolean
+  yaw?: number
+  pitch?: number
+  roll?: number
+  excluded: boolean
 }> {
-  return Object.entries(state.observed12ptByFrame)
-    .map(([key, snapshot]) => ({
-      key: key as FrameModeKey,
-      frameIndex: snapshot.frameIndex,
-      timeSec: snapshot.timeSec,
-      eyePointMode: snapshot.eyePointMode,
-      detected: snapshot.mediaPipeSummary.detected,
-      observedPointCount: snapshot.observed12pt.length,
-      landmarkCount: snapshot.mediaPipeSummary.landmarkCount,
-      hasFacialTransformationMatrix:
-        snapshot.mediaPipeSummary.hasFacialTransformationMatrix,
+  return state.acceptedFrames
+    .map((frame) => ({
+      sourceFrameIndex: frame.sourceFrameIndex,
+      timeSec: frame.timeSec,
+      detected: frame.mediaPipeSummary.detected,
+      observedPointCount: frame.observed12pt.length,
+      yaw: frame.pose?.yaw,
+      pitch: frame.pose?.pitch,
+      roll: frame.pose?.roll,
+      excluded: frame.excluded,
     }))
-    .sort(compareFrameModeEntries)
-    .slice(0, OBSERVED_12PT_BY_FRAME_PREVIEW_LIMIT)
-}
-
-function parseFrameModeKey(key: FrameModeKey): {
-  frameIndex: number
-  eyePointMode: EyePointMode
-} {
-  const [frameIndex, eyePointMode] = key.split(":") as [string, EyePointMode]
-  return {
-    frameIndex: Number(frameIndex),
-    eyePointMode,
-  }
-}
-
-function compareFrameModeEntries(
-  left: { frameIndex: number; eyePointMode: EyePointMode },
-  right: { frameIndex: number; eyePointMode: EyePointMode },
-): number {
-  return left.frameIndex - right.frameIndex ||
-    left.eyePointMode.localeCompare(right.eyePointMode)
+    .slice(0, ACCEPTED_FRAMES_PREVIEW_LIMIT)
 }
 
 function renderStatusItems(items: Array<[string, string]>): string {

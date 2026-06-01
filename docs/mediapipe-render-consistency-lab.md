@@ -253,9 +253,17 @@ RC-0 は docs 整理、RC-0.5 と RC-0.6 は `tools/mediapipe-render-consistency
 - browEyeAnchor 固定による leftEye / rightEye の安定化
 - browEyeAnchor を z 推定 / 顔形状推定用の初期推奨 eye point として扱う
 - 右側 debug 表示は Debug Console（デバッグコンソール）に統合する
-- Console tabs: Summary / 12pt / Adjustments / Raw
+- Console tabs: Summary / 12pt / Adjustments / Scan / Raw
 - 中央はサムネイルと手動調整の作業エリアに寄せる
-- 今後 auto scan の状態は Scan tab として追加する可能性がある
+- auto scan の状態は Scan tab で扱う
+- MP4 読み込み直後の auto scan prototype
+- maxScanDurationSec = 300
+- maxScanFrames = 9000
+- acceptedFrames
+- currentReviewIndex による accepted frame review
+- 顔なし / invalid landmarks の破棄
+- accepted frame の thumbnail snapshot + observed12pt 保持
+- Debug Console の Scan tab
 
 RC-1 以降で実装する場合も、Runtime / Studio / IdealFace Authoring Tool / Fitting Lab の実装を直接変更せず、`tools/mediapipe-render-consistency-lab` の責務として切り分けます。保存 / export、mesh 化、render、MediaPipe re-detection、residual evaluation、`meshReadyZ` candidate 探索はまだ未実装です。
 
