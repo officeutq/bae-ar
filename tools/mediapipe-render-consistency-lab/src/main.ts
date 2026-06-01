@@ -139,10 +139,10 @@ app.innerHTML = `
       <h2>MediaPipe メタ情報サマリ</h2>
       <div id="summaryGrid" class="status-grid"></div>
 
-      <h2>pose</h2>
+      <h2>姿勢</h2>
       <div id="poseGrid" class="status-grid"></div>
 
-      <h2>12pt landmark summary</h2>
+      <h2>12点ランドマークサマリ</h2>
       <div id="landmarkSummaryGrid" class="landmark-summary-grid"></div>
 
       <h2>rawDebug</h2>
@@ -544,10 +544,13 @@ function render(): void {
   ])
 
   poseGrid.innerHTML = renderStatusItems([
-    ["yaw", state.pose ? formatNumber(state.pose.yaw) : "-"],
-    ["pitch", state.pose ? formatNumber(state.pose.pitch) : "-"],
-    ["roll", state.pose ? formatNumber(state.pose.roll) : "-"],
-    ["matrixAvailable", state.summary ? formatBoolean(state.summary.hasFacialTransformationMatrix) : "-"],
+    ["ヨー", state.pose ? formatNumber(state.pose.yaw) : "-"],
+    ["ピッチ", state.pose ? formatNumber(state.pose.pitch) : "-"],
+    ["ロール", state.pose ? formatNumber(state.pose.roll) : "-"],
+    [
+      "顔変換行列",
+      state.summary ? formatJapaneseBoolean(state.summary.hasFacialTransformationMatrix) : "-",
+    ],
   ])
 
   landmarkSummaryGrid.innerHTML =
@@ -556,7 +559,7 @@ function render(): void {
           .map(
             (point) => `
               <div class="landmark-summary-item">
-                <code>${escapeHtml(point.id)}</code>
+                <code>${escapeHtml(point.label)}</code>
                 <span>${escapeHtml(formatLandmarkSummaryPoint(point))}</span>
               </div>
             `,
@@ -623,9 +626,9 @@ function formatFileSize(size: number): string {
 }
 
 function formatLandmarkSummaryPoint(point: LandmarkSummaryPoint): string {
-  return `x ${formatNumber(point.x)} / y ${formatNumber(point.y)} / z ${
+  return `横 ${formatNumber(point.x)} / 縦 ${formatNumber(point.y)} / 奥行き ${
     point.z === undefined ? "-" : formatNumber(point.z)
-  } / indices ${point.sourceIndices.join(", ")}`
+  } / 参照番号 ${point.sourceIndices.join(", ")}`
 }
 
 function average(values: number[]): number {
