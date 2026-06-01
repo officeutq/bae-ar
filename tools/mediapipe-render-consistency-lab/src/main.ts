@@ -67,6 +67,8 @@ type Observed12ptByFrame = Record<FrameModeKey, Observed12ptFrameSnapshot>
 
 type Observed12ptSource = "none" | "newlyAnalyzed" | "cached"
 
+type ConsoleTab = "summary" | "landmarks12pt" | "adjustments" | "raw"
+
 type ExcludedFrame = {
   frameIndex: number
   timeSec: number
@@ -98,6 +100,7 @@ type AppState = {
   showLandmarkSummaryOverlay: boolean
   currentFrameIndex: number
   excludedFrames: ExcludedFrame[]
+  consoleTab: ConsoleTab
 }
 
 const RAD_TO_DEG = 180 / Math.PI
@@ -152,6 +155,7 @@ const state: AppState = {
   showLandmarkSummaryOverlay: true,
   currentFrameIndex: 0,
   excludedFrames: [],
+  consoleTab: "summary",
 }
 
 let faceLandmarker: FaceLandmarker | null = null
@@ -205,26 +209,15 @@ app.innerHTML = `
       <video id="sourceVideo" muted playsinline preload="metadata"></video>
     </section>
 
-    <section class="right-panel panel">
-      <h2>MediaPipe メタ情報サマリ</h2>
-      <div id="summaryGrid" class="status-grid"></div>
-
-      <h2>姿勢</h2>
-      <div id="poseGrid" class="status-grid"></div>
-
-      <h2>12点ランドマークサマリ</h2>
-      <div class="summary-actions">
-        <button id="resetSelectedLandmarkButton" type="button" class="secondary-button">
-          選択点をリセット
-        </button>
-        <button id="resetAllLandmarksButton" type="button" class="secondary-button">
-          現在フレームの全調整をリセット
-        </button>
+    <section class="right-panel panel console-panel">
+      <h2>Debug Console（デバッグコンソール）</h2>
+      <div class="console-tabs" role="tablist" aria-label="Debug Console">
+        <button type="button" class="console-tab-button" data-console-tab="summary">Summary</button>
+        <button type="button" class="console-tab-button" data-console-tab="landmarks12pt">12pt</button>
+        <button type="button" class="console-tab-button" data-console-tab="adjustments">Adjustments</button>
+        <button type="button" class="console-tab-button" data-console-tab="raw">Raw</button>
       </div>
-      <div id="landmarkSummaryGrid" class="landmark-summary-grid"></div>
-
-      <h2>rawDebug</h2>
-      <pre id="rawDebug" class="json-preview">{}</pre>
+      <div id="consoleContent" class="console-content"></div>
     </section>
   </main>
 `
@@ -236,16 +229,14 @@ const thumbnailEmpty = getElement<HTMLParagraphElement>("thumbnailEmpty")
 const statusGrid = getElement("statusGrid")
 const metadataGrid = getElement("metadataGrid")
 const frameInfoGrid = getElement("frameInfoGrid")
-const summaryGrid = getElement("summaryGrid")
-const poseGrid = getElement("poseGrid")
-const landmarkSummaryGrid = getElement("landmarkSummaryGrid")
-const rawDebug = getElement<HTMLPreElement>("rawDebug")
+const consoleContent = getElement("consoleContent")
 const toggleLandmarkSummaryButton = getElement<HTMLButtonElement>("toggleLandmarkSummaryButton")
 const previousFrameButton = getElement<HTMLButtonElement>("previousFrameButton")
 const excludeFrameButton = getElement<HTMLButtonElement>("excludeFrameButton")
 const nextFrameButton = getElement<HTMLButtonElement>("nextFrameButton")
-const resetSelectedLandmarkButton = getElement<HTMLButtonElement>("resetSelectedLandmarkButton")
-const resetAllLandmarksButton = getElement<HTMLButtonElement>("resetAllLandmarksButton")
+const consoleTabButtons = Array.from(
+  document.querySelectorAll<HTMLButtonElement>("[data-console-tab]"),
+)
 
 fileInput.addEventListener("change", () => {
   const file = fileInput.files?.[0] ?? null
@@ -254,16 +245,6 @@ fileInput.addEventListener("change", () => {
 
 toggleLandmarkSummaryButton.addEventListener("click", () => {
   state.showLandmarkSummaryOverlay = !state.showLandmarkSummaryOverlay
-  renderThumbnailCanvas()
-  render()
-})
-
-resetSelectedLandmarkButton.addEventListener("click", () => {
-  resetSelectedLandmarkAdjustment()
-})
-
-resetAllLandmarksButton.addEventListener("click", () => {
-  resetCurrentFrameLandmarkAdjustments()
   renderThumbnailCanvas()
   render()
 })
@@ -294,6 +275,31 @@ canvas.addEventListener("pointerup", (event) => {
 
 canvas.addEventListener("pointercancel", (event) => {
   handleCanvasPointerEnd(event)
+})
+
+for (const button of consoleTabButtons) {
+  button.addEventListener("click", () => {
+    state.consoleTab = button.dataset.consoleTab as ConsoleTab
+    render()
+  })
+}
+
+consoleContent.addEventListener("click", (event) => {
+  const action = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-console-action]")
+  if (!action) {
+    return
+  }
+
+  if (action.dataset.consoleAction === "reset-selected") {
+    resetSelectedLandmarkAdjustment()
+    return
+  }
+
+  if (action.dataset.consoleAction === "reset-current-frame") {
+    resetCurrentFrameLandmarkAdjustments()
+    renderThumbnailCanvas()
+    render()
+  }
 })
 
 render()
@@ -1118,6 +1124,12 @@ function render(): void {
   const frameState = getFrameStateDebug()
   const observed12ptFrameCount = getObserved12ptFrameCount()
   const frameBusy = state.loadStatus === "読込中" || state.loadStatus === "解析中"
+  const rawDebugPayload = createRawDebugPayload(
+    adjusted12pt,
+    currentManualAdjustments,
+    frameState,
+    observed12ptFrameCount,
+  )
 
   statusGrid.innerHTML = renderStatusItems([
     ["読み込み状態", state.loadStatus],
@@ -1138,89 +1150,234 @@ function render(): void {
     ["現在フレーム", state.metadata ? String(state.currentFrameIndex) : "-"],
     ["時刻", state.metadata ? `${formatNumber(getCurrentFrameTimeSec())} 秒` : "-"],
     ["除外状態", state.metadata ? (isCurrentFrameExcluded() ? "除外済み" : "対象") : "-"],
-    ["推定フレーム数", state.metadata ? String(getEstimatedFrameCount()) : "-"],
-    ["除外フレーム数", String(state.excludedFrames.length)],
-    ["現在フレームの手動調整数", String(currentManualAdjustments.length)],
-    ["手動調整済みフレーム数", String(getManualAdjustmentFrameCount())],
-    ["解析済みフレーム数", String(observed12ptFrameCount)],
-    ["12点解析状態", formatObserved12ptSource()],
   ])
 
-  summaryGrid.innerHTML = renderStatusItems([
-    ["顔検出", state.summary ? formatJapaneseBoolean(state.summary.detected) : "-"],
-    ["ランドマーク数", state.summary ? String(state.summary.landmarkCount) : "-"],
-    ["ブレンドシェイプ数", state.summary ? String(state.summary.blendshapeCount) : "-"],
-    ["12点サマリ数", String(adjusted12pt.length)],
-    [
-      "顔変換行列",
-      state.summary ? formatJapaneseBoolean(state.summary.hasFacialTransformationMatrix) : "-",
-    ],
-    ["行列プレビュー", state.summary?.matrixPreview?.join(", ") ?? "-"],
-    ["エラー", state.summary?.error ?? "-"],
-  ])
+  renderConsoleTabs()
+  consoleContent.innerHTML = renderConsoleTabContent(
+    adjusted12pt,
+    currentManualAdjustments,
+    rawDebugPayload,
+  )
 
-  poseGrid.innerHTML = renderStatusItems([
-    ["左右向き", state.pose ? formatNumber(state.pose.yaw) : "-"],
-    ["上下向き", state.pose ? formatNumber(state.pose.pitch) : "-"],
-    ["傾き", state.pose ? formatNumber(state.pose.roll) : "-"],
-    [
-      "顔変換行列",
-      state.summary ? formatJapaneseBoolean(state.summary.hasFacialTransformationMatrix) : "-",
-    ],
-  ])
+  toggleLandmarkSummaryButton.textContent = state.showLandmarkSummaryOverlay
+    ? "12点サマリを非表示"
+    : "12点サマリを表示"
+  previousFrameButton.disabled = !state.metadata || state.currentFrameIndex <= 0 || frameBusy
+  nextFrameButton.disabled = !state.metadata || state.currentFrameIndex >= getMaxFrameIndex() || frameBusy
+  excludeFrameButton.disabled = !state.metadata || frameBusy
+}
 
-  landmarkSummaryGrid.innerHTML =
+function createRawDebugPayload(
+  adjusted12pt: LandmarkSummaryPoint[],
+  currentManualAdjustments: ManualLandmarkAdjustment[],
+  frameState: ReturnType<typeof getFrameStateDebug>,
+  observed12ptFrameCount: number,
+): Record<string, unknown> {
+  return {
+    metadata: state.metadata,
+    frameState,
+    mediaPipeFrameSummary: state.summary,
+    landmarkSummaryPointCount: adjusted12pt.length,
+    observed12pt: state.observed12pt,
+    observed12ptFrameCount,
+    observed12ptByFramePreview: getObserved12ptByFramePreview(),
+    manualAdjustmentCount: currentManualAdjustments.length,
+    manualAdjustments: currentManualAdjustments,
+    manualAdjustmentFrameCount: getManualAdjustmentFrameCount(),
+    manualAdjustmentsByFramePreview: getManualAdjustmentsByFramePreview(),
+    adjustedLandmarkSummary: adjusted12pt,
+    pose: state.pose
+      ? {
+          yaw: roundDebugNumber(state.pose.yaw),
+          pitch: roundDebugNumber(state.pose.pitch),
+          roll: roundDebugNumber(state.pose.roll),
+        }
+      : null,
+  }
+}
+
+function renderConsoleTabs(): void {
+  for (const button of consoleTabButtons) {
+    const tab = button.dataset.consoleTab as ConsoleTab
+    const isActive = tab === state.consoleTab
+    button.classList.toggle("is-active", isActive)
+    button.setAttribute("aria-selected", String(isActive))
+  }
+}
+
+function renderConsoleTabContent(
+  adjusted12pt: LandmarkSummaryPoint[],
+  currentManualAdjustments: ManualLandmarkAdjustment[],
+  rawDebugPayload: Record<string, unknown>,
+): string {
+  switch (state.consoleTab) {
+    case "landmarks12pt":
+      return renderLandmarks12ptConsole(adjusted12pt)
+    case "adjustments":
+      return renderAdjustmentsConsole(currentManualAdjustments)
+    case "raw":
+      return renderRawConsole(rawDebugPayload)
+    case "summary":
+    default:
+      return renderSummaryConsole(adjusted12pt, currentManualAdjustments)
+  }
+}
+
+function renderSummaryConsole(
+  adjusted12pt: LandmarkSummaryPoint[],
+  currentManualAdjustments: ManualLandmarkAdjustment[],
+): string {
+  return [
+    renderConsoleSection(
+      "Current frame",
+      renderStatusItems([
+        ["表示フレーム", state.metadata ? String(state.currentFrameIndex) : "-"],
+        ["source frame index", state.metadata ? String(state.currentFrameIndex) : "-"],
+        ["時刻", state.metadata ? `${formatNumber(getCurrentFrameTimeSec())} 秒` : "-"],
+        ["除外状態", state.metadata ? (isCurrentFrameExcluded() ? "除外済み" : "対象") : "-"],
+        ["推定フレーム数", state.metadata ? String(getEstimatedFrameCount()) : "-"],
+        ["除外フレーム数", String(state.excludedFrames.length)],
+      ]),
+    ),
+    renderConsoleSection(
+      "MediaPipe",
+      renderStatusItems([
+        ["顔検出", state.summary ? formatJapaneseBoolean(state.summary.detected) : "-"],
+        ["ランドマーク数", state.summary ? String(state.summary.landmarkCount) : "-"],
+        ["ブレンドシェイプ数", state.summary ? String(state.summary.blendshapeCount) : "-"],
+        [
+          "顔変換行列",
+          state.summary ? formatJapaneseBoolean(state.summary.hasFacialTransformationMatrix) : "-",
+        ],
+        ["左右向き", state.pose ? formatNumber(state.pose.yaw) : "-"],
+        ["上下向き", state.pose ? formatNumber(state.pose.pitch) : "-"],
+        ["傾き", state.pose ? formatNumber(state.pose.roll) : "-"],
+        ["エラー", state.summary?.error ?? "-"],
+      ]),
+    ),
+    renderConsoleSection(
+      "12pt",
+      renderStatusItems([
+        ["12点サマリ数", String(adjusted12pt.length)],
+        ["現在フレームの手動調整数", String(currentManualAdjustments.length)],
+        ["12点解析状態", formatObserved12ptSource()],
+      ]),
+    ),
+    renderConsoleSection(
+      "Cache",
+      renderStatusItems([
+        ["解析済みフレーム数", String(getObserved12ptFrameCount())],
+        ["手動調整済みフレーム数", String(getManualAdjustmentFrameCount())],
+      ]),
+    ),
+  ].join("")
+}
+
+function renderLandmarks12ptConsole(adjusted12pt: LandmarkSummaryPoint[]): string {
+  const content =
     adjusted12pt.length > 0
       ? adjusted12pt
           .map(
             (point) => `
               <div class="landmark-summary-item ${point.id === state.selectedLandmarkSummaryPointId ? "selected" : ""}">
                 <code>${escapeHtml(point.label)}</code>
-                <span>${escapeHtml(formatLandmarkSummaryPoint(point))}</span>
+                <span>${escapeHtml(formatConsoleLandmarkSummaryPoint(point))}</span>
               </div>
             `,
           )
           .join("")
       : `<div class="landmark-summary-item empty">12点サマリはありません。</div>`
 
-  toggleLandmarkSummaryButton.textContent = state.showLandmarkSummaryOverlay
-    ? "12点サマリを非表示"
-    : "12点サマリを表示"
-  resetSelectedLandmarkButton.disabled =
-    !state.selectedLandmarkSummaryPointId ||
-    !currentManualAdjustments.some(
+  return renderConsoleSection("12pt landmark summary", `<div class="landmark-summary-grid">${content}</div>`)
+}
+
+function renderAdjustmentsConsole(
+  currentManualAdjustments: ManualLandmarkAdjustment[],
+): string {
+  const selectedHasAdjustment =
+    Boolean(state.selectedLandmarkSummaryPointId) &&
+    currentManualAdjustments.some(
       (adjustment) => adjustment.id === state.selectedLandmarkSummaryPointId,
     )
-  resetAllLandmarksButton.disabled = currentManualAdjustments.length === 0
-  previousFrameButton.disabled = !state.metadata || state.currentFrameIndex <= 0 || frameBusy
-  nextFrameButton.disabled = !state.metadata || state.currentFrameIndex >= getMaxFrameIndex() || frameBusy
-  excludeFrameButton.disabled = !state.metadata || frameBusy
 
-  rawDebug.textContent = JSON.stringify(
-    {
-      metadata: state.metadata,
-      frameState,
-      mediaPipeFrameSummary: state.summary,
-      landmarkSummaryPointCount: adjusted12pt.length,
-      observed12pt: state.observed12pt,
-      observed12ptFrameCount,
-      observed12ptByFramePreview: getObserved12ptByFramePreview(),
-      manualAdjustmentCount: currentManualAdjustments.length,
-      manualAdjustments: currentManualAdjustments,
-      manualAdjustmentFrameCount: getManualAdjustmentFrameCount(),
-      manualAdjustmentsByFramePreview: getManualAdjustmentsByFramePreview(),
-      adjustedLandmarkSummary: adjusted12pt,
-      pose: state.pose
-        ? {
-            yaw: roundDebugNumber(state.pose.yaw),
-            pitch: roundDebugNumber(state.pose.pitch),
-            roll: roundDebugNumber(state.pose.roll),
-          }
-        : null,
-    },
-    null,
-    2,
+  return [
+    renderConsoleSection(
+      "操作",
+      `
+        <div class="summary-actions">
+          <button
+            data-console-action="reset-selected"
+            type="button"
+            class="secondary-button"
+            ${selectedHasAdjustment ? "" : "disabled"}
+          >
+            選択点をリセット
+          </button>
+          <button
+            data-console-action="reset-current-frame"
+            type="button"
+            class="secondary-button"
+            ${currentManualAdjustments.length > 0 ? "" : "disabled"}
+          >
+            現在フレームの全調整をリセット
+          </button>
+        </div>
+      `,
+    ),
+    renderConsoleSection(
+      "手動調整の状態",
+      renderStatusItems([
+        ["現在フレームの手動調整数", String(currentManualAdjustments.length)],
+        ["手動調整済みフレーム数", String(getManualAdjustmentFrameCount())],
+      ]),
+    ),
+    renderConsoleSection("現在フレーム", renderManualAdjustmentsList(currentManualAdjustments)),
+    renderConsoleSection(
+      "manualAdjustmentsByFramePreview",
+      `<pre class="console-json">${escapeHtml(
+        JSON.stringify(getManualAdjustmentsByFramePreview(), null, 2),
+      )}</pre>`,
+    ),
+  ].join("")
+}
+
+function renderRawConsole(rawDebugPayload: Record<string, unknown>): string {
+  return renderConsoleSection(
+    "rawDebug",
+    `<pre class="console-json">${escapeHtml(JSON.stringify(rawDebugPayload, null, 2))}</pre>`,
   )
+}
+
+function renderConsoleSection(title: string, body: string): string {
+  return `
+    <section class="console-section">
+      <h3>${escapeHtml(title)}</h3>
+      ${body}
+    </section>
+  `
+}
+
+function renderManualAdjustmentsList(
+  adjustments: ManualLandmarkAdjustment[],
+): string {
+  if (adjustments.length === 0) {
+    return `<div class="landmark-summary-item empty">現在フレームの手動調整はありません。</div>`
+  }
+
+  return `
+    <div class="landmark-summary-grid">
+      ${adjustments
+        .map(
+          (adjustment) => `
+            <div class="landmark-summary-item">
+              <code>${escapeHtml(adjustment.id)}</code>
+              <span>dx ${formatNumber(adjustment.dx)} / dy ${formatNumber(adjustment.dy)}</span>
+            </div>
+          `,
+        )
+        .join("")}
+    </div>
+  `
 }
 
 function getFrameStateDebug(): {
@@ -1363,20 +1520,18 @@ function formatFileSize(size: number): string {
   return `${(size / 1024 / 1024).toFixed(2)} MB`
 }
 
-function formatLandmarkSummaryPoint(point: LandmarkSummaryPoint): string {
+function formatConsoleLandmarkSummaryPoint(point: LandmarkSummaryPoint): string {
   const observed = state.observed12pt.find((item) => item.id === point.id)
   const adjustment = getManualAdjustment(point.id)
-  const coordinateSummary =
-    observed && adjustment
-      ? `横 ${formatNumber(observed.x)} → ${formatNumber(point.x)} / 縦 ${formatNumber(
-          observed.y,
-        )} → ${formatNumber(point.y)}`
-      : `横 ${formatNumber(point.x)} / 縦 ${formatNumber(point.y)}`
+  const adjustedSummary = `adjusted x ${formatNumber(point.x)} / y ${formatNumber(point.y)}`
+  const observedSummary = observed
+    ? `observed x ${formatNumber(observed.x)} / y ${formatNumber(observed.y)}`
+    : "observed -"
   const manualSummary = adjustment
     ? ` / 手動調整あり dx ${formatNumber(adjustment.dx)} / dy ${formatNumber(adjustment.dy)}`
     : " / 手動調整なし"
 
-  return `識別子 ${point.id} / ${coordinateSummary} / 奥行き ${
+  return `識別子 ${point.id} / ${adjustedSummary} / ${observedSummary} / 奥行き ${
     point.z === undefined ? "-" : formatNumber(point.z)
   } / 参照番号 ${point.sourceIndices.join(", ")}${manualSummary}`
 }

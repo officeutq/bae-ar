@@ -192,7 +192,7 @@ input[type="file"] {
 }
 
 .frame-info-grid {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 canvas {
@@ -216,6 +216,53 @@ video {
   text-align: center;
 }
 
+.console-panel h2 {
+  margin-bottom: 12px;
+}
+
+.console-tabs {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-bottom: 12px;
+}
+
+.console-tab-button {
+  background: #ffffff;
+  border: 1px solid #aab6c2;
+  border-radius: 6px;
+  color: #26313b;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  min-height: 34px;
+  padding: 7px 8px;
+}
+
+.console-tab-button.is-active {
+  background: #26313b;
+  border-color: #26313b;
+  color: #ffffff;
+}
+
+.console-content {
+  display: grid;
+  gap: 12px;
+}
+
+.console-section {
+  display: grid;
+  gap: 8px;
+}
+
+.console-section h3 {
+  color: #26313b;
+  font-size: 13px;
+  margin: 0;
+}
+
+.console-json,
 .json-preview {
   background: #f7fafc;
   border: 1px solid #dce4eb;
