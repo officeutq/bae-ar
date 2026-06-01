@@ -248,6 +248,8 @@ RC-0 は docs 整理、RC-0.5 と RC-0.6 は `tools/mediapipe-render-consistency
 - previous / delete / next controls
 - manualAdjustmentsByFrame によるフレーム別手動調整の一時保持
 - フレーム移動時に調整済み12点を復元
+- observed12ptByFrame による初回 MediaPipe 解析結果のフレーム別一時保持
+- 同じ frameIndex に戻った場合、初回解析時の observed12pt を再利用
 
 RC-1 以降で実装する場合も、Runtime / Studio / IdealFace Authoring Tool / Fitting Lab の実装を直接変更せず、`tools/mediapipe-render-consistency-lab` の責務として切り分けます。保存 / export、mesh 化、render、MediaPipe re-detection、residual evaluation、`meshReadyZ` candidate 探索はまだ未実装です。
 

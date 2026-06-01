@@ -48,6 +48,18 @@ type ManualLandmarkAdjustment = {
 
 type ManualAdjustmentsByFrame = Record<number, ManualLandmarkAdjustment[]>
 
+type Observed12ptFrameSnapshot = {
+  frameIndex: number
+  timeSec: number
+  observed12pt: LandmarkSummaryPoint[]
+  mediaPipeSummary: MediaPipeFrameSummary
+  pose: Pose | null
+}
+
+type Observed12ptByFrame = Record<number, Observed12ptFrameSnapshot>
+
+type Observed12ptSource = "none" | "newlyAnalyzed" | "cached"
+
 type ExcludedFrame = {
   frameIndex: number
   timeSec: number
@@ -70,6 +82,8 @@ type AppState = {
   summary: MediaPipeFrameSummary | null
   pose: Pose | null
   observed12pt: LandmarkSummaryPoint[]
+  observed12ptByFrame: Observed12ptByFrame
+  observed12ptSource: Observed12ptSource
   manualAdjustmentsByFrame: ManualAdjustmentsByFrame
   selectedLandmarkSummaryPointId: string | null
   draggingLandmarkSummaryPointId: string | null
@@ -83,6 +97,7 @@ const MATRIX_PREVIEW_COUNT = 8
 const FRAME_STEP_SECONDS = 1 / 30
 const EXCLUDED_FRAMES_PREVIEW_LIMIT = 20
 const MANUAL_ADJUSTMENTS_BY_FRAME_PREVIEW_LIMIT = 20
+const OBSERVED_12PT_BY_FRAME_PREVIEW_LIMIT = 20
 const OVERLAY_POINT_RADIUS = 5
 const OVERLAY_SELECTED_POINT_RADIUS = 8
 const OVERLAY_HIT_RADIUS = 12
@@ -111,6 +126,8 @@ const state: AppState = {
   summary: null,
   pose: null,
   observed12pt: [],
+  observed12ptByFrame: {},
+  observed12ptSource: "none",
   manualAdjustmentsByFrame: {},
   selectedLandmarkSummaryPointId: null,
   draggingLandmarkSummaryPointId: null,
@@ -336,6 +353,7 @@ async function handleFile(file: File | null): Promise<void> {
       error: state.fileError,
     }
     state.observed12pt = []
+    state.observed12ptSource = "none"
     state.selectedLandmarkSummaryPointId = null
     state.draggingLandmarkSummaryPointId = null
     renderThumbnailCanvas()
@@ -350,6 +368,8 @@ function resetFrameState(): void {
   state.summary = null
   state.pose = null
   state.observed12pt = []
+  state.observed12ptByFrame = {}
+  state.observed12ptSource = "none"
   state.manualAdjustmentsByFrame = {}
   state.selectedLandmarkSummaryPointId = null
   state.draggingLandmarkSummaryPointId = null
@@ -388,6 +408,13 @@ async function loadCurrentFrame(): Promise<void> {
   await seekVideoToCurrentFrame()
   prepareThumbnailCanvas()
   renderThumbnailCanvas()
+  const cachedSnapshot = state.observed12ptByFrame[state.currentFrameIndex]
+  if (cachedSnapshot) {
+    applyObserved12ptFrameSnapshot(cachedSnapshot, "cached")
+    renderThumbnailCanvas()
+    render()
+    return
+  }
 
   state.loadStatus = "解析中"
   render()
@@ -396,7 +423,12 @@ async function loadCurrentFrame(): Promise<void> {
     await detectorReadyPromise
   }
 
-  state.summary = analyzeFirstFrame()
+  const snapshot = analyzeCurrentFrameSnapshot()
+  state.observed12ptByFrame = {
+    ...state.observed12ptByFrame,
+    [snapshot.frameIndex]: snapshot,
+  }
+  applyObserved12ptFrameSnapshot(snapshot, "newlyAnalyzed")
   renderThumbnailCanvas()
   state.loadStatus = "完了"
   render()
@@ -406,6 +438,7 @@ function resetPerFrameState(): void {
   state.summary = null
   state.pose = null
   state.observed12pt = []
+  state.observed12ptSource = "none"
   state.selectedLandmarkSummaryPointId = null
   state.draggingLandmarkSummaryPointId = null
 }
@@ -581,15 +614,15 @@ function renderThumbnailCanvas(): void {
   thumbnailEmpty.hidden = true
 }
 
-function analyzeFirstFrame(): MediaPipeFrameSummary {
+function analyzeCurrentFrameSnapshot(): Observed12ptFrameSnapshot {
   if (!faceLandmarker) {
-    return {
+    return createObserved12ptFrameSnapshot({
       detected: false,
       landmarkCount: 0,
       blendshapeCount: 0,
       hasFacialTransformationMatrix: false,
       error: "MediaPipe Face Landmarker が初期化されていません。",
-    }
+    }, [], null)
   }
 
   try {
@@ -599,15 +632,10 @@ function analyzeFirstFrame(): MediaPipeFrameSummary {
     const matrix = result.facialTransformationMatrixes[0]
     const matrixValues = matrix ? Array.from(matrix.data) : []
     const detected = result.faceLandmarks.length > 0
+    const pose = estimateFacePoseFromMatrix(matrix)
+    const observed12pt = detected ? buildLandmarkSummary(landmarks) : []
 
-    state.pose = estimateFacePoseFromMatrix(matrix)
-    state.observed12pt = detected ? buildLandmarkSummary(landmarks) : []
-    if (!detected) {
-      state.selectedLandmarkSummaryPointId = null
-      state.draggingLandmarkSummaryPointId = null
-    }
-
-    return {
+    return createObserved12ptFrameSnapshot({
       detected,
       landmarkCount: landmarks.length,
       blendshapeCount: blendshapes.length,
@@ -616,19 +644,44 @@ function analyzeFirstFrame(): MediaPipeFrameSummary {
         matrixValues.length > 0
           ? matrixValues.slice(0, MATRIX_PREVIEW_COUNT).map(roundDebugNumber)
           : undefined,
-    }
+    }, observed12pt, pose)
   } catch (error) {
-    state.pose = null
-    state.observed12pt = []
-    state.selectedLandmarkSummaryPointId = null
-    state.draggingLandmarkSummaryPointId = null
-    return {
+    return createObserved12ptFrameSnapshot({
       detected: false,
       landmarkCount: 0,
       blendshapeCount: 0,
       hasFacialTransformationMatrix: false,
       error: error instanceof Error ? error.message : String(error),
-    }
+    }, [], null)
+  }
+}
+
+function createObserved12ptFrameSnapshot(
+  mediaPipeSummary: MediaPipeFrameSummary,
+  observed12pt: LandmarkSummaryPoint[],
+  pose: Pose | null,
+): Observed12ptFrameSnapshot {
+  return {
+    frameIndex: state.currentFrameIndex,
+    timeSec: roundDebugNumber(getCurrentFrameTimeSec()),
+    observed12pt,
+    mediaPipeSummary,
+    pose,
+  }
+}
+
+function applyObserved12ptFrameSnapshot(
+  snapshot: Observed12ptFrameSnapshot,
+  source: Observed12ptSource,
+): void {
+  state.summary = snapshot.mediaPipeSummary
+  state.pose = snapshot.pose
+  state.observed12pt = snapshot.observed12pt
+  state.observed12ptSource = source
+
+  if (!snapshot.mediaPipeSummary.detected) {
+    state.selectedLandmarkSummaryPointId = null
+    state.draggingLandmarkSummaryPointId = null
   }
 }
 
@@ -941,6 +994,7 @@ function render(): void {
   const adjusted12pt = getAdjusted12pt()
   const currentManualAdjustments = getCurrentManualAdjustments()
   const frameState = getFrameStateDebug()
+  const observed12ptFrameCount = getObserved12ptFrameCount()
   const frameBusy = state.loadStatus === "読込中" || state.loadStatus === "解析中"
 
   statusGrid.innerHTML = renderStatusItems([
@@ -966,6 +1020,8 @@ function render(): void {
     ["除外フレーム数", String(state.excludedFrames.length)],
     ["現在フレームの手動調整数", String(currentManualAdjustments.length)],
     ["手動調整済みフレーム数", String(getManualAdjustmentFrameCount())],
+    ["解析済みフレーム数", String(observed12ptFrameCount)],
+    ["12点解析状態", formatObserved12ptSource()],
   ])
 
   summaryGrid.innerHTML = renderStatusItems([
@@ -1025,6 +1081,8 @@ function render(): void {
       mediaPipeFrameSummary: state.summary,
       landmarkSummaryPointCount: adjusted12pt.length,
       observed12pt: state.observed12pt,
+      observed12ptFrameCount,
+      observed12ptByFramePreview: getObserved12ptByFramePreview(),
       manualAdjustmentCount: currentManualAdjustments.length,
       manualAdjustments: currentManualAdjustments,
       manualAdjustmentFrameCount: getManualAdjustmentFrameCount(),
@@ -1083,6 +1141,42 @@ function getManualAdjustmentsByFramePreview(): Array<{
     .filter((entry) => entry.adjustmentCount > 0)
     .sort((left, right) => left.frameIndex - right.frameIndex)
     .slice(0, MANUAL_ADJUSTMENTS_BY_FRAME_PREVIEW_LIMIT)
+}
+
+function getObserved12ptFrameCount(): number {
+  return Object.keys(state.observed12ptByFrame).length
+}
+
+function formatObserved12ptSource(): string {
+  if (!state.metadata || state.observed12ptSource === "none") {
+    return "-"
+  }
+
+  return state.observed12ptSource === "cached"
+    ? "解析済みキャッシュ使用"
+    : "初回解析"
+}
+
+function getObserved12ptByFramePreview(): Array<{
+  frameIndex: number
+  timeSec: number
+  detected: boolean
+  observedPointCount: number
+  landmarkCount: number
+  hasFacialTransformationMatrix: boolean
+}> {
+  return Object.entries(state.observed12ptByFrame)
+    .map(([frameIndex, snapshot]) => ({
+      frameIndex: Number(frameIndex),
+      timeSec: snapshot.timeSec,
+      detected: snapshot.mediaPipeSummary.detected,
+      observedPointCount: snapshot.observed12pt.length,
+      landmarkCount: snapshot.mediaPipeSummary.landmarkCount,
+      hasFacialTransformationMatrix:
+        snapshot.mediaPipeSummary.hasFacialTransformationMatrix,
+    }))
+    .sort((left, right) => left.frameIndex - right.frameIndex)
+    .slice(0, OBSERVED_12PT_BY_FRAME_PREVIEW_LIMIT)
 }
 
 function renderStatusItems(items: Array<[string, string]>): string {
