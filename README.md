@@ -8,6 +8,7 @@
 - `tools/ideal-face-authoring` の Step 2-I 生成フローとは分離します。
 - `tools/mediapipe-canonical-lab` の MediaPipe 座標系調査とも目的を分けます。
 - 次段の `tools/mediapipe-render-consistency-lab` は、mesh / render / MediaPipe re-detection 前提で `projectionFitZ` と `meshReadyZ` の違いを検証する debug lab として扱います。詳細は [MediaPipe Render Consistency Lab](docs/mediapipe-render-consistency-lab.md) を参照してください。
+- `tools/mediapipe-render-consistency-lab` の初期土台として、MP4 import、1フレーム目サムネイル、MediaPipe metadata summary 表示を追加済みです。mesh / render / MediaPipe re-detection は未実装です。
 - captured JSON を import し、`8pt_basic` / `12pt_rotation_center` / `24pt_structure` を比較します。現時点の 478点奥行き生成 prototype（試作）の推奨は `12pt_rotation_center` です。
 - 478点 z 生成は `canonical-face-depth-template-v1.json`（標準顔奥行きテンプレート）を基準に、`canonicalDepthBased` で仮 z を作り、`perLandmarkZSearch` で各 landmark（ランドマーク）を1次元探索として微調整します。
 - Summary JSON はレビューや ChatGPT 相談用の軽量形式として出力します。
@@ -47,6 +48,9 @@ tools/ideal-face-authoring
 
 tools/mediapipe-canonical-lab
   MediaPipe Face Landmarker の 478 landmarks / facialTransformationMatrix / pose / blendshapes を調査する debug lab
+
+tools/mediapipe-render-consistency-lab
+  MP4 の 1フレーム目と MediaPipe Face Landmarker metadata summary を確認する debug lab
 
 docs
   設計、仕様、ロードマップ、開発方針
@@ -309,9 +313,12 @@ root の `package.json` には以下の script があります。
 ```bash
 npm run start
 npm run start:ideal-face-authoring
+npm run start:mediapipe-canonical-lab
+npm run start:ideal-face-fitting-lab
+npm run start:mediapipe-render-consistency-lab
 ```
 
-`npm run start` は `apps/studio` を起動します。`npm run start:ideal-face-authoring` は `tools/ideal-face-authoring` を起動します。
+`npm run start` は `apps/studio` を起動します。`npm run start:ideal-face-authoring` は `tools/ideal-face-authoring`、`npm run start:mediapipe-canonical-lab` は `tools/mediapipe-canonical-lab`、`npm run start:ideal-face-fitting-lab` は `tools/ideal-face-fitting-lab`、`npm run start:mediapipe-render-consistency-lab` は `tools/mediapipe-render-consistency-lab` を起動します。
 
 ## 関連ドキュメント
 
