@@ -235,6 +235,20 @@ roll が片側に偏った selected frames だけで評価すると、画像上�
 
 評価時も、roll bucket ごとの score を出し、特定 roll group（roll 分類）だけで改善する candidate を警戒する。
 
+## Downward Tilt Exclusion Candidate Mode
+
+Rotation Fit（回転中心評価）の pose review candidates（姿勢レビュー候補）には、`normal`（通常候補）に加えて `exclude_downward_tilt`（下向き＋傾き除外候補）を持たせる。
+
+`exclude_downward_tilt`（下向き＋傾き除外候補）は、外れ値寄りの frame（フレーム）が「右向き + 下向き + 傾き大」に集中したことを確認するための debug comparison（検証比較）であり、通常候補を置き換えるものではない。
+
+除外条件は `pitch negativeLarge`（強い下向き）かつ `roll negativeLarge` / `roll positiveLarge`（強い傾き）とする。つまり、強い下向き かつ 強い傾き の frame（フレーム）を 12+2点推定用の evaluation frames（評価フレーム）から外す。
+
+primary grouping（主分類）は引き続き yaw × pitch の25 bucket とし、125 bucket（yaw × pitch × roll）は coverage map（姿勢カバレッジ確認）として残す。roll は引き続き `roll_negative` / `roll_center` / `roll_positive` の balance（偏り抑制）に使う。
+
+`expressionTooStrong`（表情が強すぎるフレーム）は `normal`（通常候補）でも `exclude_downward_tilt`（下向き＋傾き除外候補）でも必ず除外し、fallback（補充）にも使わない。
+
+Raw JSON（生デバッグJSON）には `candidateSelectionSummary.candidateMode`、`candidateSelectionSummary.excludeDownwardTiltPolicy`、`rotationFitEvaluation.evaluationFrameFiltering`、`fittingLab12ptSearch.evaluationCandidateMode` を出す。これは通常候補と下向き＋傾き除外候補を手動比較するための debug UI（検証用 UI）であり、production export（本番書き出し）ではない。
+
 ## Things Not To Do
 
 この設計では以下を行わない。

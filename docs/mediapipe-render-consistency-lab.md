@@ -440,14 +440,19 @@ Render Consistency Lab は、最初から production asset を作る工程では
 - yaw × pitch の25 bucket を primaryGrouping（主分類）とし、`maxTargetPerBucket = 5` から `4`、`minBalancedTargetPerBucket = 3` の順に試します。
 - 全25 bucket が満たせた最初の `actualTargetPerBucket` を採用し、満たせない場合は target 3 の partial balanced result（部分均等結果）として shortage bucket（不足bucket）を表示します。
 - `expressionTooStrong` は常に除外し、fallback（補充）にも使いません。
+- candidateMode（候補抽出モード）は `normal`（通常候補）と `exclude_downward_tilt`（下向き＋傾き除外候補）を持ちます。
+- `normal`（通常候補）は既存の抽出方針を維持します。`exclude_downward_tilt`（下向き＋傾き除外候補）は比較用モードであり、通常候補を置き換えるものではありません。
+- `exclude_downward_tilt`（下向き＋傾き除外候補）では、`pitch negativeLarge`（強い下向き）かつ `roll negativeLarge` / `roll positiveLarge`（強い傾き）の frame（フレーム）を Rotation Fit（回転中心評価）の候補から除外します。
+- このモードは、外れ値寄りの frame（フレーム）が「右向き + 下向き + 傾き大」に集中したための debug comparison（検証比較）です。production export（本番書き出し）ではありません。
+- `expressionTooStrong`（表情が強すぎるフレーム）の除外は、`exclude_downward_tilt`（下向き＋傾き除外候補）でも引き続き必須です。
 - pose review candidate 抽出は rotationCenter(0, y, z) 推定向けの候補作成として扱います。
 - primary grouping（主分類）は yaw × pitch の25 bucket のままにします。125 bucket は Pose タブの coverage map（姿勢カバレッジ確認）として残し、必須採用単位にはしません。
 - roll は完全除外や単純 fallback ではなく、`roll_negative` / `roll_center` / `roll_positive` の3 group（グループ）でバランスを取ります。
 - `roll_negative` は `negativeLarge` / `negativeSmall`、`roll_center` は `center`、`roll_positive` は `positiveSmall` / `positiveLarge` として扱います。
 - 候補過多の bucket では `pickEvenlySpaced` により timeSec（秒）方向に均等抽出します。
 - Candidates tab（候補タブ）には Shortage buckets（不足bucket）診断を表示し、不足した yaw / pitch bucket だけを集約して確認できるようにします。
-- Shortage buckets（不足bucket）診断では、acceptedFrames 件数、`expressionTooStrong` 除外後の usable frame（利用可能フレーム）件数、roll group（rollグループ）別の available / selected count（利用可能 / 選択件数）を表示します。
-- `shortageReason` は `not_enough_pose_frames`（その姿勢のフレーム不足）、`not_enough_non_expression_frames`（表情が強くないフレーム不足）、`unknown`（原因未分類）を使います。
+- Shortage buckets（不足bucket）診断では、acceptedFrames 件数、`expressionTooStrong` 除外後の usable frame（利用可能フレーム）件数、`exclude_downward_tilt`（下向き＋傾き除外候補）で除外された件数、除外後 usable frame 件数、roll group（rollグループ）別の available / selected count（利用可能 / 選択件数）を表示します。
+- `shortageReason` は `not_enough_pose_frames`（その姿勢のフレーム不足）、`not_enough_non_expression_frames`（表情が強くないフレーム不足）、`not_enough_after_downward_tilt_filter`（下向き＋傾き除外後のフレーム不足）、`unknown`（原因未分類）を使います。
 - この診断は rotationCenter(0, y, z) 推定に使う候補フレームの品質確認用で、`expressionTooStrong` 除外後に不足する bucket を見つけるための表示です。
 - この機能は候補抽出と Debug Console（デバッグコンソール）表示までを扱い、mesh / render / MediaPipe re-detection / residual evaluation には進みません。
 
@@ -467,6 +472,8 @@ Render Consistency Lab は、最初から production asset を作る工程では
 - Rotation Fit（回転中心評価）タブには pass summary（探索周回の要約）、1週目 / 2週目の score comparison（誤差比較）、base frame rectification（正面基準補正）を表示します。`Improvement by parameter（探索対象ごとの改善量）` は 1週目 / 2週目それぞれの coarse search（粗探索）と fine search（細かい追加探索）に分けて確認できるようにします。
 - best candidate（最良候補）の projected12pt（投影後12点）と adjusted12pt（手動調整後12点）を比較し、score evaluator（スコア評価器）の frame scores（フレーム別スコア）、point scores（点別スコア）、bucket scores（姿勢分類別スコア）を表示します。
 - 評価座標は aspect-corrected image coordinate（横縦比補正済み画像座標）で、`x = adjusted12pt.x * videoAspectRatio`、`y = adjusted12pt.y` とします。pixel coordinate（ピクセル座標）、face bounds center（顔外枠中心）、顔幅 normalization（正規化）は使いません。
+- Rotation Fit（回転中心評価）は、現在選択されている candidateMode（候補抽出モード）の selected candidates（選択候補）を evaluation frames（評価フレーム）として使います。
+- Raw JSON（生デバッグ JSON）には `candidateSelectionSummary.candidateMode`、`candidateSelectionSummary.excludeDownwardTiltPolicy`、`rotationFitEvaluation.evaluationFrameFiltering`、`fittingLab12ptSearch.evaluationCandidateMode` を含め、通常候補と下向き＋傾き除外候補を手動比較できるようにします。
 - Raw JSON（生デバッグ JSON）には `searchStages.coarse` / `searchStages.fine`、`zSymmetryMode`、`symmetricZParameters`、`leftRightZSymmetryDiagnostics`、`parameterImprovements`（探索対象ごとの改善量）と `parameterImprovementSummary`（改善量要約）を含めます。これは `coordinateDescentLog`（座標降下探索ログ）を人間が読みやすく要約した debug payload（検証用データ）です。
 - Debug Console（デバッグコンソール）の Raw タブと Rotation Fit（回転中心評価）内の Raw JSON 表示には `Raw JSONをコピー` ボタンを置き、現在の payload（ペイロード）を `JSON.stringify(payload, null, 2)` した文字列として clipboard（クリップボード）へコピーできます。探索結果を Codex やチャットへ貼りやすくするための debug UI（検証用 UI）であり、production export（本番書き出し）ではありません。
 - 478点 z 推定、`perLandmarkZSearch`（ランドマーク単位z探索）、mesh（メッシュ化） / render（レンダリング） / MediaPipe re-detection（MediaPipe再検出）、production export（本番書き出し）は行いません。
