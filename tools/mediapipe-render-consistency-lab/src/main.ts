@@ -531,7 +531,7 @@ const ROTATION_FIT_SEARCH_MODE = "rotation_center_yz_coarse"
 const ROTATION_FIT_FOCAL_LENGTH = 2.6
 const ROTATION_FIT_ROTATION_CENTER_Y_RANGE: RotationFitSearchRange = {
   min: -0.24,
-  max: 0.16,
+  max: 0.4,
   step: 0.02,
 }
 const ROTATION_FIT_ROTATION_CENTER_Z_RANGE: RotationFitSearchRange = {
