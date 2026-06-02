@@ -7,8 +7,8 @@
 - production 用 IdealFace asset を作る正式 authoring tool ではありません。
 - `tools/ideal-face-authoring` の Step 2-I 生成フローとは分離します。
 - `tools/mediapipe-canonical-lab` の MediaPipe 座標系調査とも目的を分けます。
-- 次段の `tools/mediapipe-render-consistency-lab` は、mesh / render / MediaPipe re-detection 前提で `projectionFitZ` と `meshReadyZ` の違いを検証する debug lab として扱います。詳細は [MediaPipe Render Consistency Lab](docs/mediapipe-render-consistency-lab.md) を参照してください。
-- `tools/mediapipe-render-consistency-lab` の初期土台として、MP4 import、1フレーム目サムネイル、MediaPipe metadata summary 表示を追加済みです。mesh / render / MediaPipe re-detection は未実装です。
+- 次段の `tools/mediapipe-render-consistency-lab` は、mesh（メッシュ化） / render（レンダリング） / MediaPipe re-detection（MediaPipe 再検出）前提で `projectionFitZ` と `meshReadyZ` の違いを検証する debug lab（検証用ラボ）として扱います。production 用 IdealFace asset を作る正式 authoring tool（作成ツール）ではありません。詳細は [MediaPipe Render Consistency Lab](docs/mediapipe-render-consistency-lab.md) を参照してください。
+- `tools/mediapipe-render-consistency-lab` は、MP4 import、auto scan（自動スキャン）、`acceptedFrames`、`thumbnailDataUrl`、MediaPipe metadata summary（MediaPipe メタデータ要約）、`acceptedFrames[].observed12pt`、pose（姿勢） / `expressionSummary`、`manualAdjustmentsByFrame`、`currentReviewIndex`、Debug Console（デバッグコンソール）、Current Frame（現在フレーム）タブ、`poseBucket125`、`frontCandidate` / `expressionTooStrong` badge（補助ラベル）まで実装済みです。MediaPipe face mesh topology（顔メッシュ接続情報）での478点 mesh 化、yaw / pitch / roll 指定 render、rendered image（レンダリング画像）の MediaPipe Face Landmarker 再入力、returned landmarks（返却ランドマーク）と geometric projected landmarks（幾何投影ランドマーク）の比較、alignment / residual evaluation（位置合わせ・残差評価）は未実装です。
 - captured JSON を import し、`8pt_basic` / `12pt_rotation_center` / `24pt_structure` を比較します。現時点の 478点奥行き生成 prototype（試作）の推奨は `12pt_rotation_center` です。
 - 478点 z 生成は `canonical-face-depth-template-v1.json`（標準顔奥行きテンプレート）を基準に、`canonicalDepthBased` で仮 z を作り、`perLandmarkZSearch` で各 landmark（ランドマーク）を1次元探索として微調整します。
 - Summary JSON はレビューや ChatGPT 相談用の軽量形式として出力します。
@@ -50,7 +50,7 @@ tools/mediapipe-canonical-lab
   MediaPipe Face Landmarker の 478 landmarks / facialTransformationMatrix / pose / blendshapes を調査する debug lab
 
 tools/mediapipe-render-consistency-lab
-  MP4 の 1フレーム目と MediaPipe Face Landmarker metadata summary を確認する debug lab
+  MP4 import / auto scan / acceptedFrames / 12pt overlay / manual adjustments / Debug Console / poseBucket125 を確認する debug lab
 
 docs
   設計、仕様、ロードマップ、開発方針
@@ -96,6 +96,7 @@ Engine Runtime に Studio / Authoring 用 UI や生成・編集処理は入れ�
 - IdealFace Authoring Tool frame usage card UI prototype
 - IdealFace Authoring Tool usage-aware adaptive scan prototype
 - MediaPipe Canonical Lab empirical 478 analysis / Summary JSON export docs 方針
+- MediaPipe Render Consistency Lab MP4 import / auto scan / acceptedFrames / 12pt overlay / manual adjustments / Debug Console / poseBucket125 debug prototype
 
 ### 未実装 / 後段
 
@@ -117,6 +118,7 @@ Engine Runtime に Studio / Authoring 用 UI や生成・編集処理は入れ�
 - manual adjustment UI
 - save / import
 - multiple image input
+- MediaPipe Render Consistency Lab の478点 mesh 化 / yaw・pitch・roll 指定 render / MediaPipe re-detection / alignment・residual evaluation / mesh diagnostics / meshReadyZ candidate 比較 / 保存・export・localStorage・JSON download / 478点 full landmarks 保持・表示・ドラッグ
 
 ## IdealFace Authoring Tool
 

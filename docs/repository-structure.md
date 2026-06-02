@@ -103,7 +103,7 @@ tools/
    └─ Layer Mask Authoring Tool
 ```
 
-`tools/ideal-face-authoring` は Step 2-I-A/B/C と Step 2-H まで実装済みです。`tools/mediapipe-canonical-lab` は MediaPipe Face Landmarker の 478 landmarks / `facialTransformationMatrix` / pose / blendshapes を調査する debug lab です。`tools/mediapipe-render-consistency-lab` は MP4 import、1フレーム目サムネイル、MediaPipe metadata summary を確認する debug lab です。`tools/layer-mask-authoring` は将来予定です。
+`tools/ideal-face-authoring` は Step 2-I-A/B/C と Step 2-H まで実装済みです。`tools/mediapipe-canonical-lab` は MediaPipe Face Landmarker の 478 landmarks / `facialTransformationMatrix` / pose / blendshapes を調査する debug lab です。`tools/mediapipe-render-consistency-lab` は MP4 import、auto scan（自動スキャン）、`acceptedFrames`、`thumbnailDataUrl`、MediaPipe metadata summary（MediaPipe メタデータ要約）、12pt overlay（12点重ね表示）、manual adjustments（手動調整）、Debug Console（デバッグコンソール）、`poseBucket125` を確認する debug lab です。production 用 IdealFace asset を作る正式 authoring tool（作成ツール）ではありません。`tools/layer-mask-authoring` は将来予定です。
 
 ## `packages/engine`
 
@@ -256,17 +256,31 @@ MediaPipe Render Consistency Lab は、mesh / render / MediaPipe re-detection �
 現在含まれるもの:
 
 - MP4 import
-- 1フレーム目サムネイル表示
-- MediaPipe Face Landmarker metadata summary 表示
+- auto scan（自動スキャン）
+- `acceptedFrames`
+- accepted frame ごとの `thumbnailDataUrl`
+- MediaPipe Face Landmarker metadata summary（メタデータ要約）表示
+- `acceptedFrames[].observed12pt`
+- 12pt overlay（12点重ね表示）と show / hide toggle
+- pose / `expressionSummary`
+- `manualAdjustmentsByFrame`
+- `currentReviewIndex` による accepted frame review
+- Debug Console（デバッグコンソール）
+- Current Frame（現在フレーム）タブ
+- `poseBucket125`
+- `frontCandidate` / `expressionTooStrong` badge（補助ラベル）
 
 まだ含まないもの:
 
-- landmarks overlay
-- 478点 mesh 化
-- render
-- MediaPipe re-detection
-- residual evaluation
-- `meshReadyZ` candidate 探索
+- MediaPipe face mesh topology（顔メッシュ接続情報）での478点 mesh 化
+- yaw / pitch / roll 指定 render（姿勢指定レンダリング）
+- rendered image（レンダリング画像）の MediaPipe Face Landmarker 再入力
+- returned landmarks（返却ランドマーク）と geometric projected landmarks（幾何投影ランドマーク）の比較
+- alignment / residual evaluation（位置合わせ・残差評価）
+- mesh diagnostics（メッシュ診断）
+- `meshReadyZ` candidate 比較
+- 保存 / export / localStorage / JSON download
+- 478点 full landmarks の保持・表示・ドラッグ
 
 Runtime / Studio / IdealFace Authoring Tool / Fitting Lab の実装には依存せず、lab 内で必要な最小の MediaPipe Face Landmarker 初期化だけを行います。詳細は [MediaPipe Render Consistency Lab](mediapipe-render-consistency-lab.md) を参照してください。
 
@@ -301,7 +315,7 @@ Layer Mask Authoring Tool を置く想定の場所です。
 - `shape-warp-production-direction.md`: Shape Warp v1 debug prototype と production candidate の違い、WebGL mesh warp 方針、段階分け
 - `beauty-filter-asset-v1.md`: 最終フィルター / プリセットを `idealFace` / `landmarkGroups` / `correctionProfile` / `shapeWarpSettings` / `colorLayers` に分けつつ、1つの `beauty_filter_asset_v1` JSON として配布する方向性
 - `mediapipe-canonical-lab.md`: MediaPipe Canonical Lab の位置づけ、empirical 478 analysis 暫定結論、`facialTransformationMatrix` inverse の扱い、Full / Summary Analysis JSON export 方針
-- `mediapipe-render-consistency-lab.md`: Render Consistency Lab の位置づけ、Fitting Lab との違い、`projectionFitZ` / `meshReadyZ`、mesh / render / MediaPipe re-detection 前提の評価方針
+- `mediapipe-render-consistency-lab.md`: Render Consistency Lab の位置づけ、Fitting Lab との違い、`projectionFitZ` / `meshReadyZ`、現状の auto scan / acceptedFrames / 12pt overlay / Debug Console / poseBucket125、mesh / render / MediaPipe re-detection 前提の評価方針
 
 ## `tools/ideal-face-authoring` detailed scan
 

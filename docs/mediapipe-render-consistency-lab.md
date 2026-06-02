@@ -23,6 +23,10 @@
 
 この docs は方向性整理であり、Runtime / Studio / IdealFace Authoring Tool / Fitting Lab の実装変更、production asset export、`beauty_filter_asset_v1` schema 変更を伴いません。
 
+現状の `tools/mediapipe-render-consistency-lab` は、MP4 import、auto scan（自動スキャン）、`acceptedFrames`、`thumbnailDataUrl`、MediaPipe metadata summary（MediaPipe メタデータ要約）、`acceptedFrames[].observed12pt`、pose（姿勢） / `expressionSummary`、`manualAdjustmentsByFrame`、`currentReviewIndex`、Debug Console（デバッグコンソール）、Current Frame（現在フレーム）タブ、`poseBucket125`、`frontCandidate` / `expressionTooStrong` badge（補助ラベル）までの debug lab です。production 用 IdealFace asset を作る正式 authoring tool（作成ツール）ではありません。
+
+MediaPipe face mesh topology（顔メッシュ接続情報）での478点 mesh 化、yaw / pitch / roll 指定 render（姿勢指定レンダリング）、rendered image（レンダリング画像）の MediaPipe Face Landmarker 再入力、returned landmarks（返却ランドマーク）と geometric projected landmarks（幾何投影ランドマーク）の比較、alignment / residual evaluation（位置合わせ・残差評価）は未実装です。
+
 ## 2. Fitting Lab との違い
 
 Fitting Lab（フィッティング検証ラボ）は、主に以下を評価しました。
@@ -199,7 +203,7 @@ RC-0:
   docs direction / lab responsibility
 
 RC-0.5:
-  MP4 import / first frame thumbnail / MediaPipe metadata summary
+  MP4 import / auto scan / acceptedFrames / thumbnailDataUrl / MediaPipe metadata summary
 
 RC-0.6:
   12pt landmark summary overlay / overlay show-hide toggle
@@ -232,15 +236,17 @@ RC-7:
   pose sweep / batch evaluation を行う
 ```
 
-RC-0 は docs 整理、RC-0.5 と RC-0.6 は `tools/mediapipe-render-consistency-lab` の初期土台として実装済みです。現在は以下を扱います。
+RC-0 は docs 整理、RC-0.5〜RC-0.8 の土台と Debug Console / Current Frame / poseBucket125 周辺の review 補助は `tools/mediapipe-render-consistency-lab` に実装済みです。現在は以下を扱います。
 
 - MP4 import
-- first frame thumbnail
+- auto scan（自動スキャン）
+- acceptedFrames
+- accepted frame ごとの thumbnailDataUrl
 - MediaPipe metadata summary
 - 12pt landmark summary overlay
 - overlay show / hide toggle
 - 12pt landmark summary の手動ドラッグ調整
-- observed12pt / adjusted12pt / manualAdjustments の一時保持
+- `acceptedFrames[].observed12pt` / adjusted12pt / manualAdjustments の一時保持
 - reset selected / reset all
 - frame navigation prototype
 - currentFrameIndex / currentTimeSec
@@ -248,8 +254,8 @@ RC-0 は docs 整理、RC-0.5 と RC-0.6 は `tools/mediapipe-render-consistency
 - previous / delete / next controls
 - manualAdjustmentsByFrame によるフレーム別手動調整の一時保持
 - フレーム移動時に調整済み12点を復元
-- observed12ptByFrame による初回 MediaPipe 解析結果のフレーム別一時保持
-- 同じ frameIndex に戻った場合、初回解析時の observed12pt を再利用
+- `acceptedFrames[].observed12pt` による accepted frame ごとの MediaPipe 解析結果保持
+- 同じ accepted frame に戻った場合、`acceptedFrames[].observed12pt` を再利用
 - browEyeAnchor 固定による leftEye / rightEye の安定化
 - browEyeAnchor を z 推定 / 顔形状推定用の初期推奨 eye point として扱う
 - 右側 debug 表示は Debug Console（デバッグコンソール）に統合する
@@ -273,11 +279,12 @@ RC-0 は docs 整理、RC-0.5 と RC-0.6 は `tools/mediapipe-render-consistency
 - yaw / pitch / roll をそれぞれ5分類し、poseBucket125 として扱う
 - 125 bucket は将来、姿勢バランスよくフレーム採用するための土台
 - frontCandidate は poseBucket125 の center / center / center に付く badge として扱う
-- Pose タブは poseBucket125 の non-empty bucket 集計を表示する
+- Pose タブは poseBucket125 の全125 bucket を 0件 bucket も含めて表示する
+- non-empty bucket は summary count として表示する
 - acceptedFrames の expressionSummary
 - 表情が大きい frame は excluded にせず、expressionTooStrong badge を付ける
 
-RC-1 以降で実装する場合も、Runtime / Studio / IdealFace Authoring Tool / Fitting Lab の実装を直接変更せず、`tools/mediapipe-render-consistency-lab` の責務として切り分けます。保存 / export、mesh 化、render、MediaPipe re-detection、residual evaluation、`meshReadyZ` candidate 探索はまだ未実装です。
+RC-1 以降で実装する場合も、Runtime / Studio / IdealFace Authoring Tool / Fitting Lab の実装を直接変更せず、`tools/mediapipe-render-consistency-lab` の責務として切り分けます。MediaPipe face mesh topology での478点 mesh 化、yaw / pitch / roll 指定 render、rendered image の MediaPipe Face Landmarker 再入力、returned landmarks と geometric projected landmarks の比較、alignment / residual evaluation、mesh diagnostics、`meshReadyZ` candidate 比較、保存 / export / localStorage / JSON download、478点 full landmarks の保持・表示・ドラッグはまだ未実装です。
 
 ### eyePointMode
 
@@ -305,13 +312,16 @@ Render Consistency Lab では UI の肥大化を避けるため、現在は `bro
 - `beauty_filter_asset_v1` schema 変更
 - 12点手動調整の保存 / export
 - 除外フレームの保存 / export
-- 全フレーム事前スキャン
-- 478点すべての landmarks overlay
-- 478点 mesh 化
-- render
-- MediaPipe re-detection
-- residual evaluation
-- いきなり `meshReadyZ` 探索実装
+- localStorage / JSON download
+- 無制限の全フレーム事前スキャン
+- 478点 full landmarks の保持・表示・ドラッグ
+- MediaPipe face mesh topology（顔メッシュ接続情報）での478点 mesh 化
+- yaw / pitch / roll 指定 render（姿勢指定レンダリング）
+- rendered image（レンダリング画像）の MediaPipe Face Landmarker 再入力
+- returned landmarks（返却ランドマーク）と geometric projected landmarks（幾何投影ランドマーク）の比較
+- alignment / residual evaluation（位置合わせ・残差評価）
+- mesh diagnostics（メッシュ診断）
+- `meshReadyZ` candidate 比較
 - FLAME / 3DMM 導入
 - NeRF / Gaussian Splatting 導入
 
@@ -349,12 +359,12 @@ Render Consistency Lab は、最初から production asset を作る工程では
 - yaw / pitch / roll をそれぞれ5分類し、poseBucket125 として扱う
 - 125 bucket は将来、姿勢バランスよくフレーム採用するための土台
 - frontCandidate は poseBucket125 の center / center / center に付く badge として扱う
-- Pose タブは poseBucket125 の non-empty bucket 集計を表示する
 - Pose タブでは poseBucket125 の全125 bucket を 0件 bucket も含めて表示する
-- nonEmptyBucketCount は引き続き summary として表示する
+- nonEmptyBucketCount は summary count として表示する
 - 125 bucket の一覧は将来の均等採用の確認用であり、現時点では採用処理は行わない
 - poseBucket125 の center は正面候補の意味を保つため、yaw / pitch / roll とも ±3 に固定する
 - small / large の境界は yaw / pitch / roll 個別に設定できる
-- 現時点の初期値では、pitch positive 側が不足しやすいため pitch.positiveSmallMax を 6 にする
-- yaw / roll は従来どおり positiveSmallMax / negativeSmallMax を 10 とする
+- 現在の `poseBucket125` 閾値は、yaw: `centerAbsMax = 3`, `negativeSmallMax = 10`, `positiveSmallMax = 10`
+- 現在の `poseBucket125` 閾値は、pitch: `centerAbsMax = 3`, `negativeSmallMax = 10`, `positiveSmallMax = 6`
+- 現在の `poseBucket125` 閾値は、roll: `centerAbsMax = 3`, `negativeSmallMax = 10`, `positiveSmallMax = 10`
 - この閾値は review / coverage 診断用であり、production の最終分類ではない
