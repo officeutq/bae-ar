@@ -450,3 +450,10 @@ Render Consistency Lab は、最初から production asset を作る工程では
 - `shortageReason` は `not_enough_pose_frames`（その姿勢のフレーム不足）、`not_enough_non_expression_frames`（表情が強くないフレーム不足）、`unknown`（原因未分類）を使います。
 - この診断は rotationCenter(0, y, z) 推定に使う候補フレームの品質確認用で、`expressionTooStrong` 除外後に不足する bucket を見つけるための表示です。
 - この機能は候補抽出と Debug Console（デバッグコンソール）表示までを扱い、mesh / render / MediaPipe re-detection / residual evaluation には進みません。
+
+## UI 方針: Rotation Fit debug UI
+
+- `Rotation Fit（回転中心評価）` タブは一時的な debug UI（検証用 UI）です。
+- 固定 `rotationCenter` と `rotationFitDebugPreset_provisional_v1` の固定 12pt z preset（12点奥行きプリセット）を使い、projected12pt（投影後12点）と adjusted12pt（手動調整後12点）の score evaluator（スコア評価器）が接続できるかを確認します。
+- 評価座標は aspect-corrected image coordinate（横縦比補正済み画像座標）で、`x = adjusted12pt.x * videoAspectRatio`、`y = adjusted12pt.y` とします。pixel coordinate（ピクセル座標）、face bounds center（顔外枠中心）、顔幅 normalization（正規化）は使いません。
+- rotationCenter.y/z 探索、12pt z 探索、coordinate descent（座標降下法）などの本格探索は後段で扱います。
