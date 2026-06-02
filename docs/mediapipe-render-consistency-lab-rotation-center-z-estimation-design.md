@@ -268,3 +268,46 @@ roll が片側に偏った selected frames だけで評価すると、画像上�
 - `base12pt` は正面候補または姿勢中央に近い selected frame の adjusted12pt（手動調整後12点）から作り、`x = adjusted12pt.x * videoAspectRatio`、`y = adjusted12pt.y`、`z = rotationFitDebugPreset_provisional_v1` とする。
 - 各 evaluation frame（評価フレーム）では projected12pt（投影後12点）と frame adjusted12pt（各フレームの手動調整後12点）を 2D distance（二次元距離）で比較し、frameScore / totalScore / worstFrame / worstPoint / bucketScores を表示する。
 - rotationCenter.y/z 探索、12pt z 探索、14未知数最適化、mesh / render / MediaPipe re-detection は後段で扱う。
+
+## Adopted Search: Fitting Lab 12pt Rotation Center
+
+現行実装では、旧 Stage A（rotationCenter.y/z coarse search: 回転中心y/z粗探索）と Stage B（group z search: グループ単位奥行き探索）を主導線にせず、IdealFace Fitting Lab の `12pt_rotation_center`（回転中心推定向け12点）方式を採用する。
+
+Fitting Lab で確認した 12pt 段階の候補生成は以下である。
+
+```text
+baseCandidate = naturalNoseWithRotationCenter
+searchMode = coordinateDescent
+iterationCount = 2
+
+for iteration in 1..2
+  for parameter in parameterOrder
+    create candidates by replacing only that parameter
+    evaluate all candidates
+    keep the best candidate as the next current candidate
+```
+
+`parameterOrder`（探索順）は以下とする。
+
+```text
+rotationCenter.y
+rotationCenter.z
+leftCheek.z
+rightCheek.z
+nose.z
+mouth.z
+leftEye.z
+rightEye.z
+headTop.z
+chin.z
+noseBridge.z
+leftJaw.z
+rightJaw.z
+upperFaceCenter.z
+```
+
+`coordinateDescentRanges`（座標降下探索範囲）は Fitting Lab の `DEFAULT_COORDINATE_DESCENT_RANGES` のうち、`12pt_rotation_center` に含まれる parameter（探索対象）だけを使う。
+
+Render Consistency Lab への移植では、Fitting Lab の x/y 座標系は使わない。12点の x/y は `adjusted12pt`（手動調整後12点）から作り、評価時は `x = adjusted12pt.x * videoAspectRatio`、`y = adjusted12pt.y` とする。pixel coordinate（ピクセル座標）、face bounds center（顔外枠中心）、顔幅 normalization（正規化）は使わない。`rotationCenter.x`（回転中心x）は `0.5 * videoAspectRatio` 固定とする。
+
+この探索は 478点へ拡張する前の 12点段階だけを扱う。`perLandmarkZSearch`（ランドマーク単位z探索）、478点 z 推定、mesh（メッシュ化） / render（レンダリング） / MediaPipe re-detection（MediaPipe再検出）、production export（本番書き出し）は対象外とする。
