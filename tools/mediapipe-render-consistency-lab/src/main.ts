@@ -82,7 +82,7 @@ type PoseBucket125SummaryItem = PoseBucket125Definition & {
 
 type PoseAxisName = "yaw" | "pitch" | "roll"
 
-type PoseReviewSelectedBy = "roll_center" | "roll_small_fallback"
+type PoseReviewSelectedBy = "roll_center" | "roll_small_fallback" | "roll_large_fallback"
 
 type PoseReviewCandidateSelectionMode = "balanced"
 
@@ -96,8 +96,15 @@ type PoseReviewCandidatePolicy = {
   actualTargetPerBucket: number
   expressionTooStrong: "exclude"
   preferredRollBins: readonly ["center"]
-  fallbackRollBins: readonly ["negativeSmall", "positiveSmall"]
-  excludedRollBins: readonly ["negativeLarge", "positiveLarge"]
+  fallbackRollSmallBins: readonly ["negativeSmall", "positiveSmall"]
+  fallbackRollLargeBins: readonly ["negativeLarge", "positiveLarge"]
+  fallbackRollBins: readonly [
+    "negativeSmall",
+    "positiveSmall",
+    "negativeLarge",
+    "positiveLarge",
+  ]
+  excludedRollBins: readonly []
   sampling: "evenly_spaced_by_time"
 }
 
@@ -115,8 +122,12 @@ type PoseReviewCandidateBucket = {
   targetCount: number
   selectedCount: number
   shortageCount: number
+  selectedByRollCenterCount: number
+  selectedByRollSmallFallbackCount: number
+  selectedByRollLargeFallbackCount: number
   availableRollCenterCount: number
   availableRollSmallCount: number
+  availableRollLargeCount: number
   shortageReason?: string
   selectedFrames: PoseReviewCandidateFrame[]
 }
@@ -287,11 +298,16 @@ const POSE_REVIEW_ROLL_LARGE_BINS = [
   "negativeLarge",
   "positiveLarge",
 ] as const satisfies readonly PoseAxisBin[]
+const POSE_REVIEW_FALLBACK_ROLL_BINS = [
+  ...POSE_REVIEW_ROLL_SMALL_BINS,
+  ...POSE_REVIEW_ROLL_LARGE_BINS,
+] as const
+const POSE_REVIEW_EXCLUDED_ROLL_BINS = [] as const satisfies readonly PoseAxisBin[]
 const POSE_REVIEW_PREFERRED_ROLL_BINS = [
   "center",
 ] as const satisfies readonly PoseAxisBin[]
 const POSE_REVIEW_SHORTAGE_REASON =
-  "not enough non-expressionTooStrong and non-rollLarge frames"
+  "not enough non-expressionTooStrong frames"
 const EXPRESSION_TOO_STRONG_THRESHOLDS = {
   mouth: 0.35,
   eye: 0.35,
@@ -919,21 +935,36 @@ function buildPoseReviewCandidateSummaryForTarget(
       const rollBin = frame.poseBucket125?.rollBin
       return rollBin === "negativeSmall" || rollBin === "positiveSmall"
     })
+    const rollLargeFrames = framesInBucket.filter((frame) => {
+      const rollBin = frame.poseBucket125?.rollBin
+      return rollBin === "negativeLarge" || rollBin === "positiveLarge"
+    })
 
     const selectedCenterFrames = pickEvenlySpaced(
       rollCenterFrames,
       targetPerBucket,
       (frame) => frame.timeSec,
     )
-    const fallbackTargetCount = Math.max(0, targetPerBucket - selectedCenterFrames.length)
+    const smallFallbackTargetCount = Math.max(0, targetPerBucket - selectedCenterFrames.length)
     const selectedSmallFrames =
-      fallbackTargetCount > 0
-        ? pickEvenlySpaced(rollSmallFrames, fallbackTargetCount, (frame) => frame.timeSec)
+      smallFallbackTargetCount > 0
+        ? pickEvenlySpaced(rollSmallFrames, smallFallbackTargetCount, (frame) => frame.timeSec)
+        : []
+    const largeFallbackTargetCount = Math.max(
+      0,
+      targetPerBucket - selectedCenterFrames.length - selectedSmallFrames.length,
+    )
+    const selectedLargeFrames =
+      largeFallbackTargetCount > 0
+        ? pickEvenlySpaced(rollLargeFrames, largeFallbackTargetCount, (frame) => frame.timeSec)
         : []
     const selectedFrames = [
       ...selectedCenterFrames.map((frame) => buildPoseReviewCandidateFrame(frame, "roll_center")),
       ...selectedSmallFrames.map((frame) =>
         buildPoseReviewCandidateFrame(frame, "roll_small_fallback"),
+      ),
+      ...selectedLargeFrames.map((frame) =>
+        buildPoseReviewCandidateFrame(frame, "roll_large_fallback"),
       ),
     ].sort((left, right) => left.timeSec - right.timeSec)
     const selectedCount = selectedFrames.length
@@ -943,8 +974,12 @@ function buildPoseReviewCandidateSummaryForTarget(
       targetCount: targetPerBucket,
       selectedCount,
       shortageCount: Math.max(0, targetPerBucket - selectedCount),
+      selectedByRollCenterCount: selectedCenterFrames.length,
+      selectedByRollSmallFallbackCount: selectedSmallFrames.length,
+      selectedByRollLargeFallbackCount: selectedLargeFrames.length,
       availableRollCenterCount: rollCenterFrames.length,
       availableRollSmallCount: rollSmallFrames.length,
+      availableRollLargeCount: rollLargeFrames.length,
       shortageReason:
         selectedCount < targetPerBucket ? POSE_REVIEW_SHORTAGE_REASON : undefined,
       selectedFrames,
@@ -969,8 +1004,10 @@ function buildPoseReviewCandidateSummaryForTarget(
       actualTargetPerBucket: targetPerBucket,
       expressionTooStrong: "exclude",
       preferredRollBins: POSE_REVIEW_PREFERRED_ROLL_BINS,
-      fallbackRollBins: POSE_REVIEW_ROLL_SMALL_BINS,
-      excludedRollBins: POSE_REVIEW_ROLL_LARGE_BINS,
+      fallbackRollSmallBins: POSE_REVIEW_ROLL_SMALL_BINS,
+      fallbackRollLargeBins: POSE_REVIEW_ROLL_LARGE_BINS,
+      fallbackRollBins: POSE_REVIEW_FALLBACK_ROLL_BINS,
+      excludedRollBins: POSE_REVIEW_EXCLUDED_ROLL_BINS,
       sampling: "evenly_spaced_by_time",
     },
     targetTotal: POSE_REVIEW_YAW_PITCH_BUCKET_COUNT * targetPerBucket,
@@ -2213,8 +2250,15 @@ function renderCandidatesConsole(): string {
         ["balancedStatus（均等状態）", summary.balancedStatus],
         ["expressionTooStrong（強い表情）", summary.policy.expressionTooStrong],
         ["preferred roll（優先roll）", summary.policy.preferredRollBins.join(" / ")],
-        ["fallback roll（補欠roll）", summary.policy.fallbackRollBins.join(" / ")],
-        ["excluded roll（除外roll）", summary.policy.excludedRollBins.join(" / ")],
+        [
+          "fallback roll small（補欠roll小）",
+          summary.policy.fallbackRollSmallBins.join(" / "),
+        ],
+        [
+          "fallback roll large（補欠roll大）",
+          summary.policy.fallbackRollLargeBins.join(" / "),
+        ],
+        ["excluded roll（除外roll）", formatPoseReviewRollBins(summary.policy.excludedRollBins)],
         ["sampling（抽出方法）", summary.policy.sampling],
         ["targetTotal（目標合計）", String(summary.targetTotal)],
         ["selectedTotal（選択合計）", String(summary.selectedTotal)],
@@ -2241,10 +2285,16 @@ function renderPoseReviewCandidateSummaryBrief(): string {
 
   return renderStatusItems([
     ["selectionMode", summary.selectionMode],
+    ["primaryGrouping", summary.policy.primaryGrouping],
     ["maxTargetPerBucket", String(summary.maxTargetPerBucket)],
     ["minBalancedTargetPerBucket", String(summary.minBalancedTargetPerBucket)],
     ["actualTargetPerBucket", String(summary.actualTargetPerBucket)],
     ["balancedStatus", summary.balancedStatus],
+    ["expressionTooStrong", summary.policy.expressionTooStrong],
+    ["preferred roll", summary.policy.preferredRollBins.join(" / ")],
+    ["fallback roll small", summary.policy.fallbackRollSmallBins.join(" / ")],
+    ["fallback roll large", summary.policy.fallbackRollLargeBins.join(" / ")],
+    ["sampling", summary.policy.sampling],
     ["targetTotal", String(summary.targetTotal)],
     ["selectedTotal", String(summary.selectedTotal)],
     ["selectedTotal / targetTotal", `${summary.selectedTotal} / ${summary.targetTotal}`],
@@ -2277,8 +2327,12 @@ function renderPoseReviewCandidateBucket(bucket: PoseReviewCandidateBucket): str
       <code>${escapeHtml(bucket.id)}</code>
       <span>selected（選択） ${bucket.selectedCount} / target（目標） ${bucket.targetCount}</span>
       <span>shortage（不足） ${bucket.shortageCount}</span>
+      <span>selectedBy roll_center（roll中心で選択） ${bucket.selectedByRollCenterCount}</span>
+      <span>selectedBy roll_small_fallback（roll小fallbackで選択） ${bucket.selectedByRollSmallFallbackCount}</span>
+      <span>selectedBy roll_large_fallback（roll大fallbackで選択） ${bucket.selectedByRollLargeFallbackCount}</span>
       <span>available roll_center（利用可能なroll中心） ${bucket.availableRollCenterCount}</span>
       <span>available roll_small（利用可能なroll小） ${bucket.availableRollSmallCount}</span>
+      <span>available roll_large（利用可能なroll大） ${bucket.availableRollLargeCount}</span>
       ${bucket.shortageReason ? `<span>reason（理由） ${escapeHtml(bucket.shortageReason)}</span>` : ""}
       ${renderPoseReviewCandidateFrames(bucket.selectedFrames)}
     </div>
@@ -2306,6 +2360,10 @@ function renderPoseReviewCandidateFrames(frames: PoseReviewCandidateFrame[]): st
         .join("")}
     </div>
   `
+}
+
+function formatPoseReviewRollBins(rollBins: readonly PoseAxisBin[]): string {
+  return rollBins.length > 0 ? rollBins.join(" / ") : "none"
 }
 
 function renderRawConsole(rawDebugPayload: Record<string, unknown>): string {
