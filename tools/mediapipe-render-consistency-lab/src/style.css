@@ -83,6 +83,48 @@ h2:first-child {
   margin: 0;
 }
 
+.candidate-mode-control {
+  display: grid;
+  gap: 6px;
+}
+
+.candidate-mode-label {
+  color: #4d5863;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.candidate-mode-buttons {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.mode-button {
+  background: #ffffff;
+  border: 1px solid #aab6c2;
+  border-radius: 6px;
+  color: #26313b;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  min-height: 32px;
+  padding: 6px 8px;
+}
+
+.mode-button.is-active {
+  background: #26313b;
+  border-color: #26313b;
+  color: #ffffff;
+}
+
+.mode-button:disabled {
+  color: #8b96a1;
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
 .compact-status-grid {
   gap: 4px;
 }

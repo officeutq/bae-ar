@@ -92,14 +92,19 @@ type PoseReviewSelectedBy =
 
 type PoseReviewCandidateSelectionMode = "balanced"
 
+type PoseReviewCandidateMode = "normal" | "exclude_downward_tilt"
+
 type PoseReviewCandidateBalancedStatus = "balanced" | "partial"
 
 type PoseReviewCandidateShortageReason =
   | "not_enough_non_expression_frames"
+  | "not_enough_after_downward_tilt_filter"
   | "not_enough_pose_frames"
   | "unknown"
 
 type PoseReviewCandidatePolicy = {
+  candidateMode: PoseReviewCandidateMode
+  candidateModeLabel: string
   selectionMode: PoseReviewCandidateSelectionMode
   primaryGrouping: "yaw_pitch_25"
   maxTargetPerBucket: number
@@ -112,7 +117,15 @@ type PoseReviewCandidatePolicy = {
     roll_positive: readonly ["positiveSmall", "positiveLarge"]
   }
   expressionTooStrong: "exclude"
+  excludeDownwardTiltPolicy: PoseReviewExcludeDownwardTiltPolicy
   sampling: "evenly_spaced_by_time"
+}
+
+type PoseReviewExcludeDownwardTiltPolicy = {
+  enabled: boolean
+  pitchBin: "negativeLarge"
+  rollBins: readonly ["negativeLarge", "positiveLarge"]
+  excludedCount: number
 }
 
 type PoseReviewCandidateFrame = {
@@ -136,6 +149,7 @@ type PoseReviewCandidateBucket = {
   availableRollNegativeCount: number
   availableRollCenterCount: number
   availableRollPositiveCount: number
+  excludedDownwardTiltCount: number
   shortageReason?: string
   selectedFrames: PoseReviewCandidateFrame[]
 }
@@ -150,6 +164,8 @@ type PoseReviewCandidateShortageBucketSummary = {
   acceptedFrameCount: number
   usableNonExpressionCount: number
   expressionTooStrongCount: number
+  usableAfterModeFilterCount: number
+  downwardTiltExcludedCount: number
   availableRollNegativeCount: number
   availableRollCenterCount: number
   availableRollPositiveCount: number
@@ -160,6 +176,8 @@ type PoseReviewCandidateShortageBucketSummary = {
 }
 
 type PoseReviewCandidateSummary = {
+  candidateMode: PoseReviewCandidateMode
+  candidateModeLabel: string
   selectionMode: PoseReviewCandidateSelectionMode
   maxTargetPerBucket: number
   minBalancedTargetPerBucket: number
@@ -173,6 +191,7 @@ type PoseReviewCandidateSummary = {
   fullBucketCount: number
   shortageBucketCount: number
   excludedExpressionTooStrongCount: number
+  excludeDownwardTiltPolicy: PoseReviewExcludeDownwardTiltPolicy
   shortageBuckets: PoseReviewCandidateShortageBucketSummary[]
   buckets: PoseReviewCandidateBucket[]
 }
@@ -541,6 +560,8 @@ type RotationFitPassImprovement = {
 
 type RotationFitFittingLab12ptSearch = {
   searchMode: "fitting_lab_12pt_rotation_center"
+  evaluationCandidateMode: PoseReviewCandidateMode
+  evaluationCandidateModeLabel: string
   passMode: "two_pass_base_rectification"
   sourceLab: "tools/ideal-face-fitting-lab"
   sourcePointSetId: "12pt_rotation_center"
@@ -580,9 +601,19 @@ type RotationFitFittingLab12ptSearch = {
   passImprovement: RotationFitPassImprovement
 }
 
+type RotationFitEvaluationFrameFiltering = {
+  candidateMode: PoseReviewCandidateMode
+  candidateModeLabel: string
+  evaluationFrameCount: number
+  excludedDownwardTiltFrameCount: number
+}
+
 type RotationFitEvaluation = {
   status: "completed" | "error"
   error?: string
+  evaluationCandidateMode: PoseReviewCandidateMode
+  evaluationCandidateModeLabel: string
+  evaluationFrameFiltering: RotationFitEvaluationFrameFiltering
   searchMode:
     | "rotation_center_yz_coarse"
     | "rotation_center_yz_coarse_then_group_z"
@@ -637,6 +668,7 @@ type AppState = {
   currentReviewIndex: number
   scanState: ScanState
   manualAdjustmentsByFrame: ManualAdjustmentsByFrame
+  poseReviewCandidateMode: PoseReviewCandidateMode
   poseReviewCandidateSummary: PoseReviewCandidateSummary | null
   rotationFitEvaluation: RotationFitEvaluation | null
   selectedLandmarkSummaryPointId: string | null
@@ -686,6 +718,12 @@ const POSE_BUCKET_125_TOTAL_COUNT = POSE_BUCKET_125_DEFINITIONS.length
 const FRONT_CANDIDATE_POSE_BUCKET_125_ID =
   "yaw_center__pitch_center__roll_center"
 const POSE_REVIEW_SELECTION_MODE = "balanced" as const satisfies PoseReviewCandidateSelectionMode
+const DEFAULT_POSE_REVIEW_CANDIDATE_MODE =
+  "normal" as const satisfies PoseReviewCandidateMode
+const POSE_REVIEW_CANDIDATE_MODE_LABELS = {
+  normal: "通常候補",
+  exclude_downward_tilt: "下向き＋傾き除外候補",
+} as const satisfies Record<PoseReviewCandidateMode, string>
 const POSE_REVIEW_MAX_TARGET_PER_BUCKET = 5
 const POSE_REVIEW_MIN_BALANCED_TARGET_PER_BUCKET = 3
 const POSE_REVIEW_YAW_PITCH_BUCKET_DEFINITIONS = buildPoseReviewYawPitchBucketDefinitions()
@@ -753,6 +791,11 @@ const POSE_REVIEW_ROLL_BALANCE_MAX_PER_GROUP: Record<
 }
 const POSE_REVIEW_SHORTAGE_REASON =
   "not enough non-expressionTooStrong frames"
+const POSE_REVIEW_EXCLUDE_DOWNWARD_TILT_PITCH_BIN = "negativeLarge" as const
+const POSE_REVIEW_EXCLUDE_DOWNWARD_TILT_ROLL_BINS = [
+  "negativeLarge",
+  "positiveLarge",
+] as const satisfies readonly ["negativeLarge", "positiveLarge"]
 const EXPRESSION_TOO_STRONG_THRESHOLDS = {
   mouth: 0.35,
   eye: 0.35,
@@ -992,6 +1035,7 @@ const state: AppState = {
   currentReviewIndex: 0,
   scanState: createInitialScanState(),
   manualAdjustmentsByFrame: {},
+  poseReviewCandidateMode: DEFAULT_POSE_REVIEW_CANDIDATE_MODE,
   poseReviewCandidateSummary: null,
   rotationFitEvaluation: null,
   selectedLandmarkSummaryPointId: null,
@@ -1036,6 +1080,17 @@ app.innerHTML = `
 
       <section class="controls-section">
         <h2>姿勢レビュー候補</h2>
+        <div class="candidate-mode-control" aria-label="候補抽出モード">
+          <span class="candidate-mode-label">候補抽出モード:</span>
+          <div class="candidate-mode-buttons" role="group" aria-label="候補抽出モード">
+            <button type="button" class="mode-button" data-pose-candidate-mode="normal">
+              通常候補
+            </button>
+            <button type="button" class="mode-button" data-pose-candidate-mode="exclude_downward_tilt">
+              下向き＋傾き除外候補
+            </button>
+          </div>
+        </div>
         <button id="extractPoseReviewCandidatesButton" type="button" class="secondary-button">
           125候補フレーム抽出
         </button>
@@ -1111,6 +1166,9 @@ const extractPoseReviewCandidatesButton = getElement<HTMLButtonElement>(
 )
 const rotationFitEvaluationButton = getElement<HTMLButtonElement>("rotationFitEvaluationButton")
 const poseReviewCandidateSummary = getElement("poseReviewCandidateSummary")
+const poseCandidateModeButtons = Array.from(
+  document.querySelectorAll<HTMLButtonElement>("[data-pose-candidate-mode]"),
+)
 const previousFrameButton = getElement<HTMLButtonElement>("previousFrameButton")
 const excludeFrameButton = getElement<HTMLButtonElement>("excludeFrameButton")
 const nextFrameButton = getElement<HTMLButtonElement>("nextFrameButton")
@@ -1133,6 +1191,19 @@ toggleLandmarkSummaryButton.addEventListener("click", () => {
 extractPoseReviewCandidatesButton.addEventListener("click", () => {
   extractPoseReviewCandidates()
 })
+
+for (const button of poseCandidateModeButtons) {
+  button.addEventListener("click", () => {
+    const candidateMode = button.dataset.poseCandidateMode as PoseReviewCandidateMode | undefined
+    if (!candidateMode || !isPoseReviewCandidateMode(candidateMode)) {
+      return
+    }
+    state.poseReviewCandidateMode = candidateMode
+    state.poseReviewCandidateSummary = null
+    state.rotationFitEvaluation = null
+    render()
+  })
+}
 
 rotationFitEvaluationButton.addEventListener("click", () => {
   runRotationFitEvaluation()
@@ -1519,15 +1590,17 @@ function extractPoseReviewCandidates(): void {
     return
   }
 
-  state.poseReviewCandidateSummary = buildPoseReviewCandidateSummary()
+  state.poseReviewCandidateSummary = buildPoseReviewCandidateSummary(state.poseReviewCandidateMode)
   state.rotationFitEvaluation = null
   state.consoleTab = "candidates"
   render()
 }
 
-function buildPoseReviewCandidateSummary(): PoseReviewCandidateSummary {
+function buildPoseReviewCandidateSummary(
+  candidateMode: PoseReviewCandidateMode,
+): PoseReviewCandidateSummary {
   const trialSummaries = POSE_REVIEW_BALANCED_TARGET_CANDIDATES.map((targetPerBucket) =>
-    buildPoseReviewCandidateSummaryForTarget(targetPerBucket),
+    buildPoseReviewCandidateSummaryForTarget(targetPerBucket, candidateMode),
   )
   return (
     trialSummaries.find((summary) => summary.shortageBucketCount === 0) ??
@@ -1537,11 +1610,22 @@ function buildPoseReviewCandidateSummary(): PoseReviewCandidateSummary {
 
 function buildPoseReviewCandidateSummaryForTarget(
   targetPerBucket: number,
+  candidateMode: PoseReviewCandidateMode,
 ): PoseReviewCandidateSummary {
   const excludedExpressionTooStrongCount = getExpressionTooStrongCount()
-  const usableFrames = state.acceptedFrames.filter(
+  const nonExpressionPoseFrames = state.acceptedFrames.filter(
     (frame) => !hasFrameBadge(frame, "expressionTooStrong") && frame.poseBucket125,
   )
+  const excludedDownwardTiltCount =
+    candidateMode === "exclude_downward_tilt"
+      ? nonExpressionPoseFrames.filter(isDownwardTiltExcludedFrame).length
+      : 0
+  const excludeDownwardTiltPolicy =
+    createPoseReviewExcludeDownwardTiltPolicy(excludedDownwardTiltCount, candidateMode)
+  const usableFrames =
+    candidateMode === "exclude_downward_tilt"
+      ? nonExpressionPoseFrames.filter((frame) => !isDownwardTiltExcludedFrame(frame))
+      : nonExpressionPoseFrames
 
   const buckets = POSE_REVIEW_YAW_PITCH_BUCKET_DEFINITIONS.map((definition) => {
     const framesInBucket = usableFrames.filter((frame) => {
@@ -1573,6 +1657,10 @@ function buildPoseReviewCandidateSummaryForTarget(
       availableRollNegativeCount: rollFramesByGroup.roll_negative.length,
       availableRollCenterCount: rollFramesByGroup.roll_center.length,
       availableRollPositiveCount: rollFramesByGroup.roll_positive.length,
+      excludedDownwardTiltCount: countDownwardTiltExcludedFramesInYawPitchBucket(
+        definition,
+        candidateMode,
+      ),
       shortageReason:
         selectedCount < targetPerBucket ? POSE_REVIEW_SHORTAGE_REASON : undefined,
       selectedFrames,
@@ -1582,9 +1670,11 @@ function buildPoseReviewCandidateSummaryForTarget(
   const shortageBucketCount = buckets.filter((bucket) => bucket.shortageCount > 0).length
   const balancedStatus: PoseReviewCandidateBalancedStatus =
     shortageBucketCount === 0 ? "balanced" : "partial"
-  const shortageBuckets = buildPoseReviewShortageBucketSummaries(buckets)
+  const shortageBuckets = buildPoseReviewShortageBucketSummaries(buckets, candidateMode)
 
   return {
+    candidateMode,
+    candidateModeLabel: getPoseReviewCandidateModeLabel(candidateMode),
     selectionMode: POSE_REVIEW_SELECTION_MODE,
     maxTargetPerBucket: POSE_REVIEW_MAX_TARGET_PER_BUCKET,
     minBalancedTargetPerBucket: POSE_REVIEW_MIN_BALANCED_TARGET_PER_BUCKET,
@@ -1593,6 +1683,8 @@ function buildPoseReviewCandidateSummaryForTarget(
     rollGroups: POSE_REVIEW_ROLL_GROUPS,
     balancedStatus,
     policy: {
+      candidateMode,
+      candidateModeLabel: getPoseReviewCandidateModeLabel(candidateMode),
       selectionMode: POSE_REVIEW_SELECTION_MODE,
       primaryGrouping: "yaw_pitch_25",
       maxTargetPerBucket: POSE_REVIEW_MAX_TARGET_PER_BUCKET,
@@ -1601,6 +1693,7 @@ function buildPoseReviewCandidateSummaryForTarget(
       rollSelection: POSE_REVIEW_ROLL_SELECTION,
       rollGroups: POSE_REVIEW_ROLL_GROUPS,
       expressionTooStrong: "exclude",
+      excludeDownwardTiltPolicy,
       sampling: "evenly_spaced_by_time",
     },
     targetTotal: POSE_REVIEW_YAW_PITCH_BUCKET_COUNT * targetPerBucket,
@@ -1608,6 +1701,7 @@ function buildPoseReviewCandidateSummaryForTarget(
     fullBucketCount: buckets.filter((bucket) => bucket.shortageCount === 0).length,
     shortageBucketCount,
     excludedExpressionTooStrongCount,
+    excludeDownwardTiltPolicy,
     shortageBuckets,
     buckets,
   }
@@ -1622,6 +1716,11 @@ function runRotationFitEvaluation(): void {
 function evaluateRotationFit(): RotationFitEvaluation {
   const videoAspectRatio = getVideoAspectRatio()
   const fixedRotationCenterX = roundDebugNumber(0.5 * videoAspectRatio)
+  const candidateSummary = state.poseReviewCandidateSummary
+  const evaluationCandidateMode = candidateSummary?.candidateMode ?? state.poseReviewCandidateMode
+  const evaluationCandidateModeLabel = getPoseReviewCandidateModeLabel(evaluationCandidateMode)
+  const excludedDownwardTiltFrameCount =
+    candidateSummary?.excludeDownwardTiltPolicy.excludedCount ?? 0
   const baseEvaluation = createEmptyRotationFitEvaluation(
     videoAspectRatio,
     {
@@ -1630,6 +1729,12 @@ function evaluateRotationFit(): RotationFitEvaluation {
       z: RENDER_ROTATION_FIT_INITIAL_CANDIDATE.rotationCenter.z,
     },
     0,
+    {
+      candidateMode: evaluationCandidateMode,
+      candidateModeLabel: evaluationCandidateModeLabel,
+      evaluationFrameCount: 0,
+      excludedDownwardTiltFrameCount,
+    },
   )
 
   const evaluationFrames = getRotationFitEvaluationFrames()
@@ -1708,6 +1813,8 @@ function evaluateRotationFit(): RotationFitEvaluation {
     baseFramePose: baseFrame.frame.pose,
     videoAspectRatio,
     fixedRotationCenterX,
+    evaluationCandidateMode,
+    evaluationCandidateModeLabel,
   })
   const bestCandidate = fittingLabSearch.bestCandidate
   const initialCandidate = fittingLabSearch.initialCandidate
@@ -1737,6 +1844,12 @@ function evaluateRotationFit(): RotationFitEvaluation {
       0,
     ),
     evaluationFrameCount: bestCandidate.frameScores.length,
+    evaluationFrameFiltering: {
+      candidateMode: evaluationCandidateMode,
+      candidateModeLabel: evaluationCandidateModeLabel,
+      evaluationFrameCount: bestCandidate.frameScores.length,
+      excludedDownwardTiltFrameCount,
+    },
     baseFrameSource,
     rotationCenter: bestCandidate.rotationCenter,
     bestRotationCenter: bestCandidate.rotationCenter,
@@ -1762,9 +1875,13 @@ function createEmptyRotationFitEvaluation(
   videoAspectRatio: number,
   rotationCenter: Point3D,
   candidateCount: number,
+  evaluationFrameFiltering: RotationFitEvaluationFrameFiltering,
 ): RotationFitEvaluation {
   return {
     status: "completed",
+    evaluationCandidateMode: evaluationFrameFiltering.candidateMode,
+    evaluationCandidateModeLabel: evaluationFrameFiltering.candidateModeLabel,
+    evaluationFrameFiltering,
     searchMode: ROTATION_FIT_FITTING_LAB_SEARCH_MODE,
     searchRange: {
       y: RENDER_ROTATION_FIT_COORDINATE_DESCENT_RANGES["rotationCenter.y"],
@@ -1846,6 +1963,8 @@ function evaluateRotationFitFittingLab12ptSearch(options: {
   baseFramePose: Pose
   videoAspectRatio: number
   fixedRotationCenterX: number
+  evaluationCandidateMode: PoseReviewCandidateMode
+  evaluationCandidateModeLabel: string
 }): RotationFitFittingLab12ptSearch {
   const initialState = createRotationFitFittingLabInitialCandidateState(options.fixedRotationCenterX)
   const firstPass = evaluateRotationFitFittingLab12ptSearchPass(options, {
@@ -1903,6 +2022,8 @@ function evaluateRotationFitFittingLab12ptSearch(options: {
 
   return {
     searchMode: ROTATION_FIT_FITTING_LAB_SEARCH_MODE,
+    evaluationCandidateMode: options.evaluationCandidateMode,
+    evaluationCandidateModeLabel: options.evaluationCandidateModeLabel,
     passMode: "two_pass_base_rectification",
     sourceLab: "tools/ideal-face-fitting-lab",
     sourcePointSetId: "12pt_rotation_center",
@@ -3054,6 +3175,7 @@ function getPoseMagnitude(pose: Pose | null): number {
 
 function buildPoseReviewShortageBucketSummaries(
   buckets: PoseReviewCandidateBucket[],
+  candidateMode: PoseReviewCandidateMode,
 ): PoseReviewCandidateShortageBucketSummary[] {
   return buckets
     .filter((bucket) => bucket.shortageCount > 0)
@@ -3072,6 +3194,16 @@ function buildPoseReviewShortageBucketSummaries(
         (frame) => !hasFrameBadge(frame, "expressionTooStrong"),
       ).length
       const expressionTooStrongCount = acceptedFrameCount - usableNonExpressionCount
+      const downwardTiltExcludedCount =
+        candidateMode === "exclude_downward_tilt"
+          ? acceptedFramesInBucket.filter(
+              (frame) =>
+                !hasFrameBadge(frame, "expressionTooStrong") &&
+                isDownwardTiltExcludedFrame(frame),
+            ).length
+          : 0
+      const usableAfterModeFilterCount =
+        usableNonExpressionCount - downwardTiltExcludedCount
 
       return {
         bucketId: bucket.id,
@@ -3083,6 +3215,8 @@ function buildPoseReviewShortageBucketSummaries(
         acceptedFrameCount,
         usableNonExpressionCount,
         expressionTooStrongCount,
+        usableAfterModeFilterCount,
+        downwardTiltExcludedCount,
         availableRollNegativeCount: bucket.availableRollNegativeCount,
         availableRollCenterCount: bucket.availableRollCenterCount,
         availableRollPositiveCount: bucket.availableRollPositiveCount,
@@ -3092,7 +3226,9 @@ function buildPoseReviewShortageBucketSummaries(
         shortageReason: classifyPoseReviewShortageReason(
           acceptedFrameCount,
           usableNonExpressionCount,
+          usableAfterModeFilterCount,
           bucket.targetCount,
+          downwardTiltExcludedCount,
         ),
       }
     })
@@ -3101,7 +3237,9 @@ function buildPoseReviewShortageBucketSummaries(
 function classifyPoseReviewShortageReason(
   acceptedFrameCount: number,
   usableNonExpressionCount: number,
+  usableAfterModeFilterCount: number,
   targetCount: number,
+  downwardTiltExcludedCount: number,
 ): PoseReviewCandidateShortageReason {
   if (acceptedFrameCount === 0) {
     return "not_enough_pose_frames"
@@ -3109,7 +3247,59 @@ function classifyPoseReviewShortageReason(
   if (usableNonExpressionCount < targetCount) {
     return "not_enough_non_expression_frames"
   }
+  if (usableAfterModeFilterCount < targetCount && downwardTiltExcludedCount > 0) {
+    return "not_enough_after_downward_tilt_filter"
+  }
   return "unknown"
+}
+
+function isPoseReviewCandidateMode(value: string): value is PoseReviewCandidateMode {
+  return value === "normal" || value === "exclude_downward_tilt"
+}
+
+function getPoseReviewCandidateModeLabel(candidateMode: PoseReviewCandidateMode): string {
+  return POSE_REVIEW_CANDIDATE_MODE_LABELS[candidateMode]
+}
+
+function createPoseReviewExcludeDownwardTiltPolicy(
+  excludedCount: number,
+  candidateMode: PoseReviewCandidateMode,
+): PoseReviewExcludeDownwardTiltPolicy {
+  return {
+    enabled: candidateMode === "exclude_downward_tilt",
+    pitchBin: POSE_REVIEW_EXCLUDE_DOWNWARD_TILT_PITCH_BIN,
+    rollBins: POSE_REVIEW_EXCLUDE_DOWNWARD_TILT_ROLL_BINS,
+    excludedCount,
+  }
+}
+
+function isDownwardTiltExcludedFrame(frame: AcceptedFrameSnapshot): boolean {
+  const poseBucket = frame.poseBucket125
+  return (
+    poseBucket?.pitchBin === POSE_REVIEW_EXCLUDE_DOWNWARD_TILT_PITCH_BIN &&
+    POSE_REVIEW_EXCLUDE_DOWNWARD_TILT_ROLL_BINS.includes(
+      poseBucket.rollBin as (typeof POSE_REVIEW_EXCLUDE_DOWNWARD_TILT_ROLL_BINS)[number],
+    )
+  )
+}
+
+function countDownwardTiltExcludedFramesInYawPitchBucket(
+  definition: PoseReviewYawPitchBucketDefinition,
+  candidateMode: PoseReviewCandidateMode,
+): number {
+  if (candidateMode !== "exclude_downward_tilt") {
+    return 0
+  }
+
+  return state.acceptedFrames.filter((frame) => {
+    if (hasFrameBadge(frame, "expressionTooStrong") || !isDownwardTiltExcludedFrame(frame)) {
+      return false
+    }
+    return (
+      frame.poseBucket125?.yawBin === definition.yawBin &&
+      frame.poseBucket125.pitchBin === definition.pitchBin
+    )
+  }).length
 }
 
 function groupPoseReviewFramesByRollGroup(
@@ -4151,6 +4341,13 @@ function render(): void {
     !state.metadata || state.currentReviewIndex >= state.acceptedFrames.length - 1 || frameBusy
   excludeFrameButton.disabled = !state.metadata || !currentFrame || frameBusy
   extractPoseReviewCandidatesButton.disabled = state.acceptedFrames.length === 0 || frameBusy
+  for (const button of poseCandidateModeButtons) {
+    const candidateMode = button.dataset.poseCandidateMode
+    const isActive = candidateMode === state.poseReviewCandidateMode
+    button.classList.toggle("is-active", isActive)
+    button.setAttribute("aria-pressed", String(isActive))
+    button.disabled = frameBusy
+  }
   rotationFitEvaluationButton.disabled =
     state.acceptedFrames.length === 0 || !state.poseReviewCandidateSummary || frameBusy
   stopScanButton.disabled = state.scanState.status !== "running"
@@ -4542,6 +4739,22 @@ function renderCandidatesConsole(): string {
     renderConsoleSection(
       "Summary（要約）",
       renderStatusItems([
+        ["候補モード", summary.candidateModeLabel],
+        ["candidateMode（候補モードID）", summary.candidateMode],
+        [
+          "下向き＋傾き除外",
+          summary.excludeDownwardTiltPolicy.enabled ? "有効" : "無効",
+        ],
+        [
+          "下向き＋傾きで除外された件数",
+          String(summary.excludeDownwardTiltPolicy.excludedCount),
+        ],
+        [
+          "除外条件",
+          summary.excludeDownwardTiltPolicy.enabled
+            ? "強い下向き + 強い傾き（pitch negativeLarge + roll negativeLarge / positiveLarge）"
+            : "-",
+        ],
         ["selectionMode（選択モード）", summary.selectionMode],
         ["primaryGrouping（主分類）", summary.policy.primaryGrouping],
         ["maxTargetPerBucket（bucketごとの最大目標数）", String(summary.maxTargetPerBucket)],
@@ -4574,6 +4787,10 @@ function renderCandidatesConsole(): string {
           "excludedExpressionTooStrongCount（強い表情の除外数）",
           String(summary.excludedExpressionTooStrongCount),
         ],
+        [
+          "excludedDownwardTiltCount（下向き＋傾き除外件数）",
+          String(summary.excludeDownwardTiltPolicy.excludedCount),
+        ],
       ]),
     ),
     renderConsoleSection(
@@ -4594,6 +4811,20 @@ function renderPoseReviewCandidateSummaryBrief(): string {
   }
 
   return renderStatusItems([
+    ["候補モード", summary.candidateModeLabel],
+    ["candidateMode", summary.candidateMode],
+    [
+      "下向き＋傾き除外",
+      summary.excludeDownwardTiltPolicy.enabled ? "有効" : "無効",
+    ],
+    [
+      "下向き＋傾きで除外された件数",
+      String(summary.excludeDownwardTiltPolicy.excludedCount),
+    ],
+    [
+      "除外条件",
+      summary.excludeDownwardTiltPolicy.enabled ? "強い下向き + 強い傾き" : "-",
+    ],
     ["selectionMode", summary.selectionMode],
     ["primaryGrouping", summary.policy.primaryGrouping],
     ["maxTargetPerBucket", String(summary.maxTargetPerBucket)],
@@ -4620,6 +4851,10 @@ function renderPoseReviewCandidateSummaryBrief(): string {
     [
       "excludedExpressionTooStrongCount",
       String(summary.excludedExpressionTooStrongCount),
+    ],
+    [
+      "excludedDownwardTiltCount",
+      String(summary.excludeDownwardTiltPolicy.excludedCount),
     ],
   ])
 }
@@ -4649,6 +4884,8 @@ function renderPoseReviewShortageBucket(
       <span>accepted frames（acceptedFrames件数） ${shortageBucket.acceptedFrameCount}</span>
       <span>usable non-expression（表情が強くないusable件数） ${shortageBucket.usableNonExpressionCount}</span>
       <span>expressionTooStrong（強い表情） ${shortageBucket.expressionTooStrongCount}</span>
+      <span>downward tilt excluded（下向き＋傾き除外） ${shortageBucket.downwardTiltExcludedCount}</span>
+      <span>usable after mode filter（モード除外後usable件数） ${shortageBucket.usableAfterModeFilterCount}</span>
       <span>available roll_negative（利用可能なroll負方向） ${shortageBucket.availableRollNegativeCount}</span>
       <span>available roll_center（利用可能なroll中心） ${shortageBucket.availableRollCenterCount}</span>
       <span>available roll_positive（利用可能なroll正方向） ${shortageBucket.availableRollPositiveCount}</span>
@@ -4665,6 +4902,9 @@ function formatPoseReviewShortageReason(
 ): string {
   if (shortageReason === "not_enough_non_expression_frames") {
     return "not_enough_non_expression_frames（表情が強くないフレーム不足）"
+  }
+  if (shortageReason === "not_enough_after_downward_tilt_filter") {
+    return "not_enough_after_downward_tilt_filter（下向き＋傾き除外後のフレーム不足）"
   }
   if (shortageReason === "not_enough_pose_frames") {
     return "not_enough_pose_frames（その姿勢のフレーム不足）"
@@ -4689,6 +4929,7 @@ function renderPoseReviewCandidateBucket(bucket: PoseReviewCandidateBucket): str
       <span>available roll_negative（利用可能なroll負方向） ${bucket.availableRollNegativeCount}</span>
       <span>available roll_center（利用可能なroll中心） ${bucket.availableRollCenterCount}</span>
       <span>available roll_positive（利用可能なroll正方向） ${bucket.availableRollPositiveCount}</span>
+      <span>downward tilt excluded（下向き＋傾き除外） ${bucket.excludedDownwardTiltCount}</span>
       <span>selectedBy roll_negative（roll負方向で選択） ${bucket.selectedByRollNegativeCount}</span>
       <span>selectedBy roll_center（roll中心で選択） ${bucket.selectedByRollCenterCount}</span>
       <span>selectedBy roll_positive（roll正方向で選択） ${bucket.selectedByRollPositiveCount}</span>
@@ -4753,7 +4994,13 @@ function renderRotationFitSummary(evaluation: RotationFitEvaluation): string {
     ["status", evaluation.status],
     ["error", evaluation.error ?? "-"],
     ["searchMode", evaluation.searchMode],
+    ["評価候補モード", evaluation.evaluationCandidateModeLabel],
+    ["evaluationCandidateMode（評価候補モードID）", evaluation.evaluationCandidateMode],
     ["evaluationFrameCount", String(evaluation.evaluationFrameCount)],
+    [
+      "evaluationFrameFiltering（評価フレーム抽出）",
+      `mode ${evaluation.evaluationFrameFiltering.candidateMode} / frames ${evaluation.evaluationFrameFiltering.evaluationFrameCount} / excludedDownwardTilt ${evaluation.evaluationFrameFiltering.excludedDownwardTiltFrameCount}`,
+    ],
     [
       "baseFrameSource",
       evaluation.baseFrameSource
