@@ -321,6 +321,13 @@ type RotationFitCandidateSummary = {
   worstPoint: RotationFitPointScore | null
 }
 
+type RotationFitSearchBoundaryStatus = {
+  bestYAtMin: boolean
+  bestYAtMax: boolean
+  bestZAtMin: boolean
+  bestZAtMax: boolean
+}
+
 type RotationFitEvaluation = {
   status: "completed" | "error"
   error?: string
@@ -339,6 +346,7 @@ type RotationFitEvaluation = {
   videoAspectRatio: number
   rotationCenter: Point3D
   bestRotationCenter: Point3D | null
+  boundaryStatus: RotationFitSearchBoundaryStatus
   zPresetName: string
   fixedZPresetName: string
   focalLength: number
@@ -523,7 +531,7 @@ const ROTATION_FIT_SEARCH_MODE = "rotation_center_yz_coarse"
 const ROTATION_FIT_FOCAL_LENGTH = 2.6
 const ROTATION_FIT_ROTATION_CENTER_Y_RANGE: RotationFitSearchRange = {
   min: -0.24,
-  max: 0.04,
+  max: 0.16,
   step: 0.02,
 }
 const ROTATION_FIT_ROTATION_CENTER_Z_RANGE: RotationFitSearchRange = {
@@ -532,6 +540,7 @@ const ROTATION_FIT_ROTATION_CENTER_Z_RANGE: RotationFitSearchRange = {
   step: 0.01,
 }
 const ROTATION_FIT_TOP_CANDIDATE_LIMIT = 10
+const ROTATION_FIT_BOUNDARY_EPSILON = 0.000001
 const ROTATION_FIT_DEBUG_Z_BY_POINT_ID: Record<string, number> = {
   headTop: 0.017,
   chin: 0.016,
@@ -1319,6 +1328,7 @@ function evaluateRotationFit(): RotationFitEvaluation {
     },
     rotationCenter: bestCandidate.rotationCenter,
     bestRotationCenter: bestCandidate.rotationCenter,
+    boundaryStatus: calculateRotationFitSearchBoundaryStatus(bestCandidate.rotationCenter),
     totalScore: bestCandidate.totalScore,
     maxFrameScore: bestCandidate.maxFrameScore,
     worstFrame: bestCandidate.worstFrame,
@@ -1351,6 +1361,12 @@ function createEmptyRotationFitEvaluation(
     videoAspectRatio,
     rotationCenter,
     bestRotationCenter: null,
+    boundaryStatus: {
+      bestYAtMin: false,
+      bestYAtMax: false,
+      bestZAtMin: false,
+      bestZAtMax: false,
+    },
     zPresetName: ROTATION_FIT_DEBUG_PRESET_NAME,
     fixedZPresetName: ROTATION_FIT_DEBUG_PRESET_NAME,
     focalLength: ROTATION_FIT_FOCAL_LENGTH,
@@ -1391,6 +1407,33 @@ function createRotationFitRangeCandidates(range: RotationFitSearchRange): number
   return Array.from({ length: candidateCount }, (_, index) =>
     roundDebugNumber(range.min + range.step * index),
   ).filter((value) => value <= range.max + range.step * 0.001)
+}
+
+function calculateRotationFitSearchBoundaryStatus(
+  bestRotationCenter: Point3D,
+): RotationFitSearchBoundaryStatus {
+  return {
+    bestYAtMin: isRotationFitBoundaryValue(
+      bestRotationCenter.y,
+      ROTATION_FIT_ROTATION_CENTER_Y_RANGE.min,
+    ),
+    bestYAtMax: isRotationFitBoundaryValue(
+      bestRotationCenter.y,
+      ROTATION_FIT_ROTATION_CENTER_Y_RANGE.max,
+    ),
+    bestZAtMin: isRotationFitBoundaryValue(
+      bestRotationCenter.z,
+      ROTATION_FIT_ROTATION_CENTER_Z_RANGE.min,
+    ),
+    bestZAtMax: isRotationFitBoundaryValue(
+      bestRotationCenter.z,
+      ROTATION_FIT_ROTATION_CENTER_Z_RANGE.max,
+    ),
+  }
+}
+
+function isRotationFitBoundaryValue(value: number, boundary: number): boolean {
+  return Math.abs(value - boundary) <= ROTATION_FIT_BOUNDARY_EPSILON
 }
 
 function evaluateRotationFitCandidate(
@@ -3500,6 +3543,18 @@ function renderRotationFitSummary(evaluation: RotationFitEvaluation): string {
       "bestRotationCenter.z",
       evaluation.bestRotationCenter ? formatNumber(evaluation.bestRotationCenter.z) : "-",
     ],
+    [
+      "boundaryStatus（範囲端ヒット状態）",
+      `bestYAtMin: ${String(evaluation.boundaryStatus.bestYAtMin)} / bestYAtMax: ${String(
+        evaluation.boundaryStatus.bestYAtMax,
+      )} / bestZAtMin: ${String(evaluation.boundaryStatus.bestZAtMin)} / bestZAtMax: ${String(
+        evaluation.boundaryStatus.bestZAtMax,
+      )}`,
+    ],
+    [
+      "warning（注意）",
+      formatRotationFitBoundaryWarning(evaluation.boundaryStatus),
+    ],
     ["focalLength", formatNumber(evaluation.focalLength)],
     ["best totalScore", formatNumber(evaluation.totalScore)],
     ["best maxFrameScore", formatNumber(evaluation.maxFrameScore)],
@@ -3524,6 +3579,24 @@ function renderRotationFitSummary(evaluation: RotationFitEvaluation): string {
       `yaw ${evaluation.bucketScores.yaw.length} / pitch ${evaluation.bucketScores.pitch.length} / roll ${evaluation.bucketScores.roll.length} / yaw×pitch ${evaluation.bucketScores.yawPitch.length}`,
     ],
   ])
+}
+
+function formatRotationFitBoundaryWarning(
+  boundaryStatus: RotationFitSearchBoundaryStatus,
+): string {
+  if (boundaryStatus.bestYAtMax) {
+    return "best rotationCenter.y is at search max（最良の回転中心yが探索範囲の上限にあります）"
+  }
+  if (boundaryStatus.bestYAtMin) {
+    return "best rotationCenter.y is at search min（最良の回転中心yが探索範囲の下限にあります）"
+  }
+  if (boundaryStatus.bestZAtMax) {
+    return "best rotationCenter.z is at search max（最良の回転中心zが探索範囲の上限にあります）"
+  }
+  if (boundaryStatus.bestZAtMin) {
+    return "best rotationCenter.z is at search min（最良の回転中心zが探索範囲の下限にあります）"
+  }
+  return "-"
 }
 
 function renderRotationFitTopCandidates(evaluation: RotationFitEvaluation): string {

@@ -117,10 +117,12 @@ Render Consistency Lab でも同じ考え方を使い、coarse-to-fine（粗か�
 
 `tools/mediapipe-render-consistency-lab` の `回転中心評価・粗探索` ボタンは、この Stage A（段階A）だけを実行する。固定 12pt z preset（12点奥行きプリセット）は `rotationFitDebugPreset_provisional_v1` を使い、`rotationCenter.x = 0.5 * videoAspectRatio` を固定する。12点 z 探索、14未知数の同時探索、mesh / render / MediaPipe re-detection（再検出）、production export（本番書き出し）はまだ行わない。
 
-初期探索範囲:
+初期結果で `bestRotationCenter.y`（最良の回転中心y）が探索範囲上限に張り付いたため、Stage A の再確認用に `rotationCenter.y`（回転中心の縦方向）の探索範囲を `-0.24 .. 0.16` へ広げる。`rotationCenter.z`（回転中心の奥行き方向）は現状維持とする。Summary（要約）と Raw JSON（生デバッグ JSON）には `boundaryStatus`（範囲端ヒット状態）を表示し、探索範囲不足を確認できるようにする。
+
+探索範囲:
 
 ```text
-rotationCenter.y = -0.24 .. 0.04 / step 0.02
+rotationCenter.y = -0.24 .. 0.16 / step 0.02
 rotationCenter.z = 0.00 .. 0.12 / step 0.01
 ```
 
