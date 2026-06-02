@@ -2,6 +2,7 @@
 
 ## Related docs
 
+- [Ideal Reference Mesh Warp Lab](ideal-reference-mesh-warp-lab.md)
 - [MediaPipe Render Consistency Lab next step after effective rotation center study](mediapipe-render-consistency-lab-next-after-effective-rotation-center.md)
 - [MediaPipe Canonical Effective Rotation Center Lab](mediapipe-canonical-effective-rotation-center-lab.md)
 
@@ -104,11 +105,15 @@ bae-ar/
 
 ```text
 tools/
+├─ ideal-reference-mesh-warp-lab/
+│  └─ Ideal Reference Mesh Warp Lab
+│     理想モデル動画の実測 MediaPipe 478 reference library と hybrid mesh warp を検証する debug / research lab
+│
 └─ layer-mask-authoring/
    └─ Layer Mask Authoring Tool
 ```
 
-`tools/ideal-face-authoring` は Step 2-I-A/B/C と Step 2-H まで実装済みです。`tools/mediapipe-canonical-lab` は MediaPipe Face Landmarker の 478 landmarks / `facialTransformationMatrix` / pose / blendshapes を調査する debug lab です。`tools/mediapipe-render-consistency-lab` は MP4 import、auto scan（自動スキャン）、`acceptedFrames`、`thumbnailDataUrl`、MediaPipe metadata summary（MediaPipe メタデータ要約）、12pt overlay（12点重ね表示）、manual adjustments（手動調整）、Debug Console（デバッグコンソール）、`poseBucket125` を確認する debug lab です。production 用 IdealFace asset を作る正式 authoring tool（作成ツール）ではありません。`tools/layer-mask-authoring` は将来予定です。
+`tools/ideal-face-authoring` は Step 2-I-A/B/C と Step 2-H まで実装済みです。`tools/mediapipe-canonical-lab` は MediaPipe Face Landmarker の 478 landmarks / `facialTransformationMatrix` / pose / blendshapes を調査する debug lab です。`tools/mediapipe-render-consistency-lab` は MP4 import、auto scan（自動スキャン）、`acceptedFrames`、`thumbnailDataUrl`、MediaPipe metadata summary（MediaPipe メタデータ要約）、12pt overlay（12点重ね表示）、manual adjustments（手動調整）、Debug Console（デバッグコンソール）、`poseBucket125` を確認する debug lab です。production 用 IdealFace asset を作る正式 authoring tool（作成ツール）ではありません。`tools/ideal-reference-mesh-warp-lab` は、理想モデル動画の各フレームで MediaPipe が実測した 478 landmarks を pose / expression 付き reference library として保存し、current frame に近い reference と hybrid mesh / adaptive grid を検証する将来候補の debug / research lab です。`tools/layer-mask-authoring` は将来予定です。
 
 ## `packages/engine`
 
@@ -318,6 +323,7 @@ Layer Mask Authoring Tool を置く想定の場所です。
 - `usage-aware-frame-sampling-v1.md`: MP4 detailed scan / Step 2-I-A frame selection で `frontReferenceCandidate` を提示し、用途別 bucket の targetCount を見ながら frame を採用する方針
 - `landmark-groups-v1.md`: `ideal_face_asset_v1` / `beauty_filter_asset_v1` で使う optional `landmarkGroups` 仕様、Engine fallback、validation、Landmark Group Editor 方針
 - `shape-warp-production-direction.md`: Shape Warp v1 debug prototype と production candidate の違い、WebGL mesh warp 方針、段階分け
+- `ideal-reference-mesh-warp-lab.md`: 理想顔 3D478 生成ではなく、理想モデル動画の実測 MediaPipe 478 reference library、visibility / safety weight、hybrid mesh / adaptive grid、raw / runtime library 分離、storage / compression 方針を扱う新検証ラボ
 - `beauty-filter-asset-v1.md`: 最終フィルター / プリセットを `idealFace` / `landmarkGroups` / `correctionProfile` / `shapeWarpSettings` / `colorLayers` に分けつつ、1つの `beauty_filter_asset_v1` JSON として配布する方向性
 - `mediapipe-canonical-lab.md`: MediaPipe Canonical Lab の位置づけ、empirical 478 analysis 暫定結論、`facialTransformationMatrix` inverse の扱い、Full / Summary Analysis JSON export 方針
 - `mediapipe-render-consistency-lab.md`: Render Consistency Lab の位置づけ、Fitting Lab との違い、`projectionFitZ` / `meshReadyZ`、現状の auto scan / acceptedFrames / 12pt overlay / Debug Console / poseBucket125、mesh / render / MediaPipe re-detection 前提の評価方針
@@ -362,7 +368,7 @@ MP4 input
 
 ## 今後の構成変更
 
-IdealFace v1、Runtime 側の idealLandmarks3D 478点読み込み / 投影、current 478 landmarks と projected ideal 478 landmarks の difference debug、`correctionProfile` v1 foundation、`expressionAttenuation` v1 foundation、CorrectionPlan v1 debug foundation、Studio 向け Shape Warp v1 debug prototype、WebGL mesh warp v1 prototype は実装済みです。`landmarkGroups` v1 は docs specification、Engine foundation、asset / fallback group source handling、Studio debug / Copy Debug summary、Authoring Tool Landmark Group Editor v1 prototype、`ideal_face_asset_v1` optional `landmarkGroups` export まで実装済みです。`expressionFollow v1` と [MP4 expression 3D analysis plan](mp4-expression-3d-analysis-plan.md) は docs direction のみで、Engine implementation、MP4 expression 3D analysis、landmarkFollowStrengths 自動生成は未実装です。`expressionAttenuation falloff v1` は fallback / 参考案です。`shapeWarpSettings` v1、`colorLayers` v1、`beauty_filter_asset_v1`、Production Shape Warp、Layer System、LayerMaskSpec、Color Processing、Runtime renderer integration も未実装です。追加する場合も、Engine Runtime の責務と Authoring Tool の責務を分け、Studio からは公開 API 経由で確認できるようにします。
+IdealFace v1、Runtime 側の idealLandmarks3D 478点読み込み / 投影、current 478 landmarks と projected ideal 478 landmarks の difference debug、`correctionProfile` v1 foundation、`expressionAttenuation` v1 foundation、CorrectionPlan v1 debug foundation、Studio 向け Shape Warp v1 debug prototype、WebGL mesh warp v1 prototype は実装済みです。`landmarkGroups` v1 は docs specification、Engine foundation、asset / fallback group source handling、Studio debug / Copy Debug summary、Authoring Tool Landmark Group Editor v1 prototype、`ideal_face_asset_v1` optional `landmarkGroups` export まで実装済みです。`expressionFollow v1` と [MP4 expression 3D analysis plan](mp4-expression-3d-analysis-plan.md) は docs direction のみで、Engine implementation、MP4 expression 3D analysis、landmarkFollowStrengths 自動生成は未実装です。[Ideal Reference Mesh Warp Lab](ideal-reference-mesh-warp-lab.md) も docs direction のみで、tool 実装、MediaPipe 実行、JSON export、IndexedDB、compression、validator、Runtime renderer integration は未実装です。`expressionAttenuation falloff v1` は fallback / 参考案です。`shapeWarpSettings` v1、`colorLayers` v1、`beauty_filter_asset_v1`、Production Shape Warp、Layer System、LayerMaskSpec、Color Processing、Runtime renderer integration も未実装です。追加する場合も、Engine Runtime の責務と Authoring Tool / Lab の責務を分け、Studio からは公開 API 経由で確認できるようにします。
 
 ## `tools/ideal-face-authoring` Step 1 / Step 2-A / Step 2-B
 

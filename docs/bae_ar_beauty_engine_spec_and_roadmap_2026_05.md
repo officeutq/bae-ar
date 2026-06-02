@@ -128,6 +128,7 @@ Beauty Studio:
 - expressionFollow v1 docs direction
 - MP4 expression 3D analysis plan docs direction
 - usage-aware frame sampling v1 docs direction
+- Ideal Reference Mesh Warp Lab docs direction
 - usage-aware frame sampling v1 prototype
 - scan preset
 - usage bucket summary
@@ -143,6 +144,8 @@ Beauty Studio:
 - landmarkFollowStrengths auto generation implementation
 - expressionFollow export
 - production-quality adaptive sampling / tuning
+- Ideal Reference Mesh Warp Lab implementation
+- ideal reference library JSON export / validator / IndexedDB / compression
 - expressionAttenuation falloff v1 fallback / reference handling
 - shapeWarpSettings v1
 - colorLayers v1
@@ -175,6 +178,7 @@ Beauty Studio:
 - `IdealFace` は MediaPipe canonical face model そのものでもありません。
 - IdealFace Projection v1 は `idealLandmarks3D` 478点を現在 `FacePose` へ投影します。
 - current-vs-projected ideal 478点 difference debug v1 は current landmarks と projected ideal `imageLandmarks` の差分確認用です。
+- `Ideal Reference Mesh Warp Lab` は docs direction のみです。理想モデル動画の実測 MediaPipe 478 reference library、full reference search、weighted reference blend、runtime compression、visibility / safety weight、hybrid mesh / adaptive grid は未実装です。
 - `FaceGeometry` は landmarks から代表点やサイズを計算する補助解析です。
 - Studio processed preview 限定の Shape Warp v1 debug prototype と WebGL mesh warp v1 prototype は実装済みです。Production Shape Warp / Production renderer / Runtime renderer integration、Color Processing はまだありません。
 - IdealFace Authoring Tool は Step 2-I-A/B/C と Step 2-H まで実装済みです。
@@ -376,6 +380,8 @@ MediaPipe の topology、landmark index、canonical model の考え方は参考�
 - Engine Runtime で current face と比較するため、IdealFace は `idealLandmarks3D` 478 点を本体として持つ
 - current 478 landmarks と ideal 478 landmarks を比較して shape processing へ進む
 - 2D 動画 / 複数画像から IdealFace を作る処理は、リアルタイム処理ではなく IdealFace Authoring Tool の責務
+
+ただし、理想モデル動画から MediaPipe に対応する姿勢非依存 `idealLandmarks3D` 478点を安定して作ることには難しさがあります。新しい検証ラインとして、理想顔 3D478 を作るのではなく、理想モデル動画の各フレームで MediaPipe が実際に返した 478 landmarks を pose / expression 付き reference library として保存し、current frame に近い reference を参照する [Ideal Reference Mesh Warp Lab](ideal-reference-mesh-warp-lab.md) を追加します。
 
 IdealFace Authoring Tool は BAE AR 独自の IdealFace asset を作成・調整するツールです。MediaPipe canonical face model そのものを作るツールではありません。`natural_v1` の controlPoints は現段階の投影検証用データであり、IdealFace 本体ではありません。
 
@@ -960,6 +966,7 @@ Step 11: beauty_filter_asset_v1 foundation
 - [expressionFollow v1](expression-follow-v1.md)
 - [MP4 expression 3D analysis plan](mp4-expression-3d-analysis-plan.md)
 - [usage-aware frame sampling v1](usage-aware-frame-sampling-v1.md)
+- [Ideal Reference Mesh Warp Lab](ideal-reference-mesh-warp-lab.md)
 - [expressionAttenuation falloff v1](expression-attenuation-falloff-v1.md)
 
 ### Milestone 7: Color Processing v1
@@ -1241,6 +1248,8 @@ Runtime は、その 3D ideal landmarks を現在顔の `FacePose` へ投影し�
 
 Shape Processing は、MediaPipe Face Landmarker がカメラ映像から取得した current image-normalized 478 landmarks と、IdealFace 由来の projected ideal image-normalized 478 landmarks の差分を見ます。この差分をもとに CorrectionPlan v1 debug foundation が correction vectors を生成し、Studio 向け Shape Warp v1 debug prototype と Studio processed preview 限定の WebGL mesh warp v1 prototype へ進みます。Production Shape Warp / Runtime renderer integration は後段です。最終的な image warp では pixel coordinate を使います。
 
+`Ideal Reference Mesh Warp Lab` では、Projection 後の ideal 478 landmarks ではなく、pose / expression が近い ideal reference frame または topK reference blend を使って target を作る方式を検証します。478点すべてを同じ信頼度で使わず、`visibilityWeight` と `warpSafetyWeight` を分け、危険な vertex / triangle の変形を弱めます。
+
 現在の `natural_v1` の 6 点 controlPoints は、現段階の投影検証用データです。Projection の流れを確認するための暫定データであり、IdealFace 本体ではありません。
 
 ```text
@@ -1377,3 +1386,5 @@ Step D: Quality improvements
 - correctionProfile authoring UI
 
 詳細は [Shape Warp production direction](shape-warp-production-direction.md) を参照します。Studio WebGL mesh warp v1 prototype は processed preview 限定で実装済みです。Production shader 実装、Production triangle mesh warp 実装、Runtime renderer 実装、MediaPipe face mesh topology の本番整理はまだ行いません。
+
+理想モデル動画の実測 MediaPipe 478 reference library、hybrid mesh / adaptive grid、raw / runtime library 分離、Runtime 中のメモリ参照、IndexedDB / file 保存、localStorage を小さい UI 設定へ限定する方針は [Ideal Reference Mesh Warp Lab](ideal-reference-mesh-warp-lab.md) に整理します。これは docs 方針のみで、tool 実装、JSON export、validator、compression、Runtime renderer integration は未実装です。

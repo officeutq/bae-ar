@@ -2,6 +2,7 @@
 
 ## Related docs
 
+- [Ideal Reference Mesh Warp Lab](ideal-reference-mesh-warp-lab.md)
 - [MediaPipe Render Consistency Lab next step after effective rotation center study](mediapipe-render-consistency-lab-next-after-effective-rotation-center.md)
 - [MediaPipe Canonical Effective Rotation Center Lab](mediapipe-canonical-effective-rotation-center-lab.md)
 
@@ -27,6 +28,8 @@
 - BAE AR の ideal landmarks は、幾何投影 landmarks を採用すべきか、それとも MediaPipe が理想顔 render をどう認識したかを採用すべきか
 
 この docs は方向性整理であり、Runtime / Studio / IdealFace Authoring Tool / Fitting Lab の実装変更、production asset export、`beauty_filter_asset_v1` schema 変更を伴いません。
+
+[Ideal Reference Mesh Warp Lab](ideal-reference-mesh-warp-lab.md) は、理想顔メッシュを Runtime で回転・render・MediaPipe 再検出する方針ではありません。理想モデル動画の各フレームで MediaPipe が実際に返した 478 landmarks を pose / expression 付き reference frame として保存し、current frame に近い reference を使う別の debug / research lab です。Render Consistency Lab は render / re-detection 前提の一貫性検証、Ideal Reference Mesh Warp Lab は実測 reference library と hybrid mesh warp の検証として分けます。
 
 現状の `tools/mediapipe-render-consistency-lab` は、MP4 import、auto scan（自動スキャン）、`acceptedFrames`、`thumbnailDataUrl`、MediaPipe metadata summary（MediaPipe メタデータ要約）、`acceptedFrames[].observed12pt`、pose（姿勢） / `expressionSummary`、`manualAdjustmentsByFrame`、`currentReviewIndex`、Debug Console（デバッグコンソール）、Current Frame（現在フレーム）タブ、`poseBucket125`、`frontCandidate` / `expressionTooStrong` badge（補助ラベル）までの debug lab です。production 用 IdealFace asset を作る正式 authoring tool（作成ツール）ではありません。
 

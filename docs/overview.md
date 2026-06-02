@@ -28,6 +28,8 @@ BAE AR
 
 `tools/mediapipe-canonical-lab` は、MediaPipe Face Landmarker の current landmarks 478、`facialTransformationMatrix`、yaw / pitch / roll、blendshapes、pose bucket 別 capture を調査する debug lab です。IdealFace を作る authoring tool ではなく、`empiricalCanonical478` も debug artifact として扱い、そのまま production asset にはしません。最新の empirical 478 analysis では、`face_bounds_normalized_no_matrix`、つまり MediaPipe の行列を使わず顔の外枠で中心合わせとスケール正規化を行う方式が現時点の best candidate です。詳細は [MediaPipe Canonical Lab](mediapipe-canonical-lab.md) を参照してください。
 
+`tools/ideal-reference-mesh-warp-lab` は将来候補の debug / research lab です。理想顔 3D478 を作って任意 pose へ投影するのではなく、理想モデル動画の各フレームで MediaPipe が実際に返した 478 landmarks を pose / expression 付き reference library として保存し、current frame に近い reference を選んで hybrid mesh warp を検証する方針です。詳細は [Ideal Reference Mesh Warp Lab](ideal-reference-mesh-warp-lab.md) を参照してください。
+
 ## 現在の到達点
 
 現在の Runtime / Studio 実装は、カメラ映像を `HTMLVideoElement` として取得し、`BeautyEngine.setInput()` に渡し、MediaPipe Face Landmarker を使って `FaceFrame` を更新する段階です。FacePose の実推定、IdealFace v1、Natural v1 最小プリセット、IdealFace 公開 API、`idealLandmarks3D` 478点 Projection、current-vs-projected ideal 478点 difference debug、Studio overlay / debug / Copy Debug 関連は実装済みです。
@@ -55,6 +57,8 @@ BAE AR が作る IdealFace は、BAE AR 独自の理想顔空間です。「こ�
 Engine Runtime では、IdealFace の `idealLandmarks3D` 478点を現在顔の `FacePose` へ投影し、現在姿勢を反映した projected ideal 2D landmarks 478点を生成します。shape processing は、MediaPipe Face Landmarker がカメラ映像から取得した current 478 landmarks と、projected ideal 478 landmarks を比較して進みます。
 
 2D 動画 / 複数画像から IdealFace を作る処理は、リアルタイム処理ではなく IdealFace Authoring Tool の責務です。IdealFace Authoring Tool は BAE AR 独自の IdealFace asset を作成・調整するツールであり、MediaPipe canonical face model そのものを作るツールではありません。`natural_v1` の controlPoints は現段階の投影検証用データであり、IdealFace 本体ではありません。
+
+ただし、理想モデル動画から MediaPipe に対応する姿勢非依存 `idealLandmarks3D` 478点を安定して作ることには難しさがあります。`Ideal Reference Mesh Warp Lab` では、`IdealFace 3D478` ではなく、理想モデル動画の実測 MediaPipe 478 landmarks を reference frame として保存し、pose / expression の近い reference を Runtime 実験で参照する別方針を検証します。
 
 ## correctionProfile v1 の位置づけ
 
@@ -213,6 +217,8 @@ shape processing は、個別パーツを独立して大きく変える方向に
 ```
 
 Shape Processing の差分は image-normalized coordinate で計算します。current 478 landmarks は MediaPipe 由来の image-normalized 座標です。projected ideal 478 landmarks は、IdealFace same-unit landmarks を `FacePose` へ投影し、alignment 後に image-normalized 座標へ変換したものです。差分は `deltaX = projectedIdealImageX - currentX`、`deltaY = projectedIdealImageY - currentY` として `CorrectionPlan` に渡します。
+
+新しい検証方針では、current 478 landmarks と projected ideal 478 landmarks の単純差分だけに閉じず、current frame に近い ideal reference frame / topK reference blend、`visibilityWeight`、`warpSafetyWeight`、face boundary anchors、near-face grid、background grid、screen edge anchors を組み合わせた hybrid mesh を検討します。この方針は [Ideal Reference Mesh Warp Lab](ideal-reference-mesh-warp-lab.md) に分けて整理します。
 
 CorrectionPlan v1 debug foundation は、`correctionProfile` の `strength` をこの差分に掛け、`maxCorrectionDistance` で clamp した correction vector を生成します。今後の `expressionFollow v1` では、blendshape score に応じて各 landmark の `effectiveIdealFollowStrength` を決め、`finalStrength = baseStrength * effectiveIdealFollowStrength` として表情による自然なズレを許容します。既存 `expressionAttenuation` foundation は safety attenuation として残りますが、中心仕様は `expressionFollow v1` です。`correctionProfile` は個別パーツ加工命令ではなく、current から projected ideal へ全体として自然に少し寄せるための補正率です。
 
@@ -435,3 +441,5 @@ Step 2-G v1 five-pose candidate generation has been removed from the current cod
 本番候補は WebGL mesh warp として整理します。current image-normalized landmarks を source vertices、CorrectionPlan `target` を target vertices、source video frame / source canvas を texture として扱い、MediaPipe face mesh topology の triangle mesh warp を検討します。
 
 詳細な段階分け、座標系方針、未決定事項は [Shape Warp production direction](shape-warp-production-direction.md) を参照してください。最初の WebGL mesh warp prototype は Studio processed preview 限定とし、Engine Runtime への本格統合、temporal smoothing、mask / boundary、glasses / hair、performance 対応は後段で扱います。
+
+理想モデル動画の実測 MediaPipe 478 reference library を使う新しい mesh warp 検証は [Ideal Reference Mesh Warp Lab](ideal-reference-mesh-warp-lab.md) に整理します。これは docs 方針のみで、TypeScript 実装、Runtime renderer integration、JSON export、IndexedDB、compression、validator は未実装です。

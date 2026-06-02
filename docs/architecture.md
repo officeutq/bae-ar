@@ -22,11 +22,16 @@ BAE AR
 ├─ tools/ideal-face-authoring
 │  └─ IdealFace を作成する authoring tool
 │
+├─ tools/ideal-reference-mesh-warp-lab
+│  └─ 将来候補。理想モデル動画の実測 MediaPipe 478 reference library と hybrid mesh warp を検証する debug / research lab
+│
 └─ tools/layer-mask-authoring
    └─ 将来予定。LayerMaskSpec を作成する authoring tool
 ```
 
 現在 `tools/ideal-face-authoring` は Step 2-I-A/B/C と Step 2-H まで実装済みです。`tools/layer-mask-authoring` は将来予定です。
+
+`tools/ideal-reference-mesh-warp-lab` は未実装の検証ラボ候補です。production 用 authoring tool ではなく、理想モデル動画から姿勢非依存 `idealLandmarks3D` 478点を作る難しさを受けて、各フレームで MediaPipe が実測した 478 landmarks / pose / blendshapes を reference library として使う方式を検証します。詳細は [Ideal Reference Mesh Warp Lab](ideal-reference-mesh-warp-lab.md) に整理します。
 
 ## Engine Runtime の責務
 
@@ -64,6 +69,7 @@ Engine Runtime は UI を持たない中核 SDK です。
 - colorLayers v1
 - beauty_filter_asset_v1 foundation / validator / parser / converter
 - Production Shape Warp
+- Ideal Reference Mesh Warp Lab docs 方針検証
 - Production WebGL mesh warp / Runtime renderer integration
 - Color Processing
 - Layer System
@@ -72,6 +78,8 @@ Engine Runtime は UI を持たない中核 SDK です。
 - runtime quality control
 
 Engine Runtime は定義済みの IdealFace / LayerMaskSpec を読み込んで使います。IdealFace の作成、2D 動画からの 3D 顔生成、LayerMaskSpec の作成、mask の手作業編集、Studio / Authoring 用 UI は Runtime に含めません。
+
+`Ideal Reference Mesh Warp Lab` の raw / runtime reference library 作成、保存、圧縮、検索 debug も Runtime 本体には混ぜません。将来 Runtime に接続する場合も、ライブ中はメモリ上の `runtimeIdealReferenceLibrary` だけを参照し、毎フレーム IndexedDB / localStorage を読む設計にはしません。
 
 ## Beauty Studio の責務
 
@@ -147,6 +155,22 @@ Removed legacy workflow:
 Engine Runtime は動画入力、詳細スキャン、pose-aware dataset 作成、candidate generation、手動調整 UI、保存 / export を持ちません。Runtime は完成済み IdealFace asset を読み込み、`idealLandmarks3D` 478点を現在 `FacePose` へ投影して使います。
 
 Authoring Tool は `idealLandmarks3D` を same-unit coordinate として生成します。`video_aspect_same_unit_v1` による video aspect 補正、pose-aware generation、将来の manual adjustment UI は Authoring Tool の責務です。Runtime は完成済み IdealFace asset を読み込み、same-unit の `idealLandmarks3D` を `FacePose` へ投影し、overlay / difference / warp 用に image-normalized / pixel 座標へ変換します。Authoring generation logic は Runtime に含めません。
+
+### Ideal Reference Mesh Warp Lab の位置づけ
+
+`Ideal Reference Mesh Warp Lab` は、上記の `idealLandmarks3D` 生成とは別の debug / research lab です。
+
+```text
+理想モデル動画
+  -> 全フレームを MediaPipe に通す
+  -> 実測 MediaPipe 478 landmarks / pose / blendshapes / visibilityWeights / qualityScore を保存
+  -> rawIdealReferenceFrames を作る
+  -> 実験ログから runtimeIdealReferenceLibrary へ圧縮する
+```
+
+このラボでは、理想モデル動画から姿勢非依存の `IdealFace 3D478` を作りません。理想顔メッシュを Runtime で回転・render・MediaPipe 再検出する方針でもありません。理想モデル動画の各フレームで MediaPipe が実際に返した 478 landmarks を pose / expression 付き reference frame として扱い、ライブ current frame に近い reference を検索する方針です。
+
+`rawIdealReferenceFrames` は最大10000フレーム程度の Authoring / debug / 再選抜用データとして大きく持てます。`runtimeIdealReferenceLibrary` は Runtime 実験で使う代表フレームだけを 100〜300 frames 程度へ圧縮する候補です。localStorage は UI 設定や選択中 filter id など小さい値だけに使い、library 保存は IndexedDB / file / Cache Storage を検討します。ライブ中の参照はメモリ上の TypedArray / JS object に限定します。
 
 legacy / debug と分類した UI や helper には、今後の新機能を追加しません。confidence debug、手動微調整 UI、保存 / export は Step 2-I active workflow 側に追加します。
 
@@ -500,6 +524,8 @@ Runtime の Projection は、IdealFace の 3D landmarks を現在顔の `FacePos
 
 Shape Processing の入力は、カメラ映像から MediaPipe Face Landmarker が取得した current 478 landmarks と、Projection 後の projected ideal 478 landmarks です。Shape Processing はこの 2 つの差分を見て、後段の `CorrectionPlan` / Shape Warp へ進みます。
 
+ただし、`Ideal Reference Mesh Warp Lab` では Projection 後の ideal 478 landmarks を作るのではなく、current pose / expression に近い ideal reference frame または topK reference blend を選び、`visibilityWeight` / `warpSafetyWeight` を通して source / target 対応を作る方式を検証します。478点すべてを同じ信頼度で使わず、危険な vertex / triangle は変形を弱めます。
+
 現在の `natural_v1` の 6 点 controlPoints は、現段階の投影検証用データです。Projection の流れを検証するための暫定データであり、IdealFace 本体ではありません。
 
 ```text
@@ -552,3 +578,5 @@ triangles:
 same-unit coordinate は IdealFace Projection 内部の rotation / uniform alignment 用です。WebGL mesh warp に same-unit landmarks を直接渡しません。WebGL へ渡す前に、image-normalized の source / target vertices を canvas / texture / viewport に合わせて pixel coordinate または clip coordinate へ変換します。
 
 詳細は [Shape Warp production direction](shape-warp-production-direction.md) に整理します。Studio WebGL mesh warp v1 prototype は processed preview 限定で実装済みです。Runtime renderer integration、temporal smoothing、mask / boundary、glasses / hair、performance 対応は後段で扱います。
+
+hybrid mesh / adaptive grid、face boundary anchors、near-face grid、background grid、screen edge anchors を使って背景歪みを抑える検証は [Ideal Reference Mesh Warp Lab](ideal-reference-mesh-warp-lab.md) に分けます。

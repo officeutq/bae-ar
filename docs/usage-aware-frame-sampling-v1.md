@@ -6,6 +6,8 @@
 
 対象は IdealFace Authoring Tool の authoring workflow です。Engine Runtime、Beauty Studio、JSON export、validator、Runtime renderer、Layer System にはまだ実装しません。
 
+[Ideal Reference Mesh Warp Lab](ideal-reference-mesh-warp-lab.md) では、理想モデル動画の全フレームまたは最大10000フレーム程度を MediaPipe 解析し、実測 478 landmarks / pose / blendshapes を reference library として保持する別方針を扱います。`usage-aware frame sampling v1` は IdealFace Authoring Tool の Step 2-I-A frame selection 向けであり、reference library の raw / runtime 分離、IndexedDB / file 保存、Runtime 中のメモリ参照、hybrid mesh warp は扱いません。
+
 ## 背景
 
 現在の IdealFace Authoring Tool では、MP4 input、detailed scan、Step 2-I-A frame selection、1フレーム1カード UI、Frame Review Carousel、`frontReference` / `useForInference` / `expressionGroup` / `excluded` の用途タグ管理まで実装済みです。
@@ -461,6 +463,11 @@ Engine Runtime:
 Beauty Studio:
   Engine の公開 API 経由で Runtime の状態を確認する
   Authoring generation logic は持たない
+
+Ideal Reference Mesh Warp Lab:
+  理想モデル動画の実測 MediaPipe 478 reference library を検証する
+  Step 1 full reference search / Step 2 weighted blend / Step 3 runtime compression を扱う
+  production authoring tool ではない
 ```
 
 ## 今回やらないこと
