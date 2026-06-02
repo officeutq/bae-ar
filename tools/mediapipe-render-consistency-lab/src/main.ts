@@ -415,6 +415,29 @@ type RotationFitImprovement = {
   maxFrameScoreDelta: number
 }
 
+type RotationFitParameterImprovement = {
+  parameter: string
+  iteration: number
+  scoreBefore: number
+  scoreAfter: number
+  scoreDelta: number
+  maxFrameScoreBefore: number
+  maxFrameScoreAfter: number
+  maxFrameScoreDelta: number
+  valueBefore: number
+  valueAfter: number
+  improved: boolean
+  bestCandidateRankInStep?: number
+  candidateCountInStep?: number
+}
+
+type RotationFitParameterImprovementSummary = {
+  totalImprovement: number
+  bestImprovingParameter: string | null
+  noImprovementParameters: string[]
+  boundaryHitParameters: string[]
+}
+
 type RotationFitCoordinateDescentStepLog = {
   iteration: number
   parameter: RotationFitLocalSearchParameter
@@ -426,6 +449,7 @@ type RotationFitCoordinateDescentStepLog = {
   bestMaxFrameScore: number
   candidateCount: number
   improved: boolean
+  bestCandidateRankInStep?: number
 }
 
 type RotationFitCoordinateBoundaryStatus = Record<
@@ -454,6 +478,8 @@ type RotationFitFittingLab12ptSearch = {
   bestCandidate: RotationFitCandidateResult | null
   finalZByPointId: Record<string, number> | null
   coordinateDescentLog: RotationFitCoordinateDescentStepLog[]
+  parameterImprovements: RotationFitParameterImprovement[]
+  parameterImprovementSummary: RotationFitParameterImprovementSummary
 }
 
 type RotationFitEvaluation = {
@@ -522,6 +548,7 @@ type AppState = {
   draggingLandmarkSummaryPointId: string | null
   showLandmarkSummaryOverlay: boolean
   consoleTab: ConsoleTab
+  rawJsonCopyStatus: string | null
 }
 
 const RAD_TO_DEG = 180 / Math.PI
@@ -859,6 +886,7 @@ const state: AppState = {
   draggingLandmarkSummaryPointId: null,
   showLandmarkSummaryOverlay: true,
   consoleTab: "summary",
+  rawJsonCopyStatus: null,
 }
 
 let faceLandmarker: FaceLandmarker | null = null
@@ -1052,6 +1080,10 @@ consoleContent.addEventListener("click", (event) => {
     resetCurrentFrameLandmarkAdjustments()
     renderThumbnailCanvas()
     render()
+  }
+
+  if (action.dataset.consoleAction === "copy-raw-json") {
+    void copyRawJsonToClipboard(action.dataset.rawJsonSource)
   }
 })
 
@@ -1713,20 +1745,36 @@ function evaluateRotationFitFittingLab12ptSearch(options: {
         currentCandidate = previousCandidate
       }
 
+      const selectedValue = getRotationFitCandidateStateParameter(currentState, parameter)
+      const selectedRankInStep = rankedCandidates.find(
+        (candidate) =>
+          isSameRotationFitSearchValue(
+            getRotationFitCandidateStateParameter(candidate, parameter),
+            selectedValue,
+          ) &&
+          isSameRotationFitSearchValue(candidate.totalScore, currentCandidate.totalScore) &&
+          isSameRotationFitSearchValue(candidate.maxFrameScore, currentCandidate.maxFrameScore),
+      )?.rank
+
       coordinateDescentLog.push({
         iteration: iterationIndex + 1,
         parameter,
         previousValue: getRotationFitCandidateStateParameter(previousState, parameter),
-        bestValue: getRotationFitCandidateStateParameter(currentState, parameter),
+        bestValue: selectedValue,
         previousTotalScore: previousCandidate.totalScore,
         bestTotalScore: currentCandidate.totalScore,
         previousMaxFrameScore: previousCandidate.maxFrameScore,
         bestMaxFrameScore: currentCandidate.maxFrameScore,
         candidateCount: values.length,
         improved,
+        bestCandidateRankInStep: selectedRankInStep,
       })
     }
   }
+
+  const coordinateBoundaryStatus = calculateRotationFitCoordinateBoundaryStatus(currentCandidate)
+  const parameterImprovements =
+    createRotationFitParameterImprovementsFromCoordinateDescentLog(coordinateDescentLog)
 
   return {
     searchMode: ROTATION_FIT_FITTING_LAB_SEARCH_MODE,
@@ -1741,11 +1789,18 @@ function evaluateRotationFitFittingLab12ptSearch(options: {
     coordinateDescentIterations: ROTATION_FIT_FITTING_LAB_ITERATION_COUNT,
     coordinateDescentParameterOrder: ROTATION_FIT_FITTING_LAB_PARAMETER_ORDER,
     coordinateDescentRanges: RENDER_ROTATION_FIT_COORDINATE_DESCENT_RANGES,
-    coordinateBoundaryStatus: calculateRotationFitCoordinateBoundaryStatus(currentCandidate),
+    coordinateBoundaryStatus,
     initialCandidate,
     bestCandidate: currentCandidate,
     finalZByPointId: currentCandidate.zByPointId,
     coordinateDescentLog,
+    parameterImprovements,
+    parameterImprovementSummary: createRotationFitParameterImprovementSummary({
+      initialCandidate,
+      bestCandidate: currentCandidate,
+      parameterImprovements,
+      coordinateBoundaryStatus,
+    }),
   }
 }
 
@@ -2001,6 +2056,67 @@ function createRotationFitImprovement(
   }
 }
 
+function createRotationFitParameterImprovementsFromCoordinateDescentLog(
+  logs: RotationFitCoordinateDescentStepLog[],
+): RotationFitParameterImprovement[] {
+  return logs.map((log) => ({
+    parameter: log.parameter,
+    iteration: log.iteration,
+    scoreBefore: log.previousTotalScore,
+    scoreAfter: log.bestTotalScore,
+    scoreDelta: roundDebugNumber(log.bestTotalScore - log.previousTotalScore),
+    maxFrameScoreBefore: log.previousMaxFrameScore,
+    maxFrameScoreAfter: log.bestMaxFrameScore,
+    maxFrameScoreDelta: roundDebugNumber(log.bestMaxFrameScore - log.previousMaxFrameScore),
+    valueBefore: log.previousValue,
+    valueAfter: log.bestValue,
+    improved: log.improved,
+    bestCandidateRankInStep: log.bestCandidateRankInStep,
+    candidateCountInStep: log.candidateCount,
+  }))
+}
+
+function createRotationFitParameterImprovementSummary(options: {
+  initialCandidate: RotationFitCandidateResult | null
+  bestCandidate: RotationFitCandidateResult | null
+  parameterImprovements: RotationFitParameterImprovement[]
+  coordinateBoundaryStatus: RotationFitCoordinateBoundaryStatus | null
+}): RotationFitParameterImprovementSummary {
+  const improvementByParameter = new Map<string, number>()
+  for (const item of options.parameterImprovements) {
+    const improvement = roundDebugNumber(item.scoreBefore - item.scoreAfter)
+    if (improvement <= 0) {
+      continue
+    }
+    improvementByParameter.set(
+      item.parameter,
+      roundDebugNumber((improvementByParameter.get(item.parameter) ?? 0) + improvement),
+    )
+  }
+  const bestImprovingParameter =
+    Array.from(improvementByParameter.entries()).sort(
+      (left, right) => right[1] - left[1],
+    )[0]?.[0] ?? null
+  const boundaryHitParameters = options.coordinateBoundaryStatus
+    ? ROTATION_FIT_FITTING_LAB_PARAMETER_ORDER.filter((parameter) => {
+        const status = options.coordinateBoundaryStatus?.[parameter]
+        return Boolean(status?.bestAtMin || status?.bestAtMax)
+      })
+    : []
+
+  return {
+    totalImprovement:
+      options.initialCandidate && options.bestCandidate
+        ? roundDebugNumber(options.initialCandidate.totalScore - options.bestCandidate.totalScore)
+        : 0,
+    bestImprovingParameter,
+    noImprovementParameters: ROTATION_FIT_FITTING_LAB_PARAMETER_ORDER.filter(
+      (parameter) => !improvementByParameter.has(parameter),
+    ),
+    boundaryHitParameters,
+  }
+}
+
 function calculateRotationFitCoordinateBoundaryStatus(
   candidate: RotationFitCandidateResult,
 ): RotationFitCoordinateBoundaryStatus {
@@ -2051,6 +2167,10 @@ function calculateRotationFitSearchBoundaryStatus(
 
 function isRotationFitBoundaryValue(value: number, boundary: number): boolean {
   return Math.abs(value - boundary) <= ROTATION_FIT_BOUNDARY_EPSILON
+}
+
+function isSameRotationFitSearchValue(left: number, right: number): boolean {
+  return Math.abs(left - right) <= 0.000001
 }
 
 function evaluateRotationFitCandidate(
@@ -3560,6 +3680,7 @@ function createRawDebugPayload(
     poseBucket125Summary: getPoseBucket125Summary(),
     candidateSelectionSummary: state.poseReviewCandidateSummary,
     rotationFitEvaluation: state.rotationFitEvaluation,
+    fittingLab12ptSearch: state.rotationFitEvaluation?.fittingLab12ptSearch ?? null,
     acceptedFramesPreview: getAcceptedFramesPreview(),
     mediaPipeFrameSummary: state.summary,
     landmarkSummaryPointCount: adjusted12pt.length,
@@ -3577,6 +3698,10 @@ function createRawDebugPayload(
         }
       : null,
   }
+}
+
+function createCurrentRawDebugPayload(): Record<string, unknown> {
+  return createRawDebugPayload(getAdjusted12pt(), getCurrentManualAdjustments(), getFrameStateDebug())
 }
 
 function renderConsoleTabs(): void {
@@ -4122,7 +4247,7 @@ function renderRotationFitConsole(): string {
     renderConsoleSection("Bucket scores（姿勢分類別スコア）", renderRotationFitBucketScores(evaluation)),
     renderConsoleSection(
       "Raw JSON（生デバッグ JSON）",
-      `<pre class="console-json">${escapeHtml(JSON.stringify(evaluation, null, 2))}</pre>`,
+      renderRawJsonBlock(evaluation, "rotation-fit"),
     ),
   ].join("")
 }
@@ -4409,10 +4534,74 @@ function renderRotationFitCoordinateDescent(evaluation: RotationFitEvaluation): 
           ? formatRotationFitCoordinateBoundaryHitSummary(search.coordinateBoundaryStatus)
           : "-",
       ],
+      [
+        "parameterImprovementSummary（探索対象ごとの改善量要約）",
+        formatRotationFitParameterImprovementSummary(search.parameterImprovementSummary),
+      ],
     ]),
     renderRotationFitCoordinateDescentRanges(search.coordinateDescentRanges),
+    renderRotationFitParameterImprovements(search.parameterImprovements),
     renderRotationFitCoordinateDescentLog(search.coordinateDescentLog),
   ].join("")
+}
+
+function renderRotationFitParameterImprovements(
+  parameterImprovements: RotationFitParameterImprovement[],
+): string {
+  if (parameterImprovements.length === 0) {
+    return `<div class="landmark-summary-item empty">Improvement by parameter（探索対象ごとの改善量）はありません。</div>`
+  }
+
+  return `
+    <section class="parameter-improvement-section">
+      <h4>Improvement by parameter（探索対象ごとの改善量）</h4>
+      <div class="parameter-improvement-table-wrap">
+        <table class="parameter-improvement-table">
+          <thead>
+            <tr>
+              <th>parameter（探索対象）</th>
+              <th>iteration（反復）</th>
+              <th>valueBefore</th>
+              <th>valueAfter</th>
+              <th>scoreBefore</th>
+              <th>scoreAfter</th>
+              <th>improvement（改善量）</th>
+              <th>maxFrameScoreBefore</th>
+              <th>maxFrameScoreAfter</th>
+              <th>maxFrameScoreImprovement（最大フレーム改善量）</th>
+              <th>status（状態）</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${parameterImprovements
+              .map((item) => {
+                const improvement = roundDebugNumber(item.scoreBefore - item.scoreAfter)
+                const maxFrameImprovement = roundDebugNumber(
+                  item.maxFrameScoreBefore - item.maxFrameScoreAfter,
+                )
+                const isStrongImprovement = item.improved && improvement > 0
+                return `
+                  <tr class="${isStrongImprovement ? "is-improved" : ""}">
+                    <td><code>${escapeHtml(item.parameter)}</code></td>
+                    <td>${item.iteration}</td>
+                    <td>${formatNumber(item.valueBefore)}</td>
+                    <td>${formatNumber(item.valueAfter)}</td>
+                    <td>${formatNumber(item.scoreBefore)}</td>
+                    <td>${formatNumber(item.scoreAfter)}</td>
+                    <td>${formatNumber(improvement)}</td>
+                    <td>${formatNumber(item.maxFrameScoreBefore)}</td>
+                    <td>${formatNumber(item.maxFrameScoreAfter)}</td>
+                    <td>${formatNumber(maxFrameImprovement)}</td>
+                    <td>${item.improved ? "improved（改善）" : "no change（変化なし）"}</td>
+                  </tr>
+                `
+              })
+              .join("")}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `
 }
 
 function renderRotationFitCoordinateDescentRanges(
@@ -4515,6 +4704,17 @@ function formatRotationFitCoordinateBoundaryHitSummary(
     ]
   })
   return hits.length > 0 ? hits.join(" / ") : "No coordinate boundary hits（範囲端ヒットなし）"
+}
+
+function formatRotationFitParameterImprovementSummary(
+  summary: RotationFitParameterImprovementSummary,
+): string {
+  return [
+    `totalImprovement ${formatNumber(summary.totalImprovement)}`,
+    `bestImprovingParameter ${summary.bestImprovingParameter ?? "-"}`,
+    `noImprovementParameters ${summary.noImprovementParameters.length}`,
+    `boundaryHitParameters ${summary.boundaryHitParameters.length}`,
+  ].join(" / ")
 }
 
 function formatRotationFitRange(range: RotationFitSearchRange): string {
@@ -4669,8 +4869,67 @@ function renderRotationFitBucketScoreGroup(
 function renderRawConsole(rawDebugPayload: Record<string, unknown>): string {
   return renderConsoleSection(
     "rawDebug",
-    `<pre class="console-json">${escapeHtml(JSON.stringify(rawDebugPayload, null, 2))}</pre>`,
+    renderRawJsonBlock(rawDebugPayload, "debug"),
   )
+}
+
+function renderRawJsonBlock(payload: unknown, source: "debug" | "rotation-fit"): string {
+  return `
+    <div class="raw-json-actions">
+      <button type="button" class="secondary-button" data-console-action="copy-raw-json" data-raw-json-source="${source}">
+        Raw JSONをコピー
+      </button>
+      ${
+        state.rawJsonCopyStatus
+          ? `<span class="raw-json-copy-status">${escapeHtml(state.rawJsonCopyStatus)}</span>`
+          : ""
+      }
+    </div>
+    <pre class="console-json">${escapeHtml(JSON.stringify(payload, null, 2))}</pre>
+  `
+}
+
+async function copyRawJsonToClipboard(source: string | undefined): Promise<void> {
+  const payload = source === "rotation-fit" ? state.rotationFitEvaluation : createCurrentRawDebugPayload()
+  const text = JSON.stringify(payload, null, 2)
+
+  try {
+    if (navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(text)
+      } catch {
+        if (!copyTextWithFallback(text)) {
+          throw new Error("Clipboard API failed")
+        }
+      }
+    } else if (!copyTextWithFallback(text)) {
+      throw new Error("Clipboard API is unavailable")
+    }
+    state.rawJsonCopyStatus = "Raw JSONをコピーしました"
+  } catch {
+    state.rawJsonCopyStatus = "Raw JSONのコピーに失敗しました"
+  }
+
+  render()
+}
+
+function copyTextWithFallback(text: string): boolean {
+  const textarea = document.createElement("textarea")
+  textarea.value = text
+  textarea.setAttribute("readonly", "true")
+  textarea.style.position = "fixed"
+  textarea.style.left = "-9999px"
+  textarea.style.top = "0"
+  document.body.appendChild(textarea)
+  textarea.focus()
+  textarea.select()
+  textarea.setSelectionRange(0, textarea.value.length)
+
+  try {
+    return document.execCommand("copy")
+  } finally {
+    document.body.removeChild(textarea)
+  }
 }
 
 function renderPoseBucket125List(
