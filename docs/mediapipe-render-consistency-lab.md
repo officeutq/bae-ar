@@ -350,3 +350,6 @@ Render Consistency Lab は、最初から production asset を作る工程では
 - 125 bucket は将来、姿勢バランスよくフレーム採用するための土台
 - frontCandidate は poseBucket125 の center / center / center に付く badge として扱う
 - Pose タブは poseBucket125 の non-empty bucket 集計を表示する
+- Pose タブでは poseBucket125 の全125 bucket を 0件 bucket も含めて表示する
+- nonEmptyBucketCount は引き続き summary として表示する
+- 125 bucket の一覧は将来の均等採用の確認用であり、現時点では採用処理は行わない

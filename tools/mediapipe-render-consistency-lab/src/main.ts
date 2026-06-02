@@ -67,6 +67,13 @@ type PoseBucket125 = {
   rollBin: PoseAxisBin
 }
 
+type PoseBucket125Definition = PoseBucket125
+
+type PoseBucket125SummaryItem = PoseBucket125Definition & {
+  count: number
+  percent: number
+}
+
 type FrameBadge = {
   id: string
   label: string
@@ -174,14 +181,15 @@ const POSE_AXIS_BIN_THRESHOLDS = {
   centerAbsMax: 3,
   smallAbsMax: 10,
 } as const
-const POSE_AXIS_BINS: PoseAxisBin[] = [
+const POSE_AXIS_BINS = [
   "negativeLarge",
   "negativeSmall",
   "center",
   "positiveSmall",
   "positiveLarge",
-]
-const POSE_BUCKET_125_TOTAL_COUNT = POSE_AXIS_BINS.length ** 3
+] as const satisfies readonly PoseAxisBin[]
+const POSE_BUCKET_125_DEFINITIONS = buildPoseBucket125Definitions()
+const POSE_BUCKET_125_TOTAL_COUNT = POSE_BUCKET_125_DEFINITIONS.length
 const FRONT_CANDIDATE_POSE_BUCKET_125_ID =
   "yaw_center__pitch_center__roll_center"
 const EXPRESSION_TOO_STRONG_THRESHOLDS = {
@@ -973,6 +981,19 @@ function formatPoseBucket125Id(
   rollBin: PoseAxisBin,
 ): string {
   return `yaw_${yawBin}__pitch_${pitchBin}__roll_${rollBin}`
+}
+
+function buildPoseBucket125Definitions(): PoseBucket125Definition[] {
+  return POSE_AXIS_BINS.flatMap((yawBin) =>
+    POSE_AXIS_BINS.flatMap((pitchBin) =>
+      POSE_AXIS_BINS.map((rollBin) => ({
+        id: formatPoseBucket125Id(yawBin, pitchBin, rollBin),
+        yawBin,
+        pitchBin,
+        rollBin,
+      })),
+    ),
+  )
 }
 
 function buildPoseBucket125Badges(poseBucket125: PoseBucket125 | null): FrameBadge[] {
@@ -1866,7 +1887,10 @@ function renderPoseConsole(): string {
         ["smallAbsMax", String(summary.thresholds.smallAbsMax)],
       ]),
     ),
-    renderConsoleSection("Pose bucket 125", renderPoseBucket125List(summary.buckets)),
+    renderConsoleSection(
+      "Pose bucket 125",
+      renderPoseBucket125List(summary.buckets, summary.acceptedFrameCount),
+    ),
   ].join("")
 }
 
@@ -1877,19 +1901,18 @@ function renderRawConsole(rawDebugPayload: Record<string, unknown>): string {
   )
 }
 
-function renderPoseBucket125List(buckets: Array<PoseBucket125 & { count: number }>): string {
-  if (buckets.length === 0) {
-    return `<div class="landmark-summary-item empty">non-empty bucket はありません。</div>`
-  }
-
+function renderPoseBucket125List(
+  buckets: PoseBucket125SummaryItem[],
+  acceptedFrameCount: number,
+): string {
   return `
-    <div class="landmark-summary-grid">
+    <div class="landmark-summary-grid pose-bucket-list">
       ${buckets
         .map(
           (bucket) => `
             <div class="landmark-summary-item">
               <code>${escapeHtml(bucket.id)}</code>
-              <span>${String(bucket.count)}</span>
+              <span>${escapeHtml(formatPoseBucketSummaryValue(bucket, acceptedFrameCount))}</span>
             </div>
           `,
         )
@@ -2028,37 +2051,34 @@ function getPoseBucket125Summary(): {
   frontCandidateNotExpressionTooStrongCount: number
   excludedCount: number
   thresholds: typeof POSE_AXIS_BIN_THRESHOLDS
-  buckets: Array<PoseBucket125 & { count: number }>
+  buckets: PoseBucket125SummaryItem[]
 } {
-  const bucketCountById = new Map<string, PoseBucket125 & { count: number }>()
+  const bucketCountById = new Map<string, number>()
   for (const frame of state.acceptedFrames) {
     if (!frame.poseBucket125) {
       continue
     }
 
-    const current = bucketCountById.get(frame.poseBucket125.id)
-    if (current) {
-      current.count += 1
-      continue
-    }
-
-    bucketCountById.set(frame.poseBucket125.id, {
-      ...frame.poseBucket125,
-      count: 1,
-    })
+    bucketCountById.set(
+      frame.poseBucket125.id,
+      (bucketCountById.get(frame.poseBucket125.id) ?? 0) + 1,
+    )
   }
 
-  const buckets = Array.from(bucketCountById.values()).sort((left, right) => {
-    if (right.count !== left.count) {
-      return right.count - left.count
+  const acceptedFrameCount = state.acceptedFrames.length
+  const buckets = POSE_BUCKET_125_DEFINITIONS.map((definition) => {
+    const count = bucketCountById.get(definition.id) ?? 0
+    return {
+      ...definition,
+      count,
+      percent: acceptedFrameCount > 0 ? (count / acceptedFrameCount) * 100 : 0,
     }
-    return left.id.localeCompare(right.id)
   })
 
   return {
-    acceptedFrameCount: state.acceptedFrames.length,
+    acceptedFrameCount,
     totalBucketCount: POSE_BUCKET_125_TOTAL_COUNT,
-    nonEmptyBucketCount: buckets.length,
+    nonEmptyBucketCount: buckets.filter((bucket) => bucket.count > 0).length,
     frontCandidateCount: getFrontCandidateCount(),
     expressionTooStrongCount: getExpressionTooStrongCount(),
     frontCandidateExpressionTooStrongCount: getFrontCandidateExpressionTooStrongCount(),
@@ -2097,6 +2117,13 @@ function hasFrameBadge(frame: AcceptedFrameSnapshot, badgeId: string): boolean {
 function formatPoseBucketCount(count: number, total: number): string {
   const rate = total > 0 ? (count / total) * 100 : 0
   return `${count} / ${total} (${rate.toFixed(2)}%)`
+}
+
+function formatPoseBucketSummaryValue(
+  bucket: PoseBucket125SummaryItem,
+  acceptedFrameCount: number,
+): string {
+  return `${bucket.count} / ${acceptedFrameCount} (${bucket.percent.toFixed(2)}%)`
 }
 
 function formatFrameBadges(badges: FrameBadge[]): string {
