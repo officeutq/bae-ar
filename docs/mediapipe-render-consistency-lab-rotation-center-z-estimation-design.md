@@ -311,3 +311,26 @@ upperFaceCenter.z
 Render Consistency Lab への移植では、Fitting Lab の x/y 座標系は使わない。12点の x/y は `adjusted12pt`（手動調整後12点）から作り、評価時は `x = adjusted12pt.x * videoAspectRatio`、`y = adjusted12pt.y` とする。pixel coordinate（ピクセル座標）、face bounds center（顔外枠中心）、顔幅 normalization（正規化）は使わない。`rotationCenter.x`（回転中心x）は `0.5 * videoAspectRatio` 固定とする。
 
 この探索は 478点へ拡張する前の 12点段階だけを扱う。`perLandmarkZSearch`（ランドマーク単位z探索）、478点 z 推定、mesh（メッシュ化） / render（レンダリング） / MediaPipe re-detection（MediaPipe再検出）、production export（本番書き出し）は対象外とする。
+
+### Render Coordinate Range Correction
+
+Fitting Lab から採用するのは `coordinateDescent`（座標降下探索）という探索アルゴリズムと、1つの parameter（探索対象）だけを動かして step（手順）ごとに best candidate（最良候補）を次の base candidate（基準候補）にする実行手順である。Fitting Lab の座標系・探索範囲はそのまま採用しない。
+
+Render Consistency Lab では `adjusted12pt`（手動調整後12点）の image-normalized coordinate（画像正規化座標）を使う。評価時は以下に固定する。
+
+```text
+x = adjusted12pt.x * videoAspectRatio
+y = adjusted12pt.y
+rotationCenter.x = 0.5 * videoAspectRatio
+```
+
+Fitting Lab では `rotationCenter.y`（回転中心y）の符号・原点・スケールが Render 側と違っていた可能性がある。Render 側の前段実験では `rotationCenter.y = 0.40` 方向で score（誤差スコア）が改善していたため、Render 用の coordinate descent range（座標降下探索範囲）は以下にする。
+
+```text
+rotationCenter.y = -0.05 .. 0.50 / step 0.01
+rotationCenter.z = 0.00 .. 0.12 / step 0.01
+```
+
+12点 z range（12点奥行き探索範囲）は Fitting Lab の値を参考にした debug range（検証用範囲）として明示的に Render 側定数へ複製する。これは Render Consistency Lab の座標系では今後の調整対象であり、production asset（本番用アセット）ではない。
+
+`coordinateBoundaryStatus`（座標降下探索の範囲端ヒット状態）で、`rotationCenter.y` が Render 用 range の `0.50` 上限に張り付くか確認できるようにする。Raw JSON（生デバッグJSON）には `coordinateSystemSource: render_adjusted12pt_aspect_corrected`、`rangeSource: render_consistency_lab`、`fittingLabAlgorithmOnly: true` を含める。

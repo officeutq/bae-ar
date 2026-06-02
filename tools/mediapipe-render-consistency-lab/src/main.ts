@@ -428,17 +428,30 @@ type RotationFitCoordinateDescentStepLog = {
   improved: boolean
 }
 
+type RotationFitCoordinateBoundaryStatus = Record<
+  RotationFitLocalSearchParameter,
+  {
+    bestAtMin: boolean
+    bestAtMax: boolean
+  }
+>
+
 type RotationFitFittingLab12ptSearch = {
   searchMode: "fitting_lab_12pt_rotation_center"
   sourceLab: "tools/ideal-face-fitting-lab"
   sourcePointSetId: "12pt_rotation_center"
+  coordinateSystemSource: "render_adjusted12pt_aspect_corrected"
+  rangeSource: "render_consistency_lab"
+  fittingLabAlgorithmOnly: true
   baseCandidatePresetId: "naturalNoseWithRotationCenter"
   candidateGeneration: "coordinateDescent"
   coordinateDescentIterations: number
   coordinateDescentParameterOrder: RotationFitLocalSearchParameter[]
   coordinateDescentRanges: Record<RotationFitLocalSearchParameter, RotationFitSearchRange>
+  coordinateBoundaryStatus: RotationFitCoordinateBoundaryStatus | null
   initialCandidate: RotationFitCandidateResult | null
   bestCandidate: RotationFitCandidateResult | null
+  finalZByPointId: Record<string, number> | null
   coordinateDescentLog: RotationFitCoordinateDescentStepLog[]
 }
 
@@ -480,6 +493,7 @@ type RotationFitEvaluation = {
   stageB?: RotationFitStageBResult
   fittingLab12ptSearch?: RotationFitFittingLab12ptSearch
   coordinateDescentLog?: RotationFitCoordinateDescentStepLog[]
+  coordinateBoundaryStatus?: RotationFitCoordinateBoundaryStatus | null
   improvement?: RotationFitImprovement
   debugPreset: {
     zByPointId: Record<string, number>
@@ -751,12 +765,14 @@ const ROTATION_FIT_FITTING_LAB_PARAMETER_ORDER: RotationFitLocalSearchParameter[
   "rightJaw.z",
   "upperFaceCenter.z",
 ]
-const ROTATION_FIT_FITTING_LAB_COORDINATE_DESCENT_RANGES: Record<
+// 12点 z range は Fitting Lab の値を参考にした debug range（検証用範囲）。
+// Render Consistency Lab の adjusted12pt 座標系では今後も調整対象で、production asset（本番用アセット）ではない。
+const RENDER_ROTATION_FIT_COORDINATE_DESCENT_RANGES: Record<
   RotationFitLocalSearchParameter,
   RotationFitSearchRange
 > = {
-  "rotationCenter.y": { min: -0.24, max: 0, step: 0.01 },
-  "rotationCenter.z": { min: 0.02, max: 0.12, step: 0.01 },
+  "rotationCenter.y": { min: -0.05, max: 0.5, step: 0.01 },
+  "rotationCenter.z": { min: 0, max: 0.12, step: 0.01 },
   "headTop.z": { min: -0.02, max: 0.03, step: 0.01 },
   "chin.z": { min: -0.05, max: 0.03, step: 0.01 },
   "leftCheek.z": { min: 0.02, max: 0.08, step: 0.01 },
@@ -1530,6 +1546,7 @@ function evaluateRotationFit(): RotationFitEvaluation {
   }
 
   const improvement = createRotationFitImprovement(initialCandidate, bestCandidate)
+  const coordinateBoundaryStatus = fittingLabSearch.coordinateBoundaryStatus
 
   return {
     ...baseEvaluation,
@@ -1559,6 +1576,7 @@ function evaluateRotationFit(): RotationFitEvaluation {
     topCandidates: [createRotationFitCandidateSummary(bestCandidate)],
     fittingLab12ptSearch: fittingLabSearch,
     coordinateDescentLog: fittingLabSearch.coordinateDescentLog,
+    coordinateBoundaryStatus,
     improvement,
     finalZByPointId: bestCandidate.zByPointId,
   }
@@ -1573,8 +1591,8 @@ function createEmptyRotationFitEvaluation(
     status: "completed",
     searchMode: ROTATION_FIT_FITTING_LAB_SEARCH_MODE,
     searchRange: {
-      y: ROTATION_FIT_ROTATION_CENTER_Y_RANGE,
-      z: ROTATION_FIT_ROTATION_CENTER_Z_RANGE,
+      y: RENDER_ROTATION_FIT_COORDINATE_DESCENT_RANGES["rotationCenter.y"],
+      z: RENDER_ROTATION_FIT_COORDINATE_DESCENT_RANGES["rotationCenter.z"],
     },
     candidateCount,
     evaluationFrameCount: 0,
@@ -1648,7 +1666,7 @@ function evaluateRotationFitFittingLab12ptSearch(options: {
     iterationIndex += 1
   ) {
     for (const parameter of ROTATION_FIT_FITTING_LAB_PARAMETER_ORDER) {
-      const range = ROTATION_FIT_FITTING_LAB_COORDINATE_DESCENT_RANGES[parameter]
+      const range = RENDER_ROTATION_FIT_COORDINATE_DESCENT_RANGES[parameter]
       const values = createRotationFitRangeCandidates(range)
       const previousState = cloneRotationFitCandidateState(currentState)
       const previousCandidate = currentCandidate
@@ -1699,13 +1717,18 @@ function evaluateRotationFitFittingLab12ptSearch(options: {
     searchMode: ROTATION_FIT_FITTING_LAB_SEARCH_MODE,
     sourceLab: "tools/ideal-face-fitting-lab",
     sourcePointSetId: "12pt_rotation_center",
+    coordinateSystemSource: "render_adjusted12pt_aspect_corrected",
+    rangeSource: "render_consistency_lab",
+    fittingLabAlgorithmOnly: true,
     baseCandidatePresetId: "naturalNoseWithRotationCenter",
     candidateGeneration: "coordinateDescent",
     coordinateDescentIterations: ROTATION_FIT_FITTING_LAB_ITERATION_COUNT,
     coordinateDescentParameterOrder: ROTATION_FIT_FITTING_LAB_PARAMETER_ORDER,
-    coordinateDescentRanges: ROTATION_FIT_FITTING_LAB_COORDINATE_DESCENT_RANGES,
+    coordinateDescentRanges: RENDER_ROTATION_FIT_COORDINATE_DESCENT_RANGES,
+    coordinateBoundaryStatus: calculateRotationFitCoordinateBoundaryStatus(currentCandidate),
     initialCandidate,
     bestCandidate: currentCandidate,
+    finalZByPointId: currentCandidate.zByPointId,
     coordinateDescentLog,
   }
 }
@@ -1962,25 +1985,50 @@ function createRotationFitImprovement(
   }
 }
 
+function calculateRotationFitCoordinateBoundaryStatus(
+  candidate: RotationFitCandidateResult,
+): RotationFitCoordinateBoundaryStatus {
+  return Object.fromEntries(
+    ROTATION_FIT_FITTING_LAB_PARAMETER_ORDER.map((parameter) => {
+      const range = RENDER_ROTATION_FIT_COORDINATE_DESCENT_RANGES[parameter]
+      const value =
+        parameter === "rotationCenter.y"
+          ? candidate.rotationCenter.y
+          : parameter === "rotationCenter.z"
+            ? candidate.rotationCenter.z
+            : candidate.zByPointId[parameter.replace(/\.z$/, "")] ?? 0
+      return [
+        parameter,
+        {
+          bestAtMin: isRotationFitBoundaryValue(value, range.min),
+          bestAtMax: isRotationFitBoundaryValue(value, range.max),
+        },
+      ]
+    }),
+  ) as RotationFitCoordinateBoundaryStatus
+}
+
 function calculateRotationFitSearchBoundaryStatus(
   bestRotationCenter: Point3D,
 ): RotationFitSearchBoundaryStatus {
+  const yRange = RENDER_ROTATION_FIT_COORDINATE_DESCENT_RANGES["rotationCenter.y"]
+  const zRange = RENDER_ROTATION_FIT_COORDINATE_DESCENT_RANGES["rotationCenter.z"]
   return {
     bestYAtMin: isRotationFitBoundaryValue(
       bestRotationCenter.y,
-      ROTATION_FIT_ROTATION_CENTER_Y_RANGE.min,
+      yRange.min,
     ),
     bestYAtMax: isRotationFitBoundaryValue(
       bestRotationCenter.y,
-      ROTATION_FIT_ROTATION_CENTER_Y_RANGE.max,
+      yRange.max,
     ),
     bestZAtMin: isRotationFitBoundaryValue(
       bestRotationCenter.z,
-      ROTATION_FIT_ROTATION_CENTER_Z_RANGE.min,
+      zRange.min,
     ),
     bestZAtMax: isRotationFitBoundaryValue(
       bestRotationCenter.z,
-      ROTATION_FIT_ROTATION_CENTER_Z_RANGE.max,
+      zRange.max,
     ),
   }
 }
@@ -4085,6 +4133,26 @@ function renderRotationFitSummary(evaluation: RotationFitEvaluation): string {
       "tools/ideal-face-fitting-lab / 12pt_rotation_center",
     ],
     [
+      "coordinate system note（座標系メモ）",
+      "Fitting Lab の座標系ではなく Render adjusted12pt の aspect-corrected coordinate（横縦比補正済み座標）を使う",
+    ],
+    [
+      "rangeSource（探索範囲の出所）",
+      evaluation.fittingLab12ptSearch?.rangeSource ?? "-",
+    ],
+    [
+      "rotationCenter.y range（回転中心y探索範囲）",
+      formatRotationFitRange(
+        RENDER_ROTATION_FIT_COORDINATE_DESCENT_RANGES["rotationCenter.y"],
+      ),
+    ],
+    [
+      "rotationCenter.z range（回転中心z探索範囲）",
+      formatRotationFitRange(
+        RENDER_ROTATION_FIT_COORDINATE_DESCENT_RANGES["rotationCenter.z"],
+      ),
+    ],
+    [
       "candidateGeneration（候補生成）",
       evaluation.fittingLab12ptSearch?.candidateGeneration ?? "-",
     ],
@@ -4101,6 +4169,12 @@ function renderRotationFitSummary(evaluation: RotationFitEvaluation): string {
     [
       "best zByPointId（最良の点ごとの奥行き）",
       evaluation.bestCandidate ? formatRotationFitZByPointId(evaluation.bestCandidate.zByPointId) : "-",
+    ],
+    [
+      "coordinateBoundaryStatus（探索範囲端ヒット状態）",
+      evaluation.coordinateBoundaryStatus
+        ? formatRotationFitCoordinateBoundaryStatusSummary(evaluation.coordinateBoundaryStatus)
+        : "-",
     ],
     [
       "improvement totalScore（改善量: 全体平均誤差）",
@@ -4251,6 +4325,9 @@ function renderRotationFitCoordinateDescent(evaluation: RotationFitEvaluation): 
       ["searchMode（探索モード）", search.searchMode],
       ["sourceLab（元実装）", search.sourceLab],
       ["sourcePointSetId（元点セット）", search.sourcePointSetId],
+      ["coordinateSystemSource（座標系の出所）", search.coordinateSystemSource],
+      ["rangeSource（探索範囲の出所）", search.rangeSource],
+      ["fittingLabAlgorithmOnly（Fitting Lab はアルゴリズムのみ踏襲）", String(search.fittingLabAlgorithmOnly)],
       ["baseCandidatePresetId（基準候補）", search.baseCandidatePresetId],
       ["candidateGeneration（候補生成）", search.candidateGeneration],
       ["coordinateDescentIterations（反復回数）", String(search.coordinateDescentIterations)],
@@ -4266,6 +4343,12 @@ function renderRotationFitCoordinateDescent(evaluation: RotationFitEvaluation): 
       [
         "best zByPointId（最良の点ごとの奥行き）",
         search.bestCandidate ? formatRotationFitZByPointId(search.bestCandidate.zByPointId) : "-",
+      ],
+      [
+        "coordinateBoundaryStatus（探索範囲端ヒット状態）",
+        search.coordinateBoundaryStatus
+          ? formatRotationFitCoordinateBoundaryStatusSummary(search.coordinateBoundaryStatus)
+          : "-",
       ],
     ]),
     renderRotationFitCoordinateDescentRanges(search.coordinateDescentRanges),
@@ -4351,6 +4434,19 @@ function formatRotationFitBoundaryStatus(
   )} / bestZAtMin: ${String(boundaryStatus.bestZAtMin)} / bestZAtMax: ${String(
     boundaryStatus.bestZAtMax,
   )}`
+}
+
+function formatRotationFitCoordinateBoundaryStatusSummary(
+  boundaryStatus: RotationFitCoordinateBoundaryStatus,
+): string {
+  return ROTATION_FIT_FITTING_LAB_PARAMETER_ORDER.map((parameter) => {
+    const status = boundaryStatus[parameter]
+    return `${parameter}: min ${String(status.bestAtMin)} / max ${String(status.bestAtMax)}`
+  }).join(" / ")
+}
+
+function formatRotationFitRange(range: RotationFitSearchRange): string {
+  return `${formatNumber(range.min)} .. ${formatNumber(range.max)} / step ${formatNumber(range.step)}`
 }
 
 function formatRotationFitGroupOffsets(

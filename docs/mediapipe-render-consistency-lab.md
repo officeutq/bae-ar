@@ -482,3 +482,14 @@ Render Consistency Lab は、最初から production asset を作る工程では
 - iterationCount（反復回数）は Fitting Lab の preset と同じく `2` とする。
 - Raw JSON（生デバッグJSON）には `fittingLab12ptSearch`、`coordinateDescentLog`（座標降下探索ログ）、`bestCandidate`、`finalZByPointId`（最終的な点ごとの奥行き）、`bestRotationCenter`（最良回転中心）を出す。
 - 今回も 478点 z 推定、`perLandmarkZSearch`（ランドマーク単位z探索）、mesh（メッシュ化） / render（レンダリング） / MediaPipe re-detection（MediaPipe再検出）、production export（本番書き出し）は行わない。
+
+### Render Coordinate Ranges（Render座標系の探索範囲）
+
+- Fitting Lab から採用するのは `coordinateDescent`（座標降下探索）という探索アルゴリズムと実行手順であり、Fitting Lab の座標系・探索範囲はそのまま採用しない。
+- Render Consistency Lab では `adjusted12pt`（手動調整後12点）の image-normalized coordinate（画像正規化座標）を使い、評価時は `x = adjusted12pt.x * videoAspectRatio`、`y = adjusted12pt.y` とする。
+- `rotationCenter.x`（回転中心x）は `0.5 * videoAspectRatio` 固定とする。
+- Fitting Lab では `rotationCenter.y`（回転中心y）の符号・原点・スケールが Render 側と違っていた可能性があるため、Render 用の `rotationCenter.y` 探索範囲は `-0.05 .. 0.50 / step 0.01` とする。
+- `rotationCenter.z`（回転中心z）は Render 側では `0.00 .. 0.12 / step 0.01` とする。
+- 12点 z range（12点奥行き探索範囲）は Fitting Lab の値を参考にした debug range（検証用範囲）であり、Render Consistency Lab の座標系では今後の調整対象とする。production asset（本番用アセット）ではない。
+- `coordinateBoundaryStatus`（座標降下探索の範囲端ヒット状態）で、Render 用探索範囲でも `rotationCenter.y` が `0.50` 上限に張り付くか確認する。
+- Raw JSON（生デバッグJSON）の `fittingLab12ptSearch` には `coordinateSystemSource: render_adjusted12pt_aspect_corrected`、`rangeSource: render_consistency_lab`、`fittingLabAlgorithmOnly: true` を出す。
