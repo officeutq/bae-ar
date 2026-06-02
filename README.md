@@ -338,6 +338,8 @@ npm run start:mediapipe-render-consistency-lab
 - [Shape Warp production 方針](docs/shape-warp-production-direction.md)
 - [beauty_filter_asset_v1 方針](docs/beauty-filter-asset-v1.md)
 - [MediaPipe Render Consistency Lab](docs/mediapipe-render-consistency-lab.md)
+- [MediaPipe Render Consistency Lab next step after effective rotation center study](docs/mediapipe-render-consistency-lab-next-after-effective-rotation-center.md)
+- [MediaPipe Canonical Effective Rotation Center Lab](docs/mediapipe-canonical-effective-rotation-center-lab.md)
 - [仕様書とロードマップ](docs/bae_ar_beauty_engine_spec_and_roadmap_2026_05.md)
 
 ## 今回 README で扱わないこと

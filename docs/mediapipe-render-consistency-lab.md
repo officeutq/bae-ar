@@ -1,5 +1,10 @@
 # MediaPipe Render Consistency Lab
 
+## Related docs
+
+- [MediaPipe Render Consistency Lab next step after effective rotation center study](mediapipe-render-consistency-lab-next-after-effective-rotation-center.md)
+- [MediaPipe Canonical Effective Rotation Center Lab](mediapipe-canonical-effective-rotation-center-lab.md)
+
 ## 1. 目的
 
 `tools/mediapipe-render-consistency-lab` は、production 用 IdealFace asset を直接作る正式 authoring tool ではありません。
