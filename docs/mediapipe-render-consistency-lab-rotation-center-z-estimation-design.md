@@ -325,7 +325,17 @@ upperFaceCenter.z
 
 探索は 2段階にする。Stage 1（粗探索）は既存の Render Consistency Lab 用 range と step `0.01` を使い、Fitting Lab で確認した coordinate descent（座標降下探索）と同じく `2` iteration 実行する。Stage 2（細かい追加探索）は Stage 1 の best candidate（最良候補）を base candidate（基準候補）にし、best 値の周辺だけを `step 0.005` / `radius 0.01` / `iteration 1` で再探索する。fine search（細かい追加探索）は全範囲を細かくするものではなく、元の Render 用探索範囲を超える値は clamp（範囲内に丸める）する。
 
+`fitting_lab_12pt_rotation_center`（Fitting Lab 12点回転中心探索）は、debug UI（検証用 UI）として `passMode: two_pass_base_rectification` の 2週構成にできる。firstPass（1週目）は従来どおり frontCandidate（正面候補）の `adjusted12pt` をそのまま base12pt（基準12点）にし、左右対称 z 探索、coarse search（粗探索）、fine search（細かい追加探索）を行う。
+
+secondPass（2週目）は firstPass の `bestCandidate.zByPointId` と `bestCandidate.rotationCenter` を使い、baseFrameSource（基準フレーム）の yaw（左右向き） / pitch（上下向き） / roll（傾き）を打ち消して正面へ戻した base12pt を作る。補正は aspect-corrected image coordinate（横縦比補正済み画像座標）上で、`rotationCenter` を引き、既存 projection（投影）の回転順に対する逆回転を適用し、`rotationCenter` を足し戻す。2週目ではその rectified base12pt（正面補正済み基準12点）の x/y を使い、同じ 12+2点探索をもう一度行う。
+
+2週目で変更するのは base12pt の x/y だけである。各 evaluation frame（評価フレーム）の target（比較対象）は従来どおり `x = adjusted12pt.x * videoAspectRatio`、`y = adjusted12pt.y` とし、pixel coordinate（ピクセル座標）、face bounds center（顔外枠中心）、顔幅 normalization（正規化）は使わない。secondPass の初期候補は firstPass の `bestCandidate` とするが、2週目の中で `rotationCenter.y` / `rotationCenter.z` と 12点 z は再探索する。
+
+この 2週構成の目的は、「正面候補が完全な正面ではないこと」が score（誤差スコア）の主因かを確認することである。secondPass の結果を無条件に production export（本番書き出し）へ採用するものではなく、debug UI（検証用 UI）の診断結果として扱う。
+
 Raw JSON（生デバッグJSON）には `searchStages.coarse` と `searchStages.fine` を分けて出し、`parameterImprovements` / `parameterImprovementSummary` は coarse search（粗探索）と fine search（細かい追加探索）の両方を確認できるようにする。最終的な `bestCandidate` は fine search の best candidate とするが、Stage 1 の best candidate も `searchStages.coarse.bestCandidate` に残す。
+
+2週構成の Raw JSON（生デバッグJSON）では、`fittingLab12ptSearch.firstPass` / `fittingLab12ptSearch.secondPass` / `fittingLab12ptSearch.passImprovement` を残す。`secondPass.baseFrameRectification` には `enabled: true`、`source: "firstPass.bestCandidate"`、`baseFramePose`、`inversePoseApplied`、`coordinateSystem: "aspect_corrected_image_coordinate"` を含める。top-level の `bestCandidate`、`bestRotationCenter`、`finalZByPointId` は secondPass（2週目）の結果を指してよい。
 
 `coordinateDescentRanges`（座標降下探索範囲）は Render Consistency Lab 用に定義する。Fitting Lab の `DEFAULT_COORDINATE_DESCENT_RANGES`、Fitting Lab の `rotationCenter.y/z` range（回転中心探索範囲）、Fitting Lab の 12点 z range（12点奥行き探索範囲）は使わない。
 
@@ -376,8 +386,8 @@ upperFaceCenter.z = -0.03 .. 0.06 / step 0.01
 
 `coordinateBoundaryStatus`（座標降下探索の範囲端ヒット状態）で、`rotationCenter.y` が Render 用 range の `0.50` 上限に張り付くか、`rotationCenter.z` や 12点 z が範囲端に張り付くか確認できるようにする。Raw JSON（生デバッグJSON）には `coordinateSystemSource: render_adjusted12pt_aspect_corrected`、`rangeSource: render_consistency_lab`、`zRangeSource: render_consistency_lab_uniform_debug_range`、`fittingLabAlgorithmOnly: true` を含める。
 
-Rotation Fit（回転中心評価）タブには `zSymmetryMode（奥行き左右対称モード）`、左右 z 差、`coarseTotalScore`（粗探索後の全体平均誤差）、`fineTotalScore`（細かい追加探索後の全体平均誤差）、`fineImprovement`（細かい追加探索による改善量）を表示する。`Improvement by parameter（探索対象ごとの改善量）` は coarse search（粗探索）と fine search（細かい追加探索）に分け、coordinate descent（座標降下探索）の各 step（手順）について、探索順のまま `parameter`（探索対象）、`iteration`（反復回数）、`valueBefore` / `valueAfter`、`scoreBefore` / `scoreAfter`、`improvement`（改善量）、`maxFrameScoreImprovement`（最大フレームスコア改善量）、`improved` / `no change`（改善あり / 変化なし）を表示する。
+Rotation Fit（回転中心評価）タブには `zSymmetryMode（奥行き左右対称モード）`、左右 z 差、`coarseTotalScore`（粗探索後の全体平均誤差）、`fineTotalScore`（細かい追加探索後の全体平均誤差）、`fineImprovement`（細かい追加探索による改善量）を表示する。2週構成では pass summary（探索周回の要約）、score comparison（誤差比較）、base frame rectification（正面基準補正）も表示する。`Improvement by parameter（探索対象ごとの改善量）` は firstPass（1週目） / secondPass（2週目）それぞれの coarse search（粗探索）と fine search（細かい追加探索）に分け、coordinate descent（座標降下探索）の各 step（手順）について、探索順のまま `parameter`（探索対象）、`iteration`（反復回数）、`valueBefore` / `valueAfter`、`scoreBefore` / `scoreAfter`、`improvement`（改善量）、`maxFrameScoreImprovement`（最大フレームスコア改善量）、`improved` / `no change`（改善あり / 変化なし）を表示する。
 
-Raw JSON（生デバッグJSON）の `fittingLab12ptSearch` には `searchStages.coarse` / `searchStages.fine`、`parameterImprovements`（探索対象ごとの改善量）と `parameterImprovementSummary`（改善量要約）を含める。`parameterImprovements.scoreDelta` は `scoreAfter - scoreBefore` とし、改善した場合は negative value（負の値）になる。これは既存の `coordinateDescentLog`（座標降下探索ログ）を読みやすく要約する debug payload（検証用データ）であり、production export（本番書き出し）ではない。
+Raw JSON（生デバッグJSON）の `fittingLab12ptSearch` には `passMode: "two_pass_base_rectification"`、`firstPass`、`secondPass`、`passImprovement`、`searchStages.coarse` / `searchStages.fine`、`parameterImprovements`（探索対象ごとの改善量）と `parameterImprovementSummary`（改善量要約）を含める。`parameterImprovements.scoreDelta` は `scoreAfter - scoreBefore` とし、改善した場合は negative value（負の値）になる。これは既存の `coordinateDescentLog`（座標降下探索ログ）を読みやすく要約する debug payload（検証用データ）であり、production export（本番書き出し）ではない。
 
 Debug Console（デバッグコンソール）の Raw タブ、または Rotation Fit（回転中心評価）内の Raw JSON 表示には `Raw JSONをコピー` ボタンを置く。現在の payload（ペイロード）を `JSON.stringify(payload, null, 2)` した文字列として clipboard（クリップボード）へコピーし、探索結果を Codex やチャットへ貼りやすくする。Clipboard API（クリップボードAPI）が使えない環境では例外処理を行い、可能なら fallback（代替処理）でコピーする。この機能も debug UI（検証用 UI）であり、production export（本番書き出し）ではない。
