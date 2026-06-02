@@ -462,3 +462,11 @@ Render Consistency Lab は、最初から production asset を作る工程では
 - best candidate（最良候補）の projected12pt（投影後12点）と adjusted12pt（手動調整後12点）を比較し、score evaluator（スコア評価器）の frame scores（フレーム別スコア）、point scores（点別スコア）、bucket scores（姿勢分類別スコア）を表示します。
 - 評価座標は aspect-corrected image coordinate（横縦比補正済み画像座標）で、`x = adjusted12pt.x * videoAspectRatio`、`y = adjusted12pt.y` とします。pixel coordinate（ピクセル座標）、face bounds center（顔外枠中心）、顔幅 normalization（正規化）は使いません。
 - 12pt z 探索、coordinate descent（座標降下法）などの本格探索は後段で扱います。
+
+### Stage B: group z search（段階B: グループ単位奥行き探索）
+
+- 直近の Stage A（段階A）では `rotationCenter.y`（回転中心の縦方向）を `-0.24 .. 0.40 / step 0.02` まで広げても、`bestRotationCenter.y`（最良の回転中心y）が上限 `0.40` に張り付いた。
+- ここからさらに `rotationCenter.y`（回転中心の縦方向）だけを広げるより、固定 `12pt z preset`（12点奥行きプリセット）と実データの不一致を疑い、Stage B（段階B）として `group z search`（グループ単位奥行き探索）へ進む。
+- Stage B（段階B）は `rotationFitDebugPreset_provisional_v1`（検証用の暫定奥行きプリセット）を base z（基準奥行き）とし、`centerAxis`（中心軸） / `cheek`（頬） / `jaw`（顎） / `eye`（目）の group（グループ）ごとに z offset（奥行き加算量）を小さく探索する debug search（検証用探索）である。
+- Stage B（段階B）では `rotationCenter.x = 0.5 * videoAspectRatio` を固定し、`rotationCenter.y/z`（回転中心の縦方向・奥行き方向）は Stage A（段階A）の best candidate（最良候補）を使う。
+- 今回は `per-point z search`（点単位奥行き探索）、本格的な `coordinate descent`（座標降下法）、`14 unknowns optimization`（14個の未知数の同時最適化）、mesh（メッシュ化） / render（レンダリング） / MediaPipe re-detection（MediaPipe再検出）、production export（本番書き出し）には進まない。

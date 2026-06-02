@@ -141,6 +141,12 @@ for rotationCenter.y candidates
 
 ### Stage B: group z search
 
+Stage A（段階A）で `rotationCenter.y`（回転中心の縦方向）の探索範囲を `-0.24 .. 0.40 / step 0.02` まで広げても、`bestRotationCenter.y`（最良の回転中心y）が上限 `0.40` に張り付いた。ここからは `rotationCenter.y`（回転中心の縦方向）をさらに広げるのではなく、固定 `12pt z preset`（12点奥行きプリセット）が合っていない可能性を確認するため、Stage B（段階B）の `group z search`（グループ単位奥行き探索）へ進む。
+
+Stage B（段階B）は `rotationFitDebugPreset_provisional_v1`（検証用の暫定奥行きプリセット）に group offset（グループ単位の奥行き加算量）を足して、固定 z preset（固定奥行きプリセット）の不一致を確認・補正する debug search（検証用探索）である。`rotationCenter.y/z`（回転中心の縦方向・奥行き方向）は Stage A（段階A）の best candidate（最良候補）を固定して使う。
+
+この段階ではまだ `per-point z search`（点単位奥行き探索）、本格的な `coordinate descent`（座標降下法）、`14 unknowns optimization`（14個の未知数の同時最適化）、mesh（メッシュ化） / render（レンダリング） / MediaPipe re-detection（MediaPipe再検出）、production export（本番書き出し）には進まない。
+
 次に 12点を group（グループ）へ分け、group z（グループ単位奥行き）を探索する。
 
 初期 group 案:
