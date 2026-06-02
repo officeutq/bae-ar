@@ -115,6 +115,15 @@ Render Consistency Lab でも同じ考え方を使い、coarse-to-fine（粗か�
 
 狙いは、回転中心が明らかに不自然な領域を早めに捨てることです。
 
+`tools/mediapipe-render-consistency-lab` の `回転中心評価・粗探索` ボタンは、この Stage A（段階A）だけを実行する。固定 12pt z preset（12点奥行きプリセット）は `rotationFitDebugPreset_provisional_v1` を使い、`rotationCenter.x = 0.5 * videoAspectRatio` を固定する。12点 z 探索、14未知数の同時探索、mesh / render / MediaPipe re-detection（再検出）、production export（本番書き出し）はまだ行わない。
+
+初期探索範囲:
+
+```text
+rotationCenter.y = -0.24 .. 0.04 / step 0.02
+rotationCenter.z = 0.00 .. 0.12 / step 0.01
+```
+
 ```text
 base12pt.x/y fixed from front adjusted12pt
 base12pt.z = initial group preset

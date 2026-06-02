@@ -454,6 +454,8 @@ Render Consistency Lab は、最初から production asset を作る工程では
 ## UI 方針: Rotation Fit debug UI
 
 - `Rotation Fit（回転中心評価）` タブは一時的な debug UI（検証用 UI）です。
-- 固定 `rotationCenter` と `rotationFitDebugPreset_provisional_v1` の固定 12pt z preset（12点奥行きプリセット）を使い、projected12pt（投影後12点）と adjusted12pt（手動調整後12点）の score evaluator（スコア評価器）が接続できるかを確認します。
+- `回転中心評価・粗探索` ボタンは、`rotationFitDebugPreset_provisional_v1` の固定 12pt z preset（12点奥行きプリセット）を使い、`rotationCenter.y` / `rotationCenter.z` の coarse search（粗探索）を行います。
+- Stage A（段階A）の実装として、`rotationCenter.x = 0.5 * videoAspectRatio` を固定し、12点 z 探索、14未知数の同時探索、mesh / render / MediaPipe re-detection（再検出）はまだ行いません。
+- best candidate（最良候補）の projected12pt（投影後12点）と adjusted12pt（手動調整後12点）を比較し、score evaluator（スコア評価器）の frame scores（フレーム別スコア）、point scores（点別スコア）、bucket scores（姿勢分類別スコア）を表示します。
 - 評価座標は aspect-corrected image coordinate（横縦比補正済み画像座標）で、`x = adjusted12pt.x * videoAspectRatio`、`y = adjusted12pt.y` とします。pixel coordinate（ピクセル座標）、face bounds center（顔外枠中心）、顔幅 normalization（正規化）は使いません。
-- rotationCenter.y/z 探索、12pt z 探索、coordinate descent（座標降下法）などの本格探索は後段で扱います。
+- 12pt z 探索、coordinate descent（座標降下法）などの本格探索は後段で扱います。
