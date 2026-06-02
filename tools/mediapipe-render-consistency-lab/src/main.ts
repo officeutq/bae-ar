@@ -74,6 +74,8 @@ type PoseBucket125SummaryItem = PoseBucket125Definition & {
   percent: number
 }
 
+type PoseAxisName = "yaw" | "pitch" | "roll"
+
 type FrameBadge = {
   id: string
   label: string
@@ -178,8 +180,21 @@ const OVERLAY_SELECTED_POINT_RADIUS = 8
 const OVERLAY_HIT_RADIUS = 12
 const DEFAULT_EYE_POINT_MODE: EyePointMode = "browEyeAnchor"
 const POSE_AXIS_BIN_THRESHOLDS = {
-  centerAbsMax: 3,
-  smallAbsMax: 10,
+  yaw: {
+    centerAbsMax: 3,
+    negativeSmallMax: 10,
+    positiveSmallMax: 10,
+  },
+  pitch: {
+    centerAbsMax: 3,
+    negativeSmallMax: 10,
+    positiveSmallMax: 6,
+  },
+  roll: {
+    centerAbsMax: 3,
+    negativeSmallMax: 10,
+    positiveSmallMax: 10,
+  },
 } as const
 const POSE_AXIS_BINS = [
   "negativeLarge",
@@ -948,9 +963,9 @@ function buildPoseBucket125(pose: Pose | null): PoseBucket125 | null {
     return null
   }
 
-  const yawBin = classifyPoseAxisBin(pose.yaw)
-  const pitchBin = classifyPoseAxisBin(pose.pitch)
-  const rollBin = classifyPoseAxisBin(pose.roll)
+  const yawBin = classifyPoseAxisBin("yaw", pose.yaw)
+  const pitchBin = classifyPoseAxisBin("pitch", pose.pitch)
+  const rollBin = classifyPoseAxisBin("roll", pose.roll)
   return {
     id: formatPoseBucket125Id(yawBin, pitchBin, rollBin),
     yawBin,
@@ -959,17 +974,18 @@ function buildPoseBucket125(pose: Pose | null): PoseBucket125 | null {
   }
 }
 
-function classifyPoseAxisBin(angle: number): PoseAxisBin {
-  if (angle < -POSE_AXIS_BIN_THRESHOLDS.smallAbsMax) {
+function classifyPoseAxisBin(axisName: PoseAxisName, angle: number): PoseAxisBin {
+  const thresholds = POSE_AXIS_BIN_THRESHOLDS[axisName]
+  if (angle < -thresholds.negativeSmallMax) {
     return "negativeLarge"
   }
-  if (angle < -POSE_AXIS_BIN_THRESHOLDS.centerAbsMax) {
+  if (angle < -thresholds.centerAbsMax) {
     return "negativeSmall"
   }
-  if (angle <= POSE_AXIS_BIN_THRESHOLDS.centerAbsMax) {
+  if (angle <= thresholds.centerAbsMax) {
     return "center"
   }
-  if (angle <= POSE_AXIS_BIN_THRESHOLDS.smallAbsMax) {
+  if (angle <= thresholds.positiveSmallMax) {
     return "positiveSmall"
   }
   return "positiveLarge"
@@ -1881,11 +1897,8 @@ function renderPoseConsole(): string {
       ]),
     ),
     renderConsoleSection(
-      "poseBucket125 thresholds",
-      renderStatusItems([
-        ["centerAbsMax", String(summary.thresholds.centerAbsMax)],
-        ["smallAbsMax", String(summary.thresholds.smallAbsMax)],
-      ]),
+      "Pose axis thresholds",
+      renderPoseAxisThresholds(summary.thresholds),
     ),
     renderConsoleSection(
       "Pose bucket 125",
@@ -1916,6 +1929,29 @@ function renderPoseBucket125List(
             </div>
           `,
         )
+        .join("")}
+    </div>
+  `
+}
+
+function renderPoseAxisThresholds(
+  thresholds: typeof POSE_AXIS_BIN_THRESHOLDS,
+): string {
+  const axisItems: PoseAxisName[] = ["yaw", "pitch", "roll"]
+  return `
+    <div class="landmark-summary-grid">
+      ${axisItems
+        .map((axisName) => {
+          const threshold = thresholds[axisName]
+          return `
+            <div class="landmark-summary-item">
+              <code>${axisName}</code>
+              <span>center: ±${threshold.centerAbsMax}</span>
+              <span>negativeSmall: -${threshold.negativeSmallMax} 〜 -${threshold.centerAbsMax}</span>
+              <span>positiveSmall: ${threshold.centerAbsMax} 〜 ${threshold.positiveSmallMax}</span>
+            </div>
+          `
+        })
         .join("")}
     </div>
   `
