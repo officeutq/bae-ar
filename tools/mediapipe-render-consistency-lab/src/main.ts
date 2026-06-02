@@ -467,6 +467,13 @@ type RotationFitCoordinateBoundaryStatus = Record<
   }
 >
 
+type RotationFitComparisonCoordinateSystem = {
+  projected: "aspect_corrected_image_coordinate"
+  target: "aspect_corrected_image_coordinate"
+  targetXFormula: "adjusted12pt.x * videoAspectRatio"
+  targetYFormula: "adjusted12pt.y"
+}
+
 type RotationFitLeftRightZSymmetryDiagnostics = {
   cheekDelta: number
   eyeDelta: number
@@ -492,6 +499,7 @@ type RotationFitFittingLab12ptSearch = {
   rangeSource: "render_consistency_lab"
   zRangeSource: "render_consistency_lab_uniform_debug_range"
   fittingLabAlgorithmOnly: true
+  comparisonCoordinateSystem: RotationFitComparisonCoordinateSystem
   baseCandidatePresetId: "renderUniformDebugInitial"
   candidateGeneration: "coordinateDescent"
   coordinateDescentIterations: number
@@ -539,6 +547,7 @@ type RotationFitEvaluation = {
     reason: string
   } | null
   videoAspectRatio: number
+  comparisonCoordinateSystem: RotationFitComparisonCoordinateSystem
   rotationCenter: Point3D
   bestRotationCenter: Point3D | null
   boundaryStatus: RotationFitSearchBoundaryStatus
@@ -798,6 +807,12 @@ const ROTATION_FIT_FINE_SEARCH_ENABLED = true
 const ROTATION_FIT_FINE_SEARCH_STEP = 0.005
 const ROTATION_FIT_FINE_SEARCH_RADIUS = 0.01
 const ROTATION_FIT_FINE_SEARCH_ITERATION_COUNT = 1
+const ROTATION_FIT_COMPARISON_COORDINATE_SYSTEM: RotationFitComparisonCoordinateSystem = {
+  projected: "aspect_corrected_image_coordinate",
+  target: "aspect_corrected_image_coordinate",
+  targetXFormula: "adjusted12pt.x * videoAspectRatio",
+  targetYFormula: "adjusted12pt.y",
+}
 const RENDER_ROTATION_FIT_INITIAL_CANDIDATE = {
   rotationCenter: {
     y: 0,
@@ -1694,6 +1709,7 @@ function createEmptyRotationFitEvaluation(
     evaluationFrameCount: 0,
     baseFrameSource: null,
     videoAspectRatio,
+    comparisonCoordinateSystem: ROTATION_FIT_COMPARISON_COORDINATE_SYSTEM,
     rotationCenter,
     bestRotationCenter: null,
     boundaryStatus: {
@@ -1815,6 +1831,7 @@ function evaluateRotationFitFittingLab12ptSearch(options: {
     rangeSource: "render_consistency_lab",
     zRangeSource: "render_consistency_lab_uniform_debug_range",
     fittingLabAlgorithmOnly: true,
+    comparisonCoordinateSystem: ROTATION_FIT_COMPARISON_COORDINATE_SYSTEM,
     baseCandidatePresetId: "renderUniformDebugInitial",
     candidateGeneration: "coordinateDescent",
     coordinateDescentIterations: ROTATION_FIT_FITTING_LAB_ITERATION_COUNT,
