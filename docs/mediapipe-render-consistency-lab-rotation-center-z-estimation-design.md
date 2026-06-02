@@ -292,19 +292,40 @@ for iteration in 1..2
 ```text
 rotationCenter.y
 rotationCenter.z
-leftCheek.z
-rightCheek.z
+cheek.z
 nose.z
 mouth.z
-leftEye.z
-rightEye.z
+eye.z
 headTop.z
 chin.z
 noseBridge.z
-leftJaw.z
-rightJaw.z
+jaw.z
 upperFaceCenter.z
 ```
+
+`cheek.z` / `eye.z` / `jaw.z` は左右対称 z 探索として扱う。`cheek.z` は `leftCheek.z` と `rightCheek.z`、`eye.z` は `leftEye.z` と `rightEye.z`、`jaw.z` は `leftJaw.z` と `rightJaw.z` に同じ値を入れる。探索対象はまとめるが、candidate（候補）の内部出力と Raw JSON（生デバッグJSON）の `bestCandidate.zByPointId` / `finalZByPointId` は従来通り 12点分へ展開する。
+
+左右対称探索の debug payload（検証用データ）には以下を含める。
+
+```json
+{
+  "zSymmetryMode": "paired_left_right",
+  "symmetricZParameters": {
+    "cheek.z": ["leftCheek.z", "rightCheek.z"],
+    "eye.z": ["leftEye.z", "rightEye.z"],
+    "jaw.z": ["leftJaw.z", "rightJaw.z"]
+  },
+  "leftRightZSymmetryDiagnostics": {
+    "cheekDelta": 0,
+    "eyeDelta": 0,
+    "jawDelta": 0
+  }
+}
+```
+
+探索は 2段階にする。Stage 1（粗探索）は既存の Render Consistency Lab 用 range と step `0.01` を使い、Fitting Lab で確認した coordinate descent（座標降下探索）と同じく `2` iteration 実行する。Stage 2（細かい追加探索）は Stage 1 の best candidate（最良候補）を base candidate（基準候補）にし、best 値の周辺だけを `step 0.005` / `radius 0.01` / `iteration 1` で再探索する。fine search（細かい追加探索）は全範囲を細かくするものではなく、元の Render 用探索範囲を超える値は clamp（範囲内に丸める）する。
+
+Raw JSON（生デバッグJSON）には `searchStages.coarse` と `searchStages.fine` を分けて出し、`parameterImprovements` / `parameterImprovementSummary` は coarse search（粗探索）と fine search（細かい追加探索）の両方を確認できるようにする。最終的な `bestCandidate` は fine search の best candidate とするが、Stage 1 の best candidate も `searchStages.coarse.bestCandidate` に残す。
 
 `coordinateDescentRanges`（座標降下探索範囲）は Render Consistency Lab 用に定義する。Fitting Lab の `DEFAULT_COORDINATE_DESCENT_RANGES`、Fitting Lab の `rotationCenter.y/z` range（回転中心探索範囲）、Fitting Lab の 12点 z range（12点奥行き探索範囲）は使わない。
 
@@ -338,22 +359,25 @@ rotationCenter.z = 0.00 .. 0.12 / step 0.01
 ```text
 headTop.z = -0.03 .. 0.06 / step 0.01
 chin.z = -0.03 .. 0.06 / step 0.01
-leftCheek.z = -0.03 .. 0.08 / step 0.01
-rightCheek.z = -0.03 .. 0.08 / step 0.01
-leftEye.z = -0.03 .. 0.06 / step 0.01
-rightEye.z = -0.03 .. 0.06 / step 0.01
+cheek.z = -0.03 .. 0.08 / step 0.01
+leftCheek.z = cheek.z として zByPointId へ展開
+rightCheek.z = cheek.z として zByPointId へ展開
+eye.z = -0.03 .. 0.06 / step 0.01
+leftEye.z = eye.z として zByPointId へ展開
+rightEye.z = eye.z として zByPointId へ展開
 nose.z = -0.03 .. 0.08 / step 0.01
 mouth.z = -0.03 .. 0.08 / step 0.01
 noseBridge.z = -0.03 .. 0.08 / step 0.01
-leftJaw.z = -0.03 .. 0.08 / step 0.01
-rightJaw.z = -0.03 .. 0.08 / step 0.01
+jaw.z = -0.03 .. 0.08 / step 0.01
+leftJaw.z = jaw.z として zByPointId へ展開
+rightJaw.z = jaw.z として zByPointId へ展開
 upperFaceCenter.z = -0.03 .. 0.06 / step 0.01
 ```
 
 `coordinateBoundaryStatus`（座標降下探索の範囲端ヒット状態）で、`rotationCenter.y` が Render 用 range の `0.50` 上限に張り付くか、`rotationCenter.z` や 12点 z が範囲端に張り付くか確認できるようにする。Raw JSON（生デバッグJSON）には `coordinateSystemSource: render_adjusted12pt_aspect_corrected`、`rangeSource: render_consistency_lab`、`zRangeSource: render_consistency_lab_uniform_debug_range`、`fittingLabAlgorithmOnly: true` を含める。
 
-Rotation Fit（回転中心評価）タブには `Improvement by parameter（探索対象ごとの改善量）` を追加し、coordinate descent（座標降下探索）の各 step（手順）について、探索順のまま `parameter`（探索対象）、`iteration`（反復回数）、`valueBefore` / `valueAfter`、`scoreBefore` / `scoreAfter`、`improvement`（改善量）、`maxFrameScoreImprovement`（最大フレームスコア改善量）、`improved` / `no change`（改善あり / 変化なし）を表示する。
+Rotation Fit（回転中心評価）タブには `zSymmetryMode（奥行き左右対称モード）`、左右 z 差、`coarseTotalScore`（粗探索後の全体平均誤差）、`fineTotalScore`（細かい追加探索後の全体平均誤差）、`fineImprovement`（細かい追加探索による改善量）を表示する。`Improvement by parameter（探索対象ごとの改善量）` は coarse search（粗探索）と fine search（細かい追加探索）に分け、coordinate descent（座標降下探索）の各 step（手順）について、探索順のまま `parameter`（探索対象）、`iteration`（反復回数）、`valueBefore` / `valueAfter`、`scoreBefore` / `scoreAfter`、`improvement`（改善量）、`maxFrameScoreImprovement`（最大フレームスコア改善量）、`improved` / `no change`（改善あり / 変化なし）を表示する。
 
-Raw JSON（生デバッグJSON）の `fittingLab12ptSearch` には `parameterImprovements`（探索対象ごとの改善量）と `parameterImprovementSummary`（改善量要約）を含める。`parameterImprovements.scoreDelta` は `scoreAfter - scoreBefore` とし、改善した場合は negative value（負の値）になる。`parameterImprovementSummary.totalImprovement` は `initialCandidate.totalScore - bestCandidate.totalScore` とする。これは既存の `coordinateDescentLog`（座標降下探索ログ）を読みやすく要約する debug payload（検証用データ）であり、production export（本番書き出し）ではない。
+Raw JSON（生デバッグJSON）の `fittingLab12ptSearch` には `searchStages.coarse` / `searchStages.fine`、`parameterImprovements`（探索対象ごとの改善量）と `parameterImprovementSummary`（改善量要約）を含める。`parameterImprovements.scoreDelta` は `scoreAfter - scoreBefore` とし、改善した場合は negative value（負の値）になる。これは既存の `coordinateDescentLog`（座標降下探索ログ）を読みやすく要約する debug payload（検証用データ）であり、production export（本番書き出し）ではない。
 
 Debug Console（デバッグコンソール）の Raw タブ、または Rotation Fit（回転中心評価）内の Raw JSON 表示には `Raw JSONをコピー` ボタンを置く。現在の payload（ペイロード）を `JSON.stringify(payload, null, 2)` した文字列として clipboard（クリップボード）へコピーし、探索結果を Codex やチャットへ貼りやすくする。Clipboard API（クリップボードAPI）が使えない環境では例外処理を行い、可能なら fallback（代替処理）でコピーする。この機能も debug UI（検証用 UI）であり、production export（本番書き出し）ではない。
