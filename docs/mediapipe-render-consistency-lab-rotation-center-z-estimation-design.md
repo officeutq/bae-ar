@@ -241,3 +241,11 @@ roll が片側に偏った selected frames だけで評価すると、画像上�
 6. その後、Stage A の `rotationCenter.y/z` coarse search だけを追加する。
 
 この順序なら、探索ロジックを増やす前に、座標系、pose projection（姿勢投影）、score 表示が正しくつながっているかを確認できる。
+
+## Implemented debug connection check
+
+- Render Consistency Lab に `Rotation Fit（回転中心評価）` タブを追加し、一時的な debug UI（検証用 UI）として score evaluator（スコア評価器）の接続確認を行う。
+- 今回は本格探索ではなく、`rotationCenter.x = 0.5 * videoAspectRatio`、`rotationCenter.y = -0.14`、`rotationCenter.z = 0.04` と固定 12pt z preset（12点奥行きプリセット）を使う。
+- `base12pt` は正面候補または姿勢中央に近い selected frame の adjusted12pt（手動調整後12点）から作り、`x = adjusted12pt.x * videoAspectRatio`、`y = adjusted12pt.y`、`z = rotationFitDebugPreset_provisional_v1` とする。
+- 各 evaluation frame（評価フレーム）では projected12pt（投影後12点）と frame adjusted12pt（各フレームの手動調整後12点）を 2D distance（二次元距離）で比較し、frameScore / totalScore / worstFrame / worstPoint / bucketScores を表示する。
+- rotationCenter.y/z 探索、12pt z 探索、14未知数最適化、mesh / render / MediaPipe re-detection は後段で扱う。

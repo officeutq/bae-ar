@@ -239,6 +239,7 @@ type ConsoleTab =
   | "landmarks12pt"
   | "adjustments"
   | "candidates"
+  | "rotationFit"
   | "raw"
   | "scan"
   | "pose"
@@ -248,6 +249,72 @@ type SemanticPointDefinition = {
   label: string
   primaryIndices: number[]
   fallbackIndices?: number[]
+}
+
+type Point2D = {
+  x: number
+  y: number
+}
+
+type Point3D = Point2D & {
+  z: number
+}
+
+type RotationFitPointScore = {
+  pointId: string
+  averageError: number
+  maxError: number
+}
+
+type RotationFitFrameScore = {
+  sourceFrameIndex: number
+  timeSec: number
+  yaw: number
+  pitch: number
+  roll: number
+  frameScore: number
+  worstPoint: string
+  worstPointError: number
+  pointErrors: Record<string, number>
+}
+
+type RotationFitAxisBucketName = "negative" | "center" | "positive"
+
+type RotationFitBucketScore = {
+  bucket: string
+  frameCount: number
+  averageFrameScore: number
+  maxFrameScore: number
+}
+
+type RotationFitEvaluation = {
+  status: "completed" | "error"
+  error?: string
+  evaluationFrameCount: number
+  baseFrameSource: {
+    sourceFrameIndex: number
+    timeSec: number
+    reason: string
+  } | null
+  videoAspectRatio: number
+  rotationCenter: Point3D
+  zPresetName: string
+  focalLength: number
+  totalScore: number
+  maxFrameScore: number
+  worstFrame: RotationFitFrameScore | null
+  worstPoint: RotationFitPointScore | null
+  frameScores: RotationFitFrameScore[]
+  pointScores: RotationFitPointScore[]
+  bucketScores: {
+    yaw: RotationFitBucketScore[]
+    pitch: RotationFitBucketScore[]
+    roll: RotationFitBucketScore[]
+    yawPitch: RotationFitBucketScore[]
+  }
+  debugPreset: {
+    zByPointId: Record<string, number>
+  }
 }
 
 type AppState = {
@@ -265,6 +332,7 @@ type AppState = {
   scanState: ScanState
   manualAdjustmentsByFrame: ManualAdjustmentsByFrame
   poseReviewCandidateSummary: PoseReviewCandidateSummary | null
+  rotationFitEvaluation: RotationFitEvaluation | null
   selectedLandmarkSummaryPointId: string | null
   draggingLandmarkSummaryPointId: string | null
   showLandmarkSummaryOverlay: boolean
@@ -411,6 +479,24 @@ const EXPRESSION_CATEGORY_NAMES = [
   ...EXPRESSION_EYE_CATEGORY_NAMES,
   ...EXPRESSION_BROW_CATEGORY_NAMES,
 ] as const
+const ROTATION_FIT_DEBUG_PRESET_NAME = "rotationFitDebugPreset_provisional_v1"
+const ROTATION_FIT_FOCAL_LENGTH = 2.6
+const ROTATION_FIT_DEBUG_ROTATION_CENTER_Y = -0.14
+const ROTATION_FIT_DEBUG_ROTATION_CENTER_Z = 0.04
+const ROTATION_FIT_DEBUG_Z_BY_POINT_ID: Record<string, number> = {
+  headTop: 0.017,
+  chin: 0.016,
+  leftCheek: 0.013,
+  rightCheek: 0.013,
+  leftEye: 0.011,
+  rightEye: 0.011,
+  nose: 0.005535,
+  mouth: 0.01,
+  noseBridge: 0.0075,
+  leftJaw: 0.018,
+  rightJaw: 0.018,
+  upperFaceCenter: 0.012,
+}
 const EYE_POINT_INDICES = {
   leftIris: [474, 475, 476, 477],
   rightIris: [469, 470, 471, 472],
@@ -464,6 +550,7 @@ const state: AppState = {
   scanState: createInitialScanState(),
   manualAdjustmentsByFrame: {},
   poseReviewCandidateSummary: null,
+  rotationFitEvaluation: null,
   selectedLandmarkSummaryPointId: null,
   draggingLandmarkSummaryPointId: null,
   showLandmarkSummaryOverlay: true,
@@ -513,6 +600,17 @@ app.innerHTML = `
       </section>
 
       <section class="controls-section">
+        <h2>Rotation Fit（回転中心評価）</h2>
+        <button id="rotationFitEvaluationButton" type="button" class="secondary-button">
+          回転中心評価確認
+        </button>
+        <p class="control-help">
+          固定 z と固定 rotationCenter で、12点投影と adjusted12pt の誤差を確認します。<br />
+          一時的な debug UI です。
+        </p>
+      </section>
+
+      <section class="controls-section">
         <h2>Overlay（表示）</h2>
         <button id="toggleLandmarkSummaryButton" type="button" class="toggle-button">
           12点サマリを非表示
@@ -548,6 +646,7 @@ app.innerHTML = `
         <button type="button" class="console-tab-button" data-console-tab="scan">Scan</button>
         <button type="button" class="console-tab-button" data-console-tab="pose">Pose（姿勢）</button>
         <button type="button" class="console-tab-button" data-console-tab="candidates">Candidates</button>
+        <button type="button" class="console-tab-button" data-console-tab="rotationFit">Rotation Fit（回転中心評価）</button>
         <button type="button" class="console-tab-button" data-console-tab="raw">Raw</button>
       </div>
       <div id="consoleContent" class="console-content"></div>
@@ -566,6 +665,7 @@ const toggleLandmarkSummaryButton = getElement<HTMLButtonElement>("toggleLandmar
 const extractPoseReviewCandidatesButton = getElement<HTMLButtonElement>(
   "extractPoseReviewCandidatesButton",
 )
+const rotationFitEvaluationButton = getElement<HTMLButtonElement>("rotationFitEvaluationButton")
 const poseReviewCandidateSummary = getElement("poseReviewCandidateSummary")
 const previousFrameButton = getElement<HTMLButtonElement>("previousFrameButton")
 const excludeFrameButton = getElement<HTMLButtonElement>("excludeFrameButton")
@@ -588,6 +688,10 @@ toggleLandmarkSummaryButton.addEventListener("click", () => {
 
 extractPoseReviewCandidatesButton.addEventListener("click", () => {
   extractPoseReviewCandidates()
+})
+
+rotationFitEvaluationButton.addEventListener("click", () => {
+  runRotationFitEvaluation()
 })
 
 previousFrameButton.addEventListener("click", () => {
@@ -746,6 +850,7 @@ function resetFrameState(): void {
   state.scanState = createInitialScanState()
   state.manualAdjustmentsByFrame = {}
   state.poseReviewCandidateSummary = null
+  state.rotationFitEvaluation = null
   state.selectedLandmarkSummaryPointId = null
   state.draggingLandmarkSummaryPointId = null
   clearCanvas()
@@ -967,6 +1072,7 @@ function extractPoseReviewCandidates(): void {
   }
 
   state.poseReviewCandidateSummary = buildPoseReviewCandidateSummary()
+  state.rotationFitEvaluation = null
   state.consoleTab = "candidates"
   render()
 }
@@ -1057,6 +1163,460 @@ function buildPoseReviewCandidateSummaryForTarget(
     shortageBuckets,
     buckets,
   }
+}
+
+function runRotationFitEvaluation(): void {
+  state.rotationFitEvaluation = evaluateRotationFit()
+  state.consoleTab = "rotationFit"
+  render()
+}
+
+function evaluateRotationFit(): RotationFitEvaluation {
+  const videoAspectRatio = getVideoAspectRatio()
+  const rotationCenter = {
+    x: roundDebugNumber(0.5 * videoAspectRatio),
+    y: ROTATION_FIT_DEBUG_ROTATION_CENTER_Y,
+    z: ROTATION_FIT_DEBUG_ROTATION_CENTER_Z,
+  }
+  const baseEvaluation = createEmptyRotationFitEvaluation(videoAspectRatio, rotationCenter)
+
+  const evaluationFrames = getRotationFitEvaluationFrames()
+  if (state.acceptedFrames.length === 0) {
+    return {
+      ...baseEvaluation,
+      status: "error",
+      error: "acceptedFrames がありません。先に MP4 auto scan（自動スキャン）を実行してください。",
+    }
+  }
+  if (!state.poseReviewCandidateSummary) {
+    return {
+      ...baseEvaluation,
+      status: "error",
+      error: "pose review candidates（姿勢レビュー候補）が未作成です。先に125候補フレーム抽出を実行してください。",
+    }
+  }
+  if (evaluationFrames.length === 0) {
+    return {
+      ...baseEvaluation,
+      status: "error",
+      error: "評価できる selected frames（選択済みフレーム）がありません。",
+    }
+  }
+
+  const baseFrame = selectRotationFitBaseFrame(evaluationFrames)
+  if (!baseFrame) {
+    return {
+      ...baseEvaluation,
+      status: "error",
+      error: "base12pt（基準12点）を作れる正面候補フレームがありません。",
+    }
+  }
+
+  const baseAdjusted12pt = getAdjusted12ptForFrame(baseFrame.frame)
+  const base12pt = createRotationFitBase12pt(baseAdjusted12pt, videoAspectRatio)
+  const missingBasePointIds = ROTATION_CENTER_12_SEMANTIC_DEFINITIONS.map(
+    (definition) => definition.id,
+  ).filter((pointId) => !base12pt[pointId])
+  if (missingBasePointIds.length > 0) {
+    return {
+      ...baseEvaluation,
+      status: "error",
+      error: `base12pt（基準12点）に不足があります: ${missingBasePointIds.join(", ")}`,
+      baseFrameSource: {
+        sourceFrameIndex: baseFrame.frame.sourceFrameIndex,
+        timeSec: roundDebugNumber(baseFrame.frame.timeSec),
+        reason: baseFrame.reason,
+      },
+    }
+  }
+
+  const frameScores = evaluationFrames.flatMap((entry) => {
+    if (!entry.frame.pose) {
+      return []
+    }
+    const adjusted12pt = createRotationFitFrameAdjusted12pt(
+      getAdjusted12ptForFrame(entry.frame),
+      videoAspectRatio,
+    )
+    const projected12pt = projectRotationFit12pt(base12pt, entry.frame.pose, rotationCenter)
+    const pointErrors = calculateRotationFitPointErrors(projected12pt, adjusted12pt)
+    const pointErrorEntries = Object.entries(pointErrors)
+    if (pointErrorEntries.length === 0) {
+      return []
+    }
+
+    const worstPointEntry = pointErrorEntries.reduce((worst, current) =>
+      current[1] > worst[1] ? current : worst,
+    )
+
+    return [
+      {
+        sourceFrameIndex: entry.frame.sourceFrameIndex,
+        timeSec: roundDebugNumber(entry.frame.timeSec),
+        yaw: roundDebugNumber(entry.frame.pose.yaw),
+        pitch: roundDebugNumber(entry.frame.pose.pitch),
+        roll: roundDebugNumber(entry.frame.pose.roll),
+        frameScore: roundDebugNumber(average(pointErrorEntries.map(([, error]) => error))),
+        worstPoint: worstPointEntry[0],
+        worstPointError: roundDebugNumber(worstPointEntry[1]),
+        pointErrors: roundRotationFitPointErrors(pointErrors),
+      },
+    ]
+  })
+
+  if (frameScores.length === 0) {
+    return {
+      ...baseEvaluation,
+      status: "error",
+      error: "評価対象フレームに pose（姿勢）または adjusted12pt（手動調整後12点）がありません。",
+      baseFrameSource: {
+        sourceFrameIndex: baseFrame.frame.sourceFrameIndex,
+        timeSec: roundDebugNumber(baseFrame.frame.timeSec),
+        reason: baseFrame.reason,
+      },
+    }
+  }
+
+  const pointScores = calculateRotationFitPointScores(frameScores)
+  const worstFrame = frameScores.reduce((worst, current) =>
+    current.frameScore > worst.frameScore ? current : worst,
+  )
+  const worstPoint = pointScores.reduce((worst, current) =>
+    current.averageError > worst.averageError ? current : worst,
+  )
+
+  return {
+    ...baseEvaluation,
+    status: "completed",
+    evaluationFrameCount: frameScores.length,
+    baseFrameSource: {
+      sourceFrameIndex: baseFrame.frame.sourceFrameIndex,
+      timeSec: roundDebugNumber(baseFrame.frame.timeSec),
+      reason: baseFrame.reason,
+    },
+    totalScore: roundDebugNumber(average(frameScores.map((frame) => frame.frameScore))),
+    maxFrameScore: roundDebugNumber(worstFrame.frameScore),
+    worstFrame,
+    worstPoint,
+    frameScores,
+    pointScores,
+    bucketScores: calculateRotationFitBucketScores(frameScores),
+  }
+}
+
+function createEmptyRotationFitEvaluation(
+  videoAspectRatio: number,
+  rotationCenter: Point3D,
+): RotationFitEvaluation {
+  return {
+    status: "completed",
+    evaluationFrameCount: 0,
+    baseFrameSource: null,
+    videoAspectRatio,
+    rotationCenter,
+    zPresetName: ROTATION_FIT_DEBUG_PRESET_NAME,
+    focalLength: ROTATION_FIT_FOCAL_LENGTH,
+    totalScore: 0,
+    maxFrameScore: 0,
+    worstFrame: null,
+    worstPoint: null,
+    frameScores: [],
+    pointScores: [],
+    bucketScores: {
+      yaw: [],
+      pitch: [],
+      roll: [],
+      yawPitch: [],
+    },
+    debugPreset: {
+      zByPointId: ROTATION_FIT_DEBUG_Z_BY_POINT_ID,
+    },
+  }
+}
+
+function getRotationFitEvaluationFrames(): Array<{
+  frame: AcceptedFrameSnapshot
+  candidate: PoseReviewCandidateFrame
+}> {
+  const summary = state.poseReviewCandidateSummary
+  if (!summary) {
+    return []
+  }
+
+  const acceptedFrameBySourceIndex = new Map(
+    state.acceptedFrames.map((frame) => [frame.sourceFrameIndex, frame]),
+  )
+  const seenSourceFrameIndexes = new Set<number>()
+  return summary.buckets.flatMap((bucket) =>
+    bucket.selectedFrames.flatMap((candidate) => {
+      if (seenSourceFrameIndexes.has(candidate.sourceFrameIndex)) {
+        return []
+      }
+      const frame = acceptedFrameBySourceIndex.get(candidate.sourceFrameIndex)
+      if (!frame) {
+        return []
+      }
+      seenSourceFrameIndexes.add(candidate.sourceFrameIndex)
+      return [{ frame, candidate }]
+    }),
+  )
+}
+
+function selectRotationFitBaseFrame(
+  evaluationFrames: Array<{ frame: AcceptedFrameSnapshot; candidate: PoseReviewCandidateFrame }>,
+): { frame: AcceptedFrameSnapshot; reason: string } | null {
+  const frontFrame = evaluationFrames.find(({ frame }) => hasFrameBadge(frame, "frontCandidate"))
+  if (frontFrame) {
+    return {
+      frame: frontFrame.frame,
+      reason: "frontCandidate（正面候補）",
+    }
+  }
+
+  const centerBucketFrame = evaluationFrames.find(
+    ({ frame }) => frame.poseBucket125?.id === FRONT_CANDIDATE_POSE_BUCKET_125_ID,
+  )
+  if (centerBucketFrame) {
+    return {
+      frame: centerBucketFrame.frame,
+      reason: "poseBucket125 center（姿勢中央 bucket）",
+    }
+  }
+
+  const closestPoseFrame = evaluationFrames
+    .filter(({ frame }) => frame.pose)
+    .sort((left, right) => getPoseMagnitude(left.frame.pose) - getPoseMagnitude(right.frame.pose))[0]
+
+  return closestPoseFrame
+    ? {
+        frame: closestPoseFrame.frame,
+        reason: "closest pose fallback（姿勢最小 fallback）",
+      }
+    : null
+}
+
+function createRotationFitBase12pt(
+  adjusted12pt: LandmarkSummaryPoint[],
+  videoAspectRatio: number,
+): Record<string, Point3D> {
+  return Object.fromEntries(
+    adjusted12pt.flatMap((point) => {
+      const z = ROTATION_FIT_DEBUG_Z_BY_POINT_ID[point.id]
+      if (z === undefined) {
+        return []
+      }
+      return [
+        [
+          point.id,
+          {
+            x: point.x * videoAspectRatio,
+            y: point.y,
+            z,
+          },
+        ],
+      ]
+    }),
+  )
+}
+
+function createRotationFitFrameAdjusted12pt(
+  adjusted12pt: LandmarkSummaryPoint[],
+  videoAspectRatio: number,
+): Record<string, Point2D> {
+  return Object.fromEntries(
+    adjusted12pt.map((point) => [
+      point.id,
+      {
+        x: point.x * videoAspectRatio,
+        y: point.y,
+      },
+    ]),
+  )
+}
+
+function projectRotationFit12pt(
+  base12pt: Record<string, Point3D>,
+  pose: Pose,
+  rotationCenter: Point3D,
+): Record<string, Point2D> {
+  return Object.fromEntries(
+    ROTATION_CENTER_12_SEMANTIC_DEFINITIONS.flatMap((definition) => {
+      const point = base12pt[definition.id]
+      if (!point) {
+        return []
+      }
+      const rotated = rotateRotationFitPoint3D(
+        {
+          x: point.x - rotationCenter.x,
+          y: point.y - rotationCenter.y,
+          z: point.z - rotationCenter.z,
+        },
+        pose,
+      )
+      const projectedX = rotated.x + rotationCenter.x
+      const projectedY = rotated.y + rotationCenter.y
+      const z = rotated.z + rotationCenter.z
+      const perspective = ROTATION_FIT_FOCAL_LENGTH / Math.max(ROTATION_FIT_FOCAL_LENGTH + z, 0.2)
+      return [
+        [
+          definition.id,
+          {
+            x: projectedX * perspective,
+            y: projectedY * perspective,
+          },
+        ],
+      ]
+    }),
+  )
+}
+
+function rotateRotationFitPoint3D(point: Point3D, pose: Pose): Point3D {
+  const yaw = degreesToRadians(pose.yaw)
+  const pitch = degreesToRadians(pose.pitch)
+  const roll = degreesToRadians(pose.roll)
+
+  const cosY = Math.cos(yaw)
+  const sinY = Math.sin(yaw)
+  const yawed = {
+    x: point.x * cosY + point.z * sinY,
+    y: point.y,
+    z: -point.x * sinY + point.z * cosY,
+  }
+
+  const cosP = Math.cos(pitch)
+  const sinP = Math.sin(pitch)
+  const pitched = {
+    x: yawed.x,
+    y: yawed.y * cosP - yawed.z * sinP,
+    z: yawed.y * sinP + yawed.z * cosP,
+  }
+
+  const cosR = Math.cos(roll)
+  const sinR = Math.sin(roll)
+  return {
+    x: pitched.x * cosR - pitched.y * sinR,
+    y: pitched.x * sinR + pitched.y * cosR,
+    z: pitched.z,
+  }
+}
+
+function calculateRotationFitPointErrors(
+  projected12pt: Record<string, Point2D>,
+  adjusted12pt: Record<string, Point2D>,
+): Record<string, number> {
+  return Object.fromEntries(
+    ROTATION_CENTER_12_SEMANTIC_DEFINITIONS.flatMap((definition) => {
+      const projected = projected12pt[definition.id]
+      const adjusted = adjusted12pt[definition.id]
+      if (!projected || !adjusted) {
+        return []
+      }
+      return [[definition.id, distance2D(projected, adjusted)]]
+    }),
+  )
+}
+
+function roundRotationFitPointErrors(pointErrors: Record<string, number>): Record<string, number> {
+  return Object.fromEntries(
+    Object.entries(pointErrors).map(([pointId, error]) => [pointId, roundDebugNumber(error)]),
+  )
+}
+
+function calculateRotationFitPointScores(
+  frameScores: RotationFitFrameScore[],
+): RotationFitPointScore[] {
+  return ROTATION_CENTER_12_SEMANTIC_DEFINITIONS.flatMap((definition) => {
+    const errors = frameScores
+      .map((frame) => frame.pointErrors[definition.id])
+      .filter((error): error is number => Number.isFinite(error))
+    if (errors.length === 0) {
+      return []
+    }
+    return [
+      {
+        pointId: definition.id,
+        averageError: roundDebugNumber(average(errors)),
+        maxError: roundDebugNumber(Math.max(...errors)),
+      },
+    ]
+  })
+}
+
+function calculateRotationFitBucketScores(frameScores: RotationFitFrameScore[]): {
+  yaw: RotationFitBucketScore[]
+  pitch: RotationFitBucketScore[]
+  roll: RotationFitBucketScore[]
+  yawPitch: RotationFitBucketScore[]
+} {
+  return {
+    yaw: createRotationFitAxisBucketScores(frameScores, "yaw"),
+    pitch: createRotationFitAxisBucketScores(frameScores, "pitch"),
+    roll: createRotationFitAxisBucketScores(frameScores, "roll"),
+    yawPitch: createRotationFitYawPitchBucketScores(frameScores),
+  }
+}
+
+function createRotationFitAxisBucketScores(
+  frameScores: RotationFitFrameScore[],
+  axis: PoseAxisName,
+): RotationFitBucketScore[] {
+  return (["negative", "center", "positive"] as const).map((bucket) =>
+    summarizeRotationFitBucket(
+      bucket,
+      frameScores.filter((frame) => getRotationFitAxisBucket(frame[axis], axis) === bucket),
+    ),
+  )
+}
+
+function createRotationFitYawPitchBucketScores(
+  frameScores: RotationFitFrameScore[],
+): RotationFitBucketScore[] {
+  const buckets = new Map<string, RotationFitFrameScore[]>()
+  for (const frame of frameScores) {
+    const bucket = `${getRotationFitAxisBucket(frame.yaw, "yaw")} x ${getRotationFitAxisBucket(
+      frame.pitch,
+      "pitch",
+    )}`
+    buckets.set(bucket, [...(buckets.get(bucket) ?? []), frame])
+  }
+
+  return Array.from(buckets.entries())
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([bucket, frames]) => summarizeRotationFitBucket(bucket, frames))
+}
+
+function summarizeRotationFitBucket(
+  bucket: string,
+  frames: RotationFitFrameScore[],
+): RotationFitBucketScore {
+  const frameScores = frames.map((frame) => frame.frameScore)
+  return {
+    bucket,
+    frameCount: frames.length,
+    averageFrameScore: frameScores.length > 0 ? roundDebugNumber(average(frameScores)) : 0,
+    maxFrameScore: frameScores.length > 0 ? roundDebugNumber(Math.max(...frameScores)) : 0,
+  }
+}
+
+function getRotationFitAxisBucket(
+  value: number,
+  axis: PoseAxisName,
+): RotationFitAxisBucketName {
+  const centerAbsMax = POSE_AXIS_BIN_THRESHOLDS[axis].centerAbsMax
+  if (value < -centerAbsMax) {
+    return "negative"
+  }
+  if (value > centerAbsMax) {
+    return "positive"
+  }
+  return "center"
+}
+
+function getPoseMagnitude(pose: Pose | null): number {
+  if (!pose) {
+    return Number.POSITIVE_INFINITY
+  }
+  return Math.abs(pose.yaw) + Math.abs(pose.pitch) + Math.abs(pose.roll)
 }
 
 function buildPoseReviewShortageBucketSummaries(
@@ -1702,8 +2262,15 @@ function isExpressionTooStrong(summary?: ExpressionScoreSummary): boolean {
 }
 
 function getAdjusted12pt(): LandmarkSummaryPoint[] {
-  return state.observed12pt.map((point) => {
-    const adjustment = getManualAdjustment(point.id)
+  const currentFrame = getCurrentAcceptedFrame()
+  return currentFrame ? getAdjusted12ptForFrame(currentFrame) : state.observed12pt
+}
+
+function getAdjusted12ptForFrame(frame: AcceptedFrameSnapshot): LandmarkSummaryPoint[] {
+  const adjustments = state.manualAdjustmentsByFrame[frame.sourceFrameIndex] ?? []
+
+  return frame.observed12pt.map((point) => {
+    const adjustment = adjustments.find((item) => item.id === point.id)
     if (!adjustment) {
       return point
     }
@@ -2151,6 +2718,8 @@ function render(): void {
     !state.metadata || state.currentReviewIndex >= state.acceptedFrames.length - 1 || frameBusy
   excludeFrameButton.disabled = !state.metadata || !currentFrame || frameBusy
   extractPoseReviewCandidatesButton.disabled = state.acceptedFrames.length === 0 || frameBusy
+  rotationFitEvaluationButton.disabled =
+    state.acceptedFrames.length === 0 || !state.poseReviewCandidateSummary || frameBusy
   stopScanButton.disabled = state.scanState.status !== "running"
 }
 
@@ -2173,6 +2742,7 @@ function createRawDebugPayload(
     expressionTooStrongCount: getExpressionTooStrongCount(),
     poseBucket125Summary: getPoseBucket125Summary(),
     candidateSelectionSummary: state.poseReviewCandidateSummary,
+    rotationFitEvaluation: state.rotationFitEvaluation,
     acceptedFramesPreview: getAcceptedFramesPreview(),
     mediaPipeFrameSummary: state.summary,
     landmarkSummaryPointCount: adjusted12pt.length,
@@ -2219,6 +2789,8 @@ function renderConsoleTabContent(
       return renderPoseConsole()
     case "candidates":
       return renderCandidatesConsole()
+    case "rotationFit":
+      return renderRotationFitConsole()
     case "raw":
       return renderRawConsole(rawDebugPayload)
     case "summary":
@@ -2712,6 +3284,155 @@ function renderPoseReviewCandidateFrames(frames: PoseReviewCandidateFrame[]): st
   `
 }
 
+function renderRotationFitConsole(): string {
+  const evaluation = state.rotationFitEvaluation
+  if (!evaluation) {
+    return renderConsoleSection(
+      "Rotation Fit（回転中心評価）",
+      `<div class="landmark-summary-item empty">左ペインの「回転中心評価確認」ボタンを押してください。固定 z と固定 rotationCenter（投影用回転中心）で score evaluator（スコア評価器）を実行します。</div>`,
+    )
+  }
+
+  return [
+    renderConsoleSection("Summary（要約）", renderRotationFitSummary(evaluation)),
+    renderConsoleSection("Frame scores（フレーム別スコア）", renderRotationFitFrameScores(evaluation)),
+    renderConsoleSection("Point scores（点別スコア）", renderRotationFitPointScores(evaluation)),
+    renderConsoleSection("Bucket scores（姿勢分類別スコア）", renderRotationFitBucketScores(evaluation)),
+    renderConsoleSection(
+      "Raw JSON（生デバッグ JSON）",
+      `<pre class="console-json">${escapeHtml(JSON.stringify(evaluation, null, 2))}</pre>`,
+    ),
+  ].join("")
+}
+
+function renderRotationFitSummary(evaluation: RotationFitEvaluation): string {
+  return renderStatusItems([
+    ["status", evaluation.status],
+    ["error", evaluation.error ?? "-"],
+    ["evaluationFrameCount", String(evaluation.evaluationFrameCount)],
+    [
+      "baseFrameSource",
+      evaluation.baseFrameSource
+        ? `${evaluation.baseFrameSource.sourceFrameIndex} / ${formatNumber(
+            evaluation.baseFrameSource.timeSec,
+          )} sec / ${evaluation.baseFrameSource.reason}`
+        : "-",
+    ],
+    ["videoAspectRatio", formatNumber(evaluation.videoAspectRatio)],
+    ["rotationCenter.x", formatNumber(evaluation.rotationCenter.x)],
+    ["rotationCenter.y", formatNumber(evaluation.rotationCenter.y)],
+    ["rotationCenter.z", formatNumber(evaluation.rotationCenter.z)],
+    ["zPresetName", evaluation.zPresetName],
+    ["focalLength", formatNumber(evaluation.focalLength)],
+    ["totalScore", formatNumber(evaluation.totalScore)],
+    ["maxFrameScore", formatNumber(evaluation.maxFrameScore)],
+    [
+      "worstFrame",
+      evaluation.worstFrame
+        ? `${evaluation.worstFrame.sourceFrameIndex} / score ${formatNumber(
+            evaluation.worstFrame.frameScore,
+          )}`
+        : "-",
+    ],
+    [
+      "worstPoint",
+      evaluation.worstPoint
+        ? `${evaluation.worstPoint.pointId} / avg ${formatNumber(
+            evaluation.worstPoint.averageError,
+          )} / max ${formatNumber(evaluation.worstPoint.maxError)}`
+        : "-",
+    ],
+    [
+      "bucketScores summary",
+      `yaw ${evaluation.bucketScores.yaw.length} / pitch ${evaluation.bucketScores.pitch.length} / roll ${evaluation.bucketScores.roll.length} / yaw×pitch ${evaluation.bucketScores.yawPitch.length}`,
+    ],
+  ])
+}
+
+function renderRotationFitFrameScores(evaluation: RotationFitEvaluation): string {
+  if (evaluation.frameScores.length === 0) {
+    return `<div class="landmark-summary-item empty">frame scores（フレーム別スコア）はありません。</div>`
+  }
+
+  return `
+    <div class="landmark-summary-grid pose-candidate-bucket-list">
+      ${evaluation.frameScores.map(renderRotationFitFrameScore).join("")}
+    </div>
+  `
+}
+
+function renderRotationFitFrameScore(frameScore: RotationFitFrameScore): string {
+  return `
+    <div class="landmark-summary-item pose-candidate-bucket">
+      <code>sourceFrameIndex ${frameScore.sourceFrameIndex}</code>
+      <span>timeSec（秒） ${formatNumber(frameScore.timeSec)}</span>
+      <span>yaw / pitch / roll ${formatNumber(frameScore.yaw)} / ${formatNumber(frameScore.pitch)} / ${formatNumber(frameScore.roll)}</span>
+      <span>frameScore（フレーム平均誤差） ${formatNumber(frameScore.frameScore)}</span>
+      <span>worstPoint（最大誤差点） ${escapeHtml(frameScore.worstPoint)}</span>
+      <span>worstPointError（最大点誤差） ${formatNumber(frameScore.worstPointError)}</span>
+    </div>
+  `
+}
+
+function renderRotationFitPointScores(evaluation: RotationFitEvaluation): string {
+  if (evaluation.pointScores.length === 0) {
+    return `<div class="landmark-summary-item empty">point scores（点別スコア）はありません。</div>`
+  }
+
+  return `
+    <div class="landmark-summary-grid">
+      ${evaluation.pointScores
+        .map(
+          (pointScore) => `
+            <div class="landmark-summary-item">
+              <code>${escapeHtml(pointScore.pointId)}</code>
+              <span>averageError（平均誤差） ${formatNumber(pointScore.averageError)}</span>
+              <span>maxError（最大誤差） ${formatNumber(pointScore.maxError)}</span>
+            </div>
+          `,
+        )
+        .join("")}
+    </div>
+  `
+}
+
+function renderRotationFitBucketScores(evaluation: RotationFitEvaluation): string {
+  return [
+    renderRotationFitBucketScoreGroup("yaw negative / center / positive", evaluation.bucketScores.yaw),
+    renderRotationFitBucketScoreGroup(
+      "pitch negative / center / positive",
+      evaluation.bucketScores.pitch,
+    ),
+    renderRotationFitBucketScoreGroup("roll negative / center / positive", evaluation.bucketScores.roll),
+    renderRotationFitBucketScoreGroup("yaw × pitch bucket", evaluation.bucketScores.yawPitch),
+  ].join("")
+}
+
+function renderRotationFitBucketScoreGroup(
+  title: string,
+  bucketScores: RotationFitBucketScore[],
+): string {
+  if (bucketScores.length === 0) {
+    return `<div class="landmark-summary-item empty">${escapeHtml(title)}: -</div>`
+  }
+
+  return `
+    <div class="landmark-summary-grid">
+      <div class="landmark-summary-item">
+        <code>${escapeHtml(title)}</code>
+        ${bucketScores
+          .map(
+            (bucketScore) =>
+              `<span>${escapeHtml(bucketScore.bucket)} / frames ${bucketScore.frameCount} / avg ${formatNumber(
+                bucketScore.averageFrameScore,
+              )} / max ${formatNumber(bucketScore.maxFrameScore)}</span>`,
+          )
+          .join("")}
+      </div>
+    </div>
+  `
+}
+
 function renderRawConsole(rawDebugPayload: Record<string, unknown>): string {
   return renderConsoleSection(
     "rawDebug",
@@ -3082,6 +3803,13 @@ function formatNumber(value: number): string {
   return Number.isFinite(value) ? value.toFixed(3) : "-"
 }
 
+function getVideoAspectRatio(): number {
+  if (!state.metadata || state.metadata.videoHeight <= 0) {
+    return 1
+  }
+  return state.metadata.videoWidth / state.metadata.videoHeight
+}
+
 function formatFileSize(size: number): string {
   if (!Number.isFinite(size)) {
     return "-"
@@ -3113,6 +3841,14 @@ function average(values: number[]): number {
   return validValues.length === 0
     ? 0
     : validValues.reduce((sum, value) => sum + value, 0) / validValues.length
+}
+
+function distance2D(left: Point2D, right: Point2D): number {
+  return Math.hypot(left.x - right.x, left.y - right.y)
+}
+
+function degreesToRadians(value: number): number {
+  return (value / 180) * Math.PI
 }
 
 function roundDebugNumber(value: number): number {
