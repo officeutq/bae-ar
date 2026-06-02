@@ -300,6 +300,68 @@ Render Consistency Lab では UI の肥大化を避けるため、現在は `bro
 
 `表情を除外` button は廃止しました。`expressionTooStrong` は production の除外判定ではありません。Render Consistency Lab 内で accepted frame をレビューしやすくするための debug / review 補助 badge として扱い、auto scan 時点で `expressionSummary` から判定します。表情が大きい frame でも自動では `excluded=true` にしません。
 
+## Coordinate policy for 12pt and rotationCenter estimation
+
+次回以降の `rotationCenter(0, y, z)`（投影用回転中心）推定では、Render Consistency Lab 内の 12pt（12点要約）と overlay（重ね描画）の座標系を混同しないことを前提にする。
+
+### 1. MediaPipe coordinate
+
+MediaPipe Face Landmarker が返す landmarks は、現コードでは `NormalizedLandmark` として扱う。
+
+- `x` / `y` は image-normalized coordinate（画像正規化座標）であり、画像の左上を基準に `0..1` の範囲で扱う。
+- `z` は MediaPipe の `NormalizedLandmark.z` であり、まだ IdealFace Fitting Lab の depth convention（奥行き規約）へ変換していない。
+- 現時点の Render Consistency Lab は、MediaPipe canonical face model（MediaPipe 標準顔モデル）を BAE AR の IdealFace として扱わない。
+
+### 2. observed12pt / adjusted12pt
+
+`observed12pt` は MediaPipe 478 landmarks から作る 12pt summary（12点要約）である。
+
+- `observed12pt.x` / `observed12pt.y` は image-normalized coordinate のまま保存する。
+- `adjusted12pt` は `observed12pt + manualAdjustmentsByFrame` で作るが、これも image-normalized coordinate のまま扱う。
+- `manualAdjustmentsByFrame.dx` / `manualAdjustmentsByFrame.dy` は pixel delta（画面上のピクセル単位の移動量）ではなく、normalized delta（画像幅・高さを `0..1` とした正規化座標での移動量）である。
+
+例: 横幅 1000px の動画で点を 10px 右へ動かした場合、`dx` は `10` ではなく `0.01` になる。
+
+### 3. Canvas overlay
+
+12pt overlay を canvas に描画するときだけ、image-normalized coordinate から canvas pixel coordinate（canvas 内部ピクセル座標）へ変換する。
+
+```ts
+canvasX = point.x * canvas.width
+canvasY = point.y * canvas.height
+```
+
+MP4 frame（MP4 フレーム）を解析する場合、canvas 内部サイズは `video.videoWidth` / `video.videoHeight` に合わせ、`drawImage(video, 0, 0, canvas.width, canvas.height)` で canvas 全域へ描画する。サムネイル復元時も image natural size（画像本来の幅・高さ）を canvas 内部サイズにして全域描画する。
+
+保存値、Debug Console（デバッグコンソール）、Raw JSON（生 JSON）は、この overlay 用 pixel coordinate ではない。
+
+### 4. Raw JSON
+
+Debug Console / Raw JSON に出る 12pt は image-normalized coordinate である。
+
+- `observed12pt` は pixel coordinate（ピクセル座標）へ変換済みではない。
+- `adjustedLandmarkSummary` も pixel coordinate へ変換済みではない。
+- `manualAdjustments` / `manualAdjustmentsByFramePreview` の `dx` / `dy` も normalized delta のままである。
+
+### 5. rotationCenter estimation
+
+`rotationCenter(0, y, z)` 推定では、screen pixel coordinate（画面ピクセル座標）を入力に使わない。
+
+- 入力元は normalized（正規化済み）の `adjusted12pt` とする。
+- 推定直前に same-unit centered coordinate（同一単位・中心化座標）へ変換する。
+- 変換では face bounds center（顔外枠中心）を引き、`x` は video aspect ratio（動画の縦横比）を考慮して `y` と同じ単位へ揃える方針とする。
+- `rotationCenter.y` / `rotationCenter.z` は screen pixel coordinate ではなく、base12pt 3D candidate（基準12点3D候補）と同じ local candidate coordinate（候補内ローカル座標）の pivot（回転軸点）として扱う。
+
+このため、overlay 用に `point.x * canvas.width` / `point.y * canvas.height` した値を、そのまま `rotationCenter` 推定の比較入力へ渡してはいけない。
+
+### 6. 危険な混同ポイント
+
+- Raw JSON の 12pt を pixel coordinate と誤解しない。
+- `manualAdjustmentsByFrame.dx` / `manualAdjustmentsByFrame.dy` を pixel delta と誤解しない。
+- overlay 用 pixel 変換値を `rotationCenter` 推定入力に使わない。
+- MediaPipe `NormalizedLandmark.z` を、そのまま Fitting Lab の depth convention と同一視しない。
+- 16:9 以外の動画では、CSS display size（CSS 表示サイズ）、canvas backing size（canvas 内部サイズ）、pointer mapping（ポインター位置変換）、`object-fit: contain`（表示領域への収め方）の差に注意する。
+
 ## 11. 今回やらないこと
 
 今回は以下を行いません。
