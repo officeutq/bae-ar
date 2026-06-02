@@ -333,6 +333,7 @@ Render Consistency Lab は、最初から production asset を作る工程では
 
 - [IdealFace Fitting Lab Experiment Summary](ideal-face-fitting-lab-experiment-summary.md)
 - [IdealFace Fitting Lab](ideal-face-fitting-lab.md)
+- [MediaPipe Render Consistency Lab rotationCenter study](mediapipe-render-consistency-lab-rotation-center-study.md)
 - [MediaPipe Canonical Lab](mediapipe-canonical-lab.md)
 - [開発フロー](development-flow.md)
 - [アーキテクチャ](architecture.md)
