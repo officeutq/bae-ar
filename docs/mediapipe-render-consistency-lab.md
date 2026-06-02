@@ -381,4 +381,8 @@ Render Consistency Lab は、最初から production asset を作る工程では
 - roll は完全除外や単純 fallback ではなく、`roll_negative` / `roll_center` / `roll_positive` の3 group（グループ）でバランスを取ります。
 - `roll_negative` は `negativeLarge` / `negativeSmall`、`roll_center` は `center`、`roll_positive` は `positiveSmall` / `positiveLarge` として扱います。
 - 候補過多の bucket では `pickEvenlySpaced` により timeSec（秒）方向に均等抽出します。
+- Candidates tab（候補タブ）には Shortage buckets（不足bucket）診断を表示し、不足した yaw / pitch bucket だけを集約して確認できるようにします。
+- Shortage buckets（不足bucket）診断では、acceptedFrames 件数、`expressionTooStrong` 除外後の usable frame（利用可能フレーム）件数、roll group（rollグループ）別の available / selected count（利用可能 / 選択件数）を表示します。
+- `shortageReason` は `not_enough_pose_frames`（その姿勢のフレーム不足）、`not_enough_non_expression_frames`（表情が強くないフレーム不足）、`unknown`（原因未分類）を使います。
+- この診断は rotationCenter(0, y, z) 推定に使う候補フレームの品質確認用で、`expressionTooStrong` 除外後に不足する bucket を見つけるための表示です。
 - この機能は候補抽出と Debug Console（デバッグコンソール）表示までを扱い、mesh / render / MediaPipe re-detection / residual evaluation には進みません。

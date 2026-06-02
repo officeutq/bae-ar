@@ -329,6 +329,12 @@ video {
   padding-right: 4px;
 }
 
+.pose-shortage-bucket-list {
+  max-height: 320px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
 .pose-candidate-bucket {
   gap: 4px;
 }

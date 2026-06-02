@@ -94,6 +94,11 @@ type PoseReviewCandidateSelectionMode = "balanced"
 
 type PoseReviewCandidateBalancedStatus = "balanced" | "partial"
 
+type PoseReviewCandidateShortageReason =
+  | "not_enough_non_expression_frames"
+  | "not_enough_pose_frames"
+  | "unknown"
+
 type PoseReviewCandidatePolicy = {
   selectionMode: PoseReviewCandidateSelectionMode
   primaryGrouping: "yaw_pitch_25"
@@ -135,6 +140,25 @@ type PoseReviewCandidateBucket = {
   selectedFrames: PoseReviewCandidateFrame[]
 }
 
+type PoseReviewCandidateShortageBucketSummary = {
+  bucketId: string
+  yawBin: PoseAxisBin
+  pitchBin: PoseAxisBin
+  targetCount: number
+  selectedCount: number
+  shortageCount: number
+  acceptedFrameCount: number
+  usableNonExpressionCount: number
+  expressionTooStrongCount: number
+  availableRollNegativeCount: number
+  availableRollCenterCount: number
+  availableRollPositiveCount: number
+  selectedByRollNegativeCount: number
+  selectedByRollCenterCount: number
+  selectedByRollPositiveCount: number
+  shortageReason: PoseReviewCandidateShortageReason
+}
+
 type PoseReviewCandidateSummary = {
   selectionMode: PoseReviewCandidateSelectionMode
   maxTargetPerBucket: number
@@ -149,6 +173,7 @@ type PoseReviewCandidateSummary = {
   fullBucketCount: number
   shortageBucketCount: number
   excludedExpressionTooStrongCount: number
+  shortageBuckets: PoseReviewCandidateShortageBucketSummary[]
   buckets: PoseReviewCandidateBucket[]
 }
 
@@ -1003,6 +1028,7 @@ function buildPoseReviewCandidateSummaryForTarget(
   const shortageBucketCount = buckets.filter((bucket) => bucket.shortageCount > 0).length
   const balancedStatus: PoseReviewCandidateBalancedStatus =
     shortageBucketCount === 0 ? "balanced" : "partial"
+  const shortageBuckets = buildPoseReviewShortageBucketSummaries(buckets)
 
   return {
     selectionMode: POSE_REVIEW_SELECTION_MODE,
@@ -1028,8 +1054,69 @@ function buildPoseReviewCandidateSummaryForTarget(
     fullBucketCount: buckets.filter((bucket) => bucket.shortageCount === 0).length,
     shortageBucketCount,
     excludedExpressionTooStrongCount,
+    shortageBuckets,
     buckets,
   }
+}
+
+function buildPoseReviewShortageBucketSummaries(
+  buckets: PoseReviewCandidateBucket[],
+): PoseReviewCandidateShortageBucketSummary[] {
+  return buckets
+    .filter((bucket) => bucket.shortageCount > 0)
+    .map((bucket) => {
+      const acceptedFramesInBucket = state.acceptedFrames.filter((frame) => {
+        const poseBucket = frame.poseBucket125
+        return (
+          poseBucket !== null &&
+          poseBucket !== undefined &&
+          poseBucket.yawBin === bucket.yawBin &&
+          poseBucket.pitchBin === bucket.pitchBin
+        )
+      })
+      const acceptedFrameCount = acceptedFramesInBucket.length
+      const usableNonExpressionCount = acceptedFramesInBucket.filter(
+        (frame) => !hasFrameBadge(frame, "expressionTooStrong"),
+      ).length
+      const expressionTooStrongCount = acceptedFrameCount - usableNonExpressionCount
+
+      return {
+        bucketId: bucket.id,
+        yawBin: bucket.yawBin,
+        pitchBin: bucket.pitchBin,
+        targetCount: bucket.targetCount,
+        selectedCount: bucket.selectedCount,
+        shortageCount: bucket.shortageCount,
+        acceptedFrameCount,
+        usableNonExpressionCount,
+        expressionTooStrongCount,
+        availableRollNegativeCount: bucket.availableRollNegativeCount,
+        availableRollCenterCount: bucket.availableRollCenterCount,
+        availableRollPositiveCount: bucket.availableRollPositiveCount,
+        selectedByRollNegativeCount: bucket.selectedByRollNegativeCount,
+        selectedByRollCenterCount: bucket.selectedByRollCenterCount,
+        selectedByRollPositiveCount: bucket.selectedByRollPositiveCount,
+        shortageReason: classifyPoseReviewShortageReason(
+          acceptedFrameCount,
+          usableNonExpressionCount,
+          bucket.targetCount,
+        ),
+      }
+    })
+}
+
+function classifyPoseReviewShortageReason(
+  acceptedFrameCount: number,
+  usableNonExpressionCount: number,
+  targetCount: number,
+): PoseReviewCandidateShortageReason {
+  if (acceptedFrameCount === 0) {
+    return "not_enough_pose_frames"
+  }
+  if (usableNonExpressionCount < targetCount) {
+    return "not_enough_non_expression_frames"
+  }
+  return "unknown"
 }
 
 function groupPoseReviewFramesByRollGroup(
@@ -2480,6 +2567,10 @@ function renderCandidatesConsole(): string {
       ]),
     ),
     renderConsoleSection(
+      "Shortage buckets（不足bucket）",
+      renderPoseReviewShortageBuckets(summary.shortageBuckets),
+    ),
+    renderConsoleSection(
       "Bucket list（bucket一覧）",
       renderPoseReviewCandidateBucketList(summary.buckets),
     ),
@@ -2521,6 +2612,54 @@ function renderPoseReviewCandidateSummaryBrief(): string {
       String(summary.excludedExpressionTooStrongCount),
     ],
   ])
+}
+
+function renderPoseReviewShortageBuckets(
+  shortageBuckets: PoseReviewCandidateShortageBucketSummary[],
+): string {
+  if (shortageBuckets.length === 0) {
+    return `<div class="landmark-summary-item empty">No shortage buckets（不足bucketなし）</div>`
+  }
+
+  return `
+    <div class="landmark-summary-grid pose-shortage-bucket-list">
+      ${shortageBuckets.map(renderPoseReviewShortageBucket).join("")}
+    </div>
+  `
+}
+
+function renderPoseReviewShortageBucket(
+  shortageBucket: PoseReviewCandidateShortageBucketSummary,
+): string {
+  return `
+    <div class="landmark-summary-item pose-candidate-bucket">
+      <code>${escapeHtml(shortageBucket.bucketId)}</code>
+      <span>selected（選択） ${shortageBucket.selectedCount} / target（目標） ${shortageBucket.targetCount}</span>
+      <span>shortage（不足） ${shortageBucket.shortageCount}</span>
+      <span>accepted frames（acceptedFrames件数） ${shortageBucket.acceptedFrameCount}</span>
+      <span>usable non-expression（表情が強くないusable件数） ${shortageBucket.usableNonExpressionCount}</span>
+      <span>expressionTooStrong（強い表情） ${shortageBucket.expressionTooStrongCount}</span>
+      <span>available roll_negative（利用可能なroll負方向） ${shortageBucket.availableRollNegativeCount}</span>
+      <span>available roll_center（利用可能なroll中心） ${shortageBucket.availableRollCenterCount}</span>
+      <span>available roll_positive（利用可能なroll正方向） ${shortageBucket.availableRollPositiveCount}</span>
+      <span>selectedBy roll_negative（roll負方向で選択） ${shortageBucket.selectedByRollNegativeCount}</span>
+      <span>selectedBy roll_center（roll中心で選択） ${shortageBucket.selectedByRollCenterCount}</span>
+      <span>selectedBy roll_positive（roll正方向で選択） ${shortageBucket.selectedByRollPositiveCount}</span>
+      <span>reason（理由） ${escapeHtml(formatPoseReviewShortageReason(shortageBucket.shortageReason))}</span>
+    </div>
+  `
+}
+
+function formatPoseReviewShortageReason(
+  shortageReason: PoseReviewCandidateShortageReason,
+): string {
+  if (shortageReason === "not_enough_non_expression_frames") {
+    return "not_enough_non_expression_frames（表情が強くないフレーム不足）"
+  }
+  if (shortageReason === "not_enough_pose_frames") {
+    return "not_enough_pose_frames（その姿勢のフレーム不足）"
+  }
+  return "unknown（原因未分類）"
 }
 
 function renderPoseReviewCandidateBucketList(buckets: PoseReviewCandidateBucket[]): string {
