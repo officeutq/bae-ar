@@ -82,7 +82,13 @@ type PoseBucket125SummaryItem = PoseBucket125Definition & {
 
 type PoseAxisName = "yaw" | "pitch" | "roll"
 
-type PoseReviewSelectedBy = "roll_center" | "roll_small_fallback" | "roll_large_fallback"
+type PoseReviewCandidateRollGroup = "roll_negative" | "roll_center" | "roll_positive"
+
+type PoseReviewSelectedBy =
+  | "roll_center"
+  | "roll_negative"
+  | "roll_positive"
+  | "roll_balance_supplement"
 
 type PoseReviewCandidateSelectionMode = "balanced"
 
@@ -94,17 +100,13 @@ type PoseReviewCandidatePolicy = {
   maxTargetPerBucket: number
   minBalancedTargetPerBucket: number
   actualTargetPerBucket: number
+  rollSelection: "balanced_negative_center_positive"
+  rollGroups: {
+    roll_negative: readonly ["negativeLarge", "negativeSmall"]
+    roll_center: readonly ["center"]
+    roll_positive: readonly ["positiveSmall", "positiveLarge"]
+  }
   expressionTooStrong: "exclude"
-  preferredRollBins: readonly ["center"]
-  fallbackRollSmallBins: readonly ["negativeSmall", "positiveSmall"]
-  fallbackRollLargeBins: readonly ["negativeLarge", "positiveLarge"]
-  fallbackRollBins: readonly [
-    "negativeSmall",
-    "positiveSmall",
-    "negativeLarge",
-    "positiveLarge",
-  ]
-  excludedRollBins: readonly []
   sampling: "evenly_spaced_by_time"
 }
 
@@ -112,6 +114,7 @@ type PoseReviewCandidateFrame = {
   sourceFrameIndex: number
   timeSec: number
   rollBin: PoseAxisBin
+  rollGroup: PoseReviewCandidateRollGroup
   selectedBy: PoseReviewSelectedBy
 }
 
@@ -122,12 +125,12 @@ type PoseReviewCandidateBucket = {
   targetCount: number
   selectedCount: number
   shortageCount: number
+  selectedByRollNegativeCount: number
   selectedByRollCenterCount: number
-  selectedByRollSmallFallbackCount: number
-  selectedByRollLargeFallbackCount: number
+  selectedByRollPositiveCount: number
+  availableRollNegativeCount: number
   availableRollCenterCount: number
-  availableRollSmallCount: number
-  availableRollLargeCount: number
+  availableRollPositiveCount: number
   shortageReason?: string
   selectedFrames: PoseReviewCandidateFrame[]
 }
@@ -137,6 +140,8 @@ type PoseReviewCandidateSummary = {
   maxTargetPerBucket: number
   minBalancedTargetPerBucket: number
   actualTargetPerBucket: number
+  rollSelection: "balanced_negative_center_positive"
+  rollGroups: PoseReviewCandidatePolicy["rollGroups"]
   balancedStatus: PoseReviewCandidateBalancedStatus
   policy: PoseReviewCandidatePolicy
   targetTotal: number
@@ -290,22 +295,62 @@ const POSE_REVIEW_BALANCED_TARGET_CANDIDATES = [
   4,
   POSE_REVIEW_MIN_BALANCED_TARGET_PER_BUCKET,
 ] as const
-const POSE_REVIEW_ROLL_SMALL_BINS = [
-  "negativeSmall",
-  "positiveSmall",
-] as const satisfies readonly PoseAxisBin[]
-const POSE_REVIEW_ROLL_LARGE_BINS = [
-  "negativeLarge",
-  "positiveLarge",
-] as const satisfies readonly PoseAxisBin[]
-const POSE_REVIEW_FALLBACK_ROLL_BINS = [
-  ...POSE_REVIEW_ROLL_SMALL_BINS,
-  ...POSE_REVIEW_ROLL_LARGE_BINS,
-] as const
-const POSE_REVIEW_EXCLUDED_ROLL_BINS = [] as const satisfies readonly PoseAxisBin[]
-const POSE_REVIEW_PREFERRED_ROLL_BINS = [
-  "center",
-] as const satisfies readonly PoseAxisBin[]
+const POSE_REVIEW_ROLL_SELECTION = "balanced_negative_center_positive" as const
+const POSE_REVIEW_ROLL_GROUPS = {
+  roll_negative: ["negativeLarge", "negativeSmall"],
+  roll_center: ["center"],
+  roll_positive: ["positiveSmall", "positiveLarge"],
+} as const satisfies Record<PoseReviewCandidateRollGroup, readonly PoseAxisBin[]>
+const POSE_REVIEW_ROLL_GROUP_ORDER = [
+  "roll_center",
+  "roll_negative",
+  "roll_positive",
+] as const satisfies readonly PoseReviewCandidateRollGroup[]
+const POSE_REVIEW_ROLL_SUPPLEMENT_ORDER = [
+  "roll_negative",
+  "roll_positive",
+  "roll_center",
+] as const satisfies readonly PoseReviewCandidateRollGroup[]
+const POSE_REVIEW_ROLL_BALANCE_INITIAL_TARGETS: Record<
+  number,
+  Record<PoseReviewCandidateRollGroup, number>
+> = {
+  5: {
+    roll_center: 2,
+    roll_negative: 1,
+    roll_positive: 1,
+  },
+  4: {
+    roll_center: 1,
+    roll_negative: 1,
+    roll_positive: 1,
+  },
+  3: {
+    roll_center: 1,
+    roll_negative: 1,
+    roll_positive: 1,
+  },
+}
+const POSE_REVIEW_ROLL_BALANCE_MAX_PER_GROUP: Record<
+  number,
+  Record<PoseReviewCandidateRollGroup, number>
+> = {
+  5: {
+    roll_center: 2,
+    roll_negative: 2,
+    roll_positive: 2,
+  },
+  4: {
+    roll_center: 2,
+    roll_negative: 2,
+    roll_positive: 2,
+  },
+  3: {
+    roll_center: 3,
+    roll_negative: 3,
+    roll_positive: 3,
+  },
+}
 const POSE_REVIEW_SHORTAGE_REASON =
   "not enough non-expressionTooStrong frames"
 const EXPRESSION_TOO_STRONG_THRESHOLDS = {
@@ -928,45 +973,8 @@ function buildPoseReviewCandidateSummaryForTarget(
 
       return poseBucket.yawBin === definition.yawBin && poseBucket.pitchBin === definition.pitchBin
     })
-    const rollCenterFrames = framesInBucket.filter(
-      (frame) => frame.poseBucket125?.rollBin === "center",
-    )
-    const rollSmallFrames = framesInBucket.filter((frame) => {
-      const rollBin = frame.poseBucket125?.rollBin
-      return rollBin === "negativeSmall" || rollBin === "positiveSmall"
-    })
-    const rollLargeFrames = framesInBucket.filter((frame) => {
-      const rollBin = frame.poseBucket125?.rollBin
-      return rollBin === "negativeLarge" || rollBin === "positiveLarge"
-    })
-
-    const selectedCenterFrames = pickEvenlySpaced(
-      rollCenterFrames,
-      targetPerBucket,
-      (frame) => frame.timeSec,
-    )
-    const smallFallbackTargetCount = Math.max(0, targetPerBucket - selectedCenterFrames.length)
-    const selectedSmallFrames =
-      smallFallbackTargetCount > 0
-        ? pickEvenlySpaced(rollSmallFrames, smallFallbackTargetCount, (frame) => frame.timeSec)
-        : []
-    const largeFallbackTargetCount = Math.max(
-      0,
-      targetPerBucket - selectedCenterFrames.length - selectedSmallFrames.length,
-    )
-    const selectedLargeFrames =
-      largeFallbackTargetCount > 0
-        ? pickEvenlySpaced(rollLargeFrames, largeFallbackTargetCount, (frame) => frame.timeSec)
-        : []
-    const selectedFrames = [
-      ...selectedCenterFrames.map((frame) => buildPoseReviewCandidateFrame(frame, "roll_center")),
-      ...selectedSmallFrames.map((frame) =>
-        buildPoseReviewCandidateFrame(frame, "roll_small_fallback"),
-      ),
-      ...selectedLargeFrames.map((frame) =>
-        buildPoseReviewCandidateFrame(frame, "roll_large_fallback"),
-      ),
-    ].sort((left, right) => left.timeSec - right.timeSec)
+    const rollFramesByGroup = groupPoseReviewFramesByRollGroup(framesInBucket)
+    const selectedFrames = selectRollBalancedCandidateFrames(rollFramesByGroup, targetPerBucket)
     const selectedCount = selectedFrames.length
 
     return {
@@ -974,12 +982,18 @@ function buildPoseReviewCandidateSummaryForTarget(
       targetCount: targetPerBucket,
       selectedCount,
       shortageCount: Math.max(0, targetPerBucket - selectedCount),
-      selectedByRollCenterCount: selectedCenterFrames.length,
-      selectedByRollSmallFallbackCount: selectedSmallFrames.length,
-      selectedByRollLargeFallbackCount: selectedLargeFrames.length,
-      availableRollCenterCount: rollCenterFrames.length,
-      availableRollSmallCount: rollSmallFrames.length,
-      availableRollLargeCount: rollLargeFrames.length,
+      selectedByRollNegativeCount: selectedFrames.filter(
+        (frame) => frame.rollGroup === "roll_negative",
+      ).length,
+      selectedByRollCenterCount: selectedFrames.filter(
+        (frame) => frame.rollGroup === "roll_center",
+      ).length,
+      selectedByRollPositiveCount: selectedFrames.filter(
+        (frame) => frame.rollGroup === "roll_positive",
+      ).length,
+      availableRollNegativeCount: rollFramesByGroup.roll_negative.length,
+      availableRollCenterCount: rollFramesByGroup.roll_center.length,
+      availableRollPositiveCount: rollFramesByGroup.roll_positive.length,
       shortageReason:
         selectedCount < targetPerBucket ? POSE_REVIEW_SHORTAGE_REASON : undefined,
       selectedFrames,
@@ -995,6 +1009,8 @@ function buildPoseReviewCandidateSummaryForTarget(
     maxTargetPerBucket: POSE_REVIEW_MAX_TARGET_PER_BUCKET,
     minBalancedTargetPerBucket: POSE_REVIEW_MIN_BALANCED_TARGET_PER_BUCKET,
     actualTargetPerBucket: targetPerBucket,
+    rollSelection: POSE_REVIEW_ROLL_SELECTION,
+    rollGroups: POSE_REVIEW_ROLL_GROUPS,
     balancedStatus,
     policy: {
       selectionMode: POSE_REVIEW_SELECTION_MODE,
@@ -1002,12 +1018,9 @@ function buildPoseReviewCandidateSummaryForTarget(
       maxTargetPerBucket: POSE_REVIEW_MAX_TARGET_PER_BUCKET,
       minBalancedTargetPerBucket: POSE_REVIEW_MIN_BALANCED_TARGET_PER_BUCKET,
       actualTargetPerBucket: targetPerBucket,
+      rollSelection: POSE_REVIEW_ROLL_SELECTION,
+      rollGroups: POSE_REVIEW_ROLL_GROUPS,
       expressionTooStrong: "exclude",
-      preferredRollBins: POSE_REVIEW_PREFERRED_ROLL_BINS,
-      fallbackRollSmallBins: POSE_REVIEW_ROLL_SMALL_BINS,
-      fallbackRollLargeBins: POSE_REVIEW_ROLL_LARGE_BINS,
-      fallbackRollBins: POSE_REVIEW_FALLBACK_ROLL_BINS,
-      excludedRollBins: POSE_REVIEW_EXCLUDED_ROLL_BINS,
       sampling: "evenly_spaced_by_time",
     },
     targetTotal: POSE_REVIEW_YAW_PITCH_BUCKET_COUNT * targetPerBucket,
@@ -1019,14 +1032,210 @@ function buildPoseReviewCandidateSummaryForTarget(
   }
 }
 
+function groupPoseReviewFramesByRollGroup(
+  frames: AcceptedFrameSnapshot[],
+): Record<PoseReviewCandidateRollGroup, AcceptedFrameSnapshot[]> {
+  return {
+    roll_negative: frames.filter((frame) => getPoseReviewRollGroup(frame) === "roll_negative"),
+    roll_center: frames.filter((frame) => getPoseReviewRollGroup(frame) === "roll_center"),
+    roll_positive: frames.filter((frame) => getPoseReviewRollGroup(frame) === "roll_positive"),
+  }
+}
+
+function selectRollBalancedCandidateFrames(
+  framesByGroup: Record<PoseReviewCandidateRollGroup, AcceptedFrameSnapshot[]>,
+  targetPerBucket: number,
+): PoseReviewCandidateFrame[] {
+  const selectedFrames: PoseReviewCandidateFrame[] = []
+  const selectedSourceFrameIndexes = new Set<number>()
+  const selectedCountByGroup = createEmptyPoseReviewRollGroupCount()
+  const initialTargets = POSE_REVIEW_ROLL_BALANCE_INITIAL_TARGETS[targetPerBucket]
+  const softMaxByGroup = POSE_REVIEW_ROLL_BALANCE_MAX_PER_GROUP[targetPerBucket]
+
+  const addFrames = (
+    rollGroup: PoseReviewCandidateRollGroup,
+    frames: AcceptedFrameSnapshot[],
+    selectedBy: PoseReviewSelectedBy,
+  ): void => {
+    for (const frame of frames) {
+      if (selectedFrames.length >= targetPerBucket) {
+        return
+      }
+      if (selectedSourceFrameIndexes.has(frame.sourceFrameIndex)) {
+        continue
+      }
+
+      selectedFrames.push(buildPoseReviewCandidateFrame(frame, rollGroup, selectedBy))
+      selectedSourceFrameIndexes.add(frame.sourceFrameIndex)
+      selectedCountByGroup[rollGroup] += 1
+    }
+  }
+
+  for (const rollGroup of POSE_REVIEW_ROLL_GROUP_ORDER) {
+    const targetCount = Math.min(initialTargets[rollGroup] ?? 0, targetPerBucket)
+    const pickedFrames = pickEvenlySpaced(
+      framesByGroup[rollGroup],
+      targetCount,
+      (frame) => frame.timeSec,
+    )
+    addFrames(rollGroup, pickedFrames, getPoseReviewSelectedByForRollGroup(rollGroup))
+  }
+
+  supplementRollBalancedCandidateFrames({
+    addFrames,
+    framesByGroup,
+    selectedCountByGroup,
+    selectedSourceFrameIndexes,
+    selectedFrames,
+    targetPerBucket,
+    softMaxByGroup,
+    useSoftMax: true,
+  })
+
+  supplementRollBalancedCandidateFrames({
+    addFrames,
+    framesByGroup,
+    selectedCountByGroup,
+    selectedSourceFrameIndexes,
+    selectedFrames,
+    targetPerBucket,
+    softMaxByGroup,
+    useSoftMax: false,
+  })
+
+  return selectedFrames.sort((left, right) => left.timeSec - right.timeSec)
+}
+
+function supplementRollBalancedCandidateFrames(options: {
+  addFrames: (
+    rollGroup: PoseReviewCandidateRollGroup,
+    frames: AcceptedFrameSnapshot[],
+    selectedBy: PoseReviewSelectedBy,
+  ) => void
+  framesByGroup: Record<PoseReviewCandidateRollGroup, AcceptedFrameSnapshot[]>
+  selectedCountByGroup: Record<PoseReviewCandidateRollGroup, number>
+  selectedSourceFrameIndexes: Set<number>
+  selectedFrames: PoseReviewCandidateFrame[]
+  targetPerBucket: number
+  softMaxByGroup: Record<PoseReviewCandidateRollGroup, number>
+  useSoftMax: boolean
+}): void {
+  while (options.selectedFrames.length < options.targetPerBucket) {
+    const nextRollGroup = choosePoseReviewSupplementRollGroup(options)
+    if (!nextRollGroup) {
+      return
+    }
+
+    const remainingFrames = getRemainingPoseReviewFrames(
+      options.framesByGroup[nextRollGroup],
+      options.selectedSourceFrameIndexes,
+    )
+    options.addFrames(
+      nextRollGroup,
+      pickEvenlySpaced(remainingFrames, 1, (frame) => frame.timeSec),
+      "roll_balance_supplement",
+    )
+  }
+}
+
+function choosePoseReviewSupplementRollGroup(options: {
+  framesByGroup: Record<PoseReviewCandidateRollGroup, AcceptedFrameSnapshot[]>
+  selectedCountByGroup: Record<PoseReviewCandidateRollGroup, number>
+  selectedSourceFrameIndexes: Set<number>
+  softMaxByGroup: Record<PoseReviewCandidateRollGroup, number>
+  useSoftMax: boolean
+}): PoseReviewCandidateRollGroup | null {
+  const candidates = POSE_REVIEW_ROLL_SUPPLEMENT_ORDER.filter((rollGroup) => {
+    if (
+      options.useSoftMax &&
+      options.selectedCountByGroup[rollGroup] >= options.softMaxByGroup[rollGroup]
+    ) {
+      return false
+    }
+
+    return getRemainingPoseReviewFrames(
+      options.framesByGroup[rollGroup],
+      options.selectedSourceFrameIndexes,
+    ).length > 0
+  })
+
+  if (candidates.length === 0) {
+    return null
+  }
+
+  return candidates.sort((left, right) => {
+    const selectedCountDiff =
+      options.selectedCountByGroup[left] - options.selectedCountByGroup[right]
+    if (selectedCountDiff !== 0) {
+      return selectedCountDiff
+    }
+
+    const remainingCountDiff =
+      getRemainingPoseReviewFrames(options.framesByGroup[right], options.selectedSourceFrameIndexes)
+        .length -
+      getRemainingPoseReviewFrames(options.framesByGroup[left], options.selectedSourceFrameIndexes)
+        .length
+    if (remainingCountDiff !== 0) {
+      return remainingCountDiff
+    }
+
+    return (
+      POSE_REVIEW_ROLL_SUPPLEMENT_ORDER.indexOf(left) -
+      POSE_REVIEW_ROLL_SUPPLEMENT_ORDER.indexOf(right)
+    )
+  })[0]
+}
+
+function getRemainingPoseReviewFrames(
+  frames: AcceptedFrameSnapshot[],
+  selectedSourceFrameIndexes: Set<number>,
+): AcceptedFrameSnapshot[] {
+  return frames.filter((frame) => !selectedSourceFrameIndexes.has(frame.sourceFrameIndex))
+}
+
+function getPoseReviewRollGroup(
+  frame: AcceptedFrameSnapshot,
+): PoseReviewCandidateRollGroup | null {
+  const rollBin = frame.poseBucket125?.rollBin
+  if (rollBin === "negativeLarge" || rollBin === "negativeSmall") {
+    return "roll_negative"
+  }
+  if (rollBin === "center") {
+    return "roll_center"
+  }
+  if (rollBin === "positiveSmall" || rollBin === "positiveLarge") {
+    return "roll_positive"
+  }
+  return null
+}
+
+function getPoseReviewSelectedByForRollGroup(
+  rollGroup: PoseReviewCandidateRollGroup,
+): PoseReviewSelectedBy {
+  if (rollGroup === "roll_center") {
+    return "roll_center"
+  }
+  return rollGroup
+}
+
+function createEmptyPoseReviewRollGroupCount(): Record<PoseReviewCandidateRollGroup, number> {
+  return {
+    roll_negative: 0,
+    roll_center: 0,
+    roll_positive: 0,
+  }
+}
+
 function buildPoseReviewCandidateFrame(
   frame: AcceptedFrameSnapshot,
+  rollGroup: PoseReviewCandidateRollGroup,
   selectedBy: PoseReviewSelectedBy,
 ): PoseReviewCandidateFrame {
   return {
     sourceFrameIndex: frame.sourceFrameIndex,
     timeSec: frame.timeSec,
     rollBin: frame.poseBucket125?.rollBin ?? "center",
+    rollGroup,
     selectedBy,
   }
 }
@@ -2248,17 +2457,17 @@ function renderCandidatesConsole(): string {
           String(summary.actualTargetPerBucket),
         ],
         ["balancedStatus（均等状態）", summary.balancedStatus],
+        ["rollSelection（roll選択）", summary.rollSelection],
+        [
+          "roll_negative group（roll負方向）",
+          summary.rollGroups.roll_negative.join(" / "),
+        ],
+        ["roll_center group（roll中心）", summary.rollGroups.roll_center.join(" / ")],
+        [
+          "roll_positive group（roll正方向）",
+          summary.rollGroups.roll_positive.join(" / "),
+        ],
         ["expressionTooStrong（強い表情）", summary.policy.expressionTooStrong],
-        ["preferred roll（優先roll）", summary.policy.preferredRollBins.join(" / ")],
-        [
-          "fallback roll small（補欠roll小）",
-          summary.policy.fallbackRollSmallBins.join(" / "),
-        ],
-        [
-          "fallback roll large（補欠roll大）",
-          summary.policy.fallbackRollLargeBins.join(" / "),
-        ],
-        ["excluded roll（除外roll）", formatPoseReviewRollBins(summary.policy.excludedRollBins)],
         ["sampling（抽出方法）", summary.policy.sampling],
         ["targetTotal（目標合計）", String(summary.targetTotal)],
         ["selectedTotal（選択合計）", String(summary.selectedTotal)],
@@ -2290,10 +2499,11 @@ function renderPoseReviewCandidateSummaryBrief(): string {
     ["minBalancedTargetPerBucket", String(summary.minBalancedTargetPerBucket)],
     ["actualTargetPerBucket", String(summary.actualTargetPerBucket)],
     ["balancedStatus", summary.balancedStatus],
+    ["rollSelection", summary.rollSelection],
+    ["roll_negative group", summary.rollGroups.roll_negative.join(" / ")],
+    ["roll_center group", summary.rollGroups.roll_center.join(" / ")],
+    ["roll_positive group", summary.rollGroups.roll_positive.join(" / ")],
     ["expressionTooStrong", summary.policy.expressionTooStrong],
-    ["preferred roll", summary.policy.preferredRollBins.join(" / ")],
-    ["fallback roll small", summary.policy.fallbackRollSmallBins.join(" / ")],
-    ["fallback roll large", summary.policy.fallbackRollLargeBins.join(" / ")],
     ["sampling", summary.policy.sampling],
     ["targetTotal", String(summary.targetTotal)],
     ["selectedTotal", String(summary.selectedTotal)],
@@ -2327,12 +2537,12 @@ function renderPoseReviewCandidateBucket(bucket: PoseReviewCandidateBucket): str
       <code>${escapeHtml(bucket.id)}</code>
       <span>selected（選択） ${bucket.selectedCount} / target（目標） ${bucket.targetCount}</span>
       <span>shortage（不足） ${bucket.shortageCount}</span>
-      <span>selectedBy roll_center（roll中心で選択） ${bucket.selectedByRollCenterCount}</span>
-      <span>selectedBy roll_small_fallback（roll小fallbackで選択） ${bucket.selectedByRollSmallFallbackCount}</span>
-      <span>selectedBy roll_large_fallback（roll大fallbackで選択） ${bucket.selectedByRollLargeFallbackCount}</span>
+      <span>available roll_negative（利用可能なroll負方向） ${bucket.availableRollNegativeCount}</span>
       <span>available roll_center（利用可能なroll中心） ${bucket.availableRollCenterCount}</span>
-      <span>available roll_small（利用可能なroll小） ${bucket.availableRollSmallCount}</span>
-      <span>available roll_large（利用可能なroll大） ${bucket.availableRollLargeCount}</span>
+      <span>available roll_positive（利用可能なroll正方向） ${bucket.availableRollPositiveCount}</span>
+      <span>selectedBy roll_negative（roll負方向で選択） ${bucket.selectedByRollNegativeCount}</span>
+      <span>selectedBy roll_center（roll中心で選択） ${bucket.selectedByRollCenterCount}</span>
+      <span>selectedBy roll_positive（roll正方向で選択） ${bucket.selectedByRollPositiveCount}</span>
       ${bucket.shortageReason ? `<span>reason（理由） ${escapeHtml(bucket.shortageReason)}</span>` : ""}
       ${renderPoseReviewCandidateFrames(bucket.selectedFrames)}
     </div>
@@ -2353,6 +2563,7 @@ function renderPoseReviewCandidateFrames(frames: PoseReviewCandidateFrame[]): st
               <span>sourceFrameIndex（元フレーム番号） ${frame.sourceFrameIndex}</span>
               <span>timeSec（秒） ${formatNumber(frame.timeSec)}</span>
               <span>rollBin（roll分類） ${escapeHtml(frame.rollBin)}</span>
+              <span>rollGroup（rollグループ） ${escapeHtml(frame.rollGroup)}</span>
               <span>selectedBy（選択理由） ${escapeHtml(frame.selectedBy)}</span>
             </div>
           `,
@@ -2360,10 +2571,6 @@ function renderPoseReviewCandidateFrames(frames: PoseReviewCandidateFrame[]): st
         .join("")}
     </div>
   `
-}
-
-function formatPoseReviewRollBins(rollBins: readonly PoseAxisBin[]): string {
-  return rollBins.length > 0 ? rollBins.join(" / ") : "none"
 }
 
 function renderRawConsole(rawDebugPayload: Record<string, unknown>): string {

@@ -376,7 +376,9 @@ Render Consistency Lab は、最初から production asset を作る工程では
 - yaw × pitch の25 bucket を primaryGrouping（主分類）とし、`maxTargetPerBucket = 5` から `4`、`minBalancedTargetPerBucket = 3` の順に試します。
 - 全25 bucket が満たせた最初の `actualTargetPerBucket` を採用し、満たせない場合は target 3 の partial balanced result（部分均等結果）として shortage bucket（不足bucket）を表示します。
 - `expressionTooStrong` は常に除外し、fallback（補充）にも使いません。
-- roll は `center`、`negativeSmall` / `positiveSmall`、`negativeLarge` / `positiveLarge` の順に使います。
-- `negativeLarge` / `positiveLarge` は優先候補ではなく、center と small で不足する場合の最後の fallback（補充）です。
+- pose review candidate 抽出は rotationCenter(0, y, z) 推定向けの候補作成として扱います。
+- primary grouping（主分類）は yaw × pitch の25 bucket のままにします。125 bucket は Pose タブの coverage map（姿勢カバレッジ確認）として残し、必須採用単位にはしません。
+- roll は完全除外や単純 fallback ではなく、`roll_negative` / `roll_center` / `roll_positive` の3 group（グループ）でバランスを取ります。
+- `roll_negative` は `negativeLarge` / `negativeSmall`、`roll_center` は `center`、`roll_positive` は `positiveSmall` / `positiveLarge` として扱います。
 - 候補過多の bucket では `pickEvenlySpaced` により timeSec（秒）方向に均等抽出します。
 - この機能は候補抽出と Debug Console（デバッグコンソール）表示までを扱い、mesh / render / MediaPipe re-detection / residual evaluation には進みません。
