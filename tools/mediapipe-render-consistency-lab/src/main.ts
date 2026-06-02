@@ -84,6 +84,23 @@ type PoseAxisName = "yaw" | "pitch" | "roll"
 
 type PoseReviewSelectedBy = "roll_center" | "roll_small_fallback"
 
+type PoseReviewCandidateSelectionMode = "balanced"
+
+type PoseReviewCandidateBalancedStatus = "balanced" | "partial"
+
+type PoseReviewCandidatePolicy = {
+  selectionMode: PoseReviewCandidateSelectionMode
+  primaryGrouping: "yaw_pitch_25"
+  maxTargetPerBucket: number
+  minBalancedTargetPerBucket: number
+  actualTargetPerBucket: number
+  expressionTooStrong: "exclude"
+  preferredRollBins: readonly ["center"]
+  fallbackRollBins: readonly ["negativeSmall", "positiveSmall"]
+  excludedRollBins: readonly ["negativeLarge", "positiveLarge"]
+  sampling: "evenly_spaced_by_time"
+}
+
 type PoseReviewCandidateFrame = {
   sourceFrameIndex: number
   timeSec: number
@@ -100,18 +117,17 @@ type PoseReviewCandidateBucket = {
   shortageCount: number
   availableRollCenterCount: number
   availableRollSmallCount: number
+  shortageReason?: string
   selectedFrames: PoseReviewCandidateFrame[]
 }
 
 type PoseReviewCandidateSummary = {
-  policy: {
-    primaryGrouping: "yaw_pitch_25"
-    targetPerBucket: number
-    expressionTooStrong: "exclude"
-    preferredRoll: "center"
-    fallbackRoll: readonly ["negativeSmall", "positiveSmall"]
-    excludedRoll: readonly ["negativeLarge", "positiveLarge"]
-  }
+  selectionMode: PoseReviewCandidateSelectionMode
+  maxTargetPerBucket: number
+  minBalancedTargetPerBucket: number
+  actualTargetPerBucket: number
+  balancedStatus: PoseReviewCandidateBalancedStatus
+  policy: PoseReviewCandidatePolicy
   targetTotal: number
   selectedTotal: number
   fullBucketCount: number
@@ -253,11 +269,16 @@ const POSE_BUCKET_125_DEFINITIONS = buildPoseBucket125Definitions()
 const POSE_BUCKET_125_TOTAL_COUNT = POSE_BUCKET_125_DEFINITIONS.length
 const FRONT_CANDIDATE_POSE_BUCKET_125_ID =
   "yaw_center__pitch_center__roll_center"
-const POSE_REVIEW_TARGET_PER_BUCKET = 5
+const POSE_REVIEW_SELECTION_MODE = "balanced" as const satisfies PoseReviewCandidateSelectionMode
+const POSE_REVIEW_MAX_TARGET_PER_BUCKET = 5
+const POSE_REVIEW_MIN_BALANCED_TARGET_PER_BUCKET = 3
 const POSE_REVIEW_YAW_PITCH_BUCKET_DEFINITIONS = buildPoseReviewYawPitchBucketDefinitions()
 const POSE_REVIEW_YAW_PITCH_BUCKET_COUNT = POSE_REVIEW_YAW_PITCH_BUCKET_DEFINITIONS.length
-const POSE_REVIEW_TARGET_TOTAL =
-  POSE_REVIEW_YAW_PITCH_BUCKET_COUNT * POSE_REVIEW_TARGET_PER_BUCKET
+const POSE_REVIEW_BALANCED_TARGET_CANDIDATES = [
+  POSE_REVIEW_MAX_TARGET_PER_BUCKET,
+  4,
+  POSE_REVIEW_MIN_BALANCED_TARGET_PER_BUCKET,
+] as const
 const POSE_REVIEW_ROLL_SMALL_BINS = [
   "negativeSmall",
   "positiveSmall",
@@ -266,6 +287,11 @@ const POSE_REVIEW_ROLL_LARGE_BINS = [
   "negativeLarge",
   "positiveLarge",
 ] as const satisfies readonly PoseAxisBin[]
+const POSE_REVIEW_PREFERRED_ROLL_BINS = [
+  "center",
+] as const satisfies readonly PoseAxisBin[]
+const POSE_REVIEW_SHORTAGE_REASON =
+  "not enough non-expressionTooStrong and non-rollLarge frames"
 const EXPRESSION_TOO_STRONG_THRESHOLDS = {
   mouth: 0.35,
   eye: 0.35,
@@ -860,6 +886,18 @@ function extractPoseReviewCandidates(): void {
 }
 
 function buildPoseReviewCandidateSummary(): PoseReviewCandidateSummary {
+  const trialSummaries = POSE_REVIEW_BALANCED_TARGET_CANDIDATES.map((targetPerBucket) =>
+    buildPoseReviewCandidateSummaryForTarget(targetPerBucket),
+  )
+  return (
+    trialSummaries.find((summary) => summary.shortageBucketCount === 0) ??
+    trialSummaries[trialSummaries.length - 1]
+  )
+}
+
+function buildPoseReviewCandidateSummaryForTarget(
+  targetPerBucket: number,
+): PoseReviewCandidateSummary {
   const excludedExpressionTooStrongCount = getExpressionTooStrongCount()
   const usableFrames = state.acceptedFrames.filter(
     (frame) => !hasFrameBadge(frame, "expressionTooStrong") && frame.poseBucket125,
@@ -884,13 +922,10 @@ function buildPoseReviewCandidateSummary(): PoseReviewCandidateSummary {
 
     const selectedCenterFrames = pickEvenlySpaced(
       rollCenterFrames,
-      POSE_REVIEW_TARGET_PER_BUCKET,
+      targetPerBucket,
       (frame) => frame.timeSec,
     )
-    const fallbackTargetCount = Math.max(
-      0,
-      POSE_REVIEW_TARGET_PER_BUCKET - selectedCenterFrames.length,
-    )
+    const fallbackTargetCount = Math.max(0, targetPerBucket - selectedCenterFrames.length)
     const selectedSmallFrames =
       fallbackTargetCount > 0
         ? pickEvenlySpaced(rollSmallFrames, fallbackTargetCount, (frame) => frame.timeSec)
@@ -905,29 +940,43 @@ function buildPoseReviewCandidateSummary(): PoseReviewCandidateSummary {
 
     return {
       ...definition,
-      targetCount: POSE_REVIEW_TARGET_PER_BUCKET,
+      targetCount: targetPerBucket,
       selectedCount,
-      shortageCount: Math.max(0, POSE_REVIEW_TARGET_PER_BUCKET - selectedCount),
+      shortageCount: Math.max(0, targetPerBucket - selectedCount),
       availableRollCenterCount: rollCenterFrames.length,
       availableRollSmallCount: rollSmallFrames.length,
+      shortageReason:
+        selectedCount < targetPerBucket ? POSE_REVIEW_SHORTAGE_REASON : undefined,
       selectedFrames,
     }
   })
   const selectedTotal = buckets.reduce((sum, bucket) => sum + bucket.selectedCount, 0)
+  const shortageBucketCount = buckets.filter((bucket) => bucket.shortageCount > 0).length
+  const balancedStatus: PoseReviewCandidateBalancedStatus =
+    shortageBucketCount === 0 ? "balanced" : "partial"
 
   return {
+    selectionMode: POSE_REVIEW_SELECTION_MODE,
+    maxTargetPerBucket: POSE_REVIEW_MAX_TARGET_PER_BUCKET,
+    minBalancedTargetPerBucket: POSE_REVIEW_MIN_BALANCED_TARGET_PER_BUCKET,
+    actualTargetPerBucket: targetPerBucket,
+    balancedStatus,
     policy: {
+      selectionMode: POSE_REVIEW_SELECTION_MODE,
       primaryGrouping: "yaw_pitch_25",
-      targetPerBucket: POSE_REVIEW_TARGET_PER_BUCKET,
+      maxTargetPerBucket: POSE_REVIEW_MAX_TARGET_PER_BUCKET,
+      minBalancedTargetPerBucket: POSE_REVIEW_MIN_BALANCED_TARGET_PER_BUCKET,
+      actualTargetPerBucket: targetPerBucket,
       expressionTooStrong: "exclude",
-      preferredRoll: "center",
-      fallbackRoll: POSE_REVIEW_ROLL_SMALL_BINS,
-      excludedRoll: POSE_REVIEW_ROLL_LARGE_BINS,
+      preferredRollBins: POSE_REVIEW_PREFERRED_ROLL_BINS,
+      fallbackRollBins: POSE_REVIEW_ROLL_SMALL_BINS,
+      excludedRollBins: POSE_REVIEW_ROLL_LARGE_BINS,
+      sampling: "evenly_spaced_by_time",
     },
-    targetTotal: POSE_REVIEW_TARGET_TOTAL,
+    targetTotal: POSE_REVIEW_YAW_PITCH_BUCKET_COUNT * targetPerBucket,
     selectedTotal,
     fullBucketCount: buckets.filter((bucket) => bucket.shortageCount === 0).length,
-    shortageBucketCount: buckets.filter((bucket) => bucket.shortageCount > 0).length,
+    shortageBucketCount,
     excludedExpressionTooStrongCount,
     buckets,
   }
@@ -2150,12 +2199,23 @@ function renderCandidatesConsole(): string {
     renderConsoleSection(
       "Summary（要約）",
       renderStatusItems([
+        ["selectionMode（選択モード）", summary.selectionMode],
         ["primaryGrouping（主分類）", summary.policy.primaryGrouping],
-        ["targetPerBucket（bucketごとの目標数）", String(summary.policy.targetPerBucket)],
+        ["maxTargetPerBucket（bucketごとの最大目標数）", String(summary.maxTargetPerBucket)],
+        [
+          "minBalancedTargetPerBucket（均等候補の最小目標数）",
+          String(summary.minBalancedTargetPerBucket),
+        ],
+        [
+          "actualTargetPerBucket（採用したbucketごとの目標数）",
+          String(summary.actualTargetPerBucket),
+        ],
+        ["balancedStatus（均等状態）", summary.balancedStatus],
         ["expressionTooStrong（強い表情）", summary.policy.expressionTooStrong],
-        ["preferred roll（優先roll）", summary.policy.preferredRoll],
-        ["fallback roll（補欠roll）", summary.policy.fallbackRoll.join(" / ")],
-        ["excluded roll（除外roll）", summary.policy.excludedRoll.join(" / ")],
+        ["preferred roll（優先roll）", summary.policy.preferredRollBins.join(" / ")],
+        ["fallback roll（補欠roll）", summary.policy.fallbackRollBins.join(" / ")],
+        ["excluded roll（除外roll）", summary.policy.excludedRollBins.join(" / ")],
+        ["sampling（抽出方法）", summary.policy.sampling],
         ["targetTotal（目標合計）", String(summary.targetTotal)],
         ["selectedTotal（選択合計）", String(summary.selectedTotal)],
         ["fullBucketCount（充足bucket数）", String(summary.fullBucketCount)],
@@ -2180,6 +2240,13 @@ function renderPoseReviewCandidateSummaryBrief(): string {
   }
 
   return renderStatusItems([
+    ["selectionMode", summary.selectionMode],
+    ["maxTargetPerBucket", String(summary.maxTargetPerBucket)],
+    ["minBalancedTargetPerBucket", String(summary.minBalancedTargetPerBucket)],
+    ["actualTargetPerBucket", String(summary.actualTargetPerBucket)],
+    ["balancedStatus", summary.balancedStatus],
+    ["targetTotal", String(summary.targetTotal)],
+    ["selectedTotal", String(summary.selectedTotal)],
     ["selectedTotal / targetTotal", `${summary.selectedTotal} / ${summary.targetTotal}`],
     [
       "fullBucketCount / 25",
@@ -2212,6 +2279,7 @@ function renderPoseReviewCandidateBucket(bucket: PoseReviewCandidateBucket): str
       <span>shortage（不足） ${bucket.shortageCount}</span>
       <span>available roll_center（利用可能なroll中心） ${bucket.availableRollCenterCount}</span>
       <span>available roll_small（利用可能なroll小） ${bucket.availableRollSmallCount}</span>
+      ${bucket.shortageReason ? `<span>reason（理由） ${escapeHtml(bucket.shortageReason)}</span>` : ""}
       ${renderPoseReviewCandidateFrames(bucket.selectedFrames)}
     </div>
   `
