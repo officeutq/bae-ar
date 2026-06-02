@@ -442,8 +442,9 @@ type RotationFitFittingLab12ptSearch = {
   sourcePointSetId: "12pt_rotation_center"
   coordinateSystemSource: "render_adjusted12pt_aspect_corrected"
   rangeSource: "render_consistency_lab"
+  zRangeSource: "render_consistency_lab_uniform_debug_range"
   fittingLabAlgorithmOnly: true
-  baseCandidatePresetId: "naturalNoseWithRotationCenter"
+  baseCandidatePresetId: "renderUniformDebugInitial"
   candidateGeneration: "coordinateDescent"
   coordinateDescentIterations: number
   coordinateDescentParameterOrder: RotationFitLocalSearchParameter[]
@@ -728,25 +729,24 @@ const ROTATION_FIT_DEBUG_Z_BY_POINT_ID: Record<string, number> = {
 }
 const ROTATION_FIT_FITTING_LAB_SEARCH_MODE = "fitting_lab_12pt_rotation_center"
 const ROTATION_FIT_FITTING_LAB_ITERATION_COUNT = 2
-const ROTATION_FIT_FITTING_LAB_BASE_CANDIDATE = {
-  pivotZ: 0.04,
+const RENDER_ROTATION_FIT_INITIAL_CANDIDATE = {
   rotationCenter: {
-    y: -0.08,
-    z: 0.04,
+    y: 0,
+    z: 0.06,
   },
   zByPointId: {
     headTop: 0,
     chin: 0,
-    leftCheek: 0.03,
-    rightCheek: 0.03,
-    leftEye: 0.05,
-    rightEye: 0.03,
-    nose: 0.02,
-    mouth: 0.05,
-    noseBridge: 0.035,
-    leftJaw: 0.015,
-    rightJaw: 0.015,
-    upperFaceCenter: 0.0175,
+    leftCheek: 0,
+    rightCheek: 0,
+    leftEye: 0,
+    rightEye: 0,
+    nose: 0,
+    mouth: 0,
+    noseBridge: 0,
+    leftJaw: 0,
+    rightJaw: 0,
+    upperFaceCenter: 0,
   },
 } as const
 const ROTATION_FIT_FITTING_LAB_PARAMETER_ORDER: RotationFitLocalSearchParameter[] = [
@@ -765,26 +765,41 @@ const ROTATION_FIT_FITTING_LAB_PARAMETER_ORDER: RotationFitLocalSearchParameter[
   "rightJaw.z",
   "upperFaceCenter.z",
 ]
-// 12点 z range は Fitting Lab の値を参考にした debug range（検証用範囲）。
-// Render Consistency Lab の adjusted12pt 座標系では今後も調整対象で、production asset（本番用アセット）ではない。
+// Render Consistency Lab 用の uniform-ish debug range（統一寄りの検証用範囲）。
+// Fitting Lab の 12点 z range をコピーした値ではなく、production asset（本番用アセット）でもない。
+const RENDER_ROTATION_FIT_12PT_Z_RANGES = {
+  headTop: { min: -0.03, max: 0.06, step: 0.01 },
+  chin: { min: -0.03, max: 0.06, step: 0.01 },
+  leftCheek: { min: -0.03, max: 0.08, step: 0.01 },
+  rightCheek: { min: -0.03, max: 0.08, step: 0.01 },
+  leftEye: { min: -0.03, max: 0.06, step: 0.01 },
+  rightEye: { min: -0.03, max: 0.06, step: 0.01 },
+  nose: { min: -0.03, max: 0.08, step: 0.01 },
+  mouth: { min: -0.03, max: 0.08, step: 0.01 },
+  noseBridge: { min: -0.03, max: 0.08, step: 0.01 },
+  leftJaw: { min: -0.03, max: 0.08, step: 0.01 },
+  rightJaw: { min: -0.03, max: 0.08, step: 0.01 },
+  upperFaceCenter: { min: -0.03, max: 0.06, step: 0.01 },
+} as const
+
 const RENDER_ROTATION_FIT_COORDINATE_DESCENT_RANGES: Record<
   RotationFitLocalSearchParameter,
   RotationFitSearchRange
 > = {
   "rotationCenter.y": { min: -0.05, max: 0.5, step: 0.01 },
   "rotationCenter.z": { min: 0, max: 0.12, step: 0.01 },
-  "headTop.z": { min: -0.02, max: 0.03, step: 0.01 },
-  "chin.z": { min: -0.05, max: 0.03, step: 0.01 },
-  "leftCheek.z": { min: 0.02, max: 0.08, step: 0.01 },
-  "rightCheek.z": { min: 0.02, max: 0.08, step: 0.01 },
-  "leftEye.z": { min: 0, max: 0.06, step: 0.01 },
-  "rightEye.z": { min: 0, max: 0.06, step: 0.01 },
-  "nose.z": { min: -0.02, max: 0.08, step: 0.01 },
-  "mouth.z": { min: 0, max: 0.08, step: 0.01 },
-  "noseBridge.z": { min: 0, max: 0.08, step: 0.01 },
-  "leftJaw.z": { min: -0.03, max: 0.08, step: 0.01 },
-  "rightJaw.z": { min: -0.03, max: 0.08, step: 0.01 },
-  "upperFaceCenter.z": { min: -0.01, max: 0.06, step: 0.01 },
+  "headTop.z": RENDER_ROTATION_FIT_12PT_Z_RANGES.headTop,
+  "chin.z": RENDER_ROTATION_FIT_12PT_Z_RANGES.chin,
+  "leftCheek.z": RENDER_ROTATION_FIT_12PT_Z_RANGES.leftCheek,
+  "rightCheek.z": RENDER_ROTATION_FIT_12PT_Z_RANGES.rightCheek,
+  "leftEye.z": RENDER_ROTATION_FIT_12PT_Z_RANGES.leftEye,
+  "rightEye.z": RENDER_ROTATION_FIT_12PT_Z_RANGES.rightEye,
+  "nose.z": RENDER_ROTATION_FIT_12PT_Z_RANGES.nose,
+  "mouth.z": RENDER_ROTATION_FIT_12PT_Z_RANGES.mouth,
+  "noseBridge.z": RENDER_ROTATION_FIT_12PT_Z_RANGES.noseBridge,
+  "leftJaw.z": RENDER_ROTATION_FIT_12PT_Z_RANGES.leftJaw,
+  "rightJaw.z": RENDER_ROTATION_FIT_12PT_Z_RANGES.rightJaw,
+  "upperFaceCenter.z": RENDER_ROTATION_FIT_12PT_Z_RANGES.upperFaceCenter,
 }
 const EYE_POINT_INDICES = {
   leftIris: [474, 475, 476, 477],
@@ -894,8 +909,8 @@ app.innerHTML = `
           回転中心評価・粗探索
         </button>
         <p class="control-help">
-          Fitting Lab の 12pt_rotation_center 方式で rotationCenter.y/z と 12点 z を coordinate descent（座標降下探索）します。<br />
-          一時的な debug UI です。
+          Fitting Lab から踏襲するのは coordinate descent（座標降下探索）の手順のみです。<br />
+          rotationCenter range（回転中心探索範囲）と 12点 z range（12点奥行き探索範囲）は Render Consistency Lab 用に再定義しています。
         </p>
       </section>
 
@@ -1467,8 +1482,8 @@ function evaluateRotationFit(): RotationFitEvaluation {
     videoAspectRatio,
     {
       x: fixedRotationCenterX,
-      y: ROTATION_FIT_FITTING_LAB_BASE_CANDIDATE.rotationCenter.y,
-      z: ROTATION_FIT_FITTING_LAB_BASE_CANDIDATE.rotationCenter.z,
+      y: RENDER_ROTATION_FIT_INITIAL_CANDIDATE.rotationCenter.y,
+      z: RENDER_ROTATION_FIT_INITIAL_CANDIDATE.rotationCenter.z,
     },
     0,
   )
@@ -1606,8 +1621,8 @@ function createEmptyRotationFitEvaluation(
       bestZAtMin: false,
       bestZAtMax: false,
     },
-    zPresetName: "naturalNoseWithRotationCenter",
-    fixedZPresetName: "naturalNoseWithRotationCenter",
+    zPresetName: "renderUniformDebugInitial",
+    fixedZPresetName: "renderUniformDebugInitial",
     focalLength: ROTATION_FIT_FOCAL_LENGTH,
     totalScore: 0,
     maxFrameScore: 0,
@@ -1624,7 +1639,7 @@ function createEmptyRotationFitEvaluation(
     bestCandidate: null,
     topCandidates: [],
     debugPreset: {
-      zByPointId: ROTATION_FIT_FITTING_LAB_BASE_CANDIDATE.zByPointId,
+      zByPointId: RENDER_ROTATION_FIT_INITIAL_CANDIDATE.zByPointId,
     },
   }
 }
@@ -1719,8 +1734,9 @@ function evaluateRotationFitFittingLab12ptSearch(options: {
     sourcePointSetId: "12pt_rotation_center",
     coordinateSystemSource: "render_adjusted12pt_aspect_corrected",
     rangeSource: "render_consistency_lab",
+    zRangeSource: "render_consistency_lab_uniform_debug_range",
     fittingLabAlgorithmOnly: true,
-    baseCandidatePresetId: "naturalNoseWithRotationCenter",
+    baseCandidatePresetId: "renderUniformDebugInitial",
     candidateGeneration: "coordinateDescent",
     coordinateDescentIterations: ROTATION_FIT_FITTING_LAB_ITERATION_COUNT,
     coordinateDescentParameterOrder: ROTATION_FIT_FITTING_LAB_PARAMETER_ORDER,
@@ -1762,10 +1778,10 @@ function createRotationFitFittingLabInitialCandidateState(fixedRotationCenterX: 
   return {
     rotationCenter: {
       x: fixedRotationCenterX,
-      y: ROTATION_FIT_FITTING_LAB_BASE_CANDIDATE.rotationCenter.y,
-      z: ROTATION_FIT_FITTING_LAB_BASE_CANDIDATE.rotationCenter.z,
+      y: RENDER_ROTATION_FIT_INITIAL_CANDIDATE.rotationCenter.y,
+      z: RENDER_ROTATION_FIT_INITIAL_CANDIDATE.rotationCenter.z,
     },
-    zByPointId: roundRecordNumbers(ROTATION_FIT_FITTING_LAB_BASE_CANDIDATE.zByPointId),
+    zByPointId: roundRecordNumbers(RENDER_ROTATION_FIT_INITIAL_CANDIDATE.zByPointId),
   }
 }
 
@@ -4090,7 +4106,7 @@ function renderRotationFitConsole(): string {
   if (!evaluation) {
     return renderConsoleSection(
       "Rotation Fit（回転中心評価）",
-      `<div class="landmark-summary-item empty">左ペインの「回転中心評価・粗探索」ボタンを押してください。Fitting Lab の 12pt_rotation_center 方式で rotationCenter.y/z（回転中心 y/z）と 12点 z（奥行き）を coordinate descent（座標降下探索）します。</div>`,
+      `<div class="landmark-summary-item empty">左ペインの「回転中心評価・粗探索」ボタンを押してください。Fitting Lab から踏襲するのは coordinate descent（座標降下探索）の手順のみで、rotationCenter.y/z（回転中心 y/z）と 12点 z（奥行き）は Render Consistency Lab 用 range（探索範囲）で探索します。</div>`,
     )
   }
 
@@ -4137,8 +4153,26 @@ function renderRotationFitSummary(evaluation: RotationFitEvaluation): string {
       "Fitting Lab の座標系ではなく Render adjusted12pt の aspect-corrected coordinate（横縦比補正済み座標）を使う",
     ],
     [
+      "policy（方針）",
+      "Fitting Lab から踏襲しているのは coordinate descent（座標降下探索）の手順のみです。x/y 座標系、rotationCenter range、12pt z range は Render Consistency Lab 用に再定義しています。",
+    ],
+    [
+      "coordinateSystemSource（座標系の出所）",
+      evaluation.fittingLab12ptSearch?.coordinateSystemSource ?? "-",
+    ],
+    [
       "rangeSource（探索範囲の出所）",
       evaluation.fittingLab12ptSearch?.rangeSource ?? "-",
+    ],
+    [
+      "zRangeSource（12点奥行き探索範囲の出所）",
+      evaluation.fittingLab12ptSearch?.zRangeSource ?? "-",
+    ],
+    [
+      "fittingLabAlgorithmOnly（Fitting Lab は手順のみ）",
+      evaluation.fittingLab12ptSearch
+        ? String(evaluation.fittingLab12ptSearch.fittingLabAlgorithmOnly)
+        : "-",
     ],
     [
       "rotationCenter.y range（回転中心y探索範囲）",
@@ -4174,6 +4208,12 @@ function renderRotationFitSummary(evaluation: RotationFitEvaluation): string {
       "coordinateBoundaryStatus（探索範囲端ヒット状態）",
       evaluation.coordinateBoundaryStatus
         ? formatRotationFitCoordinateBoundaryStatusSummary(evaluation.coordinateBoundaryStatus)
+        : "-",
+    ],
+    [
+      "Boundary hits（範囲端ヒット）",
+      evaluation.coordinateBoundaryStatus
+        ? formatRotationFitCoordinateBoundaryHitSummary(evaluation.coordinateBoundaryStatus)
         : "-",
     ],
     [
@@ -4327,7 +4367,12 @@ function renderRotationFitCoordinateDescent(evaluation: RotationFitEvaluation): 
       ["sourcePointSetId（元点セット）", search.sourcePointSetId],
       ["coordinateSystemSource（座標系の出所）", search.coordinateSystemSource],
       ["rangeSource（探索範囲の出所）", search.rangeSource],
-      ["fittingLabAlgorithmOnly（Fitting Lab はアルゴリズムのみ踏襲）", String(search.fittingLabAlgorithmOnly)],
+      ["zRangeSource（12点奥行き探索範囲の出所）", search.zRangeSource],
+      ["fittingLabAlgorithmOnly（Fitting Lab は手順のみ踏襲）", String(search.fittingLabAlgorithmOnly)],
+      [
+        "policy（方針）",
+        "Fitting Lab から踏襲しているのは coordinate descent（座標降下探索）の手順のみです。x/y 座標系、rotationCenter range、12pt z range は Render Consistency Lab 用に再定義しています。",
+      ],
       ["baseCandidatePresetId（基準候補）", search.baseCandidatePresetId],
       ["candidateGeneration（候補生成）", search.candidateGeneration],
       ["coordinateDescentIterations（反復回数）", String(search.coordinateDescentIterations)],
@@ -4345,9 +4390,23 @@ function renderRotationFitCoordinateDescent(evaluation: RotationFitEvaluation): 
         search.bestCandidate ? formatRotationFitZByPointId(search.bestCandidate.zByPointId) : "-",
       ],
       [
+        "totalScore（全体スコア）",
+        search.bestCandidate ? formatNumber(search.bestCandidate.totalScore) : "-",
+      ],
+      [
+        "maxFrameScore（最大フレームスコア）",
+        search.bestCandidate ? formatNumber(search.bestCandidate.maxFrameScore) : "-",
+      ],
+      [
         "coordinateBoundaryStatus（探索範囲端ヒット状態）",
         search.coordinateBoundaryStatus
           ? formatRotationFitCoordinateBoundaryStatusSummary(search.coordinateBoundaryStatus)
+          : "-",
+      ],
+      [
+        "Boundary hits（範囲端ヒット）",
+        search.coordinateBoundaryStatus
+          ? formatRotationFitCoordinateBoundaryHitSummary(search.coordinateBoundaryStatus)
           : "-",
       ],
     ]),
@@ -4443,6 +4502,19 @@ function formatRotationFitCoordinateBoundaryStatusSummary(
     const status = boundaryStatus[parameter]
     return `${parameter}: min ${String(status.bestAtMin)} / max ${String(status.bestAtMax)}`
   }).join(" / ")
+}
+
+function formatRotationFitCoordinateBoundaryHitSummary(
+  boundaryStatus: RotationFitCoordinateBoundaryStatus,
+): string {
+  const hits = ROTATION_FIT_FITTING_LAB_PARAMETER_ORDER.flatMap((parameter) => {
+    const status = boundaryStatus[parameter]
+    return [
+      ...(status.bestAtMin ? [`${parameter}: min`] : []),
+      ...(status.bestAtMax ? [`${parameter}: max`] : []),
+    ]
+  })
+  return hits.length > 0 ? hits.join(" / ") : "No coordinate boundary hits（範囲端ヒットなし）"
 }
 
 function formatRotationFitRange(range: RotationFitSearchRange): string {
