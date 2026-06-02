@@ -1,5 +1,10 @@
 # MediaPipe Canonical Lab
 
+## Related docs
+
+- [MediaPipe Canonical Effective Rotation Center Lab](mediapipe-canonical-effective-rotation-center-lab.md)
+- [MediaPipe Render Consistency Lab next step after effective rotation center study](mediapipe-render-consistency-lab-next-after-effective-rotation-center.md)
+
 `tools/mediapipe-canonical-lab` は、MediaPipe Face Landmarker の生データと座標系を調査するための debug lab です。IdealFace を作る authoring tool ではなく、production asset を直接作るツールでもありません。
 
 主な目的:

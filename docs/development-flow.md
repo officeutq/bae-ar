@@ -1,5 +1,10 @@
 # 開発フロー
 
+## Related docs
+
+- [MediaPipe Render Consistency Lab next step after effective rotation center study](mediapipe-render-consistency-lab-next-after-effective-rotation-center.md)
+- [MediaPipe Canonical Effective Rotation Center Lab](mediapipe-canonical-effective-rotation-center-lab.md)
+
 ## IdealFace Fitting Lab
 
 `tools/ideal-face-fitting-lab` は 8点 / 12点 / 24点の semanticPointSet（意味点セット）を比較し、IdealFace478 の z、`rotationCenter`（回転中心） / `pivotZ`（投影基準奥行き）、canonicalDepthBased（標準顔奥行きベース方式）、perLandmarkZSearch（ランドマーク単位 z 探索）の候補を検証する debug lab（検証ラボ）です。production 用 IdealFace asset は作らず、`tools/ideal-face-authoring` と `tools/mediapipe-canonical-lab` から分離して扱います。
