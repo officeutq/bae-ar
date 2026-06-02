@@ -294,6 +294,25 @@ type RotationFitBucketScores = {
   yawPitch: RotationFitBucketScore[]
 }
 
+type RotationFitPointId =
+  | "headTop"
+  | "chin"
+  | "leftCheek"
+  | "rightCheek"
+  | "leftEye"
+  | "rightEye"
+  | "nose"
+  | "mouth"
+  | "noseBridge"
+  | "leftJaw"
+  | "rightJaw"
+  | "upperFaceCenter"
+
+type RotationFitLocalSearchParameter =
+  | "rotationCenter.y"
+  | "rotationCenter.z"
+  | `${RotationFitPointId}.z`
+
 type RotationFitSearchRange = {
   min: number
   max: number
@@ -303,6 +322,7 @@ type RotationFitSearchRange = {
 type RotationFitCandidateResult = {
   rank: number
   rotationCenter: Point3D
+  zByPointId: Record<string, number>
   totalScore: number
   maxFrameScore: number
   worstFrame: RotationFitFrameScore | null
@@ -315,6 +335,7 @@ type RotationFitCandidateResult = {
 type RotationFitCandidateSummary = {
   rank: number
   rotationCenter: Point3D
+  zByPointId?: Record<string, number>
   totalScore: number
   maxFrameScore: number
   worstFrame: RotationFitFrameScore | null
@@ -328,10 +349,119 @@ type RotationFitSearchBoundaryStatus = {
   bestZAtMax: boolean
 }
 
+type RotationFitZGroupId = "centerAxis" | "cheek" | "jaw" | "eye"
+
+type RotationFitZGroupDefinition = {
+  id: RotationFitZGroupId
+  label: string
+  pointIds: string[]
+}
+
+type RotationFitGroupSearchCandidateSummary = {
+  rank: number
+  groupId: RotationFitZGroupId
+  groupOffset: number
+  groupOffsets: Record<RotationFitZGroupId, number>
+  totalScore: number
+  maxFrameScore: number
+  worstFrame: RotationFitFrameScore | null
+  worstPoint: RotationFitPointScore | null
+}
+
+type RotationFitGroupSearchLog = {
+  iteration: number
+  groupId: RotationFitZGroupId
+  previousOffset: number
+  selectedOffset: number
+  previousTotalScore: number
+  selectedTotalScore: number
+  previousMaxFrameScore: number
+  selectedMaxFrameScore: number
+  improved: boolean
+  candidateCount: number
+  candidates: RotationFitGroupSearchCandidateSummary[]
+}
+
+type RotationFitStageAResult = {
+  searchMode: "rotation_center_yz_coarse"
+  searchRange: {
+    y: RotationFitSearchRange
+    z: RotationFitSearchRange
+  }
+  candidateCount: number
+  bestCandidate: RotationFitCandidateResult | null
+  topCandidates: RotationFitCandidateSummary[]
+  boundaryStatus: RotationFitSearchBoundaryStatus
+}
+
+type RotationFitStageBResult = {
+  searchMode: "group_z_search"
+  groupDefinitions: RotationFitZGroupDefinition[]
+  groupZOffsetRange: RotationFitSearchRange
+  iterationCount: number
+  initialCandidate: RotationFitCandidateResult | null
+  bestCandidate: RotationFitCandidateResult | null
+  groupOffsets: Record<RotationFitZGroupId, number>
+  groupSearchLogs: RotationFitGroupSearchLog[]
+  topCandidates: RotationFitGroupSearchCandidateSummary[]
+}
+
+type RotationFitImprovement = {
+  totalScoreBefore: number
+  totalScoreAfter: number
+  totalScoreDelta: number
+  maxFrameScoreBefore: number
+  maxFrameScoreAfter: number
+  maxFrameScoreDelta: number
+}
+
+type RotationFitCoordinateDescentStepLog = {
+  iteration: number
+  parameter: RotationFitLocalSearchParameter
+  previousValue: number
+  bestValue: number
+  previousTotalScore: number
+  bestTotalScore: number
+  previousMaxFrameScore: number
+  bestMaxFrameScore: number
+  candidateCount: number
+  improved: boolean
+}
+
+type RotationFitCoordinateBoundaryStatus = Record<
+  RotationFitLocalSearchParameter,
+  {
+    bestAtMin: boolean
+    bestAtMax: boolean
+  }
+>
+
+type RotationFitFittingLab12ptSearch = {
+  searchMode: "fitting_lab_12pt_rotation_center"
+  sourceLab: "tools/ideal-face-fitting-lab"
+  sourcePointSetId: "12pt_rotation_center"
+  coordinateSystemSource: "render_adjusted12pt_aspect_corrected"
+  rangeSource: "render_consistency_lab"
+  fittingLabAlgorithmOnly: true
+  baseCandidatePresetId: "naturalNoseWithRotationCenter"
+  candidateGeneration: "coordinateDescent"
+  coordinateDescentIterations: number
+  coordinateDescentParameterOrder: RotationFitLocalSearchParameter[]
+  coordinateDescentRanges: Record<RotationFitLocalSearchParameter, RotationFitSearchRange>
+  coordinateBoundaryStatus: RotationFitCoordinateBoundaryStatus | null
+  initialCandidate: RotationFitCandidateResult | null
+  bestCandidate: RotationFitCandidateResult | null
+  finalZByPointId: Record<string, number> | null
+  coordinateDescentLog: RotationFitCoordinateDescentStepLog[]
+}
+
 type RotationFitEvaluation = {
   status: "completed" | "error"
   error?: string
-  searchMode: "rotation_center_yz_coarse"
+  searchMode:
+    | "rotation_center_yz_coarse"
+    | "rotation_center_yz_coarse_then_group_z"
+    | "fitting_lab_12pt_rotation_center"
   searchRange: {
     y: RotationFitSearchRange
     z: RotationFitSearchRange
@@ -359,9 +489,16 @@ type RotationFitEvaluation = {
   bucketScores: RotationFitBucketScores
   bestCandidate: RotationFitCandidateResult | null
   topCandidates: RotationFitCandidateSummary[]
+  stageA?: RotationFitStageAResult
+  stageB?: RotationFitStageBResult
+  fittingLab12ptSearch?: RotationFitFittingLab12ptSearch
+  coordinateDescentLog?: RotationFitCoordinateDescentStepLog[]
+  coordinateBoundaryStatus?: RotationFitCoordinateBoundaryStatus | null
+  improvement?: RotationFitImprovement
   debugPreset: {
     zByPointId: Record<string, number>
   }
+  finalZByPointId?: Record<string, number>
 }
 
 type AppState = {
@@ -528,6 +665,8 @@ const EXPRESSION_CATEGORY_NAMES = [
 ] as const
 const ROTATION_FIT_DEBUG_PRESET_NAME = "rotationFitDebugPreset_provisional_v1"
 const ROTATION_FIT_SEARCH_MODE = "rotation_center_yz_coarse"
+const ROTATION_FIT_COMBINED_SEARCH_MODE = "rotation_center_yz_coarse_then_group_z"
+const ROTATION_FIT_GROUP_Z_SEARCH_MODE = "group_z_search"
 const ROTATION_FIT_FOCAL_LENGTH = 2.6
 const ROTATION_FIT_ROTATION_CENTER_Y_RANGE: RotationFitSearchRange = {
   min: -0.24,
@@ -541,6 +680,38 @@ const ROTATION_FIT_ROTATION_CENTER_Z_RANGE: RotationFitSearchRange = {
 }
 const ROTATION_FIT_TOP_CANDIDATE_LIMIT = 10
 const ROTATION_FIT_BOUNDARY_EPSILON = 0.000001
+const ROTATION_FIT_GROUP_Z_OFFSET_RANGE: RotationFitSearchRange = {
+  min: -0.02,
+  max: 0.02,
+  step: 0.005,
+}
+const ROTATION_FIT_GROUP_Z_ITERATION_COUNT = 1
+const ROTATION_FIT_GROUP_SEARCH_LOG_CANDIDATE_LIMIT = 10
+const ROTATION_FIT_Z_GROUP_DEFINITIONS: RotationFitZGroupDefinition[] = [
+  {
+    id: "centerAxis",
+    label: "centerAxis（中心軸）",
+    pointIds: ["headTop", "upperFaceCenter", "noseBridge", "nose", "mouth", "chin"],
+  },
+  {
+    id: "cheek",
+    label: "cheek（頬）",
+    pointIds: ["leftCheek", "rightCheek"],
+  },
+  {
+    id: "jaw",
+    label: "jaw（顎）",
+    pointIds: ["leftJaw", "rightJaw"],
+  },
+  {
+    id: "eye",
+    label: "eye（目）",
+    pointIds: ["leftEye", "rightEye"],
+  },
+]
+const ROTATION_FIT_Z_GROUP_SEARCH_ORDER = ROTATION_FIT_Z_GROUP_DEFINITIONS.map(
+  (definition) => definition.id,
+)
 const ROTATION_FIT_DEBUG_Z_BY_POINT_ID: Record<string, number> = {
   headTop: 0.017,
   chin: 0.016,
@@ -554,6 +725,66 @@ const ROTATION_FIT_DEBUG_Z_BY_POINT_ID: Record<string, number> = {
   leftJaw: 0.018,
   rightJaw: 0.018,
   upperFaceCenter: 0.012,
+}
+const ROTATION_FIT_FITTING_LAB_SEARCH_MODE = "fitting_lab_12pt_rotation_center"
+const ROTATION_FIT_FITTING_LAB_ITERATION_COUNT = 2
+const ROTATION_FIT_FITTING_LAB_BASE_CANDIDATE = {
+  pivotZ: 0.04,
+  rotationCenter: {
+    y: -0.08,
+    z: 0.04,
+  },
+  zByPointId: {
+    headTop: 0,
+    chin: 0,
+    leftCheek: 0.03,
+    rightCheek: 0.03,
+    leftEye: 0.05,
+    rightEye: 0.03,
+    nose: 0.02,
+    mouth: 0.05,
+    noseBridge: 0.035,
+    leftJaw: 0.015,
+    rightJaw: 0.015,
+    upperFaceCenter: 0.0175,
+  },
+} as const
+const ROTATION_FIT_FITTING_LAB_PARAMETER_ORDER: RotationFitLocalSearchParameter[] = [
+  "rotationCenter.y",
+  "rotationCenter.z",
+  "leftCheek.z",
+  "rightCheek.z",
+  "nose.z",
+  "mouth.z",
+  "leftEye.z",
+  "rightEye.z",
+  "headTop.z",
+  "chin.z",
+  "noseBridge.z",
+  "leftJaw.z",
+  "rightJaw.z",
+  "upperFaceCenter.z",
+]
+// 12点 z range は Fitting Lab の値を参考にした debug range（検証用範囲）。
+// Render Consistency Lab の adjusted12pt 座標系では今後も調整対象で、production asset（本番用アセット）ではない。
+const RENDER_ROTATION_FIT_COORDINATE_DESCENT_RANGES: Record<
+  RotationFitLocalSearchParameter,
+  RotationFitSearchRange
+> = {
+  "rotationCenter.y": { min: -0.05, max: 0.5, step: 0.01 },
+  "rotationCenter.z": { min: 0, max: 0.12, step: 0.01 },
+  "headTop.z": { min: -0.02, max: 0.03, step: 0.01 },
+  "chin.z": { min: -0.05, max: 0.03, step: 0.01 },
+  "leftCheek.z": { min: 0.02, max: 0.08, step: 0.01 },
+  "rightCheek.z": { min: 0.02, max: 0.08, step: 0.01 },
+  "leftEye.z": { min: 0, max: 0.06, step: 0.01 },
+  "rightEye.z": { min: 0, max: 0.06, step: 0.01 },
+  "nose.z": { min: -0.02, max: 0.08, step: 0.01 },
+  "mouth.z": { min: 0, max: 0.08, step: 0.01 },
+  "noseBridge.z": { min: 0, max: 0.08, step: 0.01 },
+  "leftJaw.z": { min: -0.03, max: 0.08, step: 0.01 },
+  "rightJaw.z": { min: -0.03, max: 0.08, step: 0.01 },
+  "upperFaceCenter.z": { min: -0.01, max: 0.06, step: 0.01 },
 }
 const EYE_POINT_INDICES = {
   leftIris: [474, 475, 476, 477],
@@ -663,7 +894,7 @@ app.innerHTML = `
           回転中心評価・粗探索
         </button>
         <p class="control-help">
-          固定 z で rotationCenter.y/z を粗探索します。<br />
+          Fitting Lab の 12pt_rotation_center 方式で rotationCenter.y/z と 12点 z を coordinate descent（座標降下探索）します。<br />
           一時的な debug UI です。
         </p>
       </section>
@@ -1232,15 +1463,14 @@ function runRotationFitEvaluation(): void {
 function evaluateRotationFit(): RotationFitEvaluation {
   const videoAspectRatio = getVideoAspectRatio()
   const fixedRotationCenterX = roundDebugNumber(0.5 * videoAspectRatio)
-  const candidateRotationCenters = createRotationFitCandidateRotationCenters(fixedRotationCenterX)
   const baseEvaluation = createEmptyRotationFitEvaluation(
     videoAspectRatio,
-    candidateRotationCenters[0] ?? {
+    {
       x: fixedRotationCenterX,
-      y: ROTATION_FIT_ROTATION_CENTER_Y_RANGE.min,
-      z: ROTATION_FIT_ROTATION_CENTER_Z_RANGE.min,
+      y: ROTATION_FIT_FITTING_LAB_BASE_CANDIDATE.rotationCenter.y,
+      z: ROTATION_FIT_FITTING_LAB_BASE_CANDIDATE.rotationCenter.z,
     },
-    candidateRotationCenters.length,
+    0,
   )
 
   const evaluationFrames = getRotationFitEvaluationFrames()
@@ -1293,18 +1523,16 @@ function evaluateRotationFit(): RotationFitEvaluation {
     }
   }
 
-  const rankedCandidates = candidateRotationCenters
-    .map((rotationCenter) =>
-      evaluateRotationFitCandidate(evaluationFrames, base12pt, videoAspectRatio, rotationCenter),
-    )
-    .sort(compareRotationFitCandidates)
-    .map((candidate, index) => ({
-      ...candidate,
-      rank: index + 1,
-    }))
-  const bestCandidate = rankedCandidates[0] ?? null
+  const fittingLabSearch = evaluateRotationFitFittingLab12ptSearch({
+    evaluationFrames,
+    baseAdjusted12pt,
+    videoAspectRatio,
+    fixedRotationCenterX,
+  })
+  const bestCandidate = fittingLabSearch.bestCandidate
+  const initialCandidate = fittingLabSearch.initialCandidate
 
-  if (!bestCandidate || bestCandidate.frameScores.length === 0) {
+  if (!bestCandidate || bestCandidate.frameScores.length === 0 || !initialCandidate) {
     return {
       ...baseEvaluation,
       status: "error",
@@ -1317,9 +1545,17 @@ function evaluateRotationFit(): RotationFitEvaluation {
     }
   }
 
+  const improvement = createRotationFitImprovement(initialCandidate, bestCandidate)
+  const coordinateBoundaryStatus = fittingLabSearch.coordinateBoundaryStatus
+
   return {
     ...baseEvaluation,
     status: "completed",
+    searchMode: ROTATION_FIT_FITTING_LAB_SEARCH_MODE,
+    candidateCount: fittingLabSearch.coordinateDescentLog.reduce(
+      (sum, step) => sum + step.candidateCount,
+      0,
+    ),
     evaluationFrameCount: bestCandidate.frameScores.length,
     baseFrameSource: {
       sourceFrameIndex: baseFrame.frame.sourceFrameIndex,
@@ -1337,9 +1573,12 @@ function evaluateRotationFit(): RotationFitEvaluation {
     pointScores: bestCandidate.pointScores,
     bucketScores: bestCandidate.bucketScores,
     bestCandidate,
-    topCandidates: rankedCandidates
-      .slice(0, ROTATION_FIT_TOP_CANDIDATE_LIMIT)
-      .map(createRotationFitCandidateSummary),
+    topCandidates: [createRotationFitCandidateSummary(bestCandidate)],
+    fittingLab12ptSearch: fittingLabSearch,
+    coordinateDescentLog: fittingLabSearch.coordinateDescentLog,
+    coordinateBoundaryStatus,
+    improvement,
+    finalZByPointId: bestCandidate.zByPointId,
   }
 }
 
@@ -1350,10 +1589,10 @@ function createEmptyRotationFitEvaluation(
 ): RotationFitEvaluation {
   return {
     status: "completed",
-    searchMode: ROTATION_FIT_SEARCH_MODE,
+    searchMode: ROTATION_FIT_FITTING_LAB_SEARCH_MODE,
     searchRange: {
-      y: ROTATION_FIT_ROTATION_CENTER_Y_RANGE,
-      z: ROTATION_FIT_ROTATION_CENTER_Z_RANGE,
+      y: RENDER_ROTATION_FIT_COORDINATE_DESCENT_RANGES["rotationCenter.y"],
+      z: RENDER_ROTATION_FIT_COORDINATE_DESCENT_RANGES["rotationCenter.z"],
     },
     candidateCount,
     evaluationFrameCount: 0,
@@ -1367,8 +1606,8 @@ function createEmptyRotationFitEvaluation(
       bestZAtMin: false,
       bestZAtMax: false,
     },
-    zPresetName: ROTATION_FIT_DEBUG_PRESET_NAME,
-    fixedZPresetName: ROTATION_FIT_DEBUG_PRESET_NAME,
+    zPresetName: "naturalNoseWithRotationCenter",
+    fixedZPresetName: "naturalNoseWithRotationCenter",
     focalLength: ROTATION_FIT_FOCAL_LENGTH,
     totalScore: 0,
     maxFrameScore: 0,
@@ -1385,7 +1624,7 @@ function createEmptyRotationFitEvaluation(
     bestCandidate: null,
     topCandidates: [],
     debugPreset: {
-      zByPointId: ROTATION_FIT_DEBUG_Z_BY_POINT_ID,
+      zByPointId: ROTATION_FIT_FITTING_LAB_BASE_CANDIDATE.zByPointId,
     },
   }
 }
@@ -1409,25 +1648,387 @@ function createRotationFitRangeCandidates(range: RotationFitSearchRange): number
   ).filter((value) => value <= range.max + range.step * 0.001)
 }
 
+function evaluateRotationFitFittingLab12ptSearch(options: {
+  evaluationFrames: Array<{ frame: AcceptedFrameSnapshot; candidate: PoseReviewCandidateFrame }>
+  baseAdjusted12pt: LandmarkSummaryPoint[]
+  videoAspectRatio: number
+  fixedRotationCenterX: number
+}): RotationFitFittingLab12ptSearch {
+  const initialState = createRotationFitFittingLabInitialCandidateState(options.fixedRotationCenterX)
+  const initialCandidate = evaluateRotationFitCandidateFromState(options, initialState)
+  let currentState = cloneRotationFitCandidateState(initialState)
+  let currentCandidate = initialCandidate
+  const coordinateDescentLog: RotationFitCoordinateDescentStepLog[] = []
+
+  for (
+    let iterationIndex = 0;
+    iterationIndex < ROTATION_FIT_FITTING_LAB_ITERATION_COUNT;
+    iterationIndex += 1
+  ) {
+    for (const parameter of ROTATION_FIT_FITTING_LAB_PARAMETER_ORDER) {
+      const range = RENDER_ROTATION_FIT_COORDINATE_DESCENT_RANGES[parameter]
+      const values = createRotationFitRangeCandidates(range)
+      const previousState = cloneRotationFitCandidateState(currentState)
+      const previousCandidate = currentCandidate
+      const rankedCandidates = values
+        .map((value) => {
+          const candidateState = setRotationFitCandidateStateParameter(
+            currentState,
+            parameter,
+            value,
+          )
+          return evaluateRotationFitCandidateFromState(options, candidateState)
+        })
+        .sort(compareRotationFitCandidates)
+        .map((candidate, index) => ({
+          ...candidate,
+          rank: index + 1,
+        }))
+      const bestStepCandidate = rankedCandidates[0] ?? previousCandidate
+      const improved = compareRotationFitCandidates(bestStepCandidate, previousCandidate) < 0
+
+      if (improved) {
+        currentState = {
+          rotationCenter: bestStepCandidate.rotationCenter,
+          zByPointId: bestStepCandidate.zByPointId,
+        }
+        currentCandidate = bestStepCandidate
+      } else {
+        currentState = previousState
+        currentCandidate = previousCandidate
+      }
+
+      coordinateDescentLog.push({
+        iteration: iterationIndex + 1,
+        parameter,
+        previousValue: getRotationFitCandidateStateParameter(previousState, parameter),
+        bestValue: getRotationFitCandidateStateParameter(currentState, parameter),
+        previousTotalScore: previousCandidate.totalScore,
+        bestTotalScore: currentCandidate.totalScore,
+        previousMaxFrameScore: previousCandidate.maxFrameScore,
+        bestMaxFrameScore: currentCandidate.maxFrameScore,
+        candidateCount: values.length,
+        improved,
+      })
+    }
+  }
+
+  return {
+    searchMode: ROTATION_FIT_FITTING_LAB_SEARCH_MODE,
+    sourceLab: "tools/ideal-face-fitting-lab",
+    sourcePointSetId: "12pt_rotation_center",
+    coordinateSystemSource: "render_adjusted12pt_aspect_corrected",
+    rangeSource: "render_consistency_lab",
+    fittingLabAlgorithmOnly: true,
+    baseCandidatePresetId: "naturalNoseWithRotationCenter",
+    candidateGeneration: "coordinateDescent",
+    coordinateDescentIterations: ROTATION_FIT_FITTING_LAB_ITERATION_COUNT,
+    coordinateDescentParameterOrder: ROTATION_FIT_FITTING_LAB_PARAMETER_ORDER,
+    coordinateDescentRanges: RENDER_ROTATION_FIT_COORDINATE_DESCENT_RANGES,
+    coordinateBoundaryStatus: calculateRotationFitCoordinateBoundaryStatus(currentCandidate),
+    initialCandidate,
+    bestCandidate: currentCandidate,
+    finalZByPointId: currentCandidate.zByPointId,
+    coordinateDescentLog,
+  }
+}
+
+function evaluateRotationFitCandidateFromState(
+  options: {
+    evaluationFrames: Array<{ frame: AcceptedFrameSnapshot; candidate: PoseReviewCandidateFrame }>
+    baseAdjusted12pt: LandmarkSummaryPoint[]
+    videoAspectRatio: number
+  },
+  stateCandidate: { rotationCenter: Point3D; zByPointId: Record<string, number> },
+): RotationFitCandidateResult {
+  const base12pt = createRotationFitBase12pt(
+    options.baseAdjusted12pt,
+    options.videoAspectRatio,
+    stateCandidate.zByPointId,
+  )
+  return evaluateRotationFitCandidate(
+    options.evaluationFrames,
+    base12pt,
+    options.videoAspectRatio,
+    stateCandidate.rotationCenter,
+    stateCandidate.zByPointId,
+  )
+}
+
+function createRotationFitFittingLabInitialCandidateState(fixedRotationCenterX: number): {
+  rotationCenter: Point3D
+  zByPointId: Record<string, number>
+} {
+  return {
+    rotationCenter: {
+      x: fixedRotationCenterX,
+      y: ROTATION_FIT_FITTING_LAB_BASE_CANDIDATE.rotationCenter.y,
+      z: ROTATION_FIT_FITTING_LAB_BASE_CANDIDATE.rotationCenter.z,
+    },
+    zByPointId: roundRecordNumbers(ROTATION_FIT_FITTING_LAB_BASE_CANDIDATE.zByPointId),
+  }
+}
+
+function cloneRotationFitCandidateState(stateCandidate: {
+  rotationCenter: Point3D
+  zByPointId: Record<string, number>
+}): { rotationCenter: Point3D; zByPointId: Record<string, number> } {
+  return {
+    rotationCenter: { ...stateCandidate.rotationCenter },
+    zByPointId: { ...stateCandidate.zByPointId },
+  }
+}
+
+function setRotationFitCandidateStateParameter(
+  stateCandidate: { rotationCenter: Point3D; zByPointId: Record<string, number> },
+  parameter: RotationFitLocalSearchParameter,
+  value: number,
+): { rotationCenter: Point3D; zByPointId: Record<string, number> } {
+  const next = cloneRotationFitCandidateState(stateCandidate)
+  if (parameter === "rotationCenter.y") {
+    next.rotationCenter.y = roundDebugNumber(value)
+    return next
+  }
+  if (parameter === "rotationCenter.z") {
+    next.rotationCenter.z = roundDebugNumber(value)
+    return next
+  }
+  const pointId = parameter.replace(/\.z$/, "")
+  next.zByPointId[pointId] = roundDebugNumber(value)
+  return next
+}
+
+function getRotationFitCandidateStateParameter(
+  stateCandidate: { rotationCenter: Point3D; zByPointId: Record<string, number> },
+  parameter: RotationFitLocalSearchParameter,
+): number {
+  if (parameter === "rotationCenter.y") {
+    return stateCandidate.rotationCenter.y
+  }
+  if (parameter === "rotationCenter.z") {
+    return stateCandidate.rotationCenter.z
+  }
+  const pointId = parameter.replace(/\.z$/, "")
+  return stateCandidate.zByPointId[pointId] ?? 0
+}
+
+function evaluateRotationFitGroupZSearch(options: {
+  evaluationFrames: Array<{ frame: AcceptedFrameSnapshot; candidate: PoseReviewCandidateFrame }>
+  baseAdjusted12pt: LandmarkSummaryPoint[]
+  videoAspectRatio: number
+  rotationCenter: Point3D
+  initialCandidate: RotationFitCandidateResult
+}): RotationFitStageBResult {
+  let groupOffsets = createEmptyRotationFitGroupOffsets()
+  let bestCandidate = options.initialCandidate
+  const groupSearchLogs: RotationFitGroupSearchLog[] = []
+  const allCandidateSummaries: RotationFitGroupSearchCandidateSummary[] = []
+
+  for (let iterationIndex = 0; iterationIndex < ROTATION_FIT_GROUP_Z_ITERATION_COUNT; iterationIndex += 1) {
+    for (const groupId of ROTATION_FIT_Z_GROUP_SEARCH_ORDER) {
+      const previousOffsets = { ...groupOffsets }
+      const previousCandidate = bestCandidate
+      const offsetCandidates = createRotationFitRangeCandidates(ROTATION_FIT_GROUP_Z_OFFSET_RANGE)
+      const rankedGroupCandidates = offsetCandidates
+        .map((groupOffset) => {
+          const candidateGroupOffsets = {
+            ...groupOffsets,
+            [groupId]: groupOffset,
+          }
+          const zByPointId = createRotationFitZByPointIdFromGroupOffsets(candidateGroupOffsets)
+          const candidateBase12pt = createRotationFitBase12pt(
+            options.baseAdjusted12pt,
+            options.videoAspectRatio,
+            zByPointId,
+          )
+          return {
+            groupId,
+            groupOffset,
+            groupOffsets: candidateGroupOffsets,
+            candidate: evaluateRotationFitCandidate(
+              options.evaluationFrames,
+              candidateBase12pt,
+              options.videoAspectRatio,
+              options.rotationCenter,
+            ),
+          }
+        })
+        .sort((left, right) => compareRotationFitCandidates(left.candidate, right.candidate))
+        .map((entry, index) => ({
+          ...entry,
+          candidate: {
+            ...entry.candidate,
+            rank: index + 1,
+          },
+        }))
+
+      const selectedEntry = rankedGroupCandidates[0]
+      const improved =
+        selectedEntry !== undefined &&
+        compareRotationFitCandidates(selectedEntry.candidate, previousCandidate) < 0
+      if (improved) {
+        groupOffsets = selectedEntry.groupOffsets
+        bestCandidate = selectedEntry.candidate
+      }
+
+      const candidateSummaries = rankedGroupCandidates.map((entry) =>
+        createRotationFitGroupSearchCandidateSummary(
+          entry.candidate,
+          entry.groupId,
+          entry.groupOffset,
+          entry.groupOffsets,
+        ),
+      )
+      allCandidateSummaries.push(...candidateSummaries)
+      groupSearchLogs.push({
+        iteration: iterationIndex + 1,
+        groupId,
+        previousOffset: previousOffsets[groupId],
+        selectedOffset: groupOffsets[groupId],
+        previousTotalScore: previousCandidate.totalScore,
+        selectedTotalScore: bestCandidate.totalScore,
+        previousMaxFrameScore: previousCandidate.maxFrameScore,
+        selectedMaxFrameScore: bestCandidate.maxFrameScore,
+        improved,
+        candidateCount: rankedGroupCandidates.length,
+        candidates: candidateSummaries.slice(0, ROTATION_FIT_GROUP_SEARCH_LOG_CANDIDATE_LIMIT),
+      })
+    }
+  }
+
+  return {
+    searchMode: ROTATION_FIT_GROUP_Z_SEARCH_MODE,
+    groupDefinitions: ROTATION_FIT_Z_GROUP_DEFINITIONS,
+    groupZOffsetRange: ROTATION_FIT_GROUP_Z_OFFSET_RANGE,
+    iterationCount: ROTATION_FIT_GROUP_Z_ITERATION_COUNT,
+    initialCandidate: options.initialCandidate,
+    bestCandidate,
+    groupOffsets,
+    groupSearchLogs,
+    topCandidates: allCandidateSummaries
+      .sort((left, right) => {
+        const totalScoreDiff = left.totalScore - right.totalScore
+        if (Math.abs(totalScoreDiff) > 0.000001) {
+          return totalScoreDiff
+        }
+        return left.maxFrameScore - right.maxFrameScore
+      })
+      .slice(0, ROTATION_FIT_TOP_CANDIDATE_LIMIT)
+      .map((candidate, index) => ({
+        ...candidate,
+        rank: index + 1,
+      })),
+  }
+}
+
+function createEmptyRotationFitGroupOffsets(): Record<RotationFitZGroupId, number> {
+  return {
+    centerAxis: 0,
+    cheek: 0,
+    jaw: 0,
+    eye: 0,
+  }
+}
+
+function createRotationFitZByPointIdFromGroupOffsets(
+  groupOffsets: Record<RotationFitZGroupId, number>,
+): Record<string, number> {
+  const zByPointId = { ...ROTATION_FIT_DEBUG_Z_BY_POINT_ID }
+  for (const groupDefinition of ROTATION_FIT_Z_GROUP_DEFINITIONS) {
+    const groupOffset = groupOffsets[groupDefinition.id]
+    for (const pointId of groupDefinition.pointIds) {
+      zByPointId[pointId] = roundDebugNumber(
+        (ROTATION_FIT_DEBUG_Z_BY_POINT_ID[pointId] ?? 0) + groupOffset,
+      )
+    }
+  }
+  return zByPointId
+}
+
+function createRotationFitZByPointIdFromBase12pt(
+  base12pt: Record<string, Point3D>,
+): Record<string, number> {
+  return roundRecordNumbers(
+    Object.fromEntries(Object.entries(base12pt).map(([pointId, point]) => [pointId, point.z])),
+  )
+}
+
+function createRotationFitGroupSearchCandidateSummary(
+  candidate: RotationFitCandidateResult,
+  groupId: RotationFitZGroupId,
+  groupOffset: number,
+  groupOffsets: Record<RotationFitZGroupId, number>,
+): RotationFitGroupSearchCandidateSummary {
+  return {
+    rank: candidate.rank,
+    groupId,
+    groupOffset,
+    groupOffsets,
+    totalScore: candidate.totalScore,
+    maxFrameScore: candidate.maxFrameScore,
+    worstFrame: candidate.worstFrame,
+    worstPoint: candidate.worstPoint,
+  }
+}
+
+function createRotationFitImprovement(
+  beforeCandidate: RotationFitCandidateResult,
+  afterCandidate: RotationFitCandidateResult,
+): RotationFitImprovement {
+  return {
+    totalScoreBefore: beforeCandidate.totalScore,
+    totalScoreAfter: afterCandidate.totalScore,
+    totalScoreDelta: roundDebugNumber(beforeCandidate.totalScore - afterCandidate.totalScore),
+    maxFrameScoreBefore: beforeCandidate.maxFrameScore,
+    maxFrameScoreAfter: afterCandidate.maxFrameScore,
+    maxFrameScoreDelta: roundDebugNumber(beforeCandidate.maxFrameScore - afterCandidate.maxFrameScore),
+  }
+}
+
+function calculateRotationFitCoordinateBoundaryStatus(
+  candidate: RotationFitCandidateResult,
+): RotationFitCoordinateBoundaryStatus {
+  return Object.fromEntries(
+    ROTATION_FIT_FITTING_LAB_PARAMETER_ORDER.map((parameter) => {
+      const range = RENDER_ROTATION_FIT_COORDINATE_DESCENT_RANGES[parameter]
+      const value =
+        parameter === "rotationCenter.y"
+          ? candidate.rotationCenter.y
+          : parameter === "rotationCenter.z"
+            ? candidate.rotationCenter.z
+            : candidate.zByPointId[parameter.replace(/\.z$/, "")] ?? 0
+      return [
+        parameter,
+        {
+          bestAtMin: isRotationFitBoundaryValue(value, range.min),
+          bestAtMax: isRotationFitBoundaryValue(value, range.max),
+        },
+      ]
+    }),
+  ) as RotationFitCoordinateBoundaryStatus
+}
+
 function calculateRotationFitSearchBoundaryStatus(
   bestRotationCenter: Point3D,
 ): RotationFitSearchBoundaryStatus {
+  const yRange = RENDER_ROTATION_FIT_COORDINATE_DESCENT_RANGES["rotationCenter.y"]
+  const zRange = RENDER_ROTATION_FIT_COORDINATE_DESCENT_RANGES["rotationCenter.z"]
   return {
     bestYAtMin: isRotationFitBoundaryValue(
       bestRotationCenter.y,
-      ROTATION_FIT_ROTATION_CENTER_Y_RANGE.min,
+      yRange.min,
     ),
     bestYAtMax: isRotationFitBoundaryValue(
       bestRotationCenter.y,
-      ROTATION_FIT_ROTATION_CENTER_Y_RANGE.max,
+      yRange.max,
     ),
     bestZAtMin: isRotationFitBoundaryValue(
       bestRotationCenter.z,
-      ROTATION_FIT_ROTATION_CENTER_Z_RANGE.min,
+      zRange.min,
     ),
     bestZAtMax: isRotationFitBoundaryValue(
       bestRotationCenter.z,
-      ROTATION_FIT_ROTATION_CENTER_Z_RANGE.max,
+      zRange.max,
     ),
   }
 }
@@ -1441,6 +2042,7 @@ function evaluateRotationFitCandidate(
   base12pt: Record<string, Point3D>,
   videoAspectRatio: number,
   rotationCenter: Point3D,
+  zByPointId: Record<string, number> = createRotationFitZByPointIdFromBase12pt(base12pt),
 ): RotationFitCandidateResult {
   const frameScores = evaluationFrames.flatMap((entry) => {
     if (!entry.frame.pose) {
@@ -1493,6 +2095,7 @@ function evaluateRotationFitCandidate(
   return {
     rank: 0,
     rotationCenter,
+    zByPointId: roundRecordNumbers(zByPointId),
     totalScore:
       frameScores.length > 0
         ? roundDebugNumber(average(frameScores.map((frame) => frame.frameScore)))
@@ -1523,6 +2126,7 @@ function createRotationFitCandidateSummary(
   return {
     rank: candidate.rank,
     rotationCenter: candidate.rotationCenter,
+    zByPointId: candidate.zByPointId,
     totalScore: candidate.totalScore,
     maxFrameScore: candidate.maxFrameScore,
     worstFrame: candidate.worstFrame,
@@ -1594,10 +2198,11 @@ function selectRotationFitBaseFrame(
 function createRotationFitBase12pt(
   adjusted12pt: LandmarkSummaryPoint[],
   videoAspectRatio: number,
+  zByPointId: Record<string, number> = ROTATION_FIT_DEBUG_Z_BY_POINT_ID,
 ): Record<string, Point3D> {
   return Object.fromEntries(
     adjusted12pt.flatMap((point) => {
-      const z = ROTATION_FIT_DEBUG_Z_BY_POINT_ID[point.id]
+      const z = zByPointId[point.id]
       if (z === undefined) {
         return []
       }
@@ -3485,12 +4090,16 @@ function renderRotationFitConsole(): string {
   if (!evaluation) {
     return renderConsoleSection(
       "Rotation Fit（回転中心評価）",
-      `<div class="landmark-summary-item empty">左ペインの「回転中心評価・粗探索」ボタンを押してください。固定 z で rotationCenter.y/z coarse search（回転中心 y/z 粗探索）を実行します。</div>`,
+      `<div class="landmark-summary-item empty">左ペインの「回転中心評価・粗探索」ボタンを押してください。Fitting Lab の 12pt_rotation_center 方式で rotationCenter.y/z（回転中心 y/z）と 12点 z（奥行き）を coordinate descent（座標降下探索）します。</div>`,
     )
   }
 
   return [
     renderConsoleSection("Summary（要約）", renderRotationFitSummary(evaluation)),
+    renderConsoleSection(
+      "Coordinate descent（座標降下探索）",
+      renderRotationFitCoordinateDescent(evaluation),
+    ),
     renderConsoleSection("Top candidates（上位候補）", renderRotationFitTopCandidates(evaluation)),
     renderConsoleSection("Frame scores（フレーム別スコア）", renderRotationFitFrameScores(evaluation)),
     renderConsoleSection("Point scores（点別スコア）", renderRotationFitPointScores(evaluation)),
@@ -3520,16 +4129,68 @@ function renderRotationFitSummary(evaluation: RotationFitEvaluation): string {
     ["fixedZPresetName", evaluation.fixedZPresetName],
     ["candidateCount", String(evaluation.candidateCount)],
     [
-      "searchRange.y",
-      `${formatNumber(evaluation.searchRange.y.min)} .. ${formatNumber(
-        evaluation.searchRange.y.max,
-      )} / step ${formatNumber(evaluation.searchRange.y.step)}`,
+      "source method（元方式）",
+      "tools/ideal-face-fitting-lab / 12pt_rotation_center",
     ],
     [
-      "searchRange.z",
-      `${formatNumber(evaluation.searchRange.z.min)} .. ${formatNumber(
-        evaluation.searchRange.z.max,
-      )} / step ${formatNumber(evaluation.searchRange.z.step)}`,
+      "coordinate system note（座標系メモ）",
+      "Fitting Lab の座標系ではなく Render adjusted12pt の aspect-corrected coordinate（横縦比補正済み座標）を使う",
+    ],
+    [
+      "rangeSource（探索範囲の出所）",
+      evaluation.fittingLab12ptSearch?.rangeSource ?? "-",
+    ],
+    [
+      "rotationCenter.y range（回転中心y探索範囲）",
+      formatRotationFitRange(
+        RENDER_ROTATION_FIT_COORDINATE_DESCENT_RANGES["rotationCenter.y"],
+      ),
+    ],
+    [
+      "rotationCenter.z range（回転中心z探索範囲）",
+      formatRotationFitRange(
+        RENDER_ROTATION_FIT_COORDINATE_DESCENT_RANGES["rotationCenter.z"],
+      ),
+    ],
+    [
+      "candidateGeneration（候補生成）",
+      evaluation.fittingLab12ptSearch?.candidateGeneration ?? "-",
+    ],
+    [
+      "iterationCount（反復回数）",
+      evaluation.fittingLab12ptSearch
+        ? String(evaluation.fittingLab12ptSearch.coordinateDescentIterations)
+        : "-",
+    ],
+    [
+      "coordinateDescentOrder（座標降下探索順）",
+      evaluation.fittingLab12ptSearch?.coordinateDescentParameterOrder.join(" -> ") ?? "-",
+    ],
+    [
+      "best zByPointId（最良の点ごとの奥行き）",
+      evaluation.bestCandidate ? formatRotationFitZByPointId(evaluation.bestCandidate.zByPointId) : "-",
+    ],
+    [
+      "coordinateBoundaryStatus（探索範囲端ヒット状態）",
+      evaluation.coordinateBoundaryStatus
+        ? formatRotationFitCoordinateBoundaryStatusSummary(evaluation.coordinateBoundaryStatus)
+        : "-",
+    ],
+    [
+      "improvement totalScore（改善量: 全体平均誤差）",
+      evaluation.improvement
+        ? `${formatNumber(evaluation.improvement.totalScoreBefore)} -> ${formatNumber(
+            evaluation.improvement.totalScoreAfter,
+          )} / delta ${formatNumber(evaluation.improvement.totalScoreDelta)}`
+        : "-",
+    ],
+    [
+      "improvement maxFrameScore（改善量: 最大フレーム誤差）",
+      evaluation.improvement
+        ? `${formatNumber(evaluation.improvement.maxFrameScoreBefore)} -> ${formatNumber(
+            evaluation.improvement.maxFrameScoreAfter,
+          )} / delta ${formatNumber(evaluation.improvement.maxFrameScoreDelta)}`
+        : "-",
     ],
     [
       "bestRotationCenter.x",
@@ -3579,6 +4240,230 @@ function renderRotationFitSummary(evaluation: RotationFitEvaluation): string {
       `yaw ${evaluation.bucketScores.yaw.length} / pitch ${evaluation.bucketScores.pitch.length} / roll ${evaluation.bucketScores.roll.length} / yaw×pitch ${evaluation.bucketScores.yawPitch.length}`,
     ],
   ])
+}
+
+function renderRotationFitGroupZSearch(evaluation: RotationFitEvaluation): string {
+  const stageB = evaluation.stageB
+  if (!stageB) {
+    return `<div class="landmark-summary-item empty">Stage B（段階B）の group z search（グループ単位奥行き探索）はまだ実行されていません。</div>`
+  }
+
+  return [
+    renderStatusItems([
+      ["searchMode（探索モード）", stageB.searchMode],
+      [
+        "groupZOffsetRange（グループ奥行き加算量の範囲）",
+        `${formatNumber(stageB.groupZOffsetRange.min)} .. ${formatNumber(
+          stageB.groupZOffsetRange.max,
+        )} / step ${formatNumber(stageB.groupZOffsetRange.step)}`,
+      ],
+      ["iterationCount（反復回数）", String(stageB.iterationCount)],
+      ["groupOffsets（グループ奥行き加算量）", formatRotationFitGroupOffsets(stageB.groupOffsets)],
+      ["initialCandidate（初期候補）", formatRotationFitCandidateScoreSummary(stageB.initialCandidate)],
+      ["bestCandidate（最良候補）", formatRotationFitCandidateScoreSummary(stageB.bestCandidate)],
+    ]),
+    renderRotationFitGroupDefinitions(stageB.groupDefinitions),
+    renderRotationFitGroupSearchLogs(stageB.groupSearchLogs),
+  ].join("")
+}
+
+function renderRotationFitGroupDefinitions(
+  groupDefinitions: RotationFitZGroupDefinition[],
+): string {
+  return `
+    <div class="landmark-summary-grid">
+      ${groupDefinitions
+        .map(
+          (definition) => `
+            <div class="landmark-summary-item">
+              <code>${escapeHtml(definition.label)}</code>
+              <span>${escapeHtml(definition.pointIds.join(", "))}</span>
+            </div>
+          `,
+        )
+        .join("")}
+    </div>
+  `
+}
+
+function renderRotationFitGroupSearchLogs(logs: RotationFitGroupSearchLog[]): string {
+  if (logs.length === 0) {
+    return `<div class="landmark-summary-item empty">groupSearchLogs（グループ探索ログ）はありません。</div>`
+  }
+
+  return `
+    <div class="landmark-summary-grid pose-candidate-bucket-list">
+      ${logs
+        .map(
+          (log) => `
+            <div class="landmark-summary-item pose-candidate-bucket">
+              <code>iteration ${log.iteration} / ${escapeHtml(log.groupId)}</code>
+              <span>previousOffset（前回加算量） ${formatNumber(log.previousOffset)}</span>
+              <span>selectedOffset（採用加算量） ${formatNumber(log.selectedOffset)}</span>
+              <span>previousTotalScore（前回スコア） ${formatNumber(log.previousTotalScore)}</span>
+              <span>selectedTotalScore（採用スコア） ${formatNumber(log.selectedTotalScore)}</span>
+              <span>previousMaxFrameScore（前回最大フレーム誤差） ${formatNumber(log.previousMaxFrameScore)}</span>
+              <span>selectedMaxFrameScore（採用最大フレーム誤差） ${formatNumber(log.selectedMaxFrameScore)}</span>
+              <span>improved（改善） ${String(log.improved)}</span>
+              <span>candidateCount（候補数） ${log.candidateCount}</span>
+            </div>
+          `,
+        )
+        .join("")}
+    </div>
+  `
+}
+
+function renderRotationFitCoordinateDescent(evaluation: RotationFitEvaluation): string {
+  const search = evaluation.fittingLab12ptSearch
+  if (!search) {
+    return `<div class="landmark-summary-item empty">coordinateDescent（座標降下探索）はまだ実行されていません。</div>`
+  }
+
+  return [
+    renderStatusItems([
+      ["searchMode（探索モード）", search.searchMode],
+      ["sourceLab（元実装）", search.sourceLab],
+      ["sourcePointSetId（元点セット）", search.sourcePointSetId],
+      ["coordinateSystemSource（座標系の出所）", search.coordinateSystemSource],
+      ["rangeSource（探索範囲の出所）", search.rangeSource],
+      ["fittingLabAlgorithmOnly（Fitting Lab はアルゴリズムのみ踏襲）", String(search.fittingLabAlgorithmOnly)],
+      ["baseCandidatePresetId（基準候補）", search.baseCandidatePresetId],
+      ["candidateGeneration（候補生成）", search.candidateGeneration],
+      ["coordinateDescentIterations（反復回数）", String(search.coordinateDescentIterations)],
+      [
+        "initialCandidate（初期候補）",
+        formatRotationFitCandidateScoreSummary(search.initialCandidate),
+      ],
+      ["bestCandidate（最良候補）", formatRotationFitCandidateScoreSummary(search.bestCandidate)],
+      [
+        "bestRotationCenter（最良回転中心）",
+        formatRotationFitCandidateRotationCenterSummary(search.bestCandidate),
+      ],
+      [
+        "best zByPointId（最良の点ごとの奥行き）",
+        search.bestCandidate ? formatRotationFitZByPointId(search.bestCandidate.zByPointId) : "-",
+      ],
+      [
+        "coordinateBoundaryStatus（探索範囲端ヒット状態）",
+        search.coordinateBoundaryStatus
+          ? formatRotationFitCoordinateBoundaryStatusSummary(search.coordinateBoundaryStatus)
+          : "-",
+      ],
+    ]),
+    renderRotationFitCoordinateDescentRanges(search.coordinateDescentRanges),
+    renderRotationFitCoordinateDescentLog(search.coordinateDescentLog),
+  ].join("")
+}
+
+function renderRotationFitCoordinateDescentRanges(
+  ranges: Record<RotationFitLocalSearchParameter, RotationFitSearchRange>,
+): string {
+  return `
+    <div class="landmark-summary-grid">
+      ${ROTATION_FIT_FITTING_LAB_PARAMETER_ORDER.map((parameter) => {
+        const range = ranges[parameter]
+        return `
+          <div class="landmark-summary-item">
+            <code>${escapeHtml(parameter)}</code>
+            <span>${formatNumber(range.min)} .. ${formatNumber(range.max)} / step ${formatNumber(range.step)}</span>
+          </div>
+        `
+      }).join("")}
+    </div>
+  `
+}
+
+function renderRotationFitCoordinateDescentLog(
+  logs: RotationFitCoordinateDescentStepLog[],
+): string {
+  if (logs.length === 0) {
+    return `<div class="landmark-summary-item empty">coordinateDescentLog（座標降下探索ログ）はありません。</div>`
+  }
+
+  return `
+    <div class="landmark-summary-grid pose-candidate-bucket-list">
+      ${logs
+        .map(
+          (log) => `
+            <div class="landmark-summary-item pose-candidate-bucket">
+              <code>iteration ${log.iteration} / ${escapeHtml(log.parameter)}</code>
+              <span>previousValue（前回値） ${formatNumber(log.previousValue)}</span>
+              <span>bestValue（最良値） ${formatNumber(log.bestValue)}</span>
+              <span>previousTotalScore（前回スコア） ${formatNumber(log.previousTotalScore)}</span>
+              <span>bestTotalScore（最良スコア） ${formatNumber(log.bestTotalScore)}</span>
+              <span>previousMaxFrameScore（前回最大フレーム誤差） ${formatNumber(log.previousMaxFrameScore)}</span>
+              <span>bestMaxFrameScore（最良最大フレーム誤差） ${formatNumber(log.bestMaxFrameScore)}</span>
+              <span>candidateCount（候補数） ${log.candidateCount}</span>
+              <span>improved（改善） ${String(log.improved)}</span>
+            </div>
+          `,
+        )
+        .join("")}
+    </div>
+  `
+}
+
+function formatRotationFitCandidateRotationCenterSummary(
+  candidate: RotationFitCandidateResult | null,
+): string {
+  if (!candidate) {
+    return "-"
+  }
+  return `x ${formatNumber(candidate.rotationCenter.x)} / y ${formatNumber(
+    candidate.rotationCenter.y,
+  )} / z ${formatNumber(candidate.rotationCenter.z)}`
+}
+
+function formatRotationFitCandidateScoreSummary(
+  candidate: RotationFitCandidateResult | null,
+): string {
+  if (!candidate) {
+    return "-"
+  }
+  return `totalScore ${formatNumber(candidate.totalScore)} / maxFrameScore ${formatNumber(
+    candidate.maxFrameScore,
+  )}`
+}
+
+function formatRotationFitBoundaryStatus(
+  boundaryStatus: RotationFitSearchBoundaryStatus,
+): string {
+  return `bestYAtMin: ${String(boundaryStatus.bestYAtMin)} / bestYAtMax: ${String(
+    boundaryStatus.bestYAtMax,
+  )} / bestZAtMin: ${String(boundaryStatus.bestZAtMin)} / bestZAtMax: ${String(
+    boundaryStatus.bestZAtMax,
+  )}`
+}
+
+function formatRotationFitCoordinateBoundaryStatusSummary(
+  boundaryStatus: RotationFitCoordinateBoundaryStatus,
+): string {
+  return ROTATION_FIT_FITTING_LAB_PARAMETER_ORDER.map((parameter) => {
+    const status = boundaryStatus[parameter]
+    return `${parameter}: min ${String(status.bestAtMin)} / max ${String(status.bestAtMax)}`
+  }).join(" / ")
+}
+
+function formatRotationFitRange(range: RotationFitSearchRange): string {
+  return `${formatNumber(range.min)} .. ${formatNumber(range.max)} / step ${formatNumber(range.step)}`
+}
+
+function formatRotationFitGroupOffsets(
+  groupOffsets: Record<RotationFitZGroupId, number>,
+): string {
+  return ROTATION_FIT_Z_GROUP_SEARCH_ORDER.map(
+    (groupId) => `${groupId}: ${formatNumber(groupOffsets[groupId])}`,
+  ).join(" / ")
+}
+
+function formatRotationFitZByPointId(zByPointId: Record<string, number>): string {
+  return ROTATION_FIT_FITTING_LAB_PARAMETER_ORDER.filter((parameter) =>
+    parameter.endsWith(".z"),
+  )
+    .map((parameter) => parameter.replace(/\.z$/, ""))
+    .map((pointId) => `${pointId}: ${formatNumber(zByPointId[pointId] ?? 0)}`)
+    .join(" / ")
 }
 
 function formatRotationFitBoundaryWarning(
@@ -4129,6 +5014,12 @@ function degreesToRadians(value: number): number {
 
 function roundDebugNumber(value: number): number {
   return Number.isFinite(value) ? Number(value.toFixed(6)) : value
+}
+
+function roundRecordNumbers(values: Record<string, number>): Record<string, number> {
+  return Object.fromEntries(
+    Object.entries(values).map(([key, value]) => [key, roundDebugNumber(value)]),
+  )
 }
 
 function clamp(value: number, min: number, max: number): number {

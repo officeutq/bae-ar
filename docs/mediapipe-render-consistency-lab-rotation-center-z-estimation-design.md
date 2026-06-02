@@ -141,6 +141,12 @@ for rotationCenter.y candidates
 
 ### Stage B: group z search
 
+Stage A（段階A）で `rotationCenter.y`（回転中心の縦方向）の探索範囲を `-0.24 .. 0.40 / step 0.02` まで広げても、`bestRotationCenter.y`（最良の回転中心y）が上限 `0.40` に張り付いた。ここからは `rotationCenter.y`（回転中心の縦方向）をさらに広げるのではなく、固定 `12pt z preset`（12点奥行きプリセット）が合っていない可能性を確認するため、Stage B（段階B）の `group z search`（グループ単位奥行き探索）へ進む。
+
+Stage B（段階B）は `rotationFitDebugPreset_provisional_v1`（検証用の暫定奥行きプリセット）に group offset（グループ単位の奥行き加算量）を足して、固定 z preset（固定奥行きプリセット）の不一致を確認・補正する debug search（検証用探索）である。`rotationCenter.y/z`（回転中心の縦方向・奥行き方向）は Stage A（段階A）の best candidate（最良候補）を固定して使う。
+
+この段階ではまだ `per-point z search`（点単位奥行き探索）、本格的な `coordinate descent`（座標降下法）、`14 unknowns optimization`（14個の未知数の同時最適化）、mesh（メッシュ化） / render（レンダリング） / MediaPipe re-detection（MediaPipe再検出）、production export（本番書き出し）には進まない。
+
 次に 12点を group（グループ）へ分け、group z（グループ単位奥行き）を探索する。
 
 初期 group 案:
@@ -262,3 +268,69 @@ roll が片側に偏った selected frames だけで評価すると、画像上�
 - `base12pt` は正面候補または姿勢中央に近い selected frame の adjusted12pt（手動調整後12点）から作り、`x = adjusted12pt.x * videoAspectRatio`、`y = adjusted12pt.y`、`z = rotationFitDebugPreset_provisional_v1` とする。
 - 各 evaluation frame（評価フレーム）では projected12pt（投影後12点）と frame adjusted12pt（各フレームの手動調整後12点）を 2D distance（二次元距離）で比較し、frameScore / totalScore / worstFrame / worstPoint / bucketScores を表示する。
 - rotationCenter.y/z 探索、12pt z 探索、14未知数最適化、mesh / render / MediaPipe re-detection は後段で扱う。
+
+## Adopted Search: Fitting Lab 12pt Rotation Center
+
+現行実装では、旧 Stage A（rotationCenter.y/z coarse search: 回転中心y/z粗探索）と Stage B（group z search: グループ単位奥行き探索）を主導線にせず、IdealFace Fitting Lab の `12pt_rotation_center`（回転中心推定向け12点）方式を採用する。
+
+Fitting Lab で確認した 12pt 段階の候補生成は以下である。
+
+```text
+baseCandidate = naturalNoseWithRotationCenter
+searchMode = coordinateDescent
+iterationCount = 2
+
+for iteration in 1..2
+  for parameter in parameterOrder
+    create candidates by replacing only that parameter
+    evaluate all candidates
+    keep the best candidate as the next current candidate
+```
+
+`parameterOrder`（探索順）は以下とする。
+
+```text
+rotationCenter.y
+rotationCenter.z
+leftCheek.z
+rightCheek.z
+nose.z
+mouth.z
+leftEye.z
+rightEye.z
+headTop.z
+chin.z
+noseBridge.z
+leftJaw.z
+rightJaw.z
+upperFaceCenter.z
+```
+
+`coordinateDescentRanges`（座標降下探索範囲）は Fitting Lab の `DEFAULT_COORDINATE_DESCENT_RANGES` のうち、`12pt_rotation_center` に含まれる parameter（探索対象）だけを使う。
+
+Render Consistency Lab への移植では、Fitting Lab の x/y 座標系は使わない。12点の x/y は `adjusted12pt`（手動調整後12点）から作り、評価時は `x = adjusted12pt.x * videoAspectRatio`、`y = adjusted12pt.y` とする。pixel coordinate（ピクセル座標）、face bounds center（顔外枠中心）、顔幅 normalization（正規化）は使わない。`rotationCenter.x`（回転中心x）は `0.5 * videoAspectRatio` 固定とする。
+
+この探索は 478点へ拡張する前の 12点段階だけを扱う。`perLandmarkZSearch`（ランドマーク単位z探索）、478点 z 推定、mesh（メッシュ化） / render（レンダリング） / MediaPipe re-detection（MediaPipe再検出）、production export（本番書き出し）は対象外とする。
+
+### Render Coordinate Range Correction
+
+Fitting Lab から採用するのは `coordinateDescent`（座標降下探索）という探索アルゴリズムと、1つの parameter（探索対象）だけを動かして step（手順）ごとに best candidate（最良候補）を次の base candidate（基準候補）にする実行手順である。Fitting Lab の座標系・探索範囲はそのまま採用しない。
+
+Render Consistency Lab では `adjusted12pt`（手動調整後12点）の image-normalized coordinate（画像正規化座標）を使う。評価時は以下に固定する。
+
+```text
+x = adjusted12pt.x * videoAspectRatio
+y = adjusted12pt.y
+rotationCenter.x = 0.5 * videoAspectRatio
+```
+
+Fitting Lab では `rotationCenter.y`（回転中心y）の符号・原点・スケールが Render 側と違っていた可能性がある。Render 側の前段実験では `rotationCenter.y = 0.40` 方向で score（誤差スコア）が改善していたため、Render 用の coordinate descent range（座標降下探索範囲）は以下にする。
+
+```text
+rotationCenter.y = -0.05 .. 0.50 / step 0.01
+rotationCenter.z = 0.00 .. 0.12 / step 0.01
+```
+
+12点 z range（12点奥行き探索範囲）は Fitting Lab の値を参考にした debug range（検証用範囲）として明示的に Render 側定数へ複製する。これは Render Consistency Lab の座標系では今後の調整対象であり、production asset（本番用アセット）ではない。
+
+`coordinateBoundaryStatus`（座標降下探索の範囲端ヒット状態）で、`rotationCenter.y` が Render 用 range の `0.50` 上限に張り付くか確認できるようにする。Raw JSON（生デバッグJSON）には `coordinateSystemSource: render_adjusted12pt_aspect_corrected`、`rangeSource: render_consistency_lab`、`fittingLabAlgorithmOnly: true` を含める。
