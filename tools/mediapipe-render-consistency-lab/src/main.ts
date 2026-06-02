@@ -69,12 +69,56 @@ type PoseBucket125 = {
 
 type PoseBucket125Definition = PoseBucket125
 
+type PoseReviewYawPitchBucketDefinition = {
+  id: string
+  yawBin: PoseAxisBin
+  pitchBin: PoseAxisBin
+}
+
 type PoseBucket125SummaryItem = PoseBucket125Definition & {
   count: number
   percent: number
 }
 
 type PoseAxisName = "yaw" | "pitch" | "roll"
+
+type PoseReviewSelectedBy = "roll_center" | "roll_small_fallback"
+
+type PoseReviewCandidateFrame = {
+  sourceFrameIndex: number
+  timeSec: number
+  rollBin: PoseAxisBin
+  selectedBy: PoseReviewSelectedBy
+}
+
+type PoseReviewCandidateBucket = {
+  id: string
+  yawBin: PoseAxisBin
+  pitchBin: PoseAxisBin
+  targetCount: number
+  selectedCount: number
+  shortageCount: number
+  availableRollCenterCount: number
+  availableRollSmallCount: number
+  selectedFrames: PoseReviewCandidateFrame[]
+}
+
+type PoseReviewCandidateSummary = {
+  policy: {
+    primaryGrouping: "yaw_pitch_25"
+    targetPerBucket: number
+    expressionTooStrong: "exclude"
+    preferredRoll: "center"
+    fallbackRoll: readonly ["negativeSmall", "positiveSmall"]
+    excludedRoll: readonly ["negativeLarge", "positiveLarge"]
+  }
+  targetTotal: number
+  selectedTotal: number
+  fullBucketCount: number
+  shortageBucketCount: number
+  excludedExpressionTooStrongCount: number
+  buckets: PoseReviewCandidateBucket[]
+}
 
 type FrameBadge = {
   id: string
@@ -137,6 +181,7 @@ type ConsoleTab =
   | "currentFrame"
   | "landmarks12pt"
   | "adjustments"
+  | "candidates"
   | "raw"
   | "scan"
   | "pose"
@@ -162,6 +207,7 @@ type AppState = {
   currentReviewIndex: number
   scanState: ScanState
   manualAdjustmentsByFrame: ManualAdjustmentsByFrame
+  poseReviewCandidateSummary: PoseReviewCandidateSummary | null
   selectedLandmarkSummaryPointId: string | null
   draggingLandmarkSummaryPointId: string | null
   showLandmarkSummaryOverlay: boolean
@@ -207,6 +253,19 @@ const POSE_BUCKET_125_DEFINITIONS = buildPoseBucket125Definitions()
 const POSE_BUCKET_125_TOTAL_COUNT = POSE_BUCKET_125_DEFINITIONS.length
 const FRONT_CANDIDATE_POSE_BUCKET_125_ID =
   "yaw_center__pitch_center__roll_center"
+const POSE_REVIEW_TARGET_PER_BUCKET = 5
+const POSE_REVIEW_YAW_PITCH_BUCKET_DEFINITIONS = buildPoseReviewYawPitchBucketDefinitions()
+const POSE_REVIEW_YAW_PITCH_BUCKET_COUNT = POSE_REVIEW_YAW_PITCH_BUCKET_DEFINITIONS.length
+const POSE_REVIEW_TARGET_TOTAL =
+  POSE_REVIEW_YAW_PITCH_BUCKET_COUNT * POSE_REVIEW_TARGET_PER_BUCKET
+const POSE_REVIEW_ROLL_SMALL_BINS = [
+  "negativeSmall",
+  "positiveSmall",
+] as const satisfies readonly PoseAxisBin[]
+const POSE_REVIEW_ROLL_LARGE_BINS = [
+  "negativeLarge",
+  "positiveLarge",
+] as const satisfies readonly PoseAxisBin[]
 const EXPRESSION_TOO_STRONG_THRESHOLDS = {
   mouth: 0.35,
   eye: 0.35,
@@ -292,6 +351,7 @@ const state: AppState = {
   currentReviewIndex: 0,
   scanState: createInitialScanState(),
   manualAdjustmentsByFrame: {},
+  poseReviewCandidateSummary: null,
   selectedLandmarkSummaryPointId: null,
   draggingLandmarkSummaryPointId: null,
   showLandmarkSummaryOverlay: true,
@@ -332,6 +392,15 @@ app.innerHTML = `
       </section>
 
       <section class="controls-section">
+        <h2>姿勢レビュー候補</h2>
+        <button id="extractPoseReviewCandidatesButton" type="button" class="secondary-button">
+          125候補フレーム抽出
+        </button>
+        <p class="control-help">yaw×pitch 25分類 × 最大5件。expressionTooStrong は除外。</p>
+        <div id="poseReviewCandidateSummary" class="status-grid compact-status-grid"></div>
+      </section>
+
+      <section class="controls-section">
         <h2>Overlay（表示）</h2>
         <button id="toggleLandmarkSummaryButton" type="button" class="toggle-button">
           12点サマリを非表示
@@ -366,6 +435,7 @@ app.innerHTML = `
         <button type="button" class="console-tab-button" data-console-tab="adjustments">Adjustments</button>
         <button type="button" class="console-tab-button" data-console-tab="scan">Scan</button>
         <button type="button" class="console-tab-button" data-console-tab="pose">Pose（姿勢）</button>
+        <button type="button" class="console-tab-button" data-console-tab="candidates">Candidates</button>
         <button type="button" class="console-tab-button" data-console-tab="raw">Raw</button>
       </div>
       <div id="consoleContent" class="console-content"></div>
@@ -381,6 +451,10 @@ const controlStatus = getElement("controlStatus")
 const frameInfoGrid = getElement("frameInfoGrid")
 const consoleContent = getElement("consoleContent")
 const toggleLandmarkSummaryButton = getElement<HTMLButtonElement>("toggleLandmarkSummaryButton")
+const extractPoseReviewCandidatesButton = getElement<HTMLButtonElement>(
+  "extractPoseReviewCandidatesButton",
+)
+const poseReviewCandidateSummary = getElement("poseReviewCandidateSummary")
 const previousFrameButton = getElement<HTMLButtonElement>("previousFrameButton")
 const excludeFrameButton = getElement<HTMLButtonElement>("excludeFrameButton")
 const nextFrameButton = getElement<HTMLButtonElement>("nextFrameButton")
@@ -398,6 +472,10 @@ toggleLandmarkSummaryButton.addEventListener("click", () => {
   state.showLandmarkSummaryOverlay = !state.showLandmarkSummaryOverlay
   renderThumbnailCanvas()
   render()
+})
+
+extractPoseReviewCandidatesButton.addEventListener("click", () => {
+  extractPoseReviewCandidates()
 })
 
 previousFrameButton.addEventListener("click", () => {
@@ -555,6 +633,7 @@ function resetFrameState(): void {
   state.currentReviewIndex = 0
   state.scanState = createInitialScanState()
   state.manualAdjustmentsByFrame = {}
+  state.poseReviewCandidateSummary = null
   state.selectedLandmarkSummaryPointId = null
   state.draggingLandmarkSummaryPointId = null
   clearCanvas()
@@ -594,6 +673,7 @@ async function startAutoScan(): Promise<void> {
   state.observed12pt = []
   state.selectedLandmarkSummaryPointId = null
   state.draggingLandmarkSummaryPointId = null
+  state.poseReviewCandidateSummary = null
   state.loadStatus = "解析中"
   state.scanState = createInitialScanState("running")
   clearCanvas()
@@ -767,6 +847,134 @@ async function excludeCurrentFrame(): Promise<void> {
   applyCurrentAcceptedFrame()
   renderThumbnailCanvas()
   render()
+}
+
+function extractPoseReviewCandidates(): void {
+  if (state.acceptedFrames.length === 0 || state.scanState.status === "running") {
+    return
+  }
+
+  state.poseReviewCandidateSummary = buildPoseReviewCandidateSummary()
+  state.consoleTab = "candidates"
+  render()
+}
+
+function buildPoseReviewCandidateSummary(): PoseReviewCandidateSummary {
+  const excludedExpressionTooStrongCount = getExpressionTooStrongCount()
+  const usableFrames = state.acceptedFrames.filter(
+    (frame) => !hasFrameBadge(frame, "expressionTooStrong") && frame.poseBucket125,
+  )
+
+  const buckets = POSE_REVIEW_YAW_PITCH_BUCKET_DEFINITIONS.map((definition) => {
+    const framesInBucket = usableFrames.filter((frame) => {
+      const poseBucket = frame.poseBucket125
+      if (!poseBucket) {
+        return false
+      }
+
+      return poseBucket.yawBin === definition.yawBin && poseBucket.pitchBin === definition.pitchBin
+    })
+    const rollCenterFrames = framesInBucket.filter(
+      (frame) => frame.poseBucket125?.rollBin === "center",
+    )
+    const rollSmallFrames = framesInBucket.filter((frame) => {
+      const rollBin = frame.poseBucket125?.rollBin
+      return rollBin === "negativeSmall" || rollBin === "positiveSmall"
+    })
+
+    const selectedCenterFrames = pickEvenlySpaced(
+      rollCenterFrames,
+      POSE_REVIEW_TARGET_PER_BUCKET,
+      (frame) => frame.timeSec,
+    )
+    const fallbackTargetCount = Math.max(
+      0,
+      POSE_REVIEW_TARGET_PER_BUCKET - selectedCenterFrames.length,
+    )
+    const selectedSmallFrames =
+      fallbackTargetCount > 0
+        ? pickEvenlySpaced(rollSmallFrames, fallbackTargetCount, (frame) => frame.timeSec)
+        : []
+    const selectedFrames = [
+      ...selectedCenterFrames.map((frame) => buildPoseReviewCandidateFrame(frame, "roll_center")),
+      ...selectedSmallFrames.map((frame) =>
+        buildPoseReviewCandidateFrame(frame, "roll_small_fallback"),
+      ),
+    ].sort((left, right) => left.timeSec - right.timeSec)
+    const selectedCount = selectedFrames.length
+
+    return {
+      ...definition,
+      targetCount: POSE_REVIEW_TARGET_PER_BUCKET,
+      selectedCount,
+      shortageCount: Math.max(0, POSE_REVIEW_TARGET_PER_BUCKET - selectedCount),
+      availableRollCenterCount: rollCenterFrames.length,
+      availableRollSmallCount: rollSmallFrames.length,
+      selectedFrames,
+    }
+  })
+  const selectedTotal = buckets.reduce((sum, bucket) => sum + bucket.selectedCount, 0)
+
+  return {
+    policy: {
+      primaryGrouping: "yaw_pitch_25",
+      targetPerBucket: POSE_REVIEW_TARGET_PER_BUCKET,
+      expressionTooStrong: "exclude",
+      preferredRoll: "center",
+      fallbackRoll: POSE_REVIEW_ROLL_SMALL_BINS,
+      excludedRoll: POSE_REVIEW_ROLL_LARGE_BINS,
+    },
+    targetTotal: POSE_REVIEW_TARGET_TOTAL,
+    selectedTotal,
+    fullBucketCount: buckets.filter((bucket) => bucket.shortageCount === 0).length,
+    shortageBucketCount: buckets.filter((bucket) => bucket.shortageCount > 0).length,
+    excludedExpressionTooStrongCount,
+    buckets,
+  }
+}
+
+function buildPoseReviewCandidateFrame(
+  frame: AcceptedFrameSnapshot,
+  selectedBy: PoseReviewSelectedBy,
+): PoseReviewCandidateFrame {
+  return {
+    sourceFrameIndex: frame.sourceFrameIndex,
+    timeSec: frame.timeSec,
+    rollBin: frame.poseBucket125?.rollBin ?? "center",
+    selectedBy,
+  }
+}
+
+function pickEvenlySpaced<T>(
+  items: T[],
+  targetCount: number,
+  getTimeSec: (item: T) => number,
+): T[] {
+  if (targetCount <= 0 || items.length === 0) {
+    return []
+  }
+
+  const sortedItems = [...items].sort((left, right) => getTimeSec(left) - getTimeSec(right))
+  if (sortedItems.length <= targetCount) {
+    return sortedItems
+  }
+
+  if (targetCount === 1) {
+    return [sortedItems[Math.round((sortedItems.length - 1) / 2)]]
+  }
+
+  const selectedIndexes = new Set<number>()
+  for (let index = 0; index < targetCount; index += 1) {
+    selectedIndexes.add(Math.round((index * (sortedItems.length - 1)) / (targetCount - 1)))
+  }
+
+  for (let index = 0; selectedIndexes.size < targetCount && index < sortedItems.length; index += 1) {
+    selectedIndexes.add(index)
+  }
+
+  return [...selectedIndexes]
+    .sort((left, right) => left - right)
+    .map((index) => sortedItems[index])
 }
 
 function findNextUnexcludedReviewIndex(startReviewIndex: number): number | null {
@@ -999,6 +1207,13 @@ function formatPoseBucket125Id(
   return `yaw_${yawBin}__pitch_${pitchBin}__roll_${rollBin}`
 }
 
+function formatPoseReviewYawPitchBucketId(
+  yawBin: PoseAxisBin,
+  pitchBin: PoseAxisBin,
+): string {
+  return `yaw_${yawBin}__pitch_${pitchBin}`
+}
+
 function buildPoseBucket125Definitions(): PoseBucket125Definition[] {
   return POSE_AXIS_BINS.flatMap((yawBin) =>
     POSE_AXIS_BINS.flatMap((pitchBin) =>
@@ -1009,6 +1224,16 @@ function buildPoseBucket125Definitions(): PoseBucket125Definition[] {
         rollBin,
       })),
     ),
+  )
+}
+
+function buildPoseReviewYawPitchBucketDefinitions(): PoseReviewYawPitchBucketDefinition[] {
+  return POSE_AXIS_BINS.flatMap((yawBin) =>
+    POSE_AXIS_BINS.map((pitchBin) => ({
+      id: formatPoseReviewYawPitchBucketId(yawBin, pitchBin),
+      yawBin,
+      pitchBin,
+    })),
   )
 }
 
@@ -1515,6 +1740,7 @@ function render(): void {
   )
 
   controlStatus.textContent = `状態: ${formatControlStatus()}`
+  poseReviewCandidateSummary.innerHTML = renderPoseReviewCandidateSummaryBrief()
 
   frameInfoGrid.innerHTML = renderStatusItems([
     [
@@ -1542,6 +1768,7 @@ function render(): void {
   nextFrameButton.disabled =
     !state.metadata || state.currentReviewIndex >= state.acceptedFrames.length - 1 || frameBusy
   excludeFrameButton.disabled = !state.metadata || !currentFrame || frameBusy
+  extractPoseReviewCandidatesButton.disabled = state.acceptedFrames.length === 0 || frameBusy
   stopScanButton.disabled = state.scanState.status !== "running"
 }
 
@@ -1563,6 +1790,7 @@ function createRawDebugPayload(
     expressionTooStrongThresholds: EXPRESSION_TOO_STRONG_THRESHOLDS,
     expressionTooStrongCount: getExpressionTooStrongCount(),
     poseBucket125Summary: getPoseBucket125Summary(),
+    candidateSelectionSummary: state.poseReviewCandidateSummary,
     acceptedFramesPreview: getAcceptedFramesPreview(),
     mediaPipeFrameSummary: state.summary,
     landmarkSummaryPointCount: adjusted12pt.length,
@@ -1607,6 +1835,8 @@ function renderConsoleTabContent(
       return renderScanConsole()
     case "pose":
       return renderPoseConsole()
+    case "candidates":
+      return renderCandidatesConsole()
     case "raw":
       return renderRawConsole(rawDebugPayload)
     case "summary":
@@ -1905,6 +2135,109 @@ function renderPoseConsole(): string {
       renderPoseBucket125List(summary.buckets, summary.acceptedFrameCount),
     ),
   ].join("")
+}
+
+function renderCandidatesConsole(): string {
+  const summary = state.poseReviewCandidateSummary
+  if (!summary) {
+    return renderConsoleSection(
+      "Candidates（候補）",
+      `<div class="landmark-summary-item empty">まだ抽出していません。左ペインの「125候補フレーム抽出」を押してください。</div>`,
+    )
+  }
+
+  return [
+    renderConsoleSection(
+      "Summary（要約）",
+      renderStatusItems([
+        ["primaryGrouping（主分類）", summary.policy.primaryGrouping],
+        ["targetPerBucket（bucketごとの目標数）", String(summary.policy.targetPerBucket)],
+        ["expressionTooStrong（強い表情）", summary.policy.expressionTooStrong],
+        ["preferred roll（優先roll）", summary.policy.preferredRoll],
+        ["fallback roll（補欠roll）", summary.policy.fallbackRoll.join(" / ")],
+        ["excluded roll（除外roll）", summary.policy.excludedRoll.join(" / ")],
+        ["targetTotal（目標合計）", String(summary.targetTotal)],
+        ["selectedTotal（選択合計）", String(summary.selectedTotal)],
+        ["fullBucketCount（充足bucket数）", String(summary.fullBucketCount)],
+        ["shortageBucketCount（不足bucket数）", String(summary.shortageBucketCount)],
+        [
+          "excludedExpressionTooStrongCount（強い表情の除外数）",
+          String(summary.excludedExpressionTooStrongCount),
+        ],
+      ]),
+    ),
+    renderConsoleSection(
+      "Bucket list（bucket一覧）",
+      renderPoseReviewCandidateBucketList(summary.buckets),
+    ),
+  ].join("")
+}
+
+function renderPoseReviewCandidateSummaryBrief(): string {
+  const summary = state.poseReviewCandidateSummary
+  if (!summary) {
+    return ""
+  }
+
+  return renderStatusItems([
+    ["selectedTotal / targetTotal", `${summary.selectedTotal} / ${summary.targetTotal}`],
+    [
+      "fullBucketCount / 25",
+      `${summary.fullBucketCount} / ${POSE_REVIEW_YAW_PITCH_BUCKET_COUNT}`,
+    ],
+    [
+      "shortageBucketCount / 25",
+      `${summary.shortageBucketCount} / ${POSE_REVIEW_YAW_PITCH_BUCKET_COUNT}`,
+    ],
+    [
+      "excludedExpressionTooStrongCount",
+      String(summary.excludedExpressionTooStrongCount),
+    ],
+  ])
+}
+
+function renderPoseReviewCandidateBucketList(buckets: PoseReviewCandidateBucket[]): string {
+  return `
+    <div class="landmark-summary-grid pose-candidate-bucket-list">
+      ${buckets.map(renderPoseReviewCandidateBucket).join("")}
+    </div>
+  `
+}
+
+function renderPoseReviewCandidateBucket(bucket: PoseReviewCandidateBucket): string {
+  return `
+    <div class="landmark-summary-item pose-candidate-bucket">
+      <code>${escapeHtml(bucket.id)}</code>
+      <span>selected（選択） ${bucket.selectedCount} / target（目標） ${bucket.targetCount}</span>
+      <span>shortage（不足） ${bucket.shortageCount}</span>
+      <span>available roll_center（利用可能なroll中心） ${bucket.availableRollCenterCount}</span>
+      <span>available roll_small（利用可能なroll小） ${bucket.availableRollSmallCount}</span>
+      ${renderPoseReviewCandidateFrames(bucket.selectedFrames)}
+    </div>
+  `
+}
+
+function renderPoseReviewCandidateFrames(frames: PoseReviewCandidateFrame[]): string {
+  if (frames.length === 0) {
+    return `<div class="candidate-frame-list empty">selected frames: -</div>`
+  }
+
+  return `
+    <div class="candidate-frame-list">
+      ${frames
+        .map(
+          (frame) => `
+            <div class="candidate-frame-item">
+              <span>sourceFrameIndex（元フレーム番号） ${frame.sourceFrameIndex}</span>
+              <span>timeSec（秒） ${formatNumber(frame.timeSec)}</span>
+              <span>rollBin（roll分類） ${escapeHtml(frame.rollBin)}</span>
+              <span>selectedBy（選択理由） ${escapeHtml(frame.selectedBy)}</span>
+            </div>
+          `,
+        )
+        .join("")}
+    </div>
+  `
 }
 
 function renderRawConsole(rawDebugPayload: Record<string, unknown>): string {

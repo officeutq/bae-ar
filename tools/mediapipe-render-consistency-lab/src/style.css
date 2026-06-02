@@ -76,6 +76,21 @@ h2:first-child {
   margin: 0;
 }
 
+.control-help {
+  color: #66727e;
+  font-size: 12px;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.compact-status-grid {
+  gap: 4px;
+}
+
+.compact-status-grid:empty {
+  display: none;
+}
+
 .panel-heading {
   align-items: center;
   display: flex;
@@ -243,7 +258,7 @@ video {
 .console-tabs {
   display: grid;
   gap: 6px;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-columns: repeat(8, minmax(0, 1fr));
   margin-bottom: 12px;
 }
 
@@ -306,6 +321,42 @@ video {
   max-height: 420px;
   overflow: auto;
   padding-right: 4px;
+}
+
+.pose-candidate-bucket-list {
+  max-height: 520px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.pose-candidate-bucket {
+  gap: 4px;
+}
+
+.candidate-frame-list {
+  display: grid;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.candidate-frame-list.empty {
+  color: #5f6b76;
+  font-family:
+    "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 12px;
+}
+
+.candidate-frame-item {
+  background: #f7fafc;
+  border: 1px solid #dce4eb;
+  border-radius: 6px;
+  display: grid;
+  gap: 2px;
+  padding: 6px;
+}
+
+.candidate-frame-item span {
+  font-size: 11px;
 }
 
 .summary-actions {
