@@ -368,3 +368,21 @@ Render Consistency Lab は、最初から production asset を作る工程では
 - 現在の `poseBucket125` 閾値は、pitch: `centerAbsMax = 3`, `negativeSmallMax = 10`, `positiveSmallMax = 6`
 - 現在の `poseBucket125` 閾値は、roll: `centerAbsMax = 3`, `negativeSmallMax = 10`, `positiveSmallMax = 10`
 - この閾値は review / coverage 診断用であり、production の最終分類ではない
+
+## UI 方針: pose review candidates
+
+- `125候補フレーム抽出` は、acceptedFrames から pose review candidate（姿勢レビュー候補）を作る debug / review 補助です。
+- selectionMode（選択モード）は `balanced` を基本にします。
+- yaw × pitch の25 bucket を primaryGrouping（主分類）とし、`maxTargetPerBucket = 5` から `4`、`minBalancedTargetPerBucket = 3` の順に試します。
+- 全25 bucket が満たせた最初の `actualTargetPerBucket` を採用し、満たせない場合は target 3 の partial balanced result（部分均等結果）として shortage bucket（不足bucket）を表示します。
+- `expressionTooStrong` は常に除外し、fallback（補充）にも使いません。
+- pose review candidate 抽出は rotationCenter(0, y, z) 推定向けの候補作成として扱います。
+- primary grouping（主分類）は yaw × pitch の25 bucket のままにします。125 bucket は Pose タブの coverage map（姿勢カバレッジ確認）として残し、必須採用単位にはしません。
+- roll は完全除外や単純 fallback ではなく、`roll_negative` / `roll_center` / `roll_positive` の3 group（グループ）でバランスを取ります。
+- `roll_negative` は `negativeLarge` / `negativeSmall`、`roll_center` は `center`、`roll_positive` は `positiveSmall` / `positiveLarge` として扱います。
+- 候補過多の bucket では `pickEvenlySpaced` により timeSec（秒）方向に均等抽出します。
+- Candidates tab（候補タブ）には Shortage buckets（不足bucket）診断を表示し、不足した yaw / pitch bucket だけを集約して確認できるようにします。
+- Shortage buckets（不足bucket）診断では、acceptedFrames 件数、`expressionTooStrong` 除外後の usable frame（利用可能フレーム）件数、roll group（rollグループ）別の available / selected count（利用可能 / 選択件数）を表示します。
+- `shortageReason` は `not_enough_pose_frames`（その姿勢のフレーム不足）、`not_enough_non_expression_frames`（表情が強くないフレーム不足）、`unknown`（原因未分類）を使います。
+- この診断は rotationCenter(0, y, z) 推定に使う候補フレームの品質確認用で、`expressionTooStrong` 除外後に不足する bucket を見つけるための表示です。
+- この機能は候補抽出と Debug Console（デバッグコンソール）表示までを扱い、mesh / render / MediaPipe re-detection / residual evaluation には進みません。

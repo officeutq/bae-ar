@@ -69,12 +69,113 @@ type PoseBucket125 = {
 
 type PoseBucket125Definition = PoseBucket125
 
+type PoseReviewYawPitchBucketDefinition = {
+  id: string
+  yawBin: PoseAxisBin
+  pitchBin: PoseAxisBin
+}
+
 type PoseBucket125SummaryItem = PoseBucket125Definition & {
   count: number
   percent: number
 }
 
 type PoseAxisName = "yaw" | "pitch" | "roll"
+
+type PoseReviewCandidateRollGroup = "roll_negative" | "roll_center" | "roll_positive"
+
+type PoseReviewSelectedBy =
+  | "roll_center"
+  | "roll_negative"
+  | "roll_positive"
+  | "roll_balance_supplement"
+
+type PoseReviewCandidateSelectionMode = "balanced"
+
+type PoseReviewCandidateBalancedStatus = "balanced" | "partial"
+
+type PoseReviewCandidateShortageReason =
+  | "not_enough_non_expression_frames"
+  | "not_enough_pose_frames"
+  | "unknown"
+
+type PoseReviewCandidatePolicy = {
+  selectionMode: PoseReviewCandidateSelectionMode
+  primaryGrouping: "yaw_pitch_25"
+  maxTargetPerBucket: number
+  minBalancedTargetPerBucket: number
+  actualTargetPerBucket: number
+  rollSelection: "balanced_negative_center_positive"
+  rollGroups: {
+    roll_negative: readonly ["negativeLarge", "negativeSmall"]
+    roll_center: readonly ["center"]
+    roll_positive: readonly ["positiveSmall", "positiveLarge"]
+  }
+  expressionTooStrong: "exclude"
+  sampling: "evenly_spaced_by_time"
+}
+
+type PoseReviewCandidateFrame = {
+  sourceFrameIndex: number
+  timeSec: number
+  rollBin: PoseAxisBin
+  rollGroup: PoseReviewCandidateRollGroup
+  selectedBy: PoseReviewSelectedBy
+}
+
+type PoseReviewCandidateBucket = {
+  id: string
+  yawBin: PoseAxisBin
+  pitchBin: PoseAxisBin
+  targetCount: number
+  selectedCount: number
+  shortageCount: number
+  selectedByRollNegativeCount: number
+  selectedByRollCenterCount: number
+  selectedByRollPositiveCount: number
+  availableRollNegativeCount: number
+  availableRollCenterCount: number
+  availableRollPositiveCount: number
+  shortageReason?: string
+  selectedFrames: PoseReviewCandidateFrame[]
+}
+
+type PoseReviewCandidateShortageBucketSummary = {
+  bucketId: string
+  yawBin: PoseAxisBin
+  pitchBin: PoseAxisBin
+  targetCount: number
+  selectedCount: number
+  shortageCount: number
+  acceptedFrameCount: number
+  usableNonExpressionCount: number
+  expressionTooStrongCount: number
+  availableRollNegativeCount: number
+  availableRollCenterCount: number
+  availableRollPositiveCount: number
+  selectedByRollNegativeCount: number
+  selectedByRollCenterCount: number
+  selectedByRollPositiveCount: number
+  shortageReason: PoseReviewCandidateShortageReason
+}
+
+type PoseReviewCandidateSummary = {
+  selectionMode: PoseReviewCandidateSelectionMode
+  maxTargetPerBucket: number
+  minBalancedTargetPerBucket: number
+  actualTargetPerBucket: number
+  rollSelection: "balanced_negative_center_positive"
+  rollGroups: PoseReviewCandidatePolicy["rollGroups"]
+  balancedStatus: PoseReviewCandidateBalancedStatus
+  policy: PoseReviewCandidatePolicy
+  targetTotal: number
+  selectedTotal: number
+  fullBucketCount: number
+  shortageBucketCount: number
+  excludedExpressionTooStrongCount: number
+  shortageBuckets: PoseReviewCandidateShortageBucketSummary[]
+  buckets: PoseReviewCandidateBucket[]
+}
 
 type FrameBadge = {
   id: string
@@ -137,6 +238,7 @@ type ConsoleTab =
   | "currentFrame"
   | "landmarks12pt"
   | "adjustments"
+  | "candidates"
   | "raw"
   | "scan"
   | "pose"
@@ -162,6 +264,7 @@ type AppState = {
   currentReviewIndex: number
   scanState: ScanState
   manualAdjustmentsByFrame: ManualAdjustmentsByFrame
+  poseReviewCandidateSummary: PoseReviewCandidateSummary | null
   selectedLandmarkSummaryPointId: string | null
   draggingLandmarkSummaryPointId: string | null
   showLandmarkSummaryOverlay: boolean
@@ -207,6 +310,74 @@ const POSE_BUCKET_125_DEFINITIONS = buildPoseBucket125Definitions()
 const POSE_BUCKET_125_TOTAL_COUNT = POSE_BUCKET_125_DEFINITIONS.length
 const FRONT_CANDIDATE_POSE_BUCKET_125_ID =
   "yaw_center__pitch_center__roll_center"
+const POSE_REVIEW_SELECTION_MODE = "balanced" as const satisfies PoseReviewCandidateSelectionMode
+const POSE_REVIEW_MAX_TARGET_PER_BUCKET = 5
+const POSE_REVIEW_MIN_BALANCED_TARGET_PER_BUCKET = 3
+const POSE_REVIEW_YAW_PITCH_BUCKET_DEFINITIONS = buildPoseReviewYawPitchBucketDefinitions()
+const POSE_REVIEW_YAW_PITCH_BUCKET_COUNT = POSE_REVIEW_YAW_PITCH_BUCKET_DEFINITIONS.length
+const POSE_REVIEW_BALANCED_TARGET_CANDIDATES = [
+  POSE_REVIEW_MAX_TARGET_PER_BUCKET,
+  4,
+  POSE_REVIEW_MIN_BALANCED_TARGET_PER_BUCKET,
+] as const
+const POSE_REVIEW_ROLL_SELECTION = "balanced_negative_center_positive" as const
+const POSE_REVIEW_ROLL_GROUPS = {
+  roll_negative: ["negativeLarge", "negativeSmall"],
+  roll_center: ["center"],
+  roll_positive: ["positiveSmall", "positiveLarge"],
+} as const satisfies Record<PoseReviewCandidateRollGroup, readonly PoseAxisBin[]>
+const POSE_REVIEW_ROLL_GROUP_ORDER = [
+  "roll_center",
+  "roll_negative",
+  "roll_positive",
+] as const satisfies readonly PoseReviewCandidateRollGroup[]
+const POSE_REVIEW_ROLL_SUPPLEMENT_ORDER = [
+  "roll_negative",
+  "roll_positive",
+  "roll_center",
+] as const satisfies readonly PoseReviewCandidateRollGroup[]
+const POSE_REVIEW_ROLL_BALANCE_INITIAL_TARGETS: Record<
+  number,
+  Record<PoseReviewCandidateRollGroup, number>
+> = {
+  5: {
+    roll_center: 2,
+    roll_negative: 1,
+    roll_positive: 1,
+  },
+  4: {
+    roll_center: 1,
+    roll_negative: 1,
+    roll_positive: 1,
+  },
+  3: {
+    roll_center: 1,
+    roll_negative: 1,
+    roll_positive: 1,
+  },
+}
+const POSE_REVIEW_ROLL_BALANCE_MAX_PER_GROUP: Record<
+  number,
+  Record<PoseReviewCandidateRollGroup, number>
+> = {
+  5: {
+    roll_center: 2,
+    roll_negative: 2,
+    roll_positive: 2,
+  },
+  4: {
+    roll_center: 2,
+    roll_negative: 2,
+    roll_positive: 2,
+  },
+  3: {
+    roll_center: 3,
+    roll_negative: 3,
+    roll_positive: 3,
+  },
+}
+const POSE_REVIEW_SHORTAGE_REASON =
+  "not enough non-expressionTooStrong frames"
 const EXPRESSION_TOO_STRONG_THRESHOLDS = {
   mouth: 0.35,
   eye: 0.35,
@@ -292,6 +463,7 @@ const state: AppState = {
   currentReviewIndex: 0,
   scanState: createInitialScanState(),
   manualAdjustmentsByFrame: {},
+  poseReviewCandidateSummary: null,
   selectedLandmarkSummaryPointId: null,
   draggingLandmarkSummaryPointId: null,
   showLandmarkSummaryOverlay: true,
@@ -332,6 +504,15 @@ app.innerHTML = `
       </section>
 
       <section class="controls-section">
+        <h2>姿勢レビュー候補</h2>
+        <button id="extractPoseReviewCandidatesButton" type="button" class="secondary-button">
+          125候補フレーム抽出
+        </button>
+        <p class="control-help">yaw×pitch 25分類 × 最大5件。expressionTooStrong は除外。</p>
+        <div id="poseReviewCandidateSummary" class="status-grid compact-status-grid"></div>
+      </section>
+
+      <section class="controls-section">
         <h2>Overlay（表示）</h2>
         <button id="toggleLandmarkSummaryButton" type="button" class="toggle-button">
           12点サマリを非表示
@@ -366,6 +547,7 @@ app.innerHTML = `
         <button type="button" class="console-tab-button" data-console-tab="adjustments">Adjustments</button>
         <button type="button" class="console-tab-button" data-console-tab="scan">Scan</button>
         <button type="button" class="console-tab-button" data-console-tab="pose">Pose（姿勢）</button>
+        <button type="button" class="console-tab-button" data-console-tab="candidates">Candidates</button>
         <button type="button" class="console-tab-button" data-console-tab="raw">Raw</button>
       </div>
       <div id="consoleContent" class="console-content"></div>
@@ -381,6 +563,10 @@ const controlStatus = getElement("controlStatus")
 const frameInfoGrid = getElement("frameInfoGrid")
 const consoleContent = getElement("consoleContent")
 const toggleLandmarkSummaryButton = getElement<HTMLButtonElement>("toggleLandmarkSummaryButton")
+const extractPoseReviewCandidatesButton = getElement<HTMLButtonElement>(
+  "extractPoseReviewCandidatesButton",
+)
+const poseReviewCandidateSummary = getElement("poseReviewCandidateSummary")
 const previousFrameButton = getElement<HTMLButtonElement>("previousFrameButton")
 const excludeFrameButton = getElement<HTMLButtonElement>("excludeFrameButton")
 const nextFrameButton = getElement<HTMLButtonElement>("nextFrameButton")
@@ -398,6 +584,10 @@ toggleLandmarkSummaryButton.addEventListener("click", () => {
   state.showLandmarkSummaryOverlay = !state.showLandmarkSummaryOverlay
   renderThumbnailCanvas()
   render()
+})
+
+extractPoseReviewCandidatesButton.addEventListener("click", () => {
+  extractPoseReviewCandidates()
 })
 
 previousFrameButton.addEventListener("click", () => {
@@ -555,6 +745,7 @@ function resetFrameState(): void {
   state.currentReviewIndex = 0
   state.scanState = createInitialScanState()
   state.manualAdjustmentsByFrame = {}
+  state.poseReviewCandidateSummary = null
   state.selectedLandmarkSummaryPointId = null
   state.draggingLandmarkSummaryPointId = null
   clearCanvas()
@@ -594,6 +785,7 @@ async function startAutoScan(): Promise<void> {
   state.observed12pt = []
   state.selectedLandmarkSummaryPointId = null
   state.draggingLandmarkSummaryPointId = null
+  state.poseReviewCandidateSummary = null
   state.loadStatus = "解析中"
   state.scanState = createInitialScanState("running")
   clearCanvas()
@@ -767,6 +959,404 @@ async function excludeCurrentFrame(): Promise<void> {
   applyCurrentAcceptedFrame()
   renderThumbnailCanvas()
   render()
+}
+
+function extractPoseReviewCandidates(): void {
+  if (state.acceptedFrames.length === 0 || state.scanState.status === "running") {
+    return
+  }
+
+  state.poseReviewCandidateSummary = buildPoseReviewCandidateSummary()
+  state.consoleTab = "candidates"
+  render()
+}
+
+function buildPoseReviewCandidateSummary(): PoseReviewCandidateSummary {
+  const trialSummaries = POSE_REVIEW_BALANCED_TARGET_CANDIDATES.map((targetPerBucket) =>
+    buildPoseReviewCandidateSummaryForTarget(targetPerBucket),
+  )
+  return (
+    trialSummaries.find((summary) => summary.shortageBucketCount === 0) ??
+    trialSummaries[trialSummaries.length - 1]
+  )
+}
+
+function buildPoseReviewCandidateSummaryForTarget(
+  targetPerBucket: number,
+): PoseReviewCandidateSummary {
+  const excludedExpressionTooStrongCount = getExpressionTooStrongCount()
+  const usableFrames = state.acceptedFrames.filter(
+    (frame) => !hasFrameBadge(frame, "expressionTooStrong") && frame.poseBucket125,
+  )
+
+  const buckets = POSE_REVIEW_YAW_PITCH_BUCKET_DEFINITIONS.map((definition) => {
+    const framesInBucket = usableFrames.filter((frame) => {
+      const poseBucket = frame.poseBucket125
+      if (!poseBucket) {
+        return false
+      }
+
+      return poseBucket.yawBin === definition.yawBin && poseBucket.pitchBin === definition.pitchBin
+    })
+    const rollFramesByGroup = groupPoseReviewFramesByRollGroup(framesInBucket)
+    const selectedFrames = selectRollBalancedCandidateFrames(rollFramesByGroup, targetPerBucket)
+    const selectedCount = selectedFrames.length
+
+    return {
+      ...definition,
+      targetCount: targetPerBucket,
+      selectedCount,
+      shortageCount: Math.max(0, targetPerBucket - selectedCount),
+      selectedByRollNegativeCount: selectedFrames.filter(
+        (frame) => frame.rollGroup === "roll_negative",
+      ).length,
+      selectedByRollCenterCount: selectedFrames.filter(
+        (frame) => frame.rollGroup === "roll_center",
+      ).length,
+      selectedByRollPositiveCount: selectedFrames.filter(
+        (frame) => frame.rollGroup === "roll_positive",
+      ).length,
+      availableRollNegativeCount: rollFramesByGroup.roll_negative.length,
+      availableRollCenterCount: rollFramesByGroup.roll_center.length,
+      availableRollPositiveCount: rollFramesByGroup.roll_positive.length,
+      shortageReason:
+        selectedCount < targetPerBucket ? POSE_REVIEW_SHORTAGE_REASON : undefined,
+      selectedFrames,
+    }
+  })
+  const selectedTotal = buckets.reduce((sum, bucket) => sum + bucket.selectedCount, 0)
+  const shortageBucketCount = buckets.filter((bucket) => bucket.shortageCount > 0).length
+  const balancedStatus: PoseReviewCandidateBalancedStatus =
+    shortageBucketCount === 0 ? "balanced" : "partial"
+  const shortageBuckets = buildPoseReviewShortageBucketSummaries(buckets)
+
+  return {
+    selectionMode: POSE_REVIEW_SELECTION_MODE,
+    maxTargetPerBucket: POSE_REVIEW_MAX_TARGET_PER_BUCKET,
+    minBalancedTargetPerBucket: POSE_REVIEW_MIN_BALANCED_TARGET_PER_BUCKET,
+    actualTargetPerBucket: targetPerBucket,
+    rollSelection: POSE_REVIEW_ROLL_SELECTION,
+    rollGroups: POSE_REVIEW_ROLL_GROUPS,
+    balancedStatus,
+    policy: {
+      selectionMode: POSE_REVIEW_SELECTION_MODE,
+      primaryGrouping: "yaw_pitch_25",
+      maxTargetPerBucket: POSE_REVIEW_MAX_TARGET_PER_BUCKET,
+      minBalancedTargetPerBucket: POSE_REVIEW_MIN_BALANCED_TARGET_PER_BUCKET,
+      actualTargetPerBucket: targetPerBucket,
+      rollSelection: POSE_REVIEW_ROLL_SELECTION,
+      rollGroups: POSE_REVIEW_ROLL_GROUPS,
+      expressionTooStrong: "exclude",
+      sampling: "evenly_spaced_by_time",
+    },
+    targetTotal: POSE_REVIEW_YAW_PITCH_BUCKET_COUNT * targetPerBucket,
+    selectedTotal,
+    fullBucketCount: buckets.filter((bucket) => bucket.shortageCount === 0).length,
+    shortageBucketCount,
+    excludedExpressionTooStrongCount,
+    shortageBuckets,
+    buckets,
+  }
+}
+
+function buildPoseReviewShortageBucketSummaries(
+  buckets: PoseReviewCandidateBucket[],
+): PoseReviewCandidateShortageBucketSummary[] {
+  return buckets
+    .filter((bucket) => bucket.shortageCount > 0)
+    .map((bucket) => {
+      const acceptedFramesInBucket = state.acceptedFrames.filter((frame) => {
+        const poseBucket = frame.poseBucket125
+        return (
+          poseBucket !== null &&
+          poseBucket !== undefined &&
+          poseBucket.yawBin === bucket.yawBin &&
+          poseBucket.pitchBin === bucket.pitchBin
+        )
+      })
+      const acceptedFrameCount = acceptedFramesInBucket.length
+      const usableNonExpressionCount = acceptedFramesInBucket.filter(
+        (frame) => !hasFrameBadge(frame, "expressionTooStrong"),
+      ).length
+      const expressionTooStrongCount = acceptedFrameCount - usableNonExpressionCount
+
+      return {
+        bucketId: bucket.id,
+        yawBin: bucket.yawBin,
+        pitchBin: bucket.pitchBin,
+        targetCount: bucket.targetCount,
+        selectedCount: bucket.selectedCount,
+        shortageCount: bucket.shortageCount,
+        acceptedFrameCount,
+        usableNonExpressionCount,
+        expressionTooStrongCount,
+        availableRollNegativeCount: bucket.availableRollNegativeCount,
+        availableRollCenterCount: bucket.availableRollCenterCount,
+        availableRollPositiveCount: bucket.availableRollPositiveCount,
+        selectedByRollNegativeCount: bucket.selectedByRollNegativeCount,
+        selectedByRollCenterCount: bucket.selectedByRollCenterCount,
+        selectedByRollPositiveCount: bucket.selectedByRollPositiveCount,
+        shortageReason: classifyPoseReviewShortageReason(
+          acceptedFrameCount,
+          usableNonExpressionCount,
+          bucket.targetCount,
+        ),
+      }
+    })
+}
+
+function classifyPoseReviewShortageReason(
+  acceptedFrameCount: number,
+  usableNonExpressionCount: number,
+  targetCount: number,
+): PoseReviewCandidateShortageReason {
+  if (acceptedFrameCount === 0) {
+    return "not_enough_pose_frames"
+  }
+  if (usableNonExpressionCount < targetCount) {
+    return "not_enough_non_expression_frames"
+  }
+  return "unknown"
+}
+
+function groupPoseReviewFramesByRollGroup(
+  frames: AcceptedFrameSnapshot[],
+): Record<PoseReviewCandidateRollGroup, AcceptedFrameSnapshot[]> {
+  return {
+    roll_negative: frames.filter((frame) => getPoseReviewRollGroup(frame) === "roll_negative"),
+    roll_center: frames.filter((frame) => getPoseReviewRollGroup(frame) === "roll_center"),
+    roll_positive: frames.filter((frame) => getPoseReviewRollGroup(frame) === "roll_positive"),
+  }
+}
+
+function selectRollBalancedCandidateFrames(
+  framesByGroup: Record<PoseReviewCandidateRollGroup, AcceptedFrameSnapshot[]>,
+  targetPerBucket: number,
+): PoseReviewCandidateFrame[] {
+  const selectedFrames: PoseReviewCandidateFrame[] = []
+  const selectedSourceFrameIndexes = new Set<number>()
+  const selectedCountByGroup = createEmptyPoseReviewRollGroupCount()
+  const initialTargets = POSE_REVIEW_ROLL_BALANCE_INITIAL_TARGETS[targetPerBucket]
+  const softMaxByGroup = POSE_REVIEW_ROLL_BALANCE_MAX_PER_GROUP[targetPerBucket]
+
+  const addFrames = (
+    rollGroup: PoseReviewCandidateRollGroup,
+    frames: AcceptedFrameSnapshot[],
+    selectedBy: PoseReviewSelectedBy,
+  ): void => {
+    for (const frame of frames) {
+      if (selectedFrames.length >= targetPerBucket) {
+        return
+      }
+      if (selectedSourceFrameIndexes.has(frame.sourceFrameIndex)) {
+        continue
+      }
+
+      selectedFrames.push(buildPoseReviewCandidateFrame(frame, rollGroup, selectedBy))
+      selectedSourceFrameIndexes.add(frame.sourceFrameIndex)
+      selectedCountByGroup[rollGroup] += 1
+    }
+  }
+
+  for (const rollGroup of POSE_REVIEW_ROLL_GROUP_ORDER) {
+    const targetCount = Math.min(initialTargets[rollGroup] ?? 0, targetPerBucket)
+    const pickedFrames = pickEvenlySpaced(
+      framesByGroup[rollGroup],
+      targetCount,
+      (frame) => frame.timeSec,
+    )
+    addFrames(rollGroup, pickedFrames, getPoseReviewSelectedByForRollGroup(rollGroup))
+  }
+
+  supplementRollBalancedCandidateFrames({
+    addFrames,
+    framesByGroup,
+    selectedCountByGroup,
+    selectedSourceFrameIndexes,
+    selectedFrames,
+    targetPerBucket,
+    softMaxByGroup,
+    useSoftMax: true,
+  })
+
+  supplementRollBalancedCandidateFrames({
+    addFrames,
+    framesByGroup,
+    selectedCountByGroup,
+    selectedSourceFrameIndexes,
+    selectedFrames,
+    targetPerBucket,
+    softMaxByGroup,
+    useSoftMax: false,
+  })
+
+  return selectedFrames.sort((left, right) => left.timeSec - right.timeSec)
+}
+
+function supplementRollBalancedCandidateFrames(options: {
+  addFrames: (
+    rollGroup: PoseReviewCandidateRollGroup,
+    frames: AcceptedFrameSnapshot[],
+    selectedBy: PoseReviewSelectedBy,
+  ) => void
+  framesByGroup: Record<PoseReviewCandidateRollGroup, AcceptedFrameSnapshot[]>
+  selectedCountByGroup: Record<PoseReviewCandidateRollGroup, number>
+  selectedSourceFrameIndexes: Set<number>
+  selectedFrames: PoseReviewCandidateFrame[]
+  targetPerBucket: number
+  softMaxByGroup: Record<PoseReviewCandidateRollGroup, number>
+  useSoftMax: boolean
+}): void {
+  while (options.selectedFrames.length < options.targetPerBucket) {
+    const nextRollGroup = choosePoseReviewSupplementRollGroup(options)
+    if (!nextRollGroup) {
+      return
+    }
+
+    const remainingFrames = getRemainingPoseReviewFrames(
+      options.framesByGroup[nextRollGroup],
+      options.selectedSourceFrameIndexes,
+    )
+    options.addFrames(
+      nextRollGroup,
+      pickEvenlySpaced(remainingFrames, 1, (frame) => frame.timeSec),
+      "roll_balance_supplement",
+    )
+  }
+}
+
+function choosePoseReviewSupplementRollGroup(options: {
+  framesByGroup: Record<PoseReviewCandidateRollGroup, AcceptedFrameSnapshot[]>
+  selectedCountByGroup: Record<PoseReviewCandidateRollGroup, number>
+  selectedSourceFrameIndexes: Set<number>
+  softMaxByGroup: Record<PoseReviewCandidateRollGroup, number>
+  useSoftMax: boolean
+}): PoseReviewCandidateRollGroup | null {
+  const candidates = POSE_REVIEW_ROLL_SUPPLEMENT_ORDER.filter((rollGroup) => {
+    if (
+      options.useSoftMax &&
+      options.selectedCountByGroup[rollGroup] >= options.softMaxByGroup[rollGroup]
+    ) {
+      return false
+    }
+
+    return getRemainingPoseReviewFrames(
+      options.framesByGroup[rollGroup],
+      options.selectedSourceFrameIndexes,
+    ).length > 0
+  })
+
+  if (candidates.length === 0) {
+    return null
+  }
+
+  return candidates.sort((left, right) => {
+    const selectedCountDiff =
+      options.selectedCountByGroup[left] - options.selectedCountByGroup[right]
+    if (selectedCountDiff !== 0) {
+      return selectedCountDiff
+    }
+
+    const remainingCountDiff =
+      getRemainingPoseReviewFrames(options.framesByGroup[right], options.selectedSourceFrameIndexes)
+        .length -
+      getRemainingPoseReviewFrames(options.framesByGroup[left], options.selectedSourceFrameIndexes)
+        .length
+    if (remainingCountDiff !== 0) {
+      return remainingCountDiff
+    }
+
+    return (
+      POSE_REVIEW_ROLL_SUPPLEMENT_ORDER.indexOf(left) -
+      POSE_REVIEW_ROLL_SUPPLEMENT_ORDER.indexOf(right)
+    )
+  })[0]
+}
+
+function getRemainingPoseReviewFrames(
+  frames: AcceptedFrameSnapshot[],
+  selectedSourceFrameIndexes: Set<number>,
+): AcceptedFrameSnapshot[] {
+  return frames.filter((frame) => !selectedSourceFrameIndexes.has(frame.sourceFrameIndex))
+}
+
+function getPoseReviewRollGroup(
+  frame: AcceptedFrameSnapshot,
+): PoseReviewCandidateRollGroup | null {
+  const rollBin = frame.poseBucket125?.rollBin
+  if (rollBin === "negativeLarge" || rollBin === "negativeSmall") {
+    return "roll_negative"
+  }
+  if (rollBin === "center") {
+    return "roll_center"
+  }
+  if (rollBin === "positiveSmall" || rollBin === "positiveLarge") {
+    return "roll_positive"
+  }
+  return null
+}
+
+function getPoseReviewSelectedByForRollGroup(
+  rollGroup: PoseReviewCandidateRollGroup,
+): PoseReviewSelectedBy {
+  if (rollGroup === "roll_center") {
+    return "roll_center"
+  }
+  return rollGroup
+}
+
+function createEmptyPoseReviewRollGroupCount(): Record<PoseReviewCandidateRollGroup, number> {
+  return {
+    roll_negative: 0,
+    roll_center: 0,
+    roll_positive: 0,
+  }
+}
+
+function buildPoseReviewCandidateFrame(
+  frame: AcceptedFrameSnapshot,
+  rollGroup: PoseReviewCandidateRollGroup,
+  selectedBy: PoseReviewSelectedBy,
+): PoseReviewCandidateFrame {
+  return {
+    sourceFrameIndex: frame.sourceFrameIndex,
+    timeSec: frame.timeSec,
+    rollBin: frame.poseBucket125?.rollBin ?? "center",
+    rollGroup,
+    selectedBy,
+  }
+}
+
+function pickEvenlySpaced<T>(
+  items: T[],
+  targetCount: number,
+  getTimeSec: (item: T) => number,
+): T[] {
+  if (targetCount <= 0 || items.length === 0) {
+    return []
+  }
+
+  const sortedItems = [...items].sort((left, right) => getTimeSec(left) - getTimeSec(right))
+  if (sortedItems.length <= targetCount) {
+    return sortedItems
+  }
+
+  if (targetCount === 1) {
+    return [sortedItems[Math.round((sortedItems.length - 1) / 2)]]
+  }
+
+  const selectedIndexes = new Set<number>()
+  for (let index = 0; index < targetCount; index += 1) {
+    selectedIndexes.add(Math.round((index * (sortedItems.length - 1)) / (targetCount - 1)))
+  }
+
+  for (let index = 0; selectedIndexes.size < targetCount && index < sortedItems.length; index += 1) {
+    selectedIndexes.add(index)
+  }
+
+  return [...selectedIndexes]
+    .sort((left, right) => left - right)
+    .map((index) => sortedItems[index])
 }
 
 function findNextUnexcludedReviewIndex(startReviewIndex: number): number | null {
@@ -999,6 +1589,13 @@ function formatPoseBucket125Id(
   return `yaw_${yawBin}__pitch_${pitchBin}__roll_${rollBin}`
 }
 
+function formatPoseReviewYawPitchBucketId(
+  yawBin: PoseAxisBin,
+  pitchBin: PoseAxisBin,
+): string {
+  return `yaw_${yawBin}__pitch_${pitchBin}`
+}
+
 function buildPoseBucket125Definitions(): PoseBucket125Definition[] {
   return POSE_AXIS_BINS.flatMap((yawBin) =>
     POSE_AXIS_BINS.flatMap((pitchBin) =>
@@ -1009,6 +1606,16 @@ function buildPoseBucket125Definitions(): PoseBucket125Definition[] {
         rollBin,
       })),
     ),
+  )
+}
+
+function buildPoseReviewYawPitchBucketDefinitions(): PoseReviewYawPitchBucketDefinition[] {
+  return POSE_AXIS_BINS.flatMap((yawBin) =>
+    POSE_AXIS_BINS.map((pitchBin) => ({
+      id: formatPoseReviewYawPitchBucketId(yawBin, pitchBin),
+      yawBin,
+      pitchBin,
+    })),
   )
 }
 
@@ -1515,6 +2122,7 @@ function render(): void {
   )
 
   controlStatus.textContent = `状態: ${formatControlStatus()}`
+  poseReviewCandidateSummary.innerHTML = renderPoseReviewCandidateSummaryBrief()
 
   frameInfoGrid.innerHTML = renderStatusItems([
     [
@@ -1542,6 +2150,7 @@ function render(): void {
   nextFrameButton.disabled =
     !state.metadata || state.currentReviewIndex >= state.acceptedFrames.length - 1 || frameBusy
   excludeFrameButton.disabled = !state.metadata || !currentFrame || frameBusy
+  extractPoseReviewCandidatesButton.disabled = state.acceptedFrames.length === 0 || frameBusy
   stopScanButton.disabled = state.scanState.status !== "running"
 }
 
@@ -1563,6 +2172,7 @@ function createRawDebugPayload(
     expressionTooStrongThresholds: EXPRESSION_TOO_STRONG_THRESHOLDS,
     expressionTooStrongCount: getExpressionTooStrongCount(),
     poseBucket125Summary: getPoseBucket125Summary(),
+    candidateSelectionSummary: state.poseReviewCandidateSummary,
     acceptedFramesPreview: getAcceptedFramesPreview(),
     mediaPipeFrameSummary: state.summary,
     landmarkSummaryPointCount: adjusted12pt.length,
@@ -1607,6 +2217,8 @@ function renderConsoleTabContent(
       return renderScanConsole()
     case "pose":
       return renderPoseConsole()
+    case "candidates":
+      return renderCandidatesConsole()
     case "raw":
       return renderRawConsole(rawDebugPayload)
     case "summary":
@@ -1905,6 +2517,199 @@ function renderPoseConsole(): string {
       renderPoseBucket125List(summary.buckets, summary.acceptedFrameCount),
     ),
   ].join("")
+}
+
+function renderCandidatesConsole(): string {
+  const summary = state.poseReviewCandidateSummary
+  if (!summary) {
+    return renderConsoleSection(
+      "Candidates（候補）",
+      `<div class="landmark-summary-item empty">まだ抽出していません。左ペインの「125候補フレーム抽出」を押してください。</div>`,
+    )
+  }
+
+  return [
+    renderConsoleSection(
+      "Summary（要約）",
+      renderStatusItems([
+        ["selectionMode（選択モード）", summary.selectionMode],
+        ["primaryGrouping（主分類）", summary.policy.primaryGrouping],
+        ["maxTargetPerBucket（bucketごとの最大目標数）", String(summary.maxTargetPerBucket)],
+        [
+          "minBalancedTargetPerBucket（均等候補の最小目標数）",
+          String(summary.minBalancedTargetPerBucket),
+        ],
+        [
+          "actualTargetPerBucket（採用したbucketごとの目標数）",
+          String(summary.actualTargetPerBucket),
+        ],
+        ["balancedStatus（均等状態）", summary.balancedStatus],
+        ["rollSelection（roll選択）", summary.rollSelection],
+        [
+          "roll_negative group（roll負方向）",
+          summary.rollGroups.roll_negative.join(" / "),
+        ],
+        ["roll_center group（roll中心）", summary.rollGroups.roll_center.join(" / ")],
+        [
+          "roll_positive group（roll正方向）",
+          summary.rollGroups.roll_positive.join(" / "),
+        ],
+        ["expressionTooStrong（強い表情）", summary.policy.expressionTooStrong],
+        ["sampling（抽出方法）", summary.policy.sampling],
+        ["targetTotal（目標合計）", String(summary.targetTotal)],
+        ["selectedTotal（選択合計）", String(summary.selectedTotal)],
+        ["fullBucketCount（充足bucket数）", String(summary.fullBucketCount)],
+        ["shortageBucketCount（不足bucket数）", String(summary.shortageBucketCount)],
+        [
+          "excludedExpressionTooStrongCount（強い表情の除外数）",
+          String(summary.excludedExpressionTooStrongCount),
+        ],
+      ]),
+    ),
+    renderConsoleSection(
+      "Shortage buckets（不足bucket）",
+      renderPoseReviewShortageBuckets(summary.shortageBuckets),
+    ),
+    renderConsoleSection(
+      "Bucket list（bucket一覧）",
+      renderPoseReviewCandidateBucketList(summary.buckets),
+    ),
+  ].join("")
+}
+
+function renderPoseReviewCandidateSummaryBrief(): string {
+  const summary = state.poseReviewCandidateSummary
+  if (!summary) {
+    return ""
+  }
+
+  return renderStatusItems([
+    ["selectionMode", summary.selectionMode],
+    ["primaryGrouping", summary.policy.primaryGrouping],
+    ["maxTargetPerBucket", String(summary.maxTargetPerBucket)],
+    ["minBalancedTargetPerBucket", String(summary.minBalancedTargetPerBucket)],
+    ["actualTargetPerBucket", String(summary.actualTargetPerBucket)],
+    ["balancedStatus", summary.balancedStatus],
+    ["rollSelection", summary.rollSelection],
+    ["roll_negative group", summary.rollGroups.roll_negative.join(" / ")],
+    ["roll_center group", summary.rollGroups.roll_center.join(" / ")],
+    ["roll_positive group", summary.rollGroups.roll_positive.join(" / ")],
+    ["expressionTooStrong", summary.policy.expressionTooStrong],
+    ["sampling", summary.policy.sampling],
+    ["targetTotal", String(summary.targetTotal)],
+    ["selectedTotal", String(summary.selectedTotal)],
+    ["selectedTotal / targetTotal", `${summary.selectedTotal} / ${summary.targetTotal}`],
+    [
+      "fullBucketCount / 25",
+      `${summary.fullBucketCount} / ${POSE_REVIEW_YAW_PITCH_BUCKET_COUNT}`,
+    ],
+    [
+      "shortageBucketCount / 25",
+      `${summary.shortageBucketCount} / ${POSE_REVIEW_YAW_PITCH_BUCKET_COUNT}`,
+    ],
+    [
+      "excludedExpressionTooStrongCount",
+      String(summary.excludedExpressionTooStrongCount),
+    ],
+  ])
+}
+
+function renderPoseReviewShortageBuckets(
+  shortageBuckets: PoseReviewCandidateShortageBucketSummary[],
+): string {
+  if (shortageBuckets.length === 0) {
+    return `<div class="landmark-summary-item empty">No shortage buckets（不足bucketなし）</div>`
+  }
+
+  return `
+    <div class="landmark-summary-grid pose-shortage-bucket-list">
+      ${shortageBuckets.map(renderPoseReviewShortageBucket).join("")}
+    </div>
+  `
+}
+
+function renderPoseReviewShortageBucket(
+  shortageBucket: PoseReviewCandidateShortageBucketSummary,
+): string {
+  return `
+    <div class="landmark-summary-item pose-candidate-bucket">
+      <code>${escapeHtml(shortageBucket.bucketId)}</code>
+      <span>selected（選択） ${shortageBucket.selectedCount} / target（目標） ${shortageBucket.targetCount}</span>
+      <span>shortage（不足） ${shortageBucket.shortageCount}</span>
+      <span>accepted frames（acceptedFrames件数） ${shortageBucket.acceptedFrameCount}</span>
+      <span>usable non-expression（表情が強くないusable件数） ${shortageBucket.usableNonExpressionCount}</span>
+      <span>expressionTooStrong（強い表情） ${shortageBucket.expressionTooStrongCount}</span>
+      <span>available roll_negative（利用可能なroll負方向） ${shortageBucket.availableRollNegativeCount}</span>
+      <span>available roll_center（利用可能なroll中心） ${shortageBucket.availableRollCenterCount}</span>
+      <span>available roll_positive（利用可能なroll正方向） ${shortageBucket.availableRollPositiveCount}</span>
+      <span>selectedBy roll_negative（roll負方向で選択） ${shortageBucket.selectedByRollNegativeCount}</span>
+      <span>selectedBy roll_center（roll中心で選択） ${shortageBucket.selectedByRollCenterCount}</span>
+      <span>selectedBy roll_positive（roll正方向で選択） ${shortageBucket.selectedByRollPositiveCount}</span>
+      <span>reason（理由） ${escapeHtml(formatPoseReviewShortageReason(shortageBucket.shortageReason))}</span>
+    </div>
+  `
+}
+
+function formatPoseReviewShortageReason(
+  shortageReason: PoseReviewCandidateShortageReason,
+): string {
+  if (shortageReason === "not_enough_non_expression_frames") {
+    return "not_enough_non_expression_frames（表情が強くないフレーム不足）"
+  }
+  if (shortageReason === "not_enough_pose_frames") {
+    return "not_enough_pose_frames（その姿勢のフレーム不足）"
+  }
+  return "unknown（原因未分類）"
+}
+
+function renderPoseReviewCandidateBucketList(buckets: PoseReviewCandidateBucket[]): string {
+  return `
+    <div class="landmark-summary-grid pose-candidate-bucket-list">
+      ${buckets.map(renderPoseReviewCandidateBucket).join("")}
+    </div>
+  `
+}
+
+function renderPoseReviewCandidateBucket(bucket: PoseReviewCandidateBucket): string {
+  return `
+    <div class="landmark-summary-item pose-candidate-bucket">
+      <code>${escapeHtml(bucket.id)}</code>
+      <span>selected（選択） ${bucket.selectedCount} / target（目標） ${bucket.targetCount}</span>
+      <span>shortage（不足） ${bucket.shortageCount}</span>
+      <span>available roll_negative（利用可能なroll負方向） ${bucket.availableRollNegativeCount}</span>
+      <span>available roll_center（利用可能なroll中心） ${bucket.availableRollCenterCount}</span>
+      <span>available roll_positive（利用可能なroll正方向） ${bucket.availableRollPositiveCount}</span>
+      <span>selectedBy roll_negative（roll負方向で選択） ${bucket.selectedByRollNegativeCount}</span>
+      <span>selectedBy roll_center（roll中心で選択） ${bucket.selectedByRollCenterCount}</span>
+      <span>selectedBy roll_positive（roll正方向で選択） ${bucket.selectedByRollPositiveCount}</span>
+      ${bucket.shortageReason ? `<span>reason（理由） ${escapeHtml(bucket.shortageReason)}</span>` : ""}
+      ${renderPoseReviewCandidateFrames(bucket.selectedFrames)}
+    </div>
+  `
+}
+
+function renderPoseReviewCandidateFrames(frames: PoseReviewCandidateFrame[]): string {
+  if (frames.length === 0) {
+    return `<div class="candidate-frame-list empty">selected frames: -</div>`
+  }
+
+  return `
+    <div class="candidate-frame-list">
+      ${frames
+        .map(
+          (frame) => `
+            <div class="candidate-frame-item">
+              <span>sourceFrameIndex（元フレーム番号） ${frame.sourceFrameIndex}</span>
+              <span>timeSec（秒） ${formatNumber(frame.timeSec)}</span>
+              <span>rollBin（roll分類） ${escapeHtml(frame.rollBin)}</span>
+              <span>rollGroup（rollグループ） ${escapeHtml(frame.rollGroup)}</span>
+              <span>selectedBy（選択理由） ${escapeHtml(frame.selectedBy)}</span>
+            </div>
+          `,
+        )
+        .join("")}
+    </div>
+  `
 }
 
 function renderRawConsole(rawDebugPayload: Record<string, unknown>): string {
