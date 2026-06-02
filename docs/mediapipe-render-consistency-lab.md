@@ -348,8 +348,8 @@ Debug Console / Raw JSON に出る 12pt は image-normalized coordinate であ�
 `rotationCenter(0, y, z)` 推定では、screen pixel coordinate（画面ピクセル座標）を入力に使わない。
 
 - 入力元は normalized（正規化済み）の `adjusted12pt` とする。
-- 推定直前に same-unit centered coordinate（同一単位・中心化座標）へ変換する。
-- 変換では face bounds center（顔外枠中心）を引き、`x` は video aspect ratio（動画の縦横比）を考慮して `y` と同じ単位へ揃える方針とする。
+- 推定時は `x` に video aspect ratio（動画の横幅÷高さ）を掛けた aspect-corrected image coordinate（横縦比補正済み画像座標）を使う。
+- 今回の rotationCenter / 12pt z simultaneous estimation（回転中心と12点奥行きの同時推定）では、face bounds center（顔外枠中心）を引かず、顔幅でも割らない。
 - `rotationCenter.y` / `rotationCenter.z` は screen pixel coordinate ではなく、base12pt 3D candidate（基準12点3D候補）と同じ local candidate coordinate（候補内ローカル座標）の pivot（回転軸点）として扱う。
 
 このため、overlay 用に `point.x * canvas.width` / `point.y * canvas.height` した値を、そのまま `rotationCenter` 推定の比較入力へ渡してはいけない。
@@ -396,6 +396,7 @@ Render Consistency Lab は、最初から production asset を作る工程では
 - [IdealFace Fitting Lab Experiment Summary](ideal-face-fitting-lab-experiment-summary.md)
 - [IdealFace Fitting Lab](ideal-face-fitting-lab.md)
 - [MediaPipe Render Consistency Lab rotationCenter study](mediapipe-render-consistency-lab-rotation-center-study.md)
+- [MediaPipe Render Consistency Lab rotationCenter / 12pt z simultaneous estimation design](mediapipe-render-consistency-lab-rotation-center-z-estimation-design.md)
 - [MediaPipe Canonical Lab](mediapipe-canonical-lab.md)
 - [開発フロー](development-flow.md)
 - [アーキテクチャ](architecture.md)

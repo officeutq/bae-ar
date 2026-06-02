@@ -171,7 +171,9 @@ Render Consistency Lab 用に変えるべき点は以下です。
 - 12点の手動調整は、保存や export ではなく、その場の推定入力として扱う。
 - 478点 full landmarks、mesh render、MediaPipe re-detection は、今回の `rotationCenter` 推定設計の後段として分ける。
 
-座標系の詳細は [MediaPipe Render Consistency Lab](mediapipe-render-consistency-lab.md) の `Coordinate policy for 12pt and rotationCenter estimation` を参照する。`adjusted12pt` は image-normalized coordinate（画像正規化座標）のまま保存し、推定直前に same-unit centered coordinate（同一単位・中心化座標）へ変換して使う。
+座標系の詳細は [MediaPipe Render Consistency Lab](mediapipe-render-consistency-lab.md) の `Coordinate policy for 12pt and rotationCenter estimation` を参照する。`adjusted12pt` は image-normalized coordinate（画像正規化座標）のまま保存し、推定時は `x` に video aspect ratio（動画の横幅÷高さ）を掛けた aspect-corrected image coordinate（横縦比補正済み画像座標）として扱う。
+
+rotationCenter と 12点 z を同時に推定する次回設計は、[MediaPipe Render Consistency Lab rotationCenter / 12pt z simultaneous estimation design](mediapipe-render-consistency-lab-rotation-center-z-estimation-design.md) に分ける。
 
 ## Things not to change
 
