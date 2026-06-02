@@ -297,6 +297,68 @@ video {
   margin: 0;
 }
 
+.parameter-improvement-section {
+  display: grid;
+  gap: 8px;
+}
+
+.parameter-improvement-section h4 {
+  color: #26313b;
+  font-size: 13px;
+  margin: 4px 0 0;
+}
+
+.parameter-improvement-table-wrap {
+  border: 1px solid #dce4eb;
+  border-radius: 6px;
+  max-height: 420px;
+  overflow: auto;
+}
+
+.parameter-improvement-table {
+  border-collapse: collapse;
+  font-family:
+    "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 11px;
+  min-width: 980px;
+  width: 100%;
+}
+
+.parameter-improvement-table th,
+.parameter-improvement-table td {
+  border-bottom: 1px solid #e7edf2;
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.parameter-improvement-table th {
+  background: #f2f6f9;
+  color: #4c5965;
+  font-weight: 700;
+  position: sticky;
+  top: 0;
+}
+
+.parameter-improvement-table tr.is-improved td {
+  background: #eef8f1;
+  border-left: 3px solid #4f9f65;
+}
+
+.raw-json-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.raw-json-copy-status {
+  color: #4f5f6d;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .console-json,
 .json-preview {
   background: #f7fafc;

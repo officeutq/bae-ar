@@ -459,8 +459,11 @@ Render Consistency Lab は、最初から production asset を作る工程では
 - `rotationCenter.x = 0.5 * videoAspectRatio` を固定し、`rotationCenter.y = -0.05 .. 0.50 / step 0.01`、`rotationCenter.z = 0.00 .. 0.12 / step 0.01` を Render Consistency Lab 用 range（探索範囲）として使います。
 - 12点 z range（12点奥行き探索範囲）は Render 用の uniform-ish debug range（統一寄りの検証用範囲）として再定義します。これは production asset（本番用アセット）ではなく、coordinate descent（座標降下探索）の挙動確認用です。
 - Summary（要約）、Rotation Fit（回転中心評価）タブ、Raw JSON（生デバッグ JSON）には `coordinateBoundaryStatus`（座標降下探索の範囲端ヒット状態）と boundary hit summary（範囲端ヒット要約）を表示し、`rotationCenter.y/z` と 12点 z が範囲端に張り付くか確認できるようにします。
+- Rotation Fit（回転中心評価）タブには `Improvement by parameter（探索対象ごとの改善量）` を表示し、coordinate descent（座標降下探索）の各 step（手順）で `parameter`（探索対象）、`valueBefore` / `valueAfter`、`scoreBefore` / `scoreAfter`、`improvement`（改善量）、`maxFrameScoreImprovement`（最大フレームスコア改善量）を確認できるようにします。
 - best candidate（最良候補）の projected12pt（投影後12点）と adjusted12pt（手動調整後12点）を比較し、score evaluator（スコア評価器）の frame scores（フレーム別スコア）、point scores（点別スコア）、bucket scores（姿勢分類別スコア）を表示します。
 - 評価座標は aspect-corrected image coordinate（横縦比補正済み画像座標）で、`x = adjusted12pt.x * videoAspectRatio`、`y = adjusted12pt.y` とします。pixel coordinate（ピクセル座標）、face bounds center（顔外枠中心）、顔幅 normalization（正規化）は使いません。
+- Raw JSON（生デバッグ JSON）には `parameterImprovements`（探索対象ごとの改善量）と `parameterImprovementSummary`（改善量要約）を含めます。これは `coordinateDescentLog`（座標降下探索ログ）を人間が読みやすく要約した debug payload（検証用データ）です。
+- Debug Console（デバッグコンソール）の Raw タブと Rotation Fit（回転中心評価）内の Raw JSON 表示には `Raw JSONをコピー` ボタンを置き、現在の payload（ペイロード）を `JSON.stringify(payload, null, 2)` した文字列として clipboard（クリップボード）へコピーできます。探索結果を Codex やチャットへ貼りやすくするための debug UI（検証用 UI）であり、production export（本番書き出し）ではありません。
 - 478点 z 推定、`perLandmarkZSearch`（ランドマーク単位z探索）、mesh（メッシュ化） / render（レンダリング） / MediaPipe re-detection（MediaPipe再検出）、production export（本番書き出し）は行いません。
 
 ### Stage B: group z search（段階B: グループ単位奥行き探索）
@@ -480,7 +483,8 @@ Render Consistency Lab は、最初から production asset を作る工程では
 - 12点の x/y は Fitting Lab の bounds-normalized coordinate（顔外枠正規化座標）を使わず、Render Consistency Lab の `adjusted12pt`（手動調整後12点）を使う。評価時は `x = adjusted12pt.x * videoAspectRatio`、`y = adjusted12pt.y` とする。
 - 探索順は `rotationCenter.y` / `rotationCenter.z` の後、`leftCheek.z` / `rightCheek.z` / `nose.z` / `mouth.z` / `leftEye.z` / `rightEye.z` / `headTop.z` / `chin.z` / `noseBridge.z` / `leftJaw.z` / `rightJaw.z` / `upperFaceCenter.z` とする。
 - iterationCount（反復回数）は Fitting Lab の preset と同じく `2` とする。
-- Raw JSON（生デバッグJSON）には `fittingLab12ptSearch`、`coordinateDescentLog`（座標降下探索ログ）、`bestCandidate`、`finalZByPointId`（最終的な点ごとの奥行き）、`bestRotationCenter`（最良回転中心）を出す。
+- Raw JSON（生デバッグJSON）には `fittingLab12ptSearch`、`coordinateDescentLog`（座標降下探索ログ）、`parameterImprovements`（探索対象ごとの改善量）、`parameterImprovementSummary`（改善量要約）、`bestCandidate`、`finalZByPointId`（最終的な点ごとの奥行き）、`bestRotationCenter`（最良回転中心）を出す。
+- `parameterImprovementSummary.totalImprovement`（全体改善量）は `initialCandidate.totalScore - bestCandidate.totalScore` とする。`scoreDelta` は `scoreAfter - scoreBefore` なので、改善した step（手順）では negative value（負の値）になる。
 - 今回も 478点 z 推定、`perLandmarkZSearch`（ランドマーク単位z探索）、mesh（メッシュ化） / render（レンダリング） / MediaPipe re-detection（MediaPipe再検出）、production export（本番書き出し）は行わない。
 
 ### Render Coordinate Ranges（Render座標系の探索範囲）

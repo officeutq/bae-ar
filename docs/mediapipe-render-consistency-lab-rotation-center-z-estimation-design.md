@@ -351,3 +351,9 @@ upperFaceCenter.z = -0.03 .. 0.06 / step 0.01
 ```
 
 `coordinateBoundaryStatus`（座標降下探索の範囲端ヒット状態）で、`rotationCenter.y` が Render 用 range の `0.50` 上限に張り付くか、`rotationCenter.z` や 12点 z が範囲端に張り付くか確認できるようにする。Raw JSON（生デバッグJSON）には `coordinateSystemSource: render_adjusted12pt_aspect_corrected`、`rangeSource: render_consistency_lab`、`zRangeSource: render_consistency_lab_uniform_debug_range`、`fittingLabAlgorithmOnly: true` を含める。
+
+Rotation Fit（回転中心評価）タブには `Improvement by parameter（探索対象ごとの改善量）` を追加し、coordinate descent（座標降下探索）の各 step（手順）について、探索順のまま `parameter`（探索対象）、`iteration`（反復回数）、`valueBefore` / `valueAfter`、`scoreBefore` / `scoreAfter`、`improvement`（改善量）、`maxFrameScoreImprovement`（最大フレームスコア改善量）、`improved` / `no change`（改善あり / 変化なし）を表示する。
+
+Raw JSON（生デバッグJSON）の `fittingLab12ptSearch` には `parameterImprovements`（探索対象ごとの改善量）と `parameterImprovementSummary`（改善量要約）を含める。`parameterImprovements.scoreDelta` は `scoreAfter - scoreBefore` とし、改善した場合は negative value（負の値）になる。`parameterImprovementSummary.totalImprovement` は `initialCandidate.totalScore - bestCandidate.totalScore` とする。これは既存の `coordinateDescentLog`（座標降下探索ログ）を読みやすく要約する debug payload（検証用データ）であり、production export（本番書き出し）ではない。
+
+Debug Console（デバッグコンソール）の Raw タブ、または Rotation Fit（回転中心評価）内の Raw JSON 表示には `Raw JSONをコピー` ボタンを置く。現在の payload（ペイロード）を `JSON.stringify(payload, null, 2)` した文字列として clipboard（クリップボード）へコピーし、探索結果を Codex やチャットへ貼りやすくする。Clipboard API（クリップボードAPI）が使えない環境では例外処理を行い、可能なら fallback（代替処理）でコピーする。この機能も debug UI（検証用 UI）であり、production export（本番書き出し）ではない。
