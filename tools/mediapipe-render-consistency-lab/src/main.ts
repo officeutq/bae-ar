@@ -287,9 +287,56 @@ type RotationFitBucketScore = {
   maxFrameScore: number
 }
 
+type RotationFitBucketScores = {
+  yaw: RotationFitBucketScore[]
+  pitch: RotationFitBucketScore[]
+  roll: RotationFitBucketScore[]
+  yawPitch: RotationFitBucketScore[]
+}
+
+type RotationFitSearchRange = {
+  min: number
+  max: number
+  step: number
+}
+
+type RotationFitCandidateResult = {
+  rank: number
+  rotationCenter: Point3D
+  totalScore: number
+  maxFrameScore: number
+  worstFrame: RotationFitFrameScore | null
+  worstPoint: RotationFitPointScore | null
+  frameScores: RotationFitFrameScore[]
+  pointScores: RotationFitPointScore[]
+  bucketScores: RotationFitBucketScores
+}
+
+type RotationFitCandidateSummary = {
+  rank: number
+  rotationCenter: Point3D
+  totalScore: number
+  maxFrameScore: number
+  worstFrame: RotationFitFrameScore | null
+  worstPoint: RotationFitPointScore | null
+}
+
+type RotationFitSearchBoundaryStatus = {
+  bestYAtMin: boolean
+  bestYAtMax: boolean
+  bestZAtMin: boolean
+  bestZAtMax: boolean
+}
+
 type RotationFitEvaluation = {
   status: "completed" | "error"
   error?: string
+  searchMode: "rotation_center_yz_coarse"
+  searchRange: {
+    y: RotationFitSearchRange
+    z: RotationFitSearchRange
+  }
+  candidateCount: number
   evaluationFrameCount: number
   baseFrameSource: {
     sourceFrameIndex: number
@@ -298,7 +345,10 @@ type RotationFitEvaluation = {
   } | null
   videoAspectRatio: number
   rotationCenter: Point3D
+  bestRotationCenter: Point3D | null
+  boundaryStatus: RotationFitSearchBoundaryStatus
   zPresetName: string
+  fixedZPresetName: string
   focalLength: number
   totalScore: number
   maxFrameScore: number
@@ -306,12 +356,9 @@ type RotationFitEvaluation = {
   worstPoint: RotationFitPointScore | null
   frameScores: RotationFitFrameScore[]
   pointScores: RotationFitPointScore[]
-  bucketScores: {
-    yaw: RotationFitBucketScore[]
-    pitch: RotationFitBucketScore[]
-    roll: RotationFitBucketScore[]
-    yawPitch: RotationFitBucketScore[]
-  }
+  bucketScores: RotationFitBucketScores
+  bestCandidate: RotationFitCandidateResult | null
+  topCandidates: RotationFitCandidateSummary[]
   debugPreset: {
     zByPointId: Record<string, number>
   }
@@ -480,9 +527,20 @@ const EXPRESSION_CATEGORY_NAMES = [
   ...EXPRESSION_BROW_CATEGORY_NAMES,
 ] as const
 const ROTATION_FIT_DEBUG_PRESET_NAME = "rotationFitDebugPreset_provisional_v1"
+const ROTATION_FIT_SEARCH_MODE = "rotation_center_yz_coarse"
 const ROTATION_FIT_FOCAL_LENGTH = 2.6
-const ROTATION_FIT_DEBUG_ROTATION_CENTER_Y = -0.14
-const ROTATION_FIT_DEBUG_ROTATION_CENTER_Z = 0.04
+const ROTATION_FIT_ROTATION_CENTER_Y_RANGE: RotationFitSearchRange = {
+  min: -0.24,
+  max: 0.4,
+  step: 0.02,
+}
+const ROTATION_FIT_ROTATION_CENTER_Z_RANGE: RotationFitSearchRange = {
+  min: 0,
+  max: 0.12,
+  step: 0.01,
+}
+const ROTATION_FIT_TOP_CANDIDATE_LIMIT = 10
+const ROTATION_FIT_BOUNDARY_EPSILON = 0.000001
 const ROTATION_FIT_DEBUG_Z_BY_POINT_ID: Record<string, number> = {
   headTop: 0.017,
   chin: 0.016,
@@ -602,10 +660,10 @@ app.innerHTML = `
       <section class="controls-section">
         <h2>Rotation Fit（回転中心評価）</h2>
         <button id="rotationFitEvaluationButton" type="button" class="secondary-button">
-          回転中心評価確認
+          回転中心評価・粗探索
         </button>
         <p class="control-help">
-          固定 z と固定 rotationCenter で、12点投影と adjusted12pt の誤差を確認します。<br />
+          固定 z で rotationCenter.y/z を粗探索します。<br />
           一時的な debug UI です。
         </p>
       </section>
@@ -1173,12 +1231,17 @@ function runRotationFitEvaluation(): void {
 
 function evaluateRotationFit(): RotationFitEvaluation {
   const videoAspectRatio = getVideoAspectRatio()
-  const rotationCenter = {
-    x: roundDebugNumber(0.5 * videoAspectRatio),
-    y: ROTATION_FIT_DEBUG_ROTATION_CENTER_Y,
-    z: ROTATION_FIT_DEBUG_ROTATION_CENTER_Z,
-  }
-  const baseEvaluation = createEmptyRotationFitEvaluation(videoAspectRatio, rotationCenter)
+  const fixedRotationCenterX = roundDebugNumber(0.5 * videoAspectRatio)
+  const candidateRotationCenters = createRotationFitCandidateRotationCenters(fixedRotationCenterX)
+  const baseEvaluation = createEmptyRotationFitEvaluation(
+    videoAspectRatio,
+    candidateRotationCenters[0] ?? {
+      x: fixedRotationCenterX,
+      y: ROTATION_FIT_ROTATION_CENTER_Y_RANGE.min,
+      z: ROTATION_FIT_ROTATION_CENTER_Z_RANGE.min,
+    },
+    candidateRotationCenters.length,
+  )
 
   const evaluationFrames = getRotationFitEvaluationFrames()
   if (state.acceptedFrames.length === 0) {
@@ -1230,6 +1293,155 @@ function evaluateRotationFit(): RotationFitEvaluation {
     }
   }
 
+  const rankedCandidates = candidateRotationCenters
+    .map((rotationCenter) =>
+      evaluateRotationFitCandidate(evaluationFrames, base12pt, videoAspectRatio, rotationCenter),
+    )
+    .sort(compareRotationFitCandidates)
+    .map((candidate, index) => ({
+      ...candidate,
+      rank: index + 1,
+    }))
+  const bestCandidate = rankedCandidates[0] ?? null
+
+  if (!bestCandidate || bestCandidate.frameScores.length === 0) {
+    return {
+      ...baseEvaluation,
+      status: "error",
+      error: "評価対象フレームに pose（姿勢）または adjusted12pt（手動調整後12点）がありません。",
+      baseFrameSource: {
+        sourceFrameIndex: baseFrame.frame.sourceFrameIndex,
+        timeSec: roundDebugNumber(baseFrame.frame.timeSec),
+        reason: baseFrame.reason,
+      },
+    }
+  }
+
+  return {
+    ...baseEvaluation,
+    status: "completed",
+    evaluationFrameCount: bestCandidate.frameScores.length,
+    baseFrameSource: {
+      sourceFrameIndex: baseFrame.frame.sourceFrameIndex,
+      timeSec: roundDebugNumber(baseFrame.frame.timeSec),
+      reason: baseFrame.reason,
+    },
+    rotationCenter: bestCandidate.rotationCenter,
+    bestRotationCenter: bestCandidate.rotationCenter,
+    boundaryStatus: calculateRotationFitSearchBoundaryStatus(bestCandidate.rotationCenter),
+    totalScore: bestCandidate.totalScore,
+    maxFrameScore: bestCandidate.maxFrameScore,
+    worstFrame: bestCandidate.worstFrame,
+    worstPoint: bestCandidate.worstPoint,
+    frameScores: bestCandidate.frameScores,
+    pointScores: bestCandidate.pointScores,
+    bucketScores: bestCandidate.bucketScores,
+    bestCandidate,
+    topCandidates: rankedCandidates
+      .slice(0, ROTATION_FIT_TOP_CANDIDATE_LIMIT)
+      .map(createRotationFitCandidateSummary),
+  }
+}
+
+function createEmptyRotationFitEvaluation(
+  videoAspectRatio: number,
+  rotationCenter: Point3D,
+  candidateCount: number,
+): RotationFitEvaluation {
+  return {
+    status: "completed",
+    searchMode: ROTATION_FIT_SEARCH_MODE,
+    searchRange: {
+      y: ROTATION_FIT_ROTATION_CENTER_Y_RANGE,
+      z: ROTATION_FIT_ROTATION_CENTER_Z_RANGE,
+    },
+    candidateCount,
+    evaluationFrameCount: 0,
+    baseFrameSource: null,
+    videoAspectRatio,
+    rotationCenter,
+    bestRotationCenter: null,
+    boundaryStatus: {
+      bestYAtMin: false,
+      bestYAtMax: false,
+      bestZAtMin: false,
+      bestZAtMax: false,
+    },
+    zPresetName: ROTATION_FIT_DEBUG_PRESET_NAME,
+    fixedZPresetName: ROTATION_FIT_DEBUG_PRESET_NAME,
+    focalLength: ROTATION_FIT_FOCAL_LENGTH,
+    totalScore: 0,
+    maxFrameScore: 0,
+    worstFrame: null,
+    worstPoint: null,
+    frameScores: [],
+    pointScores: [],
+    bucketScores: {
+      yaw: [],
+      pitch: [],
+      roll: [],
+      yawPitch: [],
+    },
+    bestCandidate: null,
+    topCandidates: [],
+    debugPreset: {
+      zByPointId: ROTATION_FIT_DEBUG_Z_BY_POINT_ID,
+    },
+  }
+}
+
+function createRotationFitCandidateRotationCenters(fixedRotationCenterX: number): Point3D[] {
+  const yCandidates = createRotationFitRangeCandidates(ROTATION_FIT_ROTATION_CENTER_Y_RANGE)
+  const zCandidates = createRotationFitRangeCandidates(ROTATION_FIT_ROTATION_CENTER_Z_RANGE)
+  return yCandidates.flatMap((y) =>
+    zCandidates.map((z) => ({
+      x: fixedRotationCenterX,
+      y,
+      z,
+    })),
+  )
+}
+
+function createRotationFitRangeCandidates(range: RotationFitSearchRange): number[] {
+  const candidateCount = Math.floor((range.max - range.min) / range.step + 0.5) + 1
+  return Array.from({ length: candidateCount }, (_, index) =>
+    roundDebugNumber(range.min + range.step * index),
+  ).filter((value) => value <= range.max + range.step * 0.001)
+}
+
+function calculateRotationFitSearchBoundaryStatus(
+  bestRotationCenter: Point3D,
+): RotationFitSearchBoundaryStatus {
+  return {
+    bestYAtMin: isRotationFitBoundaryValue(
+      bestRotationCenter.y,
+      ROTATION_FIT_ROTATION_CENTER_Y_RANGE.min,
+    ),
+    bestYAtMax: isRotationFitBoundaryValue(
+      bestRotationCenter.y,
+      ROTATION_FIT_ROTATION_CENTER_Y_RANGE.max,
+    ),
+    bestZAtMin: isRotationFitBoundaryValue(
+      bestRotationCenter.z,
+      ROTATION_FIT_ROTATION_CENTER_Z_RANGE.min,
+    ),
+    bestZAtMax: isRotationFitBoundaryValue(
+      bestRotationCenter.z,
+      ROTATION_FIT_ROTATION_CENTER_Z_RANGE.max,
+    ),
+  }
+}
+
+function isRotationFitBoundaryValue(value: number, boundary: number): boolean {
+  return Math.abs(value - boundary) <= ROTATION_FIT_BOUNDARY_EPSILON
+}
+
+function evaluateRotationFitCandidate(
+  evaluationFrames: Array<{ frame: AcceptedFrameSnapshot; candidate: PoseReviewCandidateFrame }>,
+  base12pt: Record<string, Point3D>,
+  videoAspectRatio: number,
+  rotationCenter: Point3D,
+): RotationFitCandidateResult {
   const frameScores = evaluationFrames.flatMap((entry) => {
     if (!entry.frame.pose) {
       return []
@@ -1264,38 +1476,28 @@ function evaluateRotationFit(): RotationFitEvaluation {
     ]
   })
 
-  if (frameScores.length === 0) {
-    return {
-      ...baseEvaluation,
-      status: "error",
-      error: "評価対象フレームに pose（姿勢）または adjusted12pt（手動調整後12点）がありません。",
-      baseFrameSource: {
-        sourceFrameIndex: baseFrame.frame.sourceFrameIndex,
-        timeSec: roundDebugNumber(baseFrame.frame.timeSec),
-        reason: baseFrame.reason,
-      },
-    }
-  }
-
   const pointScores = calculateRotationFitPointScores(frameScores)
-  const worstFrame = frameScores.reduce((worst, current) =>
-    current.frameScore > worst.frameScore ? current : worst,
-  )
-  const worstPoint = pointScores.reduce((worst, current) =>
-    current.averageError > worst.averageError ? current : worst,
-  )
+  const worstFrame =
+    frameScores.length > 0
+      ? frameScores.reduce((worst, current) =>
+          current.frameScore > worst.frameScore ? current : worst,
+        )
+      : null
+  const worstPoint =
+    pointScores.length > 0
+      ? pointScores.reduce((worst, current) =>
+          current.averageError > worst.averageError ? current : worst,
+        )
+      : null
 
   return {
-    ...baseEvaluation,
-    status: "completed",
-    evaluationFrameCount: frameScores.length,
-    baseFrameSource: {
-      sourceFrameIndex: baseFrame.frame.sourceFrameIndex,
-      timeSec: roundDebugNumber(baseFrame.frame.timeSec),
-      reason: baseFrame.reason,
-    },
-    totalScore: roundDebugNumber(average(frameScores.map((frame) => frame.frameScore))),
-    maxFrameScore: roundDebugNumber(worstFrame.frameScore),
+    rank: 0,
+    rotationCenter,
+    totalScore:
+      frameScores.length > 0
+        ? roundDebugNumber(average(frameScores.map((frame) => frame.frameScore)))
+        : Number.POSITIVE_INFINITY,
+    maxFrameScore: worstFrame ? roundDebugNumber(worstFrame.frameScore) : Number.POSITIVE_INFINITY,
     worstFrame,
     worstPoint,
     frameScores,
@@ -1304,33 +1506,27 @@ function evaluateRotationFit(): RotationFitEvaluation {
   }
 }
 
-function createEmptyRotationFitEvaluation(
-  videoAspectRatio: number,
-  rotationCenter: Point3D,
-): RotationFitEvaluation {
+function compareRotationFitCandidates(
+  left: RotationFitCandidateResult,
+  right: RotationFitCandidateResult,
+): number {
+  const totalScoreDiff = left.totalScore - right.totalScore
+  if (Math.abs(totalScoreDiff) > 0.000001) {
+    return totalScoreDiff
+  }
+  return left.maxFrameScore - right.maxFrameScore
+}
+
+function createRotationFitCandidateSummary(
+  candidate: RotationFitCandidateResult,
+): RotationFitCandidateSummary {
   return {
-    status: "completed",
-    evaluationFrameCount: 0,
-    baseFrameSource: null,
-    videoAspectRatio,
-    rotationCenter,
-    zPresetName: ROTATION_FIT_DEBUG_PRESET_NAME,
-    focalLength: ROTATION_FIT_FOCAL_LENGTH,
-    totalScore: 0,
-    maxFrameScore: 0,
-    worstFrame: null,
-    worstPoint: null,
-    frameScores: [],
-    pointScores: [],
-    bucketScores: {
-      yaw: [],
-      pitch: [],
-      roll: [],
-      yawPitch: [],
-    },
-    debugPreset: {
-      zByPointId: ROTATION_FIT_DEBUG_Z_BY_POINT_ID,
-    },
+    rank: candidate.rank,
+    rotationCenter: candidate.rotationCenter,
+    totalScore: candidate.totalScore,
+    maxFrameScore: candidate.maxFrameScore,
+    worstFrame: candidate.worstFrame,
+    worstPoint: candidate.worstPoint,
   }
 }
 
@@ -3289,12 +3485,13 @@ function renderRotationFitConsole(): string {
   if (!evaluation) {
     return renderConsoleSection(
       "Rotation Fit（回転中心評価）",
-      `<div class="landmark-summary-item empty">左ペインの「回転中心評価確認」ボタンを押してください。固定 z と固定 rotationCenter（投影用回転中心）で score evaluator（スコア評価器）を実行します。</div>`,
+      `<div class="landmark-summary-item empty">左ペインの「回転中心評価・粗探索」ボタンを押してください。固定 z で rotationCenter.y/z coarse search（回転中心 y/z 粗探索）を実行します。</div>`,
     )
   }
 
   return [
     renderConsoleSection("Summary（要約）", renderRotationFitSummary(evaluation)),
+    renderConsoleSection("Top candidates（上位候補）", renderRotationFitTopCandidates(evaluation)),
     renderConsoleSection("Frame scores（フレーム別スコア）", renderRotationFitFrameScores(evaluation)),
     renderConsoleSection("Point scores（点別スコア）", renderRotationFitPointScores(evaluation)),
     renderConsoleSection("Bucket scores（姿勢分類別スコア）", renderRotationFitBucketScores(evaluation)),
@@ -3309,6 +3506,7 @@ function renderRotationFitSummary(evaluation: RotationFitEvaluation): string {
   return renderStatusItems([
     ["status", evaluation.status],
     ["error", evaluation.error ?? "-"],
+    ["searchMode", evaluation.searchMode],
     ["evaluationFrameCount", String(evaluation.evaluationFrameCount)],
     [
       "baseFrameSource",
@@ -3319,13 +3517,47 @@ function renderRotationFitSummary(evaluation: RotationFitEvaluation): string {
         : "-",
     ],
     ["videoAspectRatio", formatNumber(evaluation.videoAspectRatio)],
-    ["rotationCenter.x", formatNumber(evaluation.rotationCenter.x)],
-    ["rotationCenter.y", formatNumber(evaluation.rotationCenter.y)],
-    ["rotationCenter.z", formatNumber(evaluation.rotationCenter.z)],
-    ["zPresetName", evaluation.zPresetName],
+    ["fixedZPresetName", evaluation.fixedZPresetName],
+    ["candidateCount", String(evaluation.candidateCount)],
+    [
+      "searchRange.y",
+      `${formatNumber(evaluation.searchRange.y.min)} .. ${formatNumber(
+        evaluation.searchRange.y.max,
+      )} / step ${formatNumber(evaluation.searchRange.y.step)}`,
+    ],
+    [
+      "searchRange.z",
+      `${formatNumber(evaluation.searchRange.z.min)} .. ${formatNumber(
+        evaluation.searchRange.z.max,
+      )} / step ${formatNumber(evaluation.searchRange.z.step)}`,
+    ],
+    [
+      "bestRotationCenter.x",
+      evaluation.bestRotationCenter ? formatNumber(evaluation.bestRotationCenter.x) : "-",
+    ],
+    [
+      "bestRotationCenter.y",
+      evaluation.bestRotationCenter ? formatNumber(evaluation.bestRotationCenter.y) : "-",
+    ],
+    [
+      "bestRotationCenter.z",
+      evaluation.bestRotationCenter ? formatNumber(evaluation.bestRotationCenter.z) : "-",
+    ],
+    [
+      "boundaryStatus（範囲端ヒット状態）",
+      `bestYAtMin: ${String(evaluation.boundaryStatus.bestYAtMin)} / bestYAtMax: ${String(
+        evaluation.boundaryStatus.bestYAtMax,
+      )} / bestZAtMin: ${String(evaluation.boundaryStatus.bestZAtMin)} / bestZAtMax: ${String(
+        evaluation.boundaryStatus.bestZAtMax,
+      )}`,
+    ],
+    [
+      "warning（注意）",
+      formatRotationFitBoundaryWarning(evaluation.boundaryStatus),
+    ],
     ["focalLength", formatNumber(evaluation.focalLength)],
-    ["totalScore", formatNumber(evaluation.totalScore)],
-    ["maxFrameScore", formatNumber(evaluation.maxFrameScore)],
+    ["best totalScore", formatNumber(evaluation.totalScore)],
+    ["best maxFrameScore", formatNumber(evaluation.maxFrameScore)],
     [
       "worstFrame",
       evaluation.worstFrame
@@ -3347,6 +3579,50 @@ function renderRotationFitSummary(evaluation: RotationFitEvaluation): string {
       `yaw ${evaluation.bucketScores.yaw.length} / pitch ${evaluation.bucketScores.pitch.length} / roll ${evaluation.bucketScores.roll.length} / yaw×pitch ${evaluation.bucketScores.yawPitch.length}`,
     ],
   ])
+}
+
+function formatRotationFitBoundaryWarning(
+  boundaryStatus: RotationFitSearchBoundaryStatus,
+): string {
+  if (boundaryStatus.bestYAtMax) {
+    return "best rotationCenter.y is at search max（最良の回転中心yが探索範囲の上限にあります）"
+  }
+  if (boundaryStatus.bestYAtMin) {
+    return "best rotationCenter.y is at search min（最良の回転中心yが探索範囲の下限にあります）"
+  }
+  if (boundaryStatus.bestZAtMax) {
+    return "best rotationCenter.z is at search max（最良の回転中心zが探索範囲の上限にあります）"
+  }
+  if (boundaryStatus.bestZAtMin) {
+    return "best rotationCenter.z is at search min（最良の回転中心zが探索範囲の下限にあります）"
+  }
+  return "-"
+}
+
+function renderRotationFitTopCandidates(evaluation: RotationFitEvaluation): string {
+  if (evaluation.topCandidates.length === 0) {
+    return `<div class="landmark-summary-item empty">top candidates（上位候補）はありません。</div>`
+  }
+
+  return `
+    <div class="landmark-summary-grid pose-candidate-bucket-list">
+      ${evaluation.topCandidates
+        .map(
+          (candidate) => `
+            <div class="landmark-summary-item pose-candidate-bucket">
+              <code>rank ${candidate.rank}</code>
+              <span>rotationCenter.y（回転中心y） ${formatNumber(candidate.rotationCenter.y)}</span>
+              <span>rotationCenter.z（回転中心z） ${formatNumber(candidate.rotationCenter.z)}</span>
+              <span>totalScore（総合スコア） ${formatNumber(candidate.totalScore)}</span>
+              <span>maxFrameScore（最大フレームスコア） ${formatNumber(candidate.maxFrameScore)}</span>
+              <span>worstPoint（最大誤差点） ${candidate.worstPoint ? escapeHtml(candidate.worstPoint.pointId) : "-"}</span>
+              <span>worstFrame sourceFrameIndex ${candidate.worstFrame ? candidate.worstFrame.sourceFrameIndex : "-"}</span>
+            </div>
+          `,
+        )
+        .join("")}
+    </div>
+  `
 }
 
 function renderRotationFitFrameScores(evaluation: RotationFitEvaluation): string {

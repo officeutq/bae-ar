@@ -454,6 +454,11 @@ Render Consistency Lab は、最初から production asset を作る工程では
 ## UI 方針: Rotation Fit debug UI
 
 - `Rotation Fit（回転中心評価）` タブは一時的な debug UI（検証用 UI）です。
-- 固定 `rotationCenter` と `rotationFitDebugPreset_provisional_v1` の固定 12pt z preset（12点奥行きプリセット）を使い、projected12pt（投影後12点）と adjusted12pt（手動調整後12点）の score evaluator（スコア評価器）が接続できるかを確認します。
+- `回転中心評価・粗探索` ボタンは、`rotationFitDebugPreset_provisional_v1` の固定 12pt z preset（12点奥行きプリセット）を使い、`rotationCenter.y` / `rotationCenter.z` の coarse search（粗探索）を行います。
+- Stage A（段階A）の実装として、`rotationCenter.x = 0.5 * videoAspectRatio` を固定し、12点 z 探索、14未知数の同時探索、mesh / render / MediaPipe re-detection（再検出）はまだ行いません。
+- 初期結果で `bestRotationCenter.y`（最良の回転中心y）が探索範囲上限に張り付き、`-0.24 .. 0.16` でも上限に張り付いたため、`rotationCenter.y`（回転中心の縦方向）の探索範囲は確認用に `-0.24 .. 0.40 / step 0.02` に広げています。`rotationCenter.z`（回転中心の奥行き方向）は `0.00 .. 0.12 / step 0.01` のままです。
+- Summary（要約）と Raw JSON（生デバッグ JSON）には `boundaryStatus`（範囲端ヒット状態）を表示し、best candidate（最良候補）が探索範囲不足の可能性を示しているか確認できるようにします。
+- `bestYAtMax`（最良yが探索範囲上限にある状態）が続く場合は、探索範囲をさらに広げるより、固定 12pt z preset（12点奥行きプリセット）の不一致を疑い、次の group z search（グループ単位奥行き探索）へ進む判断材料にします。ここではまだ 12pt z search（12点奥行き探索）は行いません。
+- best candidate（最良候補）の projected12pt（投影後12点）と adjusted12pt（手動調整後12点）を比較し、score evaluator（スコア評価器）の frame scores（フレーム別スコア）、point scores（点別スコア）、bucket scores（姿勢分類別スコア）を表示します。
 - 評価座標は aspect-corrected image coordinate（横縦比補正済み画像座標）で、`x = adjusted12pt.x * videoAspectRatio`、`y = adjusted12pt.y` とします。pixel coordinate（ピクセル座標）、face bounds center（顔外枠中心）、顔幅 normalization（正規化）は使いません。
-- rotationCenter.y/z 探索、12pt z 探索、coordinate descent（座標降下法）などの本格探索は後段で扱います。
+- 12pt z 探索、coordinate descent（座標降下法）などの本格探索は後段で扱います。
