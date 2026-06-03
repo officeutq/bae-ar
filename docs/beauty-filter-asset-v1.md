@@ -88,6 +88,8 @@ idealFace:
 
 `idealFace` は MediaPipe 478 landmarks そのものではありません。BAE AR 独自の理想 3D 顔モデルを本体とし、Engine Runtime が現在顔の `FacePose` に合わせて projected ideal 478 landmarks を生成します。
 
+一方で、[Ideal Reference Mesh Warp Lab](ideal-reference-mesh-warp-lab.md) では、理想モデル動画の各フレームで MediaPipe が実際に返した 478 landmarks を pose / expression 付き reference library として保存する別方針を検証します。これは `IdealFace 3D478` ではなく、現時点では `beauty_filter_asset_v1` schema、validator、export、Runtime parser へ含めません。
+
 ### landmarkGroups
 
 `landmarkGroups` は、MediaPipe landmark index 群に意味を与える定義です。
@@ -165,6 +167,8 @@ shapeWarpSettings:
 ```
 
 Production Shape Warp / Runtime renderer integration はまだ未実装です。現在の Studio Shape Warp v1 debug prototype と WebGL mesh warp v1 prototype は、Production Runtime renderer ではありません。
+
+reference library 方式の mesh warp、`visibilityWeight` / `warpSafetyWeight`、hybrid mesh / adaptive grid、raw / runtime library 分離は [Ideal Reference Mesh Warp Lab](ideal-reference-mesh-warp-lab.md) で検証します。`shapeWarpSettings` へ取り込むかどうかは、Step 1 full reference search、Step 2 weighted reference blend、Step 3 runtime compression の結果を見て後段で判断します。
 
 `shapeWarpSettings` はフィルターごとの公開設定であり、WebGL shader、renderer lifecycle、GPU resource 管理、fallback 実装などの Engine 内部実装は含めません。Engine 側は `shapeWarpSettings` を読み取り、実際の renderer / smoothing / boundary 処理を実行します。
 
@@ -453,6 +457,8 @@ Step 10: beauty_filter_asset_v1 foundation
 - expressionFollow v1 Engine implementation
 - MP4 expression 3D analysis implementation
 - landmarkFollowStrengths auto generation implementation
+- Ideal Reference Mesh Warp Lab implementation
+- ideal reference library JSON export / validator / IndexedDB / compression
 - expressionAttenuation falloff v1 fallback / reference handling
 - shapeWarpSettings v1
 - colorLayers v1

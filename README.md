@@ -29,7 +29,7 @@ BAE AR は、リアルタイム顔加工・AR 表現を行う Beauty Engine Runt
 
 目的は、単なるフィルターではなく、本番サービスに組み込める自然で破綻しにくい Beauty Engine を育てることです。
 
-Shape Processing は、目だけ大きくする、鼻だけ細くする、顎だけ削るような個別パーツ加工ではありません。現在顔の MediaPipe 478 landmarks と、IdealFace 由来の projected ideal 478 landmarks を比較し、顔全体として自然に少し warp する方針です。
+Shape Processing は、目だけ大きくする、鼻だけ細くする、顎だけ削るような個別パーツ加工ではありません。現在の実装・既存検証では、現在顔の MediaPipe 478 landmarks と、IdealFace 由来の projected ideal 478 landmarks を比較し、顔全体として自然に少し warp する方針を扱っています。一方で、理想モデル動画から安定した姿勢非依存 `idealLandmarks3D` 478点を作る難しさが見えてきたため、新しい debug / research lab として [Ideal Reference Mesh Warp Lab](docs/ideal-reference-mesh-warp-lab.md) を追加し、理想モデル動画の各フレームで MediaPipe が実際に返した 478 landmarks を pose / expression 付き reference library として使う方式を検証します。
 
 ## 全体構成
 
@@ -51,6 +51,9 @@ tools/mediapipe-canonical-lab
 
 tools/mediapipe-render-consistency-lab
   MP4 import / auto scan / acceptedFrames / 12pt overlay / manual adjustments / Debug Console / poseBucket125 を確認する debug lab
+
+tools/ideal-reference-mesh-warp-lab
+  将来候補。理想モデル動画の実測 MediaPipe 478 reference library と hybrid mesh warp を検証する debug / research lab
 
 docs
   設計、仕様、ロードマップ、開発方針
@@ -92,6 +95,7 @@ Engine Runtime に Studio / Authoring 用 UI や生成・編集処理は入れ�
 - `expressionFollow v1` docs 方針
 - MP4 expression 3D analysis plan docs 方針
 - usage-aware frame sampling v1 docs 方針
+- Ideal Reference Mesh Warp Lab docs 方針
 - IdealFace Authoring Tool Expression frame grouping summary prototype
 - IdealFace Authoring Tool frame usage card UI prototype
 - IdealFace Authoring Tool usage-aware adaptive scan prototype
@@ -109,6 +113,8 @@ Engine Runtime に Studio / Authoring 用 UI や生成・編集処理は入れ�
 - `shapeWarpSettings` v1
 - `colorLayers` v1
 - Production Shape Warp
+- Ideal Reference Mesh Warp Lab 実装
+- ideal reference library JSON export / validator / IndexedDB / compression
 - Runtime renderer integration
 - Production WebGL mesh warp / renderer lifecycle / disposal / fallback
 - Color Processing
@@ -286,6 +292,7 @@ Analysis JSON export は、詳細検証・再解析用の `Export Full Analysis 
 - 本番候補は WebGL mesh warp です。
 - Production Shape Warp / Runtime renderer integration は未実装です。
 - Runtime renderer lifecycle、shader hardening、MediaPipe topology の本番整理は後段です。
+- Ideal Reference Mesh Warp Lab は、理想顔 3D478 を Runtime で投影する方針とは別に、理想モデル動画の実測 MediaPipe 478 reference library、`visibilityWeight` / `warpSafetyWeight`、hybrid mesh / adaptive grid を検証する docs 方針です。実装はまだありません。
 
 詳細は [Shape Warp production 方針](docs/shape-warp-production-direction.md) を参照してください。
 
@@ -336,6 +343,7 @@ npm run start:mediapipe-render-consistency-lab
 - [expressionAttenuation falloff v1](docs/expression-attenuation-falloff-v1.md)
 - [landmarkGroups v1](docs/landmark-groups-v1.md)
 - [Shape Warp production 方針](docs/shape-warp-production-direction.md)
+- [Ideal Reference Mesh Warp Lab](docs/ideal-reference-mesh-warp-lab.md)
 - [beauty_filter_asset_v1 方針](docs/beauty-filter-asset-v1.md)
 - [MediaPipe Render Consistency Lab](docs/mediapipe-render-consistency-lab.md)
 - [MediaPipe Render Consistency Lab next step after effective rotation center study](docs/mediapipe-render-consistency-lab-next-after-effective-rotation-center.md)
@@ -354,6 +362,8 @@ npm run start:mediapipe-render-consistency-lab
 - MP4 expression 3D analysis 実装
 - `landmarkFollowStrengths` 自動生成
 - Production Shape Warp
+- Ideal Reference Mesh Warp Lab 実装
+- ideal reference library JSON export / validator / IndexedDB / compression
 - Runtime renderer integration
 - Color Processing
 - Layer System

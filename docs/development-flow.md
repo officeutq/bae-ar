@@ -2,6 +2,7 @@
 
 ## Related docs
 
+- [Ideal Reference Mesh Warp Lab](ideal-reference-mesh-warp-lab.md)
 - [MediaPipe Render Consistency Lab next step after effective rotation center study](mediapipe-render-consistency-lab-next-after-effective-rotation-center.md)
 - [MediaPipe Canonical Effective Rotation Center Lab](mediapipe-canonical-effective-rotation-center-lab.md)
 
@@ -94,6 +95,8 @@ same-unit の projected ideal landmarks を、そのまま `x * canvasWidth` / `
 current 478 landmarks は MediaPipe 由来の image-normalized 座標です。projected ideal 478 landmarks は、IdealFace same-unit landmarks を `FacePose` へ投影し、alignment 後に image-normalized 座標へ変換したものです。差分は `deltaX = projectedIdealImageX - currentX`、`deltaY = projectedIdealImageY - currentY` として計算します。
 
 現時点では、478点の current-vs-ideal difference debug、`correctionProfile` v1 foundation、`expressionAttenuation` v1 foundation、CorrectionPlan v1 debug foundation、Studio 向け Shape Warp v1 debug prototype、Studio processed preview 限定 WebGL mesh warp v1 prototype は実装済みです。Production Shape Warp / Runtime renderer integration は未実装です。
+
+新しい検証ラインとして [Ideal Reference Mesh Warp Lab](ideal-reference-mesh-warp-lab.md) を追加します。このラボでは、理想顔 3D478 を作って Runtime で任意 pose へ投影するのではなく、理想モデル動画の各フレームで MediaPipe が実際に返した 478 landmarks を pose / expression 付き reference library として保存し、current frame に近い reference を検索して hybrid mesh warp を検証します。これは docs 方針のみで、TypeScript 実装、Engine 実装、Studio 実装、Authoring Tool UI、JSON export、validator、Runtime renderer integration は行いません。
 
 `correctionProfile` v1 は、`ideal_face_asset_v1` の optional top-level field として扱う補正設定です。landmark ごとの `strength` を持ちますが、dx / dy は JSON に保存しません。dx / dy は current landmarks と projected ideal `imageLandmarks` から Engine が毎フレーム計算します。今後の表情制御では、単純に group の補正強度を下げる `expressionAttenuation` ではなく、表情ごとに landmark が neutral な projected ideal へどれだけ追従するかを定義する `expressionFollow v1` を中心にします。MP4 からの `landmarkFollowStrengths` 自動生成は IdealFace Authoring Tool の責務として扱います。詳細は [correctionProfile v1](correction-profile-v1.md)、[expressionFollow v1](expression-follow-v1.md)、[MP4 expression 3D analysis plan](mp4-expression-3d-analysis-plan.md)、[usage-aware frame sampling v1](usage-aware-frame-sampling-v1.md)、[expression-aware correctionProfile](expression-aware-correction-profile.md)、[expressionAttenuation falloff v1](expression-attenuation-falloff-v1.md) を参照してください。
 
@@ -354,6 +357,10 @@ Step C: Runtime renderer integration
 
 Step D: Quality improvements
   temporal smoothing / mask / boundary / glasses / hair / seam / stability を扱う
+
+Step R: Ideal Reference Mesh Warp Lab
+  ideal reference library、visibilityWeight / warpSafetyWeight、hybrid mesh / adaptive grid、raw / runtime library 分離を docs で整理する
+  実装はまだ行わない
 ```
 
 詳細は [Shape Warp production direction](shape-warp-production-direction.md) を参照してください。Studio WebGL mesh warp v1 prototype は processed preview 限定で実装済みです。Production renderer 実装、shader hardening、MediaPipe topology の本番整理はこの docs step では行いません。
