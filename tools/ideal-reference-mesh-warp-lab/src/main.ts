@@ -99,6 +99,51 @@ type ReferenceMatchResult = {
   error: string | null
 }
 
+type LandmarkDisplacement = {
+  index: number
+  current: ReferenceLandmark
+  alignedIdeal: ReferenceLandmark
+  dx: number
+  dy: number
+  dz: number
+  distance2D: number
+}
+
+type DisplacementSummary = {
+  available: boolean
+  count: number
+  maxDistance2D: number | null
+  averageDistance2D: number | null
+  medianDistance2D: number | null
+  p90Distance2D: number | null
+  largeDisplacementCount: number
+  largeDisplacementThreshold: number
+  topDisplacementsPreview: Array<{
+    index: number
+    distance2D: number
+    dx: number
+    dy: number
+  }>
+  error: string | null
+}
+
+type DisplacementDebugState = {
+  available: boolean
+  displacements: LandmarkDisplacement[]
+  summary: DisplacementSummary
+}
+
+type LandmarkBounds = {
+  minX: number
+  minY: number
+  maxX: number
+  maxY: number
+  width: number
+  height: number
+  centerX: number
+  centerY: number
+}
+
 type ModelScanState = {
   mediaPipeStatus: MediaPipeStatus
   mediaPipeError: string | null
@@ -120,6 +165,7 @@ type LabState = {
   activeDebugTab: DebugTab
   overlay: {
     showLandmarks478: boolean
+    showDisplacement: boolean
   }
   modelVideo: VideoPreviewState & {
     currentReviewFrameIndex: number | null
@@ -138,6 +184,7 @@ type LabState = {
   currentAcceptedReviewIndex: number | null
   currentLiveFrameAnalysis: CurrentLiveFrameAnalysis
   top1Match: ReferenceMatchResult
+  displacementDebug: DisplacementDebugState
   logs: string[]
 }
 
@@ -154,6 +201,9 @@ const RAD_TO_DEG = 180 / Math.PI
 const STRONG_EXPRESSION_THRESHOLD = 0.35
 const MIXED_EXPRESSION_THRESHOLD = 0.28
 const LANDMARK_PREVIEW_COUNT = 5
+const DISPLACEMENT_PREVIEW_COUNT = 8
+const DISPLACEMENT_DRAW_STEP = 8
+const LARGE_DISPLACEMENT_THRESHOLD = 0.03
 const SCAN_RENDER_INTERVAL = 8
 const LIVE_AUTO_ANALYSIS_INTERVAL_SEC = 0.35
 const MEDIAPIPE_TIMESTAMP_STEP_MS = SCAN_FRAME_STEP_SEC * 1000
@@ -191,6 +241,7 @@ const state: LabState = {
   activeDebugTab: "summary",
   overlay: {
     showLandmarks478: false,
+    showDisplacement: false,
   },
   modelVideo: {
     loaded: false,
@@ -237,6 +288,7 @@ const state: LabState = {
   currentAcceptedReviewIndex: null,
   currentLiveFrameAnalysis: createEmptyCurrentLiveFrameAnalysis(),
   top1Match: createEmptyTop1Match(),
+  displacementDebug: createEmptyDisplacementDebug(),
   logs: ["ラボを初期化しました。"],
 }
 
@@ -283,10 +335,16 @@ app.innerHTML = `
           <p class="eyebrow">Preview</p>
           <h2>プレビュー</h2>
         </div>
-        <label class="overlay-toggle">
-          <input type="checkbox" data-action="toggle-landmarks" />
-          <span>478点を表示</span>
-        </label>
+        <div class="overlay-toggles">
+          <label class="overlay-toggle">
+            <input type="checkbox" data-action="toggle-landmarks" />
+            <span>478点を表示</span>
+          </label>
+          <label class="overlay-toggle">
+            <input type="checkbox" data-action="toggle-displacement" />
+            <span>displacement を表示</span>
+          </label>
+        </div>
       </div>
       ${renderTabs("preview", previewTabs, state.activePreviewTab)}
       <div class="preview-stack">
@@ -428,6 +486,12 @@ function bindEvents() {
     "change",
     (event) => {
       handleToggleLandmarks478(event.currentTarget.checked)
+    },
+  )
+  getElement<HTMLInputElement>('[data-action="toggle-displacement"]').addEventListener(
+    "change",
+    (event) => {
+      handleToggleDisplacement(event.currentTarget.checked)
     },
   )
   modelFileInput.addEventListener("change", () => {
@@ -611,6 +675,7 @@ async function scanModelVideo() {
   state.modelScan.lastError = null
   state.rawIdealReferenceFrames = []
   state.currentAcceptedReviewIndex = null
+  state.displacementDebug = createEmptyDisplacementDebug("noReferenceFrames")
   disposeModelFaceLandmarker("uninitialized")
   resetModelTimestamp()
   updateScanCounters()
@@ -895,6 +960,7 @@ function updateTop1Match() {
       ...createEmptyTop1Match(),
       error: "currentNotAnalyzed",
     }
+    updateDisplacementDebug()
     return
   }
 
@@ -904,6 +970,7 @@ function updateTop1Match() {
       currentExpressionGroup: current.expressionGroup,
       error: `current analysis failed / matching skipped: ${current.error ?? "invalidCurrentLandmarks"}`,
     }
+    updateDisplacementDebug()
     return
   }
 
@@ -916,6 +983,7 @@ function updateTop1Match() {
       currentExpressionGroup: current.expressionGroup,
       error: "noReferenceFrames",
     }
+    updateDisplacementDebug()
     return
   }
 
@@ -956,6 +1024,7 @@ function updateTop1Match() {
       currentExpressionGroup: current.expressionGroup,
       error: "noReferenceFrames",
     }
+    updateDisplacementDebug()
     return
   }
 
@@ -972,6 +1041,178 @@ function updateTop1Match() {
     idealExpressionGroup: best.frame.expressionGroup,
     error: null,
   }
+  updateDisplacementDebug()
+}
+
+function updateDisplacementDebug() {
+  const current = state.currentLiveFrameAnalysis
+  const match = state.top1Match
+  const idealFrame = getMatchedIdealFrame()
+
+  if (!match.matched) {
+    state.displacementDebug = createEmptyDisplacementDebug(
+      match.error ?? "top1MatchUnavailable",
+    )
+    return
+  }
+
+  if (current.landmarks478.length !== REQUIRED_LANDMARK_COUNT) {
+    state.displacementDebug = createEmptyDisplacementDebug("invalidCurrentLandmarks")
+    return
+  }
+
+  if (!idealFrame || idealFrame.landmarks478.length !== REQUIRED_LANDMARK_COUNT) {
+    state.displacementDebug = createEmptyDisplacementDebug("invalidIdealLandmarks")
+    return
+  }
+
+  const alignedIdeal = alignIdealLandmarksToCurrentBounds(
+    idealFrame.landmarks478,
+    current.landmarks478,
+  )
+
+  if (!alignedIdeal) {
+    state.displacementDebug = createEmptyDisplacementDebug("invalidLandmarkBounds")
+    return
+  }
+
+  const displacements = current.landmarks478.map((currentLandmark, index) => {
+    const alignedIdealLandmark = alignedIdeal[index]
+    const dx = alignedIdealLandmark.x - currentLandmark.x
+    const dy = alignedIdealLandmark.y - currentLandmark.y
+    const dz = alignedIdealLandmark.z - currentLandmark.z
+    return {
+      index: currentLandmark.index,
+      current: currentLandmark,
+      alignedIdeal: alignedIdealLandmark,
+      dx,
+      dy,
+      dz,
+      distance2D: Math.hypot(dx, dy),
+    }
+  })
+
+  state.displacementDebug = {
+    available: true,
+    displacements,
+    summary: createDisplacementSummary(displacements),
+  }
+}
+
+function alignIdealLandmarksToCurrentBounds(
+  idealLandmarks: ReferenceLandmark[],
+  currentLandmarks: ReferenceLandmark[],
+) {
+  const idealBounds = calculateLandmarkBounds(idealLandmarks)
+  const currentBounds = calculateLandmarkBounds(currentLandmarks)
+
+  if (!idealBounds || !currentBounds) {
+    return null
+  }
+
+  const idealSize = Math.max(idealBounds.width, idealBounds.height)
+  const currentSize = Math.max(currentBounds.width, currentBounds.height)
+
+  if (idealSize <= 0 || currentSize <= 0) {
+    return null
+  }
+
+  const scale = currentSize / idealSize
+  return idealLandmarks.map((landmark) => ({
+    index: landmark.index,
+    x: currentBounds.centerX + (landmark.x - idealBounds.centerX) * scale,
+    y: currentBounds.centerY + (landmark.y - idealBounds.centerY) * scale,
+    z: landmark.z,
+  }))
+}
+
+function calculateLandmarkBounds(landmarks: ReferenceLandmark[]): LandmarkBounds | null {
+  if (landmarks.length === 0) {
+    return null
+  }
+
+  const initial = landmarks[0]
+  const bounds = landmarks.reduce(
+    (result, landmark) => ({
+      minX: Math.min(result.minX, landmark.x),
+      minY: Math.min(result.minY, landmark.y),
+      maxX: Math.max(result.maxX, landmark.x),
+      maxY: Math.max(result.maxY, landmark.y),
+    }),
+    {
+      minX: initial.x,
+      minY: initial.y,
+      maxX: initial.x,
+      maxY: initial.y,
+    },
+  )
+  const width = bounds.maxX - bounds.minX
+  const height = bounds.maxY - bounds.minY
+  return {
+    ...bounds,
+    width,
+    height,
+    centerX: bounds.minX + width / 2,
+    centerY: bounds.minY + height / 2,
+  }
+}
+
+function createDisplacementSummary(displacements: LandmarkDisplacement[]): DisplacementSummary {
+  if (displacements.length === 0) {
+    return createEmptyDisplacementSummary("emptyDisplacements")
+  }
+
+  const distances = displacements.map((displacement) => displacement.distance2D)
+  const sortedDistances = [...distances].sort((a, b) => a - b)
+  const totalDistance = distances.reduce((sum, value) => sum + value, 0)
+  const topDisplacementsPreview = [...displacements]
+    .sort((a, b) => b.distance2D - a.distance2D)
+    .slice(0, DISPLACEMENT_PREVIEW_COUNT)
+    .map((displacement) => ({
+      index: displacement.index,
+      distance2D: displacement.distance2D,
+      dx: displacement.dx,
+      dy: displacement.dy,
+    }))
+
+  return {
+    available: true,
+    count: displacements.length,
+    maxDistance2D: sortedDistances[sortedDistances.length - 1],
+    averageDistance2D: totalDistance / displacements.length,
+    medianDistance2D: calculateMedian(sortedDistances),
+    p90Distance2D: calculatePercentile(sortedDistances, 0.9),
+    largeDisplacementCount: distances.filter(
+      (distance) => distance >= LARGE_DISPLACEMENT_THRESHOLD,
+    ).length,
+    largeDisplacementThreshold: LARGE_DISPLACEMENT_THRESHOLD,
+    topDisplacementsPreview,
+    error: null,
+  }
+}
+
+function calculateMedian(sortedValues: number[]) {
+  if (sortedValues.length === 0) {
+    return null
+  }
+
+  const center = Math.floor(sortedValues.length / 2)
+  return sortedValues.length % 2 === 0
+    ? (sortedValues[center - 1] + sortedValues[center]) / 2
+    : sortedValues[center]
+}
+
+function calculatePercentile(sortedValues: number[], percentile: number) {
+  if (sortedValues.length === 0) {
+    return null
+  }
+
+  const index = clamp(
+    Math.ceil(sortedValues.length * percentile) - 1,
+    0,
+    sortedValues.length - 1,
+  )
+  return sortedValues[index]
 }
 
 function calculatePoseDistance(current: ReferencePose, ideal: ReferencePose) {
@@ -1082,6 +1323,7 @@ async function analyzeCurrentLiveFrame(reason: "manual" | "timeupdate" | "seeked
       ...createEmptyTop1Match(),
       error: `current analysis failed / matching skipped: ${state.currentLiveFrameAnalysis.error}`,
     }
+    updateDisplacementDebug()
     addLog(`ライブ動画 current frame 解析でエラーが発生しました: ${message}`)
   } finally {
     liveAnalysisInProgress = false
@@ -1109,6 +1351,13 @@ function maybeAnalyzeLiveFrame(reason: "timeupdate") {
 function handleToggleLandmarks478(checked: boolean) {
   state.overlay.showLandmarks478 = checked
   addLog(`478点 overlay 表示を ${checked ? "ON" : "OFF"} にしました。`)
+  drawAllOverlays()
+  renderAll()
+}
+
+function handleToggleDisplacement(checked: boolean) {
+  state.overlay.showDisplacement = checked
+  addLog(`displacement overlay 表示を ${checked ? "ON" : "OFF"} にしました。`)
   drawAllOverlays()
   renderAll()
 }
@@ -1208,6 +1457,7 @@ function resetModelScanResults() {
   state.rawIdealReferenceFrames = []
   state.currentAcceptedReviewIndex = null
   state.top1Match = createEmptyTop1Match()
+  state.displacementDebug = createEmptyDisplacementDebug()
   state.modelScan.scanStatus = "idle"
   state.modelScan.scanProgress = 0
   state.modelScan.plannedScanFrames = 0
@@ -1224,6 +1474,7 @@ function resetLiveAnalysisResults() {
   resetLiveTimestamp()
   state.currentLiveFrameAnalysis = createEmptyCurrentLiveFrameAnalysis()
   state.top1Match = createEmptyTop1Match()
+  state.displacementDebug = createEmptyDisplacementDebug()
   liveAnalysisRequestId += 1
   liveAnalysisInProgress = false
   lastAutoLiveAnalysisAtSec = Number.NEGATIVE_INFINITY
@@ -1292,6 +1543,29 @@ function createEmptyTop1Match(): ReferenceMatchResult {
     currentExpressionGroup: null,
     idealExpressionGroup: null,
     error: null,
+  }
+}
+
+function createEmptyDisplacementDebug(error: string | null = null): DisplacementDebugState {
+  return {
+    available: false,
+    displacements: [],
+    summary: createEmptyDisplacementSummary(error),
+  }
+}
+
+function createEmptyDisplacementSummary(error: string | null = null): DisplacementSummary {
+  return {
+    available: false,
+    count: 0,
+    maxDistance2D: null,
+    averageDistance2D: null,
+    medianDistance2D: null,
+    p90Distance2D: null,
+    largeDisplacementCount: 0,
+    largeDisplacementThreshold: LARGE_DISPLACEMENT_THRESHOLD,
+    topDisplacementsPreview: [],
+    error,
   }
 }
 
@@ -1370,6 +1644,8 @@ function renderControls() {
   )
   getElement<HTMLInputElement>('[data-action="toggle-landmarks"]').checked =
     state.overlay.showLandmarks478
+  getElement<HTMLInputElement>('[data-action="toggle-displacement"]').checked =
+    state.overlay.showDisplacement
   renderModelReviewCard()
   renderLiveAnalysisCard()
 }
@@ -1459,6 +1735,11 @@ function renderDebugContent() {
     return
   }
 
+  if (state.activeDebugTab === "warpMesh") {
+    content.appendChild(createWarpMeshContent())
+    return
+  }
+
   if (state.activeDebugTab === "raw") {
     const pre = document.createElement("pre")
     pre.className = "raw-state"
@@ -1478,6 +1759,7 @@ function createSummaryContent() {
   const summaryList = document.createElement("dl")
   summaryList.className = "summary-list"
   const currentFrame = getCurrentAcceptedFrame()
+  const displacementSummary = state.displacementDebug.summary
 
   const items: Array<[string, string]> = [
     ["Model MediaPipe", state.modelScan.mediaPipeStatus],
@@ -1505,10 +1787,15 @@ function createSummaryContent() {
     ["Live current analysis", formatLiveAnalysisStatus()],
     ["Live current expression", state.currentLiveFrameAnalysis.analyzed ? state.currentLiveFrameAnalysis.expressionGroup : "-"],
     ["Top1 reference", state.top1Match.idealFrameId ?? "none"],
+    ["Displacement", displacementSummary.available ? "available" : "unavailable"],
+    ["Avg displacement", formatMetric(displacementSummary.averageDistance2D)],
+    ["Max displacement", formatMetric(displacementSummary.maxDistance2D)],
+    ["Large displacement count", String(displacementSummary.largeDisplacementCount)],
     ["Match score", formatSeconds(state.top1Match.matchScore)],
     ["Pose distance", formatSeconds(state.top1Match.poseDistance)],
     ["Expression distance", formatSeconds(state.top1Match.expressionDistance)],
     ["Overlay 478 landmarks", state.overlay.showLandmarks478 ? "on" : "off"],
+    ["Overlay displacement", state.overlay.showDisplacement ? "on" : "off"],
   ]
 
   appendDefinitionItems(summaryList, items)
@@ -1637,7 +1924,68 @@ function createMatchingContent() {
     ["weights", `pose ${POSE_WEIGHT} / expression ${EXPRESSION_WEIGHT} / quality ${QUALITY_WEIGHT}`],
   ])
 
-  fragment.append(currentHeading, currentList, idealHeading, idealList, scoreHeading, scoreList)
+  const displacementHeading = document.createElement("h3")
+  displacementHeading.textContent = "Displacement"
+  const displacementList = document.createElement("dl")
+  displacementList.className = "summary-list"
+  appendDefinitionItems(displacementList, [
+    ["available", state.displacementDebug.summary.available ? "yes" : "no"],
+    ["averageDistance2D", formatMetric(state.displacementDebug.summary.averageDistance2D)],
+    ["maxDistance2D", formatMetric(state.displacementDebug.summary.maxDistance2D)],
+    ["error", state.displacementDebug.summary.error ?? "-"],
+  ])
+
+  fragment.append(
+    currentHeading,
+    currentList,
+    idealHeading,
+    idealList,
+    scoreHeading,
+    scoreList,
+    displacementHeading,
+    displacementList,
+  )
+  return fragment
+}
+
+function createWarpMeshContent() {
+  const fragment = document.createDocumentFragment()
+  const heading = document.createElement("h3")
+  heading.textContent = "Displacement debug"
+  const summary = state.displacementDebug.summary
+  const summaryList = document.createElement("dl")
+  summaryList.className = "summary-list"
+  appendDefinitionItems(summaryList, [
+    ["available", summary.available ? "yes" : "no"],
+    ["count", String(summary.count)],
+    ["maxDistance2D", formatMetric(summary.maxDistance2D)],
+    ["averageDistance2D", formatMetric(summary.averageDistance2D)],
+    ["medianDistance2D", formatMetric(summary.medianDistance2D)],
+    ["p90Distance2D", formatMetric(summary.p90Distance2D)],
+    ["largeDisplacementCount", String(summary.largeDisplacementCount)],
+    ["largeDisplacementThreshold", formatMetric(summary.largeDisplacementThreshold)],
+    ["error", summary.error ?? "-"],
+    ["alignment", "bounds center + uniform scale"],
+    ["mesh warp", "not implemented"],
+    ["grid / hybrid mesh", "not implemented"],
+  ])
+
+  const topHeading = document.createElement("h3")
+  topHeading.textContent = "Top displacements"
+  const topList = document.createElement("dl")
+  topList.className = "summary-list"
+  const topItems =
+    summary.topDisplacementsPreview.length === 0
+      ? [["preview", "-"] as [string, string]]
+      : summary.topDisplacementsPreview.map(
+          (item) =>
+            [
+              `#${item.index}`,
+              `distance ${formatMetric(item.distance2D)} / dx ${formatMetric(item.dx)} / dy ${formatMetric(item.dy)}`,
+            ] as [string, string],
+        )
+  appendDefinitionItems(topList, topItems)
+  fragment.append(heading, summaryList, topHeading, topList)
   return fragment
 }
 
@@ -1730,7 +2078,29 @@ function getRawState() {
       idealExpressionGroup: state.top1Match.idealExpressionGroup,
       error: state.top1Match.error,
     },
+    displacement: getDisplacementRawState(),
     logs: state.logs,
+  }
+}
+
+function getDisplacementRawState() {
+  const summary = state.displacementDebug.summary
+  return {
+    available: summary.available,
+    count: summary.count,
+    maxDistance2D: roundMetricForState(summary.maxDistance2D),
+    averageDistance2D: roundMetricForState(summary.averageDistance2D),
+    medianDistance2D: roundMetricForState(summary.medianDistance2D),
+    p90Distance2D: roundMetricForState(summary.p90Distance2D),
+    largeDisplacementCount: summary.largeDisplacementCount,
+    largeDisplacementThreshold: roundMetricForState(summary.largeDisplacementThreshold),
+    topDisplacementsPreview: summary.topDisplacementsPreview.map((item) => ({
+      index: item.index,
+      distance2D: roundMetricForState(item.distance2D),
+      dx: roundMetricForState(item.dx),
+      dy: roundMetricForState(item.dy),
+    })),
+    error: summary.error,
   }
 }
 
@@ -1806,17 +2176,42 @@ function drawModelOverlay() {
 }
 
 function drawLiveOverlay() {
-  drawLandmarkOverlay({
-    canvas: liveOverlayCanvas,
-    videoElement: liveVideoElement,
-    videoState: state.liveVideo,
-    landmarks: state.currentLiveFrameAnalysis.landmarks478,
-    shouldDraw:
-      state.overlay.showLandmarks478 &&
-      state.activePreviewTab === "live" &&
-      state.currentLiveFrameAnalysis.landmarks478.length === REQUIRED_LANDMARK_COUNT,
-    color: "rgba(79, 128, 255, 0.85)",
-  })
+  const context = liveOverlayCanvas.getContext("2d")
+  if (!context) {
+    return
+  }
+
+  const rect = liveVideoElement.getBoundingClientRect()
+  const dpr = window.devicePixelRatio || 1
+  liveOverlayCanvas.width = Math.max(1, Math.round(rect.width * dpr))
+  liveOverlayCanvas.height = Math.max(1, Math.round(rect.height * dpr))
+  context.setTransform(dpr, 0, 0, dpr, 0, 0)
+  context.clearRect(0, 0, rect.width, rect.height)
+
+  if (
+    state.activePreviewTab !== "live" ||
+    rect.width <= 0 ||
+    rect.height <= 0 ||
+    state.currentLiveFrameAnalysis.landmarks478.length !== REQUIRED_LANDMARK_COUNT
+  ) {
+    return
+  }
+
+  const drawRect = getVideoDrawRect(state.liveVideo, liveVideoElement, rect.width, rect.height)
+
+  if (state.overlay.showLandmarks478) {
+    drawLandmarkPoints(
+      context,
+      drawRect,
+      state.currentLiveFrameAnalysis.landmarks478,
+      "rgba(79, 128, 255, 0.85)",
+      1.45,
+    )
+  }
+
+  if (state.overlay.showDisplacement && state.displacementDebug.available) {
+    drawDisplacementOverlay(context, drawRect, state.displacementDebug.displacements)
+  }
 }
 
 function drawAllOverlays() {
@@ -1861,18 +2256,64 @@ function drawLandmarkOverlay({
   }
 
   const drawRect = getVideoDrawRect(videoState, videoElement, rect.width, rect.height)
+  drawLandmarkPoints(context, drawRect, landmarks, color, 1.45)
+}
+
+function drawLandmarkPoints(
+  context: CanvasRenderingContext2D,
+  drawRect: { x: number; y: number; width: number; height: number },
+  landmarks: ReferenceLandmark[],
+  color: string,
+  radius: number,
+) {
   context.fillStyle = color
   for (const landmark of landmarks) {
     context.beginPath()
     context.arc(
       drawRect.x + landmark.x * drawRect.width,
       drawRect.y + landmark.y * drawRect.height,
-      1.45,
+      radius,
       0,
       Math.PI * 2,
     )
     context.fill()
   }
+}
+
+function drawDisplacementOverlay(
+  context: CanvasRenderingContext2D,
+  drawRect: { x: number; y: number; width: number; height: number },
+  displacements: LandmarkDisplacement[],
+) {
+  context.save()
+  context.lineWidth = 1
+
+  for (let index = 0; index < displacements.length; index += DISPLACEMENT_DRAW_STEP) {
+    const displacement = displacements[index]
+    const currentX = drawRect.x + displacement.current.x * drawRect.width
+    const currentY = drawRect.y + displacement.current.y * drawRect.height
+    const idealX = drawRect.x + displacement.alignedIdeal.x * drawRect.width
+    const idealY = drawRect.y + displacement.alignedIdeal.y * drawRect.height
+    const isLarge = displacement.distance2D >= LARGE_DISPLACEMENT_THRESHOLD
+
+    context.strokeStyle = isLarge ? "rgba(244, 67, 54, 0.82)" : "rgba(255, 213, 79, 0.72)"
+    context.beginPath()
+    context.moveTo(currentX, currentY)
+    context.lineTo(idealX, idealY)
+    context.stroke()
+
+    context.fillStyle = "rgba(79, 128, 255, 0.92)"
+    context.beginPath()
+    context.arc(currentX, currentY, 2, 0, Math.PI * 2)
+    context.fill()
+
+    context.fillStyle = "rgba(255, 145, 0, 0.92)"
+    context.beginPath()
+    context.arc(idealX, idealY, 2, 0, Math.PI * 2)
+    context.fill()
+  }
+
+  context.restore()
 }
 
 function clearModelOverlay() {
@@ -1965,6 +2406,14 @@ function formatSeconds(value: number | null) {
   return value.toFixed(2)
 }
 
+function formatMetric(value: number | null) {
+  if (value === null || !Number.isFinite(value)) {
+    return "-"
+  }
+
+  return value.toFixed(4)
+}
+
 function formatSize(width: number | null, height: number | null) {
   return width === null || height === null ? "-" : `${width} x ${height}`
 }
@@ -2011,6 +2460,14 @@ function roundForState(value: number | null) {
   }
 
   return Math.round(value * 1000) / 1000
+}
+
+function roundMetricForState(value: number | null) {
+  if (value === null || !Number.isFinite(value)) {
+    return value
+  }
+
+  return Math.round(value * 10000) / 10000
 }
 
 function roundPose(pose: ReferencePose) {
