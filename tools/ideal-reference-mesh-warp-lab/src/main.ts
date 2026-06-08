@@ -2,16 +2,10 @@ import {
   FaceLandmarker,
   FilesetResolver,
 } from "@mediapipe/tasks-vision"
-import {
-  MEDIAPIPE_FACE_MESH_TOPOLOGY_LANDMARK_COUNT,
-  MEDIAPIPE_FACE_MESH_TRIANGLE_COUNT,
-  MEDIAPIPE_FACE_MESH_TRIANGLES,
-} from "@bae-ar/engine"
 import type { Matrix, NormalizedLandmark } from "@mediapipe/tasks-vision"
 import "./style.css"
 
 type PreviewTab = "model" | "live"
-type LivePreviewMode = "source" | "rawWarpOnly" | "sideBySide"
 type DebugTab =
   | "summary"
   | "modelScan"
@@ -105,127 +99,11 @@ type ReferenceMatchResult = {
   error: string | null
 }
 
-type LandmarkDisplacement = {
-  index: number
-  current: ReferenceLandmark
-  alignedIdeal: ReferenceLandmark
-  dx: number
-  dy: number
-  dz: number
-  distance2D: number
-}
-
-type DisplacementSummary = {
-  available: boolean
-  count: number
-  maxDistance2D: number | null
-  averageDistance2D: number | null
-  medianDistance2D: number | null
-  p90Distance2D: number | null
-  largeDisplacementCount: number
-  largeDisplacementThreshold: number
-  topDisplacementsPreview: Array<{
-    index: number
-    distance2D: number
-    dx: number
-    dy: number
-  }>
-  error: string | null
-}
-
-type DisplacementDebugState = {
-  available: boolean
-  displacements: LandmarkDisplacement[]
-  summary: DisplacementSummary
-}
-
 type Rect = {
   x: number
   y: number
   width: number
   height: number
-}
-
-type SizeDebug = {
-  width: number
-  height: number
-}
-
-type NullableSizeDebug = {
-  width: number | null
-  height: number | null
-}
-
-type VideoCoordinateDebug = {
-  videoIntrinsic: NullableSizeDebug
-  previewElementRect: SizeDebug
-  videoCssRect: SizeDebug
-  rawWarpCanvasCssRect: SizeDebug
-  displayedContentRect: Rect
-  overlayCanvas: SizeDebug
-  rawWarpCanvas: SizeDebug
-}
-
-type MeshMappingMode = "draw_target_triangles_sample_source_uv"
-type CoordinateConversionMode = "normalized_to_displayed_content_pixel_to_clip_space"
-type TextureUploadFlip = "off" | "on"
-type TextureVFormula = "y" | "oneMinusY"
-
-type RawWarpSummary = {
-  enabled: boolean
-  available: boolean
-  mode: "unadjusted_current_to_aligned_ideal"
-  strength: number
-  previewMode: LivePreviewMode
-  textureUploadFlip: TextureUploadFlip
-  textureVFormula: TextureVFormula
-  meshMapping: MeshMappingMode
-  coordinateConversion: CoordinateConversionMode
-  coordinateDebug: VideoCoordinateDebug
-  sourceVertexCount: number
-  targetVertexCount: number
-  topology: "mediapipe_face_mesh"
-  topologyLandmarkCount: number
-  triangleCount: number
-  alignment: "bounds_center_uniform_scale"
-  meshWarp: "prototype"
-  visibilityWeight: "not_implemented"
-  warpSafetyWeight: "not_implemented"
-  hybridMesh: "not_implemented"
-  error: string | null
-  webglStatus: "not_started" | "available" | "unavailable"
-  renderTimeMs: number | null
-}
-
-type RawWarpDebugState = {
-  strength: number
-  textureUploadFlip: TextureUploadFlip
-  textureVFormula: TextureVFormula
-  summary: RawWarpSummary
-}
-
-type RawWarpWebglRenderer = {
-  canvas: HTMLCanvasElement
-  gl: WebGLRenderingContext
-  program: WebGLProgram
-  positionBuffer: WebGLBuffer
-  texCoordBuffer: WebGLBuffer
-  indexBuffer: WebGLBuffer
-  texture: WebGLTexture
-  positionLocation: number
-  texCoordLocation: number
-  textureLocation: WebGLUniformLocation
-}
-
-type LandmarkBounds = {
-  minX: number
-  minY: number
-  maxX: number
-  maxY: number
-  width: number
-  height: number
-  centerX: number
-  centerY: number
 }
 
 type ModelScanState = {
@@ -247,12 +125,8 @@ type ModelScanState = {
 type LabState = {
   activePreviewTab: PreviewTab
   activeDebugTab: DebugTab
-  livePreviewMode: LivePreviewMode
   overlay: {
     showLandmarks478: boolean
-    showDisplacement: boolean
-    showRawWarp: boolean
-    showRawWarpCoordinateDebug: boolean
   }
   modelVideo: VideoPreviewState & {
     currentReviewFrameIndex: number | null
@@ -271,8 +145,6 @@ type LabState = {
   currentAcceptedReviewIndex: number | null
   currentLiveFrameAnalysis: CurrentLiveFrameAnalysis
   top1Match: ReferenceMatchResult
-  displacementDebug: DisplacementDebugState
-  rawWarpDebug: RawWarpDebugState
   logs: string[]
 }
 
@@ -289,16 +161,6 @@ const RAD_TO_DEG = 180 / Math.PI
 const STRONG_EXPRESSION_THRESHOLD = 0.35
 const MIXED_EXPRESSION_THRESHOLD = 0.28
 const LANDMARK_PREVIEW_COUNT = 5
-const DISPLACEMENT_PREVIEW_COUNT = 8
-const DISPLACEMENT_DRAW_STEP = 8
-const WARP_COORDINATE_DEBUG_DRAW_STEP = 8
-const WARP_SAMPLE_INDICES = [0, 1, 33, 61, 199] as const
-const LARGE_DISPLACEMENT_THRESHOLD = 0.03
-const DEFAULT_RAW_WARP_STRENGTH = 1
-const RAW_WARP_STRENGTH_OPTIONS = [0.25, 0.5, 1] as const
-const DEFAULT_LIVE_PREVIEW_MODE: LivePreviewMode = "source"
-const DEFAULT_TEXTURE_UPLOAD_FLIP: TextureUploadFlip = "on"
-const DEFAULT_TEXTURE_V_FORMULA: TextureVFormula = "oneMinusY"
 const SCAN_RENDER_INTERVAL = 8
 const LIVE_AUTO_ANALYSIS_INTERVAL_SEC = 0.35
 const MEDIAPIPE_TIMESTAMP_STEP_MS = SCAN_FRAME_STEP_SEC * 1000
@@ -334,12 +196,8 @@ const debugTabs: TabOption<DebugTab>[] = [
 const state: LabState = {
   activePreviewTab: "model",
   activeDebugTab: "summary",
-  livePreviewMode: DEFAULT_LIVE_PREVIEW_MODE,
   overlay: {
     showLandmarks478: false,
-    showDisplacement: false,
-    showRawWarp: false,
-    showRawWarpCoordinateDebug: false,
   },
   modelVideo: {
     loaded: false,
@@ -386,8 +244,6 @@ const state: LabState = {
   currentAcceptedReviewIndex: null,
   currentLiveFrameAnalysis: createEmptyCurrentLiveFrameAnalysis(),
   top1Match: createEmptyTop1Match(),
-  displacementDebug: createEmptyDisplacementDebug(),
-  rawWarpDebug: createEmptyRawWarpDebug(),
   logs: ["ラボを初期化しました。"],
 }
 
@@ -439,18 +295,6 @@ app.innerHTML = `
             <input type="checkbox" data-action="toggle-landmarks" />
             <span>478点を表示</span>
           </label>
-          <label class="overlay-toggle">
-            <input type="checkbox" data-action="toggle-displacement" />
-            <span>displacement を表示</span>
-          </label>
-          <label class="overlay-toggle">
-            <input type="checkbox" data-action="toggle-raw-warp" />
-            <span>warp を表示</span>
-          </label>
-          <label class="overlay-toggle">
-            <input type="checkbox" data-action="toggle-warp-coordinate-debug" />
-            <span>warp座標debugを表示</span>
-          </label>
         </div>
       </div>
       ${renderTabs("preview", previewTabs, state.activePreviewTab)}
@@ -477,12 +321,8 @@ const modelVideoElement = getElement<HTMLVideoElement>("[data-video='model']")
 const liveVideoElement = getElement<HTMLVideoElement>("[data-video='live']")
 const modelOverlayCanvas = getElement<HTMLCanvasElement>("[data-overlay='model']")
 const liveOverlayCanvas = getElement<HTMLCanvasElement>("[data-overlay='live']")
-const liveRawWarpCanvas = getElement<HTMLCanvasElement>("[data-raw-warp='live']")
 const modelFileInput = getElement<HTMLInputElement>("[data-input='model-video']")
 const liveFileInput = getElement<HTMLInputElement>("[data-input='live-video']")
-
-let rawWarpRenderer: RawWarpWebglRenderer | null = null
-let rawWarpRendererError: string | null = null
 
 bindEvents()
 renderAll()
@@ -547,7 +387,6 @@ function renderLivePreview() {
     <div class="preview-card" data-preview-panel="live">
       <div class="preview-stage" data-loaded="false">
         <video class="video-preview" data-video="live" preload="metadata" playsinline controls></video>
-        <canvas class="raw-warp-canvas" data-raw-warp="live"></canvas>
         <canvas class="landmark-overlay" data-overlay="live"></canvas>
         <div class="preview-placeholder" data-placeholder="live">
           <h3>ライブ動画プレビュー</h3>
@@ -558,37 +397,6 @@ function renderLivePreview() {
         <button class="small-button" type="button" data-action="live-play">再生</button>
         <button class="small-button" type="button" data-action="live-pause">一時停止</button>
         <button class="small-button" type="button" data-action="live-analyze-current">現在フレーム解析</button>
-        <label class="range-field compact-field">
-          <span>Preview mode</span>
-          <select data-action="live-preview-mode">
-            <option value="source" ${state.livePreviewMode === "source" ? "selected" : ""}>Source</option>
-            <option value="rawWarpOnly" ${state.livePreviewMode === "rawWarpOnly" ? "selected" : ""}>Raw warp only</option>
-            <option value="sideBySide" ${state.livePreviewMode === "sideBySide" ? "selected" : ""}>Side by side</option>
-          </select>
-        </label>
-        <label class="range-field compact-field">
-          <span>raw warp strength</span>
-          <select data-action="raw-warp-strength">
-            ${RAW_WARP_STRENGTH_OPTIONS.map(
-              (strength) =>
-                `<option value="${strength}" ${strength === state.rawWarpDebug.strength ? "selected" : ""}>${strength}</option>`,
-            ).join("")}
-          </select>
-        </label>
-        <label class="range-field compact-field">
-          <span>texture upload flip</span>
-          <select data-action="texture-upload-flip">
-            <option value="off" ${state.rawWarpDebug.textureUploadFlip === "off" ? "selected" : ""}>off</option>
-            <option value="on" ${state.rawWarpDebug.textureUploadFlip === "on" ? "selected" : ""}>on</option>
-          </select>
-        </label>
-        <label class="range-field compact-field">
-          <span>texture V formula</span>
-          <select data-action="texture-v-formula">
-            <option value="y" ${state.rawWarpDebug.textureVFormula === "y" ? "selected" : ""}>y</option>
-            <option value="oneMinusY" ${state.rawWarpDebug.textureVFormula === "oneMinusY" ? "selected" : ""}>1 - y</option>
-          </select>
-        </label>
         <label class="range-field">
           <span>シーク</span>
           <input type="range" min="0" step="0.001" value="0" data-range="live" />
@@ -629,48 +437,6 @@ function bindEvents() {
     "change",
     (event) => {
       handleToggleLandmarks478(event.currentTarget.checked)
-    },
-  )
-  getElement<HTMLInputElement>('[data-action="toggle-displacement"]').addEventListener(
-    "change",
-    (event) => {
-      handleToggleDisplacement(event.currentTarget.checked)
-    },
-  )
-  getElement<HTMLInputElement>('[data-action="toggle-raw-warp"]').addEventListener(
-    "change",
-    (event) => {
-      handleToggleRawWarp(event.currentTarget.checked)
-    },
-  )
-  getElement<HTMLInputElement>('[data-action="toggle-warp-coordinate-debug"]').addEventListener(
-    "change",
-    (event) => {
-      handleToggleWarpCoordinateDebug(event.currentTarget.checked)
-    },
-  )
-  getElement<HTMLSelectElement>('[data-action="live-preview-mode"]').addEventListener(
-    "change",
-    (event) => {
-      handleLivePreviewModeChange(event.currentTarget.value)
-    },
-  )
-  getElement<HTMLSelectElement>('[data-action="raw-warp-strength"]').addEventListener(
-    "change",
-    (event) => {
-      handleRawWarpStrengthChange(Number(event.currentTarget.value))
-    },
-  )
-  getElement<HTMLSelectElement>('[data-action="texture-upload-flip"]').addEventListener(
-    "change",
-    (event) => {
-      handleTextureUploadFlipChange(event.currentTarget.value)
-    },
-  )
-  getElement<HTMLSelectElement>('[data-action="texture-v-formula"]').addEventListener(
-    "change",
-    (event) => {
-      handleTextureVFormulaChange(event.currentTarget.value)
     },
   )
   modelFileInput.addEventListener("change", () => {
@@ -854,9 +620,6 @@ async function scanModelVideo() {
   state.modelScan.lastError = null
   state.rawIdealReferenceFrames = []
   state.currentAcceptedReviewIndex = null
-  state.displacementDebug = createEmptyDisplacementDebug("noReferenceFrames")
-  updateRawWarpSummary()
-  clearRawWarpCanvas()
   disposeModelFaceLandmarker("uninitialized")
   resetModelTimestamp()
   updateScanCounters()
@@ -1141,7 +904,6 @@ function updateTop1Match() {
       ...createEmptyTop1Match(),
       error: "currentNotAnalyzed",
     }
-    updateDisplacementDebug()
     return
   }
 
@@ -1151,7 +913,6 @@ function updateTop1Match() {
       currentExpressionGroup: current.expressionGroup,
       error: `current analysis failed / matching skipped: ${current.error ?? "invalidCurrentLandmarks"}`,
     }
-    updateDisplacementDebug()
     return
   }
 
@@ -1164,7 +925,6 @@ function updateTop1Match() {
       currentExpressionGroup: current.expressionGroup,
       error: "noReferenceFrames",
     }
-    updateDisplacementDebug()
     return
   }
 
@@ -1205,7 +965,6 @@ function updateTop1Match() {
       currentExpressionGroup: current.expressionGroup,
       error: "noReferenceFrames",
     }
-    updateDisplacementDebug()
     return
   }
 
@@ -1222,183 +981,6 @@ function updateTop1Match() {
     idealExpressionGroup: best.frame.expressionGroup,
     error: null,
   }
-  updateDisplacementDebug()
-}
-
-function updateDisplacementDebug() {
-  const current = state.currentLiveFrameAnalysis
-  const match = state.top1Match
-  const idealFrame = getMatchedIdealFrame()
-
-  if (!match.matched) {
-    state.displacementDebug = createEmptyDisplacementDebug(
-      match.error ?? "top1MatchUnavailable",
-    )
-    updateRawWarpSummary()
-    return
-  }
-
-  if (current.landmarks478.length !== REQUIRED_LANDMARK_COUNT) {
-    state.displacementDebug = createEmptyDisplacementDebug("invalidCurrentLandmarks")
-    updateRawWarpSummary()
-    return
-  }
-
-  if (!idealFrame || idealFrame.landmarks478.length !== REQUIRED_LANDMARK_COUNT) {
-    state.displacementDebug = createEmptyDisplacementDebug("invalidIdealLandmarks")
-    updateRawWarpSummary()
-    return
-  }
-
-  const alignedIdeal = alignIdealLandmarksToCurrentBounds(
-    idealFrame.landmarks478,
-    current.landmarks478,
-  )
-
-  if (!alignedIdeal) {
-    state.displacementDebug = createEmptyDisplacementDebug("invalidLandmarkBounds")
-    updateRawWarpSummary()
-    return
-  }
-
-  const displacements = current.landmarks478.map((currentLandmark, index) => {
-    const alignedIdealLandmark = alignedIdeal[index]
-    const dx = alignedIdealLandmark.x - currentLandmark.x
-    const dy = alignedIdealLandmark.y - currentLandmark.y
-    const dz = alignedIdealLandmark.z - currentLandmark.z
-    return {
-      index: currentLandmark.index,
-      current: currentLandmark,
-      alignedIdeal: alignedIdealLandmark,
-      dx,
-      dy,
-      dz,
-      distance2D: Math.hypot(dx, dy),
-    }
-  })
-
-  state.displacementDebug = {
-    available: true,
-    displacements,
-    summary: createDisplacementSummary(displacements),
-  }
-  updateRawWarpSummary()
-}
-
-function alignIdealLandmarksToCurrentBounds(
-  idealLandmarks: ReferenceLandmark[],
-  currentLandmarks: ReferenceLandmark[],
-) {
-  const idealBounds = calculateLandmarkBounds(idealLandmarks)
-  const currentBounds = calculateLandmarkBounds(currentLandmarks)
-
-  if (!idealBounds || !currentBounds) {
-    return null
-  }
-
-  const idealSize = Math.max(idealBounds.width, idealBounds.height)
-  const currentSize = Math.max(currentBounds.width, currentBounds.height)
-
-  if (idealSize <= 0 || currentSize <= 0) {
-    return null
-  }
-
-  const scale = currentSize / idealSize
-  return idealLandmarks.map((landmark) => ({
-    index: landmark.index,
-    x: currentBounds.centerX + (landmark.x - idealBounds.centerX) * scale,
-    y: currentBounds.centerY + (landmark.y - idealBounds.centerY) * scale,
-    z: landmark.z,
-  }))
-}
-
-function calculateLandmarkBounds(landmarks: ReferenceLandmark[]): LandmarkBounds | null {
-  if (landmarks.length === 0) {
-    return null
-  }
-
-  const initial = landmarks[0]
-  const bounds = landmarks.reduce(
-    (result, landmark) => ({
-      minX: Math.min(result.minX, landmark.x),
-      minY: Math.min(result.minY, landmark.y),
-      maxX: Math.max(result.maxX, landmark.x),
-      maxY: Math.max(result.maxY, landmark.y),
-    }),
-    {
-      minX: initial.x,
-      minY: initial.y,
-      maxX: initial.x,
-      maxY: initial.y,
-    },
-  )
-  const width = bounds.maxX - bounds.minX
-  const height = bounds.maxY - bounds.minY
-  return {
-    ...bounds,
-    width,
-    height,
-    centerX: bounds.minX + width / 2,
-    centerY: bounds.minY + height / 2,
-  }
-}
-
-function createDisplacementSummary(displacements: LandmarkDisplacement[]): DisplacementSummary {
-  if (displacements.length === 0) {
-    return createEmptyDisplacementSummary("emptyDisplacements")
-  }
-
-  const distances = displacements.map((displacement) => displacement.distance2D)
-  const sortedDistances = [...distances].sort((a, b) => a - b)
-  const totalDistance = distances.reduce((sum, value) => sum + value, 0)
-  const topDisplacementsPreview = [...displacements]
-    .sort((a, b) => b.distance2D - a.distance2D)
-    .slice(0, DISPLACEMENT_PREVIEW_COUNT)
-    .map((displacement) => ({
-      index: displacement.index,
-      distance2D: displacement.distance2D,
-      dx: displacement.dx,
-      dy: displacement.dy,
-    }))
-
-  return {
-    available: true,
-    count: displacements.length,
-    maxDistance2D: sortedDistances[sortedDistances.length - 1],
-    averageDistance2D: totalDistance / displacements.length,
-    medianDistance2D: calculateMedian(sortedDistances),
-    p90Distance2D: calculatePercentile(sortedDistances, 0.9),
-    largeDisplacementCount: distances.filter(
-      (distance) => distance >= LARGE_DISPLACEMENT_THRESHOLD,
-    ).length,
-    largeDisplacementThreshold: LARGE_DISPLACEMENT_THRESHOLD,
-    topDisplacementsPreview,
-    error: null,
-  }
-}
-
-function calculateMedian(sortedValues: number[]) {
-  if (sortedValues.length === 0) {
-    return null
-  }
-
-  const center = Math.floor(sortedValues.length / 2)
-  return sortedValues.length % 2 === 0
-    ? (sortedValues[center - 1] + sortedValues[center]) / 2
-    : sortedValues[center]
-}
-
-function calculatePercentile(sortedValues: number[], percentile: number) {
-  if (sortedValues.length === 0) {
-    return null
-  }
-
-  const index = clamp(
-    Math.ceil(sortedValues.length * percentile) - 1,
-    0,
-    sortedValues.length - 1,
-  )
-  return sortedValues[index]
 }
 
 function calculatePoseDistance(current: ReferencePose, ideal: ReferencePose) {
@@ -1509,7 +1091,6 @@ async function analyzeCurrentLiveFrame(reason: "manual" | "timeupdate" | "seeked
       ...createEmptyTop1Match(),
       error: `current analysis failed / matching skipped: ${state.currentLiveFrameAnalysis.error}`,
     }
-    updateDisplacementDebug()
     addLog(`ライブ動画 current frame 解析でエラーが発生しました: ${message}`)
   } finally {
     liveAnalysisInProgress = false
@@ -1537,77 +1118,6 @@ function maybeAnalyzeLiveFrame(reason: "timeupdate") {
 function handleToggleLandmarks478(checked: boolean) {
   state.overlay.showLandmarks478 = checked
   addLog(`478点 overlay 表示を ${checked ? "ON" : "OFF"} にしました。`)
-  drawAllOverlays()
-  renderAll()
-}
-
-function handleToggleDisplacement(checked: boolean) {
-  state.overlay.showDisplacement = checked
-  addLog(`displacement overlay 表示を ${checked ? "ON" : "OFF"} にしました。`)
-  drawAllOverlays()
-  renderAll()
-}
-
-function handleToggleRawWarp(checked: boolean) {
-  state.overlay.showRawWarp = checked
-  updateRawWarpSummary()
-  addLog(`調整なし warp 表示を ${checked ? "ON" : "OFF"} にしました。`)
-  drawAllOverlays()
-  renderAll()
-}
-
-function handleToggleWarpCoordinateDebug(checked: boolean) {
-  state.overlay.showRawWarpCoordinateDebug = checked
-  updateRawWarpSummary()
-  addLog(`warp 座標 debug 表示を ${checked ? "ON" : "OFF"} にしました。`)
-  drawAllOverlays()
-  renderAll()
-}
-
-function handleLivePreviewModeChange(value: string) {
-  if (!isLivePreviewMode(value)) {
-    return
-  }
-
-  state.livePreviewMode = value
-  updateRawWarpSummary()
-  addLog(`Live preview mode を ${value} にしました。`)
-  drawAllOverlays()
-  renderAll()
-}
-
-function handleRawWarpStrengthChange(strength: number) {
-  if (!RAW_WARP_STRENGTH_OPTIONS.includes(strength as (typeof RAW_WARP_STRENGTH_OPTIONS)[number])) {
-    return
-  }
-
-  state.rawWarpDebug.strength = strength
-  updateRawWarpSummary()
-  addLog(`raw warp strength を ${formatMetric(strength)} にしました。`)
-  drawAllOverlays()
-  renderAll()
-}
-
-function handleTextureUploadFlipChange(value: string) {
-  if (!isTextureUploadFlip(value)) {
-    return
-  }
-
-  state.rawWarpDebug.textureUploadFlip = value
-  updateRawWarpSummary()
-  addLog(`texture upload flip を ${value} にしました。`)
-  drawAllOverlays()
-  renderAll()
-}
-
-function handleTextureVFormulaChange(value: string) {
-  if (!isTextureVFormula(value)) {
-    return
-  }
-
-  state.rawWarpDebug.textureVFormula = value
-  updateRawWarpSummary()
-  addLog(`texture V formula を ${value} にしました。`)
   drawAllOverlays()
   renderAll()
 }
@@ -1707,9 +1217,6 @@ function resetModelScanResults() {
   state.rawIdealReferenceFrames = []
   state.currentAcceptedReviewIndex = null
   state.top1Match = createEmptyTop1Match()
-  state.displacementDebug = createEmptyDisplacementDebug()
-  updateRawWarpSummary()
-  clearRawWarpCanvas()
   state.modelScan.scanStatus = "idle"
   state.modelScan.scanProgress = 0
   state.modelScan.plannedScanFrames = 0
@@ -1726,9 +1233,6 @@ function resetLiveAnalysisResults() {
   resetLiveTimestamp()
   state.currentLiveFrameAnalysis = createEmptyCurrentLiveFrameAnalysis()
   state.top1Match = createEmptyTop1Match()
-  state.displacementDebug = createEmptyDisplacementDebug()
-  updateRawWarpSummary()
-  clearRawWarpCanvas()
   liveAnalysisRequestId += 1
   liveAnalysisInProgress = false
   lastAutoLiveAnalysisAtSec = Number.NEGATIVE_INFINITY
@@ -1800,142 +1304,6 @@ function createEmptyTop1Match(): ReferenceMatchResult {
   }
 }
 
-function createEmptyDisplacementDebug(error: string | null = null): DisplacementDebugState {
-  return {
-    available: false,
-    displacements: [],
-    summary: createEmptyDisplacementSummary(error),
-  }
-}
-
-function createEmptyDisplacementSummary(error: string | null = null): DisplacementSummary {
-  return {
-    available: false,
-    count: 0,
-    maxDistance2D: null,
-    averageDistance2D: null,
-    medianDistance2D: null,
-    p90Distance2D: null,
-    largeDisplacementCount: 0,
-    largeDisplacementThreshold: LARGE_DISPLACEMENT_THRESHOLD,
-    topDisplacementsPreview: [],
-    error,
-  }
-}
-
-function createEmptyRawWarpDebug(): RawWarpDebugState {
-  return {
-    strength: DEFAULT_RAW_WARP_STRENGTH,
-    textureUploadFlip: DEFAULT_TEXTURE_UPLOAD_FLIP,
-    textureVFormula: DEFAULT_TEXTURE_V_FORMULA,
-    summary: {
-      enabled: false,
-      available: false,
-      mode: "unadjusted_current_to_aligned_ideal",
-      strength: DEFAULT_RAW_WARP_STRENGTH,
-      previewMode: DEFAULT_LIVE_PREVIEW_MODE,
-      textureUploadFlip: DEFAULT_TEXTURE_UPLOAD_FLIP,
-      textureVFormula: DEFAULT_TEXTURE_V_FORMULA,
-      meshMapping: "draw_target_triangles_sample_source_uv",
-      coordinateConversion: "normalized_to_displayed_content_pixel_to_clip_space",
-      coordinateDebug: createEmptyVideoCoordinateDebug(),
-      sourceVertexCount: 0,
-      targetVertexCount: 0,
-      topology: "mediapipe_face_mesh",
-      topologyLandmarkCount: MEDIAPIPE_FACE_MESH_TOPOLOGY_LANDMARK_COUNT,
-      triangleCount: 0,
-      alignment: "bounds_center_uniform_scale",
-      meshWarp: "prototype",
-      visibilityWeight: "not_implemented",
-      warpSafetyWeight: "not_implemented",
-      hybridMesh: "not_implemented",
-      error: "displacementUnavailable",
-      webglStatus: "not_started",
-      renderTimeMs: null,
-    },
-  }
-}
-
-function createRawWarpSummary({
-  available,
-  error,
-  webglStatus,
-  renderTimeMs,
-}: {
-  available: boolean
-  error: string | null
-  webglStatus: RawWarpSummary["webglStatus"]
-  renderTimeMs: number | null
-}): RawWarpSummary {
-  const vertexCount = available ? MEDIAPIPE_FACE_MESH_TOPOLOGY_LANDMARK_COUNT : 0
-  return {
-    enabled: state.overlay.showRawWarp,
-    available,
-    mode: "unadjusted_current_to_aligned_ideal",
-    strength: state.rawWarpDebug?.strength ?? DEFAULT_RAW_WARP_STRENGTH,
-    previewMode: state.livePreviewMode,
-    textureUploadFlip: state.rawWarpDebug?.textureUploadFlip ?? DEFAULT_TEXTURE_UPLOAD_FLIP,
-    textureVFormula: state.rawWarpDebug?.textureVFormula ?? DEFAULT_TEXTURE_V_FORMULA,
-    meshMapping: "draw_target_triangles_sample_source_uv",
-    coordinateConversion: "normalized_to_displayed_content_pixel_to_clip_space",
-    coordinateDebug: getLiveVideoCoordinateDebug(),
-    sourceVertexCount: vertexCount,
-    targetVertexCount: vertexCount,
-    topology: "mediapipe_face_mesh",
-    topologyLandmarkCount: MEDIAPIPE_FACE_MESH_TOPOLOGY_LANDMARK_COUNT,
-    triangleCount: available ? MEDIAPIPE_FACE_MESH_TRIANGLE_COUNT : 0,
-    alignment: "bounds_center_uniform_scale",
-    meshWarp: "prototype",
-    visibilityWeight: "not_implemented",
-    warpSafetyWeight: "not_implemented",
-    hybridMesh: "not_implemented",
-    error,
-    webglStatus,
-    renderTimeMs,
-  }
-}
-
-function updateRawWarpSummary(
-  override?: Partial<Pick<RawWarpSummary, "error" | "webglStatus" | "renderTimeMs">>,
-) {
-  const availabilityError = getRawWarpAvailabilityError()
-  const webglUnavailable = override?.webglStatus === "unavailable"
-  state.rawWarpDebug.summary = createRawWarpSummary({
-    available: availabilityError === null && !webglUnavailable,
-    error: override?.error ?? availabilityError,
-    webglStatus: override?.webglStatus ?? state.rawWarpDebug.summary.webglStatus,
-    renderTimeMs: override?.renderTimeMs ?? state.rawWarpDebug.summary.renderTimeMs,
-  })
-}
-
-function getRawWarpAvailabilityError() {
-  if (!state.liveVideo.loaded) {
-    return "liveVideoNotLoaded"
-  }
-
-  if (!state.top1Match.matched) {
-    return state.top1Match.error ?? "top1MatchUnavailable"
-  }
-
-  if (!state.displacementDebug.available) {
-    return state.displacementDebug.summary.error ?? "displacementUnavailable"
-  }
-
-  if (state.displacementDebug.displacements.length < MEDIAPIPE_FACE_MESH_TOPOLOGY_LANDMARK_COUNT) {
-    return "insufficientDisplacementVertices"
-  }
-
-  if (state.currentLiveFrameAnalysis.landmarks478.length < MEDIAPIPE_FACE_MESH_TOPOLOGY_LANDMARK_COUNT) {
-    return "insufficientCurrentVertices"
-  }
-
-  if (MEDIAPIPE_FACE_MESH_TRIANGLES.length === 0) {
-    return "emptyTopology"
-  }
-
-  return null
-}
-
 function updateScanCounters() {
   const acceptedFrames = getAcceptedFrames()
   const excludedFrames = state.rawIdealReferenceFrames.filter((frame) => frame.excluded)
@@ -1981,8 +1349,6 @@ function renderPreviewPanels() {
 
   modelStage.dataset.loaded = String(state.modelVideo.loaded)
   liveStage.dataset.loaded = String(state.liveVideo.loaded)
-  liveStage.dataset.livePreviewMode = state.livePreviewMode
-  liveStage.dataset.rawWarpVisible = String(state.overlay.showRawWarp)
 }
 
 function renderControls() {
@@ -1999,7 +1365,6 @@ function renderControls() {
   setDisabled('[data-action="live-pause"]', !liveLoaded || state.liveVideo.playbackStatus !== "playing")
   setDisabled('[data-action="live-analyze-current"]', !liveLoaded || liveAnalysisInProgress)
   setDisabled('[data-range="live"]', !liveLoaded)
-  setDisabled('[data-action="raw-warp-strength"]', !liveLoaded)
 
   updateModelRange()
   updateRange("live")
@@ -2014,21 +1379,6 @@ function renderControls() {
   )
   getElement<HTMLInputElement>('[data-action="toggle-landmarks"]').checked =
     state.overlay.showLandmarks478
-  getElement<HTMLInputElement>('[data-action="toggle-displacement"]').checked =
-    state.overlay.showDisplacement
-  getElement<HTMLInputElement>('[data-action="toggle-raw-warp"]').checked =
-    state.overlay.showRawWarp
-  getElement<HTMLInputElement>('[data-action="toggle-warp-coordinate-debug"]').checked =
-    state.overlay.showRawWarpCoordinateDebug
-  getElement<HTMLSelectElement>('[data-action="live-preview-mode"]').value =
-    state.livePreviewMode
-  getElement<HTMLSelectElement>('[data-action="raw-warp-strength"]').value = String(
-    state.rawWarpDebug.strength,
-  )
-  getElement<HTMLSelectElement>('[data-action="texture-upload-flip"]').value =
-    state.rawWarpDebug.textureUploadFlip
-  getElement<HTMLSelectElement>('[data-action="texture-v-formula"]').value =
-    state.rawWarpDebug.textureVFormula
   renderModelReviewCard()
   renderLiveAnalysisCard()
 }
@@ -2142,9 +1492,6 @@ function createSummaryContent() {
   const summaryList = document.createElement("dl")
   summaryList.className = "summary-list"
   const currentFrame = getCurrentAcceptedFrame()
-  const displacementSummary = state.displacementDebug.summary
-  const rawWarpSummary = state.rawWarpDebug.summary
-  const coordinateDebug = rawWarpSummary.coordinateDebug
 
   const items: Array<[string, string]> = [
     ["Model MediaPipe", state.modelScan.mediaPipeStatus],
@@ -2172,35 +1519,10 @@ function createSummaryContent() {
     ["Live current analysis", formatLiveAnalysisStatus()],
     ["Live current expression", state.currentLiveFrameAnalysis.analyzed ? state.currentLiveFrameAnalysis.expressionGroup : "-"],
     ["Top1 reference", state.top1Match.idealFrameId ?? "none"],
-    ["Displacement", displacementSummary.available ? "available" : "unavailable"],
-    ["Avg displacement", formatMetric(displacementSummary.averageDistance2D)],
-    ["Max displacement", formatMetric(displacementSummary.maxDistance2D)],
-    ["Large displacement count", String(displacementSummary.largeDisplacementCount)],
-    ["Raw warp", rawWarpSummary.enabled ? "enabled" : "disabled"],
-    ["Raw warp strength", formatMetric(rawWarpSummary.strength)],
-    ["Warp available", rawWarpSummary.available ? "yes" : "no"],
-    ["Triangle count", String(rawWarpSummary.triangleCount)],
-    ["Preview mode", rawWarpSummary.previewMode],
-    ["Warp coordinate debug", state.overlay.showRawWarpCoordinateDebug ? "on" : "off"],
-    ["Texture upload flip", rawWarpSummary.textureUploadFlip],
-    ["Texture V formula", rawWarpSummary.textureVFormula],
-    ["Displayed content rect", formatRect(coordinateDebug.displayedContentRect)],
-    ["Video rect", formatSize(coordinateDebug.videoCssRect.width, coordinateDebug.videoCssRect.height)],
-    [
-      "Raw warp canvas rect",
-      formatSize(
-        coordinateDebug.rawWarpCanvasCssRect.width,
-        coordinateDebug.rawWarpCanvasCssRect.height,
-      ),
-    ],
-    ["Raw warp canvas", formatSize(coordinateDebug.rawWarpCanvas.width, coordinateDebug.rawWarpCanvas.height)],
     ["Match score", formatSeconds(state.top1Match.matchScore)],
     ["Pose distance", formatSeconds(state.top1Match.poseDistance)],
     ["Expression distance", formatSeconds(state.top1Match.expressionDistance)],
     ["Overlay 478 landmarks", state.overlay.showLandmarks478 ? "on" : "off"],
-    ["Overlay displacement", state.overlay.showDisplacement ? "on" : "off"],
-    ["Overlay raw warp", state.overlay.showRawWarp ? "on" : "off"],
-    ["Overlay warp coordinate debug", state.overlay.showRawWarpCoordinateDebug ? "on" : "off"],
   ]
 
   appendDefinitionItems(summaryList, items)
@@ -2329,17 +1651,6 @@ function createMatchingContent() {
     ["weights", `pose ${POSE_WEIGHT} / expression ${EXPRESSION_WEIGHT} / quality ${QUALITY_WEIGHT}`],
   ])
 
-  const displacementHeading = document.createElement("h3")
-  displacementHeading.textContent = "Displacement"
-  const displacementList = document.createElement("dl")
-  displacementList.className = "summary-list"
-  appendDefinitionItems(displacementList, [
-    ["available", state.displacementDebug.summary.available ? "yes" : "no"],
-    ["averageDistance2D", formatMetric(state.displacementDebug.summary.averageDistance2D)],
-    ["maxDistance2D", formatMetric(state.displacementDebug.summary.maxDistance2D)],
-    ["error", state.displacementDebug.summary.error ?? "-"],
-  ])
-
   fragment.append(
     currentHeading,
     currentList,
@@ -2347,8 +1658,6 @@ function createMatchingContent() {
     idealList,
     scoreHeading,
     scoreList,
-    displacementHeading,
-    displacementList,
   )
   return fragment
 }
@@ -2356,154 +1665,49 @@ function createMatchingContent() {
 function createWarpMeshContent() {
   const fragment = document.createDocumentFragment()
   const warpHeading = document.createElement("h3")
-  warpHeading.textContent = "Unadjusted Mesh Warp"
-  const rawWarpSummary = state.rawWarpDebug.summary
-  const coordinateDebug = rawWarpSummary.coordinateDebug
-  const rawWarpList = document.createElement("dl")
-  rawWarpList.className = "summary-list"
-  appendDefinitionItems(rawWarpList, [
-    ["warp available", rawWarpSummary.available ? "yes" : "no"],
-    ["warp enabled", rawWarpSummary.enabled ? "yes" : "no"],
-    ["rawWarpStrength", formatMetric(rawWarpSummary.strength)],
-    ["preview mode", rawWarpSummary.previewMode],
-    ["texture upload flip", rawWarpSummary.textureUploadFlip],
-    ["texture V formula", rawWarpSummary.textureVFormula],
-    ["sourceVertexCount", String(rawWarpSummary.sourceVertexCount)],
-    ["targetVertexCount", String(rawWarpSummary.targetVertexCount)],
-    ["topology", rawWarpSummary.topology],
-    ["topologyLandmarkCount", String(rawWarpSummary.topologyLandmarkCount)],
-    ["triangleCount", String(rawWarpSummary.triangleCount)],
-    ["mode", rawWarpSummary.mode],
-    ["alignment", "bounds center + uniform scale"],
-    ["mesh mapping", "draw target triangles / sample source UVs"],
-    ["coordinate conversion", "normalized -> displayed content pixel -> clip space"],
-    ["mesh warp", rawWarpSummary.meshWarp],
-    ["grid / hybrid mesh", rawWarpSummary.hybridMesh],
-    ["visibilityWeight", rawWarpSummary.visibilityWeight],
-    ["warpSafetyWeight", rawWarpSummary.warpSafetyWeight],
-    ["webglStatus", rawWarpSummary.webglStatus],
-    ["renderTimeMs", formatMetric(rawWarpSummary.renderTimeMs)],
-    ["error", rawWarpSummary.error ?? "-"],
+  warpHeading.textContent = "Warp Mesh"
+
+  const status = document.createElement("p")
+  status.className = "placeholder-text"
+  status.textContent =
+    "本線は未実装です。PR5以降の alignedIdeal 478点全体 displacement / raw displacement mesh warp は本線から外しました。"
+
+  const currentHeading = document.createElement("h3")
+  currentHeading.textContent = "現時点で残っているもの"
+  const currentList = document.createElement("dl")
+  currentList.className = "summary-list"
+  appendDefinitionItems(currentList, [
+    ["currentLiveFrameAnalysis", state.currentLiveFrameAnalysis.analyzed ? "available" : "not analyzed"],
+    ["top1 reference matching", state.top1Match.matched ? "matched" : "not matched"],
   ])
 
-  const warning = document.createElement("p")
-  warning.className = "warning-note"
-  warning.textContent =
-    "注意: このワープは safety weight なしで raw displacement をそのまま適用します。顔が大きく歪む可能性があります。"
-
-  const coordinateHeading = document.createElement("h3")
-  coordinateHeading.textContent = "Coordinate debug"
-  const coordinateList = document.createElement("dl")
-  coordinateList.className = "summary-list"
-  appendDefinitionItems(coordinateList, [
-    [
-      "video intrinsic",
-      formatSize(coordinateDebug.videoIntrinsic.width, coordinateDebug.videoIntrinsic.height),
-    ],
-    [
-      "preview rect",
-      formatSize(coordinateDebug.previewElementRect.width, coordinateDebug.previewElementRect.height),
-    ],
-    ["displayed content rect", formatRect(coordinateDebug.displayedContentRect)],
-    [
-      "video rect",
-      formatSize(coordinateDebug.videoCssRect.width, coordinateDebug.videoCssRect.height),
-    ],
-    [
-      "raw warp canvas rect",
-      formatSize(
-        coordinateDebug.rawWarpCanvasCssRect.width,
-        coordinateDebug.rawWarpCanvasCssRect.height,
-      ),
-    ],
-    [
-      "overlay canvas",
-      formatSize(coordinateDebug.overlayCanvas.width, coordinateDebug.overlayCanvas.height),
-    ],
-    [
-      "raw warp canvas",
-      formatSize(coordinateDebug.rawWarpCanvas.width, coordinateDebug.rawWarpCanvas.height),
-    ],
-    ["coordinate conversion", "normalized -> displayed content pixel -> clip space"],
-    ["texture upload flip", rawWarpSummary.textureUploadFlip],
-    ["texture V formula", rawWarpSummary.textureVFormula],
-    ["mesh mapping", "draw target triangles / sample source UVs"],
-    ["source vertices vs overlay", "expected to match current478 overlay"],
+  const nextHeading = document.createElement("h3")
+  nextHeading.textContent = "次の本線"
+  const nextList = document.createElement("dl")
+  nextList.className = "summary-list"
+  appendDefinitionItems(nextList, [
+    ["prototype", "finalSourceVertices / finalTargetVertices"],
+    ["alignedIdealLandmarks", "top1 / topK reference を current face へ位置合わせした target 候補"],
+    ["weightedFaceTargets", "visibility / safety / expression / boundary を反映した顔側 target 候補"],
+    ["final vertices", "weightedFaceTargets と grid / anchors を統合した最終 mesh warp 入力"],
   ])
 
-  const experimentHeading = document.createElement("h3")
-  experimentHeading.textContent = "Coordinate policy experiment"
-  const experimentList = document.createElement("dl")
-  experimentList.className = "summary-list"
-  appendDefinitionItems(experimentList, [
-    ["coordinate policy", "image-normalized -> displayedContentRect pixel -> clip space"],
-    ["texture source", "HTMLVideoElement"],
-    ["position", "target displayed pixel -> clip"],
-    ["uv", "source image-normalized"],
-    ["preview mode", rawWarpSummary.previewMode],
-    ["texture upload flip", rawWarpSummary.textureUploadFlip],
-    ["texture V formula", rawWarpSummary.textureVFormula],
-    [
-      "video rect",
-      formatSize(coordinateDebug.videoCssRect.width, coordinateDebug.videoCssRect.height),
-    ],
-    [
-      "raw warp canvas rect",
-      formatSize(
-        coordinateDebug.rawWarpCanvasCssRect.width,
-        coordinateDebug.rawWarpCanvasCssRect.height,
-      ),
-    ],
+  const missingHeading = document.createElement("h3")
+  missingHeading.textContent = "未実装"
+  const missingList = document.createElement("dl")
+  missingList.className = "summary-list"
+  appendDefinitionItems(missingList, [
+    ["visibilityWeight", "not implemented"],
+    ["warpSafetyWeight", "not implemented"],
+    ["face boundary anchors", "not implemented"],
+    ["near-face grid", "not implemented"],
+    ["background grid", "not implemented"],
+    ["screen edge anchors", "not implemented"],
+    ["hybrid mesh", "not implemented"],
+    ["production mesh warp", "not implemented"],
   ])
 
-  const heading = document.createElement("h3")
-  heading.textContent = "Displacement debug"
-  const summary = state.displacementDebug.summary
-  const summaryList = document.createElement("dl")
-  summaryList.className = "summary-list"
-  appendDefinitionItems(summaryList, [
-    ["available", summary.available ? "yes" : "no"],
-    ["count", String(summary.count)],
-    ["maxDistance2D", formatMetric(summary.maxDistance2D)],
-    ["averageDistance2D", formatMetric(summary.averageDistance2D)],
-    ["medianDistance2D", formatMetric(summary.medianDistance2D)],
-    ["p90Distance2D", formatMetric(summary.p90Distance2D)],
-    ["largeDisplacementCount", String(summary.largeDisplacementCount)],
-    ["largeDisplacementThreshold", formatMetric(summary.largeDisplacementThreshold)],
-    ["error", summary.error ?? "-"],
-    ["alignment", "bounds center + uniform scale"],
-    ["mesh warp", "prototype"],
-    ["grid / hybrid mesh", "not implemented"],
-  ])
-
-  const topHeading = document.createElement("h3")
-  topHeading.textContent = "Top displacements"
-  const topList = document.createElement("dl")
-  topList.className = "summary-list"
-  const topItems =
-    summary.topDisplacementsPreview.length === 0
-      ? [["preview", "-"] as [string, string]]
-      : summary.topDisplacementsPreview.map(
-          (item) =>
-            [
-              `#${item.index}`,
-              `distance ${formatMetric(item.distance2D)} / dx ${formatMetric(item.dx)} / dy ${formatMetric(item.dy)}`,
-            ] as [string, string],
-        )
-  appendDefinitionItems(topList, topItems)
-  fragment.append(
-    warpHeading,
-    warning,
-    rawWarpList,
-    coordinateHeading,
-    coordinateList,
-    experimentHeading,
-    experimentList,
-    heading,
-    summaryList,
-    topHeading,
-    topList,
-  )
+  fragment.append(warpHeading, status, currentHeading, currentList, nextHeading, nextList, missingHeading, missingList)
   return fragment
 }
 
@@ -2524,7 +1728,6 @@ function getRawState() {
   return {
     activePreviewTab: state.activePreviewTab,
     activeDebugTab: state.activeDebugTab,
-    livePreviewMode: state.livePreviewMode,
     overlay: state.overlay,
     modelVideo: {
       loaded: state.modelVideo.loaded,
@@ -2597,94 +1800,7 @@ function getRawState() {
       idealExpressionGroup: state.top1Match.idealExpressionGroup,
       error: state.top1Match.error,
     },
-    displacement: getDisplacementRawState(),
-    rawWarp: getRawWarpRawState(),
-    warpCoordinateDebug: getWarpCoordinateDebugRawState(),
-    rawWarpCoordinateExperiment: getRawWarpCoordinateExperimentRawState(),
     logs: state.logs,
-  }
-}
-
-function getDisplacementRawState() {
-  const summary = state.displacementDebug.summary
-  return {
-    available: summary.available,
-    count: summary.count,
-    maxDistance2D: roundMetricForState(summary.maxDistance2D),
-    averageDistance2D: roundMetricForState(summary.averageDistance2D),
-    medianDistance2D: roundMetricForState(summary.medianDistance2D),
-    p90Distance2D: roundMetricForState(summary.p90Distance2D),
-    largeDisplacementCount: summary.largeDisplacementCount,
-    largeDisplacementThreshold: roundMetricForState(summary.largeDisplacementThreshold),
-    topDisplacementsPreview: summary.topDisplacementsPreview.map((item) => ({
-      index: item.index,
-      distance2D: roundMetricForState(item.distance2D),
-      dx: roundMetricForState(item.dx),
-      dy: roundMetricForState(item.dy),
-    })),
-    error: summary.error,
-  }
-}
-
-function getRawWarpRawState() {
-  const summary = state.rawWarpDebug.summary
-  return {
-    enabled: summary.enabled,
-    available: summary.available,
-    mode: summary.mode,
-    strength: roundMetricForState(summary.strength),
-    previewMode: summary.previewMode,
-    textureUploadFlip: summary.textureUploadFlip,
-    textureVFormula: summary.textureVFormula,
-    meshMapping: summary.meshMapping,
-    coordinateConversion: summary.coordinateConversion,
-    sourceVertexCount: summary.sourceVertexCount,
-    targetVertexCount: summary.targetVertexCount,
-    topology: summary.topology,
-    topologyLandmarkCount: summary.topologyLandmarkCount,
-    triangleCount: summary.triangleCount,
-    alignment: summary.alignment,
-    meshWarp: summary.meshWarp,
-    visibilityWeight: summary.visibilityWeight,
-    warpSafetyWeight: summary.warpSafetyWeight,
-    hybridMesh: summary.hybridMesh,
-    webglStatus: summary.webglStatus,
-    renderTimeMs: roundMetricForState(summary.renderTimeMs),
-    error: summary.error,
-  }
-}
-
-function getWarpCoordinateDebugRawState() {
-  const summary = state.rawWarpDebug.summary
-  const coordinateDebug = summary.coordinateDebug
-  return {
-    videoIntrinsic: coordinateDebug.videoIntrinsic,
-    previewElementRect: roundSizeDebug(coordinateDebug.previewElementRect),
-    displayedContentRect: roundRectDebug(coordinateDebug.displayedContentRect),
-    videoCssRect: roundSizeDebug(coordinateDebug.videoCssRect),
-    rawWarpCanvasCssRect: roundSizeDebug(coordinateDebug.rawWarpCanvasCssRect),
-    overlayCanvas: roundSizeDebug(coordinateDebug.overlayCanvas),
-    rawWarpCanvas: roundSizeDebug(coordinateDebug.rawWarpCanvas),
-    textureUploadFlip: summary.textureUploadFlip,
-    textureVFormula: summary.textureVFormula,
-    meshMapping: summary.meshMapping,
-  }
-}
-
-function getRawWarpCoordinateExperimentRawState() {
-  const summary = state.rawWarpDebug.summary
-  const coordinateDebug = summary.coordinateDebug
-  return {
-    previewMode: state.livePreviewMode,
-    coordinatePolicy: "image_normalized_to_displayed_content_pixel_to_clip_space",
-    textureSource: "HTMLVideoElement",
-    positionSource: "target_displayed_pixel_clip",
-    uvSource: "source_image_normalized",
-    textureUploadFlip: summary.textureUploadFlip,
-    textureVFormula: summary.textureVFormula,
-    videoCssRect: roundSizeDebug(coordinateDebug.videoCssRect),
-    rawWarpCanvasCssRect: roundSizeDebug(coordinateDebug.rawWarpCanvasCssRect),
-    sampleVertices: getWarpCoordinateSamplePreview(),
   }
 }
 
@@ -2797,152 +1913,11 @@ function drawLiveOverlay() {
       1.45,
     )
   }
-
-  if (state.overlay.showDisplacement && state.displacementDebug.available) {
-    drawDisplacementOverlay(context, displayedContentRect, state.displacementDebug.displacements)
-  }
-
-  if (state.overlay.showRawWarpCoordinateDebug && state.displacementDebug.available) {
-    drawRawWarpCoordinateDebugOverlay(
-      context,
-      displayedContentRect,
-      rect.width,
-      rect.height,
-      state.displacementDebug.displacements,
-    )
-  }
 }
 
 function drawAllOverlays() {
-  drawRawWarpPreview()
   drawModelOverlay()
   drawLiveOverlay()
-}
-
-function drawRawWarpPreview() {
-  if (!state.overlay.showRawWarp) {
-    clearRawWarpCanvas()
-    updateRawWarpSummary()
-    return
-  }
-
-  const availabilityError = getRawWarpAvailabilityError()
-  const rect = liveRawWarpCanvas.getBoundingClientRect()
-  const dpr = window.devicePixelRatio || 1
-  liveRawWarpCanvas.width = Math.max(1, Math.round(rect.width * dpr))
-  liveRawWarpCanvas.height = Math.max(1, Math.round(rect.height * dpr))
-
-  if (
-    availabilityError ||
-    state.activePreviewTab !== "live" ||
-    rect.width <= 0 ||
-    rect.height <= 0 ||
-    liveRawWarpCanvas.width <= 1 ||
-    liveRawWarpCanvas.height <= 1
-  ) {
-    clearRawWarpCanvas()
-    updateRawWarpSummary({
-      error: availabilityError ?? "rawWarpCanvasUnavailable",
-      webglStatus: state.rawWarpDebug.summary.webglStatus,
-      renderTimeMs: null,
-    })
-    return
-  }
-
-  const renderer = getRawWarpRenderer()
-  if (!renderer) {
-    clearRawWarpCanvas()
-    updateRawWarpSummary({
-      error: rawWarpRendererError ?? "WebGL renderer unavailable",
-      webglStatus: "unavailable",
-      renderTimeMs: null,
-    })
-    return
-  }
-
-  const displayedContentRect = getDisplayedContentRect(
-    state.liveVideo,
-    liveVideoElement,
-    rect.width,
-    rect.height,
-  )
-  const frame = buildRawWarpFrame(displayedContentRect, rect.width, rect.height)
-
-  if (!frame) {
-    clearRawWarpCanvas()
-    updateRawWarpSummary({
-      error: "rawWarpFrameUnavailable",
-      webglStatus: "available",
-      renderTimeMs: null,
-    })
-    return
-  }
-
-  const startedAt = performance.now()
-  const renderError = drawRawWarpWebglFrame(
-    renderer,
-    liveVideoElement,
-    frame.targetPositions,
-    frame.textureCoordinates,
-  )
-
-  if (renderError) {
-    updateRawWarpSummary({
-      error: renderError,
-      webglStatus: "unavailable",
-      renderTimeMs: null,
-    })
-    return
-  }
-
-  updateRawWarpSummary({
-    error: null,
-    webglStatus: "available",
-    renderTimeMs: performance.now() - startedAt,
-  })
-}
-
-function buildRawWarpFrame(
-  displayedContentRect: Rect,
-  containerWidth: number,
-  containerHeight: number,
-) {
-  if (containerWidth <= 0 || containerHeight <= 0) {
-    return null
-  }
-
-  const targetPositions = new Float32Array(MEDIAPIPE_FACE_MESH_TOPOLOGY_LANDMARK_COUNT * 2)
-  const textureCoordinates = new Float32Array(MEDIAPIPE_FACE_MESH_TOPOLOGY_LANDMARK_COUNT * 2)
-
-  for (let index = 0; index < MEDIAPIPE_FACE_MESH_TOPOLOGY_LANDMARK_COUNT; index += 1) {
-    const displacement = state.displacementDebug.displacements[index]
-
-    if (!displacement) {
-      return null
-    }
-
-    const targetX =
-      displacement.current.x + displacement.dx * state.rawWarpDebug.strength
-    const targetY =
-      displacement.current.y + displacement.dy * state.rawWarpDebug.strength
-    const targetPixel = normalizedLandmarkToPreviewPixel(
-      { x: targetX, y: targetY },
-      displayedContentRect,
-    )
-    const offset = index * 2
-
-    const targetClip = previewPixelToClip(targetPixel, containerWidth, containerHeight)
-
-    targetPositions[offset] = targetClip.x
-    targetPositions[offset + 1] = targetClip.y
-    textureCoordinates[offset] = displacement.current.x
-    textureCoordinates[offset + 1] = getTextureVCoordinate(displacement.current.y)
-  }
-
-  return {
-    targetPositions,
-    textureCoordinates,
-  }
 }
 
 function drawLandmarkOverlay({
@@ -3006,309 +1981,12 @@ function drawLandmarkPoints(
   }
 }
 
-function drawDisplacementOverlay(
-  context: CanvasRenderingContext2D,
-  displayedContentRect: Rect,
-  displacements: LandmarkDisplacement[],
-) {
-  context.save()
-  context.lineWidth = 1
-
-  for (let index = 0; index < displacements.length; index += DISPLACEMENT_DRAW_STEP) {
-    const displacement = displacements[index]
-    const current = normalizedLandmarkToPreviewPixel(displacement.current, displayedContentRect)
-    const ideal = normalizedLandmarkToPreviewPixel(displacement.alignedIdeal, displayedContentRect)
-    const isLarge = displacement.distance2D >= LARGE_DISPLACEMENT_THRESHOLD
-
-    context.strokeStyle = isLarge ? "rgba(244, 67, 54, 0.82)" : "rgba(255, 213, 79, 0.72)"
-    context.beginPath()
-    context.moveTo(current.x, current.y)
-    context.lineTo(ideal.x, ideal.y)
-    context.stroke()
-
-    context.fillStyle = "rgba(79, 128, 255, 0.92)"
-    context.beginPath()
-    context.arc(current.x, current.y, 2, 0, Math.PI * 2)
-    context.fill()
-
-    context.fillStyle = "rgba(255, 145, 0, 0.92)"
-    context.beginPath()
-    context.arc(ideal.x, ideal.y, 2, 0, Math.PI * 2)
-    context.fill()
-  }
-
-  context.restore()
-}
-
-function drawRawWarpCoordinateDebugOverlay(
-  context: CanvasRenderingContext2D,
-  displayedContentRect: Rect,
-  canvasWidth: number,
-  canvasHeight: number,
-  displacements: LandmarkDisplacement[],
-) {
-  context.save()
-  context.lineWidth = 1
-
-  context.strokeStyle = "rgba(0, 200, 180, 0.9)"
-  context.setLineDash([5, 4])
-  context.strokeRect(
-    displayedContentRect.x,
-    displayedContentRect.y,
-    displayedContentRect.width,
-    displayedContentRect.height,
-  )
-
-  context.strokeStyle = "rgba(200, 80, 255, 0.65)"
-  context.setLineDash([2, 5])
-  context.strokeRect(0.5, 0.5, Math.max(0, canvasWidth - 1), Math.max(0, canvasHeight - 1))
-  context.setLineDash([])
-
-  for (
-    let index = 0;
-    index < MEDIAPIPE_FACE_MESH_TOPOLOGY_LANDMARK_COUNT;
-    index += WARP_COORDINATE_DEBUG_DRAW_STEP
-  ) {
-    const displacement = displacements[index]
-    if (!displacement) {
-      continue
-    }
-
-    const source = normalizedLandmarkToPreviewPixel(displacement.current, displayedContentRect)
-    const target = normalizedLandmarkToPreviewPixel(
-      {
-        x: displacement.current.x + displacement.dx * state.rawWarpDebug.strength,
-        y: displacement.current.y + displacement.dy * state.rawWarpDebug.strength,
-      },
-      displayedContentRect,
-    )
-
-    context.strokeStyle = "rgba(255, 255, 255, 0.65)"
-    context.beginPath()
-    context.moveTo(source.x, source.y)
-    context.lineTo(target.x, target.y)
-    context.stroke()
-
-    context.fillStyle = "rgba(79, 128, 255, 0.96)"
-    context.beginPath()
-    context.arc(source.x, source.y, 2.2, 0, Math.PI * 2)
-    context.fill()
-
-    context.fillStyle = "rgba(255, 145, 0, 0.96)"
-    context.beginPath()
-    context.arc(target.x, target.y, 2.2, 0, Math.PI * 2)
-    context.fill()
-  }
-
-  context.restore()
-}
-
-function getRawWarpRenderer(): RawWarpWebglRenderer | null {
-  if (rawWarpRenderer) {
-    return rawWarpRenderer
-  }
-
-  if (rawWarpRendererError) {
-    return null
-  }
-
-  const gl = liveRawWarpCanvas.getContext("webgl", {
-    alpha: true,
-    antialias: false,
-    premultipliedAlpha: false,
-  })
-
-  if (!gl) {
-    rawWarpRendererError = "WebGL context is unavailable"
-    return null
-  }
-
-  const vertexShaderSource = `
-    attribute vec2 a_position;
-    attribute vec2 a_texCoord;
-    varying vec2 v_texCoord;
-
-    void main() {
-      gl_Position = vec4(a_position, 0.0, 1.0);
-      v_texCoord = a_texCoord;
-    }
-  `
-  const fragmentShaderSource = `
-    precision mediump float;
-
-    uniform sampler2D u_texture;
-    varying vec2 v_texCoord;
-
-    void main() {
-      gl_FragColor = texture2D(u_texture, v_texCoord);
-    }
-  `
-  const vertexShader = compileRawWarpShader(gl, gl.VERTEX_SHADER, vertexShaderSource)
-  const fragmentShader = compileRawWarpShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource)
-
-  if (!vertexShader || !fragmentShader) {
-    rawWarpRendererError = rawWarpRendererError ?? "WebGL shader compile failed"
-    return null
-  }
-
-  const program = gl.createProgram()
-  if (!program) {
-    rawWarpRendererError = "WebGL program creation failed"
-    return null
-  }
-
-  gl.attachShader(program, vertexShader)
-  gl.attachShader(program, fragmentShader)
-  gl.linkProgram(program)
-
-  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-    rawWarpRendererError = gl.getProgramInfoLog(program) ?? "WebGL program link failed"
-    return null
-  }
-
-  const positionBuffer = gl.createBuffer()
-  const texCoordBuffer = gl.createBuffer()
-  const indexBuffer = gl.createBuffer()
-  const texture = gl.createTexture()
-  const textureLocation = gl.getUniformLocation(program, "u_texture")
-  const positionLocation = gl.getAttribLocation(program, "a_position")
-  const texCoordLocation = gl.getAttribLocation(program, "a_texCoord")
-
-  if (
-    !positionBuffer ||
-    !texCoordBuffer ||
-    !indexBuffer ||
-    !texture ||
-    !textureLocation
-  ) {
-    rawWarpRendererError = "WebGL buffer, texture, or uniform creation failed"
-    return null
-  }
-
-  if (positionLocation < 0 || texCoordLocation < 0) {
-    rawWarpRendererError = "WebGL attribute location is unavailable"
-    return null
-  }
-
-  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer)
-  gl.bufferData(
-    gl.ELEMENT_ARRAY_BUFFER,
-    new Uint16Array(MEDIAPIPE_FACE_MESH_TRIANGLES),
-    gl.STATIC_DRAW,
-  )
-
-  rawWarpRenderer = {
-    canvas: liveRawWarpCanvas,
-    gl,
-    program,
-    positionBuffer,
-    texCoordBuffer,
-    indexBuffer,
-    texture,
-    positionLocation,
-    texCoordLocation,
-    textureLocation,
-  }
-
-  return rawWarpRenderer
-}
-
-function compileRawWarpShader(
-  gl: WebGLRenderingContext,
-  type: number,
-  source: string,
-): WebGLShader | null {
-  const shader = gl.createShader(type)
-
-  if (!shader) {
-    rawWarpRendererError = "WebGL shader creation failed"
-    return null
-  }
-
-  gl.shaderSource(shader, source)
-  gl.compileShader(shader)
-
-  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-    rawWarpRendererError = gl.getShaderInfoLog(shader) ?? "WebGL shader compile failed"
-    gl.deleteShader(shader)
-    return null
-  }
-
-  return shader
-}
-
-function drawRawWarpWebglFrame(
-  renderer: RawWarpWebglRenderer,
-  videoElement: HTMLVideoElement,
-  targetPositions: Float32Array,
-  textureCoordinates: Float32Array,
-) {
-  const { gl } = renderer
-
-  try {
-    gl.viewport(0, 0, renderer.canvas.width, renderer.canvas.height)
-    gl.clearColor(0, 0, 0, state.livePreviewMode === "source" ? 0 : 1)
-    gl.clear(gl.COLOR_BUFFER_BIT)
-    gl.useProgram(renderer.program)
-    gl.disable(gl.BLEND)
-
-    gl.bindBuffer(gl.ARRAY_BUFFER, renderer.positionBuffer)
-    gl.bufferData(gl.ARRAY_BUFFER, targetPositions, gl.DYNAMIC_DRAW)
-    gl.enableVertexAttribArray(renderer.positionLocation)
-    gl.vertexAttribPointer(renderer.positionLocation, 2, gl.FLOAT, false, 0, 0)
-
-    gl.bindBuffer(gl.ARRAY_BUFFER, renderer.texCoordBuffer)
-    gl.bufferData(gl.ARRAY_BUFFER, textureCoordinates, gl.DYNAMIC_DRAW)
-    gl.enableVertexAttribArray(renderer.texCoordLocation)
-    gl.vertexAttribPointer(renderer.texCoordLocation, 2, gl.FLOAT, false, 0, 0)
-
-    gl.activeTexture(gl.TEXTURE0)
-    gl.bindTexture(gl.TEXTURE_2D, renderer.texture)
-    gl.pixelStorei(
-      gl.UNPACK_FLIP_Y_WEBGL,
-      state.rawWarpDebug.textureUploadFlip === "on",
-    )
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, videoElement)
-    gl.uniform1i(renderer.textureLocation, 0)
-
-    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, renderer.indexBuffer)
-    gl.drawElements(
-      gl.TRIANGLES,
-      MEDIAPIPE_FACE_MESH_TRIANGLES.length,
-      gl.UNSIGNED_SHORT,
-      0,
-    )
-  } catch (error) {
-    return error instanceof Error ? error.message : String(error)
-  }
-
-  const webglError = gl.getError()
-  return webglError === gl.NO_ERROR ? null : `WebGL error ${webglError}`
-}
-
 function clearModelOverlay() {
   clearOverlay(modelOverlayCanvas)
 }
 
 function clearLiveOverlay() {
   clearOverlay(liveOverlayCanvas)
-  clearRawWarpCanvas()
-}
-
-function clearRawWarpCanvas() {
-  if (rawWarpRenderer) {
-    const { gl } = rawWarpRenderer
-    gl.viewport(0, 0, liveRawWarpCanvas.width, liveRawWarpCanvas.height)
-    gl.clearColor(0, 0, 0, 0)
-    gl.clear(gl.COLOR_BUFFER_BIT)
-    return
-  }
-
-  liveRawWarpCanvas.width = liveRawWarpCanvas.width
 }
 
 function clearOverlay(canvas: HTMLCanvasElement) {
@@ -3317,87 +1995,6 @@ function clearOverlay(canvas: HTMLCanvasElement) {
     return
   }
   context.clearRect(0, 0, canvas.width, canvas.height)
-}
-
-function createEmptyVideoCoordinateDebug(): VideoCoordinateDebug {
-  return {
-    videoIntrinsic: {
-      width: null,
-      height: null,
-    },
-    previewElementRect: {
-      width: 0,
-      height: 0,
-    },
-    videoCssRect: {
-      width: 0,
-      height: 0,
-    },
-    rawWarpCanvasCssRect: {
-      width: 0,
-      height: 0,
-    },
-    displayedContentRect: {
-      x: 0,
-      y: 0,
-      width: 0,
-      height: 0,
-    },
-    overlayCanvas: {
-      width: 0,
-      height: 0,
-    },
-    rawWarpCanvas: {
-      width: 0,
-      height: 0,
-    },
-  }
-}
-
-function getLiveVideoCoordinateDebug(): VideoCoordinateDebug {
-  if (typeof liveVideoElement === "undefined") {
-    return createEmptyVideoCoordinateDebug()
-  }
-
-  const previewStageRect = getElement<HTMLElement>(
-    "[data-preview-panel='live'] .preview-stage",
-  ).getBoundingClientRect()
-  const videoRect = liveVideoElement.getBoundingClientRect()
-  const rawWarpCanvasRect = liveRawWarpCanvas.getBoundingClientRect()
-  const displayedContentRect = getDisplayedContentRect(
-    state.liveVideo,
-    liveVideoElement,
-    rawWarpCanvasRect.width,
-    rawWarpCanvasRect.height,
-  )
-
-  return {
-    videoIntrinsic: {
-      width: (state.liveVideo.width ?? liveVideoElement.videoWidth) || null,
-      height: (state.liveVideo.height ?? liveVideoElement.videoHeight) || null,
-    },
-    previewElementRect: {
-      width: previewStageRect.width,
-      height: previewStageRect.height,
-    },
-    videoCssRect: {
-      width: videoRect.width,
-      height: videoRect.height,
-    },
-    rawWarpCanvasCssRect: {
-      width: rawWarpCanvasRect.width,
-      height: rawWarpCanvasRect.height,
-    },
-    displayedContentRect,
-    overlayCanvas: {
-      width: liveOverlayCanvas.width,
-      height: liveOverlayCanvas.height,
-    },
-    rawWarpCanvas: {
-      width: liveRawWarpCanvas.width,
-      height: liveRawWarpCanvas.height,
-    },
-  }
 }
 
 function getDisplayedContentRect(
@@ -3449,83 +2046,6 @@ function normalizedLandmarkToPreviewPixel(
   }
 }
 
-function getTextureVCoordinate(sourceY: number) {
-  return state.rawWarpDebug.textureVFormula === "oneMinusY" ? 1 - sourceY : sourceY
-}
-
-function previewPixelToClip(
-  point: { x: number; y: number },
-  canvasWidth: number,
-  canvasHeight: number,
-) {
-  return {
-    x: (point.x / canvasWidth) * 2 - 1,
-    y: 1 - (point.y / canvasHeight) * 2,
-  }
-}
-
-function getWarpCoordinateSamplePreview() {
-  if (!state.displacementDebug.available) {
-    return []
-  }
-
-  const rawWarpCanvasRect = liveRawWarpCanvas.getBoundingClientRect()
-  if (rawWarpCanvasRect.width <= 0 || rawWarpCanvasRect.height <= 0) {
-    return []
-  }
-
-  const displayedContentRect = getDisplayedContentRect(
-    state.liveVideo,
-    liveVideoElement,
-    rawWarpCanvasRect.width,
-    rawWarpCanvasRect.height,
-  )
-
-  return WARP_SAMPLE_INDICES.flatMap((sampleIndex) => {
-    const displacement = state.displacementDebug.displacements[sampleIndex]
-    if (!displacement) {
-      return []
-    }
-
-    const sourceNormalized = {
-      x: displacement.current.x,
-      y: displacement.current.y,
-    }
-    const targetNormalized = {
-      x: displacement.current.x + displacement.dx * state.rawWarpDebug.strength,
-      y: displacement.current.y + displacement.dy * state.rawWarpDebug.strength,
-    }
-    const sourceDisplayedPixel = normalizedLandmarkToPreviewPixel(
-      sourceNormalized,
-      displayedContentRect,
-    )
-    const targetDisplayedPixel = normalizedLandmarkToPreviewPixel(
-      targetNormalized,
-      displayedContentRect,
-    )
-    const targetClip = previewPixelToClip(
-      targetDisplayedPixel,
-      rawWarpCanvasRect.width,
-      rawWarpCanvasRect.height,
-    )
-
-    return [
-      {
-        index: sampleIndex,
-        sourceNormalized: roundPointForState(sourceNormalized),
-        targetNormalized: roundPointForState(targetNormalized),
-        sourceDisplayedPixel: roundPointForState(sourceDisplayedPixel),
-        targetDisplayedPixel: roundPointForState(targetDisplayedPixel),
-        targetClip: roundPointForState(targetClip),
-        uv: roundUvForState({
-          u: displacement.current.x,
-          v: getTextureVCoordinate(displacement.current.y),
-        }),
-      },
-    ]
-  })
-}
-
 function formatModelTimeStatus() {
   if (!state.modelVideo.loaded) {
     return "current time: - / -"
@@ -3571,10 +2091,6 @@ function formatMetric(value: number | null) {
 
 function formatSize(width: number | null, height: number | null) {
   return width === null || height === null ? "-" : `${width} x ${height}`
-}
-
-function formatRect(rect: Rect) {
-  return `x ${formatMetric(rect.x)} / y ${formatMetric(rect.y)} / width ${formatMetric(rect.width)} / height ${formatMetric(rect.height)}`
 }
 
 function formatCounts(counts: Record<string, number>) {
@@ -3627,36 +2143,6 @@ function roundMetricForState(value: number | null) {
   }
 
   return Math.round(value * 10000) / 10000
-}
-
-function roundSizeDebug(size: SizeDebug): SizeDebug {
-  return {
-    width: roundMetricForState(size.width) ?? 0,
-    height: roundMetricForState(size.height) ?? 0,
-  }
-}
-
-function roundRectDebug(rect: Rect): Rect {
-  return {
-    x: roundMetricForState(rect.x) ?? 0,
-    y: roundMetricForState(rect.y) ?? 0,
-    width: roundMetricForState(rect.width) ?? 0,
-    height: roundMetricForState(rect.height) ?? 0,
-  }
-}
-
-function roundPointForState(point: { x: number; y: number }) {
-  return {
-    x: roundMetricForState(point.x) ?? 0,
-    y: roundMetricForState(point.y) ?? 0,
-  }
-}
-
-function roundUvForState(point: { u: number; v: number }) {
-  return {
-    u: roundMetricForState(point.u) ?? 0,
-    v: roundMetricForState(point.v) ?? 0,
-  }
 }
 
 function roundPose(pose: ReferencePose) {
@@ -3818,18 +2304,6 @@ function getElement<TElement extends Element>(selector: string) {
 
 function isPreviewTab(value: string | undefined): value is PreviewTab {
   return value === "model" || value === "live"
-}
-
-function isLivePreviewMode(value: string | undefined): value is LivePreviewMode {
-  return value === "source" || value === "rawWarpOnly" || value === "sideBySide"
-}
-
-function isTextureUploadFlip(value: string | undefined): value is TextureUploadFlip {
-  return value === "off" || value === "on"
-}
-
-function isTextureVFormula(value: string | undefined): value is TextureVFormula {
-  return value === "y" || value === "oneMinusY"
 }
 
 function isDebugTab(value: string | undefined): value is DebugTab {
