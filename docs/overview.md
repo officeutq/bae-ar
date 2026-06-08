@@ -28,7 +28,7 @@ BAE AR
 
 `tools/mediapipe-canonical-lab` は、MediaPipe Face Landmarker の current landmarks 478、`facialTransformationMatrix`、yaw / pitch / roll、blendshapes、pose bucket 別 capture を調査する debug lab です。IdealFace を作る authoring tool ではなく、`empiricalCanonical478` も debug artifact として扱い、そのまま production asset にはしません。最新の empirical 478 analysis では、`face_bounds_normalized_no_matrix`、つまり MediaPipe の行列を使わず顔の外枠で中心合わせとスケール正規化を行う方式が現時点の best candidate です。詳細は [MediaPipe Canonical Lab](mediapipe-canonical-lab.md) を参照してください。
 
-`tools/ideal-reference-mesh-warp-lab` は、理想モデル動画から作る実測 MediaPipe 478 reference library と、ライブ動画を current face 代わりにした mesh warp 検証のための debug lab です。現時点では 3ペインUIの土台のみ実装済みで、MediaPipe解析・reference library作成・matching・mesh warp は未実装です。詳細は [Ideal Reference Mesh Warp Lab](ideal-reference-mesh-warp-lab.md) を参照してください。
+`tools/ideal-reference-mesh-warp-lab` は、理想モデル動画から作る実測 MediaPipe 478 reference library と、ライブ動画を current face 代わりにした mesh warp 検証のための debug lab です。3ペインUI土台に加えて、モデル動画 / ライブ動画のローカル読み込みと preview、基本的なシーク / 再生操作まで実装済みです。MediaPipe解析、reference library作成、matching、mesh warp は未実装です。詳細は [Ideal Reference Mesh Warp Lab](ideal-reference-mesh-warp-lab.md) を参照してください。
 
 ## 現在の到達点
 
@@ -442,4 +442,4 @@ Step 2-G v1 five-pose candidate generation has been removed from the current cod
 
 詳細な段階分け、座標系方針、未決定事項は [Shape Warp production direction](shape-warp-production-direction.md) を参照してください。最初の WebGL mesh warp prototype は Studio processed preview 限定とし、Engine Runtime への本格統合、temporal smoothing、mask / boundary、glasses / hair、performance 対応は後段で扱います。
 
-理想モデル動画の実測 MediaPipe 478 reference library を使う新しい mesh warp 検証は [Ideal Reference Mesh Warp Lab](ideal-reference-mesh-warp-lab.md) に整理します。現時点では `tools/ideal-reference-mesh-warp-lab` の3ペインUI土台のみ実装済みで、MediaPipe解析、reference library作成、matching、mesh warp、Runtime renderer integration、JSON export、IndexedDB、compression、validator は未実装です。
+理想モデル動画の実測 MediaPipe 478 reference library を使う新しい mesh warp 検証は [Ideal Reference Mesh Warp Lab](ideal-reference-mesh-warp-lab.md) に整理します。`tools/ideal-reference-mesh-warp-lab` は3ペインUI土台に加えて、モデル動画 / ライブ動画のローカル読み込みと preview、基本的なシーク / 再生操作まで実装済みです。MediaPipe解析、reference library作成、matching、mesh warp、Runtime renderer integration、JSON export、IndexedDB、compression、validator は未実装です。
