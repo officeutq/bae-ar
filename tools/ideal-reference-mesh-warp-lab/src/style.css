@@ -17,12 +17,14 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
 button:disabled,
-input:disabled {
+input:disabled,
+select:disabled {
   cursor: not-allowed;
   opacity: 0.62;
 }
@@ -218,7 +220,8 @@ h3 {
   width: 100%;
 }
 
-.landmark-overlay {
+.landmark-overlay,
+.raw-warp-canvas {
   display: none;
   grid-area: 1 / 1;
   height: 100%;
@@ -227,6 +230,13 @@ h3 {
   pointer-events: none;
   position: relative;
   width: 100%;
+}
+
+.raw-warp-canvas {
+  z-index: 1;
+}
+
+.landmark-overlay {
   z-index: 2;
 }
 
@@ -234,7 +244,8 @@ h3 {
   display: block;
 }
 
-.preview-stage[data-loaded="true"] .landmark-overlay {
+.preview-stage[data-loaded="true"] .landmark-overlay,
+.preview-stage[data-loaded="true"] .raw-warp-canvas {
   display: block;
 }
 
@@ -269,7 +280,7 @@ h3 {
 }
 
 .timeline-controls.live-controls {
-  grid-template-columns: auto auto auto minmax(180px, 1fr) auto;
+  grid-template-columns: auto auto auto minmax(170px, 220px) minmax(180px, 1fr) auto;
 }
 
 .range-field {
@@ -288,6 +299,19 @@ h3 {
 input[type="range"] {
   accent-color: #26313b;
   width: 100%;
+}
+
+select {
+  background: #ffffff;
+  border: 1px solid #aab6c2;
+  border-radius: 6px;
+  color: #26313b;
+  min-height: 32px;
+  padding: 5px 8px;
+}
+
+.compact-field {
+  grid-template-columns: auto minmax(64px, 1fr);
 }
 
 .frame-status {
@@ -384,6 +408,17 @@ input[type="range"] {
   line-height: 1.6;
 }
 
+.warning-note {
+  background: #fff8e6;
+  border: 1px solid #f1d58f;
+  border-radius: 6px;
+  color: #705100;
+  font-size: 12px;
+  line-height: 1.5;
+  margin-bottom: 12px;
+  padding: 9px 10px;
+}
+
 .raw-state {
   color: #26313b;
   font-size: 12px;
@@ -430,5 +465,14 @@ input[type="range"] {
 @media (max-width: 1120px) {
   .lab-shell {
     grid-template-columns: 220px minmax(420px, 1fr) 340px;
+  }
+
+  .timeline-controls.live-controls {
+    grid-template-columns: auto auto auto;
+  }
+
+  .timeline-controls.live-controls .range-field,
+  .timeline-controls.live-controls .frame-status {
+    grid-column: 1 / -1;
   }
 }
