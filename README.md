@@ -348,6 +348,7 @@ npm run start:ideal-reference-mesh-warp-lab
 - [landmarkGroups v1](docs/landmark-groups-v1.md)
 - [Shape Warp production 方針](docs/shape-warp-production-direction.md)
 - [Ideal Reference Mesh Warp Lab](docs/ideal-reference-mesh-warp-lab.md)
+- [Ideal Reference Raw Warp Coordinate Investigation](docs/ideal-reference-raw-warp-coordinate-investigation.md)
 - [beauty_filter_asset_v1 方針](docs/beauty-filter-asset-v1.md)
 - [MediaPipe Render Consistency Lab](docs/mediapipe-render-consistency-lab.md)
 - [MediaPipe Render Consistency Lab next step after effective rotation center study](docs/mediapipe-render-consistency-lab-next-after-effective-rotation-center.md)
