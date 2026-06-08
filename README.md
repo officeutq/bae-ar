@@ -9,6 +9,7 @@
 - `tools/mediapipe-canonical-lab` の MediaPipe 座標系調査とも目的を分けます。
 - 次段の `tools/mediapipe-render-consistency-lab` は、mesh（メッシュ化） / render（レンダリング） / MediaPipe re-detection（MediaPipe 再検出）前提で `projectionFitZ` と `meshReadyZ` の違いを検証する debug lab（検証用ラボ）として扱います。production 用 IdealFace asset を作る正式 authoring tool（作成ツール）ではありません。詳細は [MediaPipe Render Consistency Lab](docs/mediapipe-render-consistency-lab.md) を参照してください。
 - `tools/mediapipe-render-consistency-lab` は、MP4 import、auto scan（自動スキャン）、`acceptedFrames`、`thumbnailDataUrl`、MediaPipe metadata summary（MediaPipe メタデータ要約）、`acceptedFrames[].observed12pt`、pose（姿勢） / `expressionSummary`、`manualAdjustmentsByFrame`、`currentReviewIndex`、Debug Console（デバッグコンソール）、Current Frame（現在フレーム）タブ、`poseBucket125`、`frontCandidate` / `expressionTooStrong` badge（補助ラベル）まで実装済みです。MediaPipe face mesh topology（顔メッシュ接続情報）での478点 mesh 化、yaw / pitch / roll 指定 render、rendered image（レンダリング画像）の MediaPipe Face Landmarker 再入力、returned landmarks（返却ランドマーク）と geometric projected landmarks（幾何投影ランドマーク）の比較、alignment / residual evaluation（位置合わせ・残差評価）は未実装です。
+- `tools/ideal-reference-mesh-warp-lab` は、理想モデル動画から作る実測 MediaPipe 478 reference library と、ライブ動画を current face 代わりにした mesh warp 検証のための debug lab です。現時点では 3ペインUIの土台のみ実装済みで、MediaPipe解析・reference library作成・matching・mesh warp は未実装です。
 - captured JSON を import し、`8pt_basic` / `12pt_rotation_center` / `24pt_structure` を比較します。現時点の 478点奥行き生成 prototype（試作）の推奨は `12pt_rotation_center` です。
 - 478点 z 生成は `canonical-face-depth-template-v1.json`（標準顔奥行きテンプレート）を基準に、`canonicalDepthBased` で仮 z を作り、`perLandmarkZSearch` で各 landmark（ランドマーク）を1次元探索として微調整します。
 - Summary JSON はレビューや ChatGPT 相談用の軽量形式として出力します。
@@ -325,9 +326,10 @@ npm run start:ideal-face-authoring
 npm run start:mediapipe-canonical-lab
 npm run start:ideal-face-fitting-lab
 npm run start:mediapipe-render-consistency-lab
+npm run start:ideal-reference-mesh-warp-lab
 ```
 
-`npm run start` は `apps/studio` を起動します。`npm run start:ideal-face-authoring` は `tools/ideal-face-authoring`、`npm run start:mediapipe-canonical-lab` は `tools/mediapipe-canonical-lab`、`npm run start:ideal-face-fitting-lab` は `tools/ideal-face-fitting-lab`、`npm run start:mediapipe-render-consistency-lab` は `tools/mediapipe-render-consistency-lab` を起動します。
+`npm run start` は `apps/studio` を起動します。`npm run start:ideal-face-authoring` は `tools/ideal-face-authoring`、`npm run start:mediapipe-canonical-lab` は `tools/mediapipe-canonical-lab`、`npm run start:ideal-face-fitting-lab` は `tools/ideal-face-fitting-lab`、`npm run start:mediapipe-render-consistency-lab` は `tools/mediapipe-render-consistency-lab`、`npm run start:ideal-reference-mesh-warp-lab` は `tools/ideal-reference-mesh-warp-lab` を起動します。
 
 ## 関連ドキュメント
 
