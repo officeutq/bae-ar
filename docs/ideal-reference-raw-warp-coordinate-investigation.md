@@ -1,5 +1,13 @@
 # Ideal Reference Raw Warp Coordinate Investigation
 
+## Deprecated note
+
+このドキュメントは PR5 以降で試した raw displacement mesh warp / rawWarpOnly / sideBySide / texture flip 実験の履歴メモです。現在の `tools/ideal-reference-mesh-warp-lab` の本線ではありません。
+
+現行本線では、モデル動画の MediaPipe 解析、`rawIdealReferenceFrames` 作成、ライブ動画 current frame の MediaPipe 解析、current478 overlay、top1 reference matching までを残し、alignedIdeal 478点全体 displacement / raw displacement mesh warp / raw warp coordinate debug は撤去済みです。
+
+次の本線は、alignedIdeal478 を最終 target とせず、visibilityWeight / warpSafetyWeight / face boundary anchors / near-face grid / background grid / screen edge anchors を使って `finalSourceVertices` / `finalTargetVertices` を作る prototype です。
+
 ## 調査目的
 
 `tools/ideal-reference-mesh-warp-lab` の raw displacement mesh warp prototype について、実動画で見えるズレが単なる過大 displacement なのか、座標系・texture UV・描画レイヤーの不一致なのかを切り分ける。

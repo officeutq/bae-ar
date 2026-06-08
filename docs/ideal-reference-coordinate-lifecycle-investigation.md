@@ -1,5 +1,11 @@
 # Ideal Reference Coordinate Lifecycle Investigation
 
+## Deprecated note
+
+このドキュメントは PR5 以降の alignedIdeal 478点全体 displacement / raw displacement mesh warp / raw warp coordinate debug 実験を含む座標系棚卸しの履歴メモです。現在の `tools/ideal-reference-mesh-warp-lab` の本線ではありません。
+
+現行本線では、モデル動画の MediaPipe 解析、`rawIdealReferenceFrames` 作成、ライブ動画 current frame の MediaPipe 解析、current478 overlay、top1 reference matching までを残します。次の本線は `finalSourceVertices` / `finalTargetVertices` prototype です。
+
 ## 調査目的
 
 `tools/ideal-reference-mesh-warp-lab` について、モデル動画解析から raw warp 表示までに流れる各データが、どの座標系で生成、保存、変換、表示されているかを実コードから棚卸しする。
