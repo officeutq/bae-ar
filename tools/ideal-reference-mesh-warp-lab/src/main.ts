@@ -106,6 +106,89 @@ type Rect = {
   height: number
 }
 
+type Point2D = {
+  x: number
+  y: number
+}
+
+type MeshVertexKind =
+  | "faceLandmark"
+  | "nearFaceGrid"
+  | "backgroundGrid"
+  | "screenEdgeAnchor"
+
+type CurrentMeshLandmarkVertex = {
+  id: string
+  kind: "faceLandmark"
+  index: number
+  source: Point2D
+  visibilityWeight: number
+  safetyWeight: number
+  usageWeight: number
+  reasons: string[]
+}
+
+type MeshSourceVertex = {
+  id: string
+  kind: MeshVertexKind
+  index?: number
+  x: number
+  y: number
+  weight: number
+  reasons: string[]
+}
+
+type MeshTargetVertex = {
+  id: string
+  kind: MeshVertexKind
+  index?: number
+  x: number
+  y: number
+  weight: number
+  reasons: string[]
+}
+
+type MeshVertexPair = {
+  id: string
+  kind: MeshVertexKind
+  index?: number
+  source: Point2D
+  target: Point2D
+  usageWeight: number
+  reasons: string[]
+}
+
+type MeshPrototypeSummary = {
+  top1MatchedReferenceId: string | null
+  currentLandmarkCount: number
+  candidateAlignedIdealLandmarkCount: number
+  visibleCurrentLandmarkCount: number
+  excludedCurrentLandmarkCount: number
+  faceSourceVertexCount: number
+  nearFaceGridCount: number
+  backgroundGridCount: number
+  screenEdgeAnchorCount: number
+  meshPairCount: number
+  usageWeightAverage: number | null
+  usageWeightMin: number | null
+  usageWeightMax: number | null
+  boundarySuppressedCount: number
+  mouthSuppressedCount: number
+  eyeSuppressedCount: number
+  largeDisplacementSuppressedCount: number
+  invalidExcludedCount: number
+}
+
+type CurrentIdealMeshPrototypeState = {
+  candidateAlignedIdealLandmarks: ReferenceLandmark[]
+  acceptedCurrentLandmarks: CurrentMeshLandmarkVertex[]
+  excludedCurrentLandmarks: CurrentMeshLandmarkVertex[]
+  currentMeshSourceVertices: MeshSourceVertex[]
+  idealMeshTargetVertices: MeshTargetVertex[]
+  currentIdealMeshPairs: MeshVertexPair[]
+  summary: MeshPrototypeSummary
+}
+
 type ModelScanState = {
   mediaPipeStatus: MediaPipeStatus
   mediaPipeError: string | null
@@ -127,6 +210,11 @@ type LabState = {
   activeDebugTab: DebugTab
   overlay: {
     showLandmarks478: boolean
+    showMeshSource: boolean
+    showMeshTarget: boolean
+    showMeshPairs: boolean
+    showExcludedLandmarks: boolean
+    showGridAnchors: boolean
   }
   modelVideo: VideoPreviewState & {
     currentReviewFrameIndex: number | null
@@ -145,6 +233,7 @@ type LabState = {
   currentAcceptedReviewIndex: number | null
   currentLiveFrameAnalysis: CurrentLiveFrameAnalysis
   top1Match: ReferenceMatchResult
+  currentIdealMeshPrototype: CurrentIdealMeshPrototypeState
   logs: string[]
 }
 
@@ -168,6 +257,15 @@ const POSE_WEIGHT = 1
 const EXPRESSION_WEIGHT = 1
 const QUALITY_WEIGHT = 0.25
 const POSE_MISSING_PENALTY = 1000
+const HIDDEN_SIDE_YAW_THRESHOLD_DEG = 18
+const FACE_BOUNDARY_USAGE_MULTIPLIER = 0.55
+const HIDDEN_SIDE_USAGE_MULTIPLIER = 0.25
+const EXPRESSION_REGION_USAGE_MULTIPLIER = 0.45
+const LARGE_DISPLACEMENT_USAGE_MULTIPLIER = 0.4
+const LARGE_DISPLACEMENT_THRESHOLD = 0.075
+const EXCLUDE_USAGE_WEIGHT_THRESHOLD = 0.15
+const NEAR_FACE_GRID_STEPS = 5
+const BACKGROUND_GRID_STEPS = 5
 const MATCH_BLENDSHAPE_KEYS = [
   "jawOpen",
   "mouthSmileLeft",
@@ -178,6 +276,22 @@ const MATCH_BLENDSHAPE_KEYS = [
   "eyeSquintLeft",
   "eyeSquintRight",
 ] as const
+const FACE_BOUNDARY_LANDMARK_INDICES = new Set([
+  0, 10, 21, 54, 58, 67, 93, 103, 109, 127, 132, 136, 148, 149, 150, 152, 162,
+  172, 176, 234, 251, 284, 288, 297, 323, 332, 338, 356, 361, 365, 377, 378,
+  379, 389, 397, 400, 454,
+])
+const MOUTH_LANDMARK_INDICES = new Set([
+  0, 13, 14, 17, 37, 39, 40, 61, 78, 80, 81, 82, 84, 87, 88, 91, 95, 146, 178,
+  181, 185, 191, 267, 269, 270, 291, 308, 310, 311, 312, 314, 317, 318, 321,
+  324, 375, 402, 405, 409, 415,
+])
+const EYE_LANDMARK_INDICES = new Set([
+  7, 33, 46, 52, 53, 55, 63, 65, 66, 70, 105, 107, 133, 144, 145, 153, 154,
+  155, 157, 158, 159, 160, 161, 163, 173, 246, 249, 263, 276, 282, 283, 285,
+  293, 295, 296, 300, 334, 336, 362, 373, 374, 380, 381, 382, 384, 385, 386,
+  387, 388, 390, 398, 466, 468, 469, 470, 471, 472, 473, 474, 475, 476, 477,
+])
 
 const previewTabs: TabOption<PreviewTab>[] = [
   { label: "モデル動画", value: "model" },
@@ -198,6 +312,11 @@ const state: LabState = {
   activeDebugTab: "summary",
   overlay: {
     showLandmarks478: false,
+    showMeshSource: false,
+    showMeshTarget: false,
+    showMeshPairs: false,
+    showExcludedLandmarks: false,
+    showGridAnchors: false,
   },
   modelVideo: {
     loaded: false,
@@ -244,6 +363,7 @@ const state: LabState = {
   currentAcceptedReviewIndex: null,
   currentLiveFrameAnalysis: createEmptyCurrentLiveFrameAnalysis(),
   top1Match: createEmptyTop1Match(),
+  currentIdealMeshPrototype: createEmptyCurrentIdealMeshPrototype(),
   logs: ["ラボを初期化しました。"],
 }
 
@@ -294,6 +414,26 @@ app.innerHTML = `
           <label class="overlay-toggle">
             <input type="checkbox" data-action="toggle-landmarks" />
             <span>478点を表示</span>
+          </label>
+          <label class="overlay-toggle">
+            <input type="checkbox" data-action="toggle-mesh-source" />
+            <span>mesh sourceを表示</span>
+          </label>
+          <label class="overlay-toggle">
+            <input type="checkbox" data-action="toggle-mesh-target" />
+            <span>mesh targetを表示</span>
+          </label>
+          <label class="overlay-toggle">
+            <input type="checkbox" data-action="toggle-mesh-pairs" />
+            <span>対応線を表示</span>
+          </label>
+          <label class="overlay-toggle">
+            <input type="checkbox" data-action="toggle-excluded-landmarks" />
+            <span>除外landmarkを表示</span>
+          </label>
+          <label class="overlay-toggle">
+            <input type="checkbox" data-action="toggle-grid-anchors" />
+            <span>grid / anchorsを表示</span>
           </label>
         </div>
       </div>
@@ -439,6 +579,11 @@ function bindEvents() {
       handleToggleLandmarks478(event.currentTarget.checked)
     },
   )
+  bindOverlayToggle("toggle-mesh-source", "showMeshSource")
+  bindOverlayToggle("toggle-mesh-target", "showMeshTarget")
+  bindOverlayToggle("toggle-mesh-pairs", "showMeshPairs")
+  bindOverlayToggle("toggle-excluded-landmarks", "showExcludedLandmarks")
+  bindOverlayToggle("toggle-grid-anchors", "showGridAnchors")
   modelFileInput.addEventListener("change", () => {
     handleVideoFileSelection("model", modelFileInput.files?.[0] ?? null)
   })
@@ -904,6 +1049,7 @@ function updateTop1Match() {
       ...createEmptyTop1Match(),
       error: "currentNotAnalyzed",
     }
+    updateCurrentIdealMeshPrototype()
     return
   }
 
@@ -913,6 +1059,7 @@ function updateTop1Match() {
       currentExpressionGroup: current.expressionGroup,
       error: `current analysis failed / matching skipped: ${current.error ?? "invalidCurrentLandmarks"}`,
     }
+    updateCurrentIdealMeshPrototype()
     return
   }
 
@@ -925,6 +1072,7 @@ function updateTop1Match() {
       currentExpressionGroup: current.expressionGroup,
       error: "noReferenceFrames",
     }
+    updateCurrentIdealMeshPrototype()
     return
   }
 
@@ -965,6 +1113,7 @@ function updateTop1Match() {
       currentExpressionGroup: current.expressionGroup,
       error: "noReferenceFrames",
     }
+    updateCurrentIdealMeshPrototype()
     return
   }
 
@@ -980,6 +1129,363 @@ function updateTop1Match() {
     currentExpressionGroup: current.expressionGroup,
     idealExpressionGroup: best.frame.expressionGroup,
     error: null,
+  }
+  updateCurrentIdealMeshPrototype()
+}
+
+function updateCurrentIdealMeshPrototype() {
+  const current = state.currentLiveFrameAnalysis
+  const idealFrame = getMatchedIdealFrame()
+
+  if (
+    current.error ||
+    current.landmarks478.length !== REQUIRED_LANDMARK_COUNT ||
+    !idealFrame ||
+    idealFrame.landmarks478.length !== REQUIRED_LANDMARK_COUNT
+  ) {
+    state.currentIdealMeshPrototype = {
+      ...createEmptyCurrentIdealMeshPrototype(),
+      summary: {
+        ...createEmptyMeshPrototypeSummary(),
+        top1MatchedReferenceId: state.top1Match.idealFrameId,
+        currentLandmarkCount: current.landmarks478.length,
+      },
+    }
+    return
+  }
+
+  const candidateAlignedIdealLandmarks = alignIdealLandmarksToCurrentFace(
+    idealFrame.landmarks478,
+    current.landmarks478,
+  )
+  const { acceptedCurrentLandmarks, excludedCurrentLandmarks } =
+    selectCurrentMeshLandmarkVertices(current, candidateAlignedIdealLandmarks)
+  const currentMeshSourceVertices = buildCurrentMeshSourceVertices(
+    acceptedCurrentLandmarks,
+    current.landmarks478,
+  )
+  const { idealMeshTargetVertices, currentIdealMeshPairs } = buildIdealMeshTargetVertices(
+    currentMeshSourceVertices,
+    candidateAlignedIdealLandmarks,
+  )
+  const summary = summarizeCurrentIdealMeshPrototype({
+    currentLandmarkCount: current.landmarks478.length,
+    top1MatchedReferenceId: state.top1Match.idealFrameId,
+    candidateAlignedIdealLandmarkCount: candidateAlignedIdealLandmarks.length,
+    acceptedCurrentLandmarks,
+    excludedCurrentLandmarks,
+    currentMeshSourceVertices,
+    currentIdealMeshPairs,
+  })
+
+  state.currentIdealMeshPrototype = {
+    candidateAlignedIdealLandmarks,
+    acceptedCurrentLandmarks,
+    excludedCurrentLandmarks,
+    currentMeshSourceVertices,
+    idealMeshTargetVertices,
+    currentIdealMeshPairs,
+    summary,
+  }
+}
+
+function alignIdealLandmarksToCurrentFace(
+  idealLandmarks: ReferenceLandmark[],
+  currentLandmarks: ReferenceLandmark[],
+): ReferenceLandmark[] {
+  const idealBounds = getLandmarkBounds(idealLandmarks)
+  const currentBounds = getLandmarkBounds(currentLandmarks)
+  const idealCenter = getRectCenter(idealBounds)
+  const currentCenter = getRectCenter(currentBounds)
+  const widthScale = idealBounds.width > 0 ? currentBounds.width / idealBounds.width : 1
+  const heightScale = idealBounds.height > 0 ? currentBounds.height / idealBounds.height : 1
+  const uniformScale = Number.isFinite(widthScale + heightScale)
+    ? Math.min(widthScale, heightScale)
+    : 1
+
+  return idealLandmarks.map((landmark) => ({
+    index: landmark.index,
+    x: currentCenter.x + (landmark.x - idealCenter.x) * uniformScale,
+    y: currentCenter.y + (landmark.y - idealCenter.y) * uniformScale,
+    z: landmark.z * uniformScale,
+  }))
+}
+
+function selectCurrentMeshLandmarkVertices(
+  current: CurrentLiveFrameAnalysis,
+  candidateAlignedIdealLandmarks: ReferenceLandmark[],
+) {
+  const bounds = getLandmarkBounds(current.landmarks478)
+  const center = getRectCenter(bounds)
+  const acceptedCurrentLandmarks: CurrentMeshLandmarkVertex[] = []
+  const excludedCurrentLandmarks: CurrentMeshLandmarkVertex[] = []
+  const blendshapeScores = getBlendshapeScoreMap(current.blendshapes)
+  const mouthActivity = Math.max(
+    getScore(blendshapeScores, "jawOpen"),
+    getScore(blendshapeScores, "mouthPucker"),
+    averageScores(blendshapeScores, "mouthSmileLeft", "mouthSmileRight"),
+  )
+  const eyeActivity = Math.max(
+    averageScores(blendshapeScores, "eyeBlinkLeft", "eyeBlinkRight"),
+    averageScores(blendshapeScores, "eyeSquintLeft", "eyeSquintRight"),
+  )
+
+  for (const landmark of current.landmarks478) {
+    const reasons: string[] = []
+    let visibilityWeight = 1
+    let safetyWeight = 1
+
+    if (!isValidNormalizedPoint(landmark)) {
+      excludedCurrentLandmarks.push({
+        id: `face:${landmark.index}`,
+        kind: "faceLandmark",
+        index: landmark.index,
+        source: { x: landmark.x, y: landmark.y },
+        visibilityWeight: 0,
+        safetyWeight: 0,
+        usageWeight: 0,
+        reasons: ["invalidExcluded"],
+      })
+      continue
+    }
+
+    if (FACE_BOUNDARY_LANDMARK_INDICES.has(landmark.index)) {
+      safetyWeight *= FACE_BOUNDARY_USAGE_MULTIPLIER
+      reasons.push("boundarySuppressed")
+    }
+
+    if (isPoseHiddenSideLandmark(landmark, center, current.pose)) {
+      visibilityWeight *= HIDDEN_SIDE_USAGE_MULTIPLIER
+      reasons.push("boundarySuppressed")
+    }
+
+    if (mouthActivity >= MIXED_EXPRESSION_THRESHOLD && MOUTH_LANDMARK_INDICES.has(landmark.index)) {
+      safetyWeight *= EXPRESSION_REGION_USAGE_MULTIPLIER
+      reasons.push("mouthSuppressed")
+    }
+
+    if (eyeActivity >= MIXED_EXPRESSION_THRESHOLD && EYE_LANDMARK_INDICES.has(landmark.index)) {
+      safetyWeight *= EXPRESSION_REGION_USAGE_MULTIPLIER
+      reasons.push("eyeSuppressed")
+    }
+
+    const candidate = candidateAlignedIdealLandmarks[landmark.index]
+    if (candidate && isValidPoint(candidate)) {
+      const distance = Math.hypot(candidate.x - landmark.x, candidate.y - landmark.y)
+      if (distance > LARGE_DISPLACEMENT_THRESHOLD) {
+        safetyWeight *= LARGE_DISPLACEMENT_USAGE_MULTIPLIER
+        reasons.push("largeDisplacementSuppressed")
+      }
+    }
+
+    const usageWeight = clamp(visibilityWeight * safetyWeight, 0, 1)
+    const vertex: CurrentMeshLandmarkVertex = {
+      id: `face:${landmark.index}`,
+      kind: "faceLandmark",
+      index: landmark.index,
+      source: { x: landmark.x, y: landmark.y },
+      visibilityWeight,
+      safetyWeight,
+      usageWeight: usageWeight <= EXCLUDE_USAGE_WEIGHT_THRESHOLD ? 0 : usageWeight,
+      reasons: reasons.length > 0 ? uniqueStrings(reasons) : ["visibleSafe"],
+    }
+
+    if (usageWeight <= EXCLUDE_USAGE_WEIGHT_THRESHOLD) {
+      excludedCurrentLandmarks.push({
+        ...vertex,
+        usageWeight: 0,
+        reasons: uniqueStrings([...vertex.reasons, "usageWeightExcluded"]),
+      })
+    } else {
+      acceptedCurrentLandmarks.push(vertex)
+    }
+  }
+
+  return { acceptedCurrentLandmarks, excludedCurrentLandmarks }
+}
+
+function buildCurrentMeshSourceVertices(
+  acceptedCurrentLandmarks: CurrentMeshLandmarkVertex[],
+  currentLandmarks: ReferenceLandmark[],
+): MeshSourceVertex[] {
+  const faceVertices: MeshSourceVertex[] = acceptedCurrentLandmarks.map((landmark) => ({
+    id: landmark.id,
+    kind: "faceLandmark",
+    index: landmark.index,
+    x: landmark.source.x,
+    y: landmark.source.y,
+    weight: landmark.usageWeight,
+    reasons: landmark.reasons,
+  }))
+  const faceBounds = getLandmarkBounds(currentLandmarks)
+  const nearFaceGrid = buildNearFaceGridVertices(faceBounds)
+  const backgroundGrid = buildBackgroundGridVertices(faceBounds)
+  const screenEdgeAnchors = buildScreenEdgeAnchorVertices()
+
+  return [...faceVertices, ...nearFaceGrid, ...backgroundGrid, ...screenEdgeAnchors]
+}
+
+function buildIdealMeshTargetVertices(
+  currentMeshSourceVertices: MeshSourceVertex[],
+  candidateAlignedIdealLandmarks: ReferenceLandmark[],
+) {
+  const idealMeshTargetVertices: MeshTargetVertex[] = []
+  const currentIdealMeshPairs: MeshVertexPair[] = []
+
+  for (const sourceVertex of currentMeshSourceVertices) {
+    let target = { x: sourceVertex.x, y: sourceVertex.y }
+    let usageWeight = 0
+
+    if (sourceVertex.kind === "faceLandmark" && sourceVertex.index !== undefined) {
+      const candidate = candidateAlignedIdealLandmarks[sourceVertex.index]
+      usageWeight = sourceVertex.weight
+      if (candidate && isValidPoint(candidate)) {
+        target = lerpPoint({ x: sourceVertex.x, y: sourceVertex.y }, candidate, usageWeight)
+      }
+    }
+
+    idealMeshTargetVertices.push({
+      id: sourceVertex.id,
+      kind: sourceVertex.kind,
+      index: sourceVertex.index,
+      x: target.x,
+      y: target.y,
+      weight: usageWeight,
+      reasons: sourceVertex.kind === "faceLandmark" ? sourceVertex.reasons : ["fixedGridAnchor"],
+    })
+    currentIdealMeshPairs.push({
+      id: sourceVertex.id,
+      kind: sourceVertex.kind,
+      index: sourceVertex.index,
+      source: { x: sourceVertex.x, y: sourceVertex.y },
+      target,
+      usageWeight,
+      reasons: sourceVertex.kind === "faceLandmark" ? sourceVertex.reasons : ["fixedGridAnchor"],
+    })
+  }
+
+  return { idealMeshTargetVertices, currentIdealMeshPairs }
+}
+
+function buildNearFaceGridVertices(faceBounds: Rect): MeshSourceVertex[] {
+  const expanded = expandRect(faceBounds, 0.12)
+  const vertices: MeshSourceVertex[] = []
+
+  for (let yIndex = 0; yIndex < NEAR_FACE_GRID_STEPS; yIndex += 1) {
+    for (let xIndex = 0; xIndex < NEAR_FACE_GRID_STEPS; xIndex += 1) {
+      const isPerimeter =
+        xIndex === 0 ||
+        yIndex === 0 ||
+        xIndex === NEAR_FACE_GRID_STEPS - 1 ||
+        yIndex === NEAR_FACE_GRID_STEPS - 1
+      if (!isPerimeter) {
+        continue
+      }
+
+      const x = interpolate(expanded.x, expanded.x + expanded.width, xIndex / (NEAR_FACE_GRID_STEPS - 1))
+      const y = interpolate(expanded.y, expanded.y + expanded.height, yIndex / (NEAR_FACE_GRID_STEPS - 1))
+      vertices.push({
+        id: `grid:near:${vertices.length}`,
+        kind: "nearFaceGrid",
+        x: clamp(x, 0, 1),
+        y: clamp(y, 0, 1),
+        weight: 0,
+        reasons: ["fixedGridAnchor"],
+      })
+    }
+  }
+
+  return vertices
+}
+
+function buildBackgroundGridVertices(faceBounds: Rect): MeshSourceVertex[] {
+  const expandedFaceBounds = expandRect(faceBounds, 0.18)
+  const vertices: MeshSourceVertex[] = []
+
+  for (let yIndex = 0; yIndex < BACKGROUND_GRID_STEPS; yIndex += 1) {
+    for (let xIndex = 0; xIndex < BACKGROUND_GRID_STEPS; xIndex += 1) {
+      const x = xIndex / (BACKGROUND_GRID_STEPS - 1)
+      const y = yIndex / (BACKGROUND_GRID_STEPS - 1)
+      if (isPointInsideRect({ x, y }, expandedFaceBounds)) {
+        continue
+      }
+
+      vertices.push({
+        id: `grid:background:${vertices.length}`,
+        kind: "backgroundGrid",
+        x,
+        y,
+        weight: 0,
+        reasons: ["fixedGridAnchor"],
+      })
+    }
+  }
+
+  return vertices
+}
+
+function buildScreenEdgeAnchorVertices(): MeshSourceVertex[] {
+  return [
+    { x: 0, y: 0 },
+    { x: 0.5, y: 0 },
+    { x: 1, y: 0 },
+    { x: 0, y: 0.5 },
+    { x: 1, y: 0.5 },
+    { x: 0, y: 1 },
+    { x: 0.5, y: 1 },
+    { x: 1, y: 1 },
+  ].map((point, index) => ({
+    id: `anchor:screen:${index}`,
+    kind: "screenEdgeAnchor",
+    x: point.x,
+    y: point.y,
+    weight: 0,
+    reasons: ["fixedGridAnchor"],
+  }))
+}
+
+function summarizeCurrentIdealMeshPrototype({
+  currentLandmarkCount,
+  top1MatchedReferenceId,
+  candidateAlignedIdealLandmarkCount,
+  acceptedCurrentLandmarks,
+  excludedCurrentLandmarks,
+  currentMeshSourceVertices,
+  currentIdealMeshPairs,
+}: {
+  currentLandmarkCount: number
+  top1MatchedReferenceId: string | null
+  candidateAlignedIdealLandmarkCount: number
+  acceptedCurrentLandmarks: CurrentMeshLandmarkVertex[]
+  excludedCurrentLandmarks: CurrentMeshLandmarkVertex[]
+  currentMeshSourceVertices: MeshSourceVertex[]
+  currentIdealMeshPairs: MeshVertexPair[]
+}): MeshPrototypeSummary {
+  const usageWeights = currentIdealMeshPairs.map((pair) => pair.usageWeight)
+  const allLandmarkVertices = [...acceptedCurrentLandmarks, ...excludedCurrentLandmarks]
+
+  return {
+    top1MatchedReferenceId,
+    currentLandmarkCount,
+    candidateAlignedIdealLandmarkCount,
+    visibleCurrentLandmarkCount: acceptedCurrentLandmarks.length,
+    excludedCurrentLandmarkCount: excludedCurrentLandmarks.length,
+    faceSourceVertexCount: countVerticesByKind(currentMeshSourceVertices, "faceLandmark"),
+    nearFaceGridCount: countVerticesByKind(currentMeshSourceVertices, "nearFaceGrid"),
+    backgroundGridCount: countVerticesByKind(currentMeshSourceVertices, "backgroundGrid"),
+    screenEdgeAnchorCount: countVerticesByKind(currentMeshSourceVertices, "screenEdgeAnchor"),
+    meshPairCount: currentIdealMeshPairs.length,
+    usageWeightAverage: usageWeights.length > 0 ? averageNumbers(usageWeights) : null,
+    usageWeightMin: usageWeights.length > 0 ? Math.min(...usageWeights) : null,
+    usageWeightMax: usageWeights.length > 0 ? Math.max(...usageWeights) : null,
+    boundarySuppressedCount: countVerticesWithReason(allLandmarkVertices, "boundarySuppressed"),
+    mouthSuppressedCount: countVerticesWithReason(allLandmarkVertices, "mouthSuppressed"),
+    eyeSuppressedCount: countVerticesWithReason(allLandmarkVertices, "eyeSuppressed"),
+    largeDisplacementSuppressedCount: countVerticesWithReason(
+      allLandmarkVertices,
+      "largeDisplacementSuppressed",
+    ),
+    invalidExcludedCount: countVerticesWithReason(excludedCurrentLandmarks, "invalidExcluded"),
   }
 }
 
@@ -1034,6 +1540,109 @@ function getScore(scores: Map<string, number>, key: string) {
 
 function averageScores(scores: Map<string, number>, leftKey: string, rightKey: string) {
   return (getScore(scores, leftKey) + getScore(scores, rightKey)) / 2
+}
+
+function getLandmarkBounds(landmarks: Array<{ x: number; y: number }>): Rect {
+  const validPoints = landmarks.filter(isValidPoint)
+  if (validPoints.length === 0) {
+    return {
+      x: 0.35,
+      y: 0.25,
+      width: 0.3,
+      height: 0.5,
+    }
+  }
+
+  const xs = validPoints.map((point) => point.x)
+  const ys = validPoints.map((point) => point.y)
+  const minX = Math.min(...xs)
+  const maxX = Math.max(...xs)
+  const minY = Math.min(...ys)
+  const maxY = Math.max(...ys)
+
+  return {
+    x: minX,
+    y: minY,
+    width: Math.max(0.001, maxX - minX),
+    height: Math.max(0.001, maxY - minY),
+  }
+}
+
+function getRectCenter(rect: Rect): Point2D {
+  return {
+    x: rect.x + rect.width / 2,
+    y: rect.y + rect.height / 2,
+  }
+}
+
+function expandRect(rect: Rect, margin: number): Rect {
+  return {
+    x: clamp(rect.x - margin, 0, 1),
+    y: clamp(rect.y - margin, 0, 1),
+    width: clamp(rect.width + margin * 2, 0, 1),
+    height: clamp(rect.height + margin * 2, 0, 1),
+  }
+}
+
+function isPointInsideRect(point: Point2D, rect: Rect) {
+  return (
+    point.x >= rect.x &&
+    point.x <= rect.x + rect.width &&
+    point.y >= rect.y &&
+    point.y <= rect.y + rect.height
+  )
+}
+
+function isValidPoint(point: { x: number; y: number }) {
+  return Number.isFinite(point.x) && Number.isFinite(point.y)
+}
+
+function isValidNormalizedPoint(point: { x: number; y: number }) {
+  return isValidPoint(point) && point.x >= 0 && point.x <= 1 && point.y >= 0 && point.y <= 1
+}
+
+function isPoseHiddenSideLandmark(
+  landmark: ReferenceLandmark,
+  center: Point2D,
+  pose: ReferencePose,
+) {
+  if (pose.yaw === null || Math.abs(pose.yaw) < HIDDEN_SIDE_YAW_THRESHOLD_DEG) {
+    return false
+  }
+
+  const leftSide = landmark.x < center.x - 0.08
+  const rightSide = landmark.x > center.x + 0.08
+  return pose.yaw > 0 ? leftSide : rightSide
+}
+
+function lerpPoint(source: Point2D, target: Point2D, amount: number): Point2D {
+  return {
+    x: interpolate(source.x, target.x, amount),
+    y: interpolate(source.y, target.y, amount),
+  }
+}
+
+function interpolate(start: number, end: number, amount: number) {
+  return start + (end - start) * amount
+}
+
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values))
+}
+
+function countVerticesByKind(vertices: MeshSourceVertex[], kind: MeshVertexKind) {
+  return vertices.filter((vertex) => vertex.kind === kind).length
+}
+
+function countVerticesWithReason(
+  vertices: Array<{ reasons: string[] }>,
+  reason: string,
+) {
+  return vertices.filter((vertex) => vertex.reasons.includes(reason)).length
+}
+
+function averageNumbers(values: number[]) {
+  return values.reduce((sum, value) => sum + value, 0) / values.length
 }
 
 function getMissingBlendshapeKeys(blendshapes: ReferenceBlendshape[]) {
@@ -1091,6 +1700,7 @@ async function analyzeCurrentLiveFrame(reason: "manual" | "timeupdate" | "seeked
       ...createEmptyTop1Match(),
       error: `current analysis failed / matching skipped: ${state.currentLiveFrameAnalysis.error}`,
     }
+    updateCurrentIdealMeshPrototype()
     addLog(`ライブ動画 current frame 解析でエラーが発生しました: ${message}`)
   } finally {
     liveAnalysisInProgress = false
@@ -1120,6 +1730,20 @@ function handleToggleLandmarks478(checked: boolean) {
   addLog(`478点 overlay 表示を ${checked ? "ON" : "OFF"} にしました。`)
   drawAllOverlays()
   renderAll()
+}
+
+function bindOverlayToggle(
+  action: string,
+  key: Exclude<keyof LabState["overlay"], "showLandmarks478">,
+) {
+  getElement<HTMLInputElement>(`[data-action="${action}"]`).addEventListener(
+    "change",
+    (event) => {
+      state.overlay[key] = event.currentTarget.checked
+      drawAllOverlays()
+      renderAll()
+    },
+  )
 }
 
 function handleModelRangeInput(value: number) {
@@ -1217,6 +1841,7 @@ function resetModelScanResults() {
   state.rawIdealReferenceFrames = []
   state.currentAcceptedReviewIndex = null
   state.top1Match = createEmptyTop1Match()
+  state.currentIdealMeshPrototype = createEmptyCurrentIdealMeshPrototype()
   state.modelScan.scanStatus = "idle"
   state.modelScan.scanProgress = 0
   state.modelScan.plannedScanFrames = 0
@@ -1233,6 +1858,7 @@ function resetLiveAnalysisResults() {
   resetLiveTimestamp()
   state.currentLiveFrameAnalysis = createEmptyCurrentLiveFrameAnalysis()
   state.top1Match = createEmptyTop1Match()
+  state.currentIdealMeshPrototype = createEmptyCurrentIdealMeshPrototype()
   liveAnalysisRequestId += 1
   liveAnalysisInProgress = false
   lastAutoLiveAnalysisAtSec = Number.NEGATIVE_INFINITY
@@ -1301,6 +1927,41 @@ function createEmptyTop1Match(): ReferenceMatchResult {
     currentExpressionGroup: null,
     idealExpressionGroup: null,
     error: null,
+  }
+}
+
+function createEmptyMeshPrototypeSummary(): MeshPrototypeSummary {
+  return {
+    top1MatchedReferenceId: null,
+    currentLandmarkCount: 0,
+    candidateAlignedIdealLandmarkCount: 0,
+    visibleCurrentLandmarkCount: 0,
+    excludedCurrentLandmarkCount: 0,
+    faceSourceVertexCount: 0,
+    nearFaceGridCount: 0,
+    backgroundGridCount: 0,
+    screenEdgeAnchorCount: 0,
+    meshPairCount: 0,
+    usageWeightAverage: null,
+    usageWeightMin: null,
+    usageWeightMax: null,
+    boundarySuppressedCount: 0,
+    mouthSuppressedCount: 0,
+    eyeSuppressedCount: 0,
+    largeDisplacementSuppressedCount: 0,
+    invalidExcludedCount: 0,
+  }
+}
+
+function createEmptyCurrentIdealMeshPrototype(): CurrentIdealMeshPrototypeState {
+  return {
+    candidateAlignedIdealLandmarks: [],
+    acceptedCurrentLandmarks: [],
+    excludedCurrentLandmarks: [],
+    currentMeshSourceVertices: [],
+    idealMeshTargetVertices: [],
+    currentIdealMeshPairs: [],
+    summary: createEmptyMeshPrototypeSummary(),
   }
 }
 
@@ -1379,6 +2040,16 @@ function renderControls() {
   )
   getElement<HTMLInputElement>('[data-action="toggle-landmarks"]').checked =
     state.overlay.showLandmarks478
+  getElement<HTMLInputElement>('[data-action="toggle-mesh-source"]').checked =
+    state.overlay.showMeshSource
+  getElement<HTMLInputElement>('[data-action="toggle-mesh-target"]').checked =
+    state.overlay.showMeshTarget
+  getElement<HTMLInputElement>('[data-action="toggle-mesh-pairs"]').checked =
+    state.overlay.showMeshPairs
+  getElement<HTMLInputElement>('[data-action="toggle-excluded-landmarks"]').checked =
+    state.overlay.showExcludedLandmarks
+  getElement<HTMLInputElement>('[data-action="toggle-grid-anchors"]').checked =
+    state.overlay.showGridAnchors
   renderModelReviewCard()
   renderLiveAnalysisCard()
 }
@@ -1469,7 +2140,7 @@ function renderDebugContent() {
   }
 
   if (state.activeDebugTab === "warpMesh") {
-    content.appendChild(createWarpMeshContent())
+    content.appendChild(createMeshPrototypeContent())
     return
   }
 
@@ -1492,6 +2163,7 @@ function createSummaryContent() {
   const summaryList = document.createElement("dl")
   summaryList.className = "summary-list"
   const currentFrame = getCurrentAcceptedFrame()
+  const meshSummary = state.currentIdealMeshPrototype.summary
 
   const items: Array<[string, string]> = [
     ["Model MediaPipe", state.modelScan.mediaPipeStatus],
@@ -1522,6 +2194,27 @@ function createSummaryContent() {
     ["Match score", formatSeconds(state.top1Match.matchScore)],
     ["Pose distance", formatSeconds(state.top1Match.poseDistance)],
     ["Expression distance", formatSeconds(state.top1Match.expressionDistance)],
+    ["top1MatchedReferenceId", meshSummary.top1MatchedReferenceId ?? "-"],
+    ["currentLandmarkCount", String(meshSummary.currentLandmarkCount)],
+    ["visibleCurrentLandmarkCount", String(meshSummary.visibleCurrentLandmarkCount)],
+    ["excludedCurrentLandmarkCount", String(meshSummary.excludedCurrentLandmarkCount)],
+    ["faceSourceVertexCount", String(meshSummary.faceSourceVertexCount)],
+    ["nearFaceGridCount", String(meshSummary.nearFaceGridCount)],
+    ["backgroundGridCount", String(meshSummary.backgroundGridCount)],
+    ["screenEdgeAnchorCount", String(meshSummary.screenEdgeAnchorCount)],
+    ["meshPairCount", String(meshSummary.meshPairCount)],
+    [
+      "usageWeight average / min / max",
+      `${formatMetric(meshSummary.usageWeightAverage)} / ${formatMetric(meshSummary.usageWeightMin)} / ${formatMetric(meshSummary.usageWeightMax)}`,
+    ],
+    ["boundarySuppressedCount", String(meshSummary.boundarySuppressedCount)],
+    ["mouthSuppressedCount", String(meshSummary.mouthSuppressedCount)],
+    ["eyeSuppressedCount", String(meshSummary.eyeSuppressedCount)],
+    [
+      "largeDisplacementSuppressedCount",
+      String(meshSummary.largeDisplacementSuppressedCount),
+    ],
+    ["invalidExcludedCount", String(meshSummary.invalidExcludedCount)],
     ["Overlay 478 landmarks", state.overlay.showLandmarks478 ? "on" : "off"],
   ]
 
@@ -1662,6 +2355,70 @@ function createMatchingContent() {
   return fragment
 }
 
+function createMeshPrototypeContent() {
+  const fragment = document.createDocumentFragment()
+  const mesh = state.currentIdealMeshPrototype
+  const summary = mesh.summary
+
+  const heading = document.createElement("h3")
+  heading.textContent = "Warp Mesh"
+
+  const status = document.createElement("p")
+  status.className = "placeholder-text"
+  status.textContent =
+    "visible current landmarks + grid / anchors の mesh pair prototype を確認します。WebGL warp と raw displacement warp はまだ行いません。"
+
+  const sourceHeading = document.createElement("h3")
+  sourceHeading.textContent = "Current Mesh Source"
+  const sourceList = document.createElement("dl")
+  sourceList.className = "summary-list"
+  appendDefinitionItems(sourceList, [
+    ["currentLiveFrameAnalysis", state.currentLiveFrameAnalysis.analyzed ? "available" : "not analyzed"],
+    ["top1 reference matching", state.top1Match.matched ? "matched" : "not matched"],
+    ["top1MatchedReferenceId", summary.top1MatchedReferenceId ?? "-"],
+    ["candidateAlignedIdealLandmarkCount", String(summary.candidateAlignedIdealLandmarkCount)],
+    ["currentLandmarkCount", String(summary.currentLandmarkCount)],
+    ["visibleCurrentLandmarkCount", String(summary.visibleCurrentLandmarkCount)],
+    ["excludedCurrentLandmarkCount", String(summary.excludedCurrentLandmarkCount)],
+    ["faceSourceVertexCount", String(summary.faceSourceVertexCount)],
+    ["nearFaceGridCount", String(summary.nearFaceGridCount)],
+    ["backgroundGridCount", String(summary.backgroundGridCount)],
+    ["screenEdgeAnchorCount", String(summary.screenEdgeAnchorCount)],
+  ])
+
+  const targetHeading = document.createElement("h3")
+  targetHeading.textContent = "Ideal Mesh Target"
+  const targetList = document.createElement("dl")
+  targetList.className = "summary-list"
+  appendDefinitionItems(targetList, [
+    ["meshPairCount", String(summary.meshPairCount)],
+    [
+      "usageWeight average / min / max",
+      `${formatMetric(summary.usageWeightAverage)} / ${formatMetric(summary.usageWeightMin)} / ${formatMetric(summary.usageWeightMax)}`,
+    ],
+    ["alignedIdeal rule", "candidate only; not final target for all 478 landmarks"],
+    ["faceLandmark target", "selected current landmark index -> same candidate aligned ideal index"],
+    ["grid / anchors target", "fixed source position"],
+  ])
+
+  const reasonHeading = document.createElement("h3")
+  reasonHeading.textContent = "Suppression / Exclusion"
+  const reasonList = document.createElement("dl")
+  reasonList.className = "summary-list"
+  appendDefinitionItems(reasonList, [
+    ["boundarySuppressedCount", String(summary.boundarySuppressedCount)],
+    ["mouthSuppressedCount", String(summary.mouthSuppressedCount)],
+    ["eyeSuppressedCount", String(summary.eyeSuppressedCount)],
+    ["largeDisplacementSuppressedCount", String(summary.largeDisplacementSuppressedCount)],
+    ["invalidExcludedCount", String(summary.invalidExcludedCount)],
+    ["accepted landmark preview", formatMeshLandmarkPreview(mesh.acceptedCurrentLandmarks)],
+    ["excluded landmark preview", formatMeshLandmarkPreview(mesh.excludedCurrentLandmarks)],
+  ])
+
+  fragment.append(heading, status, sourceHeading, sourceList, targetHeading, targetList, reasonHeading, reasonList)
+  return fragment
+}
+
 function createWarpMeshContent() {
   const fragment = document.createDocumentFragment()
   const warpHeading = document.createElement("h3")
@@ -1686,10 +2443,10 @@ function createWarpMeshContent() {
   const nextList = document.createElement("dl")
   nextList.className = "summary-list"
   appendDefinitionItems(nextList, [
-    ["prototype", "finalSourceVertices / finalTargetVertices"],
-    ["alignedIdealLandmarks", "top1 / topK reference を current face へ位置合わせした target 候補"],
-    ["weightedFaceTargets", "visibility / safety / expression / boundary を反映した顔側 target 候補"],
-    ["final vertices", "weightedFaceTargets と grid / anchors を統合した最終 mesh warp 入力"],
+    ["prototype", "current mesh source / ideal mesh target pairs"],
+    ["candidateAlignedIdealLandmarks", "top1 reference を current face へ位置合わせした ideal candidate"],
+    ["selectedFaceTargets", "source 側で採用された landmark index だけに対応する target 候補"],
+    ["mesh pairs", "selected face landmarks と grid / anchors を同順対応で確認する debug 入力"],
   ])
 
   const missingHeading = document.createElement("h3")
@@ -1697,12 +2454,10 @@ function createWarpMeshContent() {
   const missingList = document.createElement("dl")
   missingList.className = "summary-list"
   appendDefinitionItems(missingList, [
-    ["visibilityWeight", "not implemented"],
-    ["warpSafetyWeight", "not implemented"],
+    ["precise visibilityWeight", "not implemented"],
+    ["production warpSafetyWeight", "not implemented"],
     ["face boundary anchors", "not implemented"],
-    ["near-face grid", "not implemented"],
-    ["background grid", "not implemented"],
-    ["screen edge anchors", "not implemented"],
+    ["WebGL warp", "not implemented"],
     ["hybrid mesh", "not implemented"],
     ["production mesh warp", "not implemented"],
   ])
@@ -1800,7 +2555,32 @@ function getRawState() {
       idealExpressionGroup: state.top1Match.idealExpressionGroup,
       error: state.top1Match.error,
     },
+    currentIdealMeshPrototype: getCurrentIdealMeshPrototypeRawState(),
     logs: state.logs,
+  }
+}
+
+function getCurrentIdealMeshPrototypeRawState() {
+  const mesh = state.currentIdealMeshPrototype
+  return {
+    summary: {
+      ...mesh.summary,
+      usageWeightAverage: roundMetricForState(mesh.summary.usageWeightAverage),
+      usageWeightMin: roundMetricForState(mesh.summary.usageWeightMin),
+      usageWeightMax: roundMetricForState(mesh.summary.usageWeightMax),
+    },
+    candidateAlignedIdealLandmarkPreview: mesh.candidateAlignedIdealLandmarks
+      .slice(0, LANDMARK_PREVIEW_COUNT)
+      .map(roundLandmark),
+    acceptedCurrentLandmarkPreview: mesh.acceptedCurrentLandmarks
+      .slice(0, LANDMARK_PREVIEW_COUNT)
+      .map(roundCurrentMeshLandmarkVertex),
+    excludedCurrentLandmarkPreview: mesh.excludedCurrentLandmarks
+      .slice(0, LANDMARK_PREVIEW_COUNT)
+      .map(roundCurrentMeshLandmarkVertex),
+    meshPairPreview: mesh.currentIdealMeshPairs
+      .slice(0, LANDMARK_PREVIEW_COUNT)
+      .map(roundMeshVertexPair),
   }
 }
 
@@ -1913,6 +2693,8 @@ function drawLiveOverlay() {
       1.45,
     )
   }
+
+  drawMeshPrototypeOverlay(context, displayedContentRect)
 }
 
 function drawAllOverlays() {
@@ -1978,6 +2760,127 @@ function drawLandmarkPoints(
     context.beginPath()
     context.arc(point.x, point.y, radius, 0, Math.PI * 2)
     context.fill()
+  }
+}
+
+function drawMeshPrototypeOverlay(
+  context: CanvasRenderingContext2D,
+  displayedContentRect: Rect,
+) {
+  const mesh = state.currentIdealMeshPrototype
+  const showAnyMeshOverlay =
+    state.overlay.showMeshSource ||
+    state.overlay.showMeshTarget ||
+    state.overlay.showMeshPairs ||
+    state.overlay.showExcludedLandmarks ||
+    state.overlay.showGridAnchors
+
+  if (!showAnyMeshOverlay || mesh.currentIdealMeshPairs.length === 0) {
+    return
+  }
+
+  if (state.overlay.showMeshPairs) {
+    context.strokeStyle = "rgba(241, 126, 39, 0.55)"
+    context.lineWidth = 1
+    for (const pair of mesh.currentIdealMeshPairs) {
+      if (pair.kind !== "faceLandmark") {
+        continue
+      }
+      const source = normalizedLandmarkToPreviewPixel(pair.source, displayedContentRect)
+      const target = normalizedLandmarkToPreviewPixel(pair.target, displayedContentRect)
+      context.beginPath()
+      context.moveTo(source.x, source.y)
+      context.lineTo(target.x, target.y)
+      context.stroke()
+    }
+  }
+
+  if (state.overlay.showGridAnchors) {
+    drawMeshVertexPoints(
+      context,
+      displayedContentRect,
+      mesh.currentIdealMeshPairs.filter((pair) => pair.kind !== "faceLandmark"),
+      "source",
+      "rgba(105, 114, 126, 0.75)",
+      2.2,
+      "square",
+    )
+  }
+
+  if (state.overlay.showMeshSource) {
+    drawMeshVertexPoints(
+      context,
+      displayedContentRect,
+      mesh.currentIdealMeshPairs.filter((pair) => pair.kind === "faceLandmark"),
+      "source",
+      "rgba(20, 170, 130, 0.9)",
+      2,
+      "circle",
+    )
+  }
+
+  if (state.overlay.showMeshTarget) {
+    drawMeshVertexPoints(
+      context,
+      displayedContentRect,
+      mesh.currentIdealMeshPairs.filter((pair) => pair.kind === "faceLandmark"),
+      "target",
+      "rgba(244, 86, 120, 0.9)",
+      2,
+      "circle",
+    )
+  }
+
+  if (state.overlay.showExcludedLandmarks) {
+    drawCurrentMeshLandmarkPoints(
+      context,
+      displayedContentRect,
+      mesh.excludedCurrentLandmarks,
+      "rgba(32, 38, 45, 0.55)",
+      2.1,
+    )
+  }
+}
+
+function drawMeshVertexPoints(
+  context: CanvasRenderingContext2D,
+  displayedContentRect: Rect,
+  pairs: MeshVertexPair[],
+  side: "source" | "target",
+  color: string,
+  radius: number,
+  shape: "circle" | "square",
+) {
+  context.fillStyle = color
+  for (const pair of pairs) {
+    const point = normalizedLandmarkToPreviewPixel(pair[side], displayedContentRect)
+    if (shape === "square") {
+      context.fillRect(point.x - radius, point.y - radius, radius * 2, radius * 2)
+      continue
+    }
+    context.beginPath()
+    context.arc(point.x, point.y, radius, 0, Math.PI * 2)
+    context.fill()
+  }
+}
+
+function drawCurrentMeshLandmarkPoints(
+  context: CanvasRenderingContext2D,
+  displayedContentRect: Rect,
+  vertices: CurrentMeshLandmarkVertex[],
+  color: string,
+  radius: number,
+) {
+  context.strokeStyle = color
+  context.lineWidth = 1.5
+  for (const vertex of vertices) {
+    const point = normalizedLandmarkToPreviewPixel(vertex.source, displayedContentRect)
+    context.beginPath()
+    context.moveTo(point.x - radius, point.y - radius)
+    context.lineTo(point.x + radius, point.y + radius)
+    context.moveTo(point.x + radius, point.y - radius)
+    context.lineTo(point.x - radius, point.y + radius)
+    context.stroke()
   }
 }
 
@@ -2100,6 +3003,17 @@ function formatCounts(counts: Record<string, number>) {
     : entries.map(([key, value]) => `${key}: ${value}`).join(" / ")
 }
 
+function formatMeshLandmarkPreview(vertices: CurrentMeshLandmarkVertex[]) {
+  if (vertices.length === 0) {
+    return "-"
+  }
+
+  return vertices
+    .slice(0, LANDMARK_PREVIEW_COUNT)
+    .map((vertex) => `${vertex.index}:${formatMetric(vertex.usageWeight)}:${vertex.reasons.join("|")}`)
+    .join(" / ")
+}
+
 function formatAcceptedReviewPosition() {
   if (!hasAcceptedFrames()) {
     return "-"
@@ -2159,6 +3073,38 @@ function roundLandmark(landmark: ReferenceLandmark) {
     x: roundForState(landmark.x),
     y: roundForState(landmark.y),
     z: roundForState(landmark.z),
+  }
+}
+
+function roundCurrentMeshLandmarkVertex(vertex: CurrentMeshLandmarkVertex) {
+  return {
+    id: vertex.id,
+    kind: vertex.kind,
+    index: vertex.index,
+    source: roundPoint(vertex.source),
+    visibilityWeight: roundMetricForState(vertex.visibilityWeight),
+    safetyWeight: roundMetricForState(vertex.safetyWeight),
+    usageWeight: roundMetricForState(vertex.usageWeight),
+    reasons: vertex.reasons,
+  }
+}
+
+function roundMeshVertexPair(pair: MeshVertexPair) {
+  return {
+    id: pair.id,
+    kind: pair.kind,
+    index: pair.index,
+    source: roundPoint(pair.source),
+    target: roundPoint(pair.target),
+    usageWeight: roundMetricForState(pair.usageWeight),
+    reasons: pair.reasons,
+  }
+}
+
+function roundPoint(point: Point2D) {
+  return {
+    x: roundForState(point.x),
+    y: roundForState(point.y),
   }
 }
 
