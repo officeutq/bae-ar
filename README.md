@@ -10,6 +10,7 @@
 - 次段の `tools/mediapipe-render-consistency-lab` は、mesh（メッシュ化） / render（レンダリング） / MediaPipe re-detection（MediaPipe 再検出）前提で `projectionFitZ` と `meshReadyZ` の違いを検証する debug lab（検証用ラボ）として扱います。production 用 IdealFace asset を作る正式 authoring tool（作成ツール）ではありません。詳細は [MediaPipe Render Consistency Lab](docs/mediapipe-render-consistency-lab.md) を参照してください。
 - `tools/mediapipe-render-consistency-lab` は、MP4 import、auto scan（自動スキャン）、`acceptedFrames`、`thumbnailDataUrl`、MediaPipe metadata summary（MediaPipe メタデータ要約）、`acceptedFrames[].observed12pt`、pose（姿勢） / `expressionSummary`、`manualAdjustmentsByFrame`、`currentReviewIndex`、Debug Console（デバッグコンソール）、Current Frame（現在フレーム）タブ、`poseBucket125`、`frontCandidate` / `expressionTooStrong` badge（補助ラベル）まで実装済みです。MediaPipe face mesh topology（顔メッシュ接続情報）での478点 mesh 化、yaw / pitch / roll 指定 render、rendered image（レンダリング画像）の MediaPipe Face Landmarker 再入力、returned landmarks（返却ランドマーク）と geometric projected landmarks（幾何投影ランドマーク）の比較、alignment / residual evaluation（位置合わせ・残差評価）は未実装です。
 - `tools/ideal-reference-mesh-warp-lab` は、理想モデル動画から作る実測 MediaPipe 478 reference library と、ライブ動画を current face 代わりにした mesh warp 検証のための debug lab です。モデル動画の MediaPipe 解析と raw ideal reference frames 作成に加えて、ライブ動画 current frame の MediaPipe 解析、current478 overlay、raw ideal reference frames からの top1 reference matching まで実装済みです。topK weighted blend、visibilityWeight / warpSafetyWeight、hybrid mesh、mesh warp は未実装です。
+- Ideal Reference Mesh Warp Lab では、モデル動画解析用 MediaPipe とライブ動画 current 解析用 MediaPipe を分離します。モデル動画解析用は raw ideal reference frames 作成後に破棄し、ライブ動画解析用は Runtime 相当の current face 解析に使います。MediaPipe に渡す timestamp は `video.currentTime` ではなく、各解析 stream ごとの単調増加 timestamp を使います。
 - captured JSON を import し、`8pt_basic` / `12pt_rotation_center` / `24pt_structure` を比較します。現時点の 478点奥行き生成 prototype（試作）の推奨は `12pt_rotation_center` です。
 - 478点 z 生成は `canonical-face-depth-template-v1.json`（標準顔奥行きテンプレート）を基準に、`canonicalDepthBased` で仮 z を作り、`perLandmarkZSearch` で各 landmark（ランドマーク）を1次元探索として微調整します。
 - Summary JSON はレビューや ChatGPT 相談用の軽量形式として出力します。
@@ -294,6 +295,7 @@ Analysis JSON export は、詳細検証・再解析用の `Export Full Analysis 
 - Production Shape Warp / Runtime renderer integration は未実装です。
 - Runtime renderer lifecycle、shader hardening、MediaPipe topology の本番整理は後段です。
 - Ideal Reference Mesh Warp Lab は、理想顔 3D478 を Runtime で投影する方針とは別に、理想モデル動画の実測 MediaPipe 478 reference library、`visibilityWeight` / `warpSafetyWeight`、hybrid mesh / adaptive grid を検証する debug lab です。モデル動画の MediaPipe 解析と raw ideal reference frames 作成に加えて、ライブ動画 current frame の MediaPipe 解析、current478 overlay、raw ideal reference frames からの top1 reference matching まで実装済みです。topK weighted blend、visibilityWeight / warpSafetyWeight、hybrid mesh、mesh warp は未実装です。
+- このラボ内では、authoring / library creation 用の model MediaPipe と Runtime current face analysis 用の live MediaPipe を分け、model 側は raw ideal reference frames 作成後に破棄します。MediaPipe timestamp は seek に影響される `video.currentTime` ではなく、stream ごとの単調増加 counter を使います。
 
 詳細は [Shape Warp production 方針](docs/shape-warp-production-direction.md) を参照してください。
 

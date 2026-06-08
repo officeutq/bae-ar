@@ -14,7 +14,13 @@ type DebugTab =
   | "warpMesh"
   | "raw"
 
-type MediaPipeStatus = "uninitialized" | "initializing" | "ready" | "error"
+type MediaPipeStatus =
+  | "uninitialized"
+  | "initializing"
+  | "ready"
+  | "scanning"
+  | "disposed"
+  | "error"
 type ScanStatus = "idle" | "initializing" | "running" | "done" | "error"
 type PlaybackStatus = "stopped" | "playing" | "paused"
 type ExpressionGroup =
@@ -96,6 +102,7 @@ type ReferenceMatchResult = {
 type ModelScanState = {
   mediaPipeStatus: MediaPipeStatus
   mediaPipeError: string | null
+  modelTimestampMs: number
   scanStatus: ScanStatus
   scanProgress: number
   plannedScanFrames: number
@@ -121,6 +128,11 @@ type LabState = {
   liveVideo: VideoPreviewState & {
     playbackStatus: PlaybackStatus
   }
+  liveMediaPipe: {
+    status: MediaPipeStatus
+    error: string | null
+    liveTimestampMs: number
+  }
   modelScan: ModelScanState
   rawIdealReferenceFrames: IdealReferenceFrame[]
   currentAcceptedReviewIndex: number | null
@@ -144,6 +156,7 @@ const MIXED_EXPRESSION_THRESHOLD = 0.28
 const LANDMARK_PREVIEW_COUNT = 5
 const SCAN_RENDER_INTERVAL = 8
 const LIVE_AUTO_ANALYSIS_INTERVAL_SEC = 0.35
+const MEDIAPIPE_TIMESTAMP_STEP_MS = SCAN_FRAME_STEP_SEC * 1000
 const POSE_WEIGHT = 1
 const EXPRESSION_WEIGHT = 1
 const QUALITY_WEIGHT = 0.25
@@ -200,9 +213,15 @@ const state: LabState = {
     currentTimeSec: 0,
     playbackStatus: "stopped",
   },
+  liveMediaPipe: {
+    status: "uninitialized",
+    error: null,
+    liveTimestampMs: 0,
+  },
   modelScan: {
     mediaPipeStatus: "uninitialized",
     mediaPipeError: null,
+    modelTimestampMs: 0,
     scanStatus: "idle",
     scanProgress: 0,
     plannedScanFrames: 0,
@@ -227,8 +246,13 @@ if (!app) {
   throw new Error("#app が見つかりません。")
 }
 
-let faceLandmarker: FaceLandmarker | null = null
-let faceLandmarkerPromise: Promise<FaceLandmarker> | null = null
+// modelFaceLandmarker は authoring / library creation 用です。
+// rawIdealReferenceFrames 作成後は破棄し、Runtime 相当の処理では liveFaceLandmarker と
+// memory 上の reference library だけを使います。
+let modelFaceLandmarker: FaceLandmarker | null = null
+let modelFaceLandmarkerPromise: Promise<FaceLandmarker> | null = null
+let liveFaceLandmarker: FaceLandmarker | null = null
+let liveFaceLandmarkerPromise: Promise<FaceLandmarker> | null = null
 let liveAnalysisInProgress = false
 let lastAutoLiveAnalysisAtSec = Number.NEGATIVE_INFINITY
 let liveAnalysisRequestId = 0
@@ -249,7 +273,7 @@ app.innerHTML = `
       <input class="visually-hidden" type="file" accept="video/*" data-input="model-video" />
       <input class="visually-hidden" type="file" accept="video/*" data-input="live-video" />
       <div class="status-note">
-        PR4 ではライブ動画 current frame を MediaPipe 解析し、raw ideal reference frames から top1 reference matching まで確認します。topK、mesh warp はまだ行いません。
+        モデル動画解析用 MediaPipe とライブ current 解析用 MediaPipe を分離し、各 stream の単調増加 timestamp で解析します。topK、mesh warp はまだ行いません。
       </div>
     </section>
 
@@ -587,12 +611,14 @@ async function scanModelVideo() {
   state.modelScan.lastError = null
   state.rawIdealReferenceFrames = []
   state.currentAcceptedReviewIndex = null
+  disposeModelFaceLandmarker("uninitialized")
+  resetModelTimestamp()
   updateScanCounters()
   addLog("モデル動画解析を開始します。")
   renderAll()
 
   try {
-    const detector = await getFaceLandmarker()
+    const detector = await getModelFaceLandmarker()
     const durationSec = state.modelVideo.durationSec ?? modelVideoElement.duration
     if (!Number.isFinite(durationSec) || durationSec <= 0) {
       throw new Error("モデル動画の duration を取得できません。")
@@ -605,12 +631,13 @@ async function scanModelVideo() {
     state.modelScan.plannedScanFrames = plannedFrames
     state.modelScan.scanStatus = "running"
     state.modelVideo.scanStatus = "running"
+    state.modelScan.mediaPipeStatus = "scanning"
     renderAll()
 
     for (let frameIndex = 0; frameIndex < plannedFrames; frameIndex += 1) {
       const timeSec = Math.min(frameIndex * state.modelScan.scanFrameStepSec, durationSec)
       await seekVideoElement(modelVideoElement, timeSec)
-      const result = detector.detectForVideo(modelVideoElement, Math.round(timeSec * 1000))
+      const result = detector.detectForVideo(modelVideoElement, nextModelTimestampMs())
       state.rawIdealReferenceFrames.push(buildReferenceFrame(result, frameIndex, timeSec))
       state.modelScan.scanProgress = frameIndex + 1
 
@@ -626,6 +653,7 @@ async function scanModelVideo() {
     state.modelVideo.scanStatus = "done"
     state.currentAcceptedReviewIndex = state.modelScan.acceptedFrames > 0 ? 0 : null
     updateTop1Match()
+    disposeModelFaceLandmarker("disposed")
     addLog(
       `モデル動画解析が完了しました。accepted ${state.modelScan.acceptedFrames} / excluded ${state.modelScan.excludedFrames}`,
     )
@@ -634,7 +662,9 @@ async function scanModelVideo() {
     const message = error instanceof Error ? error.message : String(error)
     state.modelScan.scanStatus = "error"
     state.modelVideo.scanStatus = "error"
+    state.modelScan.mediaPipeStatus = "error"
     state.modelScan.lastError = message
+    disposeModelFaceLandmarker("error")
     addLog(`モデル動画解析でエラーが発生しました: ${message}`)
   }
 
@@ -642,30 +672,60 @@ async function scanModelVideo() {
   renderAll()
 }
 
-async function getFaceLandmarker() {
-  if (faceLandmarker) {
-    return faceLandmarker
+async function getModelFaceLandmarker() {
+  if (modelFaceLandmarker) {
+    return modelFaceLandmarker
   }
 
-  if (faceLandmarkerPromise) {
-    return faceLandmarkerPromise
+  if (modelFaceLandmarkerPromise) {
+    return modelFaceLandmarkerPromise
   }
 
   state.modelScan.mediaPipeStatus = "initializing"
   state.modelScan.mediaPipeError = null
+  resetModelTimestamp()
   renderAll()
 
-  faceLandmarkerPromise = initializeFaceLandmarker()
+  modelFaceLandmarkerPromise = initializeFaceLandmarker()
   try {
-    faceLandmarker = await faceLandmarkerPromise
+    modelFaceLandmarker = await modelFaceLandmarkerPromise
     state.modelScan.mediaPipeStatus = "ready"
-    return faceLandmarker
+    return modelFaceLandmarker
   } catch (error) {
     state.modelScan.mediaPipeStatus = "error"
     state.modelScan.mediaPipeError = error instanceof Error ? error.message : String(error)
     throw error
   } finally {
-    faceLandmarkerPromise = null
+    modelFaceLandmarkerPromise = null
+    renderAll()
+  }
+}
+
+async function getLiveFaceLandmarker() {
+  if (liveFaceLandmarker) {
+    return liveFaceLandmarker
+  }
+
+  if (liveFaceLandmarkerPromise) {
+    return liveFaceLandmarkerPromise
+  }
+
+  state.liveMediaPipe.status = "initializing"
+  state.liveMediaPipe.error = null
+  resetLiveTimestamp()
+  renderAll()
+
+  liveFaceLandmarkerPromise = initializeFaceLandmarker()
+  try {
+    liveFaceLandmarker = await liveFaceLandmarkerPromise
+    state.liveMediaPipe.status = "ready"
+    return liveFaceLandmarker
+  } catch (error) {
+    state.liveMediaPipe.status = "error"
+    state.liveMediaPipe.error = error instanceof Error ? error.message : String(error)
+    throw error
+  } finally {
+    liveFaceLandmarkerPromise = null
     renderAll()
   }
 }
@@ -842,7 +902,7 @@ function updateTop1Match() {
     state.top1Match = {
       ...createEmptyTop1Match(),
       currentExpressionGroup: current.expressionGroup,
-      error: current.error ?? "invalidCurrentLandmarks",
+      error: `current analysis failed / matching skipped: ${current.error ?? "invalidCurrentLandmarks"}`,
     }
     return
   }
@@ -989,13 +1049,13 @@ async function analyzeCurrentLiveFrame(reason: "manual" | "timeupdate" | "seeked
   renderAll()
 
   try {
-    const detector = await getFaceLandmarker()
+    const detector = await getLiveFaceLandmarker()
     if (requestId !== liveAnalysisRequestId) {
       return
     }
 
     const timeSec = liveVideoElement.currentTime || state.liveVideo.currentTimeSec
-    const result = detector.detectForVideo(liveVideoElement, Math.round(timeSec * 1000))
+    const result = detector.detectForVideo(liveVideoElement, nextLiveTimestampMs())
     state.currentLiveFrameAnalysis = buildCurrentLiveFrameAnalysis(result, timeSec)
     lastAutoLiveAnalysisAtSec = timeSec
     updateTop1Match()
@@ -1015,9 +1075,12 @@ async function analyzeCurrentLiveFrame(reason: "manual" | "timeupdate" | "seeked
       timeSec: state.liveVideo.currentTimeSec,
       error: `MediaPipe error: ${message}`,
     }
+    state.liveMediaPipe.status = "error"
+    state.liveMediaPipe.error = message
+    disposeLiveFaceLandmarker("error")
     state.top1Match = {
       ...createEmptyTop1Match(),
-      error: state.currentLiveFrameAnalysis.error,
+      error: `current analysis failed / matching skipped: ${state.currentLiveFrameAnalysis.error}`,
     }
     addLog(`ライブ動画 current frame 解析でエラーが発生しました: ${message}`)
   } finally {
@@ -1140,6 +1203,8 @@ function syncCurrentTime(kind: PreviewTab) {
 }
 
 function resetModelScanResults() {
+  disposeModelFaceLandmarker("uninitialized")
+  resetModelTimestamp()
   state.rawIdealReferenceFrames = []
   state.currentAcceptedReviewIndex = null
   state.top1Match = createEmptyTop1Match()
@@ -1155,12 +1220,46 @@ function resetModelScanResults() {
 }
 
 function resetLiveAnalysisResults() {
+  disposeLiveFaceLandmarker("uninitialized")
+  resetLiveTimestamp()
   state.currentLiveFrameAnalysis = createEmptyCurrentLiveFrameAnalysis()
   state.top1Match = createEmptyTop1Match()
   liveAnalysisRequestId += 1
   liveAnalysisInProgress = false
   lastAutoLiveAnalysisAtSec = Number.NEGATIVE_INFINITY
   clearLiveOverlay()
+}
+
+function disposeModelFaceLandmarker(nextStatus: MediaPipeStatus = "disposed") {
+  modelFaceLandmarker?.close()
+  modelFaceLandmarker = null
+  modelFaceLandmarkerPromise = null
+  state.modelScan.mediaPipeStatus = nextStatus
+}
+
+function disposeLiveFaceLandmarker(nextStatus: MediaPipeStatus = "disposed") {
+  liveFaceLandmarker?.close()
+  liveFaceLandmarker = null
+  liveFaceLandmarkerPromise = null
+  state.liveMediaPipe.status = nextStatus
+}
+
+function resetModelTimestamp() {
+  state.modelScan.modelTimestampMs = 0
+}
+
+function resetLiveTimestamp() {
+  state.liveMediaPipe.liveTimestampMs = 0
+}
+
+function nextModelTimestampMs() {
+  state.modelScan.modelTimestampMs += MEDIAPIPE_TIMESTAMP_STEP_MS
+  return state.modelScan.modelTimestampMs
+}
+
+function nextLiveTimestampMs() {
+  state.liveMediaPipe.liveTimestampMs += MEDIAPIPE_TIMESTAMP_STEP_MS
+  return state.liveMediaPipe.liveTimestampMs
 }
 
 function createEmptyCurrentLiveFrameAnalysis(): CurrentLiveFrameAnalysis {
@@ -1381,7 +1480,10 @@ function createSummaryContent() {
   const currentFrame = getCurrentAcceptedFrame()
 
   const items: Array<[string, string]> = [
-    ["MediaPipe", state.modelScan.mediaPipeStatus],
+    ["Model MediaPipe", state.modelScan.mediaPipeStatus],
+    ["Live MediaPipe", state.liveMediaPipe.status],
+    ["modelTimestampMs", formatSeconds(state.modelScan.modelTimestampMs)],
+    ["liveTimestampMs", formatSeconds(state.liveMediaPipe.liveTimestampMs)],
     ["Model video", state.modelVideo.loaded ? "loaded" : "not loaded"],
     ["Model file", state.modelVideo.fileName ?? "-"],
     ["Model duration", formatDuration(state.modelVideo.durationSec)],
@@ -1435,6 +1537,7 @@ function createModelScanContent() {
     ["scanStatus", state.modelScan.scanStatus],
     ["mediaPipeStatus", state.modelScan.mediaPipeStatus],
     ["mediaPipeError", state.modelScan.mediaPipeError ?? "-"],
+    ["modelTimestampMs", formatSeconds(state.modelScan.modelTimestampMs)],
     ["scanProgress", `${state.modelScan.scanProgress} / ${state.modelScan.plannedScanFrames}`],
     ["maxScanFrames", String(state.modelScan.maxScanFrames)],
     ["scanFrameStepSec", String(state.modelScan.scanFrameStepSec)],
@@ -1492,6 +1595,8 @@ function createMatchingContent() {
   const currentList = document.createElement("dl")
   currentList.className = "summary-list"
   appendDefinitionItems(currentList, [
+    ["Live MediaPipe status", state.liveMediaPipe.status],
+    ["liveTimestampMs", formatSeconds(state.liveMediaPipe.liveTimestampMs)],
     ["analyzed", current.analyzed ? "yes" : "no"],
     ["timeSec", current.timeSec === null ? "-" : `${formatSeconds(current.timeSec)} sec`],
     ["pose yaw / pitch / roll", formatPose(current.pose)],
@@ -1500,6 +1605,7 @@ function createMatchingContent() {
     ["landmarkCount", String(current.landmarks478.length)],
     ["missingBlendshapes", formatMissingBlendshapes(current.blendshapes)],
     ["error", current.error ?? "-"],
+    ["matching", match.error?.includes("matching skipped") ? "skipped" : match.matched ? "matched" : "not matched"],
   ])
 
   const idealHeading = document.createElement("h3")
@@ -1565,6 +1671,8 @@ function getRawState() {
     },
     modelScan: {
       mediaPipeStatus: state.modelScan.mediaPipeStatus,
+      mediaPipeError: state.modelScan.mediaPipeError,
+      modelTimestampMs: roundForState(state.modelScan.modelTimestampMs),
       maxScanFrames: state.modelScan.maxScanFrames,
       scanFrameStepSec: state.modelScan.scanFrameStepSec,
       scanProgress: state.modelScan.scanProgress,
@@ -1602,6 +1710,11 @@ function getRawState() {
       height: state.liveVideo.height,
       currentTimeSec: roundForState(state.liveVideo.currentTimeSec),
       playbackStatus: state.liveVideo.playbackStatus,
+    },
+    liveMediaPipe: {
+      status: state.liveMediaPipe.status,
+      error: state.liveMediaPipe.error,
+      liveTimestampMs: roundForState(state.liveMediaPipe.liveTimestampMs),
     },
     currentLiveFrameAnalysis: getCurrentLiveFrameRawState(),
     top1Match: {
@@ -2030,8 +2143,8 @@ function escapeHtml(value: string) {
 
 function cleanup() {
   revokeObjectUrls()
-  faceLandmarker?.close()
-  faceLandmarker = null
+  disposeModelFaceLandmarker("disposed")
+  disposeLiveFaceLandmarker("disposed")
 }
 
 function revokeObjectUrls() {
