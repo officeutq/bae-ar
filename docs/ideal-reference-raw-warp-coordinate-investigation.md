@@ -427,3 +427,28 @@ Raw に 3〜5 点だけ preview を出す。
 3. raw warp canvas CSS rect と sample vertex の normalized / pixel / clip / uv preview を Raw に少数出す
 
 これらは品質改善や safety weight ではなく、座標系切り分けのための最小 debug 修正として扱う。
+
+## PR7: 座標系方針に従う raw warp 表示実験
+
+PR7 では、上記の原因候補を切り分けるため、既存 docs の座標系方針に従う raw warp 表示実験を追加した。
+
+実装した実験:
+
+- live preview mode として `source` / `rawWarpOnly` / `sideBySide` を追加
+- `rawWarpOnly` では video element を下地にせず、raw warp canvas 単体を黒背景で確認できるようにした
+- `sideBySide` では source video と raw warp canvas を左右に分けて比較できるようにした
+- texture flip debug を `textureUploadFlip` (`UNPACK_FLIP_Y_WEBGL`) と `textureVFormula` (`y` / `1 - y`) に分離
+- Raw に固定 sample index の `sourceNormalized` / `targetNormalized` / displayed pixel / clip / UV preview を追加
+- Raw に `videoCssRect` と `rawWarpCanvasCssRect` を追加
+
+この実験でも、landmarks / matching / displacement は image-normalized coordinate として保持する。raw warp position は target image-normalized を `displayedContentRect` pixel に変換し、その後 WebGL clip space に変換する。texture source は `HTMLVideoElement` のままとし、UV は source image-normalized coordinate を使う。
+
+未実装のままにしているもの:
+
+- topK weighted blend
+- visibilityWeight / warpSafetyWeight
+- displacement clamp
+- adaptive grid / background grid / hybrid mesh
+- temporal smoothing
+- expression-aware attenuation
+- production renderer integration
