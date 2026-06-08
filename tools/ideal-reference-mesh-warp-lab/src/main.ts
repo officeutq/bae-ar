@@ -138,11 +138,43 @@ type DisplacementDebugState = {
   summary: DisplacementSummary
 }
 
+type Rect = {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+type SizeDebug = {
+  width: number
+  height: number
+}
+
+type NullableSizeDebug = {
+  width: number | null
+  height: number | null
+}
+
+type VideoCoordinateDebug = {
+  videoIntrinsic: NullableSizeDebug
+  previewElementRect: SizeDebug
+  displayedContentRect: Rect
+  overlayCanvas: SizeDebug
+  rawWarpCanvas: SizeDebug
+}
+
+type MeshMappingMode = "draw_target_triangles_sample_source_uv"
+type CoordinateConversionMode = "normalized_to_displayed_content_pixel_to_clip_space"
+
 type RawWarpSummary = {
   enabled: boolean
   available: boolean
   mode: "unadjusted_current_to_aligned_ideal"
   strength: number
+  textureVFlip: boolean
+  meshMapping: MeshMappingMode
+  coordinateConversion: CoordinateConversionMode
+  coordinateDebug: VideoCoordinateDebug
   sourceVertexCount: number
   targetVertexCount: number
   topology: "mediapipe_face_mesh"
@@ -160,6 +192,7 @@ type RawWarpSummary = {
 
 type RawWarpDebugState = {
   strength: number
+  textureVFlip: boolean
   summary: RawWarpSummary
 }
 
@@ -210,6 +243,7 @@ type LabState = {
     showLandmarks478: boolean
     showDisplacement: boolean
     showRawWarp: boolean
+    showRawWarpCoordinateDebug: boolean
   }
   modelVideo: VideoPreviewState & {
     currentReviewFrameIndex: number | null
@@ -248,9 +282,11 @@ const MIXED_EXPRESSION_THRESHOLD = 0.28
 const LANDMARK_PREVIEW_COUNT = 5
 const DISPLACEMENT_PREVIEW_COUNT = 8
 const DISPLACEMENT_DRAW_STEP = 8
+const WARP_COORDINATE_DEBUG_DRAW_STEP = 8
 const LARGE_DISPLACEMENT_THRESHOLD = 0.03
 const DEFAULT_RAW_WARP_STRENGTH = 1
 const RAW_WARP_STRENGTH_OPTIONS = [0.25, 0.5, 1] as const
+const DEFAULT_TEXTURE_V_FLIP = true
 const SCAN_RENDER_INTERVAL = 8
 const LIVE_AUTO_ANALYSIS_INTERVAL_SEC = 0.35
 const MEDIAPIPE_TIMESTAMP_STEP_MS = SCAN_FRAME_STEP_SEC * 1000
@@ -290,6 +326,7 @@ const state: LabState = {
     showLandmarks478: false,
     showDisplacement: false,
     showRawWarp: false,
+    showRawWarpCoordinateDebug: false,
   },
   modelVideo: {
     loaded: false,
@@ -396,6 +433,10 @@ app.innerHTML = `
           <label class="overlay-toggle">
             <input type="checkbox" data-action="toggle-raw-warp" />
             <span>warp を表示</span>
+          </label>
+          <label class="overlay-toggle">
+            <input type="checkbox" data-action="toggle-warp-coordinate-debug" />
+            <span>warp座標debugを表示</span>
           </label>
         </div>
       </div>
@@ -513,6 +554,13 @@ function renderLivePreview() {
             ).join("")}
           </select>
         </label>
+        <label class="range-field compact-field">
+          <span>texture V flip</span>
+          <select data-action="texture-v-flip">
+            <option value="on" ${state.rawWarpDebug.textureVFlip ? "selected" : ""}>on</option>
+            <option value="off" ${state.rawWarpDebug.textureVFlip ? "" : "selected"}>off</option>
+          </select>
+        </label>
         <label class="range-field">
           <span>シーク</span>
           <input type="range" min="0" step="0.001" value="0" data-range="live" />
@@ -567,10 +615,22 @@ function bindEvents() {
       handleToggleRawWarp(event.currentTarget.checked)
     },
   )
+  getElement<HTMLInputElement>('[data-action="toggle-warp-coordinate-debug"]').addEventListener(
+    "change",
+    (event) => {
+      handleToggleWarpCoordinateDebug(event.currentTarget.checked)
+    },
+  )
   getElement<HTMLSelectElement>('[data-action="raw-warp-strength"]').addEventListener(
     "change",
     (event) => {
       handleRawWarpStrengthChange(Number(event.currentTarget.value))
+    },
+  )
+  getElement<HTMLSelectElement>('[data-action="texture-v-flip"]').addEventListener(
+    "change",
+    (event) => {
+      handleTextureVFlipChange(event.currentTarget.value === "on")
     },
   )
   modelFileInput.addEventListener("change", () => {
@@ -1456,6 +1516,14 @@ function handleToggleRawWarp(checked: boolean) {
   renderAll()
 }
 
+function handleToggleWarpCoordinateDebug(checked: boolean) {
+  state.overlay.showRawWarpCoordinateDebug = checked
+  updateRawWarpSummary()
+  addLog(`warp 座標 debug 表示を ${checked ? "ON" : "OFF"} にしました。`)
+  drawAllOverlays()
+  renderAll()
+}
+
 function handleRawWarpStrengthChange(strength: number) {
   if (!RAW_WARP_STRENGTH_OPTIONS.includes(strength as (typeof RAW_WARP_STRENGTH_OPTIONS)[number])) {
     return
@@ -1464,6 +1532,14 @@ function handleRawWarpStrengthChange(strength: number) {
   state.rawWarpDebug.strength = strength
   updateRawWarpSummary()
   addLog(`raw warp strength を ${formatMetric(strength)} にしました。`)
+  drawAllOverlays()
+  renderAll()
+}
+
+function handleTextureVFlipChange(textureVFlip: boolean) {
+  state.rawWarpDebug.textureVFlip = textureVFlip
+  updateRawWarpSummary()
+  addLog(`texture V flip を ${textureVFlip ? "ON" : "OFF"} にしました。`)
   drawAllOverlays()
   renderAll()
 }
@@ -1682,11 +1758,16 @@ function createEmptyDisplacementSummary(error: string | null = null): Displaceme
 function createEmptyRawWarpDebug(): RawWarpDebugState {
   return {
     strength: DEFAULT_RAW_WARP_STRENGTH,
+    textureVFlip: DEFAULT_TEXTURE_V_FLIP,
     summary: {
       enabled: false,
       available: false,
       mode: "unadjusted_current_to_aligned_ideal",
       strength: DEFAULT_RAW_WARP_STRENGTH,
+      textureVFlip: DEFAULT_TEXTURE_V_FLIP,
+      meshMapping: "draw_target_triangles_sample_source_uv",
+      coordinateConversion: "normalized_to_displayed_content_pixel_to_clip_space",
+      coordinateDebug: createEmptyVideoCoordinateDebug(),
       sourceVertexCount: 0,
       targetVertexCount: 0,
       topology: "mediapipe_face_mesh",
@@ -1721,6 +1802,10 @@ function createRawWarpSummary({
     available,
     mode: "unadjusted_current_to_aligned_ideal",
     strength: state.rawWarpDebug?.strength ?? DEFAULT_RAW_WARP_STRENGTH,
+    textureVFlip: state.rawWarpDebug?.textureVFlip ?? DEFAULT_TEXTURE_V_FLIP,
+    meshMapping: "draw_target_triangles_sample_source_uv",
+    coordinateConversion: "normalized_to_displayed_content_pixel_to_clip_space",
+    coordinateDebug: getLiveVideoCoordinateDebug(),
     sourceVertexCount: vertexCount,
     targetVertexCount: vertexCount,
     topology: "mediapipe_face_mesh",
@@ -1801,8 +1886,8 @@ function renderAll() {
   renderPreviewPanels()
   renderControls()
   renderDebugTabs()
-  renderDebugContent()
   drawAllOverlays()
+  renderDebugContent()
 }
 
 function renderPreviewTabs() {
@@ -1858,9 +1943,13 @@ function renderControls() {
     state.overlay.showDisplacement
   getElement<HTMLInputElement>('[data-action="toggle-raw-warp"]').checked =
     state.overlay.showRawWarp
+  getElement<HTMLInputElement>('[data-action="toggle-warp-coordinate-debug"]').checked =
+    state.overlay.showRawWarpCoordinateDebug
   getElement<HTMLSelectElement>('[data-action="raw-warp-strength"]').value = String(
     state.rawWarpDebug.strength,
   )
+  getElement<HTMLSelectElement>('[data-action="texture-v-flip"]').value =
+    state.rawWarpDebug.textureVFlip ? "on" : "off"
   renderModelReviewCard()
   renderLiveAnalysisCard()
 }
@@ -1976,6 +2065,7 @@ function createSummaryContent() {
   const currentFrame = getCurrentAcceptedFrame()
   const displacementSummary = state.displacementDebug.summary
   const rawWarpSummary = state.rawWarpDebug.summary
+  const coordinateDebug = rawWarpSummary.coordinateDebug
 
   const items: Array<[string, string]> = [
     ["Model MediaPipe", state.modelScan.mediaPipeStatus],
@@ -2011,12 +2101,17 @@ function createSummaryContent() {
     ["Raw warp strength", formatMetric(rawWarpSummary.strength)],
     ["Warp available", rawWarpSummary.available ? "yes" : "no"],
     ["Triangle count", String(rawWarpSummary.triangleCount)],
+    ["Warp coordinate debug", state.overlay.showRawWarpCoordinateDebug ? "on" : "off"],
+    ["Texture V flip", rawWarpSummary.textureVFlip ? "on" : "off"],
+    ["Displayed content rect", formatRect(coordinateDebug.displayedContentRect)],
+    ["Raw warp canvas", formatSize(coordinateDebug.rawWarpCanvas.width, coordinateDebug.rawWarpCanvas.height)],
     ["Match score", formatSeconds(state.top1Match.matchScore)],
     ["Pose distance", formatSeconds(state.top1Match.poseDistance)],
     ["Expression distance", formatSeconds(state.top1Match.expressionDistance)],
     ["Overlay 478 landmarks", state.overlay.showLandmarks478 ? "on" : "off"],
     ["Overlay displacement", state.overlay.showDisplacement ? "on" : "off"],
     ["Overlay raw warp", state.overlay.showRawWarp ? "on" : "off"],
+    ["Overlay warp coordinate debug", state.overlay.showRawWarpCoordinateDebug ? "on" : "off"],
   ]
 
   appendDefinitionItems(summaryList, items)
@@ -2174,12 +2269,14 @@ function createWarpMeshContent() {
   const warpHeading = document.createElement("h3")
   warpHeading.textContent = "Unadjusted Mesh Warp"
   const rawWarpSummary = state.rawWarpDebug.summary
+  const coordinateDebug = rawWarpSummary.coordinateDebug
   const rawWarpList = document.createElement("dl")
   rawWarpList.className = "summary-list"
   appendDefinitionItems(rawWarpList, [
     ["warp available", rawWarpSummary.available ? "yes" : "no"],
     ["warp enabled", rawWarpSummary.enabled ? "yes" : "no"],
     ["rawWarpStrength", formatMetric(rawWarpSummary.strength)],
+    ["texture V flip", rawWarpSummary.textureVFlip ? "on" : "off"],
     ["sourceVertexCount", String(rawWarpSummary.sourceVertexCount)],
     ["targetVertexCount", String(rawWarpSummary.targetVertexCount)],
     ["topology", rawWarpSummary.topology],
@@ -2187,6 +2284,8 @@ function createWarpMeshContent() {
     ["triangleCount", String(rawWarpSummary.triangleCount)],
     ["mode", rawWarpSummary.mode],
     ["alignment", "bounds center + uniform scale"],
+    ["mesh mapping", "draw target triangles / sample source UVs"],
+    ["coordinate conversion", "normalized -> displayed content pixel -> clip space"],
     ["mesh warp", rawWarpSummary.meshWarp],
     ["grid / hybrid mesh", rawWarpSummary.hybridMesh],
     ["visibilityWeight", rawWarpSummary.visibilityWeight],
@@ -2200,6 +2299,34 @@ function createWarpMeshContent() {
   warning.className = "warning-note"
   warning.textContent =
     "注意: このワープは safety weight なしで raw displacement をそのまま適用します。顔が大きく歪む可能性があります。"
+
+  const coordinateHeading = document.createElement("h3")
+  coordinateHeading.textContent = "Coordinate debug"
+  const coordinateList = document.createElement("dl")
+  coordinateList.className = "summary-list"
+  appendDefinitionItems(coordinateList, [
+    [
+      "video intrinsic",
+      formatSize(coordinateDebug.videoIntrinsic.width, coordinateDebug.videoIntrinsic.height),
+    ],
+    [
+      "preview rect",
+      formatSize(coordinateDebug.previewElementRect.width, coordinateDebug.previewElementRect.height),
+    ],
+    ["displayed content rect", formatRect(coordinateDebug.displayedContentRect)],
+    [
+      "overlay canvas",
+      formatSize(coordinateDebug.overlayCanvas.width, coordinateDebug.overlayCanvas.height),
+    ],
+    [
+      "raw warp canvas",
+      formatSize(coordinateDebug.rawWarpCanvas.width, coordinateDebug.rawWarpCanvas.height),
+    ],
+    ["coordinate conversion", "normalized -> displayed content pixel -> clip space"],
+    ["texture v flip", rawWarpSummary.textureVFlip ? "on" : "off"],
+    ["mesh mapping", "draw target triangles / sample source UVs"],
+    ["source vertices vs overlay", "expected to match current478 overlay"],
+  ])
 
   const heading = document.createElement("h3")
   heading.textContent = "Displacement debug"
@@ -2236,7 +2363,17 @@ function createWarpMeshContent() {
             ] as [string, string],
         )
   appendDefinitionItems(topList, topItems)
-  fragment.append(warpHeading, warning, rawWarpList, heading, summaryList, topHeading, topList)
+  fragment.append(
+    warpHeading,
+    warning,
+    rawWarpList,
+    coordinateHeading,
+    coordinateList,
+    heading,
+    summaryList,
+    topHeading,
+    topList,
+  )
   return fragment
 }
 
@@ -2331,6 +2468,7 @@ function getRawState() {
     },
     displacement: getDisplacementRawState(),
     rawWarp: getRawWarpRawState(),
+    warpCoordinateDebug: getWarpCoordinateDebugRawState(),
     logs: state.logs,
   }
 }
@@ -2363,6 +2501,9 @@ function getRawWarpRawState() {
     available: summary.available,
     mode: summary.mode,
     strength: roundMetricForState(summary.strength),
+    textureVFlip: summary.textureVFlip,
+    meshMapping: summary.meshMapping,
+    coordinateConversion: summary.coordinateConversion,
     sourceVertexCount: summary.sourceVertexCount,
     targetVertexCount: summary.targetVertexCount,
     topology: summary.topology,
@@ -2376,6 +2517,20 @@ function getRawWarpRawState() {
     webglStatus: summary.webglStatus,
     renderTimeMs: roundMetricForState(summary.renderTimeMs),
     error: summary.error,
+  }
+}
+
+function getWarpCoordinateDebugRawState() {
+  const summary = state.rawWarpDebug.summary
+  const coordinateDebug = summary.coordinateDebug
+  return {
+    videoIntrinsic: coordinateDebug.videoIntrinsic,
+    previewElementRect: roundSizeDebug(coordinateDebug.previewElementRect),
+    displayedContentRect: roundRectDebug(coordinateDebug.displayedContentRect),
+    overlayCanvas: roundSizeDebug(coordinateDebug.overlayCanvas),
+    rawWarpCanvas: roundSizeDebug(coordinateDebug.rawWarpCanvas),
+    textureVFlip: summary.textureVFlip,
+    meshMapping: summary.meshMapping,
   }
 }
 
@@ -2472,12 +2627,17 @@ function drawLiveOverlay() {
     return
   }
 
-  const drawRect = getVideoDrawRect(state.liveVideo, liveVideoElement, rect.width, rect.height)
+  const displayedContentRect = getDisplayedContentRect(
+    state.liveVideo,
+    liveVideoElement,
+    rect.width,
+    rect.height,
+  )
 
   if (state.overlay.showLandmarks478) {
     drawLandmarkPoints(
       context,
-      drawRect,
+      displayedContentRect,
       state.currentLiveFrameAnalysis.landmarks478,
       "rgba(79, 128, 255, 0.85)",
       1.45,
@@ -2485,7 +2645,17 @@ function drawLiveOverlay() {
   }
 
   if (state.overlay.showDisplacement && state.displacementDebug.available) {
-    drawDisplacementOverlay(context, drawRect, state.displacementDebug.displacements)
+    drawDisplacementOverlay(context, displayedContentRect, state.displacementDebug.displacements)
+  }
+
+  if (state.overlay.showRawWarpCoordinateDebug && state.displacementDebug.available) {
+    drawRawWarpCoordinateDebugOverlay(
+      context,
+      displayedContentRect,
+      rect.width,
+      rect.height,
+      state.displacementDebug.displacements,
+    )
   }
 }
 
@@ -2536,8 +2706,13 @@ function drawRawWarpPreview() {
     return
   }
 
-  const drawRect = getVideoDrawRect(state.liveVideo, liveVideoElement, rect.width, rect.height)
-  const frame = buildRawWarpFrame(drawRect, rect.width, rect.height)
+  const displayedContentRect = getDisplayedContentRect(
+    state.liveVideo,
+    liveVideoElement,
+    rect.width,
+    rect.height,
+  )
+  const frame = buildRawWarpFrame(displayedContentRect, rect.width, rect.height)
 
   if (!frame) {
     clearRawWarpCanvas()
@@ -2574,7 +2749,7 @@ function drawRawWarpPreview() {
 }
 
 function buildRawWarpFrame(
-  drawRect: { x: number; y: number; width: number; height: number },
+  displayedContentRect: Rect,
   containerWidth: number,
   containerHeight: number,
 ) {
@@ -2596,14 +2771,20 @@ function buildRawWarpFrame(
       displacement.current.x + displacement.dx * state.rawWarpDebug.strength
     const targetY =
       displacement.current.y + displacement.dy * state.rawWarpDebug.strength
-    const canvasX = drawRect.x + targetX * drawRect.width
-    const canvasY = drawRect.y + targetY * drawRect.height
+    const targetPixel = normalizedLandmarkToPreviewPixel(
+      { x: targetX, y: targetY },
+      displayedContentRect,
+    )
     const offset = index * 2
 
-    targetPositions[offset] = (canvasX / containerWidth) * 2 - 1
-    targetPositions[offset + 1] = 1 - (canvasY / containerHeight) * 2
+    const targetClip = previewPixelToClip(targetPixel, containerWidth, containerHeight)
+
+    targetPositions[offset] = targetClip.x
+    targetPositions[offset + 1] = targetClip.y
     textureCoordinates[offset] = displacement.current.x
-    textureCoordinates[offset + 1] = 1 - displacement.current.y
+    textureCoordinates[offset + 1] = state.rawWarpDebug.textureVFlip
+      ? 1 - displacement.current.y
+      : displacement.current.y
   }
 
   return {
@@ -2648,34 +2829,34 @@ function drawLandmarkOverlay({
     return
   }
 
-  const drawRect = getVideoDrawRect(videoState, videoElement, rect.width, rect.height)
-  drawLandmarkPoints(context, drawRect, landmarks, color, 1.45)
+  const displayedContentRect = getDisplayedContentRect(
+    videoState,
+    videoElement,
+    rect.width,
+    rect.height,
+  )
+  drawLandmarkPoints(context, displayedContentRect, landmarks, color, 1.45)
 }
 
 function drawLandmarkPoints(
   context: CanvasRenderingContext2D,
-  drawRect: { x: number; y: number; width: number; height: number },
+  displayedContentRect: Rect,
   landmarks: ReferenceLandmark[],
   color: string,
   radius: number,
 ) {
   context.fillStyle = color
   for (const landmark of landmarks) {
+    const point = normalizedLandmarkToPreviewPixel(landmark, displayedContentRect)
     context.beginPath()
-    context.arc(
-      drawRect.x + landmark.x * drawRect.width,
-      drawRect.y + landmark.y * drawRect.height,
-      radius,
-      0,
-      Math.PI * 2,
-    )
+    context.arc(point.x, point.y, radius, 0, Math.PI * 2)
     context.fill()
   }
 }
 
 function drawDisplacementOverlay(
   context: CanvasRenderingContext2D,
-  drawRect: { x: number; y: number; width: number; height: number },
+  displayedContentRect: Rect,
   displacements: LandmarkDisplacement[],
 ) {
   context.save()
@@ -2683,26 +2864,87 @@ function drawDisplacementOverlay(
 
   for (let index = 0; index < displacements.length; index += DISPLACEMENT_DRAW_STEP) {
     const displacement = displacements[index]
-    const currentX = drawRect.x + displacement.current.x * drawRect.width
-    const currentY = drawRect.y + displacement.current.y * drawRect.height
-    const idealX = drawRect.x + displacement.alignedIdeal.x * drawRect.width
-    const idealY = drawRect.y + displacement.alignedIdeal.y * drawRect.height
+    const current = normalizedLandmarkToPreviewPixel(displacement.current, displayedContentRect)
+    const ideal = normalizedLandmarkToPreviewPixel(displacement.alignedIdeal, displayedContentRect)
     const isLarge = displacement.distance2D >= LARGE_DISPLACEMENT_THRESHOLD
 
     context.strokeStyle = isLarge ? "rgba(244, 67, 54, 0.82)" : "rgba(255, 213, 79, 0.72)"
     context.beginPath()
-    context.moveTo(currentX, currentY)
-    context.lineTo(idealX, idealY)
+    context.moveTo(current.x, current.y)
+    context.lineTo(ideal.x, ideal.y)
     context.stroke()
 
     context.fillStyle = "rgba(79, 128, 255, 0.92)"
     context.beginPath()
-    context.arc(currentX, currentY, 2, 0, Math.PI * 2)
+    context.arc(current.x, current.y, 2, 0, Math.PI * 2)
     context.fill()
 
     context.fillStyle = "rgba(255, 145, 0, 0.92)"
     context.beginPath()
-    context.arc(idealX, idealY, 2, 0, Math.PI * 2)
+    context.arc(ideal.x, ideal.y, 2, 0, Math.PI * 2)
+    context.fill()
+  }
+
+  context.restore()
+}
+
+function drawRawWarpCoordinateDebugOverlay(
+  context: CanvasRenderingContext2D,
+  displayedContentRect: Rect,
+  canvasWidth: number,
+  canvasHeight: number,
+  displacements: LandmarkDisplacement[],
+) {
+  context.save()
+  context.lineWidth = 1
+
+  context.strokeStyle = "rgba(0, 200, 180, 0.9)"
+  context.setLineDash([5, 4])
+  context.strokeRect(
+    displayedContentRect.x,
+    displayedContentRect.y,
+    displayedContentRect.width,
+    displayedContentRect.height,
+  )
+
+  context.strokeStyle = "rgba(200, 80, 255, 0.65)"
+  context.setLineDash([2, 5])
+  context.strokeRect(0.5, 0.5, Math.max(0, canvasWidth - 1), Math.max(0, canvasHeight - 1))
+  context.setLineDash([])
+
+  for (
+    let index = 0;
+    index < MEDIAPIPE_FACE_MESH_TOPOLOGY_LANDMARK_COUNT;
+    index += WARP_COORDINATE_DEBUG_DRAW_STEP
+  ) {
+    const displacement = displacements[index]
+    if (!displacement) {
+      continue
+    }
+
+    const source = normalizedLandmarkToPreviewPixel(displacement.current, displayedContentRect)
+    const target = normalizedLandmarkToPreviewPixel(
+      {
+        x: displacement.current.x + displacement.dx * state.rawWarpDebug.strength,
+        y: displacement.current.y + displacement.dy * state.rawWarpDebug.strength,
+      },
+      displayedContentRect,
+    )
+
+    context.strokeStyle = "rgba(255, 255, 255, 0.65)"
+    context.beginPath()
+    context.moveTo(source.x, source.y)
+    context.lineTo(target.x, target.y)
+    context.stroke()
+
+    context.fillStyle = "rgba(79, 128, 255, 0.96)"
+    context.beginPath()
+    context.arc(source.x, source.y, 2.2, 0, Math.PI * 2)
+    context.fill()
+
+    context.fillStyle = "rgba(255, 145, 0, 0.96)"
+    context.beginPath()
+    context.arc(target.x, target.y, 2.2, 0, Math.PI * 2)
     context.fill()
   }
 
@@ -2922,12 +3164,73 @@ function clearOverlay(canvas: HTMLCanvasElement) {
   context.clearRect(0, 0, canvas.width, canvas.height)
 }
 
-function getVideoDrawRect(
+function createEmptyVideoCoordinateDebug(): VideoCoordinateDebug {
+  return {
+    videoIntrinsic: {
+      width: null,
+      height: null,
+    },
+    previewElementRect: {
+      width: 0,
+      height: 0,
+    },
+    displayedContentRect: {
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+    },
+    overlayCanvas: {
+      width: 0,
+      height: 0,
+    },
+    rawWarpCanvas: {
+      width: 0,
+      height: 0,
+    },
+  }
+}
+
+function getLiveVideoCoordinateDebug(): VideoCoordinateDebug {
+  if (typeof liveVideoElement === "undefined") {
+    return createEmptyVideoCoordinateDebug()
+  }
+
+  const previewRect = liveVideoElement.getBoundingClientRect()
+  const displayedContentRect = getDisplayedContentRect(
+    state.liveVideo,
+    liveVideoElement,
+    previewRect.width,
+    previewRect.height,
+  )
+
+  return {
+    videoIntrinsic: {
+      width: (state.liveVideo.width ?? liveVideoElement.videoWidth) || null,
+      height: (state.liveVideo.height ?? liveVideoElement.videoHeight) || null,
+    },
+    previewElementRect: {
+      width: previewRect.width,
+      height: previewRect.height,
+    },
+    displayedContentRect,
+    overlayCanvas: {
+      width: liveOverlayCanvas.width,
+      height: liveOverlayCanvas.height,
+    },
+    rawWarpCanvas: {
+      width: liveRawWarpCanvas.width,
+      height: liveRawWarpCanvas.height,
+    },
+  }
+}
+
+function getDisplayedContentRect(
   videoState: VideoPreviewState,
   videoElement: HTMLVideoElement,
   containerWidth: number,
   containerHeight: number,
-) {
+): Rect {
   const videoWidth = videoState.width ?? videoElement.videoWidth
   const videoHeight = videoState.height ?? videoElement.videoHeight
   if (!videoWidth || !videoHeight) {
@@ -2958,6 +3261,27 @@ function getVideoDrawRect(
     y: (containerHeight - height) / 2,
     width: containerWidth,
     height,
+  }
+}
+
+function normalizedLandmarkToPreviewPixel(
+  landmark: { x: number; y: number },
+  displayedContentRect: Rect,
+) {
+  return {
+    x: displayedContentRect.x + landmark.x * displayedContentRect.width,
+    y: displayedContentRect.y + landmark.y * displayedContentRect.height,
+  }
+}
+
+function previewPixelToClip(
+  point: { x: number; y: number },
+  canvasWidth: number,
+  canvasHeight: number,
+) {
+  return {
+    x: (point.x / canvasWidth) * 2 - 1,
+    y: 1 - (point.y / canvasHeight) * 2,
   }
 }
 
@@ -3006,6 +3330,10 @@ function formatMetric(value: number | null) {
 
 function formatSize(width: number | null, height: number | null) {
   return width === null || height === null ? "-" : `${width} x ${height}`
+}
+
+function formatRect(rect: Rect) {
+  return `x ${formatMetric(rect.x)} / y ${formatMetric(rect.y)} / width ${formatMetric(rect.width)} / height ${formatMetric(rect.height)}`
 }
 
 function formatCounts(counts: Record<string, number>) {
@@ -3058,6 +3386,22 @@ function roundMetricForState(value: number | null) {
   }
 
   return Math.round(value * 10000) / 10000
+}
+
+function roundSizeDebug(size: SizeDebug): SizeDebug {
+  return {
+    width: roundMetricForState(size.width) ?? 0,
+    height: roundMetricForState(size.height) ?? 0,
+  }
+}
+
+function roundRectDebug(rect: Rect): Rect {
+  return {
+    x: roundMetricForState(rect.x) ?? 0,
+    y: roundMetricForState(rect.y) ?? 0,
+    width: roundMetricForState(rect.width) ?? 0,
+    height: roundMetricForState(rect.height) ?? 0,
+  }
 }
 
 function roundPose(pose: ReferencePose) {

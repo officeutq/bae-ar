@@ -280,7 +280,8 @@ h3 {
 }
 
 .timeline-controls.live-controls {
-  grid-template-columns: auto auto auto minmax(170px, 220px) minmax(180px, 1fr) auto;
+  grid-template-columns:
+    auto auto auto minmax(160px, 210px) minmax(140px, 180px) minmax(180px, 1fr) auto;
 }
 
 .range-field {
