@@ -260,6 +260,10 @@ h3 {
   grid-template-columns: auto auto minmax(180px, 1fr) auto;
 }
 
+.timeline-controls.live-controls {
+  grid-template-columns: auto auto auto minmax(180px, 1fr) auto;
+}
+
 .range-field {
   align-items: center;
   display: grid;

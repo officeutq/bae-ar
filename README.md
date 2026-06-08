@@ -9,7 +9,7 @@
 - `tools/mediapipe-canonical-lab` の MediaPipe 座標系調査とも目的を分けます。
 - 次段の `tools/mediapipe-render-consistency-lab` は、mesh（メッシュ化） / render（レンダリング） / MediaPipe re-detection（MediaPipe 再検出）前提で `projectionFitZ` と `meshReadyZ` の違いを検証する debug lab（検証用ラボ）として扱います。production 用 IdealFace asset を作る正式 authoring tool（作成ツール）ではありません。詳細は [MediaPipe Render Consistency Lab](docs/mediapipe-render-consistency-lab.md) を参照してください。
 - `tools/mediapipe-render-consistency-lab` は、MP4 import、auto scan（自動スキャン）、`acceptedFrames`、`thumbnailDataUrl`、MediaPipe metadata summary（MediaPipe メタデータ要約）、`acceptedFrames[].observed12pt`、pose（姿勢） / `expressionSummary`、`manualAdjustmentsByFrame`、`currentReviewIndex`、Debug Console（デバッグコンソール）、Current Frame（現在フレーム）タブ、`poseBucket125`、`frontCandidate` / `expressionTooStrong` badge（補助ラベル）まで実装済みです。MediaPipe face mesh topology（顔メッシュ接続情報）での478点 mesh 化、yaw / pitch / roll 指定 render、rendered image（レンダリング画像）の MediaPipe Face Landmarker 再入力、returned landmarks（返却ランドマーク）と geometric projected landmarks（幾何投影ランドマーク）の比較、alignment / residual evaluation（位置合わせ・残差評価）は未実装です。
-- `tools/ideal-reference-mesh-warp-lab` は、理想モデル動画から作る実測 MediaPipe 478 reference library と、ライブ動画を current face 代わりにした mesh warp 検証のための debug lab です。3ペインUI、モデル動画 / ライブ動画 preview に加えて、モデル動画の MediaPipe 解析と raw ideal reference frames 作成、accepted frame review、モデル動画タブでの 478点 overlay 表示まで実装済みです。ライブ動画の MediaPipe 解析、reference matching、visibilityWeight / warpSafetyWeight、hybrid mesh、mesh warp は未実装です。
+- `tools/ideal-reference-mesh-warp-lab` は、理想モデル動画から作る実測 MediaPipe 478 reference library と、ライブ動画を current face 代わりにした mesh warp 検証のための debug lab です。モデル動画の MediaPipe 解析と raw ideal reference frames 作成に加えて、ライブ動画 current frame の MediaPipe 解析、current478 overlay、raw ideal reference frames からの top1 reference matching まで実装済みです。topK weighted blend、visibilityWeight / warpSafetyWeight、hybrid mesh、mesh warp は未実装です。
 - captured JSON を import し、`8pt_basic` / `12pt_rotation_center` / `24pt_structure` を比較します。現時点の 478点奥行き生成 prototype（試作）の推奨は `12pt_rotation_center` です。
 - 478点 z 生成は `canonical-face-depth-template-v1.json`（標準顔奥行きテンプレート）を基準に、`canonicalDepthBased` で仮 z を作り、`perLandmarkZSearch` で各 landmark（ランドマーク）を1次元探索として微調整します。
 - Summary JSON はレビューや ChatGPT 相談用の軽量形式として出力します。
@@ -96,7 +96,7 @@ Engine Runtime に Studio / Authoring 用 UI や生成・編集処理は入れ�
 - `expressionFollow v1` docs 方針
 - MP4 expression 3D analysis plan docs 方針
 - usage-aware frame sampling v1 docs 方針
-- Ideal Reference Mesh Warp Lab 3ペインUI / 動画 preview / モデル動画 MediaPipe scan foundation
+- Ideal Reference Mesh Warp Lab 3ペインUI / 動画 preview / モデル動画 MediaPipe scan / ライブ current scan / top1 matching foundation
 - IdealFace Authoring Tool Expression frame grouping summary prototype
 - IdealFace Authoring Tool frame usage card UI prototype
 - IdealFace Authoring Tool usage-aware adaptive scan prototype
@@ -114,7 +114,7 @@ Engine Runtime に Studio / Authoring 用 UI や生成・編集処理は入れ�
 - `shapeWarpSettings` v1
 - `colorLayers` v1
 - Production Shape Warp
-- Ideal Reference Mesh Warp Lab reference matching / mesh warp 実装
+- Ideal Reference Mesh Warp Lab topK / visibilityWeight / mesh warp 実装
 - ideal reference library JSON export / validator / IndexedDB / compression
 - Runtime renderer integration
 - Production WebGL mesh warp / renderer lifecycle / disposal / fallback
@@ -293,7 +293,7 @@ Analysis JSON export は、詳細検証・再解析用の `Export Full Analysis 
 - 本番候補は WebGL mesh warp です。
 - Production Shape Warp / Runtime renderer integration は未実装です。
 - Runtime renderer lifecycle、shader hardening、MediaPipe topology の本番整理は後段です。
-- Ideal Reference Mesh Warp Lab は、理想顔 3D478 を Runtime で投影する方針とは別に、理想モデル動画の実測 MediaPipe 478 reference library、`visibilityWeight` / `warpSafetyWeight`、hybrid mesh / adaptive grid を検証する debug lab です。3ペインUI、モデル動画 / ライブ動画 preview に加えて、モデル動画の MediaPipe 解析と raw ideal reference frames 作成、accepted frame review、モデル動画タブでの 478点 overlay 表示まで実装済みです。ライブ動画の MediaPipe 解析、reference matching、visibilityWeight / warpSafetyWeight、hybrid mesh、mesh warp は未実装です。
+- Ideal Reference Mesh Warp Lab は、理想顔 3D478 を Runtime で投影する方針とは別に、理想モデル動画の実測 MediaPipe 478 reference library、`visibilityWeight` / `warpSafetyWeight`、hybrid mesh / adaptive grid を検証する debug lab です。モデル動画の MediaPipe 解析と raw ideal reference frames 作成に加えて、ライブ動画 current frame の MediaPipe 解析、current478 overlay、raw ideal reference frames からの top1 reference matching まで実装済みです。topK weighted blend、visibilityWeight / warpSafetyWeight、hybrid mesh、mesh warp は未実装です。
 
 詳細は [Shape Warp production 方針](docs/shape-warp-production-direction.md) を参照してください。
 
@@ -364,7 +364,7 @@ npm run start:ideal-reference-mesh-warp-lab
 - MP4 expression 3D analysis 実装
 - `landmarkFollowStrengths` 自動生成
 - Production Shape Warp
-- Ideal Reference Mesh Warp Lab reference matching / mesh warp 実装
+- Ideal Reference Mesh Warp Lab topK / visibilityWeight / mesh warp 実装
 - ideal reference library JSON export / validator / IndexedDB / compression
 - Runtime renderer integration
 - Color Processing

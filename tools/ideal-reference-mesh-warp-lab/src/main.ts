@@ -68,6 +68,31 @@ type IdealReferenceFrame = {
   excludedReason: string | null
 }
 
+type CurrentLiveFrameAnalysis = {
+  analyzed: boolean
+  timeSec: number | null
+  landmarks478: ReferenceLandmark[]
+  pose: ReferencePose
+  blendshapes: ReferenceBlendshape[]
+  expressionGroup: ExpressionGroup
+  qualityScore: number
+  error: string | null
+}
+
+type ReferenceMatchResult = {
+  matched: boolean
+  idealFrameId: string | null
+  idealFrameIndex: number | null
+  idealTimeSec: number | null
+  matchScore: number | null
+  poseDistance: number | null
+  expressionDistance: number | null
+  qualityPenalty: number | null
+  currentExpressionGroup: ExpressionGroup | null
+  idealExpressionGroup: ExpressionGroup | null
+  error: string | null
+}
+
 type ModelScanState = {
   mediaPipeStatus: MediaPipeStatus
   mediaPipeError: string | null
@@ -99,6 +124,8 @@ type LabState = {
   modelScan: ModelScanState
   rawIdealReferenceFrames: IdealReferenceFrame[]
   currentAcceptedReviewIndex: number | null
+  currentLiveFrameAnalysis: CurrentLiveFrameAnalysis
+  top1Match: ReferenceMatchResult
   logs: string[]
 }
 
@@ -116,6 +143,21 @@ const STRONG_EXPRESSION_THRESHOLD = 0.35
 const MIXED_EXPRESSION_THRESHOLD = 0.28
 const LANDMARK_PREVIEW_COUNT = 5
 const SCAN_RENDER_INTERVAL = 8
+const LIVE_AUTO_ANALYSIS_INTERVAL_SEC = 0.35
+const POSE_WEIGHT = 1
+const EXPRESSION_WEIGHT = 1
+const QUALITY_WEIGHT = 0.25
+const POSE_MISSING_PENALTY = 1000
+const MATCH_BLENDSHAPE_KEYS = [
+  "jawOpen",
+  "mouthSmileLeft",
+  "mouthSmileRight",
+  "mouthPucker",
+  "eyeBlinkLeft",
+  "eyeBlinkRight",
+  "eyeSquintLeft",
+  "eyeSquintRight",
+] as const
 
 const previewTabs: TabOption<PreviewTab>[] = [
   { label: "モデル動画", value: "model" },
@@ -174,6 +216,8 @@ const state: LabState = {
   },
   rawIdealReferenceFrames: [],
   currentAcceptedReviewIndex: null,
+  currentLiveFrameAnalysis: createEmptyCurrentLiveFrameAnalysis(),
+  top1Match: createEmptyTop1Match(),
   logs: ["ラボを初期化しました。"],
 }
 
@@ -185,6 +229,9 @@ if (!app) {
 
 let faceLandmarker: FaceLandmarker | null = null
 let faceLandmarkerPromise: Promise<FaceLandmarker> | null = null
+let liveAnalysisInProgress = false
+let lastAutoLiveAnalysisAtSec = Number.NEGATIVE_INFINITY
+let liveAnalysisRequestId = 0
 
 app.innerHTML = `
   <main class="lab-shell">
@@ -202,7 +249,7 @@ app.innerHTML = `
       <input class="visually-hidden" type="file" accept="video/*" data-input="model-video" />
       <input class="visually-hidden" type="file" accept="video/*" data-input="live-video" />
       <div class="status-note">
-        PR3 ではモデル動画だけを MediaPipe 解析し、raw ideal reference frames を作成します。ライブ動画解析、matching、mesh warp はまだ行いません。
+        PR4 ではライブ動画 current frame を MediaPipe 解析し、raw ideal reference frames から top1 reference matching まで確認します。topK、mesh warp はまだ行いません。
       </div>
     </section>
 
@@ -240,6 +287,7 @@ app.innerHTML = `
 const modelVideoElement = getElement<HTMLVideoElement>("[data-video='model']")
 const liveVideoElement = getElement<HTMLVideoElement>("[data-video='live']")
 const modelOverlayCanvas = getElement<HTMLCanvasElement>("[data-overlay='model']")
+const liveOverlayCanvas = getElement<HTMLCanvasElement>("[data-overlay='live']")
 const modelFileInput = getElement<HTMLInputElement>("[data-input='model-video']")
 const liveFileInput = getElement<HTMLInputElement>("[data-input='live-video']")
 
@@ -306,19 +354,24 @@ function renderLivePreview() {
     <div class="preview-card" data-preview-panel="live">
       <div class="preview-stage" data-loaded="false">
         <video class="video-preview" data-video="live" preload="metadata" playsinline controls></video>
+        <canvas class="landmark-overlay" data-overlay="live"></canvas>
         <div class="preview-placeholder" data-placeholder="live">
           <h3>ライブ動画プレビュー</h3>
           <p>ライブ動画読込からローカル動画を選択すると、ここに current face 代わりの preview を表示します。</p>
         </div>
       </div>
-      <div class="timeline-controls" aria-label="ライブ動画操作">
+      <div class="timeline-controls live-controls" aria-label="ライブ動画操作">
         <button class="small-button" type="button" data-action="live-play">再生</button>
         <button class="small-button" type="button" data-action="live-pause">一時停止</button>
+        <button class="small-button" type="button" data-action="live-analyze-current">現在フレーム解析</button>
         <label class="range-field">
           <span>シーク</span>
           <input type="range" min="0" step="0.001" value="0" data-range="live" />
         </label>
         <p class="frame-status" data-status="live-time">current time: - / -</p>
+      </div>
+      <div class="review-card" data-live-analysis>
+        <p>ライブ動画の current frame 解析結果はまだありません。</p>
       </div>
     </div>
   `
@@ -394,6 +447,12 @@ function bindEvents() {
       liveVideoElement.pause()
     },
   )
+  getElement<HTMLButtonElement>('[data-action="live-analyze-current"]').addEventListener(
+    "click",
+    () => {
+      void analyzeCurrentLiveFrame("manual")
+    },
+  )
   getElement<HTMLInputElement>('[data-range="live"]').addEventListener(
     "input",
     (event) => {
@@ -418,7 +477,13 @@ function bindEvents() {
   })
   liveVideoElement.addEventListener("timeupdate", () => {
     syncCurrentTime("live")
+    drawLiveOverlay()
+    maybeAnalyzeLiveFrame("timeupdate")
     renderAll()
+  })
+  liveVideoElement.addEventListener("seeked", () => {
+    syncCurrentTime("live")
+    void analyzeCurrentLiveFrame("seeked")
   })
   liveVideoElement.addEventListener("play", () => {
     state.liveVideo.playbackStatus = "playing"
@@ -431,10 +496,16 @@ function bindEvents() {
       state.liveVideo.currentTimeSec >= durationSec - 0.001
         ? "stopped"
         : "paused"
+    if (state.liveVideo.loaded) {
+      void analyzeCurrentLiveFrame("pause")
+    }
     renderAll()
   })
   liveVideoElement.addEventListener("ended", () => {
     state.liveVideo.playbackStatus = "stopped"
+    if (state.liveVideo.loaded) {
+      void analyzeCurrentLiveFrame("ended")
+    }
     renderAll()
   })
 
@@ -456,7 +527,7 @@ function bindEvents() {
     })
   })
 
-  window.addEventListener("resize", drawModelOverlay)
+  window.addEventListener("resize", drawAllOverlays)
   window.addEventListener("beforeunload", cleanup)
 }
 
@@ -489,6 +560,7 @@ function handleVideoFileSelection(kind: PreviewTab, file: File | null) {
     addLog(`モデル動画を読み込みました: ${file.name}`)
   } else {
     state.liveVideo.playbackStatus = "stopped"
+    resetLiveAnalysisResults()
     liveVideoElement.src = objectUrl
     liveVideoElement.load()
     state.activePreviewTab = "live"
@@ -553,6 +625,7 @@ async function scanModelVideo() {
     state.modelScan.scanStatus = "done"
     state.modelVideo.scanStatus = "done"
     state.currentAcceptedReviewIndex = state.modelScan.acceptedFrames > 0 ? 0 : null
+    updateTop1Match()
     addLog(
       `モデル動画解析が完了しました。accepted ${state.modelScan.acceptedFrames} / excluded ${state.modelScan.excludedFrames}`,
     )
@@ -645,6 +718,32 @@ function buildReferenceFrame(
   }
 }
 
+function buildCurrentLiveFrameAnalysis(
+  result: FaceLandmarkerResultLike,
+  timeSec: number,
+): CurrentLiveFrameAnalysis {
+  const landmarks = result.faceLandmarks[0] ?? []
+  const blendshapes = (result.faceBlendshapes[0]?.categories ?? []).map((category) => ({
+    categoryName: category.categoryName,
+    score: category.score,
+  }))
+  const matrix = result.facialTransformationMatrixes[0]
+  const hasFace = result.faceLandmarks.length > 0
+  const validLandmarks = landmarks.length === REQUIRED_LANDMARK_COUNT
+  const error = !hasFace ? "noFace" : validLandmarks ? null : "invalidLandmarks"
+
+  return {
+    analyzed: true,
+    timeSec,
+    landmarks478: validLandmarks ? mapLandmarks(landmarks) : [],
+    pose: estimateNullablePose(matrix),
+    blendshapes,
+    expressionGroup: validLandmarks ? classifyExpressionGroup(blendshapes) : "unknown",
+    qualityScore: validLandmarks ? 1 : 0,
+    error,
+  }
+}
+
 type FaceLandmarkerResultLike = ReturnType<FaceLandmarker["detectForVideo"]>
 
 function mapLandmarks(landmarks: NormalizedLandmark[]): ReferenceLandmark[] {
@@ -729,16 +828,225 @@ function classifyExpressionGroup(blendshapes: ReferenceBlendshape[]): Expression
   return strongest[1] >= STRONG_EXPRESSION_THRESHOLD ? strongest[0] : "neutral"
 }
 
+function updateTop1Match() {
+  const current = state.currentLiveFrameAnalysis
+  if (!current.analyzed) {
+    state.top1Match = {
+      ...createEmptyTop1Match(),
+      error: "currentNotAnalyzed",
+    }
+    return
+  }
+
+  if (current.error || current.landmarks478.length !== REQUIRED_LANDMARK_COUNT) {
+    state.top1Match = {
+      ...createEmptyTop1Match(),
+      currentExpressionGroup: current.expressionGroup,
+      error: current.error ?? "invalidCurrentLandmarks",
+    }
+    return
+  }
+
+  const candidates = getAcceptedFrames().filter(
+    (frame) => frame.landmarks478.length === REQUIRED_LANDMARK_COUNT,
+  )
+  if (candidates.length === 0) {
+    state.top1Match = {
+      ...createEmptyTop1Match(),
+      currentExpressionGroup: current.expressionGroup,
+      error: "noReferenceFrames",
+    }
+    return
+  }
+
+  let best: {
+    frame: IdealReferenceFrame
+    poseDistance: number
+    expressionDistance: number
+    qualityPenalty: number
+    matchScore: number
+  } | null = null
+
+  for (const frame of candidates) {
+    const poseDistance = calculatePoseDistance(current.pose, frame.pose)
+    const expressionDistance = calculateExpressionDistance(
+      current.blendshapes,
+      frame.blendshapes,
+    )
+    const qualityPenalty = Math.max(0, 1 - frame.qualityScore)
+    const matchScore =
+      poseDistance * POSE_WEIGHT +
+      expressionDistance * EXPRESSION_WEIGHT +
+      qualityPenalty * QUALITY_WEIGHT
+
+    if (!best || matchScore < best.matchScore) {
+      best = {
+        frame,
+        poseDistance,
+        expressionDistance,
+        qualityPenalty,
+        matchScore,
+      }
+    }
+  }
+
+  if (!best) {
+    state.top1Match = {
+      ...createEmptyTop1Match(),
+      currentExpressionGroup: current.expressionGroup,
+      error: "noReferenceFrames",
+    }
+    return
+  }
+
+  state.top1Match = {
+    matched: true,
+    idealFrameId: best.frame.frameId,
+    idealFrameIndex: best.frame.frameIndex,
+    idealTimeSec: best.frame.timeSec,
+    matchScore: best.matchScore,
+    poseDistance: best.poseDistance,
+    expressionDistance: best.expressionDistance,
+    qualityPenalty: best.qualityPenalty,
+    currentExpressionGroup: current.expressionGroup,
+    idealExpressionGroup: best.frame.expressionGroup,
+    error: null,
+  }
+}
+
+function calculatePoseDistance(current: ReferencePose, ideal: ReferencePose) {
+  if (
+    current.yaw === null ||
+    current.pitch === null ||
+    current.roll === null ||
+    ideal.yaw === null ||
+    ideal.pitch === null ||
+    ideal.roll === null
+  ) {
+    return POSE_MISSING_PENALTY
+  }
+
+  const yawDiff = current.yaw - ideal.yaw
+  const pitchDiff = current.pitch - ideal.pitch
+  const rollDiff = current.roll - ideal.roll
+  return yawDiff * yawDiff + pitchDiff * pitchDiff + rollDiff * rollDiff
+}
+
+function calculateExpressionDistance(
+  currentBlendshapes: ReferenceBlendshape[],
+  idealBlendshapes: ReferenceBlendshape[],
+) {
+  const currentScores = getBlendshapeScoreMap(currentBlendshapes)
+  const idealScores = getBlendshapeScoreMap(idealBlendshapes)
+  const currentSmile = averageScores(currentScores, "mouthSmileLeft", "mouthSmileRight")
+  const idealSmile = averageScores(idealScores, "mouthSmileLeft", "mouthSmileRight")
+  const currentBlink = averageScores(currentScores, "eyeBlinkLeft", "eyeBlinkRight")
+  const idealBlink = averageScores(idealScores, "eyeBlinkLeft", "eyeBlinkRight")
+  const currentSquint = averageScores(currentScores, "eyeSquintLeft", "eyeSquintRight")
+  const idealSquint = averageScores(idealScores, "eyeSquintLeft", "eyeSquintRight")
+  const diffs = [
+    getScore(currentScores, "jawOpen") - getScore(idealScores, "jawOpen"),
+    currentSmile - idealSmile,
+    getScore(currentScores, "mouthPucker") - getScore(idealScores, "mouthPucker"),
+    currentBlink - idealBlink,
+    currentSquint - idealSquint,
+  ]
+
+  return diffs.reduce((sum, diff) => sum + diff * diff, 0)
+}
+
+function getBlendshapeScoreMap(blendshapes: ReferenceBlendshape[]) {
+  return new Map(blendshapes.map((item) => [item.categoryName, item.score]))
+}
+
+function getScore(scores: Map<string, number>, key: string) {
+  return scores.get(key) ?? 0
+}
+
+function averageScores(scores: Map<string, number>, leftKey: string, rightKey: string) {
+  return (getScore(scores, leftKey) + getScore(scores, rightKey)) / 2
+}
+
+function getMissingBlendshapeKeys(blendshapes: ReferenceBlendshape[]) {
+  const scores = getBlendshapeScoreMap(blendshapes)
+  return MATCH_BLENDSHAPE_KEYS.filter((key) => !scores.has(key))
+}
+
 function handleExportLog() {
   addLog("現在の state summary を console に出力しました。")
   console.info("Ideal Reference Mesh Warp Lab state", getRawState())
   renderAll()
 }
 
+async function analyzeCurrentLiveFrame(reason: "manual" | "timeupdate" | "seeked" | "pause" | "ended") {
+  if (!state.liveVideo.loaded || liveAnalysisInProgress) {
+    return
+  }
+
+  const requestId = liveAnalysisRequestId + 1
+  liveAnalysisRequestId = requestId
+  liveAnalysisInProgress = true
+  renderAll()
+
+  try {
+    const detector = await getFaceLandmarker()
+    if (requestId !== liveAnalysisRequestId) {
+      return
+    }
+
+    const timeSec = liveVideoElement.currentTime || state.liveVideo.currentTimeSec
+    const result = detector.detectForVideo(liveVideoElement, Math.round(timeSec * 1000))
+    state.currentLiveFrameAnalysis = buildCurrentLiveFrameAnalysis(result, timeSec)
+    lastAutoLiveAnalysisAtSec = timeSec
+    updateTop1Match()
+
+    if (reason === "manual") {
+      addLog(
+        state.currentLiveFrameAnalysis.error
+          ? `ライブ動画 current frame 解析で ${state.currentLiveFrameAnalysis.error} を検出しました。`
+          : "ライブ動画 current frame を解析しました。",
+      )
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    state.currentLiveFrameAnalysis = {
+      ...createEmptyCurrentLiveFrameAnalysis(),
+      analyzed: true,
+      timeSec: state.liveVideo.currentTimeSec,
+      error: `MediaPipe error: ${message}`,
+    }
+    state.top1Match = {
+      ...createEmptyTop1Match(),
+      error: state.currentLiveFrameAnalysis.error,
+    }
+    addLog(`ライブ動画 current frame 解析でエラーが発生しました: ${message}`)
+  } finally {
+    liveAnalysisInProgress = false
+    renderAll()
+  }
+}
+
+function maybeAnalyzeLiveFrame(reason: "timeupdate") {
+  if (
+    !state.liveVideo.loaded ||
+    state.liveVideo.playbackStatus !== "playing" ||
+    liveAnalysisInProgress
+  ) {
+    return
+  }
+
+  const currentTimeSec = liveVideoElement.currentTime || state.liveVideo.currentTimeSec
+  if (currentTimeSec - lastAutoLiveAnalysisAtSec < LIVE_AUTO_ANALYSIS_INTERVAL_SEC) {
+    return
+  }
+
+  void analyzeCurrentLiveFrame(reason)
+}
+
 function handleToggleLandmarks478(checked: boolean) {
   state.overlay.showLandmarks478 = checked
   addLog(`478点 overlay 表示を ${checked ? "ON" : "OFF"} にしました。`)
-  drawModelOverlay()
+  drawAllOverlays()
   renderAll()
 }
 
@@ -834,6 +1142,7 @@ function syncCurrentTime(kind: PreviewTab) {
 function resetModelScanResults() {
   state.rawIdealReferenceFrames = []
   state.currentAcceptedReviewIndex = null
+  state.top1Match = createEmptyTop1Match()
   state.modelScan.scanStatus = "idle"
   state.modelScan.scanProgress = 0
   state.modelScan.plannedScanFrames = 0
@@ -843,6 +1152,48 @@ function resetModelScanResults() {
   state.modelScan.excludedReasonCounts = {}
   state.modelScan.lastError = null
   clearModelOverlay()
+}
+
+function resetLiveAnalysisResults() {
+  state.currentLiveFrameAnalysis = createEmptyCurrentLiveFrameAnalysis()
+  state.top1Match = createEmptyTop1Match()
+  liveAnalysisRequestId += 1
+  liveAnalysisInProgress = false
+  lastAutoLiveAnalysisAtSec = Number.NEGATIVE_INFINITY
+  clearLiveOverlay()
+}
+
+function createEmptyCurrentLiveFrameAnalysis(): CurrentLiveFrameAnalysis {
+  return {
+    analyzed: false,
+    timeSec: null,
+    landmarks478: [],
+    pose: {
+      yaw: null,
+      pitch: null,
+      roll: null,
+    },
+    blendshapes: [],
+    expressionGroup: "unknown",
+    qualityScore: 0,
+    error: null,
+  }
+}
+
+function createEmptyTop1Match(): ReferenceMatchResult {
+  return {
+    matched: false,
+    idealFrameId: null,
+    idealFrameIndex: null,
+    idealTimeSec: null,
+    matchScore: null,
+    poseDistance: null,
+    expressionDistance: null,
+    qualityPenalty: null,
+    currentExpressionGroup: null,
+    idealExpressionGroup: null,
+    error: null,
+  }
 }
 
 function updateScanCounters() {
@@ -869,7 +1220,7 @@ function renderAll() {
   renderControls()
   renderDebugTabs()
   renderDebugContent()
-  drawModelOverlay()
+  drawAllOverlays()
 }
 
 function renderPreviewTabs() {
@@ -904,6 +1255,7 @@ function renderControls() {
   setDisabled('[data-range="model"]', !modelLoaded || scanBusy)
   setDisabled('[data-action="live-play"]', !liveLoaded || state.liveVideo.playbackStatus === "playing")
   setDisabled('[data-action="live-pause"]', !liveLoaded || state.liveVideo.playbackStatus !== "playing")
+  setDisabled('[data-action="live-analyze-current"]', !liveLoaded || liveAnalysisInProgress)
   setDisabled('[data-range="live"]', !liveLoaded)
 
   updateModelRange()
@@ -920,6 +1272,7 @@ function renderControls() {
   getElement<HTMLInputElement>('[data-action="toggle-landmarks"]').checked =
     state.overlay.showLandmarks478
   renderModelReviewCard()
+  renderLiveAnalysisCard()
 }
 
 function renderModelReviewCard() {
@@ -951,6 +1304,30 @@ function renderModelReviewCard() {
   `
 }
 
+function renderLiveAnalysisCard() {
+  const card = getElement<HTMLElement>("[data-live-analysis]")
+  const analysis = state.currentLiveFrameAnalysis
+  const match = state.top1Match
+
+  if (!analysis.analyzed) {
+    card.innerHTML = `<p>ライブ動画の current frame 解析結果はまだありません。</p>`
+    return
+  }
+
+  card.innerHTML = `
+    <dl class="review-grid">
+      <div><dt>timeSec</dt><dd>${formatSeconds(analysis.timeSec)} sec</dd></div>
+      <div><dt>landmarks</dt><dd>${analysis.landmarks478.length}</dd></div>
+      <div><dt>pose</dt><dd>${escapeHtml(formatPose(analysis.pose))}</dd></div>
+      <div><dt>expressionGroup</dt><dd>${analysis.expressionGroup}</dd></div>
+      <div><dt>qualityScore</dt><dd>${formatSeconds(analysis.qualityScore)}</dd></div>
+      <div><dt>error</dt><dd>${escapeHtml(analysis.error ?? "-")}</dd></div>
+      <div><dt>top1</dt><dd>${escapeHtml(match.idealFrameId ?? "-")}</dd></div>
+      <div><dt>matchScore</dt><dd>${formatSeconds(match.matchScore)}</dd></div>
+    </dl>
+  `
+}
+
 function renderDebugTabs() {
   app.querySelectorAll<HTMLButtonElement>("[data-tab-group='debug']").forEach((button) => {
     const isActive = button.dataset.tabValue === state.activeDebugTab
@@ -975,6 +1352,11 @@ function renderDebugContent() {
 
   if (state.activeDebugTab === "referenceLibrary") {
     content.appendChild(createReferenceLibraryContent())
+    return
+  }
+
+  if (state.activeDebugTab === "matching") {
+    content.appendChild(createMatchingContent())
     return
   }
 
@@ -1018,6 +1400,12 @@ function createSummaryContent() {
     ["Live size", formatSize(state.liveVideo.width, state.liveVideo.height)],
     ["Live current time", `${formatSeconds(state.liveVideo.currentTimeSec)} sec`],
     ["Live playback", state.liveVideo.playbackStatus],
+    ["Live current analysis", formatLiveAnalysisStatus()],
+    ["Live current expression", state.currentLiveFrameAnalysis.analyzed ? state.currentLiveFrameAnalysis.expressionGroup : "-"],
+    ["Top1 reference", state.top1Match.idealFrameId ?? "none"],
+    ["Match score", formatSeconds(state.top1Match.matchScore)],
+    ["Pose distance", formatSeconds(state.top1Match.poseDistance)],
+    ["Expression distance", formatSeconds(state.top1Match.expressionDistance)],
     ["Overlay 478 landmarks", state.overlay.showLandmarks478 ? "on" : "off"],
   ]
 
@@ -1074,6 +1462,77 @@ function createReferenceLibraryContent() {
     ["landmark count summary", formatCounts(stats.landmarkCountSummary)],
   ])
   return list
+}
+
+function createMatchingContent() {
+  const fragment = document.createDocumentFragment()
+  const acceptedFrames = getAcceptedFrames().filter(
+    (frame) => frame.landmarks478.length === REQUIRED_LANDMARK_COUNT,
+  )
+  const current = state.currentLiveFrameAnalysis
+  const match = state.top1Match
+  const idealFrame = getMatchedIdealFrame()
+
+  if (acceptedFrames.length === 0) {
+    const message = document.createElement("p")
+    message.className = "placeholder-text"
+    message.textContent = "モデル動画を解析して raw ideal reference frames を作成してください。"
+    fragment.appendChild(message)
+  }
+
+  if (!current.analyzed) {
+    const message = document.createElement("p")
+    message.className = "placeholder-text"
+    message.textContent = "ライブ動画の current frame はまだ解析されていません。"
+    fragment.appendChild(message)
+  }
+
+  const currentHeading = document.createElement("h3")
+  currentHeading.textContent = "Current live frame"
+  const currentList = document.createElement("dl")
+  currentList.className = "summary-list"
+  appendDefinitionItems(currentList, [
+    ["analyzed", current.analyzed ? "yes" : "no"],
+    ["timeSec", current.timeSec === null ? "-" : `${formatSeconds(current.timeSec)} sec`],
+    ["pose yaw / pitch / roll", formatPose(current.pose)],
+    ["expressionGroup", current.analyzed ? current.expressionGroup : "-"],
+    ["qualityScore", formatSeconds(current.qualityScore)],
+    ["landmarkCount", String(current.landmarks478.length)],
+    ["missingBlendshapes", formatMissingBlendshapes(current.blendshapes)],
+    ["error", current.error ?? "-"],
+  ])
+
+  const idealHeading = document.createElement("h3")
+  idealHeading.textContent = "Top1 ideal reference"
+  const idealList = document.createElement("dl")
+  idealList.className = "summary-list"
+  appendDefinitionItems(idealList, [
+    ["matched", match.matched ? "yes" : "no"],
+    ["frameId", match.idealFrameId ?? "-"],
+    ["frameIndex", match.idealFrameIndex === null ? "-" : String(match.idealFrameIndex)],
+    ["timeSec", match.idealTimeSec === null ? "-" : `${formatSeconds(match.idealTimeSec)} sec`],
+    ["pose yaw / pitch / roll", idealFrame ? formatPose(idealFrame.pose) : "-"],
+    ["expressionGroup", idealFrame?.expressionGroup ?? "-"],
+    ["qualityScore", idealFrame ? formatSeconds(idealFrame.qualityScore) : "-"],
+    ["missingBlendshapes", idealFrame ? formatMissingBlendshapes(idealFrame.blendshapes) : "-"],
+    ["error", match.error ?? "-"],
+  ])
+
+  const scoreHeading = document.createElement("h3")
+  scoreHeading.textContent = "Scores"
+  const scoreList = document.createElement("dl")
+  scoreList.className = "summary-list"
+  appendDefinitionItems(scoreList, [
+    ["matchScore", formatSeconds(match.matchScore)],
+    ["poseDistance", formatSeconds(match.poseDistance)],
+    ["expressionDistance", formatSeconds(match.expressionDistance)],
+    ["qualityPenalty", formatSeconds(match.qualityPenalty)],
+    ["pose unit", "degree squared"],
+    ["weights", `pose ${POSE_WEIGHT} / expression ${EXPRESSION_WEIGHT} / quality ${QUALITY_WEIGHT}`],
+  ])
+
+  fragment.append(currentHeading, currentList, idealHeading, idealList, scoreHeading, scoreList)
+  return fragment
 }
 
 function appendDefinitionItems(list: HTMLDListElement, items: Array<[string, string]>) {
@@ -1144,7 +1603,36 @@ function getRawState() {
       currentTimeSec: roundForState(state.liveVideo.currentTimeSec),
       playbackStatus: state.liveVideo.playbackStatus,
     },
+    currentLiveFrameAnalysis: getCurrentLiveFrameRawState(),
+    top1Match: {
+      matched: state.top1Match.matched,
+      idealFrameId: state.top1Match.idealFrameId,
+      idealFrameIndex: state.top1Match.idealFrameIndex,
+      idealTimeSec: roundForState(state.top1Match.idealTimeSec),
+      matchScore: roundForState(state.top1Match.matchScore),
+      poseDistance: roundForState(state.top1Match.poseDistance),
+      expressionDistance: roundForState(state.top1Match.expressionDistance),
+      qualityPenalty: roundForState(state.top1Match.qualityPenalty),
+      currentExpressionGroup: state.top1Match.currentExpressionGroup,
+      idealExpressionGroup: state.top1Match.idealExpressionGroup,
+      error: state.top1Match.error,
+    },
     logs: state.logs,
+  }
+}
+
+function getCurrentLiveFrameRawState() {
+  const current = state.currentLiveFrameAnalysis
+  return {
+    analyzed: current.analyzed,
+    timeSec: roundForState(current.timeSec),
+    landmarkCount: current.landmarks478.length,
+    pose: roundPose(current.pose),
+    blendshapeCount: current.blendshapes.length,
+    expressionGroup: current.expressionGroup,
+    qualityScore: current.qualityScore,
+    error: current.error,
+    landmarksPreview: current.landmarks478.slice(0, LANDMARK_PREVIEW_COUNT).map(roundLandmark),
   }
 }
 
@@ -1189,33 +1677,79 @@ function updateRange(kind: "live") {
 }
 
 function drawModelOverlay() {
-  const context = modelOverlayCanvas.getContext("2d")
+  const frame = getCurrentAcceptedFrame()
+  drawLandmarkOverlay({
+    canvas: modelOverlayCanvas,
+    videoElement: modelVideoElement,
+    videoState: state.modelVideo,
+    landmarks: frame?.landmarks478 ?? [],
+    shouldDraw:
+      state.overlay.showLandmarks478 &&
+      state.activePreviewTab === "model" &&
+      Boolean(frame) &&
+      (frame?.landmarks478.length ?? 0) === REQUIRED_LANDMARK_COUNT,
+    color: "rgba(32, 186, 165, 0.85)",
+  })
+}
+
+function drawLiveOverlay() {
+  drawLandmarkOverlay({
+    canvas: liveOverlayCanvas,
+    videoElement: liveVideoElement,
+    videoState: state.liveVideo,
+    landmarks: state.currentLiveFrameAnalysis.landmarks478,
+    shouldDraw:
+      state.overlay.showLandmarks478 &&
+      state.activePreviewTab === "live" &&
+      state.currentLiveFrameAnalysis.landmarks478.length === REQUIRED_LANDMARK_COUNT,
+    color: "rgba(79, 128, 255, 0.85)",
+  })
+}
+
+function drawAllOverlays() {
+  drawModelOverlay()
+  drawLiveOverlay()
+}
+
+function drawLandmarkOverlay({
+  canvas,
+  videoElement,
+  videoState,
+  landmarks,
+  shouldDraw,
+  color,
+}: {
+  canvas: HTMLCanvasElement
+  videoElement: HTMLVideoElement
+  videoState: VideoPreviewState
+  landmarks: ReferenceLandmark[]
+  shouldDraw: boolean
+  color: string
+}) {
+  const context = canvas.getContext("2d")
   if (!context) {
     return
   }
 
-  const rect = modelVideoElement.getBoundingClientRect()
+  const rect = videoElement.getBoundingClientRect()
   const dpr = window.devicePixelRatio || 1
-  modelOverlayCanvas.width = Math.max(1, Math.round(rect.width * dpr))
-  modelOverlayCanvas.height = Math.max(1, Math.round(rect.height * dpr))
+  canvas.width = Math.max(1, Math.round(rect.width * dpr))
+  canvas.height = Math.max(1, Math.round(rect.height * dpr))
   context.setTransform(dpr, 0, 0, dpr, 0, 0)
   context.clearRect(0, 0, rect.width, rect.height)
 
-  const frame = getCurrentAcceptedFrame()
   if (
-    !state.overlay.showLandmarks478 ||
-    state.activePreviewTab !== "model" ||
-    !frame ||
-    frame.landmarks478.length !== REQUIRED_LANDMARK_COUNT ||
+    !shouldDraw ||
+    landmarks.length !== REQUIRED_LANDMARK_COUNT ||
     rect.width <= 0 ||
     rect.height <= 0
   ) {
     return
   }
 
-  const drawRect = getVideoDrawRect(rect.width, rect.height)
-  context.fillStyle = "rgba(32, 186, 165, 0.85)"
-  for (const landmark of frame.landmarks478) {
+  const drawRect = getVideoDrawRect(videoState, videoElement, rect.width, rect.height)
+  context.fillStyle = color
+  for (const landmark of landmarks) {
     context.beginPath()
     context.arc(
       drawRect.x + landmark.x * drawRect.width,
@@ -1229,16 +1763,29 @@ function drawModelOverlay() {
 }
 
 function clearModelOverlay() {
-  const context = modelOverlayCanvas.getContext("2d")
+  clearOverlay(modelOverlayCanvas)
+}
+
+function clearLiveOverlay() {
+  clearOverlay(liveOverlayCanvas)
+}
+
+function clearOverlay(canvas: HTMLCanvasElement) {
+  const context = canvas.getContext("2d")
   if (!context) {
     return
   }
-  context.clearRect(0, 0, modelOverlayCanvas.width, modelOverlayCanvas.height)
+  context.clearRect(0, 0, canvas.width, canvas.height)
 }
 
-function getVideoDrawRect(containerWidth: number, containerHeight: number) {
-  const videoWidth = state.modelVideo.width ?? modelVideoElement.videoWidth
-  const videoHeight = state.modelVideo.height ?? modelVideoElement.videoHeight
+function getVideoDrawRect(
+  videoState: VideoPreviewState,
+  videoElement: HTMLVideoElement,
+  containerWidth: number,
+  containerHeight: number,
+) {
+  const videoWidth = videoState.width ?? videoElement.videoWidth
+  const videoHeight = videoState.height ?? videoElement.videoHeight
   if (!videoWidth || !videoHeight) {
     return {
       x: 0,
@@ -1328,6 +1875,23 @@ function formatPose(pose: ReferencePose) {
   return `yaw ${formatSeconds(pose.yaw)} / pitch ${formatSeconds(pose.pitch)} / roll ${formatSeconds(pose.roll)}`
 }
 
+function formatLiveAnalysisStatus() {
+  if (!state.currentLiveFrameAnalysis.analyzed) {
+    return "not analyzed"
+  }
+
+  return state.currentLiveFrameAnalysis.error ? "error" : "analyzed"
+}
+
+function formatMissingBlendshapes(blendshapes: ReferenceBlendshape[]) {
+  if (blendshapes.length === 0) {
+    return "all"
+  }
+
+  const missing = getMissingBlendshapeKeys(blendshapes)
+  return missing.length === 0 ? "-" : missing.join(" / ")
+}
+
 function roundForState(value: number | null) {
   if (value === null || !Number.isFinite(value)) {
     return value
@@ -1369,6 +1933,13 @@ function getCurrentAcceptedFrame() {
   const acceptedFrames = getAcceptedFrames()
   const index = state.currentAcceptedReviewIndex
   return index === null ? null : acceptedFrames[index] ?? null
+}
+
+function getMatchedIdealFrame() {
+  const frameId = state.top1Match.idealFrameId
+  return frameId === null
+    ? null
+    : state.rawIdealReferenceFrames.find((frame) => frame.frameId === frameId) ?? null
 }
 
 function canMoveModel(delta: number) {
