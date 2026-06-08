@@ -96,7 +96,7 @@ current 478 landmarks は MediaPipe 由来の image-normalized 座標です。pr
 
 現時点では、478点の current-vs-ideal difference debug、`correctionProfile` v1 foundation、`expressionAttenuation` v1 foundation、CorrectionPlan v1 debug foundation、Studio 向け Shape Warp v1 debug prototype、Studio processed preview 限定 WebGL mesh warp v1 prototype は実装済みです。Production Shape Warp / Runtime renderer integration は未実装です。
 
-新しい検証ラインとして [Ideal Reference Mesh Warp Lab](ideal-reference-mesh-warp-lab.md) を追加します。このラボでは、理想モデル動画から作る実測 MediaPipe 478 reference library と、ライブ動画を current face 代わりにした mesh warp 検証を扱います。`tools/ideal-reference-mesh-warp-lab` は 3ペインUI土台に加えて、モデル動画 / ライブ動画のローカル読み込みと preview、基本的なシーク / 再生操作まで実装済みです。MediaPipe解析、reference library作成、matching、mesh warp は未実装です。Engine 実装、Studio 実装、Authoring Tool UI、JSON export、validator、Runtime renderer integration も行いません。
+新しい検証ラインとして [Ideal Reference Mesh Warp Lab](ideal-reference-mesh-warp-lab.md) を追加します。このラボでは、理想モデル動画から作る実測 MediaPipe 478 reference library と、ライブ動画を current face 代わりにした mesh warp 検証を扱います。`tools/ideal-reference-mesh-warp-lab` は 3ペインUI、モデル動画 / ライブ動画 preview に加えて、モデル動画の MediaPipe 解析と raw ideal reference frames 作成、accepted frame review、モデル動画タブでの 478点 overlay 表示まで実装済みです。ライブ動画の MediaPipe 解析、reference matching、visibilityWeight / warpSafetyWeight、hybrid mesh、mesh warp は未実装です。Engine 実装、Studio 実装、Authoring Tool UI、JSON export、validator、Runtime renderer integration も行いません。
 
 `correctionProfile` v1 は、`ideal_face_asset_v1` の optional top-level field として扱う補正設定です。landmark ごとの `strength` を持ちますが、dx / dy は JSON に保存しません。dx / dy は current landmarks と projected ideal `imageLandmarks` から Engine が毎フレーム計算します。今後の表情制御では、単純に group の補正強度を下げる `expressionAttenuation` ではなく、表情ごとに landmark が neutral な projected ideal へどれだけ追従するかを定義する `expressionFollow v1` を中心にします。MP4 からの `landmarkFollowStrengths` 自動生成は IdealFace Authoring Tool の責務として扱います。詳細は [correctionProfile v1](correction-profile-v1.md)、[expressionFollow v1](expression-follow-v1.md)、[MP4 expression 3D analysis plan](mp4-expression-3d-analysis-plan.md)、[usage-aware frame sampling v1](usage-aware-frame-sampling-v1.md)、[expression-aware correctionProfile](expression-aware-correction-profile.md)、[expressionAttenuation falloff v1](expression-attenuation-falloff-v1.md) を参照してください。
 
@@ -365,7 +365,8 @@ Step D: Quality improvements
 
 Step R: Ideal Reference Mesh Warp Lab
   ideal reference library、visibilityWeight / warpSafetyWeight、hybrid mesh / adaptive grid、raw / runtime library 分離を docs で整理する
-  実装はまだ行わない
+  現在はモデル動画の MediaPipe 解析と raw ideal reference frames 作成まで実装済み
+  reference matching、visibilityWeight / warpSafetyWeight、hybrid mesh、mesh warp は後段で扱う
 ```
 
 詳細は [Shape Warp production direction](shape-warp-production-direction.md) を参照してください。Studio WebGL mesh warp v1 prototype は processed preview 限定で実装済みです。Production renderer 実装、shader hardening、MediaPipe topology の本番整理はこの docs step では行いません。

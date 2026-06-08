@@ -202,6 +202,7 @@ h3 {
 .video-preview {
   background: #111820;
   display: none;
+  grid-area: 1 / 1;
   height: 100%;
   max-height: 62vh;
   min-height: 320px;
@@ -209,7 +210,23 @@ h3 {
   width: 100%;
 }
 
+.landmark-overlay {
+  display: none;
+  grid-area: 1 / 1;
+  height: 100%;
+  max-height: 62vh;
+  min-height: 320px;
+  pointer-events: none;
+  position: relative;
+  width: 100%;
+  z-index: 2;
+}
+
 .preview-stage[data-loaded="true"] .video-preview {
+  display: block;
+}
+
+.preview-stage[data-loaded="true"] .landmark-overlay {
   display: block;
 }
 
@@ -275,6 +292,44 @@ input[type="range"] {
   font-size: 12px;
   line-height: 1.45;
   margin: 0;
+}
+
+.review-card {
+  background: #f8fafc;
+  border: 1px solid #d8e0e7;
+  border-radius: 8px;
+  color: #4f5c69;
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 10px;
+}
+
+.review-card p {
+  margin: 0;
+}
+
+.review-grid {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.review-grid div {
+  display: grid;
+  gap: 4px;
+  grid-template-columns: 120px minmax(0, 1fr);
+}
+
+.review-grid dt {
+  color: #66727e;
+  font-weight: 700;
+}
+
+.review-grid dd {
+  font-family:
+    "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .debug-content {
