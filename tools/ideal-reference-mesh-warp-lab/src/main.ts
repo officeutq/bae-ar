@@ -202,6 +202,11 @@ type MeshVertexPair = {
   reasons: string[]
 }
 
+type GridAnchorDisplayState = {
+  showSourceGrid: boolean
+  showTargetGrid: boolean
+}
+
 type MeshPrototypeSummary = {
   top1MatchedReferenceId: string | null
   currentLandmarkCount: number
@@ -311,6 +316,10 @@ const LARGE_DISPLACEMENT_THRESHOLD = 0.075
 const EXCLUDE_USAGE_WEIGHT_THRESHOLD = 0.15
 const NEAR_FACE_GRID_STEPS = 5
 const BACKGROUND_GRID_STEPS = 5
+const MESH_SOURCE_COLOR = "rgba(20, 170, 130, 0.9)"
+const MESH_TARGET_COLOR = "rgba(244, 86, 120, 0.9)"
+const GRID_SOURCE_COLOR = "rgba(20, 170, 130, 0.78)"
+const GRID_TARGET_COLOR = "rgba(244, 86, 120, 0.78)"
 const MATCH_BLENDSHAPE_KEYS = [
   "jawOpen",
   "mouthSmileLeft",
@@ -2439,6 +2448,7 @@ function createSummaryContent() {
   const meshSummary = state.currentIdealMeshPrototype.summary
   const aspectDebug = state.currentIdealMeshPrototype.aspectDebug
   const alignmentDebug = aspectDebug.alignment
+  const gridAnchorDisplay = getGridAnchorDisplayState()
 
   const items: Array<[string, string]> = [
     ["Model MediaPipe", state.modelScan.mediaPipeStatus],
@@ -2490,6 +2500,7 @@ function createSummaryContent() {
       String(meshSummary.largeDisplacementSuppressedCount),
     ],
     ["invalidExcludedCount", String(meshSummary.invalidExcludedCount)],
+    ["gridAnchorDisplay", formatGridAnchorDisplay(gridAnchorDisplay)],
     ["videoAspectRatio", formatMetric(aspectDebug.videoAspectRatio)],
     ["modelVideoAspectRatio", formatMetric(aspectDebug.modelVideoAspectRatio)],
     ["liveVideoAspectRatio", formatMetric(aspectDebug.liveVideoAspectRatio)],
@@ -2646,6 +2657,7 @@ function createMeshPrototypeContent() {
   const fragment = document.createDocumentFragment()
   const mesh = state.currentIdealMeshPrototype
   const summary = mesh.summary
+  const gridAnchorDisplay = getGridAnchorDisplayState()
 
   const heading = document.createElement("h3")
   heading.textContent = "Warp Mesh"
@@ -2671,6 +2683,7 @@ function createMeshPrototypeContent() {
     ["nearFaceGridCount", String(summary.nearFaceGridCount)],
     ["backgroundGridCount", String(summary.backgroundGridCount)],
     ["screenEdgeAnchorCount", String(summary.screenEdgeAnchorCount)],
+    ["gridAnchorDisplay", formatGridAnchorDisplay(gridAnchorDisplay)],
   ])
 
   const targetHeading = document.createElement("h3")
@@ -2840,6 +2853,7 @@ function getRawState() {
     activePreviewTab: state.activePreviewTab,
     activeDebugTab: state.activeDebugTab,
     overlay: state.overlay,
+    gridAnchorDisplay: getGridAnchorDisplayState(),
     modelVideo: {
       loaded: state.modelVideo.loaded,
       fileName: state.modelVideo.fileName,
@@ -3125,12 +3139,14 @@ function drawMeshPrototypeOverlay(
   displayedContentRect: Rect,
 ) {
   const mesh = state.currentIdealMeshPrototype
+  const gridAnchorDisplay = getGridAnchorDisplayState()
   const showAnyMeshOverlay =
     state.overlay.showMeshSource ||
     state.overlay.showMeshTarget ||
     state.overlay.showMeshPairs ||
     state.overlay.showExcludedLandmarks ||
-    state.overlay.showGridAnchors
+    gridAnchorDisplay.showSourceGrid ||
+    gridAnchorDisplay.showTargetGrid
 
   if (!showAnyMeshOverlay || mesh.currentIdealMeshPairs.length === 0) {
     return
@@ -3152,15 +3168,31 @@ function drawMeshPrototypeOverlay(
     }
   }
 
-  if (state.overlay.showGridAnchors) {
+  const gridAnchorPairs = mesh.currentIdealMeshPairs.filter(
+    (pair) => pair.kind !== "faceLandmark",
+  )
+
+  if (gridAnchorDisplay.showSourceGrid) {
     drawMeshVertexPoints(
       context,
       displayedContentRect,
-      mesh.currentIdealMeshPairs.filter((pair) => pair.kind !== "faceLandmark"),
+      gridAnchorPairs,
       "source",
-      "rgba(105, 114, 126, 0.75)",
+      GRID_SOURCE_COLOR,
       2.2,
       "square",
+    )
+  }
+
+  if (gridAnchorDisplay.showTargetGrid) {
+    drawMeshVertexPoints(
+      context,
+      displayedContentRect,
+      gridAnchorPairs,
+      "target",
+      GRID_TARGET_COLOR,
+      2.35,
+      "circle",
     )
   }
 
@@ -3170,7 +3202,7 @@ function drawMeshPrototypeOverlay(
       displayedContentRect,
       mesh.currentIdealMeshPairs.filter((pair) => pair.kind === "faceLandmark"),
       "source",
-      "rgba(20, 170, 130, 0.9)",
+      MESH_SOURCE_COLOR,
       2,
       "circle",
     )
@@ -3182,7 +3214,7 @@ function drawMeshPrototypeOverlay(
       displayedContentRect,
       mesh.currentIdealMeshPairs.filter((pair) => pair.kind === "faceLandmark"),
       "target",
-      "rgba(244, 86, 120, 0.9)",
+      MESH_TARGET_COLOR,
       2,
       "circle",
     )
@@ -3197,6 +3229,17 @@ function drawMeshPrototypeOverlay(
       2.1,
     )
   }
+}
+
+function getGridAnchorDisplayState(): GridAnchorDisplayState {
+  return {
+    showSourceGrid: state.overlay.showGridAnchors && state.overlay.showMeshSource,
+    showTargetGrid: state.overlay.showGridAnchors && state.overlay.showMeshTarget,
+  }
+}
+
+function formatGridAnchorDisplay(display: GridAnchorDisplayState) {
+  return `showSourceGrid: ${String(display.showSourceGrid)} / showTargetGrid: ${String(display.showTargetGrid)}`
 }
 
 function drawMeshVertexPoints(

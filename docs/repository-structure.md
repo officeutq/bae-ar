@@ -444,4 +444,6 @@ MediaPipe z normalize は Step 2-I 時点では `raw` を現時点の推奨 defa
 
 current mesh source は採用された current landmark、near-face grid、background grid、screen edge anchors で構成します。ideal mesh target は source と同じ頂点数・同じ順番で、face landmark だけ source 側の index に対応する `candidateAlignedIdealLandmarks` を使い、grid / anchors は source と同じ固定位置にします。
 
+grid / anchors overlay は source / target で色分けします。`grid / anchorsを表示` が ON でも、`mesh sourceを表示` が OFF の場合は source grid / anchors を表示せず、`mesh targetを表示` が OFF の場合は target grid / anchors を表示しません。
+
 この tool では現時点で mesh pair の overlay / summary / preview raw debug までを扱います。WebGL warp、raw displacement mesh warp、Runtime / Engine 変更、Beauty Studio 変更、IdealFace Authoring Tool 変更、JSON export / import、保存機能は含めません。
