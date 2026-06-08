@@ -131,3 +131,37 @@ PR5 以降で試した以下は本線から外しています。
 - [開発フロー](development-flow.md)
 - [Repository structure](repository-structure.md)
 - [Shape Warp production direction](shape-warp-production-direction.md)
+
+## aspect-corrected image coordinate
+
+Ideal Reference Mesh Warp Lab では、MediaPipe returned landmarks の `x` / `y` は
+image-normalized coordinate として保存する。`x` は画像幅、`y` は画像高さを
+0..1 に正規化した値であり、保存値や overlay / mesh pair 表示用の座標はこの
+image-normalized coordinate のまま扱う。
+
+一方で、bounds / center / uniform scale / distance / large displacement 判定のように
+`x` と `y` を同じ距離単位として比較する処理では、aspect-corrected image coordinate
+を使う。
+
+```text
+aspect-corrected image coordinate
+  x' = x * videoAspectRatio
+  y' = y
+```
+
+`candidateAlignedIdealLandmarks` の alignment は aspect-corrected coordinate 上で行う。
+top1 raw ideal reference landmarks と current landmarks の bounds / center を横縦比補正後
+の座標で計算し、x/y 別々の scale ではなく uniform scale を使う。alignment 結果は
+image-normalized coordinate に戻してから、overlay / mesh pair / ideal mesh target
+候補として使う。
+
+large displacement 判定も aspect-corrected distance を使う。横長動画で x 方向の移動量を
+過小評価しないため、`dx = (target.x - source.x) * videoAspectRatio`、`dy = target.y - source.y`
+として距離を計算する。Raw debug / Warp Mesh debug には normalized bounds と
+aspect-corrected bounds の両方を出し、mesh target が縦長に見える場合にどの段階の
+bounds aspect が崩れているかを確認できるようにする。
+
+overlay 表示は aspect-corrected coordinate を直接描画しない。従来どおり
+image-normalized coordinate を `displayedContentRect` の pixel coordinate に変換して描画する。
+これは過去の Render Consistency Lab / Rotation Fit 系で使っていた横縦比補正の方針を、
+Ideal Reference Mesh Warp Lab の current / ideal mesh prototype に反映するもの。
