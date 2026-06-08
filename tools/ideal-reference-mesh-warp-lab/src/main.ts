@@ -11,6 +11,7 @@ import type { Matrix, NormalizedLandmark } from "@mediapipe/tasks-vision"
 import "./style.css"
 
 type PreviewTab = "model" | "live"
+type LivePreviewMode = "source" | "rawWarpOnly" | "sideBySide"
 type DebugTab =
   | "summary"
   | "modelScan"
@@ -158,6 +159,8 @@ type NullableSizeDebug = {
 type VideoCoordinateDebug = {
   videoIntrinsic: NullableSizeDebug
   previewElementRect: SizeDebug
+  videoCssRect: SizeDebug
+  rawWarpCanvasCssRect: SizeDebug
   displayedContentRect: Rect
   overlayCanvas: SizeDebug
   rawWarpCanvas: SizeDebug
@@ -165,13 +168,17 @@ type VideoCoordinateDebug = {
 
 type MeshMappingMode = "draw_target_triangles_sample_source_uv"
 type CoordinateConversionMode = "normalized_to_displayed_content_pixel_to_clip_space"
+type TextureUploadFlip = "off" | "on"
+type TextureVFormula = "y" | "oneMinusY"
 
 type RawWarpSummary = {
   enabled: boolean
   available: boolean
   mode: "unadjusted_current_to_aligned_ideal"
   strength: number
-  textureVFlip: boolean
+  previewMode: LivePreviewMode
+  textureUploadFlip: TextureUploadFlip
+  textureVFormula: TextureVFormula
   meshMapping: MeshMappingMode
   coordinateConversion: CoordinateConversionMode
   coordinateDebug: VideoCoordinateDebug
@@ -192,7 +199,8 @@ type RawWarpSummary = {
 
 type RawWarpDebugState = {
   strength: number
-  textureVFlip: boolean
+  textureUploadFlip: TextureUploadFlip
+  textureVFormula: TextureVFormula
   summary: RawWarpSummary
 }
 
@@ -239,6 +247,7 @@ type ModelScanState = {
 type LabState = {
   activePreviewTab: PreviewTab
   activeDebugTab: DebugTab
+  livePreviewMode: LivePreviewMode
   overlay: {
     showLandmarks478: boolean
     showDisplacement: boolean
@@ -283,10 +292,13 @@ const LANDMARK_PREVIEW_COUNT = 5
 const DISPLACEMENT_PREVIEW_COUNT = 8
 const DISPLACEMENT_DRAW_STEP = 8
 const WARP_COORDINATE_DEBUG_DRAW_STEP = 8
+const WARP_SAMPLE_INDICES = [0, 1, 33, 61, 199] as const
 const LARGE_DISPLACEMENT_THRESHOLD = 0.03
 const DEFAULT_RAW_WARP_STRENGTH = 1
 const RAW_WARP_STRENGTH_OPTIONS = [0.25, 0.5, 1] as const
-const DEFAULT_TEXTURE_V_FLIP = true
+const DEFAULT_LIVE_PREVIEW_MODE: LivePreviewMode = "source"
+const DEFAULT_TEXTURE_UPLOAD_FLIP: TextureUploadFlip = "on"
+const DEFAULT_TEXTURE_V_FORMULA: TextureVFormula = "oneMinusY"
 const SCAN_RENDER_INTERVAL = 8
 const LIVE_AUTO_ANALYSIS_INTERVAL_SEC = 0.35
 const MEDIAPIPE_TIMESTAMP_STEP_MS = SCAN_FRAME_STEP_SEC * 1000
@@ -322,6 +334,7 @@ const debugTabs: TabOption<DebugTab>[] = [
 const state: LabState = {
   activePreviewTab: "model",
   activeDebugTab: "summary",
+  livePreviewMode: DEFAULT_LIVE_PREVIEW_MODE,
   overlay: {
     showLandmarks478: false,
     showDisplacement: false,
@@ -546,6 +559,14 @@ function renderLivePreview() {
         <button class="small-button" type="button" data-action="live-pause">一時停止</button>
         <button class="small-button" type="button" data-action="live-analyze-current">現在フレーム解析</button>
         <label class="range-field compact-field">
+          <span>Preview mode</span>
+          <select data-action="live-preview-mode">
+            <option value="source" ${state.livePreviewMode === "source" ? "selected" : ""}>Source</option>
+            <option value="rawWarpOnly" ${state.livePreviewMode === "rawWarpOnly" ? "selected" : ""}>Raw warp only</option>
+            <option value="sideBySide" ${state.livePreviewMode === "sideBySide" ? "selected" : ""}>Side by side</option>
+          </select>
+        </label>
+        <label class="range-field compact-field">
           <span>raw warp strength</span>
           <select data-action="raw-warp-strength">
             ${RAW_WARP_STRENGTH_OPTIONS.map(
@@ -555,10 +576,17 @@ function renderLivePreview() {
           </select>
         </label>
         <label class="range-field compact-field">
-          <span>texture V flip</span>
-          <select data-action="texture-v-flip">
-            <option value="on" ${state.rawWarpDebug.textureVFlip ? "selected" : ""}>on</option>
-            <option value="off" ${state.rawWarpDebug.textureVFlip ? "" : "selected"}>off</option>
+          <span>texture upload flip</span>
+          <select data-action="texture-upload-flip">
+            <option value="off" ${state.rawWarpDebug.textureUploadFlip === "off" ? "selected" : ""}>off</option>
+            <option value="on" ${state.rawWarpDebug.textureUploadFlip === "on" ? "selected" : ""}>on</option>
+          </select>
+        </label>
+        <label class="range-field compact-field">
+          <span>texture V formula</span>
+          <select data-action="texture-v-formula">
+            <option value="y" ${state.rawWarpDebug.textureVFormula === "y" ? "selected" : ""}>y</option>
+            <option value="oneMinusY" ${state.rawWarpDebug.textureVFormula === "oneMinusY" ? "selected" : ""}>1 - y</option>
           </select>
         </label>
         <label class="range-field">
@@ -621,16 +649,28 @@ function bindEvents() {
       handleToggleWarpCoordinateDebug(event.currentTarget.checked)
     },
   )
+  getElement<HTMLSelectElement>('[data-action="live-preview-mode"]').addEventListener(
+    "change",
+    (event) => {
+      handleLivePreviewModeChange(event.currentTarget.value)
+    },
+  )
   getElement<HTMLSelectElement>('[data-action="raw-warp-strength"]').addEventListener(
     "change",
     (event) => {
       handleRawWarpStrengthChange(Number(event.currentTarget.value))
     },
   )
-  getElement<HTMLSelectElement>('[data-action="texture-v-flip"]').addEventListener(
+  getElement<HTMLSelectElement>('[data-action="texture-upload-flip"]').addEventListener(
     "change",
     (event) => {
-      handleTextureVFlipChange(event.currentTarget.value === "on")
+      handleTextureUploadFlipChange(event.currentTarget.value)
+    },
+  )
+  getElement<HTMLSelectElement>('[data-action="texture-v-formula"]').addEventListener(
+    "change",
+    (event) => {
+      handleTextureVFormulaChange(event.currentTarget.value)
     },
   )
   modelFileInput.addEventListener("change", () => {
@@ -1524,6 +1564,18 @@ function handleToggleWarpCoordinateDebug(checked: boolean) {
   renderAll()
 }
 
+function handleLivePreviewModeChange(value: string) {
+  if (!isLivePreviewMode(value)) {
+    return
+  }
+
+  state.livePreviewMode = value
+  updateRawWarpSummary()
+  addLog(`Live preview mode を ${value} にしました。`)
+  drawAllOverlays()
+  renderAll()
+}
+
 function handleRawWarpStrengthChange(strength: number) {
   if (!RAW_WARP_STRENGTH_OPTIONS.includes(strength as (typeof RAW_WARP_STRENGTH_OPTIONS)[number])) {
     return
@@ -1536,10 +1588,26 @@ function handleRawWarpStrengthChange(strength: number) {
   renderAll()
 }
 
-function handleTextureVFlipChange(textureVFlip: boolean) {
-  state.rawWarpDebug.textureVFlip = textureVFlip
+function handleTextureUploadFlipChange(value: string) {
+  if (!isTextureUploadFlip(value)) {
+    return
+  }
+
+  state.rawWarpDebug.textureUploadFlip = value
   updateRawWarpSummary()
-  addLog(`texture V flip を ${textureVFlip ? "ON" : "OFF"} にしました。`)
+  addLog(`texture upload flip を ${value} にしました。`)
+  drawAllOverlays()
+  renderAll()
+}
+
+function handleTextureVFormulaChange(value: string) {
+  if (!isTextureVFormula(value)) {
+    return
+  }
+
+  state.rawWarpDebug.textureVFormula = value
+  updateRawWarpSummary()
+  addLog(`texture V formula を ${value} にしました。`)
   drawAllOverlays()
   renderAll()
 }
@@ -1758,13 +1826,16 @@ function createEmptyDisplacementSummary(error: string | null = null): Displaceme
 function createEmptyRawWarpDebug(): RawWarpDebugState {
   return {
     strength: DEFAULT_RAW_WARP_STRENGTH,
-    textureVFlip: DEFAULT_TEXTURE_V_FLIP,
+    textureUploadFlip: DEFAULT_TEXTURE_UPLOAD_FLIP,
+    textureVFormula: DEFAULT_TEXTURE_V_FORMULA,
     summary: {
       enabled: false,
       available: false,
       mode: "unadjusted_current_to_aligned_ideal",
       strength: DEFAULT_RAW_WARP_STRENGTH,
-      textureVFlip: DEFAULT_TEXTURE_V_FLIP,
+      previewMode: DEFAULT_LIVE_PREVIEW_MODE,
+      textureUploadFlip: DEFAULT_TEXTURE_UPLOAD_FLIP,
+      textureVFormula: DEFAULT_TEXTURE_V_FORMULA,
       meshMapping: "draw_target_triangles_sample_source_uv",
       coordinateConversion: "normalized_to_displayed_content_pixel_to_clip_space",
       coordinateDebug: createEmptyVideoCoordinateDebug(),
@@ -1802,7 +1873,9 @@ function createRawWarpSummary({
     available,
     mode: "unadjusted_current_to_aligned_ideal",
     strength: state.rawWarpDebug?.strength ?? DEFAULT_RAW_WARP_STRENGTH,
-    textureVFlip: state.rawWarpDebug?.textureVFlip ?? DEFAULT_TEXTURE_V_FLIP,
+    previewMode: state.livePreviewMode,
+    textureUploadFlip: state.rawWarpDebug?.textureUploadFlip ?? DEFAULT_TEXTURE_UPLOAD_FLIP,
+    textureVFormula: state.rawWarpDebug?.textureVFormula ?? DEFAULT_TEXTURE_V_FORMULA,
     meshMapping: "draw_target_triangles_sample_source_uv",
     coordinateConversion: "normalized_to_displayed_content_pixel_to_clip_space",
     coordinateDebug: getLiveVideoCoordinateDebug(),
@@ -1908,6 +1981,8 @@ function renderPreviewPanels() {
 
   modelStage.dataset.loaded = String(state.modelVideo.loaded)
   liveStage.dataset.loaded = String(state.liveVideo.loaded)
+  liveStage.dataset.livePreviewMode = state.livePreviewMode
+  liveStage.dataset.rawWarpVisible = String(state.overlay.showRawWarp)
 }
 
 function renderControls() {
@@ -1945,11 +2020,15 @@ function renderControls() {
     state.overlay.showRawWarp
   getElement<HTMLInputElement>('[data-action="toggle-warp-coordinate-debug"]').checked =
     state.overlay.showRawWarpCoordinateDebug
+  getElement<HTMLSelectElement>('[data-action="live-preview-mode"]').value =
+    state.livePreviewMode
   getElement<HTMLSelectElement>('[data-action="raw-warp-strength"]').value = String(
     state.rawWarpDebug.strength,
   )
-  getElement<HTMLSelectElement>('[data-action="texture-v-flip"]').value =
-    state.rawWarpDebug.textureVFlip ? "on" : "off"
+  getElement<HTMLSelectElement>('[data-action="texture-upload-flip"]').value =
+    state.rawWarpDebug.textureUploadFlip
+  getElement<HTMLSelectElement>('[data-action="texture-v-formula"]').value =
+    state.rawWarpDebug.textureVFormula
   renderModelReviewCard()
   renderLiveAnalysisCard()
 }
@@ -2101,9 +2180,19 @@ function createSummaryContent() {
     ["Raw warp strength", formatMetric(rawWarpSummary.strength)],
     ["Warp available", rawWarpSummary.available ? "yes" : "no"],
     ["Triangle count", String(rawWarpSummary.triangleCount)],
+    ["Preview mode", rawWarpSummary.previewMode],
     ["Warp coordinate debug", state.overlay.showRawWarpCoordinateDebug ? "on" : "off"],
-    ["Texture V flip", rawWarpSummary.textureVFlip ? "on" : "off"],
+    ["Texture upload flip", rawWarpSummary.textureUploadFlip],
+    ["Texture V formula", rawWarpSummary.textureVFormula],
     ["Displayed content rect", formatRect(coordinateDebug.displayedContentRect)],
+    ["Video rect", formatSize(coordinateDebug.videoCssRect.width, coordinateDebug.videoCssRect.height)],
+    [
+      "Raw warp canvas rect",
+      formatSize(
+        coordinateDebug.rawWarpCanvasCssRect.width,
+        coordinateDebug.rawWarpCanvasCssRect.height,
+      ),
+    ],
     ["Raw warp canvas", formatSize(coordinateDebug.rawWarpCanvas.width, coordinateDebug.rawWarpCanvas.height)],
     ["Match score", formatSeconds(state.top1Match.matchScore)],
     ["Pose distance", formatSeconds(state.top1Match.poseDistance)],
@@ -2276,7 +2365,9 @@ function createWarpMeshContent() {
     ["warp available", rawWarpSummary.available ? "yes" : "no"],
     ["warp enabled", rawWarpSummary.enabled ? "yes" : "no"],
     ["rawWarpStrength", formatMetric(rawWarpSummary.strength)],
-    ["texture V flip", rawWarpSummary.textureVFlip ? "on" : "off"],
+    ["preview mode", rawWarpSummary.previewMode],
+    ["texture upload flip", rawWarpSummary.textureUploadFlip],
+    ["texture V formula", rawWarpSummary.textureVFormula],
     ["sourceVertexCount", String(rawWarpSummary.sourceVertexCount)],
     ["targetVertexCount", String(rawWarpSummary.targetVertexCount)],
     ["topology", rawWarpSummary.topology],
@@ -2315,6 +2406,17 @@ function createWarpMeshContent() {
     ],
     ["displayed content rect", formatRect(coordinateDebug.displayedContentRect)],
     [
+      "video rect",
+      formatSize(coordinateDebug.videoCssRect.width, coordinateDebug.videoCssRect.height),
+    ],
+    [
+      "raw warp canvas rect",
+      formatSize(
+        coordinateDebug.rawWarpCanvasCssRect.width,
+        coordinateDebug.rawWarpCanvasCssRect.height,
+      ),
+    ],
+    [
       "overlay canvas",
       formatSize(coordinateDebug.overlayCanvas.width, coordinateDebug.overlayCanvas.height),
     ],
@@ -2323,9 +2425,35 @@ function createWarpMeshContent() {
       formatSize(coordinateDebug.rawWarpCanvas.width, coordinateDebug.rawWarpCanvas.height),
     ],
     ["coordinate conversion", "normalized -> displayed content pixel -> clip space"],
-    ["texture v flip", rawWarpSummary.textureVFlip ? "on" : "off"],
+    ["texture upload flip", rawWarpSummary.textureUploadFlip],
+    ["texture V formula", rawWarpSummary.textureVFormula],
     ["mesh mapping", "draw target triangles / sample source UVs"],
     ["source vertices vs overlay", "expected to match current478 overlay"],
+  ])
+
+  const experimentHeading = document.createElement("h3")
+  experimentHeading.textContent = "Coordinate policy experiment"
+  const experimentList = document.createElement("dl")
+  experimentList.className = "summary-list"
+  appendDefinitionItems(experimentList, [
+    ["coordinate policy", "image-normalized -> displayedContentRect pixel -> clip space"],
+    ["texture source", "HTMLVideoElement"],
+    ["position", "target displayed pixel -> clip"],
+    ["uv", "source image-normalized"],
+    ["preview mode", rawWarpSummary.previewMode],
+    ["texture upload flip", rawWarpSummary.textureUploadFlip],
+    ["texture V formula", rawWarpSummary.textureVFormula],
+    [
+      "video rect",
+      formatSize(coordinateDebug.videoCssRect.width, coordinateDebug.videoCssRect.height),
+    ],
+    [
+      "raw warp canvas rect",
+      formatSize(
+        coordinateDebug.rawWarpCanvasCssRect.width,
+        coordinateDebug.rawWarpCanvasCssRect.height,
+      ),
+    ],
   ])
 
   const heading = document.createElement("h3")
@@ -2369,6 +2497,8 @@ function createWarpMeshContent() {
     rawWarpList,
     coordinateHeading,
     coordinateList,
+    experimentHeading,
+    experimentList,
     heading,
     summaryList,
     topHeading,
@@ -2394,6 +2524,7 @@ function getRawState() {
   return {
     activePreviewTab: state.activePreviewTab,
     activeDebugTab: state.activeDebugTab,
+    livePreviewMode: state.livePreviewMode,
     overlay: state.overlay,
     modelVideo: {
       loaded: state.modelVideo.loaded,
@@ -2469,6 +2600,7 @@ function getRawState() {
     displacement: getDisplacementRawState(),
     rawWarp: getRawWarpRawState(),
     warpCoordinateDebug: getWarpCoordinateDebugRawState(),
+    rawWarpCoordinateExperiment: getRawWarpCoordinateExperimentRawState(),
     logs: state.logs,
   }
 }
@@ -2501,7 +2633,9 @@ function getRawWarpRawState() {
     available: summary.available,
     mode: summary.mode,
     strength: roundMetricForState(summary.strength),
-    textureVFlip: summary.textureVFlip,
+    previewMode: summary.previewMode,
+    textureUploadFlip: summary.textureUploadFlip,
+    textureVFormula: summary.textureVFormula,
     meshMapping: summary.meshMapping,
     coordinateConversion: summary.coordinateConversion,
     sourceVertexCount: summary.sourceVertexCount,
@@ -2527,10 +2661,30 @@ function getWarpCoordinateDebugRawState() {
     videoIntrinsic: coordinateDebug.videoIntrinsic,
     previewElementRect: roundSizeDebug(coordinateDebug.previewElementRect),
     displayedContentRect: roundRectDebug(coordinateDebug.displayedContentRect),
+    videoCssRect: roundSizeDebug(coordinateDebug.videoCssRect),
+    rawWarpCanvasCssRect: roundSizeDebug(coordinateDebug.rawWarpCanvasCssRect),
     overlayCanvas: roundSizeDebug(coordinateDebug.overlayCanvas),
     rawWarpCanvas: roundSizeDebug(coordinateDebug.rawWarpCanvas),
-    textureVFlip: summary.textureVFlip,
+    textureUploadFlip: summary.textureUploadFlip,
+    textureVFormula: summary.textureVFormula,
     meshMapping: summary.meshMapping,
+  }
+}
+
+function getRawWarpCoordinateExperimentRawState() {
+  const summary = state.rawWarpDebug.summary
+  const coordinateDebug = summary.coordinateDebug
+  return {
+    previewMode: state.livePreviewMode,
+    coordinatePolicy: "image_normalized_to_displayed_content_pixel_to_clip_space",
+    textureSource: "HTMLVideoElement",
+    positionSource: "target_displayed_pixel_clip",
+    uvSource: "source_image_normalized",
+    textureUploadFlip: summary.textureUploadFlip,
+    textureVFormula: summary.textureVFormula,
+    videoCssRect: roundSizeDebug(coordinateDebug.videoCssRect),
+    rawWarpCanvasCssRect: roundSizeDebug(coordinateDebug.rawWarpCanvasCssRect),
+    sampleVertices: getWarpCoordinateSamplePreview(),
   }
 }
 
@@ -2611,7 +2765,7 @@ function drawLiveOverlay() {
     return
   }
 
-  const rect = liveVideoElement.getBoundingClientRect()
+  const rect = liveOverlayCanvas.getBoundingClientRect()
   const dpr = window.devicePixelRatio || 1
   liveOverlayCanvas.width = Math.max(1, Math.round(rect.width * dpr))
   liveOverlayCanvas.height = Math.max(1, Math.round(rect.height * dpr))
@@ -2673,7 +2827,7 @@ function drawRawWarpPreview() {
   }
 
   const availabilityError = getRawWarpAvailabilityError()
-  const rect = liveVideoElement.getBoundingClientRect()
+  const rect = liveRawWarpCanvas.getBoundingClientRect()
   const dpr = window.devicePixelRatio || 1
   liveRawWarpCanvas.width = Math.max(1, Math.round(rect.width * dpr))
   liveRawWarpCanvas.height = Math.max(1, Math.round(rect.height * dpr))
@@ -2782,9 +2936,7 @@ function buildRawWarpFrame(
     targetPositions[offset] = targetClip.x
     targetPositions[offset + 1] = targetClip.y
     textureCoordinates[offset] = displacement.current.x
-    textureCoordinates[offset + 1] = state.rawWarpDebug.textureVFlip
-      ? 1 - displacement.current.y
-      : displacement.current.y
+    textureCoordinates[offset + 1] = getTextureVCoordinate(displacement.current.y)
   }
 
   return {
@@ -3095,7 +3247,7 @@ function drawRawWarpWebglFrame(
 
   try {
     gl.viewport(0, 0, renderer.canvas.width, renderer.canvas.height)
-    gl.clearColor(0, 0, 0, 0)
+    gl.clearColor(0, 0, 0, state.livePreviewMode === "source" ? 0 : 1)
     gl.clear(gl.COLOR_BUFFER_BIT)
     gl.useProgram(renderer.program)
     gl.disable(gl.BLEND)
@@ -3112,7 +3264,10 @@ function drawRawWarpWebglFrame(
 
     gl.activeTexture(gl.TEXTURE0)
     gl.bindTexture(gl.TEXTURE_2D, renderer.texture)
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true)
+    gl.pixelStorei(
+      gl.UNPACK_FLIP_Y_WEBGL,
+      state.rawWarpDebug.textureUploadFlip === "on",
+    )
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
@@ -3174,6 +3329,14 @@ function createEmptyVideoCoordinateDebug(): VideoCoordinateDebug {
       width: 0,
       height: 0,
     },
+    videoCssRect: {
+      width: 0,
+      height: 0,
+    },
+    rawWarpCanvasCssRect: {
+      width: 0,
+      height: 0,
+    },
     displayedContentRect: {
       x: 0,
       y: 0,
@@ -3196,12 +3359,16 @@ function getLiveVideoCoordinateDebug(): VideoCoordinateDebug {
     return createEmptyVideoCoordinateDebug()
   }
 
-  const previewRect = liveVideoElement.getBoundingClientRect()
+  const previewStageRect = getElement<HTMLElement>(
+    "[data-preview-panel='live'] .preview-stage",
+  ).getBoundingClientRect()
+  const videoRect = liveVideoElement.getBoundingClientRect()
+  const rawWarpCanvasRect = liveRawWarpCanvas.getBoundingClientRect()
   const displayedContentRect = getDisplayedContentRect(
     state.liveVideo,
     liveVideoElement,
-    previewRect.width,
-    previewRect.height,
+    rawWarpCanvasRect.width,
+    rawWarpCanvasRect.height,
   )
 
   return {
@@ -3210,8 +3377,16 @@ function getLiveVideoCoordinateDebug(): VideoCoordinateDebug {
       height: (state.liveVideo.height ?? liveVideoElement.videoHeight) || null,
     },
     previewElementRect: {
-      width: previewRect.width,
-      height: previewRect.height,
+      width: previewStageRect.width,
+      height: previewStageRect.height,
+    },
+    videoCssRect: {
+      width: videoRect.width,
+      height: videoRect.height,
+    },
+    rawWarpCanvasCssRect: {
+      width: rawWarpCanvasRect.width,
+      height: rawWarpCanvasRect.height,
     },
     displayedContentRect,
     overlayCanvas: {
@@ -3274,6 +3449,10 @@ function normalizedLandmarkToPreviewPixel(
   }
 }
 
+function getTextureVCoordinate(sourceY: number) {
+  return state.rawWarpDebug.textureVFormula === "oneMinusY" ? 1 - sourceY : sourceY
+}
+
 function previewPixelToClip(
   point: { x: number; y: number },
   canvasWidth: number,
@@ -3283,6 +3462,68 @@ function previewPixelToClip(
     x: (point.x / canvasWidth) * 2 - 1,
     y: 1 - (point.y / canvasHeight) * 2,
   }
+}
+
+function getWarpCoordinateSamplePreview() {
+  if (!state.displacementDebug.available) {
+    return []
+  }
+
+  const rawWarpCanvasRect = liveRawWarpCanvas.getBoundingClientRect()
+  if (rawWarpCanvasRect.width <= 0 || rawWarpCanvasRect.height <= 0) {
+    return []
+  }
+
+  const displayedContentRect = getDisplayedContentRect(
+    state.liveVideo,
+    liveVideoElement,
+    rawWarpCanvasRect.width,
+    rawWarpCanvasRect.height,
+  )
+
+  return WARP_SAMPLE_INDICES.flatMap((sampleIndex) => {
+    const displacement = state.displacementDebug.displacements[sampleIndex]
+    if (!displacement) {
+      return []
+    }
+
+    const sourceNormalized = {
+      x: displacement.current.x,
+      y: displacement.current.y,
+    }
+    const targetNormalized = {
+      x: displacement.current.x + displacement.dx * state.rawWarpDebug.strength,
+      y: displacement.current.y + displacement.dy * state.rawWarpDebug.strength,
+    }
+    const sourceDisplayedPixel = normalizedLandmarkToPreviewPixel(
+      sourceNormalized,
+      displayedContentRect,
+    )
+    const targetDisplayedPixel = normalizedLandmarkToPreviewPixel(
+      targetNormalized,
+      displayedContentRect,
+    )
+    const targetClip = previewPixelToClip(
+      targetDisplayedPixel,
+      rawWarpCanvasRect.width,
+      rawWarpCanvasRect.height,
+    )
+
+    return [
+      {
+        index: sampleIndex,
+        sourceNormalized: roundPointForState(sourceNormalized),
+        targetNormalized: roundPointForState(targetNormalized),
+        sourceDisplayedPixel: roundPointForState(sourceDisplayedPixel),
+        targetDisplayedPixel: roundPointForState(targetDisplayedPixel),
+        targetClip: roundPointForState(targetClip),
+        uv: roundUvForState({
+          u: displacement.current.x,
+          v: getTextureVCoordinate(displacement.current.y),
+        }),
+      },
+    ]
+  })
 }
 
 function formatModelTimeStatus() {
@@ -3401,6 +3642,20 @@ function roundRectDebug(rect: Rect): Rect {
     y: roundMetricForState(rect.y) ?? 0,
     width: roundMetricForState(rect.width) ?? 0,
     height: roundMetricForState(rect.height) ?? 0,
+  }
+}
+
+function roundPointForState(point: { x: number; y: number }) {
+  return {
+    x: roundMetricForState(point.x) ?? 0,
+    y: roundMetricForState(point.y) ?? 0,
+  }
+}
+
+function roundUvForState(point: { u: number; v: number }) {
+  return {
+    u: roundMetricForState(point.u) ?? 0,
+    v: roundMetricForState(point.v) ?? 0,
   }
 }
 
@@ -3563,6 +3818,18 @@ function getElement<TElement extends Element>(selector: string) {
 
 function isPreviewTab(value: string | undefined): value is PreviewTab {
   return value === "model" || value === "live"
+}
+
+function isLivePreviewMode(value: string | undefined): value is LivePreviewMode {
+  return value === "source" || value === "rawWarpOnly" || value === "sideBySide"
+}
+
+function isTextureUploadFlip(value: string | undefined): value is TextureUploadFlip {
+  return value === "off" || value === "on"
+}
+
+function isTextureVFormula(value: string | undefined): value is TextureVFormula {
+  return value === "y" || value === "oneMinusY"
 }
 
 function isDebugTab(value: string | undefined): value is DebugTab {
