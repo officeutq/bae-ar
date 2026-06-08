@@ -80,6 +80,8 @@ live preview overlay では以下を確認できます。
 - background grid
 - screen edge anchors
 
+grid / anchors overlay は source / target で色分けします。`grid / anchorsを表示` は親スイッチであり、`mesh sourceを表示` が OFF の場合は source grid / anchors を表示せず、`mesh targetを表示` が OFF の場合は target grid / anchors を表示しません。
+
 Summary / Warp Mesh debug では以下を確認します。
 
 - `top1MatchedReferenceId`
@@ -97,6 +99,8 @@ Summary / Warp Mesh debug では以下を確認します。
 - `eyeSuppressedCount`
 - `largeDisplacementSuppressedCount`
 - `invalidExcludedCount`
+- `gridAnchorDisplay.showSourceGrid`
+- `gridAnchorDisplay.showTargetGrid`
 
 Raw debug は巨大配列を出さず、`candidateAlignedIdealLandmarkPreview`、`acceptedCurrentLandmarkPreview`、`excludedCurrentLandmarkPreview`、`meshPairPreview` の sample だけを出します。
 

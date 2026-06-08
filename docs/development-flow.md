@@ -449,4 +449,6 @@ Step 9: beauty_filter_asset_v1 foundation
 
 現在の flow は、`currentLiveFrameAnalysis.landmarks478` から見えている / 安全な current landmarks を選び、near-face grid / background grid / screen edge anchors を加えて current mesh source を作ります。次に、source 側で採用された landmark index と同じ index の `candidateAlignedIdealLandmarks` と、同じ fixed grid / anchors を使って ideal mesh target を作ります。
 
+grid / anchors overlay は source / target で色分けします。`grid / anchorsを表示` が ON でも、`mesh sourceを表示` が OFF の場合は source grid / anchors を表示せず、`mesh targetを表示` が OFF の場合は target grid / anchors を表示しません。
+
 `candidateAlignedIdealLandmarks` は最終 target ではありません。採用済み current landmark に対応する ideal candidate であり、478点全体 displacement、raw displacement mesh warp、WebGL warp、topK weighted blend、temporal smoothing、Engine / Studio / Authoring Tool 変更はこの段階では行いません。
