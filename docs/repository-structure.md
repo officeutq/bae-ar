@@ -7,6 +7,24 @@
 - [MediaPipe Render Consistency Lab next step after effective rotation center study](mediapipe-render-consistency-lab-next-after-effective-rotation-center.md)
 - [MediaPipe Canonical Effective Rotation Center Lab](mediapipe-canonical-effective-rotation-center-lab.md)
 
+## Ideal Reference Mesh Warp Lab の座標方針
+
+`tools/ideal-reference-mesh-warp-lab` は、MediaPipe returned landmarks を
+image-normalized coordinate として保持し、overlay では `displayedContentRect` pixel に
+変換して描画します。mesh prototype の bounds / center / uniform scale / distance /
+large displacement 判定では、横長動画で x 方向を過小評価しないように
+aspect-corrected image coordinate を使います。
+
+```text
+x' = x * videoAspectRatio
+y' = y
+```
+
+`candidateAlignedIdealLandmarks` は aspect-corrected coordinate 上で top1 reference を
+current face に位置合わせした候補であり、最終 target として 478点全体を扱うものでは
+ありません。source 側で採用された current landmark index に対応する ideal candidate として
+mesh pair / ideal mesh target の確認に使います。
+
 ## `tools/ideal-face-fitting-lab`
 
 IdealFace Fitting Lab は、production 用 IdealFace asset を直接作る正式ツールではありません。captured JSON の current landmarks 478 から semanticPointSet（意味点セット）を取り出し、8点 / 12点 / 24点を比較しながら、IdealFace478 の z、`rotationCenter`（回転中心） / `pivotZ`（投影基準奥行き）、canonicalDepthBased（標準顔奥行きベース方式）、perLandmarkZSearch（ランドマーク単位 z 探索）の候補を検証する debug lab（検証ラボ）です。

@@ -111,6 +111,48 @@ type Point2D = {
   y: number
 }
 
+type BoundsDebugSummary = {
+  minX: number
+  maxX: number
+  minY: number
+  maxY: number
+  width: number
+  height: number
+  aspect: number | null
+}
+
+type CoordinateBoundsDebug = {
+  normalized: BoundsDebugSummary | null
+  aspectCorrected: BoundsDebugSummary | null
+}
+
+type MeshAlignmentDebug = {
+  videoAspectRatio: number
+  idealVideoAspectRatio: number
+  currentVideoAspectRatio: number
+  idealBoundsAspectCorrected: BoundsDebugSummary | null
+  currentBoundsAspectCorrected: BoundsDebugSummary | null
+  scale: number
+  idealCenterAspectCorrected: Point2D
+  currentCenterAspectCorrected: Point2D
+}
+
+type MeshBoundsDebug = {
+  currentLandmarks: CoordinateBoundsDebug
+  top1RawIdealReferenceLandmarks: CoordinateBoundsDebug
+  candidateAlignedIdealLandmarks: CoordinateBoundsDebug
+  acceptedCurrentMeshSourceFaceLandmarks: CoordinateBoundsDebug
+  idealMeshTargetFaceLandmarks: CoordinateBoundsDebug
+}
+
+type MeshAspectDebug = {
+  videoAspectRatio: number
+  modelVideoAspectRatio: number
+  liveVideoAspectRatio: number
+  alignment: MeshAlignmentDebug | null
+  bounds: MeshBoundsDebug
+}
+
 type MeshVertexKind =
   | "faceLandmark"
   | "nearFaceGrid"
@@ -154,6 +196,8 @@ type MeshVertexPair = {
   index?: number
   source: Point2D
   target: Point2D
+  distanceNormalized: number
+  distanceAspectCorrected: number
   usageWeight: number
   reasons: string[]
 }
@@ -186,6 +230,7 @@ type CurrentIdealMeshPrototypeState = {
   currentMeshSourceVertices: MeshSourceVertex[]
   idealMeshTargetVertices: MeshTargetVertex[]
   currentIdealMeshPairs: MeshVertexPair[]
+  aspectDebug: MeshAspectDebug
   summary: MeshPrototypeSummary
 }
 
@@ -1136,6 +1181,8 @@ function updateTop1Match() {
 function updateCurrentIdealMeshPrototype() {
   const current = state.currentLiveFrameAnalysis
   const idealFrame = getMatchedIdealFrame()
+  const modelVideoAspectRatio = getVideoAspectRatio(state.modelVideo)
+  const liveVideoAspectRatio = getVideoAspectRatio(state.liveVideo)
 
   if (
     current.error ||
@@ -1144,7 +1191,7 @@ function updateCurrentIdealMeshPrototype() {
     idealFrame.landmarks478.length !== REQUIRED_LANDMARK_COUNT
   ) {
     state.currentIdealMeshPrototype = {
-      ...createEmptyCurrentIdealMeshPrototype(),
+      ...createEmptyCurrentIdealMeshPrototype(modelVideoAspectRatio, liveVideoAspectRatio),
       summary: {
         ...createEmptyMeshPrototypeSummary(),
         top1MatchedReferenceId: state.top1Match.idealFrameId,
@@ -1154,12 +1201,19 @@ function updateCurrentIdealMeshPrototype() {
     return
   }
 
-  const candidateAlignedIdealLandmarks = alignIdealLandmarksToCurrentFace(
+  const alignmentResult = alignIdealLandmarksToCurrentFace(
     idealFrame.landmarks478,
     current.landmarks478,
+    modelVideoAspectRatio,
+    liveVideoAspectRatio,
   )
+  const candidateAlignedIdealLandmarks = alignmentResult.landmarks
   const { acceptedCurrentLandmarks, excludedCurrentLandmarks } =
-    selectCurrentMeshLandmarkVertices(current, candidateAlignedIdealLandmarks)
+    selectCurrentMeshLandmarkVertices(
+      current,
+      candidateAlignedIdealLandmarks,
+      liveVideoAspectRatio,
+    )
   const currentMeshSourceVertices = buildCurrentMeshSourceVertices(
     acceptedCurrentLandmarks,
     current.landmarks478,
@@ -1167,7 +1221,18 @@ function updateCurrentIdealMeshPrototype() {
   const { idealMeshTargetVertices, currentIdealMeshPairs } = buildIdealMeshTargetVertices(
     currentMeshSourceVertices,
     candidateAlignedIdealLandmarks,
+    liveVideoAspectRatio,
   )
+  const aspectDebug = createMeshAspectDebug({
+    currentLandmarks: current.landmarks478,
+    top1RawIdealReferenceLandmarks: idealFrame.landmarks478,
+    candidateAlignedIdealLandmarks,
+    acceptedCurrentLandmarks,
+    idealMeshTargetVertices,
+    alignment: alignmentResult.debug,
+    modelVideoAspectRatio,
+    liveVideoAspectRatio,
+  })
   const summary = summarizeCurrentIdealMeshPrototype({
     currentLandmarkCount: current.landmarks478.length,
     top1MatchedReferenceId: state.top1Match.idealFrameId,
@@ -1185,6 +1250,7 @@ function updateCurrentIdealMeshPrototype() {
     currentMeshSourceVertices,
     idealMeshTargetVertices,
     currentIdealMeshPairs,
+    aspectDebug,
     summary,
   }
 }
@@ -1192,9 +1258,20 @@ function updateCurrentIdealMeshPrototype() {
 function alignIdealLandmarksToCurrentFace(
   idealLandmarks: ReferenceLandmark[],
   currentLandmarks: ReferenceLandmark[],
-): ReferenceLandmark[] {
-  const idealBounds = getLandmarkBounds(idealLandmarks)
-  const currentBounds = getLandmarkBounds(currentLandmarks)
+  idealVideoAspectRatio: number,
+  currentVideoAspectRatio: number,
+): {
+  landmarks: ReferenceLandmark[]
+  debug: MeshAlignmentDebug
+} {
+  const idealAspectCorrectedLandmarks = idealLandmarks.map((landmark) =>
+    toAspectCorrectedPoint(landmark, idealVideoAspectRatio),
+  )
+  const currentAspectCorrectedLandmarks = currentLandmarks.map((landmark) =>
+    toAspectCorrectedPoint(landmark, currentVideoAspectRatio),
+  )
+  const idealBounds = getLandmarkBounds(idealAspectCorrectedLandmarks)
+  const currentBounds = getLandmarkBounds(currentAspectCorrectedLandmarks)
   const idealCenter = getRectCenter(idealBounds)
   const currentCenter = getRectCenter(currentBounds)
   const widthScale = idealBounds.width > 0 ? currentBounds.width / idealBounds.width : 1
@@ -1203,17 +1280,44 @@ function alignIdealLandmarksToCurrentFace(
     ? Math.min(widthScale, heightScale)
     : 1
 
-  return idealLandmarks.map((landmark) => ({
-    index: landmark.index,
-    x: currentCenter.x + (landmark.x - idealCenter.x) * uniformScale,
-    y: currentCenter.y + (landmark.y - idealCenter.y) * uniformScale,
-    z: landmark.z * uniformScale,
-  }))
+  const landmarks = idealLandmarks.map((landmark) => {
+    const correctedPoint = toAspectCorrectedPoint(landmark, idealVideoAspectRatio)
+    const alignedCorrectedPoint = {
+      x: currentCenter.x + (correctedPoint.x - idealCenter.x) * uniformScale,
+      y: currentCenter.y + (correctedPoint.y - idealCenter.y) * uniformScale,
+    }
+    const normalizedPoint = fromAspectCorrectedPoint(
+      alignedCorrectedPoint,
+      currentVideoAspectRatio,
+    )
+
+    return {
+      index: landmark.index,
+      x: normalizedPoint.x,
+      y: normalizedPoint.y,
+      z: landmark.z * uniformScale,
+    }
+  })
+
+  return {
+    landmarks,
+    debug: {
+      videoAspectRatio: currentVideoAspectRatio,
+      idealVideoAspectRatio,
+      currentVideoAspectRatio,
+      idealBoundsAspectCorrected: createBoundsDebugSummary(idealBounds),
+      currentBoundsAspectCorrected: createBoundsDebugSummary(currentBounds),
+      scale: uniformScale,
+      idealCenterAspectCorrected: idealCenter,
+      currentCenterAspectCorrected: currentCenter,
+    },
+  }
 }
 
 function selectCurrentMeshLandmarkVertices(
   current: CurrentLiveFrameAnalysis,
   candidateAlignedIdealLandmarks: ReferenceLandmark[],
+  videoAspectRatio: number,
 ) {
   const bounds = getLandmarkBounds(current.landmarks478)
   const center = getRectCenter(bounds)
@@ -1271,7 +1375,11 @@ function selectCurrentMeshLandmarkVertices(
 
     const candidate = candidateAlignedIdealLandmarks[landmark.index]
     if (candidate && isValidPoint(candidate)) {
-      const distance = Math.hypot(candidate.x - landmark.x, candidate.y - landmark.y)
+      const distance = calculateAspectCorrectedDistance(
+        landmark,
+        candidate,
+        videoAspectRatio,
+      )
       if (distance > LARGE_DISPLACEMENT_THRESHOLD) {
         safetyWeight *= LARGE_DISPLACEMENT_USAGE_MULTIPLIER
         reasons.push("largeDisplacementSuppressed")
@@ -1328,6 +1436,7 @@ function buildCurrentMeshSourceVertices(
 function buildIdealMeshTargetVertices(
   currentMeshSourceVertices: MeshSourceVertex[],
   candidateAlignedIdealLandmarks: ReferenceLandmark[],
+  videoAspectRatio: number,
 ) {
   const idealMeshTargetVertices: MeshTargetVertex[] = []
   const currentIdealMeshPairs: MeshVertexPair[] = []
@@ -1359,6 +1468,15 @@ function buildIdealMeshTargetVertices(
       index: sourceVertex.index,
       source: { x: sourceVertex.x, y: sourceVertex.y },
       target,
+      distanceNormalized: calculateNormalizedDistance(
+        { x: sourceVertex.x, y: sourceVertex.y },
+        target,
+      ),
+      distanceAspectCorrected: calculateAspectCorrectedDistance(
+        { x: sourceVertex.x, y: sourceVertex.y },
+        target,
+        videoAspectRatio,
+      ),
       usageWeight,
       reasons: sourceVertex.kind === "faceLandmark" ? sourceVertex.reasons : ["fixedGridAnchor"],
     })
@@ -1442,6 +1560,54 @@ function buildScreenEdgeAnchorVertices(): MeshSourceVertex[] {
     weight: 0,
     reasons: ["fixedGridAnchor"],
   }))
+}
+
+function createMeshAspectDebug({
+  currentLandmarks,
+  top1RawIdealReferenceLandmarks,
+  candidateAlignedIdealLandmarks,
+  acceptedCurrentLandmarks,
+  idealMeshTargetVertices,
+  alignment,
+  modelVideoAspectRatio,
+  liveVideoAspectRatio,
+}: {
+  currentLandmarks: ReferenceLandmark[]
+  top1RawIdealReferenceLandmarks: ReferenceLandmark[]
+  candidateAlignedIdealLandmarks: ReferenceLandmark[]
+  acceptedCurrentLandmarks: CurrentMeshLandmarkVertex[]
+  idealMeshTargetVertices: MeshTargetVertex[]
+  alignment: MeshAlignmentDebug | null
+  modelVideoAspectRatio: number
+  liveVideoAspectRatio: number
+}): MeshAspectDebug {
+  return {
+    videoAspectRatio: liveVideoAspectRatio,
+    modelVideoAspectRatio,
+    liveVideoAspectRatio,
+    alignment,
+    bounds: {
+      currentLandmarks: createBoundsDebug(currentLandmarks, liveVideoAspectRatio),
+      top1RawIdealReferenceLandmarks: createBoundsDebug(
+        top1RawIdealReferenceLandmarks,
+        modelVideoAspectRatio,
+      ),
+      candidateAlignedIdealLandmarks: createBoundsDebug(
+        candidateAlignedIdealLandmarks,
+        liveVideoAspectRatio,
+      ),
+      acceptedCurrentMeshSourceFaceLandmarks: createBoundsDebug(
+        acceptedCurrentLandmarks.map((landmark) => landmark.source),
+        liveVideoAspectRatio,
+      ),
+      idealMeshTargetFaceLandmarks: createBoundsDebug(
+        idealMeshTargetVertices
+          .filter((vertex) => vertex.kind === "faceLandmark")
+          .map((vertex) => ({ x: vertex.x, y: vertex.y })),
+        liveVideoAspectRatio,
+      ),
+    },
+  }
 }
 
 function summarizeCurrentIdealMeshPrototype({
@@ -1565,6 +1731,89 @@ function getLandmarkBounds(landmarks: Array<{ x: number; y: number }>): Rect {
     y: minY,
     width: Math.max(0.001, maxX - minX),
     height: Math.max(0.001, maxY - minY),
+  }
+}
+
+function getLandmarkBoundsOrNull(landmarks: Array<{ x: number; y: number }>): Rect | null {
+  const validPoints = landmarks.filter(isValidPoint)
+  if (validPoints.length === 0) {
+    return null
+  }
+
+  const xs = validPoints.map((point) => point.x)
+  const ys = validPoints.map((point) => point.y)
+  const minX = Math.min(...xs)
+  const maxX = Math.max(...xs)
+  const minY = Math.min(...ys)
+  const maxY = Math.max(...ys)
+
+  return {
+    x: minX,
+    y: minY,
+    width: Math.max(0.001, maxX - minX),
+    height: Math.max(0.001, maxY - minY),
+  }
+}
+
+function toAspectCorrectedPoint(point: Point2D, videoAspectRatio: number): Point2D {
+  return {
+    x: point.x * videoAspectRatio,
+    y: point.y,
+  }
+}
+
+function fromAspectCorrectedPoint(point: Point2D, videoAspectRatio: number): Point2D {
+  return {
+    x: point.x / videoAspectRatio,
+    y: point.y,
+  }
+}
+
+function calculateNormalizedDistance(source: Point2D, target: Point2D) {
+  return Math.hypot(target.x - source.x, target.y - source.y)
+}
+
+function calculateAspectCorrectedDistance(
+  source: Point2D,
+  target: Point2D,
+  videoAspectRatio: number,
+) {
+  const dx = (target.x - source.x) * videoAspectRatio
+  const dy = target.y - source.y
+  return Math.hypot(dx, dy)
+}
+
+function getVideoAspectRatio(videoState: VideoPreviewState) {
+  if (videoState.width && videoState.height && videoState.height > 0) {
+    return videoState.width / videoState.height
+  }
+  return 1
+}
+
+function createBoundsDebug(
+  points: Array<{ x: number; y: number }>,
+  videoAspectRatio: number,
+): CoordinateBoundsDebug {
+  const normalizedBounds = getLandmarkBoundsOrNull(points)
+  const aspectCorrectedBounds = getLandmarkBoundsOrNull(
+    points.map((point) => toAspectCorrectedPoint(point, videoAspectRatio)),
+  )
+
+  return {
+    normalized: normalizedBounds ? createBoundsDebugSummary(normalizedBounds) : null,
+    aspectCorrected: aspectCorrectedBounds ? createBoundsDebugSummary(aspectCorrectedBounds) : null,
+  }
+}
+
+function createBoundsDebugSummary(rect: Rect): BoundsDebugSummary {
+  return {
+    minX: rect.x,
+    maxX: rect.x + rect.width,
+    minY: rect.y,
+    maxY: rect.y + rect.height,
+    width: rect.width,
+    height: rect.height,
+    aspect: rect.height > 0 ? rect.width / rect.height : null,
   }
 }
 
@@ -1953,7 +2202,30 @@ function createEmptyMeshPrototypeSummary(): MeshPrototypeSummary {
   }
 }
 
-function createEmptyCurrentIdealMeshPrototype(): CurrentIdealMeshPrototypeState {
+function createEmptyMeshAspectDebug(
+  modelVideoAspectRatio = 1,
+  liveVideoAspectRatio = 1,
+): MeshAspectDebug {
+  const emptyBounds = createBoundsDebug([], liveVideoAspectRatio)
+  return {
+    videoAspectRatio: liveVideoAspectRatio,
+    modelVideoAspectRatio,
+    liveVideoAspectRatio,
+    alignment: null,
+    bounds: {
+      currentLandmarks: emptyBounds,
+      top1RawIdealReferenceLandmarks: createBoundsDebug([], modelVideoAspectRatio),
+      candidateAlignedIdealLandmarks: emptyBounds,
+      acceptedCurrentMeshSourceFaceLandmarks: emptyBounds,
+      idealMeshTargetFaceLandmarks: emptyBounds,
+    },
+  }
+}
+
+function createEmptyCurrentIdealMeshPrototype(
+  modelVideoAspectRatio = 1,
+  liveVideoAspectRatio = 1,
+): CurrentIdealMeshPrototypeState {
   return {
     candidateAlignedIdealLandmarks: [],
     acceptedCurrentLandmarks: [],
@@ -1961,6 +2233,7 @@ function createEmptyCurrentIdealMeshPrototype(): CurrentIdealMeshPrototypeState 
     currentMeshSourceVertices: [],
     idealMeshTargetVertices: [],
     currentIdealMeshPairs: [],
+    aspectDebug: createEmptyMeshAspectDebug(modelVideoAspectRatio, liveVideoAspectRatio),
     summary: createEmptyMeshPrototypeSummary(),
   }
 }
@@ -2164,6 +2437,8 @@ function createSummaryContent() {
   summaryList.className = "summary-list"
   const currentFrame = getCurrentAcceptedFrame()
   const meshSummary = state.currentIdealMeshPrototype.summary
+  const aspectDebug = state.currentIdealMeshPrototype.aspectDebug
+  const alignmentDebug = aspectDebug.alignment
 
   const items: Array<[string, string]> = [
     ["Model MediaPipe", state.modelScan.mediaPipeStatus],
@@ -2215,6 +2490,18 @@ function createSummaryContent() {
       String(meshSummary.largeDisplacementSuppressedCount),
     ],
     ["invalidExcludedCount", String(meshSummary.invalidExcludedCount)],
+    ["videoAspectRatio", formatMetric(aspectDebug.videoAspectRatio)],
+    ["modelVideoAspectRatio", formatMetric(aspectDebug.modelVideoAspectRatio)],
+    ["liveVideoAspectRatio", formatMetric(aspectDebug.liveVideoAspectRatio)],
+    ["alignment scale", formatMetric(alignmentDebug?.scale ?? null)],
+    [
+      "idealBoundsAspectCorrected",
+      formatBoundsSummary(alignmentDebug?.idealBoundsAspectCorrected ?? null),
+    ],
+    [
+      "currentBoundsAspectCorrected",
+      formatBoundsSummary(alignmentDebug?.currentBoundsAspectCorrected ?? null),
+    ],
     ["Overlay 478 landmarks", state.overlay.showLandmarks478 ? "on" : "off"],
   ]
 
@@ -2401,6 +2688,62 @@ function createMeshPrototypeContent() {
     ["grid / anchors target", "fixed source position"],
   ])
 
+  const alignmentHeading = document.createElement("h3")
+  alignmentHeading.textContent = "Aspect Corrected Alignment"
+  const alignmentList = document.createElement("dl")
+  alignmentList.className = "summary-list"
+  appendDefinitionItems(alignmentList, [
+    ["videoAspectRatio", formatMetric(mesh.aspectDebug.videoAspectRatio)],
+    ["modelVideoAspectRatio", formatMetric(mesh.aspectDebug.modelVideoAspectRatio)],
+    ["liveVideoAspectRatio", formatMetric(mesh.aspectDebug.liveVideoAspectRatio)],
+    ["scale", formatMetric(mesh.aspectDebug.alignment?.scale ?? null)],
+    [
+      "idealCenterAspectCorrected",
+      formatPoint(mesh.aspectDebug.alignment?.idealCenterAspectCorrected ?? null),
+    ],
+    [
+      "currentCenterAspectCorrected",
+      formatPoint(mesh.aspectDebug.alignment?.currentCenterAspectCorrected ?? null),
+    ],
+    [
+      "idealBoundsAspectCorrected",
+      formatBoundsSummary(mesh.aspectDebug.alignment?.idealBoundsAspectCorrected ?? null),
+    ],
+    [
+      "currentBoundsAspectCorrected",
+      formatBoundsSummary(mesh.aspectDebug.alignment?.currentBoundsAspectCorrected ?? null),
+    ],
+  ])
+
+  const boundsHeading = document.createElement("h3")
+  boundsHeading.textContent = "Bounds / Aspect Debug"
+  const boundsList = document.createElement("dl")
+  boundsList.className = "summary-list"
+  appendDefinitionItems(boundsList, [
+    [
+      "current landmarks",
+      formatCoordinateBoundsDebug(mesh.aspectDebug.bounds.currentLandmarks),
+    ],
+    [
+      "top1 raw ideal reference landmarks",
+      formatCoordinateBoundsDebug(mesh.aspectDebug.bounds.top1RawIdealReferenceLandmarks),
+    ],
+    [
+      "candidateAlignedIdealLandmarks",
+      formatCoordinateBoundsDebug(mesh.aspectDebug.bounds.candidateAlignedIdealLandmarks),
+    ],
+    [
+      "accepted current mesh source face landmarks",
+      formatCoordinateBoundsDebug(
+        mesh.aspectDebug.bounds.acceptedCurrentMeshSourceFaceLandmarks,
+      ),
+    ],
+    [
+      "ideal mesh target face landmarks",
+      formatCoordinateBoundsDebug(mesh.aspectDebug.bounds.idealMeshTargetFaceLandmarks),
+    ],
+  ])
+
   const reasonHeading = document.createElement("h3")
   reasonHeading.textContent = "Suppression / Exclusion"
   const reasonList = document.createElement("dl")
@@ -2415,7 +2758,20 @@ function createMeshPrototypeContent() {
     ["excluded landmark preview", formatMeshLandmarkPreview(mesh.excludedCurrentLandmarks)],
   ])
 
-  fragment.append(heading, status, sourceHeading, sourceList, targetHeading, targetList, reasonHeading, reasonList)
+  fragment.append(
+    heading,
+    status,
+    sourceHeading,
+    sourceList,
+    targetHeading,
+    targetList,
+    alignmentHeading,
+    alignmentList,
+    boundsHeading,
+    boundsList,
+    reasonHeading,
+    reasonList,
+  )
   return fragment
 }
 
@@ -2569,6 +2925,7 @@ function getCurrentIdealMeshPrototypeRawState() {
       usageWeightMin: roundMetricForState(mesh.summary.usageWeightMin),
       usageWeightMax: roundMetricForState(mesh.summary.usageWeightMax),
     },
+    aspectDebug: roundMeshAspectDebug(mesh.aspectDebug),
     candidateAlignedIdealLandmarkPreview: mesh.candidateAlignedIdealLandmarks
       .slice(0, LANDMARK_PREVIEW_COUNT)
       .map(roundLandmark),
@@ -2992,6 +3349,34 @@ function formatMetric(value: number | null) {
   return value.toFixed(4)
 }
 
+function formatPoint(point: Point2D | null) {
+  if (!point) {
+    return "-"
+  }
+
+  return `x ${formatMetric(point.x)} / y ${formatMetric(point.y)}`
+}
+
+function formatBoundsSummary(bounds: BoundsDebugSummary | null) {
+  if (!bounds) {
+    return "-"
+  }
+
+  return [
+    `minX ${formatMetric(bounds.minX)}`,
+    `maxX ${formatMetric(bounds.maxX)}`,
+    `minY ${formatMetric(bounds.minY)}`,
+    `maxY ${formatMetric(bounds.maxY)}`,
+    `width ${formatMetric(bounds.width)}`,
+    `height ${formatMetric(bounds.height)}`,
+    `aspect ${formatMetric(bounds.aspect)}`,
+  ].join(" / ")
+}
+
+function formatCoordinateBoundsDebug(debug: CoordinateBoundsDebug) {
+  return `normalized: ${formatBoundsSummary(debug.normalized)} | aspect-corrected: ${formatBoundsSummary(debug.aspectCorrected)}`
+}
+
 function formatSize(width: number | null, height: number | null) {
   return width === null || height === null ? "-" : `${width} x ${height}`
 }
@@ -3096,6 +3481,8 @@ function roundMeshVertexPair(pair: MeshVertexPair) {
     index: pair.index,
     source: roundPoint(pair.source),
     target: roundPoint(pair.target),
+    distanceNormalized: roundMetricForState(pair.distanceNormalized),
+    distanceAspectCorrected: roundMetricForState(pair.distanceAspectCorrected),
     usageWeight: roundMetricForState(pair.usageWeight),
     reasons: pair.reasons,
   }
@@ -3105,6 +3492,70 @@ function roundPoint(point: Point2D) {
   return {
     x: roundForState(point.x),
     y: roundForState(point.y),
+  }
+}
+
+function roundBoundsDebugSummary(bounds: BoundsDebugSummary | null) {
+  if (!bounds) {
+    return null
+  }
+
+  return {
+    minX: roundForState(bounds.minX),
+    maxX: roundForState(bounds.maxX),
+    minY: roundForState(bounds.minY),
+    maxY: roundForState(bounds.maxY),
+    width: roundForState(bounds.width),
+    height: roundForState(bounds.height),
+    aspect: roundMetricForState(bounds.aspect),
+  }
+}
+
+function roundCoordinateBoundsDebug(debug: CoordinateBoundsDebug) {
+  return {
+    normalized: roundBoundsDebugSummary(debug.normalized),
+    aspectCorrected: roundBoundsDebugSummary(debug.aspectCorrected),
+  }
+}
+
+function roundMeshAlignmentDebug(debug: MeshAlignmentDebug | null) {
+  if (!debug) {
+    return null
+  }
+
+  return {
+    videoAspectRatio: roundMetricForState(debug.videoAspectRatio),
+    idealVideoAspectRatio: roundMetricForState(debug.idealVideoAspectRatio),
+    currentVideoAspectRatio: roundMetricForState(debug.currentVideoAspectRatio),
+    idealBoundsAspectCorrected: roundBoundsDebugSummary(debug.idealBoundsAspectCorrected),
+    currentBoundsAspectCorrected: roundBoundsDebugSummary(debug.currentBoundsAspectCorrected),
+    scale: roundMetricForState(debug.scale),
+    idealCenterAspectCorrected: roundPoint(debug.idealCenterAspectCorrected),
+    currentCenterAspectCorrected: roundPoint(debug.currentCenterAspectCorrected),
+  }
+}
+
+function roundMeshAspectDebug(debug: MeshAspectDebug) {
+  return {
+    videoAspectRatio: roundMetricForState(debug.videoAspectRatio),
+    modelVideoAspectRatio: roundMetricForState(debug.modelVideoAspectRatio),
+    liveVideoAspectRatio: roundMetricForState(debug.liveVideoAspectRatio),
+    alignment: roundMeshAlignmentDebug(debug.alignment),
+    bounds: {
+      currentLandmarks: roundCoordinateBoundsDebug(debug.bounds.currentLandmarks),
+      top1RawIdealReferenceLandmarks: roundCoordinateBoundsDebug(
+        debug.bounds.top1RawIdealReferenceLandmarks,
+      ),
+      candidateAlignedIdealLandmarks: roundCoordinateBoundsDebug(
+        debug.bounds.candidateAlignedIdealLandmarks,
+      ),
+      acceptedCurrentMeshSourceFaceLandmarks: roundCoordinateBoundsDebug(
+        debug.bounds.acceptedCurrentMeshSourceFaceLandmarks,
+      ),
+      idealMeshTargetFaceLandmarks: roundCoordinateBoundsDebug(
+        debug.bounds.idealMeshTargetFaceLandmarks,
+      ),
+    },
   }
 }
 

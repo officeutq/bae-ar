@@ -30,6 +30,14 @@ BAE AR
 
 `tools/ideal-reference-mesh-warp-lab` は、理想モデル動画から作る実測 MediaPipe 478 reference library と、ライブ動画を current face 代わりにした matching 検証のための debug lab です。現在は、モデル動画の MediaPipe 解析、raw ideal reference frames 作成、accepted / excluded frame 管理、ライブ動画 current frame の MediaPipe 解析、current478 overlay、raw ideal reference frames からの top1 reference matching までを本線として残します。PR5以降で試した alignedIdeal 478点全体 displacement / raw displacement mesh warp / rawWarpOnly / sideBySide / texture flip 実験は本線から外しました。次の本線は、alignedIdeal478 を最終 target とせず、visible / safe current landmarks と near-face grid / background grid / screen edge anchors で current mesh source を作り、対応する candidate aligned ideal landmarks と同じ grid / anchors で ideal mesh target を作る mesh pair prototype です。詳細は [Ideal Reference Mesh Warp Lab](ideal-reference-mesh-warp-lab.md) を参照してください。
 
+Ideal Reference Mesh Warp Lab の mesh prototype では、MediaPipe returned landmarks は
+image-normalized coordinate として保存します。ただし、bounds / center / uniform scale /
+distance / large displacement 判定では、Render Consistency Lab / Rotation Fit 系と同じ
+aspect-corrected image coordinate を使います。`x' = x * videoAspectRatio`、`y' = y`
+で計算し、`candidateAlignedIdealLandmarks` の alignment 後は image-normalized coordinate
+へ戻して overlay / mesh pair に使います。overlay 表示は `displayedContentRect` pixel
+への変換で行います。
+
 ## 現在の到達点
 
 現在の Runtime / Studio 実装は、カメラ映像を `HTMLVideoElement` として取得し、`BeautyEngine.setInput()` に渡し、MediaPipe Face Landmarker を使って `FaceFrame` を更新する段階です。FacePose の実推定、IdealFace v1、Natural v1 最小プリセット、IdealFace 公開 API、`idealLandmarks3D` 478点 Projection、current-vs-projected ideal 478点 difference debug、Studio overlay / debug / Copy Debug 関連は実装済みです。

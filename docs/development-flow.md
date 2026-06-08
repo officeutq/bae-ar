@@ -7,6 +7,22 @@
 - [MediaPipe Render Consistency Lab next step after effective rotation center study](mediapipe-render-consistency-lab-next-after-effective-rotation-center.md)
 - [MediaPipe Canonical Effective Rotation Center Lab](mediapipe-canonical-effective-rotation-center-lab.md)
 
+## Ideal Reference Mesh Warp Lab の aspect-corrected alignment
+
+`tools/ideal-reference-mesh-warp-lab` の current / ideal mesh prototype では、
+MediaPipe returned landmarks の `x` / `y` を image-normalized coordinate として保存する。
+ただし、bounds / center / uniform scale / distance / large displacement 判定など、
+`x` と `y` を同じ距離単位として比較する処理では aspect-corrected image coordinate を使う。
+
+```text
+x' = x * videoAspectRatio
+y' = y
+```
+
+`candidateAlignedIdealLandmarks` の alignment は aspect-corrected coordinate 上で行い、
+結果を image-normalized coordinate に戻して overlay / mesh pair / ideal mesh target 候補に使う。
+overlay 表示は従来どおり image-normalized coordinate から `displayedContentRect` pixel へ変換する。
+
 ## IdealFace Fitting Lab
 
 `tools/ideal-face-fitting-lab` は 8点 / 12点 / 24点の semanticPointSet（意味点セット）を比較し、IdealFace478 の z、`rotationCenter`（回転中心） / `pivotZ`（投影基準奥行き）、canonicalDepthBased（標準顔奥行きベース方式）、perLandmarkZSearch（ランドマーク単位 z 探索）の候補を検証する debug lab（検証ラボ）です。production 用 IdealFace asset は作らず、`tools/ideal-face-authoring` と `tools/mediapipe-canonical-lab` から分離して扱います。
