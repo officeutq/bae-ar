@@ -232,3 +232,33 @@ overlay 表示は aspect-corrected coordinate を直接描画しない。従来�
 image-normalized coordinate を `displayedContentRect` の pixel coordinate に変換して描画する。
 これは過去の Render Consistency Lab / Rotation Fit 系で使っていた横縦比補正の方針を、
 Ideal Reference Mesh Warp Lab の current / ideal mesh prototype に反映するもの。
+
+## nearFaceGrid 顔内部除外方式
+
+Ideal Reference Mesh Warp Lab の `nearFaceGrid` は、`expandedNearFaceBounds` の内部全体を `nearFaceGridSpacing` の grid で一度埋めた後、顔内部に入る grid point を除外する方式に変更した。
+
+顔内部判定には、採用済みの visible / safe current landmarks だけから作る `face-only triangle indices` を使う。これは `nearFaceGrid` 生成時に grid point が顔内部へ入っているかを判定するための補助データであり、最終描画用の triangle mesh ではない。
+
+判定は aspect-corrected image coordinate で行う。
+
+```text
+x' = x * videoAspectRatio
+y' = y
+```
+
+`nearFaceGrid` の生成順序は以下とする。
+
+```text
+accepted current face landmarks
+  -> face-only triangle indices を作る
+  -> expandedNearFaceBounds 内を grid で埋める
+  -> face-only triangle indices による face interior 判定で顔内部 grid point を除外
+  -> 顔ランドマークに近すぎる grid point を弱めの threshold で除外
+  -> 残った点を nearFaceGrid として採用
+```
+
+visible / safe current landmarks の選択方針は既存の本線を維持する。invalid x/y、hidden side、face boundary、mouth / eyes、large displacement、usageWeight による抑制と除外を行った後、その採用済み current face landmarks を `nearFaceGrid` の顔内部判定にも使う。
+
+final triangle indices は、`faceLandmark` / `nearFaceGrid` / `backgroundGrid` / `screenEdgeAnchor` を含む source vertices から別途作る。source mesh と target mesh では、この final triangle indices を共通に使う。
+
+この段階では WebGL mesh warp、texture upload、shader、production mesh warp はまだ行わない。

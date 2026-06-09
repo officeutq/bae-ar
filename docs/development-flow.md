@@ -475,3 +475,22 @@ Summary / Warp Mesh / Raw debug では、triangle count、valid / warning / excl
 live overlay には `triangle meshを表示` toggle を追加します。`mesh sourceを表示` と組み合わせて source triangle wireframe、`mesh targetを表示` と組み合わせて target triangle wireframe を表示します。
 
 現時点では triangle wireframe overlay と Summary / Warp Mesh / Raw debug による確認までで、WebGL mesh warp、texture upload、shader、production mesh warp はまだ行いません。
+
+## Ideal Reference Mesh Warp Lab nearFaceGrid 更新
+
+`tools/ideal-reference-mesh-warp-lab` の current mesh source prototype では、visible / safe current landmarks の選択は既存方針を維持する。`currentLiveFrameAnalysis.landmarks478` から invalid x/y、hidden side、face boundary、mouth / eyes、large displacement、usageWeight による抑制と除外を行い、採用済み current face landmarks を source の顔ランドマークとして扱う。
+
+`nearFaceGrid` は、採用済み current face landmarks だけから作る `face-only triangle indices` を使って顔内部判定を行う。`face-only triangle indices` は `nearFaceGrid` 生成時の face interior 判定専用であり、最終描画用 triangle mesh ではない。
+
+現在の `nearFaceGrid` 生成は以下の流れとする。
+
+```text
+accepted current face landmarks
+  -> face-only triangle indices
+  -> expandedNearFaceBounds 内を nearFaceGridSpacing で埋める
+  -> face interior に入る grid point を除外
+  -> 顔ランドマークに近すぎる grid point を弱めの threshold で除外
+  -> nearFaceGrid として採用
+```
+
+final triangle indices は、`faceLandmark` / `nearFaceGrid` / `backgroundGrid` / `screenEdgeAnchor` を含む source vertices から別途作り、source mesh と target mesh で共通に使う。この段階では WebGL mesh warp、texture upload、shader、production mesh warp は行わない。
