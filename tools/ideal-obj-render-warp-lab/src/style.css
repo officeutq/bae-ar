@@ -17,7 +17,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -188,7 +189,7 @@ h3 {
   border-radius: 8px;
   display: grid;
   gap: 12px;
-  grid-template-rows: minmax(320px, 1fr) auto auto;
+  grid-template-rows: minmax(320px, 1fr) auto auto auto;
   min-height: 560px;
   padding: 12px;
 }
@@ -244,6 +245,37 @@ h3 {
   display: none;
 }
 
+.obj-preview-stage {
+  min-height: 420px;
+}
+
+.obj-preview-canvas {
+  background:
+    linear-gradient(90deg, rgba(32, 38, 45, 0.055) 1px, transparent 1px),
+    linear-gradient(0deg, rgba(32, 38, 45, 0.055) 1px, transparent 1px),
+    #f8fafc;
+  background-size: 24px 24px;
+  cursor: grab;
+  display: none;
+  grid-area: 1 / 1;
+  height: 100%;
+  min-height: 420px;
+  touch-action: none;
+  width: 100%;
+}
+
+.obj-preview-canvas:active {
+  cursor: grabbing;
+}
+
+.obj-preview-stage[data-preview-status="ready"] .obj-preview-canvas {
+  display: block;
+}
+
+.obj-preview-stage[data-preview-status="ready"] .preview-placeholder {
+  display: none;
+}
+
 .preview-placeholder {
   align-content: center;
   background:
@@ -271,8 +303,7 @@ h3 {
 }
 
 .obj-preview-summary {
-  max-width: 720px;
-  width: min(100%, 720px);
+  width: 100%;
 }
 
 .obj-preview-message {
@@ -316,6 +347,43 @@ h3 {
   font-size: 12px;
   margin: 0;
   overflow-wrap: anywhere;
+}
+
+.obj-preview-controls {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.select-field {
+  align-items: center;
+  display: inline-grid;
+  gap: 8px;
+  grid-template-columns: auto minmax(160px, 1fr);
+}
+
+.select-field span {
+  color: #66727e;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.select-field select {
+  background: #ffffff;
+  border: 1px solid #aab6c2;
+  border-radius: 6px;
+  color: #26313b;
+  min-height: 32px;
+  padding: 5px 8px;
+}
+
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
 }
 
 .timeline-controls {

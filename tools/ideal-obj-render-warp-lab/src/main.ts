@@ -4,6 +4,8 @@ type PreviewTab = "obj" | "renderedIdeal" | "live"
 type DebugTab = "summary" | "current" | "obj" | "renderedIdeal" | "warpMesh" | "raw"
 type PlaybackStatus = "stopped" | "playing" | "paused"
 type ObjParseStatus = "not_loaded" | "not_parsed" | "parsed" | "error"
+type ObjPreviewMode = "points" | "wireframe" | "points_wireframe"
+type ObjPreviewStatus = "not_ready" | "ready" | "error"
 
 type TabOption<TValue extends string> = {
   label: string
@@ -25,6 +27,11 @@ type ObjVertex = {
 
 type ObjFace = {
   indices: number[]
+}
+
+type ObjEdge = {
+  a: number
+  b: number
 }
 
 type ObjBounds = {
@@ -57,6 +64,29 @@ type ObjParseResult = {
   vertices: ObjVertex[]
   faces: ObjFace[]
   warnings: string[]
+}
+
+type ObjGeometryState = {
+  vertices: ObjVertex[]
+  faces: ObjFace[]
+  edges: ObjEdge[]
+}
+
+type ObjPreviewState = {
+  yawDeg: number
+  pitchDeg: number
+  rollDeg: number
+  zoom: number
+  panX: number
+  panY: number
+  mode: ObjPreviewMode
+  maxPoints: number
+  maxEdges: number
+}
+
+type ObjPreviewStats = {
+  sampledPointCount: number
+  sampledEdgeCount: number
 }
 
 type VideoPreviewState = {
@@ -94,6 +124,9 @@ type LabState = {
   }
   objFile: ObjFileState
   objSummary: ObjSummary
+  objGeometry: ObjGeometryState
+  objPreview: ObjPreviewState
+  objPreviewStats: ObjPreviewStats
   objErrorMessage: string | null
   liveVideo: VideoPreviewState
   currentAnalysis: CurrentAnalysisState
@@ -136,6 +169,12 @@ const state: LabState = {
     fileType: null,
   },
   objSummary: createEmptyObjSummary(),
+  objGeometry: createEmptyObjGeometry(),
+  objPreview: createDefaultObjPreviewState(),
+  objPreviewStats: {
+    sampledPointCount: 0,
+    sampledEdgeCount: 0,
+  },
   objErrorMessage: null,
   liveVideo: {
     loaded: false,
@@ -224,6 +263,15 @@ app.innerHTML = `
 const objFileInput = getElement<HTMLInputElement>("[data-input='obj-file']")
 const liveFileInput = getElement<HTMLInputElement>("[data-input='live-video']")
 const liveVideoElement = getElement<HTMLVideoElement>("[data-video='live']")
+const objPreviewCanvas = getElement<HTMLCanvasElement>('[data-canvas="obj-preview"]')
+let objPreviewDrag:
+  | {
+      pointerId: number
+      lastX: number
+      lastY: number
+      mode: "rotate" | "pan"
+    }
+  | null = null
 
 bindEvents()
 renderAll()
@@ -267,13 +315,32 @@ function renderTabs<TValue extends string>(
 function renderObjPreview() {
   return `
     <div class="preview-card" data-preview-panel="obj">
-      <div class="preview-stage">
-        <div class="preview-placeholder">
+      <div class="preview-stage obj-preview-stage" data-obj-stage data-preview-status="not_ready">
+        <canvas class="obj-preview-canvas" data-canvas="obj-preview" aria-label="OBJ 3D preview"></canvas>
+        <div class="preview-placeholder obj-preview-placeholder" data-obj-preview-placeholder>
           <h3>OBJプレビュー</h3>
-          <p>OBJファイルを読み込むと、ここにOBJ summaryを表示します。3D表示は未実装です。</p>
-          <div class="obj-preview-summary" data-obj-preview-summary></div>
+          <p data-obj-preview-message>OBJファイルを読み込むと、ここにOBJ 3D previewを表示します。</p>
         </div>
       </div>
+      <div class="obj-preview-controls" aria-label="OBJ 3D preview 操作">
+        <label class="select-field">
+          <span>表示モード</span>
+          <select data-control="obj-preview-mode">
+            <option value="points">points</option>
+            <option value="wireframe">wireframe</option>
+            <option value="points_wireframe">points + wireframe</option>
+          </select>
+        </label>
+        <div class="button-row">
+          <button class="small-button" type="button" data-action="obj-preview-front">Front</button>
+          <button class="small-button" type="button" data-action="obj-preview-left">Left</button>
+          <button class="small-button" type="button" data-action="obj-preview-right">Right</button>
+          <button class="small-button" type="button" data-action="obj-preview-top">Top</button>
+          <button class="small-button" type="button" data-action="obj-preview-side">Side</button>
+          <button class="small-button" type="button" data-action="obj-preview-reset">Reset View</button>
+        </div>
+      </div>
+      <div class="obj-preview-summary" data-obj-preview-summary></div>
     </div>
   `
 }
@@ -391,6 +458,81 @@ function bindEvents() {
     }
   })
 
+  getElement<HTMLSelectElement>('[data-control="obj-preview-mode"]').addEventListener("change", (event) => {
+    const value = event.currentTarget.value
+    if (isObjPreviewMode(value)) {
+      state.objPreview.mode = value
+      renderAll()
+    }
+  })
+
+  bindObjPreviewPreset("obj-preview-front", { yawDeg: 0, pitchDeg: 0, rollDeg: 0 })
+  bindObjPreviewPreset("obj-preview-left", { yawDeg: -90, pitchDeg: 0, rollDeg: 0 })
+  bindObjPreviewPreset("obj-preview-right", { yawDeg: 90, pitchDeg: 0, rollDeg: 0 })
+  bindObjPreviewPreset("obj-preview-top", { yawDeg: 0, pitchDeg: -90, rollDeg: 0 })
+  bindObjPreviewPreset("obj-preview-side", { yawDeg: 90, pitchDeg: 0, rollDeg: 0 })
+
+  getElement<HTMLButtonElement>('[data-action="obj-preview-reset"]').addEventListener("click", () => {
+    state.objPreview = createDefaultObjPreviewState()
+    renderAll()
+  })
+
+  objPreviewCanvas.addEventListener("pointerdown", (event) => {
+    objPreviewDrag = {
+      pointerId: event.pointerId,
+      lastX: event.clientX,
+      lastY: event.clientY,
+      mode: event.shiftKey ? "pan" : "rotate",
+    }
+    objPreviewCanvas.setPointerCapture(event.pointerId)
+  })
+
+  objPreviewCanvas.addEventListener("pointermove", (event) => {
+    if (!objPreviewDrag || objPreviewDrag.pointerId !== event.pointerId) {
+      return
+    }
+
+    const dx = event.clientX - objPreviewDrag.lastX
+    const dy = event.clientY - objPreviewDrag.lastY
+    objPreviewDrag.lastX = event.clientX
+    objPreviewDrag.lastY = event.clientY
+
+    if (objPreviewDrag.mode === "pan") {
+      state.objPreview.panX += dx / getObjCanvasScale()
+      state.objPreview.panY -= dy / getObjCanvasScale()
+    } else {
+      state.objPreview.yawDeg = normalizeDegrees(state.objPreview.yawDeg + dx * 0.35)
+      state.objPreview.pitchDeg = clamp(state.objPreview.pitchDeg + dy * 0.35, -180, 180)
+    }
+
+    renderAll()
+  })
+
+  objPreviewCanvas.addEventListener("pointerup", (event) => {
+    if (objPreviewDrag?.pointerId === event.pointerId) {
+      objPreviewDrag = null
+    }
+  })
+
+  objPreviewCanvas.addEventListener("pointercancel", () => {
+    objPreviewDrag = null
+  })
+
+  objPreviewCanvas.addEventListener(
+    "wheel",
+    (event) => {
+      event.preventDefault()
+      const zoomDelta = event.deltaY < 0 ? 1.08 : 0.92
+      state.objPreview.zoom = clamp(state.objPreview.zoom * zoomDelta, 0.15, 8)
+      renderAll()
+    },
+    { passive: false },
+  )
+
+  window.addEventListener("resize", () => {
+    renderObjPreviewCanvas()
+  })
+
   app.querySelectorAll<HTMLButtonElement>("[data-tab-group]").forEach((button) => {
     button.addEventListener("click", () => {
       const group = button.dataset.tabGroup
@@ -415,6 +557,21 @@ function bindEvents() {
   bindOverlayToggle("toggle-triangle-mesh", "showTriangleMesh")
 }
 
+function bindObjPreviewPreset(
+  action: string,
+  preset: Pick<ObjPreviewState, "yawDeg" | "pitchDeg" | "rollDeg">,
+) {
+  getElement<HTMLButtonElement>(`[data-action="${action}"]`).addEventListener("click", () => {
+    state.objPreview = {
+      ...state.objPreview,
+      ...preset,
+      panX: 0,
+      panY: 0,
+    }
+    renderAll()
+  })
+}
+
 function bindOverlayToggle(
   action: string,
   key: keyof LabState["overlay"],
@@ -434,6 +591,11 @@ async function loadObjFile(file: File) {
     fileType: file.type || "unknown",
   }
   state.objSummary = createFileObjSummary(file, "not_parsed")
+  state.objGeometry = createEmptyObjGeometry()
+  state.objPreviewStats = {
+    sampledPointCount: 0,
+    sampledEdgeCount: 0,
+  }
   state.objErrorMessage = null
   state.activePreviewTab = "obj"
   addLog(`OBJファイル情報を読み込みました: ${file.name}`)
@@ -443,11 +605,21 @@ async function loadObjFile(file: File) {
     const objText = await file.text()
     const parseResult = parseObjText(objText)
     state.objSummary = createParsedObjSummary(file, parseResult)
+    state.objGeometry = {
+      vertices: parseResult.vertices,
+      faces: parseResult.faces,
+      edges: createUniqueEdges(parseResult.faces),
+    }
     addLog(`OBJ解析が完了しました: 頂点 ${state.objSummary.vertexCount} / 面 ${state.objSummary.faceCount} / 警告 ${state.objSummary.warningCount}`)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     console.error("OBJ parse failed", error)
     state.objSummary = createFileObjSummary(file, "error")
+    state.objGeometry = createEmptyObjGeometry()
+    state.objPreviewStats = {
+      sampledPointCount: 0,
+      sampledEdgeCount: 0,
+    }
     state.objErrorMessage = message
     addLog(`OBJ解析に失敗しました: ${message}`)
   }
@@ -515,6 +687,12 @@ function renderPreviewPanels() {
   const liveStage = getElement<HTMLElement>("[data-live-stage]")
   liveStage.dataset.loaded = String(state.liveVideo.loaded)
 
+  const objPreviewStatus = getObjPreviewStatus()
+  const objStage = getElement<HTMLElement>("[data-obj-stage]")
+  objStage.dataset.previewStatus = objPreviewStatus
+  getElement<HTMLElement>("[data-obj-preview-message]").textContent = getObjPreviewMessage(objPreviewStatus)
+  renderObjPreviewCanvas()
+
   const objSummary = getElement<HTMLElement>("[data-obj-preview-summary]")
   objSummary.innerHTML = renderObjPreviewSummary()
 }
@@ -541,6 +719,192 @@ function renderControls() {
   getElement<HTMLElement>("[data-live-analysis]").innerHTML = `
     <p>ライブ動画の current frame 解析結果はまだありません。MediaPipe解析はこのPRでは接続していません。</p>
   `
+
+  getElement<HTMLSelectElement>('[data-control="obj-preview-mode"]').value = state.objPreview.mode
+}
+
+function renderObjPreviewCanvas() {
+  const status = getObjPreviewStatus()
+  state.objPreviewStats = status === "ready" ? calculateObjPreviewStats() : {
+    sampledPointCount: 0,
+    sampledEdgeCount: 0,
+  }
+
+  const context = objPreviewCanvas.getContext("2d")
+  if (!context) {
+    return
+  }
+
+  const rect = objPreviewCanvas.getBoundingClientRect()
+  if (rect.width <= 0 || rect.height <= 0) {
+    return
+  }
+
+  const dpr = window.devicePixelRatio || 1
+  const targetWidth = Math.round(rect.width * dpr)
+  const targetHeight = Math.round(rect.height * dpr)
+  if (objPreviewCanvas.width !== targetWidth || objPreviewCanvas.height !== targetHeight) {
+    objPreviewCanvas.width = targetWidth
+    objPreviewCanvas.height = targetHeight
+  }
+
+  context.setTransform(dpr, 0, 0, dpr, 0, 0)
+  context.clearRect(0, 0, rect.width, rect.height)
+
+  if (status !== "ready") {
+    return
+  }
+
+  const summary = state.objSummary
+  if (!summary.center || !summary.maxDimension || summary.maxDimension <= 0) {
+    return
+  }
+
+  const viewport = {
+    centerX: rect.width / 2,
+    centerY: rect.height / 2,
+    scale: getObjCanvasScale(),
+  }
+
+  context.save()
+  context.lineCap = "round"
+  context.lineJoin = "round"
+
+  if (state.objPreview.mode === "wireframe" || state.objPreview.mode === "points_wireframe") {
+    drawObjWireframe(context, summary.center, summary.maxDimension, viewport)
+  }
+
+  if (state.objPreview.mode === "points" || state.objPreview.mode === "points_wireframe") {
+    drawObjPoints(context, summary.center, summary.maxDimension, viewport)
+  }
+
+  drawObjAxisGuide(context, rect.height)
+  context.restore()
+}
+
+function drawObjWireframe(
+  context: CanvasRenderingContext2D,
+  center: ObjVertex,
+  maxDimension: number,
+  viewport: { centerX: number; centerY: number; scale: number },
+) {
+  const edgeStep = getSampleStep(state.objGeometry.edges.length, state.objPreview.maxEdges)
+  context.strokeStyle = "rgba(67, 99, 132, 0.32)"
+  context.lineWidth = 1
+  context.beginPath()
+
+  for (let index = 0; index < state.objGeometry.edges.length; index += edgeStep) {
+    const edge = state.objGeometry.edges[index]
+    const from = state.objGeometry.vertices[edge.a]
+    const to = state.objGeometry.vertices[edge.b]
+    if (!from || !to) {
+      continue
+    }
+
+    const p1 = projectObjVertex(from, center, maxDimension, viewport)
+    const p2 = projectObjVertex(to, center, maxDimension, viewport)
+    context.moveTo(p1.x, p1.y)
+    context.lineTo(p2.x, p2.y)
+  }
+
+  context.stroke()
+}
+
+function drawObjPoints(
+  context: CanvasRenderingContext2D,
+  center: ObjVertex,
+  maxDimension: number,
+  viewport: { centerX: number; centerY: number; scale: number },
+) {
+  const pointStep = getSampleStep(state.objGeometry.vertices.length, state.objPreview.maxPoints)
+  context.fillStyle = "rgba(18, 31, 44, 0.64)"
+
+  for (let index = 0; index < state.objGeometry.vertices.length; index += pointStep) {
+    const point = projectObjVertex(
+      state.objGeometry.vertices[index],
+      center,
+      maxDimension,
+      viewport,
+    )
+    context.beginPath()
+    context.arc(point.x, point.y, 1.35, 0, Math.PI * 2)
+    context.fill()
+  }
+}
+
+function drawObjAxisGuide(
+  context: CanvasRenderingContext2D,
+  canvasHeight: number,
+) {
+  const originX = 18
+  const originY = canvasHeight - 18
+  const length = 34
+  const axes: Array<{ label: string; color: string; vertex: ObjVertex }> = [
+    { label: "x", color: "#cf3f3f", vertex: { x: 1, y: 0, z: 0 } },
+    { label: "y", color: "#268053", vertex: { x: 0, y: 1, z: 0 } },
+    { label: "z", color: "#3159b7", vertex: { x: 0, y: 0, z: 1 } },
+  ]
+
+  context.font = "700 11px Inter, system-ui, sans-serif"
+  axes.forEach((axis) => {
+    const rotated = rotateObjPoint(axis.vertex)
+    const x = originX + rotated.x * length
+    const y = originY - rotated.y * length
+    context.strokeStyle = axis.color
+    context.fillStyle = axis.color
+    context.lineWidth = 2
+    context.beginPath()
+    context.moveTo(originX, originY)
+    context.lineTo(x, y)
+    context.stroke()
+    context.fillText(axis.label, x + 4, y + 4)
+  })
+}
+
+function projectObjVertex(
+  vertex: ObjVertex,
+  center: ObjVertex,
+  maxDimension: number,
+  viewport: { centerX: number; centerY: number; scale: number },
+) {
+  const normalized = {
+    x: (vertex.x - center.x) / maxDimension,
+    y: (vertex.y - center.y) / maxDimension,
+    z: (vertex.z - center.z) / maxDimension,
+  }
+  const rotated = rotateObjPoint(normalized)
+
+  return {
+    x: viewport.centerX + (rotated.x * state.objPreview.zoom + state.objPreview.panX) * viewport.scale,
+    y: viewport.centerY - (rotated.y * state.objPreview.zoom + state.objPreview.panY) * viewport.scale,
+    z: rotated.z,
+  }
+}
+
+function rotateObjPoint(point: ObjVertex): ObjVertex {
+  const yaw = degreesToRadians(state.objPreview.yawDeg)
+  const pitch = degreesToRadians(state.objPreview.pitchDeg)
+  const roll = degreesToRadians(state.objPreview.rollDeg)
+  const cosYaw = Math.cos(yaw)
+  const sinYaw = Math.sin(yaw)
+  const cosPitch = Math.cos(pitch)
+  const sinPitch = Math.sin(pitch)
+  const cosRoll = Math.cos(roll)
+  const sinRoll = Math.sin(roll)
+
+  const yawX = point.x * cosYaw + point.z * sinYaw
+  const yawY = point.y
+  const yawZ = -point.x * sinYaw + point.z * cosYaw
+
+  const pitchX = yawX
+  const pitchY = yawY * cosPitch - yawZ * sinPitch
+  const pitchZ = yawY * sinPitch + yawZ * cosPitch
+
+  return {
+    x: pitchX * cosRoll - pitchY * sinRoll,
+    y: pitchX * sinRoll + pitchY * cosRoll,
+    z: pitchZ,
+  }
 }
 
 function renderDebugTabs() {
@@ -605,6 +969,10 @@ function getSummaryItems(): Array<[string, string]> {
     ["objVertexCount", formatNullableCount(state.objFile.loaded ? state.objSummary.vertexCount : null)],
     ["objFaceCount", formatNullableCount(state.objFile.loaded ? state.objSummary.faceCount : null)],
     ["objWarningCount", formatNullableCount(state.objFile.loaded ? state.objSummary.warningCount : null)],
+    ["objPreviewStatus", getObjPreviewStatus()],
+    ["objPreviewMode", state.objPreview.mode],
+    ["objSampledPointCount", formatNullableCount(state.objPreviewStats.sampledPointCount)],
+    ["objSampledEdgeCount", formatNullableCount(state.objPreviewStats.sampledEdgeCount)],
     ["objErrorMessage", state.objErrorMessage ?? "null"],
     ["currentAnalysisStatus", state.currentAnalysis.status],
     ["renderedIdealStatus", "not_implemented"],
@@ -640,6 +1008,15 @@ function getObjItems(): Array<[string, string]> {
     ["maxDimension", formatNullableNumber(summary.maxDimension)],
     ["warningCount", formatNullableCount(state.objFile.loaded ? summary.warningCount : null)],
     ["warningsPreview", formatStringList(summary.warningsPreview)],
+    ["previewYawDeg", formatNumber(state.objPreview.yawDeg)],
+    ["previewPitchDeg", formatNumber(state.objPreview.pitchDeg)],
+    ["previewRollDeg", formatNumber(state.objPreview.rollDeg)],
+    ["previewZoom", formatNumber(state.objPreview.zoom)],
+    ["previewPanX", formatNumber(state.objPreview.panX)],
+    ["previewPanY", formatNumber(state.objPreview.panY)],
+    ["previewMode", state.objPreview.mode],
+    ["sampledPointCount", formatNullableCount(state.objPreviewStats.sampledPointCount)],
+    ["sampledEdgeCount", formatNullableCount(state.objPreviewStats.sampledEdgeCount)],
     ["errorMessage", state.objErrorMessage ?? "null"],
   ]
 }
@@ -670,6 +1047,11 @@ function getRawState() {
     overlay: state.overlay,
     objFile: state.objFile,
     objSummary: state.objSummary,
+    objPreviewState: getRoundedObjPreviewState(),
+    verticesPreview: state.objGeometry.vertices.slice(0, 5).map(roundPointForState),
+    facesPreview: state.objGeometry.faces.slice(0, 5),
+    sampledPointCount: state.objPreviewStats.sampledPointCount,
+    sampledEdgeCount: state.objPreviewStats.sampledEdgeCount,
     objErrorMessage: state.objErrorMessage,
     liveVideo: {
       loaded: state.liveVideo.loaded,
@@ -768,6 +1150,27 @@ function parseObjText(objText: string): ObjParseResult {
   return { vertices, faces, warnings }
 }
 
+function createUniqueEdges(faces: ObjFace[]): ObjEdge[] {
+  const edgeKeys = new Set<string>()
+  const edges: ObjEdge[] = []
+
+  faces.forEach((face) => {
+    for (let index = 0; index < face.indices.length; index += 1) {
+      const a = face.indices[index]
+      const b = face.indices[(index + 1) % face.indices.length]
+      const min = Math.min(a, b)
+      const max = Math.max(a, b)
+      const key = `${min}:${max}`
+      if (!edgeKeys.has(key)) {
+        edgeKeys.add(key)
+        edges.push({ a: min, b: max })
+      }
+    }
+  })
+
+  return edges
+}
+
 function createEmptyObjSummary(): ObjSummary {
   return {
     fileName: "",
@@ -784,6 +1187,28 @@ function createEmptyObjSummary(): ObjSummary {
     maxDimension: null,
     warningCount: 0,
     warningsPreview: [],
+  }
+}
+
+function createEmptyObjGeometry(): ObjGeometryState {
+  return {
+    vertices: [],
+    faces: [],
+    edges: [],
+  }
+}
+
+function createDefaultObjPreviewState(): ObjPreviewState {
+  return {
+    yawDeg: 0,
+    pitchDeg: 0,
+    rollDeg: 0,
+    zoom: 1,
+    panX: 0,
+    panY: 0,
+    mode: "points_wireframe",
+    maxPoints: 8000,
+    maxEdges: 12000,
   }
 }
 
@@ -869,6 +1294,26 @@ function getObjFileStatus() {
   return state.objSummary.parseStatus
 }
 
+function getObjPreviewStatus(): ObjPreviewStatus {
+  if (state.objSummary.parseStatus === "error") {
+    return "error"
+  }
+  if (state.objSummary.parseStatus === "parsed" && state.objGeometry.vertices.length > 0) {
+    return "ready"
+  }
+  return "not_ready"
+}
+
+function getObjPreviewMessage(status: ObjPreviewStatus) {
+  if (status === "ready") {
+    return "OBJ解析は完了。簡易3D previewを表示しています。"
+  }
+  if (status === "error") {
+    return "OBJ解析に失敗したため、3D previewを表示できません。"
+  }
+  return "OBJファイルを読み込むと、ここにOBJ 3D previewを表示します。"
+}
+
 function renderObjPreviewSummary() {
   const summary = state.objSummary
   if (!state.objFile.loaded) {
@@ -877,7 +1322,7 @@ function renderObjPreviewSummary() {
 
   if (summary.parseStatus === "error") {
     return `
-      <p class="obj-preview-message">OBJ解析に失敗しました。画面は継続して表示しています。</p>
+      <p class="obj-preview-message">OBJ解析に失敗したため、3D previewを表示できません。</p>
       <dl class="obj-preview-list">
         <div><dt>fileName</dt><dd>${escapeHtml(summary.fileName)}</dd></div>
         <div><dt>parseStatus</dt><dd>error</dd></div>
@@ -898,11 +1343,14 @@ function renderObjPreviewSummary() {
   }
 
   return `
-    <p class="obj-preview-message">OBJ解析は完了。3D表示は未実装です。</p>
+    <p class="obj-preview-message">OBJ解析は完了。簡易3D previewを表示しています。</p>
     <dl class="obj-preview-list">
       <div><dt>fileName</dt><dd>${escapeHtml(summary.fileName)}</dd></div>
       <div><dt>vertexCount</dt><dd>${summary.vertexCount}</dd></div>
       <div><dt>faceCount</dt><dd>${summary.faceCount}</dd></div>
+      <div><dt>previewMode</dt><dd>${state.objPreview.mode}</dd></div>
+      <div><dt>sampledPointCount</dt><dd>${state.objPreviewStats.sampledPointCount}</dd></div>
+      <div><dt>sampledEdgeCount</dt><dd>${state.objPreviewStats.sampledEdgeCount}</dd></div>
       <div><dt>bounds</dt><dd>${escapeHtml(formatBounds(summary.bounds))}</dd></div>
       <div><dt>center</dt><dd>${escapeHtml(formatPoint(summary.center))}</dd></div>
       <div><dt>size</dt><dd>${escapeHtml(formatPoint(summary.size))}</dd></div>
@@ -992,6 +1440,10 @@ function isDebugTab(value: string | undefined): value is DebugTab {
   return debugTabs.some((tab) => tab.value === value)
 }
 
+function isObjPreviewMode(value: string): value is ObjPreviewMode {
+  return value === "points" || value === "wireframe" || value === "points_wireframe"
+}
+
 function formatTimeStatus(videoState: VideoPreviewState) {
   if (!videoState.loaded) {
     return "current time: - / -"
@@ -1051,6 +1503,71 @@ function formatSeconds(value: number | null) {
 
 function roundForState(value: number | null) {
   return value === null ? null : Number(value.toFixed(6))
+}
+
+function roundPointForState(point: ObjVertex): ObjVertex {
+  return {
+    x: roundForState(point.x) ?? 0,
+    y: roundForState(point.y) ?? 0,
+    z: roundForState(point.z) ?? 0,
+  }
+}
+
+function getRoundedObjPreviewState() {
+  return {
+    yawDeg: roundForState(state.objPreview.yawDeg),
+    pitchDeg: roundForState(state.objPreview.pitchDeg),
+    rollDeg: roundForState(state.objPreview.rollDeg),
+    zoom: roundForState(state.objPreview.zoom),
+    panX: roundForState(state.objPreview.panX),
+    panY: roundForState(state.objPreview.panY),
+    mode: state.objPreview.mode,
+    maxPoints: state.objPreview.maxPoints,
+    maxEdges: state.objPreview.maxEdges,
+  }
+}
+
+function calculateObjPreviewStats(): ObjPreviewStats {
+  return {
+    sampledPointCount:
+      state.objPreview.mode === "wireframe"
+        ? 0
+        : getSampledCount(state.objGeometry.vertices.length, state.objPreview.maxPoints),
+    sampledEdgeCount:
+      state.objPreview.mode === "points"
+        ? 0
+        : getSampledCount(state.objGeometry.edges.length, state.objPreview.maxEdges),
+  }
+}
+
+function getSampleStep(total: number, maxCount: number) {
+  if (total <= 0) {
+    return 1
+  }
+  return Math.max(1, Math.ceil(total / Math.max(1, maxCount)))
+}
+
+function getSampledCount(total: number, maxCount: number) {
+  if (total <= 0) {
+    return 0
+  }
+  return Math.ceil(total / getSampleStep(total, maxCount))
+}
+
+function getObjCanvasScale() {
+  const rect = objPreviewCanvas.getBoundingClientRect()
+  return Math.max(1, Math.min(rect.width, rect.height) * 0.42)
+}
+
+function degreesToRadians(value: number) {
+  return (value * Math.PI) / 180
+}
+
+function normalizeDegrees(value: number) {
+  if (!Number.isFinite(value)) {
+    return 0
+  }
+  return ((value + 180) % 360 + 360) % 360 - 180
 }
 
 function clamp(value: number, min: number, max: number) {
