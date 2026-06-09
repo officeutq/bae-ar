@@ -36,7 +36,7 @@ current
 
 ## Current Mesh Source
 
-current mesh source は、`currentLiveFrameAnalysis.landmarks478` から見えている / 安全な landmark を選び、それに fixed grid / anchors を加えて作ります。
+current mesh source は、`currentLiveFrameAnalysis.landmarks478` から見えている / 安全な landmark を選び、それに dynamic grid / anchors を加えて作ります。Ideal Reference Mesh Warp Lab の grid / anchors は、fixed grid / anchors から dynamic grid prototype に進みました。
 
 ```text
 currentLiveFrameAnalysis.landmarks478
@@ -46,10 +46,16 @@ currentLiveFrameAnalysis.landmarks478
   -> mouth / eyes は表情時に弱める
   -> current -> candidateAlignedIdeal の距離が大きすぎる点を弱める
   -> usageWeight が低すぎる点は source から除外
-  -> accepted current landmarks + near-face grid + background grid + screen edge anchors
+  -> accepted current landmarks から faceMedianNearestDistance を計算
+  -> faceMedianNearestDistance を基準に nearFaceGridSpacing / backgroundGridSpacing / screenEdgeAnchorSpacing を決める
+  -> accepted current landmarks + dynamic near-face grid + dynamic background grid + screen edge anchors
 ```
 
 初期実装の visibility / safety は簡易 rule based です。後で `visibilityWeight` / `warpSafetyWeight` に差し替えられるよう、`CurrentMeshLandmarkVertex` に `visibilityWeight`、`safetyWeight`、`usageWeight`、`reasons` を持たせます。
+
+dynamic grid は、採用済み current face landmarks の nearest neighbor distance を aspect-corrected image coordinate でサンプル計算し、その中央値を `faceMedianNearestDistance` として使います。near-face grid は `faceMedianNearestDistance * 1.5` を基準に細かめ、background grid は `faceMedianNearestDistance * 4.0` を基準に粗め、screen edge anchors は background grid と同程度の間隔で作ります。極端に細かくなりすぎないよう、near-face / background spacing は clamp します。
+
+near-face grid は current face bounds を 20% 程度 expand した顔周辺領域に置きます。顔内部に入りすぎる点は簡易 bounds 判定で除外し、顔に近い背景を支える点だけを `nearFaceGrid` として残します。background grid は画面全体に置きますが、near-face region と画面端を避けます。画面四隅と辺上は `screenEdgeAnchor` として固定し、source = target のまま扱います。
 
 ## Ideal Mesh Target
 
@@ -84,6 +90,15 @@ grid / anchors overlay は source / target で色分けします。`grid / ancho
 
 Summary / Warp Mesh debug では以下を確認します。
 
+- `gridMode`
+- `acceptedFaceLandmarkCount`
+- `faceMedianNearestDistance`
+- `faceNearestDistanceSampleCount`
+- `nearFaceGridSpacing`
+- `backgroundGridSpacing`
+- `screenEdgeAnchorSpacing`
+- `nearFaceGridSpacingRatioToFaceMedian`
+- `backgroundGridSpacingRatioToFaceMedian`
 - `top1MatchedReferenceId`
 - `currentLandmarkCount`
 - `visibleCurrentLandmarkCount`
@@ -99,10 +114,13 @@ Summary / Warp Mesh debug では以下を確認します。
 - `eyeSuppressedCount`
 - `largeDisplacementSuppressedCount`
 - `invalidExcludedCount`
+- `faceBounds`
+- `expandedNearFaceBounds`
+- `videoAspectRatio`
 - `gridAnchorDisplay.showSourceGrid`
 - `gridAnchorDisplay.showTargetGrid`
 
-Raw debug は巨大配列を出さず、`candidateAlignedIdealLandmarkPreview`、`acceptedCurrentLandmarkPreview`、`excludedCurrentLandmarkPreview`、`meshPairPreview` の sample だけを出します。
+Raw debug は巨大配列を出さず、`dynamicGrid.gridPointPreview`、`candidateAlignedIdealLandmarkPreview`、`acceptedCurrentLandmarkPreview`、`excludedCurrentLandmarkPreview`、`meshPairPreview` の sample だけを出します。
 
 ## 本線から外したもの
 
@@ -119,6 +137,9 @@ PR5 以降で試した以下は本線から外しています。
 
 ## 今回まだ行わないこと
 
+- triangle indices 作成
+- triangle mesh 作成
+- Delaunay triangulation
 - WebGL warp
 - production mesh warp
 - topK weighted blend

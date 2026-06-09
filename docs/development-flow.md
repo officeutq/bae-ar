@@ -113,7 +113,7 @@ current 478 landmarks は MediaPipe 由来の image-normalized 座標です。pr
 
 現時点では、478点の current-vs-ideal difference debug、`correctionProfile` v1 foundation、`expressionAttenuation` v1 foundation、CorrectionPlan v1 debug foundation、Studio 向け Shape Warp v1 debug prototype、Studio processed preview 限定 WebGL mesh warp v1 prototype は実装済みです。Production Shape Warp / Runtime renderer integration は未実装です。
 
-新しい検証ラインとして [Ideal Reference Mesh Warp Lab](ideal-reference-mesh-warp-lab.md) を追加します。このラボでは、理想モデル動画から作る実測 MediaPipe 478 reference library と、ライブ動画を current face 代わりにした matching 検証を扱います。`tools/ideal-reference-mesh-warp-lab` はモデル動画の MediaPipe 解析と raw ideal reference frames 作成、accepted / excluded frame 管理、ライブ動画 current frame の MediaPipe 解析、current478 overlay、raw ideal reference frames からの top1 reference matching までを本線として残します。モデル動画解析用 MediaPipe とライブ動画 current 解析用 MediaPipe は分離し、MediaPipe に渡す timestamp は stream ごとの単調増加 counter を使います。PR5以降で試した alignedIdeal 478点全体 displacement / raw displacement mesh warp / rawWarpOnly / sideBySide / texture flip 実験は本線から外しました。次の本線は current mesh source / ideal mesh target の mesh pair prototype です。topK weighted blend、visibilityWeight / warpSafetyWeight、hybrid mesh、grid、temporal smoothing、production mesh warp は未実装です。Engine 実装、Studio 実装、Authoring Tool UI、JSON export、validator、Runtime renderer integration も行いません。
+新しい検証ラインとして [Ideal Reference Mesh Warp Lab](ideal-reference-mesh-warp-lab.md) を追加します。このラボでは、理想モデル動画から作る実測 MediaPipe 478 reference library と、ライブ動画を current face 代わりにした matching 検証を扱います。`tools/ideal-reference-mesh-warp-lab` はモデル動画の MediaPipe 解析と raw ideal reference frames 作成、accepted / excluded frame 管理、ライブ動画 current frame の MediaPipe 解析、current478 overlay、raw ideal reference frames からの top1 reference matching までを本線として残します。モデル動画解析用 MediaPipe とライブ動画 current 解析用 MediaPipe は分離し、MediaPipe に渡す timestamp は stream ごとの単調増加 counter を使います。PR5以降で試した alignedIdeal 478点全体 displacement / raw displacement mesh warp / rawWarpOnly / sideBySide / texture flip 実験は本線から外しました。次の本線は current mesh source / ideal mesh target の mesh pair prototype です。dynamic grid prototype までは実装済みで、topK weighted blend、visibilityWeight / warpSafetyWeight の本格化、hybrid mesh、triangle mesh、temporal smoothing、production mesh warp は未実装です。Engine 実装、Studio 実装、Authoring Tool UI、JSON export、validator、Runtime renderer integration も行いません。
 
 `correctionProfile` v1 は、`ideal_face_asset_v1` の optional top-level field として扱う補正設定です。landmark ごとの `strength` を持ちますが、dx / dy は JSON に保存しません。dx / dy は current landmarks と projected ideal `imageLandmarks` から Engine が毎フレーム計算します。今後の表情制御では、単純に group の補正強度を下げる `expressionAttenuation` ではなく、表情ごとに landmark が neutral な projected ideal へどれだけ追従するかを定義する `expressionFollow v1` を中心にします。MP4 からの `landmarkFollowStrengths` 自動生成は IdealFace Authoring Tool の責務として扱います。詳細は [correctionProfile v1](correction-profile-v1.md)、[expressionFollow v1](expression-follow-v1.md)、[MP4 expression 3D analysis plan](mp4-expression-3d-analysis-plan.md)、[usage-aware frame sampling v1](usage-aware-frame-sampling-v1.md)、[expression-aware correctionProfile](expression-aware-correction-profile.md)、[expressionAttenuation falloff v1](expression-attenuation-falloff-v1.md) を参照してください。
 
@@ -387,7 +387,7 @@ Step R: Ideal Reference Mesh Warp Lab
   次の本線は current mesh source / ideal mesh target の mesh pair prototype
   model MediaPipe は authoring / library creation 用、live MediaPipe は Runtime current face analysis 用として分離する
   MediaPipe timestamp は video.currentTime ではなく stream ごとの単調増加 counter を使う
-  topK weighted blend、visibilityWeight / warpSafetyWeight、hybrid mesh、grid、temporal smoothing、production mesh warp は後段で扱う
+  topK weighted blend、visibilityWeight / warpSafetyWeight、hybrid mesh、triangle mesh、temporal smoothing、production mesh warp は後段で扱う
 ```
 
 詳細は [Shape Warp production direction](shape-warp-production-direction.md) を参照してください。Studio WebGL mesh warp v1 prototype は processed preview 限定で実装済みです。Production renderer 実装、shader hardening、MediaPipe topology の本番整理はこの docs step では行いません。
@@ -447,8 +447,10 @@ Step 9: beauty_filter_asset_v1 foundation
 
 `tools/ideal-reference-mesh-warp-lab` は、PR5以降の raw displacement warp 実験線を本線から外し、top1 reference matching 後に current mesh source / ideal mesh target の対応を確認する prototype に進みます。
 
-現在の flow は、`currentLiveFrameAnalysis.landmarks478` から見えている / 安全な current landmarks を選び、near-face grid / background grid / screen edge anchors を加えて current mesh source を作ります。次に、source 側で採用された landmark index と同じ index の `candidateAlignedIdealLandmarks` と、同じ fixed grid / anchors を使って ideal mesh target を作ります。
+現在の flow は、`currentLiveFrameAnalysis.landmarks478` から見えている / 安全な current landmarks を選び、dynamic near-face grid / background grid / screen edge anchors を加えて current mesh source を作ります。grid / anchors は fixed grid / anchors から dynamic grid prototype に進み、採用済み current face landmarks の aspect-corrected nearest neighbor distance 中央値である `faceMedianNearestDistance` を基準に `nearFaceGridSpacing` / `backgroundGridSpacing` / `screenEdgeAnchorSpacing` を決めます。
+
+near-face grid は顔内部 landmark density に近づけ、background grid は少し粗くし、screen edge anchors は四隅と辺上に固定します。次に、source 側で採用された landmark index と同じ index の `candidateAlignedIdealLandmarks` と、source と同じ grid / anchors を使って ideal mesh target を作ります。
 
 grid / anchors overlay は source / target で色分けします。`grid / anchorsを表示` が ON でも、`mesh sourceを表示` が OFF の場合は source grid / anchors を表示せず、`mesh targetを表示` が OFF の場合は target grid / anchors を表示しません。
 
-`candidateAlignedIdealLandmarks` は最終 target ではありません。採用済み current landmark に対応する ideal candidate であり、478点全体 displacement、raw displacement mesh warp、WebGL warp、topK weighted blend、temporal smoothing、Engine / Studio / Authoring Tool 変更はこの段階では行いません。
+`candidateAlignedIdealLandmarks` は最終 target ではありません。採用済み current landmark に対応する ideal candidate であり、triangle indices 作成、triangle mesh 作成、WebGL warp、478点全体 displacement、raw displacement mesh warp、topK weighted blend、temporal smoothing、Engine / Studio / Authoring Tool 変更はこの段階では行いません。
