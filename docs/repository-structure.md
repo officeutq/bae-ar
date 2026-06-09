@@ -3,6 +3,7 @@
 ## Related docs
 
 - [Ideal Reference Mesh Warp Lab](ideal-reference-mesh-warp-lab.md)
+- [Ideal OBJ Render Warp Lab](ideal-obj-render-warp-lab.md)
 - [Ideal Reference Coordinate Lifecycle Investigation](ideal-reference-coordinate-lifecycle-investigation.md)
 - [MediaPipe Render Consistency Lab next step after effective rotation center study](mediapipe-render-consistency-lab-next-after-effective-rotation-center.md)
 - [MediaPipe Canonical Effective Rotation Center Lab](mediapipe-canonical-effective-rotation-center-lab.md)
@@ -24,6 +25,28 @@ y' = y
 current face に位置合わせした候補であり、最終 target として 478点全体を扱うものでは
 ありません。source 側で採用された current landmark index に対応する ideal candidate として
 mesh pair / ideal mesh target の確認に使います。
+
+## Ideal OBJ Render Warp Lab の座標方針
+
+`tools/ideal-obj-render-warp-lab` は、`ideal-reference-mesh-warp-lab` の座標系・メッシュ・WebGL warp を踏襲し、ideal source だけを OBJ render -> MediaPipe returned 478 に差し替える将来予定の debug / research lab です。
+
+```text
+OBJ
+  -> current yaw / pitch / roll で render
+  -> rendered ideal image
+  -> MediaPipe
+  -> renderedIdeal478
+  -> image-normalized coordinate
+```
+
+`renderedIdeal478` は MediaPipe returned landmarks として image-normalized coordinate で扱います。alignment の bounds / center / uniform scale / distance / large displacement 判定では、既存ラボと同じ aspect-corrected image coordinate を使います。
+
+```text
+x' = x * videoAspectRatio
+y' = y
+```
+
+OBJ vertex coordinate と MediaPipe image-normalized coordinate は混ぜません。render image の pixel coordinate は MediaPipe 入力用に閉じ込め、MediaPipe から戻ってきた後の `renderedIdeal478` だけを mesh pair / target vertices 生成へ渡します。
 
 ## `tools/ideal-face-fitting-lab`
 
@@ -128,11 +151,15 @@ tools/
 │  └─ Ideal Reference Mesh Warp Lab
 │     理想モデル動画の実測 MediaPipe 478 reference library と hybrid mesh warp を検証する debug / research lab
 │
+├─ ideal-obj-render-warp-lab/
+│  └─ Ideal OBJ Render Warp Lab
+│     OBJ render から MediaPipe returned 478 を取得し、既存 mesh warp へ接続できるか検証する debug / research lab
+│
 └─ layer-mask-authoring/
    └─ Layer Mask Authoring Tool
 ```
 
-`tools/ideal-face-authoring` は Step 2-I-A/B/C と Step 2-H まで実装済みです。`tools/mediapipe-canonical-lab` は MediaPipe Face Landmarker の 478 landmarks / `facialTransformationMatrix` / pose / blendshapes を調査する debug lab です。`tools/mediapipe-render-consistency-lab` は MP4 import、auto scan（自動スキャン）、`acceptedFrames`、`thumbnailDataUrl`、MediaPipe metadata summary（MediaPipe メタデータ要約）、12pt overlay（12点重ね表示）、manual adjustments（手動調整）、Debug Console（デバッグコンソール）、`poseBucket125` を確認する debug lab です。production 用 IdealFace asset を作る正式 authoring tool（作成ツール）ではありません。`tools/ideal-reference-mesh-warp-lab` は、理想モデル動画から作る実測 MediaPipe 478 reference library と、ライブ動画を current face 代わりにした matching 検証のための debug lab です。現在は、モデル動画の MediaPipe 解析、raw ideal reference frames 作成、accepted / excluded frame 管理、モデル動画 accepted frame review、モデル動画 478点 overlay、ライブ動画 current frame の MediaPipe 解析、current478 overlay、raw ideal reference frames からの top1 reference matching までを本線として残します。モデル動画解析用 MediaPipe とライブ動画 current 解析用 MediaPipe は分離し、timestamp は各解析 stream ごとの単調増加 counter を使います。PR5以降で試した alignedIdeal 478点全体 displacement / raw displacement mesh warp / rawWarpOnly / sideBySide / texture flip 実験は本線から外しました。現在は current mesh source / ideal mesh target の mesh pair prototype、dynamic grid prototype、source vertices 基準の triangle indices prototype、WebGL mesh warp input debug、Lab 内限定の WebGL mesh warp preview prototype、model scan JSON export / import まで実装済みです。model scan JSON は `rawIdealReferenceFrames` と accepted / excluded frame 管理を保存し、model video 再解析なしで reference library と top1 matching を再利用するための Lab 検証効率化機能です。topK weighted blend、visibilityWeight / warpSafetyWeight の本格化、hybrid mesh、temporal smoothing、production mesh warp は未実装です。`tools/layer-mask-authoring` は将来予定です。
+`tools/ideal-face-authoring` は Step 2-I-A/B/C と Step 2-H まで実装済みです。`tools/mediapipe-canonical-lab` は MediaPipe Face Landmarker の 478 landmarks / `facialTransformationMatrix` / pose / blendshapes を調査する debug lab です。`tools/mediapipe-render-consistency-lab` は MP4 import、auto scan（自動スキャン）、`acceptedFrames`、`thumbnailDataUrl`、MediaPipe metadata summary（MediaPipe メタデータ要約）、12pt overlay（12点重ね表示）、manual adjustments（手動調整）、Debug Console（デバッグコンソール）、`poseBucket125` を確認する debug lab です。production 用 IdealFace asset を作る正式 authoring tool（作成ツール）ではありません。`tools/ideal-reference-mesh-warp-lab` は、理想モデル動画から作る実測 MediaPipe 478 reference library と、ライブ動画を current face 代わりにした matching 検証のための debug lab です。現在は、モデル動画の MediaPipe 解析、raw ideal reference frames 作成、accepted / excluded frame 管理、モデル動画 accepted frame review、モデル動画 478点 overlay、ライブ動画 current frame の MediaPipe 解析、current478 overlay、raw ideal reference frames からの top1 reference matching までを本線として残します。モデル動画解析用 MediaPipe とライブ動画 current 解析用 MediaPipe は分離し、timestamp は各解析 stream ごとの単調増加 counter を使います。PR5以降で試した alignedIdeal 478点全体 displacement / raw displacement mesh warp / rawWarpOnly / sideBySide / texture flip 実験は本線から外しました。現在は current mesh source / ideal mesh target の mesh pair prototype、dynamic grid prototype、source vertices 基準の triangle indices prototype、WebGL mesh warp input debug、Lab 内限定の WebGL mesh warp preview prototype、model scan JSON export / import まで実装済みです。model scan JSON は `rawIdealReferenceFrames` と accepted / excluded frame 管理を保存し、model video 再解析なしで reference library と top1 matching を再利用するための Lab 検証効率化機能です。topK weighted blend、visibilityWeight / warpSafetyWeight の本格化、hybrid mesh、temporal smoothing、production mesh warp は未実装です。`tools/ideal-obj-render-warp-lab` は将来予定の debug / research lab です。`ideal-reference-mesh-warp-lab` の座標系・mesh source / target・dynamic grid・anchors・triangle indices・WebGL mesh warp preview を踏襲し、ideal source だけを OBJ render -> MediaPipe returned 478 に差し替えて検証します。`tools/layer-mask-authoring` は将来予定です。
 
 ## `packages/engine`
 
@@ -343,6 +370,7 @@ Layer Mask Authoring Tool を置く想定の場所です。
 - `landmark-groups-v1.md`: `ideal_face_asset_v1` / `beauty_filter_asset_v1` で使う optional `landmarkGroups` 仕様、Engine fallback、validation、Landmark Group Editor 方針
 - `shape-warp-production-direction.md`: Shape Warp v1 debug prototype と production candidate の違い、WebGL mesh warp 方針、段階分け
 - `ideal-reference-mesh-warp-lab.md`: 理想顔 3D478 生成ではなく、理想モデル動画の実測 MediaPipe 478 reference library、visibility / safety weight、hybrid mesh / adaptive grid、raw / runtime library 分離、storage / compression 方針を扱う新検証ラボ
+- `ideal-obj-render-warp-lab.md`: FaceBuilder + Blender sculpt 由来 OBJ を current pose で render し、MediaPipe returned 478 を WebGL mesh warp の target 候補にする debug / research lab 方針
 - `beauty-filter-asset-v1.md`: 最終フィルター / プリセットを `idealFace` / `landmarkGroups` / `correctionProfile` / `shapeWarpSettings` / `colorLayers` に分けつつ、1つの `beauty_filter_asset_v1` JSON として配布する方向性
 - `mediapipe-canonical-lab.md`: MediaPipe Canonical Lab の位置づけ、empirical 478 analysis 暫定結論、`facialTransformationMatrix` inverse の扱い、Full / Summary Analysis JSON export 方針
 - `mediapipe-render-consistency-lab.md`: Render Consistency Lab の位置づけ、Fitting Lab との違い、`projectionFitZ` / `meshReadyZ`、現状の auto scan / acceptedFrames / 12pt overlay / Debug Console / poseBucket125、mesh / render / MediaPipe re-detection 前提の評価方針
