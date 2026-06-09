@@ -112,6 +112,20 @@ type ObjPreviewState = {
   maxEdges: number
 }
 
+type ObjPoseSyncState = {
+  enabled: boolean
+  yawSign: 1 | -1
+  pitchSign: 1 | -1
+  rollSign: 1 | -1
+  yawOffsetDeg: number
+  pitchOffsetDeg: number
+  rollOffsetDeg: number
+  appliedYawDeg: number | null
+  appliedPitchDeg: number | null
+  appliedRollDeg: number | null
+  source: "none" | "current_frame"
+}
+
 type ObjPreviewStats = {
   sampledPointCount: number
   sampledEdgeCount: number
@@ -200,6 +214,8 @@ type LabState = {
   objGeometry: ObjGeometryState
   objPreview: ObjPreviewState
   objPreviewStats: ObjPreviewStats
+  objPoseSync: ObjPoseSyncState
+  objPoseSyncStats: ObjPreviewStats
   objErrorMessage: string | null
   liveVideo: LiveVideoState
   liveMediaPipe: {
@@ -269,6 +285,11 @@ const state: LabState = {
   objGeometry: createEmptyObjGeometry(),
   objPreview: createDefaultObjPreviewState(),
   objPreviewStats: {
+    sampledPointCount: 0,
+    sampledEdgeCount: 0,
+  },
+  objPoseSync: createDefaultObjPoseSyncState(),
+  objPoseSyncStats: {
     sampledPointCount: 0,
     sampledEdgeCount: 0,
   },
@@ -350,6 +371,7 @@ const liveFileInput = getElement<HTMLInputElement>("[data-input='live-video']")
 const liveVideoElement = getElement<HTMLVideoElement>("[data-video='live']")
 const liveOverlayCanvas = getElement<HTMLCanvasElement>("[data-overlay='live']")
 const objPreviewCanvas = getElement<HTMLCanvasElement>('[data-canvas="obj-preview"]')
+const liveObjPosePreviewCanvas = getElement<HTMLCanvasElement>('[data-canvas="live-obj-pose-preview"]')
 let liveFaceLandmarker: FaceLandmarker | null = null
 let liveFaceLandmarkerPromise: Promise<FaceLandmarker> | null = null
 let liveAnalysisInProgress = false
@@ -451,27 +473,90 @@ function renderRenderedIdealPreview() {
 
 function renderLivePreview() {
   return `
-    <div class="preview-card" data-preview-panel="live">
-      <div class="preview-stage" data-live-stage data-loaded="false">
-        <video class="video-preview" data-video="live" preload="metadata" playsinline controls></video>
-        <canvas class="landmark-overlay" data-overlay="live"></canvas>
-        <div class="preview-placeholder">
-          <h3>ライブプレビュー</h3>
-          <p>ライブ動画を読み込むと、ここにライブプレビューを表示します。</p>
-        </div>
-      </div>
-      <div class="timeline-controls live-controls" aria-label="ライブ動画操作">
-        <button class="small-button" type="button" data-action="live-play">再生</button>
-        <button class="small-button" type="button" data-action="live-pause">一時停止</button>
-        <button class="small-button" type="button" data-action="live-analyze-current">現在フレーム解析</button>
-        <label class="range-field">
-          <span>シーク</span>
-          <input type="range" min="0" step="0.001" value="0" data-range="live" />
-        </label>
-        <p class="frame-status" data-status="live-time">current time: - / -</p>
-      </div>
-      <div class="review-card" data-live-analysis>
-        <p>ライブ動画の current frame 解析結果はまだありません。</p>
+    <div class="preview-card live-preview-card" data-preview-panel="live">
+      <div class="live-preview-grid">
+        <section class="live-column-panel" aria-label="ライブ現在顔">
+          <h3>ライブ現在顔</h3>
+          <div class="preview-stage live-face-stage" data-live-stage data-loaded="false">
+            <video class="video-preview" data-video="live" preload="metadata" playsinline controls></video>
+            <canvas class="landmark-overlay" data-overlay="live"></canvas>
+            <div class="preview-placeholder">
+              <h3>ライブプレビュー</h3>
+              <p>ライブ動画を読み込むと、ここにライブプレビューを表示します。</p>
+            </div>
+          </div>
+          <div class="timeline-controls live-controls" aria-label="ライブ動画操作">
+            <button class="small-button" type="button" data-action="live-play">再生</button>
+            <button class="small-button" type="button" data-action="live-pause">一時停止</button>
+            <button class="small-button" type="button" data-action="live-analyze-current">現在フレーム解析</button>
+            <label class="range-field">
+              <span>シーク</span>
+              <input type="range" min="0" step="0.001" value="0" data-range="live" />
+            </label>
+            <p class="frame-status" data-status="live-time">current time: - / -</p>
+          </div>
+          <div class="review-card" data-live-analysis>
+            <p>ライブ動画の current frame 解析結果はまだありません。</p>
+          </div>
+        </section>
+
+        <section class="live-column-panel" aria-label="現在姿勢OBJ">
+          <h3>現在姿勢OBJ</h3>
+          <div class="preview-stage obj-preview-stage live-obj-preview-stage" data-live-obj-stage data-preview-status="not_ready">
+            <canvas class="obj-preview-canvas" data-canvas="live-obj-pose-preview" aria-label="現在姿勢 OBJ preview"></canvas>
+            <div class="preview-placeholder obj-preview-placeholder">
+              <h3>現在姿勢OBJ</h3>
+              <p data-live-obj-preview-message>OBJを読み込むと、現在姿勢を反映したOBJ previewを表示します。</p>
+            </div>
+          </div>
+          <div class="obj-preview-controls live-obj-controls" aria-label="現在姿勢 OBJ preview 操作">
+            <label class="select-field">
+              <span>表示モード</span>
+              <select data-control="live-obj-preview-mode">
+                <option value="points">points</option>
+                <option value="wireframe">wireframe</option>
+                <option value="points_wireframe">points + wireframe</option>
+              </select>
+            </label>
+            <div class="button-row">
+              <button class="small-button" type="button" data-action="live-obj-current-pose">Current Pose</button>
+              <button class="small-button" type="button" data-action="live-obj-reset-view">Reset View</button>
+            </div>
+          </div>
+          <div class="pose-sync-controls" aria-label="現在姿勢 OBJ 同期設定">
+            <label class="overlay-toggle">
+              <input type="checkbox" data-action="obj-pose-sync-enabled" />
+              <span>pose sync enabled</span>
+            </label>
+            <label class="overlay-toggle">
+              <input type="checkbox" data-action="obj-pose-yaw-invert" />
+              <span>yaw反転</span>
+            </label>
+            <label class="overlay-toggle">
+              <input type="checkbox" data-action="obj-pose-pitch-invert" />
+              <span>pitch反転</span>
+            </label>
+            <label class="overlay-toggle">
+              <input type="checkbox" data-action="obj-pose-roll-invert" />
+              <span>roll反転</span>
+            </label>
+            <label class="number-field">
+              <span>yawOffsetDeg</span>
+              <input type="number" step="0.1" data-control="obj-pose-yaw-offset" />
+            </label>
+            <label class="number-field">
+              <span>pitchOffsetDeg</span>
+              <input type="number" step="0.1" data-control="obj-pose-pitch-offset" />
+            </label>
+            <label class="number-field">
+              <span>rollOffsetDeg</span>
+              <input type="number" step="0.1" data-control="obj-pose-roll-offset" />
+            </label>
+          </div>
+          <div class="review-card" data-live-obj-pose-summary>
+            <p>OBJを読み込むと、現在姿勢を反映したOBJ previewを表示します。</p>
+          </div>
+        </section>
       </div>
     </div>
   `
@@ -590,6 +675,38 @@ function bindEvents() {
     }
   })
 
+  getElement<HTMLSelectElement>('[data-control="live-obj-preview-mode"]').addEventListener("change", (event) => {
+    const value = event.currentTarget.value
+    if (isObjPreviewMode(value)) {
+      state.objPreview.mode = value
+      renderAll()
+    }
+  })
+
+  getElement<HTMLInputElement>('[data-action="obj-pose-sync-enabled"]').addEventListener("change", (event) => {
+    state.objPoseSync.enabled = event.currentTarget.checked
+    updateObjPoseSyncFromCurrentAnalysis()
+    renderAll()
+  })
+
+  bindObjPoseSignToggle("obj-pose-yaw-invert", "yawSign")
+  bindObjPoseSignToggle("obj-pose-pitch-invert", "pitchSign")
+  bindObjPoseSignToggle("obj-pose-roll-invert", "rollSign")
+  bindObjPoseOffsetInput("obj-pose-yaw-offset", "yawOffsetDeg")
+  bindObjPoseOffsetInput("obj-pose-pitch-offset", "pitchOffsetDeg")
+  bindObjPoseOffsetInput("obj-pose-roll-offset", "rollOffsetDeg")
+
+  getElement<HTMLButtonElement>('[data-action="live-obj-current-pose"]').addEventListener("click", () => {
+    updateObjPoseSyncFromCurrentAnalysis()
+    renderAll()
+  })
+
+  getElement<HTMLButtonElement>('[data-action="live-obj-reset-view"]').addEventListener("click", () => {
+    state.objPoseSync = createDefaultObjPoseSyncState()
+    updateObjPoseSyncFromCurrentAnalysis()
+    renderAll()
+  })
+
   bindObjPreviewPreset("obj-preview-front", { yawDeg: 0, pitchDeg: 0, rollDeg: 0 })
   bindObjPreviewPreset("obj-preview-left", { yawDeg: -90, pitchDeg: 0, rollDeg: 0 })
   bindObjPreviewPreset("obj-preview-right", { yawDeg: 90, pitchDeg: 0, rollDeg: 0 })
@@ -655,6 +772,7 @@ function bindEvents() {
 
   window.addEventListener("resize", () => {
     renderObjPreviewCanvas()
+    renderObjPoseSyncCanvas()
     drawLiveOverlay()
   })
 
@@ -708,6 +826,29 @@ function bindOverlayToggle(
   getElement<HTMLInputElement>(`[data-action="${action}"]`).addEventListener("change", (event) => {
     state.overlay[key] = event.currentTarget.checked
     addLog(`${event.currentTarget.nextElementSibling?.textContent ?? action}を${event.currentTarget.checked ? "ON" : "OFF"}にしました。`)
+    renderAll()
+  })
+}
+
+function bindObjPoseSignToggle(
+  action: string,
+  key: "yawSign" | "pitchSign" | "rollSign",
+) {
+  getElement<HTMLInputElement>(`[data-action="${action}"]`).addEventListener("change", (event) => {
+    state.objPoseSync[key] = event.currentTarget.checked ? -1 : 1
+    updateObjPoseSyncFromCurrentAnalysis()
+    renderAll()
+  })
+}
+
+function bindObjPoseOffsetInput(
+  control: string,
+  key: "yawOffsetDeg" | "pitchOffsetDeg" | "rollOffsetDeg",
+) {
+  getElement<HTMLInputElement>(`[data-control="${control}"]`).addEventListener("input", (event) => {
+    const value = Number(event.currentTarget.value)
+    state.objPoseSync[key] = Number.isFinite(value) ? value : 0
+    updateObjPoseSyncFromCurrentAnalysis()
     renderAll()
   })
 }
@@ -846,6 +987,7 @@ async function analyzeCurrentLiveFrame(
       analyzedTimeSec: state.liveVideo.currentTimeSec,
       errorMessage: "動画フレームがまだ読み込まれていません。",
     }
+    updateObjPoseSyncFromCurrentAnalysis()
     renderAll()
     return
   }
@@ -858,6 +1000,7 @@ async function analyzeCurrentLiveFrame(
     status: "analyzing",
     errorMessage: null,
   }
+  updateObjPoseSyncFromCurrentAnalysis()
   renderAll()
 
   try {
@@ -869,6 +1012,7 @@ async function analyzeCurrentLiveFrame(
     const timeSec = liveVideoElement.currentTime || state.liveVideo.currentTimeSec || 0
     const result = detector.detectForVideo(liveVideoElement, nextLiveTimestampMs())
     state.currentAnalysis = buildCurrentFrameAnalysis(result, timeSec)
+    updateObjPoseSyncFromCurrentAnalysis()
     lastAutoLiveAnalysisAtSec = timeSec
 
     if (reason === "manual") {
@@ -891,6 +1035,7 @@ async function analyzeCurrentLiveFrame(
         status: "error",
       },
     }
+    updateObjPoseSyncFromCurrentAnalysis()
     state.liveMediaPipe.status = "error"
     state.liveMediaPipe.error = message
     disposeLiveFaceLandmarker("error")
@@ -916,6 +1061,33 @@ function maybeAnalyzeLiveFrame() {
   }
 
   void analyzeCurrentLiveFrame("timeupdate")
+}
+
+function updateObjPoseSyncFromCurrentAnalysis() {
+  const pose = state.currentAnalysis.pose
+  if (
+    !state.objPoseSync.enabled ||
+    state.currentAnalysis.status !== "detected" ||
+    !hasFullPose(pose)
+  ) {
+    state.objPoseSync = {
+      ...state.objPoseSync,
+      appliedYawDeg: null,
+      appliedPitchDeg: null,
+      appliedRollDeg: null,
+      source: "none",
+    }
+    return
+  }
+
+  state.objPoseSync = {
+    ...state.objPoseSync,
+    appliedYawDeg: (pose.yaw ?? 0) * state.objPoseSync.yawSign + state.objPoseSync.yawOffsetDeg,
+    appliedPitchDeg:
+      (pose.pitch ?? 0) * state.objPoseSync.pitchSign + state.objPoseSync.pitchOffsetDeg,
+    appliedRollDeg: (pose.roll ?? 0) * state.objPoseSync.rollSign + state.objPoseSync.rollOffsetDeg,
+    source: "current_frame",
+  }
 }
 
 function buildCurrentFrameAnalysis(
@@ -1119,6 +1291,7 @@ function seekLiveVideoTo(targetSec: number) {
 }
 
 function renderAll() {
+  updateObjPoseSyncFromCurrentAnalysis()
   renderPreviewTabs()
   renderPreviewPanels()
   renderControls()
@@ -1151,6 +1324,11 @@ function renderPreviewPanels() {
 
   const objSummary = getElement<HTMLElement>("[data-obj-preview-summary]")
   objSummary.innerHTML = renderObjPreviewSummary()
+
+  const liveObjStage = getElement<HTMLElement>("[data-live-obj-stage]")
+  liveObjStage.dataset.previewStatus = objPreviewStatus
+  getElement<HTMLElement>("[data-live-obj-preview-message]").textContent = getObjPoseSyncMessage()
+  renderObjPoseSyncCanvas()
 }
 
 function renderControls() {
@@ -1178,6 +1356,15 @@ function renderControls() {
 
   renderLiveAnalysisCard()
   getElement<HTMLSelectElement>('[data-control="obj-preview-mode"]').value = state.objPreview.mode
+  getElement<HTMLSelectElement>('[data-control="live-obj-preview-mode"]').value = state.objPreview.mode
+  setChecked("obj-pose-sync-enabled", state.objPoseSync.enabled)
+  setChecked("obj-pose-yaw-invert", state.objPoseSync.yawSign === -1)
+  setChecked("obj-pose-pitch-invert", state.objPoseSync.pitchSign === -1)
+  setChecked("obj-pose-roll-invert", state.objPoseSync.rollSign === -1)
+  setNumberValue("obj-pose-yaw-offset", state.objPoseSync.yawOffsetDeg)
+  setNumberValue("obj-pose-pitch-offset", state.objPoseSync.pitchOffsetDeg)
+  setNumberValue("obj-pose-roll-offset", state.objPoseSync.rollOffsetDeg)
+  renderLiveObjPoseSummaryCard()
 }
 
 function renderLiveAnalysisCard() {
@@ -1206,19 +1393,66 @@ function renderLiveAnalysisCard() {
   `
 }
 
+function renderLiveObjPoseSummaryCard() {
+  const card = getElement<HTMLElement>("[data-live-obj-pose-summary]")
+  const poseSync = state.objPoseSync
+
+  card.innerHTML = `
+    <p>${escapeHtml(getObjPoseSyncMessage())}</p>
+    <dl class="review-grid">
+      <div><dt>syncStatus</dt><dd>${getObjPoseSyncStatus()}</dd></div>
+      <div><dt>poseSource</dt><dd>${poseSync.source}</dd></div>
+      <div><dt>poseSyncEnabled</dt><dd>${String(poseSync.enabled)}</dd></div>
+      <div><dt>currentYawDeg</dt><dd>${formatNullableNumber(state.currentAnalysis.pose.yaw)}</dd></div>
+      <div><dt>currentPitchDeg</dt><dd>${formatNullableNumber(state.currentAnalysis.pose.pitch)}</dd></div>
+      <div><dt>currentRollDeg</dt><dd>${formatNullableNumber(state.currentAnalysis.pose.roll)}</dd></div>
+      <div><dt>appliedYawDeg</dt><dd>${formatNullableNumber(poseSync.appliedYawDeg)}</dd></div>
+      <div><dt>appliedPitchDeg</dt><dd>${formatNullableNumber(poseSync.appliedPitchDeg)}</dd></div>
+      <div><dt>appliedRollDeg</dt><dd>${formatNullableNumber(poseSync.appliedRollDeg)}</dd></div>
+      <div><dt>yawSign</dt><dd>${poseSync.yawSign}</dd></div>
+      <div><dt>pitchSign</dt><dd>${poseSync.pitchSign}</dd></div>
+      <div><dt>rollSign</dt><dd>${poseSync.rollSign}</dd></div>
+      <div><dt>yawOffsetDeg</dt><dd>${formatNumber(poseSync.yawOffsetDeg)}</dd></div>
+      <div><dt>pitchOffsetDeg</dt><dd>${formatNumber(poseSync.pitchOffsetDeg)}</dd></div>
+      <div><dt>rollOffsetDeg</dt><dd>${formatNumber(poseSync.rollOffsetDeg)}</dd></div>
+      <div><dt>sampledPointCount</dt><dd>${state.objPoseSyncStats.sampledPointCount}</dd></div>
+      <div><dt>sampledEdgeCount</dt><dd>${state.objPoseSyncStats.sampledEdgeCount}</dd></div>
+    </dl>
+  `
+}
+
 function renderObjPreviewCanvas() {
   const status = getObjPreviewStatus()
-  state.objPreviewStats = status === "ready" ? calculateObjPreviewStats() : {
+  state.objPreviewStats = status === "ready" ? calculateObjPreviewStats(state.objPreview) : {
     sampledPointCount: 0,
     sampledEdgeCount: 0,
   }
 
-  const context = objPreviewCanvas.getContext("2d")
+  renderObjPreviewCanvasTo(objPreviewCanvas, state.objPreview)
+}
+
+function renderObjPoseSyncCanvas() {
+  const status = getObjPreviewStatus()
+  const previewState = getObjPoseSyncPreviewState()
+  state.objPoseSyncStats = status === "ready" ? calculateObjPreviewStats(previewState) : {
+    sampledPointCount: 0,
+    sampledEdgeCount: 0,
+  }
+
+  renderObjPreviewCanvasTo(liveObjPosePreviewCanvas, previewState)
+}
+
+function renderObjPreviewCanvasTo(
+  canvas: HTMLCanvasElement,
+  previewState: ObjPreviewState,
+) {
+  const status = getObjPreviewStatus()
+  const context = canvas.getContext("2d")
   if (!context) {
     return
   }
 
-  const rect = objPreviewCanvas.getBoundingClientRect()
+  const rect = canvas.getBoundingClientRect()
   if (rect.width <= 0 || rect.height <= 0) {
     return
   }
@@ -1226,9 +1460,9 @@ function renderObjPreviewCanvas() {
   const dpr = window.devicePixelRatio || 1
   const targetWidth = Math.round(rect.width * dpr)
   const targetHeight = Math.round(rect.height * dpr)
-  if (objPreviewCanvas.width !== targetWidth || objPreviewCanvas.height !== targetHeight) {
-    objPreviewCanvas.width = targetWidth
-    objPreviewCanvas.height = targetHeight
+  if (canvas.width !== targetWidth || canvas.height !== targetHeight) {
+    canvas.width = targetWidth
+    canvas.height = targetHeight
   }
 
   context.setTransform(dpr, 0, 0, dpr, 0, 0)
@@ -1246,22 +1480,22 @@ function renderObjPreviewCanvas() {
   const viewport = {
     centerX: rect.width / 2,
     centerY: rect.height / 2,
-    scale: getObjCanvasScale(),
+    scale: getObjCanvasScale(canvas),
   }
 
   context.save()
   context.lineCap = "round"
   context.lineJoin = "round"
 
-  if (state.objPreview.mode === "wireframe" || state.objPreview.mode === "points_wireframe") {
-    drawObjWireframe(context, summary.center, summary.maxDimension, viewport)
+  if (previewState.mode === "wireframe" || previewState.mode === "points_wireframe") {
+    drawObjWireframe(context, summary.center, summary.maxDimension, viewport, previewState)
   }
 
-  if (state.objPreview.mode === "points" || state.objPreview.mode === "points_wireframe") {
-    drawObjPoints(context, summary.center, summary.maxDimension, viewport)
+  if (previewState.mode === "points" || previewState.mode === "points_wireframe") {
+    drawObjPoints(context, summary.center, summary.maxDimension, viewport, previewState)
   }
 
-  drawObjAxisGuide(context, rect.height)
+  drawObjAxisGuide(context, rect.height, previewState)
   context.restore()
 }
 
@@ -1270,8 +1504,9 @@ function drawObjWireframe(
   center: ObjVertex,
   maxDimension: number,
   viewport: { centerX: number; centerY: number; scale: number },
+  previewState: ObjPreviewState,
 ) {
-  const edgeStep = getSampleStep(state.objGeometry.edges.length, state.objPreview.maxEdges)
+  const edgeStep = getSampleStep(state.objGeometry.edges.length, previewState.maxEdges)
   context.strokeStyle = "rgba(67, 99, 132, 0.32)"
   context.lineWidth = 1
   context.beginPath()
@@ -1284,8 +1519,8 @@ function drawObjWireframe(
       continue
     }
 
-    const p1 = projectObjVertex(from, center, maxDimension, viewport)
-    const p2 = projectObjVertex(to, center, maxDimension, viewport)
+    const p1 = projectObjVertex(from, center, maxDimension, viewport, previewState)
+    const p2 = projectObjVertex(to, center, maxDimension, viewport, previewState)
     context.moveTo(p1.x, p1.y)
     context.lineTo(p2.x, p2.y)
   }
@@ -1298,8 +1533,9 @@ function drawObjPoints(
   center: ObjVertex,
   maxDimension: number,
   viewport: { centerX: number; centerY: number; scale: number },
+  previewState: ObjPreviewState,
 ) {
-  const pointStep = getSampleStep(state.objGeometry.vertices.length, state.objPreview.maxPoints)
+  const pointStep = getSampleStep(state.objGeometry.vertices.length, previewState.maxPoints)
   context.fillStyle = "rgba(18, 31, 44, 0.64)"
 
   for (let index = 0; index < state.objGeometry.vertices.length; index += pointStep) {
@@ -1308,6 +1544,7 @@ function drawObjPoints(
       center,
       maxDimension,
       viewport,
+      previewState,
     )
     context.beginPath()
     context.arc(point.x, point.y, 1.35, 0, Math.PI * 2)
@@ -1318,6 +1555,7 @@ function drawObjPoints(
 function drawObjAxisGuide(
   context: CanvasRenderingContext2D,
   canvasHeight: number,
+  previewState: ObjPreviewState,
 ) {
   const originX = 18
   const originY = canvasHeight - 18
@@ -1330,7 +1568,7 @@ function drawObjAxisGuide(
 
   context.font = "700 11px Inter, system-ui, sans-serif"
   axes.forEach((axis) => {
-    const rotated = rotateObjPoint(axis.vertex)
+    const rotated = rotateObjPoint(axis.vertex, previewState)
     const x = originX + rotated.x * length
     const y = originY - rotated.y * length
     context.strokeStyle = axis.color
@@ -1349,25 +1587,26 @@ function projectObjVertex(
   center: ObjVertex,
   maxDimension: number,
   viewport: { centerX: number; centerY: number; scale: number },
+  previewState: ObjPreviewState,
 ) {
   const normalized = {
     x: (vertex.x - center.x) / maxDimension,
     y: (vertex.y - center.y) / maxDimension,
     z: (vertex.z - center.z) / maxDimension,
   }
-  const rotated = rotateObjPoint(normalized)
+  const rotated = rotateObjPoint(normalized, previewState)
 
   return {
-    x: viewport.centerX + (rotated.x * state.objPreview.zoom + state.objPreview.panX) * viewport.scale,
-    y: viewport.centerY - (rotated.y * state.objPreview.zoom + state.objPreview.panY) * viewport.scale,
+    x: viewport.centerX + (rotated.x * previewState.zoom + previewState.panX) * viewport.scale,
+    y: viewport.centerY - (rotated.y * previewState.zoom + previewState.panY) * viewport.scale,
     z: rotated.z,
   }
 }
 
-function rotateObjPoint(point: ObjVertex): ObjVertex {
-  const yaw = degreesToRadians(state.objPreview.yawDeg)
-  const pitch = degreesToRadians(state.objPreview.pitchDeg)
-  const roll = degreesToRadians(state.objPreview.rollDeg)
+function rotateObjPoint(point: ObjVertex, previewState: ObjPreviewState): ObjVertex {
+  const yaw = degreesToRadians(previewState.yawDeg)
+  const pitch = degreesToRadians(previewState.pitchDeg)
+  const roll = degreesToRadians(previewState.rollDeg)
   const cosYaw = Math.cos(yaw)
   const sinYaw = Math.sin(yaw)
   const cosPitch = Math.cos(pitch)
@@ -1566,6 +1805,14 @@ function getSummaryItems(): Array<[string, string]> {
     ["objPreviewMode", state.objPreview.mode],
     ["objSampledPointCount", formatNullableCount(state.objPreviewStats.sampledPointCount)],
     ["objSampledEdgeCount", formatNullableCount(state.objPreviewStats.sampledEdgeCount)],
+    ["objPoseSyncEnabled", String(state.objPoseSync.enabled)],
+    ["objPoseSyncSource", state.objPoseSync.source],
+    ["objAppliedYawDeg", formatNullableNumber(state.objPoseSync.appliedYawDeg)],
+    ["objAppliedPitchDeg", formatNullableNumber(state.objPoseSync.appliedPitchDeg)],
+    ["objAppliedRollDeg", formatNullableNumber(state.objPoseSync.appliedRollDeg)],
+    ["objYawSign", String(state.objPoseSync.yawSign)],
+    ["objPitchSign", String(state.objPoseSync.pitchSign)],
+    ["objRollSign", String(state.objPoseSync.rollSign)],
     ["objErrorMessage", state.objErrorMessage ?? "null"],
     ["renderedIdealStatus", "not_implemented"],
     ["warpStatus", "not_implemented"],
@@ -1590,6 +1837,8 @@ function getCurrentItems(): Array<[string, string]> {
     ["expressionSummary", formatExpressionSummary(state.currentAnalysis.expressionSummary)],
     ["qualityScore", formatNullableNumber(state.currentAnalysis.qualityScore)],
     ["qualitySummary", formatQualitySummary(state.currentAnalysis.qualitySummary)],
+    ["objPoseSyncSource", state.objPoseSync.source],
+    ["objAppliedPose", formatAppliedObjPose()],
     ["liveMediaPipeStatus", state.liveMediaPipe.status],
     ["liveTimestampMs", formatNullableNumber(state.liveMediaPipe.liveTimestampMs)],
     ["errorMessage", state.currentAnalysis.errorMessage ?? state.liveVideo.errorMessage ?? "null"],
@@ -1622,6 +1871,11 @@ function getObjItems(): Array<[string, string]> {
     ["previewMode", state.objPreview.mode],
     ["sampledPointCount", formatNullableCount(state.objPreviewStats.sampledPointCount)],
     ["sampledEdgeCount", formatNullableCount(state.objPreviewStats.sampledEdgeCount)],
+    ["objPoseSyncEnabled", String(state.objPoseSync.enabled)],
+    ["objPoseSyncSource", state.objPoseSync.source],
+    ["objAppliedPose", formatAppliedObjPose()],
+    ["objPoseSyncSampledPointCount", formatNullableCount(state.objPoseSyncStats.sampledPointCount)],
+    ["objPoseSyncSampledEdgeCount", formatNullableCount(state.objPoseSyncStats.sampledEdgeCount)],
     ["errorMessage", state.objErrorMessage ?? "null"],
   ]
 }
@@ -1653,10 +1907,21 @@ function getRawState() {
     objFile: state.objFile,
     objSummary: state.objSummary,
     objPreviewState: getRoundedObjPreviewState(),
+    objPoseSyncState: getRoundedObjPoseSyncState(),
+    currentPoseSummary: roundPoseForState(state.currentAnalysis.pose),
+    appliedPoseSummary: {
+      yaw: roundForState(state.objPoseSync.appliedYawDeg),
+      pitch: roundForState(state.objPoseSync.appliedPitchDeg),
+      roll: roundForState(state.objPoseSync.appliedRollDeg),
+      source: state.objPoseSync.source,
+      enabled: state.objPoseSync.enabled,
+    },
     verticesPreview: state.objGeometry.vertices.slice(0, 5).map(roundPointForState),
     facesPreview: state.objGeometry.faces.slice(0, 5),
     sampledPointCount: state.objPreviewStats.sampledPointCount,
     sampledEdgeCount: state.objPreviewStats.sampledEdgeCount,
+    poseSyncSampledPointCount: state.objPoseSyncStats.sampledPointCount,
+    poseSyncSampledEdgeCount: state.objPoseSyncStats.sampledEdgeCount,
     objErrorMessage: state.objErrorMessage,
     liveVideo: getLiveVideoRawSummary(),
     liveMediaPipe: {
@@ -1817,6 +2082,22 @@ function createDefaultObjPreviewState(): ObjPreviewState {
   }
 }
 
+function createDefaultObjPoseSyncState(): ObjPoseSyncState {
+  return {
+    enabled: true,
+    yawSign: 1,
+    pitchSign: 1,
+    rollSign: 1,
+    yawOffsetDeg: 0,
+    pitchOffsetDeg: 0,
+    rollOffsetDeg: 0,
+    appliedYawDeg: null,
+    appliedPitchDeg: null,
+    appliedRollDeg: null,
+    source: "none",
+  }
+}
+
 function createEmptyLiveVideoState(): LiveVideoState {
   return {
     loaded: false,
@@ -1964,6 +2245,29 @@ function getObjPreviewMessage(status: ObjPreviewStatus) {
   return "OBJファイルを読み込むと、ここに OBJ 3D preview を表示します。"
 }
 
+function getObjPoseSyncMessage() {
+  if (getObjPreviewStatus() !== "ready") {
+    return "OBJを読み込むと、現在姿勢を反映したOBJ previewを表示します。"
+  }
+  if (state.currentAnalysis.status !== "detected" || !hasFullPose(state.currentAnalysis.pose)) {
+    return "現在フレーム解析を実行すると、OBJに現在姿勢を反映します。"
+  }
+  if (!state.objPoseSync.enabled) {
+    return "pose sync がOFFのため、現在姿勢はOBJ previewへ反映していません。"
+  }
+  return "現在姿勢を反映したOBJ previewを表示しています。"
+}
+
+function getObjPoseSyncStatus() {
+  if (getObjPreviewStatus() !== "ready") {
+    return "obj_not_ready"
+  }
+  if (!state.objPoseSync.enabled) {
+    return "disabled"
+  }
+  return state.objPoseSync.source === "current_frame" ? "synced" : "waiting_current_frame"
+}
+
 function renderObjPreviewSummary() {
   const summary = state.objSummary
   if (!state.objFile.loaded) {
@@ -2056,6 +2360,7 @@ function resetLiveAnalysisResults() {
   disposeLiveFaceLandmarker("uninitialized")
   resetLiveTimestamp()
   state.currentAnalysis = createEmptyCurrentAnalysis()
+  updateObjPoseSyncFromCurrentAnalysis()
   liveAnalysisRequestId += 1
   liveAnalysisInProgress = false
   lastAutoLiveAnalysisAtSec = Number.NEGATIVE_INFINITY
@@ -2149,6 +2454,10 @@ function setChecked(action: string, checked: boolean) {
   getElement<HTMLInputElement>(`[data-action="${action}"]`).checked = checked
 }
 
+function setNumberValue(control: string, value: number) {
+  getElement<HTMLInputElement>(`[data-control="${control}"]`).value = formatNumber(value)
+}
+
 function setDisabled(selector: string, disabled: boolean) {
   getElement<HTMLButtonElement | HTMLInputElement | HTMLSelectElement>(selector).disabled = disabled
 }
@@ -2222,6 +2531,10 @@ function formatStringList(values: string[]) {
 
 function formatPose(pose: ReferencePose) {
   return `yaw ${formatNullableNumber(pose.yaw)} / pitch ${formatNullableNumber(pose.pitch)} / roll ${formatNullableNumber(pose.roll)}`
+}
+
+function formatAppliedObjPose() {
+  return `yaw ${formatNullableNumber(state.objPoseSync.appliedYawDeg)} / pitch ${formatNullableNumber(state.objPoseSync.appliedPitchDeg)} / roll ${formatNullableNumber(state.objPoseSync.appliedRollDeg)}`
 }
 
 function formatExpressionSummary(summary: ExpressionSummary | null) {
@@ -2300,16 +2613,44 @@ function getRoundedObjPreviewState() {
   }
 }
 
-function calculateObjPreviewStats(): ObjPreviewStats {
+function getRoundedObjPoseSyncState() {
+  return {
+    enabled: state.objPoseSync.enabled,
+    yawSign: state.objPoseSync.yawSign,
+    pitchSign: state.objPoseSync.pitchSign,
+    rollSign: state.objPoseSync.rollSign,
+    yawOffsetDeg: roundForState(state.objPoseSync.yawOffsetDeg),
+    pitchOffsetDeg: roundForState(state.objPoseSync.pitchOffsetDeg),
+    rollOffsetDeg: roundForState(state.objPoseSync.rollOffsetDeg),
+    appliedYawDeg: roundForState(state.objPoseSync.appliedYawDeg),
+    appliedPitchDeg: roundForState(state.objPoseSync.appliedPitchDeg),
+    appliedRollDeg: roundForState(state.objPoseSync.appliedRollDeg),
+    source: state.objPoseSync.source,
+  }
+}
+
+function getObjPoseSyncPreviewState(): ObjPreviewState {
+  return {
+    ...state.objPreview,
+    yawDeg: state.objPoseSync.appliedYawDeg ?? 0,
+    pitchDeg: state.objPoseSync.appliedPitchDeg ?? 0,
+    rollDeg: state.objPoseSync.appliedRollDeg ?? 0,
+    zoom: 1,
+    panX: 0,
+    panY: 0,
+  }
+}
+
+function calculateObjPreviewStats(previewState: ObjPreviewState): ObjPreviewStats {
   return {
     sampledPointCount:
-      state.objPreview.mode === "wireframe"
+      previewState.mode === "wireframe"
         ? 0
-        : getSampledCount(state.objGeometry.vertices.length, state.objPreview.maxPoints),
+        : getSampledCount(state.objGeometry.vertices.length, previewState.maxPoints),
     sampledEdgeCount:
-      state.objPreview.mode === "points"
+      previewState.mode === "points"
         ? 0
-        : getSampledCount(state.objGeometry.edges.length, state.objPreview.maxEdges),
+        : getSampledCount(state.objGeometry.edges.length, previewState.maxEdges),
   }
 }
 
@@ -2327,8 +2668,8 @@ function getSampledCount(total: number, maxCount: number) {
   return Math.ceil(total / getSampleStep(total, maxCount))
 }
 
-function getObjCanvasScale() {
-  const rect = objPreviewCanvas.getBoundingClientRect()
+function getObjCanvasScale(canvas: HTMLCanvasElement = objPreviewCanvas) {
+  const rect = canvas.getBoundingClientRect()
   return Math.max(1, Math.min(rect.width, rect.height) * 0.42)
 }
 
