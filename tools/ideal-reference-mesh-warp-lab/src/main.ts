@@ -202,15 +202,54 @@ type MeshVertexPair = {
   reasons: string[]
 }
 
+type DynamicGridPointPreview = {
+  id: string
+  kind: MeshVertexKind
+  x: number
+  y: number
+  reasons: string[]
+}
+
+type DynamicGridDebug = {
+  mode: "dynamic"
+  acceptedFaceLandmarkCount: number
+  faceMedianNearestDistance: number | null
+  faceNearestDistanceSampleCount: number
+  nearFaceGridSpacing: number | null
+  backgroundGridSpacing: number | null
+  screenEdgeAnchorSpacing: number | null
+  nearFaceGridSpacingRatioToFaceMedian: number | null
+  backgroundGridSpacingRatioToFaceMedian: number | null
+  nearFaceGridCount: number
+  backgroundGridCount: number
+  screenEdgeAnchorCount: number
+  faceBounds: BoundsDebugSummary | null
+  expandedNearFaceBounds: BoundsDebugSummary | null
+  videoAspectRatio: number
+  gridPointPreview: DynamicGridPointPreview[]
+}
+
 type GridAnchorDisplayState = {
   showSourceGrid: boolean
   showTargetGrid: boolean
 }
 
 type MeshPrototypeSummary = {
+  gridMode: "dynamic"
   top1MatchedReferenceId: string | null
   currentLandmarkCount: number
   candidateAlignedIdealLandmarkCount: number
+  acceptedFaceLandmarkCount: number
+  faceMedianNearestDistance: number | null
+  faceNearestDistanceSampleCount: number
+  nearFaceGridSpacing: number | null
+  backgroundGridSpacing: number | null
+  screenEdgeAnchorSpacing: number | null
+  nearFaceGridSpacingRatioToFaceMedian: number | null
+  backgroundGridSpacingRatioToFaceMedian: number | null
+  faceBounds: BoundsDebugSummary | null
+  expandedNearFaceBounds: BoundsDebugSummary | null
+  videoAspectRatio: number
   visibleCurrentLandmarkCount: number
   excludedCurrentLandmarkCount: number
   faceSourceVertexCount: number
@@ -236,6 +275,7 @@ type CurrentIdealMeshPrototypeState = {
   idealMeshTargetVertices: MeshTargetVertex[]
   currentIdealMeshPairs: MeshVertexPair[]
   aspectDebug: MeshAspectDebug
+  dynamicGrid: DynamicGridDebug
   summary: MeshPrototypeSummary
 }
 
@@ -314,8 +354,18 @@ const EXPRESSION_REGION_USAGE_MULTIPLIER = 0.45
 const LARGE_DISPLACEMENT_USAGE_MULTIPLIER = 0.4
 const LARGE_DISPLACEMENT_THRESHOLD = 0.075
 const EXCLUDE_USAGE_WEIGHT_THRESHOLD = 0.15
-const NEAR_FACE_GRID_STEPS = 5
-const BACKGROUND_GRID_STEPS = 5
+const DYNAMIC_GRID_NEAR_FACE_EXPAND_RATIO = 0.2
+const DYNAMIC_GRID_FACE_EXCLUSION_RATIO = 0.04
+const DYNAMIC_GRID_NEAREST_SAMPLE_LIMIT = 160
+const DYNAMIC_GRID_DEFAULT_FACE_MEDIAN_DISTANCE = 0.018
+const NEAR_FACE_GRID_SPACING_RATIO = 1.5
+const BACKGROUND_GRID_SPACING_RATIO = 4
+const SCREEN_EDGE_ANCHOR_SPACING_RATIO = 1.25
+const MIN_NEAR_FACE_GRID_SPACING = 0.012
+const MAX_NEAR_FACE_GRID_SPACING = 0.04
+const MIN_BACKGROUND_GRID_SPACING = 0.04
+const MAX_BACKGROUND_GRID_SPACING = 0.12
+const GRID_VERTEX_KEY_PRECISION = 10000
 const MESH_SOURCE_COLOR = "rgba(20, 170, 130, 0.9)"
 const MESH_TARGET_COLOR = "rgba(244, 86, 120, 0.9)"
 const GRID_SOURCE_COLOR = "rgba(20, 170, 130, 0.78)"
@@ -1202,7 +1252,7 @@ function updateCurrentIdealMeshPrototype() {
     state.currentIdealMeshPrototype = {
       ...createEmptyCurrentIdealMeshPrototype(modelVideoAspectRatio, liveVideoAspectRatio),
       summary: {
-        ...createEmptyMeshPrototypeSummary(),
+        ...createEmptyMeshPrototypeSummary(liveVideoAspectRatio),
         top1MatchedReferenceId: state.top1Match.idealFrameId,
         currentLandmarkCount: current.landmarks478.length,
       },
@@ -1223,12 +1273,13 @@ function updateCurrentIdealMeshPrototype() {
       candidateAlignedIdealLandmarks,
       liveVideoAspectRatio,
     )
-  const currentMeshSourceVertices = buildCurrentMeshSourceVertices(
+  const currentMeshSource = buildCurrentMeshSourceVertices(
     acceptedCurrentLandmarks,
     current.landmarks478,
+    liveVideoAspectRatio,
   )
   const { idealMeshTargetVertices, currentIdealMeshPairs } = buildIdealMeshTargetVertices(
-    currentMeshSourceVertices,
+    currentMeshSource.vertices,
     candidateAlignedIdealLandmarks,
     liveVideoAspectRatio,
   )
@@ -1248,18 +1299,20 @@ function updateCurrentIdealMeshPrototype() {
     candidateAlignedIdealLandmarkCount: candidateAlignedIdealLandmarks.length,
     acceptedCurrentLandmarks,
     excludedCurrentLandmarks,
-    currentMeshSourceVertices,
+    currentMeshSourceVertices: currentMeshSource.vertices,
     currentIdealMeshPairs,
+    dynamicGrid: currentMeshSource.dynamicGrid,
   })
 
   state.currentIdealMeshPrototype = {
     candidateAlignedIdealLandmarks,
     acceptedCurrentLandmarks,
     excludedCurrentLandmarks,
-    currentMeshSourceVertices,
+    currentMeshSourceVertices: currentMeshSource.vertices,
     idealMeshTargetVertices,
     currentIdealMeshPairs,
     aspectDebug,
+    dynamicGrid: currentMeshSource.dynamicGrid,
     summary,
   }
 }
@@ -1424,7 +1477,11 @@ function selectCurrentMeshLandmarkVertices(
 function buildCurrentMeshSourceVertices(
   acceptedCurrentLandmarks: CurrentMeshLandmarkVertex[],
   currentLandmarks: ReferenceLandmark[],
-): MeshSourceVertex[] {
+  videoAspectRatio: number,
+): {
+  vertices: MeshSourceVertex[]
+  dynamicGrid: DynamicGridDebug
+} {
   const faceVertices: MeshSourceVertex[] = acceptedCurrentLandmarks.map((landmark) => ({
     id: landmark.id,
     kind: "faceLandmark",
@@ -1434,12 +1491,16 @@ function buildCurrentMeshSourceVertices(
     weight: landmark.usageWeight,
     reasons: landmark.reasons,
   }))
-  const faceBounds = getLandmarkBounds(currentLandmarks)
-  const nearFaceGrid = buildNearFaceGridVertices(faceBounds)
-  const backgroundGrid = buildBackgroundGridVertices(faceBounds)
-  const screenEdgeAnchors = buildScreenEdgeAnchorVertices()
+  const dynamicGrid = buildDynamicGridVertices(
+    acceptedCurrentLandmarks,
+    currentLandmarks,
+    videoAspectRatio,
+  )
 
-  return [...faceVertices, ...nearFaceGrid, ...backgroundGrid, ...screenEdgeAnchors]
+  return {
+    vertices: [...faceVertices, ...dynamicGrid.vertices],
+    dynamicGrid: dynamicGrid.debug,
+  }
 }
 
 function buildIdealMeshTargetVertices(
@@ -1469,7 +1530,7 @@ function buildIdealMeshTargetVertices(
       x: target.x,
       y: target.y,
       weight: usageWeight,
-      reasons: sourceVertex.kind === "faceLandmark" ? sourceVertex.reasons : ["fixedGridAnchor"],
+      reasons: sourceVertex.reasons,
     })
     currentIdealMeshPairs.push({
       id: sourceVertex.id,
@@ -1487,88 +1548,291 @@ function buildIdealMeshTargetVertices(
         videoAspectRatio,
       ),
       usageWeight,
-      reasons: sourceVertex.kind === "faceLandmark" ? sourceVertex.reasons : ["fixedGridAnchor"],
+      reasons: sourceVertex.reasons,
     })
   }
 
   return { idealMeshTargetVertices, currentIdealMeshPairs }
 }
 
-function buildNearFaceGridVertices(faceBounds: Rect): MeshSourceVertex[] {
-  const expanded = expandRect(faceBounds, 0.12)
+function buildDynamicGridVertices(
+  acceptedCurrentLandmarks: CurrentMeshLandmarkVertex[],
+  currentLandmarks: ReferenceLandmark[],
+  videoAspectRatio: number,
+): {
+  vertices: MeshSourceVertex[]
+  debug: DynamicGridDebug
+} {
+  const acceptedPoints = acceptedCurrentLandmarks
+    .map((landmark) => landmark.source)
+    .filter(isValidNormalizedPoint)
+  const faceBoundsSourcePoints =
+    acceptedPoints.length > 0 ? acceptedPoints : currentLandmarks.filter(isValidNormalizedPoint)
+  const faceBounds = getLandmarkBoundsOrNull(
+    faceBoundsSourcePoints.map((point) => toAspectCorrectedPoint(point, videoAspectRatio)),
+  )
+  const expandedNearFaceBounds = faceBounds
+    ? expandAspectCorrectedRect(
+        faceBounds,
+        DYNAMIC_GRID_NEAR_FACE_EXPAND_RATIO,
+        videoAspectRatio,
+      )
+    : null
+  const excludedFaceBounds = faceBounds
+    ? expandAspectCorrectedRect(
+        faceBounds,
+        DYNAMIC_GRID_FACE_EXCLUSION_RATIO,
+        videoAspectRatio,
+      )
+    : null
+  const density = estimateFaceLandmarkDensity(acceptedPoints, videoAspectRatio)
+  const faceMedianNearestDistance =
+    density.faceMedianNearestDistance ?? DYNAMIC_GRID_DEFAULT_FACE_MEDIAN_DISTANCE
+  const nearFaceGridSpacing = clamp(
+    faceMedianNearestDistance * NEAR_FACE_GRID_SPACING_RATIO,
+    MIN_NEAR_FACE_GRID_SPACING,
+    MAX_NEAR_FACE_GRID_SPACING,
+  )
+  const backgroundGridSpacing = clamp(
+    faceMedianNearestDistance * BACKGROUND_GRID_SPACING_RATIO,
+    MIN_BACKGROUND_GRID_SPACING,
+    MAX_BACKGROUND_GRID_SPACING,
+  )
+  const screenEdgeAnchorSpacing = backgroundGridSpacing * SCREEN_EDGE_ANCHOR_SPACING_RATIO
   const vertices: MeshSourceVertex[] = []
+  const occupiedKeys = new Set<string>()
 
-  for (let yIndex = 0; yIndex < NEAR_FACE_GRID_STEPS; yIndex += 1) {
-    for (let xIndex = 0; xIndex < NEAR_FACE_GRID_STEPS; xIndex += 1) {
-      const isPerimeter =
-        xIndex === 0 ||
-        yIndex === 0 ||
-        xIndex === NEAR_FACE_GRID_STEPS - 1 ||
-        yIndex === NEAR_FACE_GRID_STEPS - 1
-      if (!isPerimeter) {
-        continue
+  const addVertex = (
+    kind: MeshVertexKind,
+    point: Point2D,
+    idPrefix: string,
+    reasons: string[],
+  ) => {
+    const normalized = fromAspectCorrectedPoint(point, videoAspectRatio)
+    const vertexPoint = {
+      x: clamp(normalized.x, 0, 1),
+      y: clamp(normalized.y, 0, 1),
+    }
+    const key = createGridVertexKey(vertexPoint)
+    if (occupiedKeys.has(key)) {
+      return
+    }
+    occupiedKeys.add(key)
+    vertices.push({
+      id: `${idPrefix}:${countVerticesByKind(vertices, kind)}`,
+      kind,
+      x: vertexPoint.x,
+      y: vertexPoint.y,
+      weight: 0,
+      reasons,
+    })
+  }
+
+  if (expandedNearFaceBounds && excludedFaceBounds) {
+    forEachAspectCorrectedGridPoint(
+      expandedNearFaceBounds,
+      nearFaceGridSpacing,
+      (point) => {
+        if (isPointInsideRect(point, excludedFaceBounds)) {
+          return
+        }
+        addVertex("nearFaceGrid", point, "grid:near", ["dynamicNearFaceGrid"])
+      },
+    )
+  }
+
+  forEachAspectCorrectedGridPoint(
+    { x: 0, y: 0, width: videoAspectRatio, height: 1 },
+    backgroundGridSpacing,
+    (point) => {
+      if (expandedNearFaceBounds && isPointInsideRect(point, expandedNearFaceBounds)) {
+        return
       }
+      if (isPointOnAspectCorrectedScreenEdge(point, videoAspectRatio)) {
+        return
+      }
+      addVertex("backgroundGrid", point, "grid:background", ["dynamicBackgroundGrid"])
+    },
+  )
 
-      const x = interpolate(expanded.x, expanded.x + expanded.width, xIndex / (NEAR_FACE_GRID_STEPS - 1))
-      const y = interpolate(expanded.y, expanded.y + expanded.height, yIndex / (NEAR_FACE_GRID_STEPS - 1))
-      vertices.push({
-        id: `grid:near:${vertices.length}`,
-        kind: "nearFaceGrid",
-        x: clamp(x, 0, 1),
-        y: clamp(y, 0, 1),
-        weight: 0,
-        reasons: ["fixedGridAnchor"],
-      })
+  for (const point of buildScreenEdgeAnchorPoints(videoAspectRatio, screenEdgeAnchorSpacing)) {
+    addVertex("screenEdgeAnchor", point, "anchor:screen", ["dynamicScreenEdgeAnchor"])
+  }
+
+  const debug: DynamicGridDebug = {
+    mode: "dynamic",
+    acceptedFaceLandmarkCount: acceptedPoints.length,
+    faceMedianNearestDistance,
+    faceNearestDistanceSampleCount: density.faceNearestDistanceSampleCount,
+    nearFaceGridSpacing,
+    backgroundGridSpacing,
+    screenEdgeAnchorSpacing,
+    nearFaceGridSpacingRatioToFaceMedian: calculateSpacingRatio(
+      nearFaceGridSpacing,
+      faceMedianNearestDistance,
+    ),
+    backgroundGridSpacingRatioToFaceMedian: calculateSpacingRatio(
+      backgroundGridSpacing,
+      faceMedianNearestDistance,
+    ),
+    nearFaceGridCount: countVerticesByKind(vertices, "nearFaceGrid"),
+    backgroundGridCount: countVerticesByKind(vertices, "backgroundGrid"),
+    screenEdgeAnchorCount: countVerticesByKind(vertices, "screenEdgeAnchor"),
+    faceBounds: faceBounds ? createBoundsDebugSummary(faceBounds) : null,
+    expandedNearFaceBounds: expandedNearFaceBounds
+      ? createBoundsDebugSummary(expandedNearFaceBounds)
+      : null,
+    videoAspectRatio,
+    gridPointPreview: vertices.slice(0, LANDMARK_PREVIEW_COUNT).map((vertex) => ({
+      id: vertex.id,
+      kind: vertex.kind,
+      x: vertex.x,
+      y: vertex.y,
+      reasons: vertex.reasons,
+    })),
+  }
+
+  return { vertices, debug }
+}
+
+function estimateFaceLandmarkDensity(
+  points: Point2D[],
+  videoAspectRatio: number,
+): {
+  faceMedianNearestDistance: number | null
+  faceNearestDistanceSampleCount: number
+} {
+  const validPoints = points.filter(isValidNormalizedPoint)
+  if (validPoints.length < 2) {
+    return {
+      faceMedianNearestDistance: null,
+      faceNearestDistanceSampleCount: validPoints.length,
     }
   }
 
-  return vertices
-}
+  const step = Math.max(1, Math.ceil(validPoints.length / DYNAMIC_GRID_NEAREST_SAMPLE_LIMIT))
+  const sampledPoints = validPoints.filter((_, index) => index % step === 0)
+  const nearestDistances: number[] = []
 
-function buildBackgroundGridVertices(faceBounds: Rect): MeshSourceVertex[] {
-  const expandedFaceBounds = expandRect(faceBounds, 0.18)
-  const vertices: MeshSourceVertex[] = []
-
-  for (let yIndex = 0; yIndex < BACKGROUND_GRID_STEPS; yIndex += 1) {
-    for (let xIndex = 0; xIndex < BACKGROUND_GRID_STEPS; xIndex += 1) {
-      const x = xIndex / (BACKGROUND_GRID_STEPS - 1)
-      const y = yIndex / (BACKGROUND_GRID_STEPS - 1)
-      if (isPointInsideRect({ x, y }, expandedFaceBounds)) {
+  for (const point of sampledPoints) {
+    let nearest = Number.POSITIVE_INFINITY
+    for (const other of validPoints) {
+      if (point === other) {
         continue
       }
-
-      vertices.push({
-        id: `grid:background:${vertices.length}`,
-        kind: "backgroundGrid",
-        x,
-        y,
-        weight: 0,
-        reasons: ["fixedGridAnchor"],
-      })
+      nearest = Math.min(nearest, calculateAspectCorrectedDistance(point, other, videoAspectRatio))
+    }
+    if (Number.isFinite(nearest)) {
+      nearestDistances.push(nearest)
     }
   }
 
-  return vertices
+  return {
+    faceMedianNearestDistance: medianNumber(nearestDistances),
+    faceNearestDistanceSampleCount: nearestDistances.length,
+  }
 }
 
-function buildScreenEdgeAnchorVertices(): MeshSourceVertex[] {
-  return [
-    { x: 0, y: 0 },
-    { x: 0.5, y: 0 },
-    { x: 1, y: 0 },
-    { x: 0, y: 0.5 },
-    { x: 1, y: 0.5 },
-    { x: 0, y: 1 },
-    { x: 0.5, y: 1 },
-    { x: 1, y: 1 },
-  ].map((point, index) => ({
-    id: `anchor:screen:${index}`,
-    kind: "screenEdgeAnchor",
-    x: point.x,
-    y: point.y,
-    weight: 0,
-    reasons: ["fixedGridAnchor"],
-  }))
+function expandAspectCorrectedRect(
+  rect: Rect,
+  ratio: number,
+  videoAspectRatio: number,
+): Rect {
+  const marginX = rect.width * ratio
+  const marginY = rect.height * ratio
+  const minX = clamp(rect.x - marginX, 0, videoAspectRatio)
+  const minY = clamp(rect.y - marginY, 0, 1)
+  const maxX = clamp(rect.x + rect.width + marginX, 0, videoAspectRatio)
+  const maxY = clamp(rect.y + rect.height + marginY, 0, 1)
+
+  return {
+    x: minX,
+    y: minY,
+    width: Math.max(0.001, maxX - minX),
+    height: Math.max(0.001, maxY - minY),
+  }
+}
+
+function forEachAspectCorrectedGridPoint(
+  bounds: Rect,
+  spacing: number,
+  callback: (point: Point2D) => void,
+) {
+  const minX = bounds.x
+  const maxX = bounds.x + bounds.width
+  const minY = bounds.y
+  const maxY = bounds.y + bounds.height
+
+  for (let y = minY; y <= maxY + spacing * 0.5; y += spacing) {
+    for (let x = minX; x <= maxX + spacing * 0.5; x += spacing) {
+      callback({
+        x: clamp(x, minX, maxX),
+        y: clamp(y, minY, maxY),
+      })
+    }
+  }
+}
+
+function buildScreenEdgeAnchorPoints(
+  videoAspectRatio: number,
+  spacing: number,
+): Point2D[] {
+  const points: Point2D[] = []
+  const add = (point: Point2D) => {
+    const key = `${Math.round(point.x * GRID_VERTEX_KEY_PRECISION)}:${Math.round(
+      point.y * GRID_VERTEX_KEY_PRECISION,
+    )}`
+    if (
+      points.some(
+        (existing) =>
+          `${Math.round(existing.x * GRID_VERTEX_KEY_PRECISION)}:${Math.round(
+            existing.y * GRID_VERTEX_KEY_PRECISION,
+          )}` === key,
+      )
+    ) {
+      return
+    }
+    points.push(point)
+  }
+
+  const horizontalSegments = Math.max(1, Math.ceil(videoAspectRatio / spacing))
+  const verticalSegments = Math.max(1, Math.ceil(1 / spacing))
+
+  for (let index = 0; index <= horizontalSegments; index += 1) {
+    const x = (videoAspectRatio * index) / horizontalSegments
+    add({ x, y: 0 })
+    add({ x, y: 1 })
+  }
+
+  for (let index = 0; index <= verticalSegments; index += 1) {
+    const y = index / verticalSegments
+    add({ x: 0, y })
+    add({ x: videoAspectRatio, y })
+  }
+
+  return points
+}
+
+function createGridVertexKey(point: Point2D) {
+  return `${Math.round(point.x * GRID_VERTEX_KEY_PRECISION)}:${Math.round(
+    point.y * GRID_VERTEX_KEY_PRECISION,
+  )}`
+}
+
+function isPointOnAspectCorrectedScreenEdge(point: Point2D, videoAspectRatio: number) {
+  return (
+    point.x <= 0 ||
+    point.y <= 0 ||
+    point.x >= videoAspectRatio ||
+    point.y >= 1
+  )
+}
+
+function calculateSpacingRatio(spacing: number | null, faceMedian: number | null) {
+  if (!spacing || !faceMedian || faceMedian <= 0) {
+    return null
+  }
+  return spacing / faceMedian
 }
 
 function createMeshAspectDebug({
@@ -1627,6 +1891,7 @@ function summarizeCurrentIdealMeshPrototype({
   excludedCurrentLandmarks,
   currentMeshSourceVertices,
   currentIdealMeshPairs,
+  dynamicGrid,
 }: {
   currentLandmarkCount: number
   top1MatchedReferenceId: string | null
@@ -1635,14 +1900,29 @@ function summarizeCurrentIdealMeshPrototype({
   excludedCurrentLandmarks: CurrentMeshLandmarkVertex[]
   currentMeshSourceVertices: MeshSourceVertex[]
   currentIdealMeshPairs: MeshVertexPair[]
+  dynamicGrid: DynamicGridDebug
 }): MeshPrototypeSummary {
   const usageWeights = currentIdealMeshPairs.map((pair) => pair.usageWeight)
   const allLandmarkVertices = [...acceptedCurrentLandmarks, ...excludedCurrentLandmarks]
 
   return {
+    gridMode: dynamicGrid.mode,
     top1MatchedReferenceId,
     currentLandmarkCount,
     candidateAlignedIdealLandmarkCount,
+    acceptedFaceLandmarkCount: dynamicGrid.acceptedFaceLandmarkCount,
+    faceMedianNearestDistance: dynamicGrid.faceMedianNearestDistance,
+    faceNearestDistanceSampleCount: dynamicGrid.faceNearestDistanceSampleCount,
+    nearFaceGridSpacing: dynamicGrid.nearFaceGridSpacing,
+    backgroundGridSpacing: dynamicGrid.backgroundGridSpacing,
+    screenEdgeAnchorSpacing: dynamicGrid.screenEdgeAnchorSpacing,
+    nearFaceGridSpacingRatioToFaceMedian:
+      dynamicGrid.nearFaceGridSpacingRatioToFaceMedian,
+    backgroundGridSpacingRatioToFaceMedian:
+      dynamicGrid.backgroundGridSpacingRatioToFaceMedian,
+    faceBounds: dynamicGrid.faceBounds,
+    expandedNearFaceBounds: dynamicGrid.expandedNearFaceBounds,
+    videoAspectRatio: dynamicGrid.videoAspectRatio,
     visibleCurrentLandmarkCount: acceptedCurrentLandmarks.length,
     excludedCurrentLandmarkCount: excludedCurrentLandmarks.length,
     faceSourceVertexCount: countVerticesByKind(currentMeshSourceVertices, "faceLandmark"),
@@ -1901,6 +2181,21 @@ function countVerticesWithReason(
 
 function averageNumbers(values: number[]) {
   return values.reduce((sum, value) => sum + value, 0) / values.length
+}
+
+function medianNumber(values: number[]) {
+  if (values.length === 0) {
+    return null
+  }
+
+  const sorted = [...values].sort((a, b) => a - b)
+  const middle = Math.floor(sorted.length / 2)
+
+  if (sorted.length % 2 === 0) {
+    return (sorted[middle - 1] + sorted[middle]) / 2
+  }
+
+  return sorted[middle]
 }
 
 function getMissingBlendshapeKeys(blendshapes: ReferenceBlendshape[]) {
@@ -2188,11 +2483,26 @@ function createEmptyTop1Match(): ReferenceMatchResult {
   }
 }
 
-function createEmptyMeshPrototypeSummary(): MeshPrototypeSummary {
+function createEmptyMeshPrototypeSummary(videoAspectRatio = 1): MeshPrototypeSummary {
+  const dynamicGrid = createEmptyDynamicGridDebug(videoAspectRatio)
   return {
+    gridMode: dynamicGrid.mode,
     top1MatchedReferenceId: null,
     currentLandmarkCount: 0,
     candidateAlignedIdealLandmarkCount: 0,
+    acceptedFaceLandmarkCount: dynamicGrid.acceptedFaceLandmarkCount,
+    faceMedianNearestDistance: dynamicGrid.faceMedianNearestDistance,
+    faceNearestDistanceSampleCount: dynamicGrid.faceNearestDistanceSampleCount,
+    nearFaceGridSpacing: dynamicGrid.nearFaceGridSpacing,
+    backgroundGridSpacing: dynamicGrid.backgroundGridSpacing,
+    screenEdgeAnchorSpacing: dynamicGrid.screenEdgeAnchorSpacing,
+    nearFaceGridSpacingRatioToFaceMedian:
+      dynamicGrid.nearFaceGridSpacingRatioToFaceMedian,
+    backgroundGridSpacingRatioToFaceMedian:
+      dynamicGrid.backgroundGridSpacingRatioToFaceMedian,
+    faceBounds: dynamicGrid.faceBounds,
+    expandedNearFaceBounds: dynamicGrid.expandedNearFaceBounds,
+    videoAspectRatio: dynamicGrid.videoAspectRatio,
     visibleCurrentLandmarkCount: 0,
     excludedCurrentLandmarkCount: 0,
     faceSourceVertexCount: 0,
@@ -2208,6 +2518,27 @@ function createEmptyMeshPrototypeSummary(): MeshPrototypeSummary {
     eyeSuppressedCount: 0,
     largeDisplacementSuppressedCount: 0,
     invalidExcludedCount: 0,
+  }
+}
+
+function createEmptyDynamicGridDebug(videoAspectRatio = 1): DynamicGridDebug {
+  return {
+    mode: "dynamic",
+    acceptedFaceLandmarkCount: 0,
+    faceMedianNearestDistance: null,
+    faceNearestDistanceSampleCount: 0,
+    nearFaceGridSpacing: null,
+    backgroundGridSpacing: null,
+    screenEdgeAnchorSpacing: null,
+    nearFaceGridSpacingRatioToFaceMedian: null,
+    backgroundGridSpacingRatioToFaceMedian: null,
+    nearFaceGridCount: 0,
+    backgroundGridCount: 0,
+    screenEdgeAnchorCount: 0,
+    faceBounds: null,
+    expandedNearFaceBounds: null,
+    videoAspectRatio,
+    gridPointPreview: [],
   }
 }
 
@@ -2243,7 +2574,8 @@ function createEmptyCurrentIdealMeshPrototype(
     idealMeshTargetVertices: [],
     currentIdealMeshPairs: [],
     aspectDebug: createEmptyMeshAspectDebug(modelVideoAspectRatio, liveVideoAspectRatio),
-    summary: createEmptyMeshPrototypeSummary(),
+    dynamicGrid: createEmptyDynamicGridDebug(liveVideoAspectRatio),
+    summary: createEmptyMeshPrototypeSummary(liveVideoAspectRatio),
   }
 }
 
@@ -2480,9 +2812,30 @@ function createSummaryContent() {
     ["Pose distance", formatSeconds(state.top1Match.poseDistance)],
     ["Expression distance", formatSeconds(state.top1Match.expressionDistance)],
     ["top1MatchedReferenceId", meshSummary.top1MatchedReferenceId ?? "-"],
+    ["gridMode", meshSummary.gridMode],
     ["currentLandmarkCount", String(meshSummary.currentLandmarkCount)],
     ["visibleCurrentLandmarkCount", String(meshSummary.visibleCurrentLandmarkCount)],
     ["excludedCurrentLandmarkCount", String(meshSummary.excludedCurrentLandmarkCount)],
+    ["acceptedFaceLandmarkCount", String(meshSummary.acceptedFaceLandmarkCount)],
+    [
+      "faceMedianNearestDistance",
+      formatMetric(meshSummary.faceMedianNearestDistance),
+    ],
+    [
+      "faceNearestDistanceSampleCount",
+      String(meshSummary.faceNearestDistanceSampleCount),
+    ],
+    ["nearFaceGridSpacing", formatMetric(meshSummary.nearFaceGridSpacing)],
+    ["backgroundGridSpacing", formatMetric(meshSummary.backgroundGridSpacing)],
+    ["screenEdgeAnchorSpacing", formatMetric(meshSummary.screenEdgeAnchorSpacing)],
+    [
+      "nearFaceGridSpacingRatioToFaceMedian",
+      formatMetric(meshSummary.nearFaceGridSpacingRatioToFaceMedian),
+    ],
+    [
+      "backgroundGridSpacingRatioToFaceMedian",
+      formatMetric(meshSummary.backgroundGridSpacingRatioToFaceMedian),
+    ],
     ["faceSourceVertexCount", String(meshSummary.faceSourceVertexCount)],
     ["nearFaceGridCount", String(meshSummary.nearFaceGridCount)],
     ["backgroundGridCount", String(meshSummary.backgroundGridCount)],
@@ -2502,6 +2855,9 @@ function createSummaryContent() {
     ["invalidExcludedCount", String(meshSummary.invalidExcludedCount)],
     ["gridAnchorDisplay", formatGridAnchorDisplay(gridAnchorDisplay)],
     ["videoAspectRatio", formatMetric(aspectDebug.videoAspectRatio)],
+    ["dynamicGrid videoAspectRatio", formatMetric(meshSummary.videoAspectRatio)],
+    ["faceBounds", formatBoundsSummary(meshSummary.faceBounds)],
+    ["expandedNearFaceBounds", formatBoundsSummary(meshSummary.expandedNearFaceBounds)],
     ["modelVideoAspectRatio", formatMetric(aspectDebug.modelVideoAspectRatio)],
     ["liveVideoAspectRatio", formatMetric(aspectDebug.liveVideoAspectRatio)],
     ["alignment scale", formatMetric(alignmentDebug?.scale ?? null)],
@@ -2676,6 +3032,24 @@ function createMeshPrototypeContent() {
     ["top1 reference matching", state.top1Match.matched ? "matched" : "not matched"],
     ["top1MatchedReferenceId", summary.top1MatchedReferenceId ?? "-"],
     ["candidateAlignedIdealLandmarkCount", String(summary.candidateAlignedIdealLandmarkCount)],
+    ["gridMode", summary.gridMode],
+    ["acceptedFaceLandmarkCount", String(summary.acceptedFaceLandmarkCount)],
+    ["faceMedianNearestDistance", formatMetric(summary.faceMedianNearestDistance)],
+    [
+      "faceNearestDistanceSampleCount",
+      String(summary.faceNearestDistanceSampleCount),
+    ],
+    ["nearFaceGridSpacing", formatMetric(summary.nearFaceGridSpacing)],
+    ["backgroundGridSpacing", formatMetric(summary.backgroundGridSpacing)],
+    ["screenEdgeAnchorSpacing", formatMetric(summary.screenEdgeAnchorSpacing)],
+    [
+      "nearFaceGridSpacingRatioToFaceMedian",
+      formatMetric(summary.nearFaceGridSpacingRatioToFaceMedian),
+    ],
+    [
+      "backgroundGridSpacingRatioToFaceMedian",
+      formatMetric(summary.backgroundGridSpacingRatioToFaceMedian),
+    ],
     ["currentLandmarkCount", String(summary.currentLandmarkCount)],
     ["visibleCurrentLandmarkCount", String(summary.visibleCurrentLandmarkCount)],
     ["excludedCurrentLandmarkCount", String(summary.excludedCurrentLandmarkCount)],
@@ -2699,6 +3073,27 @@ function createMeshPrototypeContent() {
     ["alignedIdeal rule", "candidate only; not final target for all 478 landmarks"],
     ["faceLandmark target", "selected current landmark index -> same candidate aligned ideal index"],
     ["grid / anchors target", "fixed source position"],
+  ])
+
+  const dynamicGridHeading = document.createElement("h3")
+  dynamicGridHeading.textContent = "Dynamic Grid"
+  const dynamicGridList = document.createElement("dl")
+  dynamicGridList.className = "summary-list"
+  appendDefinitionItems(dynamicGridList, [
+    ["mode", mesh.dynamicGrid.mode],
+    ["faceBounds", formatBoundsSummary(mesh.dynamicGrid.faceBounds)],
+    [
+      "expandedNearFaceBounds",
+      formatBoundsSummary(mesh.dynamicGrid.expandedNearFaceBounds),
+    ],
+    ["videoAspectRatio", formatMetric(mesh.dynamicGrid.videoAspectRatio)],
+    ["nearFaceGridCount", String(mesh.dynamicGrid.nearFaceGridCount)],
+    ["backgroundGridCount", String(mesh.dynamicGrid.backgroundGridCount)],
+    ["screenEdgeAnchorCount", String(mesh.dynamicGrid.screenEdgeAnchorCount)],
+    [
+      "gridPointPreview",
+      formatDynamicGridPointPreview(mesh.dynamicGrid.gridPointPreview),
+    ],
   ])
 
   const alignmentHeading = document.createElement("h3")
@@ -2778,6 +3173,8 @@ function createMeshPrototypeContent() {
     sourceList,
     targetHeading,
     targetList,
+    dynamicGridHeading,
+    dynamicGridList,
     alignmentHeading,
     alignmentList,
     boundsHeading,
@@ -2935,10 +3332,30 @@ function getCurrentIdealMeshPrototypeRawState() {
   return {
     summary: {
       ...mesh.summary,
+      faceMedianNearestDistance: roundMetricForState(
+        mesh.summary.faceMedianNearestDistance,
+      ),
+      nearFaceGridSpacing: roundMetricForState(mesh.summary.nearFaceGridSpacing),
+      backgroundGridSpacing: roundMetricForState(mesh.summary.backgroundGridSpacing),
+      screenEdgeAnchorSpacing: roundMetricForState(
+        mesh.summary.screenEdgeAnchorSpacing,
+      ),
+      nearFaceGridSpacingRatioToFaceMedian: roundMetricForState(
+        mesh.summary.nearFaceGridSpacingRatioToFaceMedian,
+      ),
+      backgroundGridSpacingRatioToFaceMedian: roundMetricForState(
+        mesh.summary.backgroundGridSpacingRatioToFaceMedian,
+      ),
+      faceBounds: roundBoundsDebugSummary(mesh.summary.faceBounds),
+      expandedNearFaceBounds: roundBoundsDebugSummary(
+        mesh.summary.expandedNearFaceBounds,
+      ),
+      videoAspectRatio: roundMetricForState(mesh.summary.videoAspectRatio),
       usageWeightAverage: roundMetricForState(mesh.summary.usageWeightAverage),
       usageWeightMin: roundMetricForState(mesh.summary.usageWeightMin),
       usageWeightMax: roundMetricForState(mesh.summary.usageWeightMax),
     },
+    dynamicGrid: roundDynamicGridDebug(mesh.dynamicGrid),
     aspectDebug: roundMeshAspectDebug(mesh.aspectDebug),
     candidateAlignedIdealLandmarkPreview: mesh.candidateAlignedIdealLandmarks
       .slice(0, LANDMARK_PREVIEW_COUNT)
@@ -3442,6 +3859,19 @@ function formatMeshLandmarkPreview(vertices: CurrentMeshLandmarkVertex[]) {
     .join(" / ")
 }
 
+function formatDynamicGridPointPreview(points: DynamicGridPointPreview[]) {
+  if (points.length === 0) {
+    return "-"
+  }
+
+  return points
+    .map(
+      (point) =>
+        `${point.id} ${point.kind} (${formatMetric(point.x)}, ${formatMetric(point.y)}) ${point.reasons.join("|")}`,
+    )
+    .join(" / ")
+}
+
 function formatAcceptedReviewPosition() {
   if (!hasAcceptedFrames()) {
     return "-"
@@ -3528,6 +3958,37 @@ function roundMeshVertexPair(pair: MeshVertexPair) {
     distanceAspectCorrected: roundMetricForState(pair.distanceAspectCorrected),
     usageWeight: roundMetricForState(pair.usageWeight),
     reasons: pair.reasons,
+  }
+}
+
+function roundDynamicGridDebug(debug: DynamicGridDebug) {
+  return {
+    mode: debug.mode,
+    acceptedFaceLandmarkCount: debug.acceptedFaceLandmarkCount,
+    faceMedianNearestDistance: roundMetricForState(debug.faceMedianNearestDistance),
+    faceNearestDistanceSampleCount: debug.faceNearestDistanceSampleCount,
+    nearFaceGridSpacing: roundMetricForState(debug.nearFaceGridSpacing),
+    backgroundGridSpacing: roundMetricForState(debug.backgroundGridSpacing),
+    screenEdgeAnchorSpacing: roundMetricForState(debug.screenEdgeAnchorSpacing),
+    nearFaceGridSpacingRatioToFaceMedian: roundMetricForState(
+      debug.nearFaceGridSpacingRatioToFaceMedian,
+    ),
+    backgroundGridSpacingRatioToFaceMedian: roundMetricForState(
+      debug.backgroundGridSpacingRatioToFaceMedian,
+    ),
+    nearFaceGridCount: debug.nearFaceGridCount,
+    backgroundGridCount: debug.backgroundGridCount,
+    screenEdgeAnchorCount: debug.screenEdgeAnchorCount,
+    faceBounds: roundBoundsDebugSummary(debug.faceBounds),
+    expandedNearFaceBounds: roundBoundsDebugSummary(debug.expandedNearFaceBounds),
+    videoAspectRatio: roundMetricForState(debug.videoAspectRatio),
+    gridPointPreview: debug.gridPointPreview.map((point) => ({
+      id: point.id,
+      kind: point.kind,
+      x: roundForState(point.x),
+      y: roundForState(point.y),
+      reasons: point.reasons,
+    })),
   }
 }
 
