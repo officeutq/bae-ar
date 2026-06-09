@@ -270,6 +270,54 @@ h3 {
   font-size: 12px;
 }
 
+.obj-preview-summary {
+  max-width: 720px;
+  width: min(100%, 720px);
+}
+
+.obj-preview-message {
+  color: #4f5c69;
+  margin-bottom: 12px;
+}
+
+.obj-preview-list {
+  background: rgba(255, 255, 255, 0.76);
+  border: 1px solid #d8e0e7;
+  border-radius: 8px;
+  display: grid;
+  gap: 0;
+  margin: 0;
+  overflow: hidden;
+  text-align: left;
+}
+
+.obj-preview-list div {
+  border-bottom: 1px solid #edf1f4;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 150px minmax(0, 1fr);
+  padding: 8px 10px;
+}
+
+.obj-preview-list div:last-child {
+  border-bottom: 0;
+}
+
+.obj-preview-list dt {
+  color: #66727e;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.obj-preview-list dd {
+  color: #26313b;
+  font-family:
+    "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 12px;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 .timeline-controls {
   align-items: center;
   display: grid;

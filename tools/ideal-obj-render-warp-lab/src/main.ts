@@ -3,6 +3,7 @@ import "./style.css"
 type PreviewTab = "obj" | "renderedIdeal" | "live"
 type DebugTab = "summary" | "current" | "obj" | "renderedIdeal" | "warpMesh" | "raw"
 type PlaybackStatus = "stopped" | "playing" | "paused"
+type ObjParseStatus = "not_loaded" | "not_parsed" | "parsed" | "error"
 
 type TabOption<TValue extends string> = {
   label: string
@@ -14,6 +15,48 @@ type ObjFileState = {
   fileName: string | null
   fileSize: number | null
   fileType: string | null
+}
+
+type ObjVertex = {
+  x: number
+  y: number
+  z: number
+}
+
+type ObjFace = {
+  indices: number[]
+}
+
+type ObjBounds = {
+  minX: number
+  minY: number
+  minZ: number
+  maxX: number
+  maxY: number
+  maxZ: number
+}
+
+type ObjSummary = {
+  fileName: string
+  fileSize: number
+  fileType: string
+  parseStatus: ObjParseStatus
+  vertexCount: number
+  faceCount: number
+  triangleFaceCount: number
+  polygonFaceCount: number
+  bounds: ObjBounds | null
+  center: { x: number; y: number; z: number } | null
+  size: { x: number; y: number; z: number } | null
+  maxDimension: number | null
+  warningCount: number
+  warningsPreview: string[]
+}
+
+type ObjParseResult = {
+  vertices: ObjVertex[]
+  faces: ObjFace[]
+  warnings: string[]
 }
 
 type VideoPreviewState = {
@@ -50,6 +93,8 @@ type LabState = {
     showTriangleMesh: boolean
   }
   objFile: ObjFileState
+  objSummary: ObjSummary
+  objErrorMessage: string | null
   liveVideo: VideoPreviewState
   currentAnalysis: CurrentAnalysisState
   logs: string[]
@@ -90,6 +135,8 @@ const state: LabState = {
     fileSize: null,
     fileType: null,
   },
+  objSummary: createEmptyObjSummary(),
+  objErrorMessage: null,
   liveVideo: {
     loaded: false,
     fileName: null,
@@ -109,7 +156,7 @@ const state: LabState = {
     expressionSummary: "not ready",
     quality: "not ready",
   },
-  logs: ["ラボを初期化しました。OBJ parse / OBJ render / MediaPipe解析 / WebGL warp は未実装です。"],
+  logs: ["ラボを初期化しました。OBJ render / MediaPipe解析 / WebGL warp は未実装です。"],
 }
 
 const app = document.querySelector<HTMLDivElement>("#app")
@@ -223,8 +270,8 @@ function renderObjPreview() {
       <div class="preview-stage">
         <div class="preview-placeholder">
           <h3>OBJプレビュー</h3>
-          <p>OBJファイルを読み込むと、ここにOBJプレビューを表示します。OBJ解析・3D表示は未実装です。</p>
-          <p class="file-summary" data-obj-preview-summary></p>
+          <p>OBJファイルを読み込むと、ここにOBJ summaryを表示します。3D表示は未実装です。</p>
+          <div class="obj-preview-summary" data-obj-preview-summary></div>
         </div>
       </div>
     </div>
@@ -287,7 +334,7 @@ function bindEvents() {
   objFileInput.addEventListener("change", (event) => {
     const file = getSelectedFile(event)
     if (file) {
-      loadObjFile(file)
+      void loadObjFile(file)
     }
   })
 
@@ -379,15 +426,32 @@ function bindOverlayToggle(
   })
 }
 
-function loadObjFile(file: File) {
+async function loadObjFile(file: File) {
   state.objFile = {
     loaded: true,
     fileName: file.name,
     fileSize: file.size,
     fileType: file.type || "unknown",
   }
+  state.objSummary = createFileObjSummary(file, "not_parsed")
+  state.objErrorMessage = null
   state.activePreviewTab = "obj"
   addLog(`OBJファイル情報を読み込みました: ${file.name}`)
+  renderAll()
+
+  try {
+    const objText = await file.text()
+    const parseResult = parseObjText(objText)
+    state.objSummary = createParsedObjSummary(file, parseResult)
+    addLog(`OBJ解析が完了しました: 頂点 ${state.objSummary.vertexCount} / 面 ${state.objSummary.faceCount} / 警告 ${state.objSummary.warningCount}`)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    console.error("OBJ parse failed", error)
+    state.objSummary = createFileObjSummary(file, "error")
+    state.objErrorMessage = message
+    addLog(`OBJ解析に失敗しました: ${message}`)
+  }
+
   renderAll()
 }
 
@@ -452,9 +516,7 @@ function renderPreviewPanels() {
   liveStage.dataset.loaded = String(state.liveVideo.loaded)
 
   const objSummary = getElement<HTMLElement>("[data-obj-preview-summary]")
-  objSummary.textContent = state.objFile.loaded
-    ? `${state.objFile.fileName} / ${formatBytes(state.objFile.fileSize)} / ${state.objFile.fileType}`
-    : ""
+  objSummary.innerHTML = renderObjPreviewSummary()
 }
 
 function renderControls() {
@@ -535,10 +597,15 @@ function renderDebugContent() {
 }
 
 function getSummaryItems(): Array<[string, string]> {
+  const objFileStatus = getObjFileStatus()
   return [
     ["labName", LAB_NAME],
     ["liveVideoStatus", state.liveVideo.loaded ? "loaded" : "not_loaded"],
-    ["objFileStatus", state.objFile.loaded ? "loaded" : "not_loaded"],
+    ["objFileStatus", objFileStatus],
+    ["objVertexCount", formatNullableCount(state.objFile.loaded ? state.objSummary.vertexCount : null)],
+    ["objFaceCount", formatNullableCount(state.objFile.loaded ? state.objSummary.faceCount : null)],
+    ["objWarningCount", formatNullableCount(state.objFile.loaded ? state.objSummary.warningCount : null)],
+    ["objErrorMessage", state.objErrorMessage ?? "null"],
     ["currentAnalysisStatus", state.currentAnalysis.status],
     ["renderedIdealStatus", "not_implemented"],
     ["warpStatus", "not_implemented"],
@@ -557,14 +624,23 @@ function getCurrentItems(): Array<[string, string]> {
 }
 
 function getObjItems(): Array<[string, string]> {
+  const summary = state.objSummary
   return [
     ["fileName", state.objFile.fileName ?? "null"],
-    ["fileSize", formatNullableCount(state.objFile.fileSize)],
+    ["fileSize", state.objFile.fileSize === null ? "null" : formatBytes(state.objFile.fileSize)],
     ["fileType", state.objFile.fileType ?? "null"],
-    ["parseStatus", "not_implemented"],
-    ["vertexCount", "null"],
-    ["faceCount", "null"],
-    ["bounds", "null"],
+    ["parseStatus", summary.parseStatus],
+    ["vertexCount", formatNullableCount(state.objFile.loaded ? summary.vertexCount : null)],
+    ["faceCount", formatNullableCount(state.objFile.loaded ? summary.faceCount : null)],
+    ["triangleFaceCount", formatNullableCount(state.objFile.loaded ? summary.triangleFaceCount : null)],
+    ["polygonFaceCount", formatNullableCount(state.objFile.loaded ? summary.polygonFaceCount : null)],
+    ["bounds", formatBounds(summary.bounds)],
+    ["center", formatPoint(summary.center)],
+    ["size", formatPoint(summary.size)],
+    ["maxDimension", formatNullableNumber(summary.maxDimension)],
+    ["warningCount", formatNullableCount(state.objFile.loaded ? summary.warningCount : null)],
+    ["warningsPreview", formatStringList(summary.warningsPreview)],
+    ["errorMessage", state.objErrorMessage ?? "null"],
   ]
 }
 
@@ -593,6 +669,8 @@ function getRawState() {
     activeDebugTab: state.activeDebugTab,
     overlay: state.overlay,
     objFile: state.objFile,
+    objSummary: state.objSummary,
+    objErrorMessage: state.objErrorMessage,
     liveVideo: {
       loaded: state.liveVideo.loaded,
       fileName: state.liveVideo.fileName,
@@ -617,6 +695,219 @@ function getRawState() {
     },
     logs: state.logs.slice(-20),
   }
+}
+
+function parseObjText(objText: string): ObjParseResult {
+  const vertices: ObjVertex[] = []
+  const pendingFaces: Array<{ lineNumber: number; tokens: string[] }> = []
+  const warnings: string[] = []
+  const lines = objText.split(/\r?\n/)
+
+  lines.forEach((sourceLine, index) => {
+    const lineNumber = index + 1
+    const line = sourceLine.split("#", 1)[0].trim()
+    if (!line) {
+      return
+    }
+
+    const parts = line.split(/\s+/)
+    const command = parts[0]
+
+    if (command === "v") {
+      const values = parts.slice(1, 4).map((value) => Number(value))
+      if (values.length < 3 || values.some((value) => !Number.isFinite(value))) {
+        warnings.push(`line ${lineNumber}: 不正な vertex 座標を skip しました。`)
+        return
+      }
+      vertices.push({ x: values[0], y: values[1], z: values[2] })
+      return
+    }
+
+    if (command === "f") {
+      const tokens = parts.slice(1)
+      if (tokens.length < 3) {
+        warnings.push(`line ${lineNumber}: face の頂点数が3未満のため skip しました。`)
+        return
+      }
+      pendingFaces.push({ lineNumber, tokens })
+    }
+  })
+
+  const faces = pendingFaces.flatMap(({ lineNumber, tokens }) => {
+    const indices: number[] = []
+
+    for (const token of tokens) {
+      const rawIndex = token.split("/")[0]
+      if (!/^-?\d+$/.test(rawIndex)) {
+        warnings.push(`line ${lineNumber}: face index "${token}" が不正なため face を skip しました。`)
+        return []
+      }
+
+      const objIndex = Number(rawIndex)
+      if (objIndex < 0) {
+        warnings.push(`line ${lineNumber}: 負の face index は未対応のため face を skip しました。`)
+        return []
+      }
+      if (objIndex === 0) {
+        warnings.push(`line ${lineNumber}: OBJ index 0 は無効なため face を skip しました。`)
+        return []
+      }
+
+      const zeroBasedIndex = objIndex - 1
+      if (zeroBasedIndex < 0 || zeroBasedIndex >= vertices.length) {
+        warnings.push(`line ${lineNumber}: face index ${objIndex} が頂点範囲外のため face を skip しました。`)
+        return []
+      }
+
+      indices.push(zeroBasedIndex)
+    }
+
+    return [{ indices }]
+  })
+
+  return { vertices, faces, warnings }
+}
+
+function createEmptyObjSummary(): ObjSummary {
+  return {
+    fileName: "",
+    fileSize: 0,
+    fileType: "",
+    parseStatus: "not_loaded",
+    vertexCount: 0,
+    faceCount: 0,
+    triangleFaceCount: 0,
+    polygonFaceCount: 0,
+    bounds: null,
+    center: null,
+    size: null,
+    maxDimension: null,
+    warningCount: 0,
+    warningsPreview: [],
+  }
+}
+
+function createFileObjSummary(file: File, parseStatus: ObjParseStatus): ObjSummary {
+  return {
+    ...createEmptyObjSummary(),
+    fileName: file.name,
+    fileSize: file.size,
+    fileType: file.type || "unknown",
+    parseStatus,
+  }
+}
+
+function createParsedObjSummary(file: File, parseResult: ObjParseResult): ObjSummary {
+  const bounds = calculateObjBounds(parseResult.vertices)
+  const size = bounds
+    ? {
+        x: bounds.maxX - bounds.minX,
+        y: bounds.maxY - bounds.minY,
+        z: bounds.maxZ - bounds.minZ,
+      }
+    : null
+  const center = bounds
+    ? {
+        x: (bounds.minX + bounds.maxX) / 2,
+        y: (bounds.minY + bounds.maxY) / 2,
+        z: (bounds.minZ + bounds.maxZ) / 2,
+      }
+    : null
+  const triangleFaceCount = parseResult.faces.filter((face) => face.indices.length === 3).length
+  const polygonFaceCount = parseResult.faces.filter((face) => face.indices.length > 3).length
+
+  return {
+    fileName: file.name,
+    fileSize: file.size,
+    fileType: file.type || "unknown",
+    parseStatus: "parsed",
+    vertexCount: parseResult.vertices.length,
+    faceCount: parseResult.faces.length,
+    triangleFaceCount,
+    polygonFaceCount,
+    bounds,
+    center,
+    size,
+    maxDimension: size ? Math.max(size.x, size.y, size.z) : null,
+    warningCount: parseResult.warnings.length,
+    warningsPreview: parseResult.warnings.slice(0, 20),
+  }
+}
+
+function calculateObjBounds(vertices: ObjVertex[]): ObjBounds | null {
+  if (vertices.length === 0) {
+    return null
+  }
+
+  return vertices.reduce<ObjBounds>(
+    (bounds, vertex) => ({
+      minX: Math.min(bounds.minX, vertex.x),
+      minY: Math.min(bounds.minY, vertex.y),
+      minZ: Math.min(bounds.minZ, vertex.z),
+      maxX: Math.max(bounds.maxX, vertex.x),
+      maxY: Math.max(bounds.maxY, vertex.y),
+      maxZ: Math.max(bounds.maxZ, vertex.z),
+    }),
+    {
+      minX: vertices[0].x,
+      minY: vertices[0].y,
+      minZ: vertices[0].z,
+      maxX: vertices[0].x,
+      maxY: vertices[0].y,
+      maxZ: vertices[0].z,
+    },
+  )
+}
+
+function getObjFileStatus() {
+  if (!state.objFile.loaded) {
+    return "not_loaded"
+  }
+  if (state.objSummary.parseStatus === "not_parsed") {
+    return "loaded_not_parsed"
+  }
+  return state.objSummary.parseStatus
+}
+
+function renderObjPreviewSummary() {
+  const summary = state.objSummary
+  if (!state.objFile.loaded) {
+    return ""
+  }
+
+  if (summary.parseStatus === "error") {
+    return `
+      <p class="obj-preview-message">OBJ解析に失敗しました。画面は継続して表示しています。</p>
+      <dl class="obj-preview-list">
+        <div><dt>fileName</dt><dd>${escapeHtml(summary.fileName)}</dd></div>
+        <div><dt>parseStatus</dt><dd>error</dd></div>
+        <div><dt>errorMessage</dt><dd>${escapeHtml(state.objErrorMessage ?? "null")}</dd></div>
+      </dl>
+    `
+  }
+
+  if (summary.parseStatus !== "parsed") {
+    return `
+      <p class="obj-preview-message">OBJファイルを読み込み中です。</p>
+      <dl class="obj-preview-list">
+        <div><dt>fileName</dt><dd>${escapeHtml(summary.fileName)}</dd></div>
+        <div><dt>fileSize</dt><dd>${escapeHtml(formatBytes(summary.fileSize))}</dd></div>
+        <div><dt>parseStatus</dt><dd>${summary.parseStatus}</dd></div>
+      </dl>
+    `
+  }
+
+  return `
+    <p class="obj-preview-message">OBJ解析は完了。3D表示は未実装です。</p>
+    <dl class="obj-preview-list">
+      <div><dt>fileName</dt><dd>${escapeHtml(summary.fileName)}</dd></div>
+      <div><dt>vertexCount</dt><dd>${summary.vertexCount}</dd></div>
+      <div><dt>faceCount</dt><dd>${summary.faceCount}</dd></div>
+      <div><dt>bounds</dt><dd>${escapeHtml(formatBounds(summary.bounds))}</dd></div>
+      <div><dt>center</dt><dd>${escapeHtml(formatPoint(summary.center))}</dd></div>
+      <div><dt>size</dt><dd>${escapeHtml(formatPoint(summary.size))}</dd></div>
+    </dl>
+  `
 }
 
 function appendDefinitionItems(list: HTMLDListElement, items: Array<[string, string]>) {
@@ -725,6 +1016,35 @@ function formatNullableCount(value: number | null) {
   return value === null ? "null" : String(value)
 }
 
+function formatNullableNumber(value: number | null) {
+  return value === null ? "null" : formatNumber(value)
+}
+
+function formatBounds(bounds: ObjBounds | null) {
+  if (!bounds) {
+    return "null"
+  }
+  return `min(${formatNumber(bounds.minX)}, ${formatNumber(bounds.minY)}, ${formatNumber(bounds.minZ)}) / max(${formatNumber(bounds.maxX)}, ${formatNumber(bounds.maxY)}, ${formatNumber(bounds.maxZ)})`
+}
+
+function formatPoint(point: { x: number; y: number; z: number } | null) {
+  if (!point) {
+    return "null"
+  }
+  return `x=${formatNumber(point.x)}, y=${formatNumber(point.y)}, z=${formatNumber(point.z)}`
+}
+
+function formatStringList(values: string[]) {
+  if (values.length === 0) {
+    return "[]"
+  }
+  return values.join("\n")
+}
+
+function formatNumber(value: number) {
+  return Number(value.toFixed(6)).toString()
+}
+
 function formatSeconds(value: number | null) {
   return value === null ? "-" : `${value.toFixed(3)} sec`
 }
@@ -735,4 +1055,13 @@ function roundForState(value: number | null) {
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max)
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;")
 }
