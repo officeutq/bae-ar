@@ -404,6 +404,7 @@ type WebglPreviewRuntimeDebug = {
 
 type WebglMeshWarpPreviewDrawInput = {
   videoElement: HTMLVideoElement
+  videoState: VideoPreviewState
   sourceVertices: MeshSourceVertex[]
   targetVertices: MeshTargetVertex[]
   triangles: TriangleMeshTriangle[]
@@ -2892,6 +2893,24 @@ function imageNormalizedToClipSpace(point: Point2D): Point2D {
   }
 }
 
+function imageNormalizedToDisplayedClipSpace(
+  point: Point2D,
+  displayedContentRect: Rect,
+  containerWidth: number,
+  containerHeight: number,
+): Point2D {
+  if (containerWidth <= 0 || containerHeight <= 0) {
+    return imageNormalizedToClipSpace(point)
+  }
+
+  const pixelX = displayedContentRect.x + point.x * displayedContentRect.width
+  const pixelY = displayedContentRect.y + point.y * displayedContentRect.height
+  return {
+    x: (pixelX / containerWidth) * 2 - 1,
+    y: 1 - (pixelY / containerHeight) * 2,
+  }
+}
+
 function calculateNormalizedDistance(source: Point2D, target: Point2D) {
   return Math.hypot(target.x - source.x, target.y - source.y)
 }
@@ -3820,6 +3839,7 @@ function updateWebglMeshWarpPreview() {
 
     const result = webglMeshWarpPreviewRenderer.draw({
       videoElement: liveVideoElement,
+      videoState: state.liveVideo,
       sourceVertices: mesh.currentMeshSourceVertices,
       targetVertices: mesh.idealMeshTargetVertices,
       triangles: mesh.triangleMesh.triangles,
@@ -4054,13 +4074,24 @@ function createWebglMeshWarpPreviewRenderer(
         canvas.width = canvasWidth
         canvas.height = canvasHeight
       }
+      const displayedContentRect = getDisplayedContentRect(
+        input.videoState,
+        input.videoElement,
+        rect.width,
+        rect.height,
+      )
 
       const positions = new Float32Array(vertexCount * 2)
       const uvs = new Float32Array(vertexCount * 2)
       for (let index = 0; index < vertexCount; index += 1) {
         const source = input.sourceVertices[index]
         const target = input.targetVertices[index]
-        const clip = imageNormalizedToClipSpace(target)
+        const clip = imageNormalizedToDisplayedClipSpace(
+          target,
+          displayedContentRect,
+          rect.width,
+          rect.height,
+        )
         positions[index * 2] = clip.x
         positions[index * 2 + 1] = clip.y
         uvs[index * 2] = source.x
