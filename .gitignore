@@ -143,3 +143,5 @@ vite.config.ts.timestamp-*
 .vite/
 
 tools/ideal-face-authoring/sample-videos/*.mp4
+
+docs/メモ.md
