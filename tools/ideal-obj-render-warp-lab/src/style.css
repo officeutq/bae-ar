@@ -23,7 +23,8 @@ select {
 }
 
 button:disabled,
-input:disabled {
+input:disabled,
+select:disabled {
   cursor: not-allowed;
   opacity: 0.62;
 }
@@ -393,7 +394,7 @@ h3 {
 }
 
 .timeline-controls.live-controls {
-  grid-template-columns: auto auto minmax(180px, 1fr) auto;
+  grid-template-columns: auto auto auto minmax(180px, 1fr) auto;
 }
 
 .range-field {
@@ -435,6 +436,30 @@ input[type="range"] {
 
 .review-card p {
   margin: 0;
+}
+
+.review-grid {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.review-grid div {
+  display: grid;
+  gap: 4px;
+  grid-template-columns: 148px minmax(0, 1fr);
+}
+
+.review-grid dt {
+  color: #66727e;
+  font-weight: 700;
+}
+
+.review-grid dd {
+  font-family:
+    "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .debug-content {
@@ -526,7 +551,7 @@ input[type="range"] {
   }
 
   .timeline-controls.live-controls {
-    grid-template-columns: auto auto;
+    grid-template-columns: auto auto auto;
   }
 
   .timeline-controls.live-controls .range-field,
