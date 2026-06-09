@@ -213,6 +213,7 @@ type DynamicGridPointPreview = {
 }
 
 type NearFaceGridMode = "filledRegionMinusFaceInterior"
+type NearFaceBandMode = "nearestLandmarkNarrowBand"
 
 type FaceInteriorTrianglePreview = {
   indices: [number, number, number]
@@ -227,17 +228,21 @@ type FaceInteriorDebug = {
 
 type NearFaceGridDebug = {
   mode: NearFaceGridMode
+  bandMode: NearFaceBandMode
   candidateGridCount: number
   removedInsideFaceCount: number
   removedTooCloseToFaceCount: number
+  removedTooFarFromFaceCount: number
   acceptedGridCount: number
   tooCloseToFaceThreshold: number | null
+  bandMaxDistance: number | null
   gridPointPreview: DynamicGridPointPreview[]
 }
 
 type DynamicGridDebug = {
   mode: "dynamic"
   nearFaceGridMode: NearFaceGridMode
+  nearFaceBandMode: NearFaceBandMode
   acceptedFaceLandmarkCount: number
   faceMedianNearestDistance: number | null
   faceNearestDistanceSampleCount: number
@@ -251,8 +256,10 @@ type DynamicGridDebug = {
   nearFaceCandidateGridCount: number
   nearFaceRemovedInsideFaceCount: number
   nearFaceRemovedTooCloseToFaceCount: number
+  nearFaceRemovedTooFarFromFaceCount: number
   nearFaceAcceptedGridCount: number
   tooCloseToFaceThreshold: number | null
+  nearFaceBandMaxDistance: number | null
   nearFaceGridCount: number
   backgroundGridCount: number
   screenEdgeAnchorCount: number
@@ -426,6 +433,7 @@ type WebglMeshWarpPreviewRenderer = {
 type MeshPrototypeSummary = {
   gridMode: "dynamic"
   nearFaceGridMode: NearFaceGridMode
+  nearFaceBandMode: NearFaceBandMode
   triangleMode: "prototype"
   top1MatchedReferenceId: string | null
   currentLandmarkCount: number
@@ -443,8 +451,10 @@ type MeshPrototypeSummary = {
   nearFaceCandidateGridCount: number
   nearFaceRemovedInsideFaceCount: number
   nearFaceRemovedTooCloseToFaceCount: number
+  nearFaceRemovedTooFarFromFaceCount: number
   nearFaceAcceptedGridCount: number
   tooCloseToFaceThreshold: number | null
+  nearFaceBandMaxDistance: number | null
   faceBounds: BoundsDebugSummary | null
   expandedNearFaceBounds: BoundsDebugSummary | null
   videoAspectRatio: number
@@ -475,6 +485,9 @@ type MeshPrototypeSummary = {
   eyeSuppressedCount: number
   largeDisplacementSuppressedCount: number
   invalidExcludedCount: number
+  irisExcludedCount: number
+  irisExcludedIndexRange: string
+  irisExcludedIndicesPreview: number[]
 }
 
 type CurrentIdealMeshPrototypeState = {
@@ -551,6 +564,10 @@ const MAX_SCAN_FRAMES = 10000
 const SCAN_FRAME_STEP_SEC = 1 / 30
 const FRAME_STEP_SEC = 1 / 30
 const REQUIRED_LANDMARK_COUNT = 478
+const IRIS_LANDMARK_START_INDEX = 468
+const IRIS_LANDMARK_END_INDEX = 477
+const IRIS_EXCLUDED_INDEX_RANGE = `${IRIS_LANDMARK_START_INDEX}..${IRIS_LANDMARK_END_INDEX}`
+const IRIS_EXCLUSION_REASON = "irisLandmark"
 const RAD_TO_DEG = 180 / Math.PI
 const STRONG_EXPRESSION_THRESHOLD = 0.35
 const MIXED_EXPRESSION_THRESHOLD = 0.28
@@ -574,6 +591,7 @@ const DYNAMIC_GRID_NEAREST_SAMPLE_LIMIT = 160
 const DYNAMIC_GRID_DEFAULT_FACE_MEDIAN_DISTANCE = 0.018
 const NEAR_FACE_GRID_SPACING_RATIO = 1.5
 const NEAR_FACE_TOO_CLOSE_TO_FACE_SPACING_RATIO = 0.4
+const NEAR_FACE_BAND_MAX_DISTANCE_SPACING_RATIO = 2.5
 const BACKGROUND_GRID_SPACING_RATIO = 4
 const SCREEN_EDGE_ANCHOR_SPACING_RATIO = 1.25
 const MIN_NEAR_FACE_GRID_SPACING = 0.012
@@ -1689,6 +1707,20 @@ function selectCurrentMeshLandmarkVertices(
       continue
     }
 
+    if (isIrisLandmarkIndex(landmark.index)) {
+      excludedCurrentLandmarks.push({
+        id: `face:${landmark.index}`,
+        kind: "faceLandmark",
+        index: landmark.index,
+        source: { x: landmark.x, y: landmark.y },
+        visibilityWeight: 0,
+        safetyWeight: 0,
+        usageWeight: 0,
+        reasons: [IRIS_EXCLUSION_REASON],
+      })
+      continue
+    }
+
     if (FACE_BOUNDARY_LANDMARK_INDICES.has(landmark.index)) {
       safetyWeight *= FACE_BOUNDARY_USAGE_MULTIPLIER
       reasons.push("boundarySuppressed")
@@ -2250,6 +2282,8 @@ function buildDynamicGridVertices(
   )
   const tooCloseToFaceThreshold =
     nearFaceGridSpacing * NEAR_FACE_TOO_CLOSE_TO_FACE_SPACING_RATIO
+  const nearFaceBandMaxDistance =
+    nearFaceGridSpacing * NEAR_FACE_BAND_MAX_DISTANCE_SPACING_RATIO
   const backgroundGridSpacing = clamp(
     faceMedianNearestDistance * BACKGROUND_GRID_SPACING_RATIO,
     MIN_BACKGROUND_GRID_SPACING,
@@ -2261,6 +2295,7 @@ function buildDynamicGridVertices(
   let nearFaceCandidateGridCount = 0
   let nearFaceRemovedInsideFaceCount = 0
   let nearFaceRemovedTooCloseToFaceCount = 0
+  let nearFaceRemovedTooFarFromFaceCount = 0
 
   const addVertex = (
     kind: MeshVertexKind,
@@ -2319,6 +2354,16 @@ function buildDynamicGridVertices(
           nearFaceRemovedTooCloseToFaceCount += 1
           return
         }
+        if (
+          calculateNearestAspectCorrectedFaceDistance(
+            point,
+            acceptedPoints,
+            videoAspectRatio,
+          ) > nearFaceBandMaxDistance
+        ) {
+          nearFaceRemovedTooFarFromFaceCount += 1
+          return
+        }
         addVertex("nearFaceGrid", point, "grid:near", ["filledNearFaceGrid"])
       },
     )
@@ -2345,6 +2390,7 @@ function buildDynamicGridVertices(
   const debug: DynamicGridDebug = {
     mode: "dynamic",
     nearFaceGridMode: "filledRegionMinusFaceInterior",
+    nearFaceBandMode: "nearestLandmarkNarrowBand",
     acceptedFaceLandmarkCount: acceptedPoints.length,
     faceMedianNearestDistance,
     faceNearestDistanceSampleCount: density.faceNearestDistanceSampleCount,
@@ -2364,8 +2410,10 @@ function buildDynamicGridVertices(
     nearFaceCandidateGridCount,
     nearFaceRemovedInsideFaceCount,
     nearFaceRemovedTooCloseToFaceCount,
+    nearFaceRemovedTooFarFromFaceCount,
     nearFaceAcceptedGridCount: countVerticesByKind(vertices, "nearFaceGrid"),
     tooCloseToFaceThreshold,
+    nearFaceBandMaxDistance,
     nearFaceGridCount: countVerticesByKind(vertices, "nearFaceGrid"),
     backgroundGridCount: countVerticesByKind(vertices, "backgroundGrid"),
     screenEdgeAnchorCount: countVerticesByKind(vertices, "screenEdgeAnchor"),
@@ -2376,11 +2424,14 @@ function buildDynamicGridVertices(
     videoAspectRatio,
     nearFaceGrid: {
       mode: "filledRegionMinusFaceInterior",
+      bandMode: "nearestLandmarkNarrowBand",
       candidateGridCount: nearFaceCandidateGridCount,
       removedInsideFaceCount: nearFaceRemovedInsideFaceCount,
       removedTooCloseToFaceCount: nearFaceRemovedTooCloseToFaceCount,
+      removedTooFarFromFaceCount: nearFaceRemovedTooFarFromFaceCount,
       acceptedGridCount: countVerticesByKind(vertices, "nearFaceGrid"),
       tooCloseToFaceThreshold,
+      bandMaxDistance: nearFaceBandMaxDistance,
       gridPointPreview: vertices
         .filter((vertex) => vertex.kind === "nearFaceGrid")
         .slice(0, LANDMARK_PREVIEW_COUNT)
@@ -2530,10 +2581,29 @@ function isPointTooCloseToFaceLandmark(
   threshold: number,
   videoAspectRatio: number,
 ) {
-  return facePoints.some((facePoint) => {
+  return (
+    calculateNearestAspectCorrectedFaceDistance(
+      aspectCorrectedPoint,
+      facePoints,
+      videoAspectRatio,
+    ) < threshold
+  )
+}
+
+function calculateNearestAspectCorrectedFaceDistance(
+  aspectCorrectedPoint: Point2D,
+  facePoints: Point2D[],
+  videoAspectRatio: number,
+) {
+  let nearest = Number.POSITIVE_INFINITY
+  for (const facePoint of facePoints) {
     const correctedFacePoint = toAspectCorrectedPoint(facePoint, videoAspectRatio)
-    return calculateNormalizedDistance(aspectCorrectedPoint, correctedFacePoint) < threshold
-  })
+    nearest = Math.min(
+      nearest,
+      calculateNormalizedDistance(aspectCorrectedPoint, correctedFacePoint),
+    )
+  }
+  return nearest
 }
 
 function expandAspectCorrectedRect(
@@ -2715,6 +2785,7 @@ function summarizeCurrentIdealMeshPrototype({
   return {
     gridMode: dynamicGrid.mode,
     nearFaceGridMode: dynamicGrid.nearFaceGridMode,
+    nearFaceBandMode: dynamicGrid.nearFaceBandMode,
     triangleMode: triangleMesh.mode,
     top1MatchedReferenceId,
     currentLandmarkCount,
@@ -2734,8 +2805,11 @@ function summarizeCurrentIdealMeshPrototype({
     nearFaceCandidateGridCount: dynamicGrid.nearFaceCandidateGridCount,
     nearFaceRemovedInsideFaceCount: dynamicGrid.nearFaceRemovedInsideFaceCount,
     nearFaceRemovedTooCloseToFaceCount: dynamicGrid.nearFaceRemovedTooCloseToFaceCount,
+    nearFaceRemovedTooFarFromFaceCount:
+      dynamicGrid.nearFaceRemovedTooFarFromFaceCount,
     nearFaceAcceptedGridCount: dynamicGrid.nearFaceAcceptedGridCount,
     tooCloseToFaceThreshold: dynamicGrid.tooCloseToFaceThreshold,
+    nearFaceBandMaxDistance: dynamicGrid.nearFaceBandMaxDistance,
     faceBounds: dynamicGrid.faceBounds,
     expandedNearFaceBounds: dynamicGrid.expandedNearFaceBounds,
     videoAspectRatio: dynamicGrid.videoAspectRatio,
@@ -2769,6 +2843,15 @@ function summarizeCurrentIdealMeshPrototype({
       "largeDisplacementSuppressed",
     ),
     invalidExcludedCount: countVerticesWithReason(excludedCurrentLandmarks, "invalidExcluded"),
+    irisExcludedCount: countVerticesWithReason(
+      excludedCurrentLandmarks,
+      IRIS_EXCLUSION_REASON,
+    ),
+    irisExcludedIndexRange: IRIS_EXCLUDED_INDEX_RANGE,
+    irisExcludedIndicesPreview: excludedCurrentLandmarks
+      .filter((vertex) => vertex.reasons.includes(IRIS_EXCLUSION_REASON))
+      .map((vertex) => vertex.index)
+      .slice(0, LANDMARK_PREVIEW_COUNT),
   }
 }
 
@@ -3044,6 +3127,10 @@ function interpolate(start: number, end: number, amount: number) {
 
 function uniqueStrings(values: string[]) {
   return Array.from(new Set(values))
+}
+
+function isIrisLandmarkIndex(index: number) {
+  return index >= IRIS_LANDMARK_START_INDEX && index <= IRIS_LANDMARK_END_INDEX
 }
 
 function countVerticesByKind(vertices: MeshSourceVertex[], kind: MeshVertexKind) {
@@ -3422,6 +3509,7 @@ function createEmptyMeshPrototypeSummary(videoAspectRatio = 1): MeshPrototypeSum
   return {
     gridMode: dynamicGrid.mode,
     nearFaceGridMode: dynamicGrid.nearFaceGridMode,
+    nearFaceBandMode: dynamicGrid.nearFaceBandMode,
     triangleMode: triangleMesh.mode,
     top1MatchedReferenceId: null,
     currentLandmarkCount: 0,
@@ -3441,8 +3529,11 @@ function createEmptyMeshPrototypeSummary(videoAspectRatio = 1): MeshPrototypeSum
     nearFaceCandidateGridCount: dynamicGrid.nearFaceCandidateGridCount,
     nearFaceRemovedInsideFaceCount: dynamicGrid.nearFaceRemovedInsideFaceCount,
     nearFaceRemovedTooCloseToFaceCount: dynamicGrid.nearFaceRemovedTooCloseToFaceCount,
+    nearFaceRemovedTooFarFromFaceCount:
+      dynamicGrid.nearFaceRemovedTooFarFromFaceCount,
     nearFaceAcceptedGridCount: dynamicGrid.nearFaceAcceptedGridCount,
     tooCloseToFaceThreshold: dynamicGrid.tooCloseToFaceThreshold,
+    nearFaceBandMaxDistance: dynamicGrid.nearFaceBandMaxDistance,
     faceBounds: dynamicGrid.faceBounds,
     expandedNearFaceBounds: dynamicGrid.expandedNearFaceBounds,
     videoAspectRatio: dynamicGrid.videoAspectRatio,
@@ -3473,6 +3564,9 @@ function createEmptyMeshPrototypeSummary(videoAspectRatio = 1): MeshPrototypeSum
     eyeSuppressedCount: 0,
     largeDisplacementSuppressedCount: 0,
     invalidExcludedCount: 0,
+    irisExcludedCount: 0,
+    irisExcludedIndexRange: IRIS_EXCLUDED_INDEX_RANGE,
+    irisExcludedIndicesPreview: [],
   }
 }
 
@@ -3484,17 +3578,21 @@ function createEmptyDynamicGridDebug(videoAspectRatio = 1): DynamicGridDebug {
   }
   const nearFaceGrid: NearFaceGridDebug = {
     mode: "filledRegionMinusFaceInterior",
+    bandMode: "nearestLandmarkNarrowBand",
     candidateGridCount: 0,
     removedInsideFaceCount: 0,
     removedTooCloseToFaceCount: 0,
+    removedTooFarFromFaceCount: 0,
     acceptedGridCount: 0,
     tooCloseToFaceThreshold: null,
+    bandMaxDistance: null,
     gridPointPreview: [],
   }
 
   return {
     mode: "dynamic",
     nearFaceGridMode: "filledRegionMinusFaceInterior",
+    nearFaceBandMode: "nearestLandmarkNarrowBand",
     acceptedFaceLandmarkCount: 0,
     faceMedianNearestDistance: null,
     faceNearestDistanceSampleCount: 0,
@@ -3508,8 +3606,10 @@ function createEmptyDynamicGridDebug(videoAspectRatio = 1): DynamicGridDebug {
     nearFaceCandidateGridCount: 0,
     nearFaceRemovedInsideFaceCount: 0,
     nearFaceRemovedTooCloseToFaceCount: 0,
+    nearFaceRemovedTooFarFromFaceCount: 0,
     nearFaceAcceptedGridCount: 0,
     tooCloseToFaceThreshold: null,
+    nearFaceBandMaxDistance: null,
     nearFaceGridCount: 0,
     backgroundGridCount: 0,
     screenEdgeAnchorCount: 0,
@@ -4294,6 +4394,7 @@ function createSummaryContent() {
     ["top1MatchedReferenceId", meshSummary.top1MatchedReferenceId ?? "-"],
     ["gridMode", meshSummary.gridMode],
     ["nearFaceGridMode", meshSummary.nearFaceGridMode],
+    ["nearFaceBandMode", meshSummary.nearFaceBandMode],
     ["triangleMode", meshSummary.triangleMode],
     ["currentLandmarkCount", String(meshSummary.currentLandmarkCount)],
     ["visibleCurrentLandmarkCount", String(meshSummary.visibleCurrentLandmarkCount)],
@@ -4332,8 +4433,19 @@ function createSummaryContent() {
       "nearFaceRemovedTooCloseToFaceCount",
       String(meshSummary.nearFaceRemovedTooCloseToFaceCount),
     ],
+    [
+      "nearFaceRemovedTooFarFromFaceCount",
+      String(meshSummary.nearFaceRemovedTooFarFromFaceCount),
+    ],
     ["nearFaceAcceptedGridCount", String(meshSummary.nearFaceAcceptedGridCount)],
     ["tooCloseToFaceThreshold", formatMetric(meshSummary.tooCloseToFaceThreshold)],
+    ["nearFaceBandMaxDistance", formatMetric(meshSummary.nearFaceBandMaxDistance)],
+    ["irisExcludedCount", String(meshSummary.irisExcludedCount)],
+    ["irisExcludedIndexRange", meshSummary.irisExcludedIndexRange],
+    [
+      "irisExcludedIndicesPreview",
+      formatIndexPreview(meshSummary.irisExcludedIndicesPreview),
+    ],
     ["faceSourceVertexCount", String(meshSummary.faceSourceVertexCount)],
     ["nearFaceGridCount", String(meshSummary.nearFaceGridCount)],
     ["backgroundGridCount", String(meshSummary.backgroundGridCount)],
@@ -4380,6 +4492,7 @@ function createSummaryContent() {
       String(meshSummary.largeDisplacementSuppressedCount),
     ],
     ["invalidExcludedCount", String(meshSummary.invalidExcludedCount)],
+    ["irisExcludedCount", String(meshSummary.irisExcludedCount)],
     ["gridAnchorDisplay", formatGridAnchorDisplay(gridAnchorDisplay)],
     ["videoAspectRatio", formatMetric(aspectDebug.videoAspectRatio)],
     ["dynamicGrid videoAspectRatio", formatMetric(meshSummary.videoAspectRatio)],
@@ -4562,6 +4675,7 @@ function createMeshPrototypeContent() {
     ["candidateAlignedIdealLandmarkCount", String(summary.candidateAlignedIdealLandmarkCount)],
     ["gridMode", summary.gridMode],
     ["nearFaceGridMode", summary.nearFaceGridMode],
+    ["nearFaceBandMode", summary.nearFaceBandMode],
     ["acceptedFaceLandmarkCount", String(summary.acceptedFaceLandmarkCount)],
     ["faceMedianNearestDistance", formatMetric(summary.faceMedianNearestDistance)],
     [
@@ -4593,11 +4707,19 @@ function createMeshPrototypeContent() {
       "nearFaceRemovedTooCloseToFaceCount",
       String(summary.nearFaceRemovedTooCloseToFaceCount),
     ],
+    [
+      "nearFaceRemovedTooFarFromFaceCount",
+      String(summary.nearFaceRemovedTooFarFromFaceCount),
+    ],
     ["nearFaceAcceptedGridCount", String(summary.nearFaceAcceptedGridCount)],
     ["tooCloseToFaceThreshold", formatMetric(summary.tooCloseToFaceThreshold)],
+    ["nearFaceBandMaxDistance", formatMetric(summary.nearFaceBandMaxDistance)],
     ["currentLandmarkCount", String(summary.currentLandmarkCount)],
     ["visibleCurrentLandmarkCount", String(summary.visibleCurrentLandmarkCount)],
     ["excludedCurrentLandmarkCount", String(summary.excludedCurrentLandmarkCount)],
+    ["irisExcludedCount", String(summary.irisExcludedCount)],
+    ["irisExcludedIndexRange", summary.irisExcludedIndexRange],
+    ["irisExcludedIndicesPreview", formatIndexPreview(summary.irisExcludedIndicesPreview)],
     ["faceSourceVertexCount", String(summary.faceSourceVertexCount)],
     ["nearFaceGridCount", String(summary.nearFaceGridCount)],
     ["backgroundGridCount", String(summary.backgroundGridCount)],
@@ -4730,6 +4852,7 @@ function createMeshPrototypeContent() {
   appendDefinitionItems(dynamicGridList, [
     ["mode", mesh.dynamicGrid.mode],
     ["nearFaceGridMode", mesh.dynamicGrid.nearFaceGridMode],
+    ["nearFaceBandMode", mesh.dynamicGrid.nearFaceBandMode],
     ["faceBounds", formatBoundsSummary(mesh.dynamicGrid.faceBounds)],
     [
       "expandedNearFaceBounds",
@@ -4758,8 +4881,16 @@ function createMeshPrototypeContent() {
       String(mesh.dynamicGrid.nearFaceRemovedTooCloseToFaceCount),
     ],
     [
+      "nearFaceRemovedTooFarFromFaceCount",
+      String(mesh.dynamicGrid.nearFaceRemovedTooFarFromFaceCount),
+    ],
+    [
       "tooCloseToFaceThreshold",
       formatMetric(mesh.dynamicGrid.tooCloseToFaceThreshold),
+    ],
+    [
+      "nearFaceBandMaxDistance",
+      formatMetric(mesh.dynamicGrid.nearFaceBandMaxDistance),
     ],
     ["nearFaceGridCount", String(mesh.dynamicGrid.nearFaceGridCount)],
     ["backgroundGridCount", String(mesh.dynamicGrid.backgroundGridCount)],
@@ -4836,6 +4967,9 @@ function createMeshPrototypeContent() {
     ["eyeSuppressedCount", String(summary.eyeSuppressedCount)],
     ["largeDisplacementSuppressedCount", String(summary.largeDisplacementSuppressedCount)],
     ["invalidExcludedCount", String(summary.invalidExcludedCount)],
+    ["irisExcludedCount", String(summary.irisExcludedCount)],
+    ["irisExcludedIndexRange", summary.irisExcludedIndexRange],
+    ["irisExcludedIndicesPreview", formatIndexPreview(summary.irisExcludedIndicesPreview)],
     ["accepted landmark preview", formatMeshLandmarkPreview(mesh.acceptedCurrentLandmarks)],
     ["excluded landmark preview", formatMeshLandmarkPreview(mesh.excludedCurrentLandmarks)],
   ])
@@ -5031,6 +5165,15 @@ function getCurrentIdealMeshPrototypeRawState() {
       tooCloseToFaceThreshold: roundMetricForState(
         mesh.summary.tooCloseToFaceThreshold,
       ),
+      nearFaceBandMaxDistance: roundMetricForState(
+        mesh.summary.nearFaceBandMaxDistance,
+      ),
+      irisExclusion: {
+        excludedCount: mesh.summary.irisExcludedCount,
+        excludedIndexRange: mesh.summary.irisExcludedIndexRange,
+        excludedIndicesPreview: mesh.summary.irisExcludedIndicesPreview,
+        reason: IRIS_EXCLUSION_REASON,
+      },
       faceBounds: roundBoundsDebugSummary(mesh.summary.faceBounds),
       expandedNearFaceBounds: roundBoundsDebugSummary(
         mesh.summary.expandedNearFaceBounds,
@@ -5584,6 +5727,10 @@ function formatCounts(counts: Record<string, number>) {
     : entries.map(([key, value]) => `${key}: ${value}`).join(" / ")
 }
 
+function formatIndexPreview(indices: number[]) {
+  return indices.length === 0 ? "-" : indices.join(", ")
+}
+
 function formatMetricRange(range: TriangleMetricRange) {
   return `${formatMetric(range.min)} / ${formatMetric(range.median)} / ${formatMetric(range.max)}`
 }
@@ -5746,6 +5893,7 @@ function roundDynamicGridDebug(debug: DynamicGridDebug) {
   return {
     mode: debug.mode,
     nearFaceGridMode: debug.nearFaceGridMode,
+    nearFaceBandMode: debug.nearFaceBandMode,
     acceptedFaceLandmarkCount: debug.acceptedFaceLandmarkCount,
     faceMedianNearestDistance: roundMetricForState(debug.faceMedianNearestDistance),
     faceNearestDistanceSampleCount: debug.faceNearestDistanceSampleCount,
@@ -5763,8 +5911,10 @@ function roundDynamicGridDebug(debug: DynamicGridDebug) {
     nearFaceCandidateGridCount: debug.nearFaceCandidateGridCount,
     nearFaceRemovedInsideFaceCount: debug.nearFaceRemovedInsideFaceCount,
     nearFaceRemovedTooCloseToFaceCount: debug.nearFaceRemovedTooCloseToFaceCount,
+    nearFaceRemovedTooFarFromFaceCount: debug.nearFaceRemovedTooFarFromFaceCount,
     nearFaceAcceptedGridCount: debug.nearFaceAcceptedGridCount,
     tooCloseToFaceThreshold: roundMetricForState(debug.tooCloseToFaceThreshold),
+    nearFaceBandMaxDistance: roundMetricForState(debug.nearFaceBandMaxDistance),
     nearFaceGridCount: debug.nearFaceGridCount,
     backgroundGridCount: debug.backgroundGridCount,
     screenEdgeAnchorCount: debug.screenEdgeAnchorCount,
@@ -5773,13 +5923,16 @@ function roundDynamicGridDebug(debug: DynamicGridDebug) {
     videoAspectRatio: roundMetricForState(debug.videoAspectRatio),
     nearFaceGrid: {
       mode: debug.nearFaceGrid.mode,
+      bandMode: debug.nearFaceGrid.bandMode,
       candidateGridCount: debug.nearFaceGrid.candidateGridCount,
       removedInsideFaceCount: debug.nearFaceGrid.removedInsideFaceCount,
       removedTooCloseToFaceCount: debug.nearFaceGrid.removedTooCloseToFaceCount,
+      removedTooFarFromFaceCount: debug.nearFaceGrid.removedTooFarFromFaceCount,
       acceptedGridCount: debug.nearFaceGrid.acceptedGridCount,
       tooCloseToFaceThreshold: roundMetricForState(
         debug.nearFaceGrid.tooCloseToFaceThreshold,
       ),
+      bandMaxDistance: roundMetricForState(debug.nearFaceGrid.bandMaxDistance),
       gridPointPreview: debug.nearFaceGrid.gridPointPreview.map(roundDynamicGridPointPreview),
     },
     faceInterior: {
