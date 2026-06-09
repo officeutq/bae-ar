@@ -8,6 +8,7 @@
     "start:mediapipe-render-consistency-lab": "npm exec --workspace @bae-ar/mediapipe-render-consistency-lab vite -- --host 0.0.0.0",
     "start:ideal-face-fitting-lab": "npm run start --workspace @bae-ar/ideal-face-fitting-lab",
     "start:ideal-reference-mesh-warp-lab": "npm run start --workspace @bae-ar/ideal-reference-mesh-warp-lab",
+    "start:ideal-obj-render-warp-lab": "npm run start --workspace @bae-ar/ideal-obj-render-warp-lab",
     "build:ideal-reference-mesh-warp-lab": "npm run build --workspace @bae-ar/ideal-reference-mesh-warp-lab",
     "build:mediapipe-canonical-lab": "npm exec --workspace @bae-ar/mediapipe-canonical-lab -- vite build"
   },
