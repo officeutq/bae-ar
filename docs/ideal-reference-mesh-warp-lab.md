@@ -262,3 +262,32 @@ visible / safe current landmarks の選択方針は既存の本線を維持す�
 final triangle indices は、`faceLandmark` / `nearFaceGrid` / `backgroundGrid` / `screenEdgeAnchor` を含む source vertices から別途作る。source mesh と target mesh では、この final triangle indices を共通に使う。
 
 この段階では WebGL mesh warp、texture upload、shader、production mesh warp はまだ行わない。
+
+## WebGL mesh warp input debug
+
+Ideal Reference Mesh Warp Lab は、source mesh / target mesh / triangle indices が成立した次の段階として、WebGL mesh warp に渡す直前の input debug を追加した。
+
+WebGL input debug では、既存の source vertices から source UVs、target vertices から clip-space target positions、triangle indices から index buffer 相当の配列を作り、範囲・件数・index 妥当性を確認する。
+
+```text
+source vertex:
+  x: 0..1
+  y: 0..1
+
+source UV:
+  u = x
+  v = y
+  sourceUvConvention = imageNormalizedNoFlip
+
+target position:
+  clipX = x * 2 - 1
+  clipY = 1 - y * 2
+  targetPositionConvention = clipSpaceFromImageNormalized
+
+triangle index [a, b, c]:
+  indices buffer に a, b, c を追加
+```
+
+Summary / Warp Mesh / Raw debug では、`webglInputReady`、`vertexCount`、`triangleCount`、`indexCount`、`sourceUvRange`、`targetClipRange`、`invalidIndexCount`、`outOfRangeUvCount`、`outOfRangeTargetCount`、`warnings` を確認する。Raw debug は巨大配列を出さず、`preview` と `indexPreview` の sample のみに留める。
+
+この段階では WebGL warp の実描画、WebGL context 初期化、texture upload、shader、`gl.drawElements`、production mesh warp はまだ行わない。texture V flip 実験 UI、`rawWarpOnly`、`sideBySide`、raw displacement mesh warp も復活させない。

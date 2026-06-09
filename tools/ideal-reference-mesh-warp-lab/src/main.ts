@@ -288,6 +288,11 @@ type TriangleMetricRange = {
   max: number | null
 }
 
+type MetricMinMaxRange = {
+  min: number | null
+  max: number | null
+}
+
 type TriangleKindCounts = Record<TriangleKind, number>
 type TriangleWarningCounts = Record<TriangleWarning, number>
 
@@ -312,6 +317,70 @@ type TriangleMeshDebug = {
   triangleAspectRatio: TriangleMetricRange
   triangles: TriangleMeshTriangle[]
   trianglePreview: TriangleMeshTriangle[]
+}
+
+type WebglMeshWarpInputWarning =
+  | "sourceTargetVertexCountMismatch"
+  | "invalidIndex"
+  | "sourceUvOutOfRange"
+  | "targetPositionOutOfRange"
+  | "targetClipPositionOutOfRange"
+  | "emptyTriangleIndices"
+
+type WebglMeshWarpInputPreviewItem = {
+  vertexIndex: number
+  source: Point2D
+  target: Point2D | null
+  uv: {
+    u: number
+    v: number
+  }
+  clip: Point2D | null
+  kind: MeshVertexKind
+}
+
+type WebglMeshWarpInputDebug = {
+  mode: "debugOnly"
+  webglInputReady: boolean
+  vertexCount: number
+  sourceVertexCount: number
+  targetVertexCount: number
+  triangleCount: number
+  indexCount: number
+  sourceUvConvention: "imageNormalizedNoFlip"
+  targetPositionConvention: "clipSpaceFromImageNormalized"
+  sourceUvSummary: {
+    uRange: MetricMinMaxRange
+    vRange: MetricMinMaxRange
+    outOfRangeUvCount: number
+    sourceUvInRange: boolean
+  }
+  targetPositionSummary: {
+    imageXRange: MetricMinMaxRange
+    imageYRange: MetricMinMaxRange
+    clipXRange: MetricMinMaxRange
+    clipYRange: MetricMinMaxRange
+    outOfRangeTargetCount: number
+    outOfRangeClipCount: number
+    targetImagePositionInRange: boolean
+    targetClipPositionInRange: boolean
+  }
+  indexSummary: {
+    maxIndex: number | null
+    indexWithinVertexRange: boolean
+    invalidIndexCount: number
+  }
+  coordinateSummary: {
+    sourceTargetVertexCountMatch: boolean
+    sourceUvInRange: boolean
+    targetImagePositionInRange: boolean
+    targetClipPositionInRange: boolean
+    triangleCountPositive: boolean
+  }
+  preview: WebglMeshWarpInputPreviewItem[]
+  indexPreview: Array<[number, number, number]>
+  warnings: WebglMeshWarpInputWarning[]
+  warningCount: number
 }
 
 type MeshPrototypeSummary = {
@@ -355,6 +424,9 @@ type MeshPrototypeSummary = {
   triangleQuality: TriangleWarningCounts
   triangleArea: TriangleMetricRange
   triangleAspectRatio: TriangleMetricRange
+  webglInputReady: boolean
+  webglInputWarningCount: number
+  webglInputWarnings: WebglMeshWarpInputWarning[]
   usageWeightAverage: number | null
   usageWeightMin: number | null
   usageWeightMax: number | null
@@ -373,6 +445,7 @@ type CurrentIdealMeshPrototypeState = {
   idealMeshTargetVertices: MeshTargetVertex[]
   currentIdealMeshPairs: MeshVertexPair[]
   triangleMesh: TriangleMeshDebug
+  webglMeshWarpInput: WebglMeshWarpInputDebug
   aspectDebug: MeshAspectDebug
   dynamicGrid: DynamicGridDebug
   summary: MeshPrototypeSummary
@@ -467,6 +540,7 @@ const MIN_BACKGROUND_GRID_SPACING = 0.04
 const MAX_BACKGROUND_GRID_SPACING = 0.12
 const GRID_VERTEX_KEY_PRECISION = 10000
 const TRIANGLE_PREVIEW_COUNT = 8
+const WEBGL_INPUT_PREVIEW_COUNT = 8
 const TRIANGLE_MIN_AREA = 0.0000008
 const TRIANGLE_LARGE_AREA = 0.018
 const TRIANGLE_LONG_THIN_ASPECT_RATIO = 12
@@ -1414,6 +1488,11 @@ function updateCurrentIdealMeshPrototype() {
     currentMeshSource.vertices,
     liveVideoAspectRatio,
   )
+  const webglMeshWarpInput = buildWebglMeshWarpInputDebug(
+    currentMeshSource.vertices,
+    idealMeshTargetVertices,
+    triangleMesh.triangles,
+  )
   const aspectDebug = createMeshAspectDebug({
     currentLandmarks: current.landmarks478,
     top1RawIdealReferenceLandmarks: idealFrame.landmarks478,
@@ -1434,6 +1513,7 @@ function updateCurrentIdealMeshPrototype() {
     currentIdealMeshPairs,
     dynamicGrid: currentMeshSource.dynamicGrid,
     triangleMesh,
+    webglMeshWarpInput,
   })
 
   state.currentIdealMeshPrototype = {
@@ -1444,6 +1524,7 @@ function updateCurrentIdealMeshPrototype() {
     idealMeshTargetVertices,
     currentIdealMeshPairs,
     triangleMesh,
+    webglMeshWarpInput,
     aspectDebug,
     dynamicGrid: currentMeshSource.dynamicGrid,
     summary,
@@ -1734,6 +1815,129 @@ function buildTriangleMeshDebug(
     triangleAspectRatio: createMetricRange(triangleAspectRatios),
     triangles: includedTriangles,
     trianglePreview: includedTriangles.slice(0, TRIANGLE_PREVIEW_COUNT),
+  }
+}
+
+function buildWebglMeshWarpInputDebug(
+  sourceVertices: MeshSourceVertex[],
+  targetVertices: MeshTargetVertex[],
+  triangles: TriangleMeshTriangle[],
+): WebglMeshWarpInputDebug {
+  const sourceUvs = sourceVertices.map((vertex) => ({
+    u: vertex.x,
+    v: vertex.y,
+  }))
+  const targetPositions = targetVertices.map((vertex) => ({
+    image: {
+      x: vertex.x,
+      y: vertex.y,
+    },
+    clip: imageNormalizedToClipSpace(vertex),
+  }))
+  const indicesBuffer = triangles.flatMap((triangle) => triangle.indices)
+  const invalidIndexCount = indicesBuffer.filter(
+    (index) =>
+      !Number.isInteger(index) ||
+      index < 0 ||
+      index >= sourceVertices.length,
+  ).length
+  const outOfRangeUvCount = sourceUvs.filter((uv) => !isUvInRange(uv)).length
+  const outOfRangeTargetCount = targetPositions.filter(
+    (position) => !isValidNormalizedPoint(position.image),
+  ).length
+  const outOfRangeClipCount = targetPositions.filter(
+    (position) => !isClipPointInRange(position.clip),
+  ).length
+  const warnings: WebglMeshWarpInputWarning[] = []
+  const sourceTargetVertexCountMatch = sourceVertices.length === targetVertices.length
+  const triangleCountPositive = triangles.length > 0
+  const indexWithinVertexRange = invalidIndexCount === 0
+  const sourceUvInRange = outOfRangeUvCount === 0
+  const targetImagePositionInRange = outOfRangeTargetCount === 0
+  const targetClipPositionInRange = outOfRangeClipCount === 0
+
+  if (!sourceTargetVertexCountMatch) {
+    warnings.push("sourceTargetVertexCountMismatch")
+  }
+  if (!triangleCountPositive || indicesBuffer.length === 0) {
+    warnings.push("emptyTriangleIndices")
+  }
+  if (!indexWithinVertexRange) {
+    warnings.push("invalidIndex")
+  }
+  if (!sourceUvInRange) {
+    warnings.push("sourceUvOutOfRange")
+  }
+  if (!targetImagePositionInRange) {
+    warnings.push("targetPositionOutOfRange")
+  }
+  if (!targetClipPositionInRange) {
+    warnings.push("targetClipPositionOutOfRange")
+  }
+
+  return {
+    mode: "debugOnly",
+    webglInputReady: warnings.length === 0,
+    vertexCount: sourceVertices.length,
+    sourceVertexCount: sourceVertices.length,
+    targetVertexCount: targetVertices.length,
+    triangleCount: triangles.length,
+    indexCount: indicesBuffer.length,
+    sourceUvConvention: "imageNormalizedNoFlip",
+    targetPositionConvention: "clipSpaceFromImageNormalized",
+    sourceUvSummary: {
+      uRange: createMinMaxRange(sourceUvs.map((uv) => uv.u)),
+      vRange: createMinMaxRange(sourceUvs.map((uv) => uv.v)),
+      outOfRangeUvCount,
+      sourceUvInRange,
+    },
+    targetPositionSummary: {
+      imageXRange: createMinMaxRange(targetPositions.map((position) => position.image.x)),
+      imageYRange: createMinMaxRange(targetPositions.map((position) => position.image.y)),
+      clipXRange: createMinMaxRange(targetPositions.map((position) => position.clip.x)),
+      clipYRange: createMinMaxRange(targetPositions.map((position) => position.clip.y)),
+      outOfRangeTargetCount,
+      outOfRangeClipCount,
+      targetImagePositionInRange,
+      targetClipPositionInRange,
+    },
+    indexSummary: {
+      maxIndex: indicesBuffer.length > 0 ? Math.max(...indicesBuffer) : null,
+      indexWithinVertexRange,
+      invalidIndexCount,
+    },
+    coordinateSummary: {
+      sourceTargetVertexCountMatch,
+      sourceUvInRange,
+      targetImagePositionInRange,
+      targetClipPositionInRange,
+      triangleCountPositive,
+    },
+    preview: sourceVertices.slice(0, WEBGL_INPUT_PREVIEW_COUNT).map((sourceVertex, vertexIndex) => {
+      const targetVertex = targetVertices[vertexIndex]
+      const targetPosition = targetPositions[vertexIndex]
+      return {
+        vertexIndex,
+        source: {
+          x: sourceVertex.x,
+          y: sourceVertex.y,
+        },
+        target: targetVertex
+          ? {
+              x: targetVertex.x,
+              y: targetVertex.y,
+            }
+          : null,
+        uv: sourceUvs[vertexIndex],
+        clip: targetPosition?.clip ?? null,
+        kind: sourceVertex.kind,
+      }
+    }),
+    indexPreview: triangles
+      .slice(0, WEBGL_INPUT_PREVIEW_COUNT)
+      .map((triangle) => triangle.indices),
+    warnings,
+    warningCount: warnings.length,
   }
 }
 
@@ -2432,6 +2636,7 @@ function summarizeCurrentIdealMeshPrototype({
   currentIdealMeshPairs,
   dynamicGrid,
   triangleMesh,
+  webglMeshWarpInput,
 }: {
   currentLandmarkCount: number
   top1MatchedReferenceId: string | null
@@ -2442,6 +2647,7 @@ function summarizeCurrentIdealMeshPrototype({
   currentIdealMeshPairs: MeshVertexPair[]
   dynamicGrid: DynamicGridDebug
   triangleMesh: TriangleMeshDebug
+  webglMeshWarpInput: WebglMeshWarpInputDebug
 }): MeshPrototypeSummary {
   const usageWeights = currentIdealMeshPairs.map((pair) => pair.usageWeight)
   const allLandmarkVertices = [...acceptedCurrentLandmarks, ...excludedCurrentLandmarks]
@@ -2489,6 +2695,9 @@ function summarizeCurrentIdealMeshPrototype({
     triangleQuality: triangleMesh.triangleQuality,
     triangleArea: triangleMesh.triangleArea,
     triangleAspectRatio: triangleMesh.triangleAspectRatio,
+    webglInputReady: webglMeshWarpInput.webglInputReady,
+    webglInputWarningCount: webglMeshWarpInput.warningCount,
+    webglInputWarnings: webglMeshWarpInput.warnings,
     usageWeightAverage: usageWeights.length > 0 ? averageNumbers(usageWeights) : null,
     usageWeightMin: usageWeights.length > 0 ? Math.min(...usageWeights) : null,
     usageWeightMax: usageWeights.length > 0 ? Math.max(...usageWeights) : null,
@@ -2617,6 +2826,13 @@ function fromAspectCorrectedPoint(point: Point2D, videoAspectRatio: number): Poi
   }
 }
 
+function imageNormalizedToClipSpace(point: Point2D): Point2D {
+  return {
+    x: point.x * 2 - 1,
+    y: 1 - point.y * 2,
+  }
+}
+
 function calculateNormalizedDistance(source: Point2D, target: Point2D) {
   return Math.hypot(target.x - source.x, target.y - source.y)
 }
@@ -2702,6 +2918,27 @@ function isValidNormalizedPoint(point: { x: number; y: number }) {
   return isValidPoint(point) && point.x >= 0 && point.x <= 1 && point.y >= 0 && point.y <= 1
 }
 
+function isUvInRange(uv: { u: number; v: number }) {
+  return (
+    Number.isFinite(uv.u) &&
+    Number.isFinite(uv.v) &&
+    uv.u >= 0 &&
+    uv.u <= 1 &&
+    uv.v >= 0 &&
+    uv.v <= 1
+  )
+}
+
+function isClipPointInRange(point: Point2D) {
+  return (
+    isValidPoint(point) &&
+    point.x >= -1 &&
+    point.x <= 1 &&
+    point.y >= -1 &&
+    point.y <= 1
+  )
+}
+
 function isPoseHiddenSideLandmark(
   landmark: ReferenceLandmark,
   center: Point2D,
@@ -2761,6 +2998,14 @@ function createMetricRange(values: number[]): TriangleMetricRange {
   return {
     min: validValues.length > 0 ? Math.min(...validValues) : null,
     median: medianNumber(validValues),
+    max: validValues.length > 0 ? Math.max(...validValues) : null,
+  }
+}
+
+function createMinMaxRange(values: number[]): MetricMinMaxRange {
+  const validValues = values.filter(Number.isFinite)
+  return {
+    min: validValues.length > 0 ? Math.min(...validValues) : null,
     max: validValues.length > 0 ? Math.max(...validValues) : null,
   }
 }
@@ -3072,6 +3317,7 @@ function createEmptyTop1Match(): ReferenceMatchResult {
 function createEmptyMeshPrototypeSummary(videoAspectRatio = 1): MeshPrototypeSummary {
   const dynamicGrid = createEmptyDynamicGridDebug(videoAspectRatio)
   const triangleMesh = createEmptyTriangleMeshDebug()
+  const webglMeshWarpInput = createEmptyWebglMeshWarpInputDebug()
   return {
     gridMode: dynamicGrid.mode,
     nearFaceGridMode: dynamicGrid.nearFaceGridMode,
@@ -3115,6 +3361,9 @@ function createEmptyMeshPrototypeSummary(videoAspectRatio = 1): MeshPrototypeSum
     triangleQuality: triangleMesh.triangleQuality,
     triangleArea: triangleMesh.triangleArea,
     triangleAspectRatio: triangleMesh.triangleAspectRatio,
+    webglInputReady: webglMeshWarpInput.webglInputReady,
+    webglInputWarningCount: webglMeshWarpInput.warningCount,
+    webglInputWarnings: webglMeshWarpInput.warnings,
     usageWeightAverage: null,
     usageWeightMin: null,
     usageWeightMax: null,
@@ -3189,6 +3438,53 @@ function createEmptyTriangleMeshDebug(): TriangleMeshDebug {
   }
 }
 
+function createEmptyWebglMeshWarpInputDebug(): WebglMeshWarpInputDebug {
+  const emptyRange = createMinMaxRange([])
+  return {
+    mode: "debugOnly",
+    webglInputReady: false,
+    vertexCount: 0,
+    sourceVertexCount: 0,
+    targetVertexCount: 0,
+    triangleCount: 0,
+    indexCount: 0,
+    sourceUvConvention: "imageNormalizedNoFlip",
+    targetPositionConvention: "clipSpaceFromImageNormalized",
+    sourceUvSummary: {
+      uRange: emptyRange,
+      vRange: emptyRange,
+      outOfRangeUvCount: 0,
+      sourceUvInRange: true,
+    },
+    targetPositionSummary: {
+      imageXRange: emptyRange,
+      imageYRange: emptyRange,
+      clipXRange: emptyRange,
+      clipYRange: emptyRange,
+      outOfRangeTargetCount: 0,
+      outOfRangeClipCount: 0,
+      targetImagePositionInRange: true,
+      targetClipPositionInRange: true,
+    },
+    indexSummary: {
+      maxIndex: null,
+      indexWithinVertexRange: true,
+      invalidIndexCount: 0,
+    },
+    coordinateSummary: {
+      sourceTargetVertexCountMatch: true,
+      sourceUvInRange: true,
+      targetImagePositionInRange: true,
+      targetClipPositionInRange: true,
+      triangleCountPositive: false,
+    },
+    preview: [],
+    indexPreview: [],
+    warnings: ["emptyTriangleIndices"],
+    warningCount: 1,
+  }
+}
+
 function createEmptyMeshAspectDebug(
   modelVideoAspectRatio = 1,
   liveVideoAspectRatio = 1,
@@ -3221,6 +3517,7 @@ function createEmptyCurrentIdealMeshPrototype(
     idealMeshTargetVertices: [],
     currentIdealMeshPairs: [],
     triangleMesh: createEmptyTriangleMeshDebug(),
+    webglMeshWarpInput: createEmptyWebglMeshWarpInputDebug(),
     aspectDebug: createEmptyMeshAspectDebug(modelVideoAspectRatio, liveVideoAspectRatio),
     dynamicGrid: createEmptyDynamicGridDebug(liveVideoAspectRatio),
     summary: createEmptyMeshPrototypeSummary(liveVideoAspectRatio),
@@ -3521,6 +3818,9 @@ function createSummaryContent() {
       "triangleAspectRatio min / median / max",
       formatMetricRange(meshSummary.triangleAspectRatio),
     ],
+    ["webglInputReady", meshSummary.webglInputReady ? "true" : "false"],
+    ["webglInputWarningCount", String(meshSummary.webglInputWarningCount)],
+    ["webglInputWarnings", formatWarnings(meshSummary.webglInputWarnings)],
     [
       "usageWeight average / min / max",
       `${formatMetric(meshSummary.usageWeightAverage)} / ${formatMetric(meshSummary.usageWeightMin)} / ${formatMetric(meshSummary.usageWeightMax)}`,
@@ -3801,6 +4101,60 @@ function createMeshPrototypeContent() {
     ["trianglePreview", formatTrianglePreview(mesh.triangleMesh.trianglePreview)],
   ])
 
+  const webglHeading = document.createElement("h3")
+  webglHeading.textContent = "WebGL mesh warp input"
+  const webglList = document.createElement("dl")
+  webglList.className = "summary-list"
+  appendDefinitionItems(webglList, [
+    ["mode", mesh.webglMeshWarpInput.mode],
+    ["webglInputReady", mesh.webglMeshWarpInput.webglInputReady ? "true" : "false"],
+    ["vertexCount", String(mesh.webglMeshWarpInput.vertexCount)],
+    ["sourceVertexCount", String(mesh.webglMeshWarpInput.sourceVertexCount)],
+    ["targetVertexCount", String(mesh.webglMeshWarpInput.targetVertexCount)],
+    ["triangleCount", String(mesh.webglMeshWarpInput.triangleCount)],
+    ["indexCount", String(mesh.webglMeshWarpInput.indexCount)],
+    ["sourceUvConvention", mesh.webglMeshWarpInput.sourceUvConvention],
+    ["targetPositionConvention", mesh.webglMeshWarpInput.targetPositionConvention],
+    ["sourceUvRange", formatUvRange(mesh.webglMeshWarpInput.sourceUvSummary)],
+    [
+      "targetClipRange",
+      formatClipRange(mesh.webglMeshWarpInput.targetPositionSummary),
+    ],
+    [
+      "sourceTargetVertexCountMatch",
+      mesh.webglMeshWarpInput.coordinateSummary.sourceTargetVertexCountMatch
+        ? "true"
+        : "false",
+    ],
+    [
+      "indexWithinVertexRange",
+      mesh.webglMeshWarpInput.indexSummary.indexWithinVertexRange ? "true" : "false",
+    ],
+    [
+      "maxIndex",
+      mesh.webglMeshWarpInput.indexSummary.maxIndex === null
+        ? "-"
+        : String(mesh.webglMeshWarpInput.indexSummary.maxIndex),
+    ],
+    [
+      "invalidIndexCount",
+      String(mesh.webglMeshWarpInput.indexSummary.invalidIndexCount),
+    ],
+    [
+      "outOfRangeUvCount",
+      String(mesh.webglMeshWarpInput.sourceUvSummary.outOfRangeUvCount),
+    ],
+    [
+      "outOfRangeTargetCount",
+      String(mesh.webglMeshWarpInput.targetPositionSummary.outOfRangeTargetCount),
+    ],
+    [
+      "outOfRangeClipCount",
+      String(mesh.webglMeshWarpInput.targetPositionSummary.outOfRangeClipCount),
+    ],
+    ["warnings", formatWarnings(mesh.webglMeshWarpInput.warnings)],
+  ])
+
   const dynamicGridHeading = document.createElement("h3")
   dynamicGridHeading.textContent = "Dynamic Grid"
   const dynamicGridList = document.createElement("dl")
@@ -3927,6 +4281,8 @@ function createMeshPrototypeContent() {
     targetList,
     triangleHeading,
     triangleList,
+    webglHeading,
+    webglList,
     dynamicGridHeading,
     dynamicGridList,
     alignmentHeading,
@@ -4116,6 +4472,7 @@ function getCurrentIdealMeshPrototypeRawState() {
     },
     dynamicGrid: roundDynamicGridDebug(mesh.dynamicGrid),
     triangleMesh: roundTriangleMeshDebug(mesh.triangleMesh),
+    webglMeshWarpInput: roundWebglMeshWarpInputDebug(mesh.webglMeshWarpInput),
     aspectDebug: roundMeshAspectDebug(mesh.aspectDebug),
     candidateAlignedIdealLandmarkPreview: mesh.candidateAlignedIdealLandmarks
       .slice(0, LANDMARK_PREVIEW_COUNT)
@@ -4655,6 +5012,24 @@ function formatMetricRange(range: TriangleMetricRange) {
   return `${formatMetric(range.min)} / ${formatMetric(range.median)} / ${formatMetric(range.max)}`
 }
 
+function formatMinMaxRange(range: MetricMinMaxRange) {
+  return `min ${formatMetric(range.min)} / max ${formatMetric(range.max)}`
+}
+
+function formatUvRange(summary: WebglMeshWarpInputDebug["sourceUvSummary"]) {
+  return `u ${formatMinMaxRange(summary.uRange)} / v ${formatMinMaxRange(summary.vRange)}`
+}
+
+function formatClipRange(
+  summary: WebglMeshWarpInputDebug["targetPositionSummary"],
+) {
+  return `clipX ${formatMinMaxRange(summary.clipXRange)} / clipY ${formatMinMaxRange(summary.clipYRange)}`
+}
+
+function formatWarnings(warnings: string[]) {
+  return warnings.length === 0 ? "-" : warnings.join(" / ")
+}
+
 function formatMeshLandmarkPreview(vertices: CurrentMeshLandmarkVertex[]) {
   if (vertices.length === 0) {
     return "-"
@@ -4881,6 +5256,57 @@ function roundTriangleMeshTriangle(triangle: TriangleMeshTriangle) {
   }
 }
 
+function roundWebglMeshWarpInputDebug(debug: WebglMeshWarpInputDebug) {
+  return {
+    mode: debug.mode,
+    webglInputReady: debug.webglInputReady,
+    vertexCount: debug.vertexCount,
+    sourceVertexCount: debug.sourceVertexCount,
+    targetVertexCount: debug.targetVertexCount,
+    triangleCount: debug.triangleCount,
+    indexCount: debug.indexCount,
+    sourceUvConvention: debug.sourceUvConvention,
+    targetPositionConvention: debug.targetPositionConvention,
+    sourceUvSummary: {
+      uRange: roundMinMaxRange(debug.sourceUvSummary.uRange),
+      vRange: roundMinMaxRange(debug.sourceUvSummary.vRange),
+      outOfRangeUvCount: debug.sourceUvSummary.outOfRangeUvCount,
+      sourceUvInRange: debug.sourceUvSummary.sourceUvInRange,
+    },
+    targetPositionSummary: {
+      imageXRange: roundMinMaxRange(debug.targetPositionSummary.imageXRange),
+      imageYRange: roundMinMaxRange(debug.targetPositionSummary.imageYRange),
+      clipXRange: roundMinMaxRange(debug.targetPositionSummary.clipXRange),
+      clipYRange: roundMinMaxRange(debug.targetPositionSummary.clipYRange),
+      outOfRangeTargetCount: debug.targetPositionSummary.outOfRangeTargetCount,
+      outOfRangeClipCount: debug.targetPositionSummary.outOfRangeClipCount,
+      targetImagePositionInRange:
+        debug.targetPositionSummary.targetImagePositionInRange,
+      targetClipPositionInRange: debug.targetPositionSummary.targetClipPositionInRange,
+    },
+    indexSummary: debug.indexSummary,
+    coordinateSummary: debug.coordinateSummary,
+    preview: debug.preview.map(roundWebglMeshWarpInputPreviewItem),
+    indexPreview: debug.indexPreview,
+    warnings: debug.warnings,
+    warningCount: debug.warningCount,
+  }
+}
+
+function roundWebglMeshWarpInputPreviewItem(item: WebglMeshWarpInputPreviewItem) {
+  return {
+    vertexIndex: item.vertexIndex,
+    source: roundPoint(item.source),
+    target: item.target ? roundPoint(item.target) : null,
+    uv: {
+      u: roundForState(item.uv.u),
+      v: roundForState(item.uv.v),
+    },
+    clip: item.clip ? roundPoint(item.clip) : null,
+    kind: item.kind,
+  }
+}
+
 function roundPoint(point: Point2D) {
   return {
     x: roundForState(point.x),
@@ -4892,6 +5318,13 @@ function roundMetricRange(range: TriangleMetricRange) {
   return {
     min: roundMetricForState(range.min),
     median: roundMetricForState(range.median),
+    max: roundMetricForState(range.max),
+  }
+}
+
+function roundMinMaxRange(range: MetricMinMaxRange) {
+  return {
+    min: roundMetricForState(range.min),
     max: roundMetricForState(range.max),
   }
 }
