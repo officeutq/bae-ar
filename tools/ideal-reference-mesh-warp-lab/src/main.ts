@@ -210,8 +210,32 @@ type DynamicGridPointPreview = {
   reasons: string[]
 }
 
+type NearFaceGridMode = "filledRegionMinusFaceInterior"
+
+type FaceInteriorTrianglePreview = {
+  indices: [number, number, number]
+  area: number
+}
+
+type FaceInteriorDebug = {
+  faceOnlyTriangleCount: number
+  faceInteriorTestTriangleCount: number
+  preview: FaceInteriorTrianglePreview[]
+}
+
+type NearFaceGridDebug = {
+  mode: NearFaceGridMode
+  candidateGridCount: number
+  removedInsideFaceCount: number
+  removedTooCloseToFaceCount: number
+  acceptedGridCount: number
+  tooCloseToFaceThreshold: number | null
+  gridPointPreview: DynamicGridPointPreview[]
+}
+
 type DynamicGridDebug = {
   mode: "dynamic"
+  nearFaceGridMode: NearFaceGridMode
   acceptedFaceLandmarkCount: number
   faceMedianNearestDistance: number | null
   faceNearestDistanceSampleCount: number
@@ -220,12 +244,21 @@ type DynamicGridDebug = {
   screenEdgeAnchorSpacing: number | null
   nearFaceGridSpacingRatioToFaceMedian: number | null
   backgroundGridSpacingRatioToFaceMedian: number | null
+  faceOnlyTriangleCount: number
+  faceInteriorTestTriangleCount: number
+  nearFaceCandidateGridCount: number
+  nearFaceRemovedInsideFaceCount: number
+  nearFaceRemovedTooCloseToFaceCount: number
+  nearFaceAcceptedGridCount: number
+  tooCloseToFaceThreshold: number | null
   nearFaceGridCount: number
   backgroundGridCount: number
   screenEdgeAnchorCount: number
   faceBounds: BoundsDebugSummary | null
   expandedNearFaceBounds: BoundsDebugSummary | null
   videoAspectRatio: number
+  nearFaceGrid: NearFaceGridDebug
+  faceInterior: FaceInteriorDebug
   gridPointPreview: DynamicGridPointPreview[]
 }
 
@@ -283,6 +316,7 @@ type TriangleMeshDebug = {
 
 type MeshPrototypeSummary = {
   gridMode: "dynamic"
+  nearFaceGridMode: NearFaceGridMode
   triangleMode: "prototype"
   top1MatchedReferenceId: string | null
   currentLandmarkCount: number
@@ -295,6 +329,13 @@ type MeshPrototypeSummary = {
   screenEdgeAnchorSpacing: number | null
   nearFaceGridSpacingRatioToFaceMedian: number | null
   backgroundGridSpacingRatioToFaceMedian: number | null
+  faceOnlyTriangleCount: number
+  faceInteriorTestTriangleCount: number
+  nearFaceCandidateGridCount: number
+  nearFaceRemovedInsideFaceCount: number
+  nearFaceRemovedTooCloseToFaceCount: number
+  nearFaceAcceptedGridCount: number
+  tooCloseToFaceThreshold: number | null
   faceBounds: BoundsDebugSummary | null
   expandedNearFaceBounds: BoundsDebugSummary | null
   videoAspectRatio: number
@@ -414,10 +455,10 @@ const LARGE_DISPLACEMENT_USAGE_MULTIPLIER = 0.4
 const LARGE_DISPLACEMENT_THRESHOLD = 0.075
 const EXCLUDE_USAGE_WEIGHT_THRESHOLD = 0.15
 const DYNAMIC_GRID_NEAR_FACE_EXPAND_RATIO = 0.2
-const DYNAMIC_GRID_FACE_EXCLUSION_RATIO = 0.04
 const DYNAMIC_GRID_NEAREST_SAMPLE_LIMIT = 160
 const DYNAMIC_GRID_DEFAULT_FACE_MEDIAN_DISTANCE = 0.018
 const NEAR_FACE_GRID_SPACING_RATIO = 1.5
+const NEAR_FACE_TOO_CLOSE_TO_FACE_SPACING_RATIO = 0.4
 const BACKGROUND_GRID_SPACING_RATIO = 4
 const SCREEN_EDGE_ANCHOR_SPACING_RATIO = 1.25
 const MIN_NEAR_FACE_GRID_SPACING = 0.012
@@ -1913,13 +1954,28 @@ function buildDynamicGridVertices(
         videoAspectRatio,
       )
     : null
-  const excludedFaceBounds = faceBounds
-    ? expandAspectCorrectedRect(
-        faceBounds,
-        DYNAMIC_GRID_FACE_EXCLUSION_RATIO,
-        videoAspectRatio,
-      )
-    : null
+  const faceInteriorVertices = acceptedCurrentLandmarks.map((landmark) => ({
+    id: landmark.id,
+    kind: "faceLandmark" as const,
+    index: landmark.index,
+    x: landmark.source.x,
+    y: landmark.source.y,
+    weight: landmark.usageWeight,
+    reasons: landmark.reasons,
+  }))
+  const faceOnlyTriangleIndices = buildDelaunayTriangleIndices(
+    faceInteriorVertices,
+    videoAspectRatio,
+  )
+  const faceInteriorTestTriangleIndices = faceOnlyTriangleIndices.filter((indices) =>
+    isTriangleUsableForFaceInterior(faceInteriorVertices, indices, videoAspectRatio),
+  )
+  const faceInteriorDebug = createFaceInteriorDebug(
+    faceInteriorVertices,
+    faceOnlyTriangleIndices,
+    faceInteriorTestTriangleIndices,
+    videoAspectRatio,
+  )
   const density = estimateFaceLandmarkDensity(acceptedPoints, videoAspectRatio)
   const faceMedianNearestDistance =
     density.faceMedianNearestDistance ?? DYNAMIC_GRID_DEFAULT_FACE_MEDIAN_DISTANCE
@@ -1928,6 +1984,8 @@ function buildDynamicGridVertices(
     MIN_NEAR_FACE_GRID_SPACING,
     MAX_NEAR_FACE_GRID_SPACING,
   )
+  const tooCloseToFaceThreshold =
+    nearFaceGridSpacing * NEAR_FACE_TOO_CLOSE_TO_FACE_SPACING_RATIO
   const backgroundGridSpacing = clamp(
     faceMedianNearestDistance * BACKGROUND_GRID_SPACING_RATIO,
     MIN_BACKGROUND_GRID_SPACING,
@@ -1936,13 +1994,16 @@ function buildDynamicGridVertices(
   const screenEdgeAnchorSpacing = backgroundGridSpacing * SCREEN_EDGE_ANCHOR_SPACING_RATIO
   const vertices: MeshSourceVertex[] = []
   const occupiedKeys = new Set<string>()
+  let nearFaceCandidateGridCount = 0
+  let nearFaceRemovedInsideFaceCount = 0
+  let nearFaceRemovedTooCloseToFaceCount = 0
 
   const addVertex = (
     kind: MeshVertexKind,
     point: Point2D,
     idPrefix: string,
     reasons: string[],
-  ) => {
+  ): MeshSourceVertex | null => {
     const normalized = fromAspectCorrectedPoint(point, videoAspectRatio)
     const vertexPoint = {
       x: clamp(normalized.x, 0, 1),
@@ -1950,28 +2011,51 @@ function buildDynamicGridVertices(
     }
     const key = createGridVertexKey(vertexPoint)
     if (occupiedKeys.has(key)) {
-      return
+      return null
     }
     occupiedKeys.add(key)
-    vertices.push({
+    const vertex = {
       id: `${idPrefix}:${countVerticesByKind(vertices, kind)}`,
       kind,
       x: vertexPoint.x,
       y: vertexPoint.y,
       weight: 0,
       reasons,
-    })
+    }
+    vertices.push(vertex)
+    return vertex
   }
 
-  if (expandedNearFaceBounds && excludedFaceBounds) {
+  if (expandedNearFaceBounds) {
     forEachAspectCorrectedGridPoint(
       expandedNearFaceBounds,
       nearFaceGridSpacing,
       (point) => {
-        if (isPointInsideRect(point, excludedFaceBounds)) {
+        nearFaceCandidateGridCount += 1
+        const normalizedPoint = fromAspectCorrectedPoint(point, videoAspectRatio)
+        if (
+          isPointInsideFaceInterior(
+            normalizedPoint,
+            faceInteriorVertices,
+            faceInteriorTestTriangleIndices,
+            videoAspectRatio,
+          )
+        ) {
+          nearFaceRemovedInsideFaceCount += 1
           return
         }
-        addVertex("nearFaceGrid", point, "grid:near", ["dynamicNearFaceGrid"])
+        if (
+          isPointTooCloseToFaceLandmark(
+            point,
+            acceptedPoints,
+            tooCloseToFaceThreshold,
+            videoAspectRatio,
+          )
+        ) {
+          nearFaceRemovedTooCloseToFaceCount += 1
+          return
+        }
+        addVertex("nearFaceGrid", point, "grid:near", ["filledNearFaceGrid"])
       },
     )
   }
@@ -1996,6 +2080,7 @@ function buildDynamicGridVertices(
 
   const debug: DynamicGridDebug = {
     mode: "dynamic",
+    nearFaceGridMode: "filledRegionMinusFaceInterior",
     acceptedFaceLandmarkCount: acceptedPoints.length,
     faceMedianNearestDistance,
     faceNearestDistanceSampleCount: density.faceNearestDistanceSampleCount,
@@ -2010,6 +2095,13 @@ function buildDynamicGridVertices(
       backgroundGridSpacing,
       faceMedianNearestDistance,
     ),
+    faceOnlyTriangleCount: faceInteriorDebug.faceOnlyTriangleCount,
+    faceInteriorTestTriangleCount: faceInteriorDebug.faceInteriorTestTriangleCount,
+    nearFaceCandidateGridCount,
+    nearFaceRemovedInsideFaceCount,
+    nearFaceRemovedTooCloseToFaceCount,
+    nearFaceAcceptedGridCount: countVerticesByKind(vertices, "nearFaceGrid"),
+    tooCloseToFaceThreshold,
     nearFaceGridCount: countVerticesByKind(vertices, "nearFaceGrid"),
     backgroundGridCount: countVerticesByKind(vertices, "backgroundGrid"),
     screenEdgeAnchorCount: countVerticesByKind(vertices, "screenEdgeAnchor"),
@@ -2018,6 +2110,25 @@ function buildDynamicGridVertices(
       ? createBoundsDebugSummary(expandedNearFaceBounds)
       : null,
     videoAspectRatio,
+    nearFaceGrid: {
+      mode: "filledRegionMinusFaceInterior",
+      candidateGridCount: nearFaceCandidateGridCount,
+      removedInsideFaceCount: nearFaceRemovedInsideFaceCount,
+      removedTooCloseToFaceCount: nearFaceRemovedTooCloseToFaceCount,
+      acceptedGridCount: countVerticesByKind(vertices, "nearFaceGrid"),
+      tooCloseToFaceThreshold,
+      gridPointPreview: vertices
+        .filter((vertex) => vertex.kind === "nearFaceGrid")
+        .slice(0, LANDMARK_PREVIEW_COUNT)
+        .map((vertex) => ({
+          id: vertex.id,
+          kind: vertex.kind,
+          x: vertex.x,
+          y: vertex.y,
+          reasons: vertex.reasons,
+        })),
+    },
+    faceInterior: faceInteriorDebug,
     gridPointPreview: vertices.slice(0, LANDMARK_PREVIEW_COUNT).map((vertex) => ({
       id: vertex.id,
       kind: vertex.kind,
@@ -2066,6 +2177,99 @@ function estimateFaceLandmarkDensity(
     faceMedianNearestDistance: medianNumber(nearestDistances),
     faceNearestDistanceSampleCount: nearestDistances.length,
   }
+}
+
+function isTriangleUsableForFaceInterior(
+  faceVertices: MeshSourceVertex[],
+  indices: [number, number, number],
+  videoAspectRatio: number,
+) {
+  const points = indices.map((index) =>
+    toAspectCorrectedPoint(faceVertices[index], videoAspectRatio),
+  ) as [Point2D, Point2D, Point2D]
+
+  return Math.abs(signedTriangleArea(points[0], points[1], points[2])) > TRIANGLE_MIN_AREA
+}
+
+function createFaceInteriorDebug(
+  faceVertices: MeshSourceVertex[],
+  faceOnlyTriangleIndices: Array<[number, number, number]>,
+  faceInteriorTestTriangleIndices: Array<[number, number, number]>,
+  videoAspectRatio: number,
+): FaceInteriorDebug {
+  return {
+    faceOnlyTriangleCount: faceOnlyTriangleIndices.length,
+    faceInteriorTestTriangleCount: faceInteriorTestTriangleIndices.length,
+    preview: faceInteriorTestTriangleIndices
+      .slice(0, TRIANGLE_PREVIEW_COUNT)
+      .map((indices) => ({
+        indices,
+        area: calculateTriangleArea(faceVertices, indices, videoAspectRatio),
+      })),
+  }
+}
+
+function calculateTriangleArea(
+  vertices: MeshSourceVertex[],
+  indices: [number, number, number],
+  videoAspectRatio: number,
+) {
+  const points = indices.map((index) =>
+    toAspectCorrectedPoint(vertices[index], videoAspectRatio),
+  ) as [Point2D, Point2D, Point2D]
+
+  return Math.abs(signedTriangleArea(points[0], points[1], points[2]))
+}
+
+function isPointInsideFaceInterior(
+  point: Point2D,
+  faceVertices: MeshSourceVertex[],
+  faceOnlyTriangleIndices: Array<[number, number, number]>,
+  videoAspectRatio: number,
+): boolean {
+  if (faceOnlyTriangleIndices.length === 0) {
+    return false
+  }
+
+  const correctedPoint = toAspectCorrectedPoint(point, videoAspectRatio)
+  return faceOnlyTriangleIndices.some((indices) => {
+    const triangle = indices.map((index) =>
+      toAspectCorrectedPoint(faceVertices[index], videoAspectRatio),
+    ) as [Point2D, Point2D, Point2D]
+    return isPointInTriangle(correctedPoint, triangle)
+  })
+}
+
+function isPointInTriangle(
+  point: Point2D,
+  triangle: [Point2D, Point2D, Point2D],
+) {
+  const [a, b, c] = triangle
+  const area = signedTriangleArea(a, b, c)
+  if (Math.abs(area) <= TRIANGLE_MIN_AREA) {
+    return false
+  }
+
+  const ab = signedTriangleArea(a, b, point)
+  const bc = signedTriangleArea(b, c, point)
+  const ca = signedTriangleArea(c, a, point)
+  const epsilon = TRIANGLE_MIN_AREA
+
+  return area > 0
+    ? ab >= -epsilon && bc >= -epsilon && ca >= -epsilon
+    : ab <= epsilon && bc <= epsilon && ca <= epsilon
+}
+
+function isPointTooCloseToFaceLandmark(
+  aspectCorrectedPoint: Point2D,
+  facePoints: Point2D[],
+  threshold: number,
+  videoAspectRatio: number,
+) {
+  return facePoints.some((facePoint) => {
+    const correctedFacePoint = toAspectCorrectedPoint(facePoint, videoAspectRatio)
+    return calculateNormalizedDistance(aspectCorrectedPoint, correctedFacePoint) < threshold
+  })
 }
 
 function expandAspectCorrectedRect(
@@ -2244,6 +2448,7 @@ function summarizeCurrentIdealMeshPrototype({
 
   return {
     gridMode: dynamicGrid.mode,
+    nearFaceGridMode: dynamicGrid.nearFaceGridMode,
     triangleMode: triangleMesh.mode,
     top1MatchedReferenceId,
     currentLandmarkCount,
@@ -2258,6 +2463,13 @@ function summarizeCurrentIdealMeshPrototype({
       dynamicGrid.nearFaceGridSpacingRatioToFaceMedian,
     backgroundGridSpacingRatioToFaceMedian:
       dynamicGrid.backgroundGridSpacingRatioToFaceMedian,
+    faceOnlyTriangleCount: dynamicGrid.faceOnlyTriangleCount,
+    faceInteriorTestTriangleCount: dynamicGrid.faceInteriorTestTriangleCount,
+    nearFaceCandidateGridCount: dynamicGrid.nearFaceCandidateGridCount,
+    nearFaceRemovedInsideFaceCount: dynamicGrid.nearFaceRemovedInsideFaceCount,
+    nearFaceRemovedTooCloseToFaceCount: dynamicGrid.nearFaceRemovedTooCloseToFaceCount,
+    nearFaceAcceptedGridCount: dynamicGrid.nearFaceAcceptedGridCount,
+    tooCloseToFaceThreshold: dynamicGrid.tooCloseToFaceThreshold,
     faceBounds: dynamicGrid.faceBounds,
     expandedNearFaceBounds: dynamicGrid.expandedNearFaceBounds,
     videoAspectRatio: dynamicGrid.videoAspectRatio,
@@ -2862,6 +3074,7 @@ function createEmptyMeshPrototypeSummary(videoAspectRatio = 1): MeshPrototypeSum
   const triangleMesh = createEmptyTriangleMeshDebug()
   return {
     gridMode: dynamicGrid.mode,
+    nearFaceGridMode: dynamicGrid.nearFaceGridMode,
     triangleMode: triangleMesh.mode,
     top1MatchedReferenceId: null,
     currentLandmarkCount: 0,
@@ -2876,6 +3089,13 @@ function createEmptyMeshPrototypeSummary(videoAspectRatio = 1): MeshPrototypeSum
       dynamicGrid.nearFaceGridSpacingRatioToFaceMedian,
     backgroundGridSpacingRatioToFaceMedian:
       dynamicGrid.backgroundGridSpacingRatioToFaceMedian,
+    faceOnlyTriangleCount: dynamicGrid.faceOnlyTriangleCount,
+    faceInteriorTestTriangleCount: dynamicGrid.faceInteriorTestTriangleCount,
+    nearFaceCandidateGridCount: dynamicGrid.nearFaceCandidateGridCount,
+    nearFaceRemovedInsideFaceCount: dynamicGrid.nearFaceRemovedInsideFaceCount,
+    nearFaceRemovedTooCloseToFaceCount: dynamicGrid.nearFaceRemovedTooCloseToFaceCount,
+    nearFaceAcceptedGridCount: dynamicGrid.nearFaceAcceptedGridCount,
+    tooCloseToFaceThreshold: dynamicGrid.tooCloseToFaceThreshold,
     faceBounds: dynamicGrid.faceBounds,
     expandedNearFaceBounds: dynamicGrid.expandedNearFaceBounds,
     videoAspectRatio: dynamicGrid.videoAspectRatio,
@@ -2907,8 +3127,24 @@ function createEmptyMeshPrototypeSummary(videoAspectRatio = 1): MeshPrototypeSum
 }
 
 function createEmptyDynamicGridDebug(videoAspectRatio = 1): DynamicGridDebug {
+  const faceInterior: FaceInteriorDebug = {
+    faceOnlyTriangleCount: 0,
+    faceInteriorTestTriangleCount: 0,
+    preview: [],
+  }
+  const nearFaceGrid: NearFaceGridDebug = {
+    mode: "filledRegionMinusFaceInterior",
+    candidateGridCount: 0,
+    removedInsideFaceCount: 0,
+    removedTooCloseToFaceCount: 0,
+    acceptedGridCount: 0,
+    tooCloseToFaceThreshold: null,
+    gridPointPreview: [],
+  }
+
   return {
     mode: "dynamic",
+    nearFaceGridMode: "filledRegionMinusFaceInterior",
     acceptedFaceLandmarkCount: 0,
     faceMedianNearestDistance: null,
     faceNearestDistanceSampleCount: 0,
@@ -2917,12 +3153,21 @@ function createEmptyDynamicGridDebug(videoAspectRatio = 1): DynamicGridDebug {
     screenEdgeAnchorSpacing: null,
     nearFaceGridSpacingRatioToFaceMedian: null,
     backgroundGridSpacingRatioToFaceMedian: null,
+    faceOnlyTriangleCount: 0,
+    faceInteriorTestTriangleCount: 0,
+    nearFaceCandidateGridCount: 0,
+    nearFaceRemovedInsideFaceCount: 0,
+    nearFaceRemovedTooCloseToFaceCount: 0,
+    nearFaceAcceptedGridCount: 0,
+    tooCloseToFaceThreshold: null,
     nearFaceGridCount: 0,
     backgroundGridCount: 0,
     screenEdgeAnchorCount: 0,
     faceBounds: null,
     expandedNearFaceBounds: null,
     videoAspectRatio,
+    nearFaceGrid,
+    faceInterior,
     gridPointPreview: [],
   }
 }
@@ -3218,6 +3463,7 @@ function createSummaryContent() {
     ["Expression distance", formatSeconds(state.top1Match.expressionDistance)],
     ["top1MatchedReferenceId", meshSummary.top1MatchedReferenceId ?? "-"],
     ["gridMode", meshSummary.gridMode],
+    ["nearFaceGridMode", meshSummary.nearFaceGridMode],
     ["triangleMode", meshSummary.triangleMode],
     ["currentLandmarkCount", String(meshSummary.currentLandmarkCount)],
     ["visibleCurrentLandmarkCount", String(meshSummary.visibleCurrentLandmarkCount)],
@@ -3242,6 +3488,22 @@ function createSummaryContent() {
       "backgroundGridSpacingRatioToFaceMedian",
       formatMetric(meshSummary.backgroundGridSpacingRatioToFaceMedian),
     ],
+    ["faceOnlyTriangleCount", String(meshSummary.faceOnlyTriangleCount)],
+    [
+      "faceInteriorTestTriangleCount",
+      String(meshSummary.faceInteriorTestTriangleCount),
+    ],
+    ["nearFaceCandidateGridCount", String(meshSummary.nearFaceCandidateGridCount)],
+    [
+      "nearFaceRemovedInsideFaceCount",
+      String(meshSummary.nearFaceRemovedInsideFaceCount),
+    ],
+    [
+      "nearFaceRemovedTooCloseToFaceCount",
+      String(meshSummary.nearFaceRemovedTooCloseToFaceCount),
+    ],
+    ["nearFaceAcceptedGridCount", String(meshSummary.nearFaceAcceptedGridCount)],
+    ["tooCloseToFaceThreshold", formatMetric(meshSummary.tooCloseToFaceThreshold)],
     ["faceSourceVertexCount", String(meshSummary.faceSourceVertexCount)],
     ["nearFaceGridCount", String(meshSummary.nearFaceGridCount)],
     ["backgroundGridCount", String(meshSummary.backgroundGridCount)],
@@ -3452,6 +3714,7 @@ function createMeshPrototypeContent() {
     ["top1MatchedReferenceId", summary.top1MatchedReferenceId ?? "-"],
     ["candidateAlignedIdealLandmarkCount", String(summary.candidateAlignedIdealLandmarkCount)],
     ["gridMode", summary.gridMode],
+    ["nearFaceGridMode", summary.nearFaceGridMode],
     ["acceptedFaceLandmarkCount", String(summary.acceptedFaceLandmarkCount)],
     ["faceMedianNearestDistance", formatMetric(summary.faceMedianNearestDistance)],
     [
@@ -3469,6 +3732,22 @@ function createMeshPrototypeContent() {
       "backgroundGridSpacingRatioToFaceMedian",
       formatMetric(summary.backgroundGridSpacingRatioToFaceMedian),
     ],
+    ["faceOnlyTriangleCount", String(summary.faceOnlyTriangleCount)],
+    [
+      "faceInteriorTestTriangleCount",
+      String(summary.faceInteriorTestTriangleCount),
+    ],
+    ["nearFaceCandidateGridCount", String(summary.nearFaceCandidateGridCount)],
+    [
+      "nearFaceRemovedInsideFaceCount",
+      String(summary.nearFaceRemovedInsideFaceCount),
+    ],
+    [
+      "nearFaceRemovedTooCloseToFaceCount",
+      String(summary.nearFaceRemovedTooCloseToFaceCount),
+    ],
+    ["nearFaceAcceptedGridCount", String(summary.nearFaceAcceptedGridCount)],
+    ["tooCloseToFaceThreshold", formatMetric(summary.tooCloseToFaceThreshold)],
     ["currentLandmarkCount", String(summary.currentLandmarkCount)],
     ["visibleCurrentLandmarkCount", String(summary.visibleCurrentLandmarkCount)],
     ["excludedCurrentLandmarkCount", String(summary.excludedCurrentLandmarkCount)],
@@ -3528,12 +3807,38 @@ function createMeshPrototypeContent() {
   dynamicGridList.className = "summary-list"
   appendDefinitionItems(dynamicGridList, [
     ["mode", mesh.dynamicGrid.mode],
+    ["nearFaceGridMode", mesh.dynamicGrid.nearFaceGridMode],
     ["faceBounds", formatBoundsSummary(mesh.dynamicGrid.faceBounds)],
     [
       "expandedNearFaceBounds",
       formatBoundsSummary(mesh.dynamicGrid.expandedNearFaceBounds),
     ],
     ["videoAspectRatio", formatMetric(mesh.dynamicGrid.videoAspectRatio)],
+    ["faceOnlyTriangleCount", String(mesh.dynamicGrid.faceOnlyTriangleCount)],
+    [
+      "faceInteriorTestTriangleCount",
+      String(mesh.dynamicGrid.faceInteriorTestTriangleCount),
+    ],
+    [
+      "faceInteriorPreview",
+      formatFaceInteriorTrianglePreview(mesh.dynamicGrid.faceInterior.preview),
+    ],
+    [
+      "nearFaceCandidateGridCount",
+      String(mesh.dynamicGrid.nearFaceCandidateGridCount),
+    ],
+    [
+      "nearFaceRemovedInsideFaceCount",
+      String(mesh.dynamicGrid.nearFaceRemovedInsideFaceCount),
+    ],
+    [
+      "nearFaceRemovedTooCloseToFaceCount",
+      String(mesh.dynamicGrid.nearFaceRemovedTooCloseToFaceCount),
+    ],
+    [
+      "tooCloseToFaceThreshold",
+      formatMetric(mesh.dynamicGrid.tooCloseToFaceThreshold),
+    ],
     ["nearFaceGridCount", String(mesh.dynamicGrid.nearFaceGridCount)],
     ["backgroundGridCount", String(mesh.dynamicGrid.backgroundGridCount)],
     ["screenEdgeAnchorCount", String(mesh.dynamicGrid.screenEdgeAnchorCount)],
@@ -3794,6 +4099,9 @@ function getCurrentIdealMeshPrototypeRawState() {
       ),
       backgroundGridSpacingRatioToFaceMedian: roundMetricForState(
         mesh.summary.backgroundGridSpacingRatioToFaceMedian,
+      ),
+      tooCloseToFaceThreshold: roundMetricForState(
+        mesh.summary.tooCloseToFaceThreshold,
       ),
       faceBounds: roundBoundsDebugSummary(mesh.summary.faceBounds),
       expandedNearFaceBounds: roundBoundsDebugSummary(
@@ -4371,6 +4679,16 @@ function formatDynamicGridPointPreview(points: DynamicGridPointPreview[]) {
     .join(" / ")
 }
 
+function formatFaceInteriorTrianglePreview(triangles: FaceInteriorTrianglePreview[]) {
+  if (triangles.length === 0) {
+    return "-"
+  }
+
+  return triangles
+    .map((triangle) => `${triangle.indices.join(",")} area:${formatMetric(triangle.area)}`)
+    .join(" / ")
+}
+
 function formatTrianglePreview(triangles: TriangleMeshTriangle[]) {
   if (triangles.length === 0) {
     return "-"
@@ -4476,6 +4794,7 @@ function roundMeshVertexPair(pair: MeshVertexPair) {
 function roundDynamicGridDebug(debug: DynamicGridDebug) {
   return {
     mode: debug.mode,
+    nearFaceGridMode: debug.nearFaceGridMode,
     acceptedFaceLandmarkCount: debug.acceptedFaceLandmarkCount,
     faceMedianNearestDistance: roundMetricForState(debug.faceMedianNearestDistance),
     faceNearestDistanceSampleCount: debug.faceNearestDistanceSampleCount,
@@ -4488,19 +4807,51 @@ function roundDynamicGridDebug(debug: DynamicGridDebug) {
     backgroundGridSpacingRatioToFaceMedian: roundMetricForState(
       debug.backgroundGridSpacingRatioToFaceMedian,
     ),
+    faceOnlyTriangleCount: debug.faceOnlyTriangleCount,
+    faceInteriorTestTriangleCount: debug.faceInteriorTestTriangleCount,
+    nearFaceCandidateGridCount: debug.nearFaceCandidateGridCount,
+    nearFaceRemovedInsideFaceCount: debug.nearFaceRemovedInsideFaceCount,
+    nearFaceRemovedTooCloseToFaceCount: debug.nearFaceRemovedTooCloseToFaceCount,
+    nearFaceAcceptedGridCount: debug.nearFaceAcceptedGridCount,
+    tooCloseToFaceThreshold: roundMetricForState(debug.tooCloseToFaceThreshold),
     nearFaceGridCount: debug.nearFaceGridCount,
     backgroundGridCount: debug.backgroundGridCount,
     screenEdgeAnchorCount: debug.screenEdgeAnchorCount,
     faceBounds: roundBoundsDebugSummary(debug.faceBounds),
     expandedNearFaceBounds: roundBoundsDebugSummary(debug.expandedNearFaceBounds),
     videoAspectRatio: roundMetricForState(debug.videoAspectRatio),
+    nearFaceGrid: {
+      mode: debug.nearFaceGrid.mode,
+      candidateGridCount: debug.nearFaceGrid.candidateGridCount,
+      removedInsideFaceCount: debug.nearFaceGrid.removedInsideFaceCount,
+      removedTooCloseToFaceCount: debug.nearFaceGrid.removedTooCloseToFaceCount,
+      acceptedGridCount: debug.nearFaceGrid.acceptedGridCount,
+      tooCloseToFaceThreshold: roundMetricForState(
+        debug.nearFaceGrid.tooCloseToFaceThreshold,
+      ),
+      gridPointPreview: debug.nearFaceGrid.gridPointPreview.map(roundDynamicGridPointPreview),
+    },
+    faceInterior: {
+      faceOnlyTriangleCount: debug.faceInterior.faceOnlyTriangleCount,
+      faceInteriorTestTriangleCount: debug.faceInterior.faceInteriorTestTriangleCount,
+      preview: debug.faceInterior.preview.map((triangle) => ({
+        indices: triangle.indices,
+        area: roundMetricForState(triangle.area),
+      })),
+    },
     gridPointPreview: debug.gridPointPreview.map((point) => ({
-      id: point.id,
-      kind: point.kind,
-      x: roundForState(point.x),
-      y: roundForState(point.y),
-      reasons: point.reasons,
+      ...roundDynamicGridPointPreview(point),
     })),
+  }
+}
+
+function roundDynamicGridPointPreview(point: DynamicGridPointPreview) {
+  return {
+    id: point.id,
+    kind: point.kind,
+    x: roundForState(point.x),
+    y: roundForState(point.y),
+    reasons: point.reasons,
   }
 }
 

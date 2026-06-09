@@ -449,3 +449,13 @@ ideal mesh target は source と同じ頂点数・同じ順番で、face landmar
 grid / anchors overlay は source / target で色分けします。`grid / anchorsを表示` が ON でも、`mesh sourceを表示` が OFF の場合は source grid / anchors を表示せず、`mesh targetを表示` が OFF の場合は target grid / anchors を表示しません。
 
 この tool では現時点で mesh pair と triangle wireframe の overlay / summary / preview raw debug までを扱います。triangle indices は source vertices の位置を基準に作り、source mesh と target mesh で共通に使います。triangle quality は aspect-corrected image coordinate で評価します。WebGL warp、texture upload、shader、production mesh warp、raw displacement mesh warp、Runtime / Engine 変更、Beauty Studio 変更、IdealFace Authoring Tool 変更、JSON export / import、保存機能は含めません。
+
+## Ideal Reference Mesh Warp Lab nearFaceGrid
+
+`tools/ideal-reference-mesh-warp-lab` は、理想モデル動画の MediaPipe scan と live current analysis を使い、top1 reference matching、current mesh source、ideal mesh target、triangle wireframe overlay、debug summary を検証する lab である。
+
+現在の `nearFaceGrid` は、`expandedNearFaceBounds` の内部を grid で埋めた後、採用済み current face landmarks だけから作る `face-only triangle indices` による face interior 判定で顔内部 grid point を除外する。visible / safe current landmarks の選択は既存方針を維持する。
+
+`face-only triangle indices` は `nearFaceGrid` 生成時の顔内部判定用であり、最終描画用 triangle mesh ではない。final triangle indices は、`faceLandmark` / `nearFaceGrid` / `backgroundGrid` / `screenEdgeAnchor` を含む source vertices から別途作る。
+
+この lab 段階では WebGL mesh warp、texture upload、shader、production mesh warp、Runtime / Engine 変更、Beauty Studio 変更、IdealFace Authoring Tool 変更は含めない。
