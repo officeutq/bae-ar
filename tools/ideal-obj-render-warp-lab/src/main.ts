@@ -1,3 +1,8 @@
+import {
+  FaceLandmarker,
+  FilesetResolver,
+} from "@mediapipe/tasks-vision"
+import type { Matrix, NormalizedLandmark } from "@mediapipe/tasks-vision"
 import "./style.css"
 
 type PreviewTab = "obj" | "renderedIdeal" | "live"
@@ -6,6 +11,29 @@ type PlaybackStatus = "stopped" | "playing" | "paused"
 type ObjParseStatus = "not_loaded" | "not_parsed" | "parsed" | "error"
 type ObjPreviewMode = "points" | "wireframe" | "points_wireframe"
 type ObjPreviewStatus = "not_ready" | "ready" | "error"
+type LiveVideoStatus = "not_loaded" | "loaded" | "metadata_ready" | "error"
+type CurrentAnalysisStatus =
+  | "not_ready"
+  | "ready"
+  | "analyzing"
+  | "detected"
+  | "no_face"
+  | "error"
+type MediaPipeStatus =
+  | "uninitialized"
+  | "initializing"
+  | "ready"
+  | "disposed"
+  | "error"
+type ExpressionGroup =
+  | "neutral"
+  | "mouthSmile"
+  | "jawOpen"
+  | "mouthPucker"
+  | "eyeBlink"
+  | "eyeSquint"
+  | "mixedExpression"
+  | "unknown"
 
 type TabOption<TValue extends string> = {
   label: string
@@ -89,25 +117,70 @@ type ObjPreviewStats = {
   sampledEdgeCount: number
 }
 
-type VideoPreviewState = {
+type ReferenceLandmark = {
+  index: number
+  x: number
+  y: number
+  z: number
+}
+
+type ReferencePose = {
+  yaw: number | null
+  pitch: number | null
+  roll: number | null
+}
+
+type ReferenceBlendshape = {
+  categoryName: string
+  score: number
+}
+
+type ExpressionSummary = {
+  group: ExpressionGroup
+  topBlendshapes: ReferenceBlendshape[]
+  missingBlendshapeKeys: string[]
+}
+
+type QualitySummary = {
+  status: "not_ready" | "valid" | "no_face" | "invalid_landmarks" | "error"
+  expectedLandmarkCount: number
+  landmarkCount: number
+  hasPose: boolean
+}
+
+type LiveVideoState = {
   loaded: boolean
   fileName: string | null
+  fileSize: number | null
+  fileType: string | null
   objectUrl: string | null
   durationSec: number | null
   width: number | null
   height: number | null
-  currentTimeSec: number
+  currentTimeSec: number | null
   playbackStatus: PlaybackStatus
+  status: LiveVideoStatus
+  errorMessage: string | null
 }
 
-type CurrentAnalysisState = {
-  status: "not_ready"
-  current478Count: null
-  yaw: null
-  pitch: null
-  roll: null
-  expressionSummary: "not ready"
-  quality: "not ready"
+type CurrentFrameAnalysis = {
+  status: CurrentAnalysisStatus
+  analyzedTimeSec: number | null
+  landmarks478: ReferenceLandmark[]
+  landmarkCount: number
+  pose: ReferencePose
+  blendshapes: ReferenceBlendshape[]
+  expressionSummary: ExpressionSummary | null
+  qualityScore: number | null
+  qualitySummary: QualitySummary
+  errorMessage: string | null
+}
+
+type Rect = {
+  x: number
+  y: number
+  width: number
+  height: number
 }
 
 type LabState = {
@@ -128,12 +201,36 @@ type LabState = {
   objPreview: ObjPreviewState
   objPreviewStats: ObjPreviewStats
   objErrorMessage: string | null
-  liveVideo: VideoPreviewState
-  currentAnalysis: CurrentAnalysisState
+  liveVideo: LiveVideoState
+  liveMediaPipe: {
+    status: MediaPipeStatus
+    error: string | null
+    liveTimestampMs: number
+  }
+  currentAnalysis: CurrentFrameAnalysis
   logs: string[]
 }
 
+type FaceLandmarkerResultLike = ReturnType<FaceLandmarker["detectForVideo"]>
+
 const LAB_NAME = "Ideal OBJ Render Warp Lab"
+const REQUIRED_LANDMARK_COUNT = 478
+const LANDMARK_PREVIEW_COUNT = 5
+const MEDIAPIPE_TIMESTAMP_STEP_MS = 1000 / 30
+const LIVE_AUTO_ANALYSIS_INTERVAL_SEC = 0.35
+const RAD_TO_DEG = 180 / Math.PI
+const STRONG_EXPRESSION_THRESHOLD = 0.35
+const MIXED_EXPRESSION_THRESHOLD = 0.28
+const MATCH_BLENDSHAPE_KEYS = [
+  "jawOpen",
+  "mouthSmileLeft",
+  "mouthSmileRight",
+  "mouthPucker",
+  "eyeBlinkLeft",
+  "eyeBlinkRight",
+  "eyeSquintLeft",
+  "eyeSquintRight",
+] as const
 
 const previewTabs: TabOption<PreviewTab>[] = [
   { label: "OBJ", value: "obj" },
@@ -176,26 +273,14 @@ const state: LabState = {
     sampledEdgeCount: 0,
   },
   objErrorMessage: null,
-  liveVideo: {
-    loaded: false,
-    fileName: null,
-    objectUrl: null,
-    durationSec: null,
-    width: null,
-    height: null,
-    currentTimeSec: 0,
-    playbackStatus: "stopped",
+  liveVideo: createEmptyLiveVideoState(),
+  liveMediaPipe: {
+    status: "uninitialized",
+    error: null,
+    liveTimestampMs: 0,
   },
-  currentAnalysis: {
-    status: "not_ready",
-    current478Count: null,
-    yaw: null,
-    pitch: null,
-    roll: null,
-    expressionSummary: "not ready",
-    quality: "not ready",
-  },
-  logs: ["ラボを初期化しました。OBJ render / MediaPipe解析 / WebGL warp は未実装です。"],
+  currentAnalysis: createEmptyCurrentAnalysis(),
+  logs: ["ラボを初期化しました。OBJ render / renderedIdeal478 / WebGL warp は未実装です。"],
 }
 
 const app = document.querySelector<HTMLDivElement>("#app")
@@ -219,7 +304,7 @@ app.innerHTML = `
       <input class="visually-hidden" type="file" accept=".obj,text/plain,model/obj" data-input="obj-file" />
       <input class="visually-hidden" type="file" accept="video/*" data-input="live-video" />
       <div class="status-note">
-        OBJを現在姿勢でrenderし、MediaPipe returned 478を理想側候補として使う検証ラボです。座標系・mesh・warpはIdeal Reference Mesh Warp Labを踏襲します。
+        OBJ読込と Canvas 2D preview に加えて、ライブ動画の current frame を MediaPipe で解析します。今回は current478 overlay までを確認し、renderedIdeal478 や mesh warp はまだ接続しません。
       </div>
     </section>
 
@@ -263,7 +348,13 @@ app.innerHTML = `
 const objFileInput = getElement<HTMLInputElement>("[data-input='obj-file']")
 const liveFileInput = getElement<HTMLInputElement>("[data-input='live-video']")
 const liveVideoElement = getElement<HTMLVideoElement>("[data-video='live']")
+const liveOverlayCanvas = getElement<HTMLCanvasElement>("[data-overlay='live']")
 const objPreviewCanvas = getElement<HTMLCanvasElement>('[data-canvas="obj-preview"]')
+let liveFaceLandmarker: FaceLandmarker | null = null
+let liveFaceLandmarkerPromise: Promise<FaceLandmarker> | null = null
+let liveAnalysisInProgress = false
+let liveAnalysisRequestId = 0
+let lastAutoLiveAnalysisAtSec = Number.NEGATIVE_INFINITY
 let objPreviewDrag:
   | {
       pointerId: number
@@ -319,7 +410,7 @@ function renderObjPreview() {
         <canvas class="obj-preview-canvas" data-canvas="obj-preview" aria-label="OBJ 3D preview"></canvas>
         <div class="preview-placeholder obj-preview-placeholder" data-obj-preview-placeholder>
           <h3>OBJプレビュー</h3>
-          <p data-obj-preview-message>OBJファイルを読み込むと、ここにOBJ 3D previewを表示します。</p>
+          <p data-obj-preview-message>OBJファイルを読み込むと、ここに OBJ 3D preview を表示します。</p>
         </div>
       </div>
       <div class="obj-preview-controls" aria-label="OBJ 3D preview 操作">
@@ -351,7 +442,7 @@ function renderRenderedIdealPreview() {
       <div class="preview-stage">
         <div class="preview-placeholder">
           <h3>レンダー理想プレビュー</h3>
-          <p>OBJを現在姿勢でレンダリングした画像をここに表示します。OBJレンダー・MediaPipe解析は未実装です。</p>
+          <p>OBJ を現在姿勢でレンダリングした画像をここに表示します。OBJ render / renderedIdeal478 取得はまだ未実装です。</p>
         </div>
       </div>
     </div>
@@ -366,12 +457,13 @@ function renderLivePreview() {
         <canvas class="landmark-overlay" data-overlay="live"></canvas>
         <div class="preview-placeholder">
           <h3>ライブプレビュー</h3>
-          <p>ライブ動画を読み込むと、ここに現在顔プレビューを表示します。</p>
+          <p>ライブ動画を読み込むと、ここにライブプレビューを表示します。</p>
         </div>
       </div>
       <div class="timeline-controls live-controls" aria-label="ライブ動画操作">
         <button class="small-button" type="button" data-action="live-play">再生</button>
         <button class="small-button" type="button" data-action="live-pause">一時停止</button>
+        <button class="small-button" type="button" data-action="live-analyze-current">現在フレーム解析</button>
         <label class="range-field">
           <span>シーク</span>
           <input type="range" min="0" step="0.001" value="0" data-range="live" />
@@ -420,6 +512,21 @@ function bindEvents() {
 
   liveVideoElement.addEventListener("timeupdate", () => {
     syncLiveCurrentTime()
+    drawLiveOverlay()
+    maybeAnalyzeLiveFrame()
+    renderAll()
+  })
+
+  liveVideoElement.addEventListener("seeked", () => {
+    syncLiveCurrentTime()
+    void analyzeCurrentLiveFrame("seeked")
+  })
+
+  liveVideoElement.addEventListener("error", () => {
+    const message = liveVideoElement.error?.message || "動画の読み込みに失敗しました。"
+    state.liveVideo.status = "error"
+    state.liveVideo.errorMessage = message
+    addLog(`ライブ動画読み込みでエラーが発生しました: ${message}`)
     renderAll()
   })
 
@@ -430,6 +537,17 @@ function bindEvents() {
 
   liveVideoElement.addEventListener("pause", () => {
     state.liveVideo.playbackStatus = state.liveVideo.loaded ? "paused" : "stopped"
+    if (state.liveVideo.loaded) {
+      void analyzeCurrentLiveFrame("pause")
+    }
+    renderAll()
+  })
+
+  liveVideoElement.addEventListener("ended", () => {
+    state.liveVideo.playbackStatus = "stopped"
+    if (state.liveVideo.loaded) {
+      void analyzeCurrentLiveFrame("ended")
+    }
     renderAll()
   })
 
@@ -439,8 +557,9 @@ function bindEvents() {
       renderAll()
       return
     }
-    void liveVideoElement.play().catch(() => {
-      addLog("ライブ動画の再生に失敗しました。")
+    void liveVideoElement.play().catch((error) => {
+      const message = error instanceof Error ? error.message : String(error)
+      addLog(`ライブ動画の再生に失敗しました: ${message}`)
       renderAll()
     })
   })
@@ -449,12 +568,17 @@ function bindEvents() {
     liveVideoElement.pause()
   })
 
+  getElement<HTMLButtonElement>('[data-action="live-analyze-current"]').addEventListener(
+    "click",
+    () => {
+      void analyzeCurrentLiveFrame("manual")
+    },
+  )
+
   getElement<HTMLInputElement>("[data-range='live']").addEventListener("input", (event) => {
     const value = Number(event.currentTarget.value)
     if (Number.isFinite(value)) {
-      liveVideoElement.currentTime = value
-      state.liveVideo.currentTimeSec = value
-      renderAll()
+      seekLiveVideoTo(value)
     }
   })
 
@@ -531,6 +655,11 @@ function bindEvents() {
 
   window.addEventListener("resize", () => {
     renderObjPreviewCanvas()
+    drawLiveOverlay()
+  })
+
+  window.addEventListener("beforeunload", () => {
+    cleanup()
   })
 
   app.querySelectorAll<HTMLButtonElement>("[data-tab-group]").forEach((button) => {
@@ -632,22 +761,334 @@ function loadLiveVideo(file: File) {
     URL.revokeObjectURL(state.liveVideo.objectUrl)
   }
 
+  resetLiveAnalysisResults()
   const objectUrl = URL.createObjectURL(file)
   state.liveVideo = {
     loaded: true,
     fileName: file.name,
+    fileSize: file.size,
+    fileType: file.type || "unknown",
     objectUrl,
     durationSec: null,
     width: null,
     height: null,
     currentTimeSec: 0,
     playbackStatus: "stopped",
+    status: "loaded",
+    errorMessage: null,
   }
-  state.currentAnalysis = createEmptyCurrentAnalysis()
   liveVideoElement.src = objectUrl
+  liveVideoElement.load()
   state.activePreviewTab = "live"
   addLog(`ライブ動画を読み込みました: ${file.name}`)
   renderAll()
+}
+
+async function getLiveFaceLandmarker() {
+  if (liveFaceLandmarker) {
+    return liveFaceLandmarker
+  }
+
+  if (liveFaceLandmarkerPromise) {
+    return liveFaceLandmarkerPromise
+  }
+
+  state.liveMediaPipe.status = "initializing"
+  state.liveMediaPipe.error = null
+  resetLiveTimestamp()
+  renderAll()
+
+  liveFaceLandmarkerPromise = initializeFaceLandmarker()
+  try {
+    liveFaceLandmarker = await liveFaceLandmarkerPromise
+    state.liveMediaPipe.status = "ready"
+    return liveFaceLandmarker
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    console.error("MediaPipe initialization failed", error)
+    state.liveMediaPipe.status = "error"
+    state.liveMediaPipe.error = message
+    throw error
+  } finally {
+    liveFaceLandmarkerPromise = null
+    renderAll()
+  }
+}
+
+async function initializeFaceLandmarker() {
+  const vision = await FilesetResolver.forVisionTasks(
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm",
+  )
+
+  return FaceLandmarker.createFromOptions(vision, {
+    baseOptions: {
+      modelAssetPath:
+        "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+    },
+    runningMode: "VIDEO",
+    numFaces: 1,
+    outputFaceBlendshapes: true,
+    outputFacialTransformationMatrixes: true,
+  })
+}
+
+async function analyzeCurrentLiveFrame(
+  reason: "manual" | "timeupdate" | "seeked" | "pause" | "ended",
+) {
+  if (!state.liveVideo.loaded || liveAnalysisInProgress) {
+    return
+  }
+
+  if (liveVideoElement.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+    state.currentAnalysis = {
+      ...createEmptyCurrentAnalysis(),
+      status: "error",
+      analyzedTimeSec: state.liveVideo.currentTimeSec,
+      errorMessage: "動画フレームがまだ読み込まれていません。",
+    }
+    renderAll()
+    return
+  }
+
+  const requestId = liveAnalysisRequestId + 1
+  liveAnalysisRequestId = requestId
+  liveAnalysisInProgress = true
+  state.currentAnalysis = {
+    ...state.currentAnalysis,
+    status: "analyzing",
+    errorMessage: null,
+  }
+  renderAll()
+
+  try {
+    const detector = await getLiveFaceLandmarker()
+    if (requestId !== liveAnalysisRequestId) {
+      return
+    }
+
+    const timeSec = liveVideoElement.currentTime || state.liveVideo.currentTimeSec || 0
+    const result = detector.detectForVideo(liveVideoElement, nextLiveTimestampMs())
+    state.currentAnalysis = buildCurrentFrameAnalysis(result, timeSec)
+    lastAutoLiveAnalysisAtSec = timeSec
+
+    if (reason === "manual") {
+      addLog(
+        state.currentAnalysis.status === "detected"
+          ? "ライブ動画 current frame を解析しました。"
+          : `ライブ動画 current frame 解析結果: ${state.currentAnalysis.status}`,
+      )
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    console.error("Current frame analysis failed", error)
+    state.currentAnalysis = {
+      ...createEmptyCurrentAnalysis(),
+      status: "error",
+      analyzedTimeSec: state.liveVideo.currentTimeSec,
+      errorMessage: `MediaPipe error: ${message}`,
+      qualitySummary: {
+        ...createEmptyQualitySummary(),
+        status: "error",
+      },
+    }
+    state.liveMediaPipe.status = "error"
+    state.liveMediaPipe.error = message
+    disposeLiveFaceLandmarker("error")
+    addLog(`ライブ動画 current frame 解析でエラーが発生しました: ${message}`)
+  } finally {
+    liveAnalysisInProgress = false
+    renderAll()
+  }
+}
+
+function maybeAnalyzeLiveFrame() {
+  if (
+    !state.liveVideo.loaded ||
+    state.liveVideo.playbackStatus !== "playing" ||
+    liveAnalysisInProgress
+  ) {
+    return
+  }
+
+  const currentTimeSec = liveVideoElement.currentTime || state.liveVideo.currentTimeSec || 0
+  if (currentTimeSec - lastAutoLiveAnalysisAtSec < LIVE_AUTO_ANALYSIS_INTERVAL_SEC) {
+    return
+  }
+
+  void analyzeCurrentLiveFrame("timeupdate")
+}
+
+function buildCurrentFrameAnalysis(
+  result: FaceLandmarkerResultLike,
+  timeSec: number,
+): CurrentFrameAnalysis {
+  const landmarks = result.faceLandmarks[0] ?? []
+  const blendshapes = (result.faceBlendshapes[0]?.categories ?? []).map((category) => ({
+    categoryName: category.categoryName,
+    score: category.score,
+  }))
+  const pose = estimateNullablePose(result.facialTransformationMatrixes[0])
+  const hasFace = result.faceLandmarks.length > 0
+  const validLandmarks = landmarks.length === REQUIRED_LANDMARK_COUNT
+
+  if (!hasFace) {
+    return {
+      ...createEmptyCurrentAnalysis(),
+      status: "no_face",
+      analyzedTimeSec: timeSec,
+      landmarkCount: 0,
+      pose,
+      blendshapes,
+      expressionSummary: createExpressionSummary(blendshapes, "unknown"),
+      qualityScore: 0,
+      qualitySummary: {
+        status: "no_face",
+        expectedLandmarkCount: REQUIRED_LANDMARK_COUNT,
+        landmarkCount: 0,
+        hasPose: hasFullPose(pose),
+      },
+      errorMessage: "no_face",
+    }
+  }
+
+  if (!validLandmarks) {
+    return {
+      ...createEmptyCurrentAnalysis(),
+      status: "error",
+      analyzedTimeSec: timeSec,
+      landmarkCount: landmarks.length,
+      pose,
+      blendshapes,
+      expressionSummary: createExpressionSummary(blendshapes, "unknown"),
+      qualityScore: 0,
+      qualitySummary: {
+        status: "invalid_landmarks",
+        expectedLandmarkCount: REQUIRED_LANDMARK_COUNT,
+        landmarkCount: landmarks.length,
+        hasPose: hasFullPose(pose),
+      },
+      errorMessage: `invalid_landmarks: ${landmarks.length}`,
+    }
+  }
+
+  const expressionGroup = classifyExpressionGroup(blendshapes)
+  return {
+    status: "detected",
+    analyzedTimeSec: timeSec,
+    landmarks478: mapLandmarks(landmarks),
+    landmarkCount: landmarks.length,
+    pose,
+    blendshapes,
+    expressionSummary: createExpressionSummary(blendshapes, expressionGroup),
+    qualityScore: 1,
+    qualitySummary: {
+      status: "valid",
+      expectedLandmarkCount: REQUIRED_LANDMARK_COUNT,
+      landmarkCount: landmarks.length,
+      hasPose: hasFullPose(pose),
+    },
+    errorMessage: null,
+  }
+}
+
+function mapLandmarks(landmarks: NormalizedLandmark[]): ReferenceLandmark[] {
+  return landmarks.map((landmark, index) => ({
+    index,
+    x: landmark.x,
+    y: landmark.y,
+    z: landmark.z,
+  }))
+}
+
+function estimateNullablePose(matrix: Matrix | undefined): ReferencePose {
+  return estimateFacePoseFromMatrix(matrix) ?? {
+    yaw: null,
+    pitch: null,
+    roll: null,
+  }
+}
+
+function estimateFacePoseFromMatrix(matrix: Matrix | undefined): ReferencePose | null {
+  if (
+    !matrix ||
+    matrix.rows < 3 ||
+    matrix.columns < 3 ||
+    matrix.data.length < matrix.columns * 3
+  ) {
+    return null
+  }
+
+  const columns = matrix.columns
+  const m00 = matrix.data[0 * columns + 0]
+  const m10 = matrix.data[1 * columns + 0]
+  const m20 = matrix.data[2 * columns + 0]
+  const m21 = matrix.data[2 * columns + 1]
+  const m22 = matrix.data[2 * columns + 2]
+
+  if ([m00, m10, m20, m21, m22].some((value) => !Number.isFinite(value))) {
+    return null
+  }
+
+  const sy = Math.hypot(m00, m10)
+
+  return {
+    pitch: Math.atan2(m21, m22) * RAD_TO_DEG,
+    yaw: Math.atan2(-m20, sy) * RAD_TO_DEG,
+    roll: Math.atan2(m10, m00) * RAD_TO_DEG,
+  }
+}
+
+function classifyExpressionGroup(blendshapes: ReferenceBlendshape[]): ExpressionGroup {
+  if (blendshapes.length === 0) {
+    return "unknown"
+  }
+
+  const scores = new Map(blendshapes.map((item) => [item.categoryName, item.score]))
+  const expressionScores: Array<[ExpressionGroup, number]> = [
+    ["jawOpen", scores.get("jawOpen") ?? 0],
+    [
+      "mouthSmile",
+      Math.max(scores.get("mouthSmileLeft") ?? 0, scores.get("mouthSmileRight") ?? 0),
+    ],
+    ["mouthPucker", scores.get("mouthPucker") ?? 0],
+    [
+      "eyeBlink",
+      Math.max(scores.get("eyeBlinkLeft") ?? 0, scores.get("eyeBlinkRight") ?? 0),
+    ],
+    [
+      "eyeSquint",
+      Math.max(scores.get("eyeSquintLeft") ?? 0, scores.get("eyeSquintRight") ?? 0),
+    ],
+  ]
+  const strongGroups = expressionScores.filter(([, score]) => score >= MIXED_EXPRESSION_THRESHOLD)
+
+  if (strongGroups.length > 1) {
+    return "mixedExpression"
+  }
+
+  const strongest = expressionScores.reduce((best, current) =>
+    current[1] > best[1] ? current : best,
+  )
+
+  return strongest[1] >= STRONG_EXPRESSION_THRESHOLD ? strongest[0] : "neutral"
+}
+
+function createExpressionSummary(
+  blendshapes: ReferenceBlendshape[],
+  group: ExpressionGroup,
+): ExpressionSummary {
+  const scores = new Map(blendshapes.map((item) => [item.categoryName, item.score]))
+  return {
+    group,
+    topBlendshapes: [...blendshapes]
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 5)
+      .map((item) => ({
+        categoryName: item.categoryName,
+        score: item.score,
+      })),
+    missingBlendshapeKeys: MATCH_BLENDSHAPE_KEYS.filter((key) => !scores.has(key)),
+  }
 }
 
 function syncLiveVideoMetadata() {
@@ -656,11 +1097,25 @@ function syncLiveVideoMetadata() {
     : null
   state.liveVideo.width = liveVideoElement.videoWidth || null
   state.liveVideo.height = liveVideoElement.videoHeight || null
+  state.liveVideo.status = "metadata_ready"
+  state.liveVideo.errorMessage = null
   syncLiveCurrentTime()
 }
 
 function syncLiveCurrentTime() {
   state.liveVideo.currentTimeSec = liveVideoElement.currentTime || 0
+}
+
+function seekLiveVideoTo(targetSec: number) {
+  if (!state.liveVideo.loaded || !Number.isFinite(targetSec)) {
+    return
+  }
+
+  const duration = state.liveVideo.durationSec ?? liveVideoElement.duration
+  const nextTime = clamp(targetSec, 0, Number.isFinite(duration) ? duration : targetSec)
+  liveVideoElement.currentTime = nextTime
+  state.liveVideo.currentTimeSec = nextTime
+  renderAll()
 }
 
 function renderAll() {
@@ -669,6 +1124,7 @@ function renderAll() {
   renderControls()
   renderDebugTabs()
   renderDebugContent()
+  drawLiveOverlay()
 }
 
 function renderPreviewTabs() {
@@ -709,18 +1165,45 @@ function renderControls() {
   const duration = state.liveVideo.durationSec ?? 0
   const range = getElement<HTMLInputElement>("[data-range='live']")
   range.max = String(duration)
-  range.value = String(clamp(state.liveVideo.currentTimeSec, 0, duration))
+  range.value = String(clamp(state.liveVideo.currentTimeSec ?? 0, 0, duration))
   range.disabled = !state.liveVideo.loaded
+
+  setDisabled('[data-action="live-play"]', !state.liveVideo.loaded || state.liveVideo.playbackStatus === "playing")
+  setDisabled('[data-action="live-pause"]', !state.liveVideo.loaded || state.liveVideo.playbackStatus !== "playing")
+  setDisabled('[data-action="live-analyze-current"]', !state.liveVideo.loaded || liveAnalysisInProgress)
 
   getElement<HTMLElement>("[data-status='live-time']").textContent = formatTimeStatus(
     state.liveVideo,
   )
 
-  getElement<HTMLElement>("[data-live-analysis]").innerHTML = `
-    <p>ライブ動画の current frame 解析結果はまだありません。MediaPipe解析はこのPRでは接続していません。</p>
-  `
-
+  renderLiveAnalysisCard()
   getElement<HTMLSelectElement>('[data-control="obj-preview-mode"]').value = state.objPreview.mode
+}
+
+function renderLiveAnalysisCard() {
+  const card = getElement<HTMLElement>("[data-live-analysis]")
+  const analysis = state.currentAnalysis
+
+  if (!state.liveVideo.loaded) {
+    card.innerHTML = `<p>ライブ動画を読み込むと、ここに video metadata と current frame 解析結果を表示します。</p>`
+    return
+  }
+
+  card.innerHTML = `
+    <dl class="review-grid">
+      <div><dt>liveVideoStatus</dt><dd>${state.liveVideo.status}</dd></div>
+      <div><dt>fileName</dt><dd>${escapeHtml(state.liveVideo.fileName ?? "-")}</dd></div>
+      <div><dt>videoSize</dt><dd>${formatVideoSize()}</dd></div>
+      <div><dt>durationSec</dt><dd>${formatNullableNumber(state.liveVideo.durationSec)}</dd></div>
+      <div><dt>currentTimeSec</dt><dd>${formatNullableNumber(state.liveVideo.currentTimeSec)}</dd></div>
+      <div><dt>currentAnalysisStatus</dt><dd>${analysis.status}</dd></div>
+      <div><dt>landmarkCount</dt><dd>${formatNullableCount(analysis.status === "not_ready" ? null : analysis.landmarkCount)}</dd></div>
+      <div><dt>pose</dt><dd>${escapeHtml(formatPose(analysis.pose))}</dd></div>
+      <div><dt>expression</dt><dd>${escapeHtml(formatExpressionSummary(analysis.expressionSummary))}</dd></div>
+      <div><dt>qualityScore</dt><dd>${formatNullableNumber(analysis.qualityScore)}</dd></div>
+      <div><dt>errorMessage</dt><dd>${escapeHtml(analysis.errorMessage ?? "-")}</dd></div>
+    </dl>
+  `
 }
 
 function renderObjPreviewCanvas() {
@@ -907,6 +1390,110 @@ function rotateObjPoint(point: ObjVertex): ObjVertex {
   }
 }
 
+function drawLiveOverlay() {
+  const context = liveOverlayCanvas.getContext("2d")
+  if (!context) {
+    return
+  }
+
+  const rect = liveOverlayCanvas.getBoundingClientRect()
+  const dpr = window.devicePixelRatio || 1
+  liveOverlayCanvas.width = Math.max(1, Math.round(rect.width * dpr))
+  liveOverlayCanvas.height = Math.max(1, Math.round(rect.height * dpr))
+  context.setTransform(dpr, 0, 0, dpr, 0, 0)
+  context.clearRect(0, 0, rect.width, rect.height)
+
+  if (
+    state.activePreviewTab !== "live" ||
+    !state.overlay.showLandmarks478 ||
+    rect.width <= 0 ||
+    rect.height <= 0 ||
+    state.currentAnalysis.landmarks478.length !== REQUIRED_LANDMARK_COUNT
+  ) {
+    return
+  }
+
+  const displayedContentRect = getDisplayedContentRect(
+    state.liveVideo,
+    liveVideoElement,
+    rect.width,
+    rect.height,
+  )
+
+  drawLandmarkPoints(
+    context,
+    displayedContentRect,
+    state.currentAnalysis.landmarks478,
+    "rgba(79, 128, 255, 0.85)",
+    1.45,
+  )
+}
+
+function drawLandmarkPoints(
+  context: CanvasRenderingContext2D,
+  displayedContentRect: Rect,
+  landmarks: ReferenceLandmark[],
+  color: string,
+  radius: number,
+) {
+  context.fillStyle = color
+  for (const landmark of landmarks) {
+    const point = normalizedLandmarkToPreviewPixel(landmark, displayedContentRect)
+    context.beginPath()
+    context.arc(point.x, point.y, radius, 0, Math.PI * 2)
+    context.fill()
+  }
+}
+
+function getDisplayedContentRect(
+  videoState: LiveVideoState,
+  videoElement: HTMLVideoElement,
+  containerWidth: number,
+  containerHeight: number,
+): Rect {
+  const videoWidth = videoState.width ?? videoElement.videoWidth
+  const videoHeight = videoState.height ?? videoElement.videoHeight
+  if (!videoWidth || !videoHeight) {
+    return {
+      x: 0,
+      y: 0,
+      width: containerWidth,
+      height: containerHeight,
+    }
+  }
+
+  const videoAspect = videoWidth / videoHeight
+  const containerAspect = containerWidth / containerHeight
+
+  if (containerAspect > videoAspect) {
+    const width = containerHeight * videoAspect
+    return {
+      x: (containerWidth - width) / 2,
+      y: 0,
+      width,
+      height: containerHeight,
+    }
+  }
+
+  const height = containerWidth / videoAspect
+  return {
+    x: 0,
+    y: (containerHeight - height) / 2,
+    width: containerWidth,
+    height,
+  }
+}
+
+function normalizedLandmarkToPreviewPixel(
+  landmark: { x: number; y: number },
+  displayedContentRect: Rect,
+) {
+  return {
+    x: displayedContentRect.x + landmark.x * displayedContentRect.width,
+    y: displayedContentRect.y + landmark.y * displayedContentRect.height,
+  }
+}
+
 function renderDebugTabs() {
   app.querySelectorAll<HTMLButtonElement>("[data-tab-group='debug']").forEach((button) => {
     const isActive = button.dataset.tabValue === state.activeDebugTab
@@ -930,7 +1517,7 @@ function renderDebugContent() {
   if (state.activeDebugTab === "current" && state.currentAnalysis.status === "not_ready") {
     const message = document.createElement("p")
     message.className = "placeholder-text"
-    message.textContent = "not ready"
+    message.textContent = "not_ready"
     content.appendChild(message)
   }
 
@@ -964,7 +1551,13 @@ function getSummaryItems(): Array<[string, string]> {
   const objFileStatus = getObjFileStatus()
   return [
     ["labName", LAB_NAME],
-    ["liveVideoStatus", state.liveVideo.loaded ? "loaded" : "not_loaded"],
+    ["liveVideoStatus", state.liveVideo.status],
+    ["currentAnalysisStatus", state.currentAnalysis.status],
+    ["currentLandmarkCount", formatNullableCount(state.currentAnalysis.status === "not_ready" ? null : state.currentAnalysis.landmarkCount)],
+    ["currentPoseYaw", formatNullableNumber(state.currentAnalysis.pose.yaw)],
+    ["currentPosePitch", formatNullableNumber(state.currentAnalysis.pose.pitch)],
+    ["currentPoseRoll", formatNullableNumber(state.currentAnalysis.pose.roll)],
+    ["currentQualityScore", formatNullableNumber(state.currentAnalysis.qualityScore)],
     ["objFileStatus", objFileStatus],
     ["objVertexCount", formatNullableCount(state.objFile.loaded ? state.objSummary.vertexCount : null)],
     ["objFaceCount", formatNullableCount(state.objFile.loaded ? state.objSummary.faceCount : null)],
@@ -974,7 +1567,6 @@ function getSummaryItems(): Array<[string, string]> {
     ["objSampledPointCount", formatNullableCount(state.objPreviewStats.sampledPointCount)],
     ["objSampledEdgeCount", formatNullableCount(state.objPreviewStats.sampledEdgeCount)],
     ["objErrorMessage", state.objErrorMessage ?? "null"],
-    ["currentAnalysisStatus", state.currentAnalysis.status],
     ["renderedIdealStatus", "not_implemented"],
     ["warpStatus", "not_implemented"],
   ]
@@ -982,12 +1574,25 @@ function getSummaryItems(): Array<[string, string]> {
 
 function getCurrentItems(): Array<[string, string]> {
   return [
-    ["current478Count", formatNullableCount(state.currentAnalysis.current478Count)],
-    ["yaw", formatNullableCount(state.currentAnalysis.yaw)],
-    ["pitch", formatNullableCount(state.currentAnalysis.pitch)],
-    ["roll", formatNullableCount(state.currentAnalysis.roll)],
-    ["expressionSummary", state.currentAnalysis.expressionSummary],
-    ["quality", state.currentAnalysis.quality],
+    ["liveVideoStatus", state.liveVideo.status],
+    ["fileName", state.liveVideo.fileName ?? "null"],
+    ["width", formatNullableCount(state.liveVideo.width)],
+    ["height", formatNullableCount(state.liveVideo.height)],
+    ["durationSec", formatNullableNumber(state.liveVideo.durationSec)],
+    ["currentTimeSec", formatNullableNumber(state.liveVideo.currentTimeSec)],
+    ["currentAnalysisStatus", state.currentAnalysis.status],
+    ["detected", String(state.currentAnalysis.status === "detected")],
+    ["no_face", String(state.currentAnalysis.status === "no_face")],
+    ["currentLandmarkCount", formatNullableCount(state.currentAnalysis.status === "not_ready" ? null : state.currentAnalysis.landmarkCount)],
+    ["yaw", formatNullableNumber(state.currentAnalysis.pose.yaw)],
+    ["pitch", formatNullableNumber(state.currentAnalysis.pose.pitch)],
+    ["roll", formatNullableNumber(state.currentAnalysis.pose.roll)],
+    ["expressionSummary", formatExpressionSummary(state.currentAnalysis.expressionSummary)],
+    ["qualityScore", formatNullableNumber(state.currentAnalysis.qualityScore)],
+    ["qualitySummary", formatQualitySummary(state.currentAnalysis.qualitySummary)],
+    ["liveMediaPipeStatus", state.liveMediaPipe.status],
+    ["liveTimestampMs", formatNullableNumber(state.liveMediaPipe.liveTimestampMs)],
+    ["errorMessage", state.currentAnalysis.errorMessage ?? state.liveVideo.errorMessage ?? "null"],
   ]
 }
 
@@ -1053,16 +1658,16 @@ function getRawState() {
     sampledPointCount: state.objPreviewStats.sampledPointCount,
     sampledEdgeCount: state.objPreviewStats.sampledEdgeCount,
     objErrorMessage: state.objErrorMessage,
-    liveVideo: {
-      loaded: state.liveVideo.loaded,
-      fileName: state.liveVideo.fileName,
-      durationSec: roundForState(state.liveVideo.durationSec),
-      width: state.liveVideo.width,
-      height: state.liveVideo.height,
-      currentTimeSec: roundForState(state.liveVideo.currentTimeSec),
-      playbackStatus: state.liveVideo.playbackStatus,
+    liveVideo: getLiveVideoRawSummary(),
+    liveMediaPipe: {
+      status: state.liveMediaPipe.status,
+      error: state.liveMediaPipe.error,
+      liveTimestampMs: roundForState(state.liveMediaPipe.liveTimestampMs),
     },
-    currentAnalysis: state.currentAnalysis,
+    currentAnalysis: getCurrentAnalysisRawSummary(),
+    currentLandmarksPreview: state.currentAnalysis.landmarks478
+      .slice(0, LANDMARK_PREVIEW_COUNT)
+      .map(roundLandmarkForState),
     renderedIdeal: {
       renderStatus: "not_implemented",
       mediaPipeStatus: "not_implemented",
@@ -1108,7 +1713,7 @@ function parseObjText(objText: string): ObjParseResult {
     if (command === "f") {
       const tokens = parts.slice(1)
       if (tokens.length < 3) {
-        warnings.push(`line ${lineNumber}: face の頂点数が3未満のため skip しました。`)
+        warnings.push(`line ${lineNumber}: face の頂点数が不足しているため skip しました。`)
         return
       }
       pendingFaces.push({ lineNumber, tokens })
@@ -1212,6 +1817,51 @@ function createDefaultObjPreviewState(): ObjPreviewState {
   }
 }
 
+function createEmptyLiveVideoState(): LiveVideoState {
+  return {
+    loaded: false,
+    fileName: null,
+    fileSize: null,
+    fileType: null,
+    objectUrl: null,
+    durationSec: null,
+    width: null,
+    height: null,
+    currentTimeSec: null,
+    playbackStatus: "stopped",
+    status: "not_loaded",
+    errorMessage: null,
+  }
+}
+
+function createEmptyQualitySummary(): QualitySummary {
+  return {
+    status: "not_ready",
+    expectedLandmarkCount: REQUIRED_LANDMARK_COUNT,
+    landmarkCount: 0,
+    hasPose: false,
+  }
+}
+
+function createEmptyCurrentAnalysis(): CurrentFrameAnalysis {
+  return {
+    status: "not_ready",
+    analyzedTimeSec: null,
+    landmarks478: [],
+    landmarkCount: 0,
+    pose: {
+      yaw: null,
+      pitch: null,
+      roll: null,
+    },
+    blendshapes: [],
+    expressionSummary: null,
+    qualityScore: null,
+    qualitySummary: createEmptyQualitySummary(),
+    errorMessage: null,
+  }
+}
+
 function createFileObjSummary(file: File, parseStatus: ObjParseStatus): ObjSummary {
   return {
     ...createEmptyObjSummary(),
@@ -1306,12 +1956,12 @@ function getObjPreviewStatus(): ObjPreviewStatus {
 
 function getObjPreviewMessage(status: ObjPreviewStatus) {
   if (status === "ready") {
-    return "OBJ解析は完了。簡易3D previewを表示しています。"
+    return "OBJ解析が完了しました。簡易 3D preview を表示しています。"
   }
   if (status === "error") {
-    return "OBJ解析に失敗したため、3D previewを表示できません。"
+    return "OBJ解析に失敗したため、3D preview を表示できません。"
   }
-  return "OBJファイルを読み込むと、ここにOBJ 3D previewを表示します。"
+  return "OBJファイルを読み込むと、ここに OBJ 3D preview を表示します。"
 }
 
 function renderObjPreviewSummary() {
@@ -1322,7 +1972,7 @@ function renderObjPreviewSummary() {
 
   if (summary.parseStatus === "error") {
     return `
-      <p class="obj-preview-message">OBJ解析に失敗したため、3D previewを表示できません。</p>
+      <p class="obj-preview-message">OBJ解析に失敗したため、3D preview を表示できません。</p>
       <dl class="obj-preview-list">
         <div><dt>fileName</dt><dd>${escapeHtml(summary.fileName)}</dd></div>
         <div><dt>parseStatus</dt><dd>error</dd></div>
@@ -1343,7 +1993,7 @@ function renderObjPreviewSummary() {
   }
 
   return `
-    <p class="obj-preview-message">OBJ解析は完了。簡易3D previewを表示しています。</p>
+    <p class="obj-preview-message">OBJ解析が完了しました。簡易 3D preview を表示しています。</p>
     <dl class="obj-preview-list">
       <div><dt>fileName</dt><dd>${escapeHtml(summary.fileName)}</dd></div>
       <div><dt>vertexCount</dt><dd>${summary.vertexCount}</dd></div>
@@ -1402,6 +2052,85 @@ function addLog(message: string) {
   state.logs = [`${timestamp} ${message}`, ...state.logs].slice(0, 40)
 }
 
+function resetLiveAnalysisResults() {
+  disposeLiveFaceLandmarker("uninitialized")
+  resetLiveTimestamp()
+  state.currentAnalysis = createEmptyCurrentAnalysis()
+  liveAnalysisRequestId += 1
+  liveAnalysisInProgress = false
+  lastAutoLiveAnalysisAtSec = Number.NEGATIVE_INFINITY
+  clearLiveOverlay()
+}
+
+function disposeLiveFaceLandmarker(nextStatus: MediaPipeStatus = "disposed") {
+  liveFaceLandmarker?.close()
+  liveFaceLandmarker = null
+  liveFaceLandmarkerPromise = null
+  state.liveMediaPipe.status = nextStatus
+}
+
+function resetLiveTimestamp() {
+  state.liveMediaPipe.liveTimestampMs = 0
+}
+
+function nextLiveTimestampMs() {
+  state.liveMediaPipe.liveTimestampMs += MEDIAPIPE_TIMESTAMP_STEP_MS
+  return state.liveMediaPipe.liveTimestampMs
+}
+
+function clearLiveOverlay() {
+  const context = liveOverlayCanvas.getContext("2d")
+  if (!context) {
+    return
+  }
+  context.clearRect(0, 0, liveOverlayCanvas.width, liveOverlayCanvas.height)
+}
+
+function cleanup() {
+  if (state.liveVideo.objectUrl) {
+    URL.revokeObjectURL(state.liveVideo.objectUrl)
+    state.liveVideo.objectUrl = null
+  }
+  disposeLiveFaceLandmarker("disposed")
+}
+
+function getLiveVideoRawSummary() {
+  return {
+    status: state.liveVideo.status,
+    fileName: state.liveVideo.fileName,
+    fileSize: state.liveVideo.fileSize,
+    fileType: state.liveVideo.fileType,
+    durationSec: roundForState(state.liveVideo.durationSec),
+    width: state.liveVideo.width,
+    height: state.liveVideo.height,
+    currentTimeSec: roundForState(state.liveVideo.currentTimeSec),
+    playbackStatus: state.liveVideo.playbackStatus,
+    errorMessage: state.liveVideo.errorMessage,
+  }
+}
+
+function getCurrentAnalysisRawSummary() {
+  return {
+    status: state.currentAnalysis.status,
+    analyzedTimeSec: roundForState(state.currentAnalysis.analyzedTimeSec),
+    landmarkCount: state.currentAnalysis.landmarkCount,
+    pose: roundPoseForState(state.currentAnalysis.pose),
+    blendshapeCount: state.currentAnalysis.blendshapes.length,
+    expressionSummary: state.currentAnalysis.expressionSummary
+      ? {
+          group: state.currentAnalysis.expressionSummary.group,
+          topBlendshapes: state.currentAnalysis.expressionSummary.topBlendshapes.map(
+            roundBlendshapeForState,
+          ),
+          missingBlendshapeKeys: state.currentAnalysis.expressionSummary.missingBlendshapeKeys,
+        }
+      : null,
+    qualityScore: roundForState(state.currentAnalysis.qualityScore),
+    qualitySummary: state.currentAnalysis.qualitySummary,
+    errorMessage: state.currentAnalysis.errorMessage,
+  }
+}
+
 function getElement<TElement extends Element>(selector: string): TElement {
   const element = app.querySelector<TElement>(selector)
   if (!element) {
@@ -1416,20 +2145,12 @@ function getSelectedFile(event: Event) {
     : null
 }
 
-function createEmptyCurrentAnalysis(): CurrentAnalysisState {
-  return {
-    status: "not_ready",
-    current478Count: null,
-    yaw: null,
-    pitch: null,
-    roll: null,
-    expressionSummary: "not ready",
-    quality: "not ready",
-  }
-}
-
 function setChecked(action: string, checked: boolean) {
   getElement<HTMLInputElement>(`[data-action="${action}"]`).checked = checked
+}
+
+function setDisabled(selector: string, disabled: boolean) {
+  getElement<HTMLButtonElement | HTMLInputElement | HTMLSelectElement>(selector).disabled = disabled
 }
 
 function isPreviewTab(value: string | undefined): value is PreviewTab {
@@ -1444,11 +2165,17 @@ function isObjPreviewMode(value: string): value is ObjPreviewMode {
   return value === "points" || value === "wireframe" || value === "points_wireframe"
 }
 
-function formatTimeStatus(videoState: VideoPreviewState) {
+function formatTimeStatus(videoState: LiveVideoState) {
   if (!videoState.loaded) {
     return "current time: - / -"
   }
   return `current time: ${formatSeconds(videoState.currentTimeSec)} / ${formatSeconds(videoState.durationSec)}`
+}
+
+function formatVideoSize() {
+  return state.liveVideo.width === null || state.liveVideo.height === null
+    ? "-"
+    : `${state.liveVideo.width} x ${state.liveVideo.height}`
 }
 
 function formatBytes(value: number | null) {
@@ -1469,7 +2196,7 @@ function formatNullableCount(value: number | null) {
 }
 
 function formatNullableNumber(value: number | null) {
-  return value === null ? "null" : formatNumber(value)
+  return value === null || !Number.isFinite(value) ? "null" : formatNumber(value)
 }
 
 function formatBounds(bounds: ObjBounds | null) {
@@ -1493,16 +2220,38 @@ function formatStringList(values: string[]) {
   return values.join("\n")
 }
 
+function formatPose(pose: ReferencePose) {
+  return `yaw ${formatNullableNumber(pose.yaw)} / pitch ${formatNullableNumber(pose.pitch)} / roll ${formatNullableNumber(pose.roll)}`
+}
+
+function formatExpressionSummary(summary: ExpressionSummary | null) {
+  if (!summary) {
+    return "not_ready"
+  }
+
+  const top = summary.topBlendshapes
+    .map((item) => `${item.categoryName}:${formatNumber(item.score)}`)
+    .join(" / ")
+  const missing = summary.missingBlendshapeKeys.length > 0
+    ? ` / missing ${summary.missingBlendshapeKeys.join(",")}`
+    : ""
+  return `${summary.group}${top ? ` / ${top}` : ""}${missing}`
+}
+
+function formatQualitySummary(summary: QualitySummary) {
+  return `${summary.status} / landmarks ${summary.landmarkCount}/${summary.expectedLandmarkCount} / pose ${summary.hasPose ? "available" : "missing"}`
+}
+
 function formatNumber(value: number) {
   return Number(value.toFixed(6)).toString()
 }
 
 function formatSeconds(value: number | null) {
-  return value === null ? "-" : `${value.toFixed(3)} sec`
+  return value === null || !Number.isFinite(value) ? "-" : `${value.toFixed(3)} sec`
 }
 
 function roundForState(value: number | null) {
-  return value === null ? null : Number(value.toFixed(6))
+  return value === null || !Number.isFinite(value) ? value : Number(value.toFixed(6))
 }
 
 function roundPointForState(point: ObjVertex): ObjVertex {
@@ -1510,6 +2259,30 @@ function roundPointForState(point: ObjVertex): ObjVertex {
     x: roundForState(point.x) ?? 0,
     y: roundForState(point.y) ?? 0,
     z: roundForState(point.z) ?? 0,
+  }
+}
+
+function roundLandmarkForState(landmark: ReferenceLandmark): ReferenceLandmark {
+  return {
+    index: landmark.index,
+    x: roundForState(landmark.x) ?? 0,
+    y: roundForState(landmark.y) ?? 0,
+    z: roundForState(landmark.z) ?? 0,
+  }
+}
+
+function roundPoseForState(pose: ReferencePose): ReferencePose {
+  return {
+    yaw: roundForState(pose.yaw),
+    pitch: roundForState(pose.pitch),
+    roll: roundForState(pose.roll),
+  }
+}
+
+function roundBlendshapeForState(blendshape: ReferenceBlendshape): ReferenceBlendshape {
+  return {
+    categoryName: blendshape.categoryName,
+    score: roundForState(blendshape.score) ?? 0,
   }
 }
 
@@ -1557,6 +2330,10 @@ function getSampledCount(total: number, maxCount: number) {
 function getObjCanvasScale() {
   const rect = objPreviewCanvas.getBoundingClientRect()
   return Math.max(1, Math.min(rect.width, rect.height) * 0.42)
+}
+
+function hasFullPose(pose: ReferencePose) {
+  return pose.yaw !== null && pose.pitch !== null && pose.roll !== null
 }
 
 function degreesToRadians(value: number) {
