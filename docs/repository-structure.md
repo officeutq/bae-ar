@@ -458,9 +458,13 @@ WebGL mesh warp へ進む前段として、`tools/ideal-reference-mesh-warp-lab`
 
 `tools/ideal-reference-mesh-warp-lab` は、理想モデル動画の MediaPipe scan と live current analysis を使い、top1 reference matching、current mesh source、ideal mesh target、triangle wireframe overlay、debug summary を検証する lab である。
 
-現在の `nearFaceGrid` は、`expandedNearFaceBounds` の内部を grid で埋めた後、採用済み current face landmarks だけから作る `face-only triangle indices` による face interior 判定で顔内部 grid point を除外する。visible / safe current landmarks の選択は既存方針を維持する。
+現在の `nearFaceGrid` は、`expandedNearFaceBounds` の内部を grid で埋めた後、採用済み current face landmarks だけから作る `face-only triangle indices` による face interior 判定で顔内部 grid point を除外する。さらに顔ランドマークに近すぎる grid point と、顔から遠すぎる grid point を除外し、顔外周近傍の narrow band だけを残す。visible / safe current landmarks の選択は既存方針を維持する。
 
 `face-only triangle indices` は `nearFaceGrid` 生成時の顔内部判定用であり、最終描画用 triangle mesh ではない。final triangle indices は、`faceLandmark` / `nearFaceGrid` / `backgroundGrid` / `screenEdgeAnchor` を含む source vertices から別途作る。
+
+shape warp mesh では、MediaPipe iris landmarks 0-based `468..477` / user-facing `469..478` を source vertices / target vertices / triangle indices / WebGL mesh warp input から除外する。iris landmarks は目・黒目検出用の密集点であり、三角形頂点として使うと目周辺の局所的なガタつきにつながる可能性があるためである。debug では `irisExcludedCount`、`nearFaceBandMode`、`nearFaceBandMaxDistance`、`nearFaceRemovedTooFarFromFaceCount` を確認する。
+
+backgroundGrid と screenEdgeAnchors は粗く背景を支える役割として維持する。nearFaceGrid から除外された顔から遠い点を backgroundGrid へ移す必要はない。
 
 この lab は、WebGL mesh warp input debug の次段として Lab 内限定の WebGL mesh warp preview prototype を持つ。`WebGL mesh warp を適用` checkbox が OFF の場合は従来の live video preview を表示し、ON の場合は source UV / target clip position / triangle indices / live video texture を WebGL canvas に接続して warped preview を描画する。preview runtime の status / fallback / draw count は Summary / Warp Mesh / Raw debug で確認する。
 

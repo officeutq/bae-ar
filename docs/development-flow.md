@@ -507,6 +507,7 @@ accepted current face landmarks
   -> expandedNearFaceBounds 内を nearFaceGridSpacing で埋める
   -> face interior に入る grid point を除外
   -> 顔ランドマークに近すぎる grid point を弱めの threshold で除外
+  -> 顔から遠すぎる grid point を除外
   -> nearFaceGrid として採用
 ```
 
@@ -515,3 +516,11 @@ final triangle indices は、`faceLandmark` / `nearFaceGrid` / `backgroundGrid` 
 Ideal Reference Mesh Warp Lab は WebGL mesh warp input debug の次段として、Lab 内限定の WebGL mesh warp preview prototype を持つ。`WebGL mesh warp を適用` checkbox が OFF の場合は従来の live video preview を表示し、ON の場合は source UV / target clip position / triangle indices / live video texture を WebGL canvas に接続して warped preview を描画する。overlay は従来の displayedContentRect pixel 変換を維持する。
 
 この preview は Engine Runtime、Beauty Studio、production renderer には統合しない。texture flip 実験 UI、raw displacement mesh warp、`showRawWarp`、`rawWarpOnly`、`sideBySide` は復活させない。この段階では temporal smoothing、topK reference blend、production renderer lifecycle、performance hardening も行わない。
+
+## Ideal Reference Mesh Warp Lab mesh vertex density
+
+`tools/ideal-reference-mesh-warp-lab` の shape warp mesh では、MediaPipe iris landmarks 0-based `468..477` / user-facing `469..478` を source vertices / target vertices / triangle indices / WebGL mesh warp input から除外する。iris landmarks は目・黒目検出用の密集点であり、三角形頂点として使うと目周辺の局所的なガタつきにつながる可能性があるためである。current478 overlay では引き続き MediaPipe returned landmarks として確認してよい。
+
+`nearFaceGrid` は `expandedNearFaceBounds` を `nearFaceGridSpacing` で埋め、face-only triangle indices による face interior 除外と近すぎる点の除外を行った後、accepted current face landmarks への最近傍距離で narrow band に制限する。距離は aspect-corrected image coordinate で測り、初期値は `tooCloseToFaceThreshold = nearFaceGridSpacing * 0.4`、`nearFaceBandMaxDistance = nearFaceGridSpacing * 2.5` とする。
+
+debug では `irisExcludedCount`、`irisExcludedIndexRange`、`nearFaceBandMode`、`nearFaceBandMaxDistance`、`nearFaceRemovedTooFarFromFaceCount`、`nearFaceAcceptedGridCount` を確認する。backgroundGrid と screenEdgeAnchors は粗く背景を支える役割として維持し、今回の段階では model library 精度改善、topK reference blend、temporal smoothing、production renderer 化、Runtime / Engine 統合は行わない。

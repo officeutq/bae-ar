@@ -263,6 +263,28 @@ final triangle indices は、`faceLandmark` / `nearFaceGrid` / `backgroundGrid` 
 
 この段階の次として WebGL mesh warp input debug を追加し、さらに Lab 内限定の WebGL mesh warp preview prototype へ進める。ただし production mesh warp / Runtime renderer integration はまだ行わない。
 
+## mesh vertex density 調整
+
+Ideal Reference Mesh Warp Lab では、MediaPipe iris landmarks 0-based `468..477` / user-facing `469..478` は shape warp mesh から除外する。これは目・黒目検出用の密集点であり、WebGL mesh warp の三角形頂点に入れると目周辺の局所的なガタつきにつながる可能性があるためである。
+
+iris landmarks は MediaPipe returned landmarks や current478 overlay から消す対象ではない。除外するのは shape warp mesh の source vertices / target vertices / triangle indices / WebGL mesh warp input に使う頂点である。debug では `irisExcludedCount`、`irisExcludedIndexRange`、`irisExcludedIndicesPreview`、Raw debug の `irisExclusion` で確認する。
+
+`nearFaceGrid` は、`expandedNearFaceBounds` を埋めて顔内部を除外した後、顔外周近傍の narrow band だけに制限する。`nearFaceGrid` は顔のすぐ外側で変形をなだらかに逃がすための点であり、顔から遠い高密度 grid は不要なので除外する。
+
+距離判定は aspect-corrected image coordinate で行う。
+
+```text
+dx = (a.x - b.x) * videoAspectRatio
+dy = a.y - b.y
+distance = sqrt(dx * dx + dy * dy)
+```
+
+初期値は `tooCloseToFaceThreshold = nearFaceGridSpacing * 0.4`、`nearFaceBandMaxDistance = nearFaceGridSpacing * 2.5` とする。`distance < tooCloseToFaceThreshold` の grid point は近すぎるため除外し、`distance > nearFaceBandMaxDistance` の grid point は顔から遠すぎるため除外する。debug では `nearFaceBandMode`、`nearFaceBandMaxDistance`、`nearFaceRemovedTooFarFromFaceCount`、`nearFaceAcceptedGridCount`、`nearFaceCandidateGridCount`、`nearFaceRemovedInsideFaceCount`、`nearFaceRemovedTooCloseToFaceCount` を確認する。
+
+backgroundGrid と screenEdgeAnchors は粗く背景を支える役割として維持する。nearFaceGrid から除外された顔から遠い点を backgroundGrid へ移す必要はない。
+
+この段階では model library 精度改善、topK reference blend、temporal smoothing、production renderer 化、Runtime / Engine 統合はまだ行わない。
+
 ## WebGL mesh warp input debug
 
 Ideal Reference Mesh Warp Lab は、source mesh / target mesh / triangle indices が成立した次の段階として、WebGL mesh warp に渡す直前の input debug を追加した。
