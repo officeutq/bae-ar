@@ -458,3 +458,7 @@ Step 2-G v1 five-pose candidate generation has been removed from the current cod
 次に、source 側で採用された current landmark index に対応する `candidateAlignedIdealLandmarks` と、同じ grid / anchors を使って ideal mesh target を作ります。`candidateAlignedIdealLandmarks` は最終 target ではなく、source 側で採用された landmark に対応する ideal candidate です。
 
 現時点では mesh pair の overlay / summary による確認までで、triangle indices 作成、triangle mesh 作成、WebGL warp、raw displacement mesh warp、topK weighted blend、temporal smoothing、Runtime / Engine 変更、Beauty Studio 変更、IdealFace Authoring Tool 変更は行いません。
+
+その後の段階として、source mesh / target mesh / triangle indices が成立した状態から、WebGL mesh warp に渡す直前の input debug を追加しています。source vertices から `source UVs`、target vertices から clip-space `target positions`、triangle indices から indices buffer 相当の配列を作り、range、件数、index 範囲、source / target vertex count の整合性を Summary / Warp Mesh / Raw debug で確認します。
+
+この段階では WebGL warp の実描画、WebGL context 初期化、texture upload、shader、`gl.drawElements`、production mesh warp はまだ行いません。texture flip 実験 UI、`rawWarpOnly`、`sideBySide`、raw displacement mesh warp も復活させません。

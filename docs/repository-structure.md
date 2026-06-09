@@ -450,6 +450,10 @@ grid / anchors overlay は source / target で色分けします。`grid / ancho
 
 この tool では現時点で mesh pair と triangle wireframe の overlay / summary / preview raw debug までを扱います。triangle indices は source vertices の位置を基準に作り、source mesh と target mesh で共通に使います。triangle quality は aspect-corrected image coordinate で評価します。WebGL warp、texture upload、shader、production mesh warp、raw displacement mesh warp、Runtime / Engine 変更、Beauty Studio 変更、IdealFace Authoring Tool 変更、JSON export / import、保存機能は含めません。
 
+WebGL mesh warp へ進む前段として、`tools/ideal-reference-mesh-warp-lab` は WebGL input debug も扱います。source vertices から `source UVs`、target vertices から clip-space `target positions`、triangle indices から indices buffer 相当の配列を作り、件数、range、index 範囲、source / target vertex count の整合性を Summary / Warp Mesh / Raw debug で確認します。Raw debug は巨大配列ではなく sample preview のみに留めます。
+
+この段階でも WebGL warp 実描画、WebGL context 初期化、texture upload、shader、`gl.drawElements`、production mesh warp は含めません。texture flip 実験 UI、`rawWarpOnly`、`sideBySide`、raw displacement mesh warp も復活させません。
+
 ## Ideal Reference Mesh Warp Lab nearFaceGrid
 
 `tools/ideal-reference-mesh-warp-lab` は、理想モデル動画の MediaPipe scan と live current analysis を使い、top1 reference matching、current mesh source、ideal mesh target、triangle wireframe overlay、debug summary を検証する lab である。

@@ -459,6 +459,23 @@ grid / anchors overlay は source / target で色分けします。`grid / ancho
 
 Ideal Reference Mesh Warp Lab は dynamic grid prototype の次に、vertices から triangle indices を作る prototype に進みます。
 
+## Ideal Reference Mesh Warp Lab WebGL input debug
+
+Ideal Reference Mesh Warp Lab は、source mesh / target mesh / triangle indices が成立した次の段階として、WebGL mesh warp に渡す直前の input debug を追加します。
+
+この flow では、source vertices から `source UVs` を作り、image-normalized coordinate をそのまま `u = x` / `v = y` として扱います。debug には `sourceUvConvention = imageNormalizedNoFlip` と `uRange` / `vRange` を出します。texture V flip の UI や実験機能は復活させません。
+
+target vertices からは `target positions` を作り、debug 用に clip space 相当へ変換します。
+
+```text
+clipX = x * 2 - 1
+clipY = 1 - y * 2
+```
+
+triangle indices からは indices buffer 相当の flat array を作り、`maxIndex`、`indexWithinVertexRange`、`invalidIndexCount` を確認します。`sourceVertexCount == targetVertexCount`、triangle index 範囲、source UV range、target image-normalized range、target clip range、`triangleCount > 0` を検証し、Summary / Warp Mesh / Raw debug に `webglInputReady` と warnings を出します。
+
+この段階では WebGL context 初期化、texture upload、shader、`gl.drawElements`、WebGL warp 実描画、production mesh warp は行いません。
+
 triangle indices は source mesh と target mesh で共通に使います。sourceVertices[i] と targetVertices[i] は対応しているため、triangle index `[a, b, c]` は source triangle と target triangle の両方へ同じ意味で適用します。
 
 triangle indices は source vertices の位置を基準に作ります。texture を読む座標は source 側で決まるためです。初期 prototype では外部依存を増やさず、Lab 内の簡易 Delaunay triangulation で source vertices から triangle indices を作ります。
