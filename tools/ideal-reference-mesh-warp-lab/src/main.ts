@@ -234,8 +234,56 @@ type GridAnchorDisplayState = {
   showTargetGrid: boolean
 }
 
+type TriangleKind =
+  | "faceOnly"
+  | "faceToNearGrid"
+  | "nearGridOnly"
+  | "nearToBackground"
+  | "backgroundOnly"
+  | "edgeAnchor"
+  | "mixed"
+
+type TriangleWarning =
+  | "longThinTriangle"
+  | "largeTriangle"
+  | "degenerateTriangle"
+  | "faceToFarBackgroundTriangle"
+
+type TriangleMetricRange = {
+  min: number | null
+  median: number | null
+  max: number | null
+}
+
+type TriangleKindCounts = Record<TriangleKind, number>
+type TriangleWarningCounts = Record<TriangleWarning, number>
+
+type TriangleMeshTriangle = {
+  indices: [number, number, number]
+  kind: TriangleKind
+  area: number
+  aspectRatio: number
+  warnings: TriangleWarning[]
+}
+
+type TriangleMeshDebug = {
+  mode: "prototype"
+  vertexCount: number
+  triangleCount: number
+  validTriangleCount: number
+  warningTriangleCount: number
+  excludedTriangleCount: number
+  triangleKindCounts: TriangleKindCounts
+  triangleQuality: TriangleWarningCounts
+  triangleArea: TriangleMetricRange
+  triangleAspectRatio: TriangleMetricRange
+  triangles: TriangleMeshTriangle[]
+  trianglePreview: TriangleMeshTriangle[]
+}
+
 type MeshPrototypeSummary = {
   gridMode: "dynamic"
+  triangleMode: "prototype"
   top1MatchedReferenceId: string | null
   currentLandmarkCount: number
   candidateAlignedIdealLandmarkCount: number
@@ -257,6 +305,15 @@ type MeshPrototypeSummary = {
   backgroundGridCount: number
   screenEdgeAnchorCount: number
   meshPairCount: number
+  vertexCount: number
+  triangleCount: number
+  validTriangleCount: number
+  warningTriangleCount: number
+  excludedTriangleCount: number
+  triangleKindCounts: TriangleKindCounts
+  triangleQuality: TriangleWarningCounts
+  triangleArea: TriangleMetricRange
+  triangleAspectRatio: TriangleMetricRange
   usageWeightAverage: number | null
   usageWeightMin: number | null
   usageWeightMax: number | null
@@ -274,6 +331,7 @@ type CurrentIdealMeshPrototypeState = {
   currentMeshSourceVertices: MeshSourceVertex[]
   idealMeshTargetVertices: MeshTargetVertex[]
   currentIdealMeshPairs: MeshVertexPair[]
+  triangleMesh: TriangleMeshDebug
   aspectDebug: MeshAspectDebug
   dynamicGrid: DynamicGridDebug
   summary: MeshPrototypeSummary
@@ -305,6 +363,7 @@ type LabState = {
     showMeshPairs: boolean
     showExcludedLandmarks: boolean
     showGridAnchors: boolean
+    showTriangleMesh: boolean
   }
   modelVideo: VideoPreviewState & {
     currentReviewFrameIndex: number | null
@@ -366,10 +425,31 @@ const MAX_NEAR_FACE_GRID_SPACING = 0.04
 const MIN_BACKGROUND_GRID_SPACING = 0.04
 const MAX_BACKGROUND_GRID_SPACING = 0.12
 const GRID_VERTEX_KEY_PRECISION = 10000
+const TRIANGLE_PREVIEW_COUNT = 8
+const TRIANGLE_MIN_AREA = 0.0000008
+const TRIANGLE_LARGE_AREA = 0.018
+const TRIANGLE_LONG_THIN_ASPECT_RATIO = 12
 const MESH_SOURCE_COLOR = "rgba(20, 170, 130, 0.9)"
 const MESH_TARGET_COLOR = "rgba(244, 86, 120, 0.9)"
 const GRID_SOURCE_COLOR = "rgba(20, 170, 130, 0.78)"
 const GRID_TARGET_COLOR = "rgba(244, 86, 120, 0.78)"
+const TRIANGLE_SOURCE_COLOR = "rgba(20, 170, 130, 0.34)"
+const TRIANGLE_TARGET_COLOR = "rgba(244, 86, 120, 0.34)"
+const TRIANGLE_KINDS: TriangleKind[] = [
+  "faceOnly",
+  "faceToNearGrid",
+  "nearGridOnly",
+  "nearToBackground",
+  "backgroundOnly",
+  "edgeAnchor",
+  "mixed",
+]
+const TRIANGLE_WARNINGS: TriangleWarning[] = [
+  "longThinTriangle",
+  "largeTriangle",
+  "degenerateTriangle",
+  "faceToFarBackgroundTriangle",
+]
 const MATCH_BLENDSHAPE_KEYS = [
   "jawOpen",
   "mouthSmileLeft",
@@ -421,6 +501,7 @@ const state: LabState = {
     showMeshPairs: false,
     showExcludedLandmarks: false,
     showGridAnchors: false,
+    showTriangleMesh: false,
   },
   modelVideo: {
     loaded: false,
@@ -538,6 +619,10 @@ app.innerHTML = `
           <label class="overlay-toggle">
             <input type="checkbox" data-action="toggle-grid-anchors" />
             <span>grid / anchorsを表示</span>
+          </label>
+          <label class="overlay-toggle">
+            <input type="checkbox" data-action="toggle-triangle-mesh" />
+            <span>triangle meshを表示</span>
           </label>
         </div>
       </div>
@@ -688,6 +773,7 @@ function bindEvents() {
   bindOverlayToggle("toggle-mesh-pairs", "showMeshPairs")
   bindOverlayToggle("toggle-excluded-landmarks", "showExcludedLandmarks")
   bindOverlayToggle("toggle-grid-anchors", "showGridAnchors")
+  bindOverlayToggle("toggle-triangle-mesh", "showTriangleMesh")
   modelFileInput.addEventListener("change", () => {
     handleVideoFileSelection("model", modelFileInput.files?.[0] ?? null)
   })
@@ -1283,6 +1369,10 @@ function updateCurrentIdealMeshPrototype() {
     candidateAlignedIdealLandmarks,
     liveVideoAspectRatio,
   )
+  const triangleMesh = buildTriangleMeshDebug(
+    currentMeshSource.vertices,
+    liveVideoAspectRatio,
+  )
   const aspectDebug = createMeshAspectDebug({
     currentLandmarks: current.landmarks478,
     top1RawIdealReferenceLandmarks: idealFrame.landmarks478,
@@ -1302,6 +1392,7 @@ function updateCurrentIdealMeshPrototype() {
     currentMeshSourceVertices: currentMeshSource.vertices,
     currentIdealMeshPairs,
     dynamicGrid: currentMeshSource.dynamicGrid,
+    triangleMesh,
   })
 
   state.currentIdealMeshPrototype = {
@@ -1311,6 +1402,7 @@ function updateCurrentIdealMeshPrototype() {
     currentMeshSourceVertices: currentMeshSource.vertices,
     idealMeshTargetVertices,
     currentIdealMeshPairs,
+    triangleMesh,
     aspectDebug,
     dynamicGrid: currentMeshSource.dynamicGrid,
     summary,
@@ -1553,6 +1645,249 @@ function buildIdealMeshTargetVertices(
   }
 
   return { idealMeshTargetVertices, currentIdealMeshPairs }
+}
+
+function buildTriangleMeshDebug(
+  sourceVertices: MeshSourceVertex[],
+  videoAspectRatio: number,
+): TriangleMeshDebug {
+  const rawTriangles = buildDelaunayTriangleIndices(sourceVertices, videoAspectRatio)
+  const triangleKindCounts = createEmptyTriangleKindCounts()
+  const triangleQuality = createEmptyTriangleWarningCounts()
+  const includedTriangles: TriangleMeshTriangle[] = []
+  let excludedTriangleCount = 0
+
+  for (const indices of rawTriangles) {
+    const triangle = evaluateTriangle(sourceVertices, indices, videoAspectRatio)
+    for (const warning of triangle.warnings) {
+      triangleQuality[warning] += 1
+    }
+
+    if (shouldExcludeTriangle(triangle)) {
+      excludedTriangleCount += 1
+      continue
+    }
+
+    triangleKindCounts[triangle.kind] += 1
+    includedTriangles.push(triangle)
+  }
+
+  const triangleAreas = includedTriangles.map((triangle) => triangle.area)
+  const triangleAspectRatios = includedTriangles
+    .map((triangle) => triangle.aspectRatio)
+    .filter(Number.isFinite)
+  const warningTriangleCount = includedTriangles.filter(
+    (triangle) => triangle.warnings.length > 0,
+  ).length
+
+  return {
+    mode: "prototype",
+    vertexCount: sourceVertices.length,
+    triangleCount: includedTriangles.length,
+    validTriangleCount: includedTriangles.length - warningTriangleCount,
+    warningTriangleCount,
+    excludedTriangleCount,
+    triangleKindCounts,
+    triangleQuality,
+    triangleArea: createMetricRange(triangleAreas),
+    triangleAspectRatio: createMetricRange(triangleAspectRatios),
+    triangles: includedTriangles,
+    trianglePreview: includedTriangles.slice(0, TRIANGLE_PREVIEW_COUNT),
+  }
+}
+
+function buildDelaunayTriangleIndices(
+  sourceVertices: MeshSourceVertex[],
+  videoAspectRatio: number,
+): Array<[number, number, number]> {
+  const points = sourceVertices
+    .map((vertex, vertexIndex) => ({
+      x: vertex.x * videoAspectRatio,
+      y: vertex.y,
+      vertexIndex,
+    }))
+    .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
+
+  if (points.length < 3) {
+    return []
+  }
+
+  const bounds = getLandmarkBounds(points)
+  const center = getRectCenter(bounds)
+  const span = Math.max(bounds.width, bounds.height, 0.001) * 24
+  const superPointStart = points.length
+  const workingPoints = [
+    ...points,
+    { x: center.x - span, y: center.y - span, vertexIndex: -1 },
+    { x: center.x, y: center.y + span, vertexIndex: -1 },
+    { x: center.x + span, y: center.y - span, vertexIndex: -1 },
+  ]
+  let triangles: Array<[number, number, number]> = [
+    [superPointStart, superPointStart + 1, superPointStart + 2],
+  ]
+
+  for (let pointIndex = 0; pointIndex < points.length; pointIndex += 1) {
+    const point = workingPoints[pointIndex]
+    const badTriangles = triangles.filter((triangle) =>
+      isPointInCircumcircle(point, triangle, workingPoints),
+    )
+    const boundaryEdges = getBoundaryEdges(badTriangles)
+    triangles = triangles.filter((triangle) => !badTriangles.includes(triangle))
+    triangles.push(...boundaryEdges.map((edge) => [edge[0], edge[1], pointIndex] as [number, number, number]))
+  }
+
+  return triangles
+    .filter((triangle) => triangle.every((index) => index < superPointStart))
+    .map((triangle) => {
+      const indices = triangle.map((index) => workingPoints[index].vertexIndex)
+      return normalizeTriangleWinding(
+        indices as [number, number, number],
+        sourceVertices,
+        videoAspectRatio,
+      )
+    })
+    .filter((triangle) => new Set(triangle).size === 3)
+}
+
+function getBoundaryEdges(triangles: Array<[number, number, number]>) {
+  const edgeCounts = new Map<string, { edge: [number, number]; count: number }>()
+
+  for (const triangle of triangles) {
+    const edges: Array<[number, number]> = [
+      [triangle[0], triangle[1]],
+      [triangle[1], triangle[2]],
+      [triangle[2], triangle[0]],
+    ]
+
+    for (const edge of edges) {
+      const key = [...edge].sort((a, b) => a - b).join(":")
+      const current = edgeCounts.get(key)
+      if (current) {
+        current.count += 1
+      } else {
+        edgeCounts.set(key, { edge, count: 1 })
+      }
+    }
+  }
+
+  return Array.from(edgeCounts.values())
+    .filter((entry) => entry.count === 1)
+    .map((entry) => entry.edge)
+}
+
+function isPointInCircumcircle(
+  point: Point2D,
+  triangle: [number, number, number],
+  points: Point2D[],
+) {
+  const a = points[triangle[0]]
+  const b = points[triangle[1]]
+  const c = points[triangle[2]]
+  const ax = a.x - point.x
+  const ay = a.y - point.y
+  const bx = b.x - point.x
+  const by = b.y - point.y
+  const cx = c.x - point.x
+  const cy = c.y - point.y
+  const determinant =
+    (ax * ax + ay * ay) * (bx * cy - cx * by) -
+    (bx * bx + by * by) * (ax * cy - cx * ay) +
+    (cx * cx + cy * cy) * (ax * by - bx * ay)
+  const orientation = signedTriangleArea(a, b, c)
+
+  return orientation > 0 ? determinant > 0 : determinant < 0
+}
+
+function normalizeTriangleWinding(
+  indices: [number, number, number],
+  sourceVertices: MeshSourceVertex[],
+  videoAspectRatio: number,
+): [number, number, number] {
+  const points = indices.map((index) =>
+    toAspectCorrectedPoint(sourceVertices[index], videoAspectRatio),
+  ) as [Point2D, Point2D, Point2D]
+
+  return signedTriangleArea(points[0], points[1], points[2]) >= 0
+    ? indices
+    : [indices[0], indices[2], indices[1]]
+}
+
+function evaluateTriangle(
+  sourceVertices: MeshSourceVertex[],
+  indices: [number, number, number],
+  videoAspectRatio: number,
+): TriangleMeshTriangle {
+  const vertices = indices.map((index) => sourceVertices[index])
+  const points = vertices.map((vertex) =>
+    toAspectCorrectedPoint(vertex, videoAspectRatio),
+  ) as [Point2D, Point2D, Point2D]
+  const edgeLengths = [
+    calculateNormalizedDistance(points[0], points[1]),
+    calculateNormalizedDistance(points[1], points[2]),
+    calculateNormalizedDistance(points[2], points[0]),
+  ]
+  const area = Math.abs(signedTriangleArea(points[0], points[1], points[2]))
+  const longestEdge = Math.max(...edgeLengths)
+  const aspectRatio = area > 0 ? (longestEdge * longestEdge) / (2 * area) : Number.POSITIVE_INFINITY
+  const kind = classifyTriangleKind(vertices.map((vertex) => vertex.kind))
+  const warnings: TriangleWarning[] = []
+
+  if (area <= TRIANGLE_MIN_AREA) {
+    warnings.push("degenerateTriangle")
+  }
+  if (area >= TRIANGLE_LARGE_AREA) {
+    warnings.push("largeTriangle")
+  }
+  if (aspectRatio >= TRIANGLE_LONG_THIN_ASPECT_RATIO) {
+    warnings.push("longThinTriangle")
+  }
+  if (isFaceToFarBackgroundTriangle(vertices.map((vertex) => vertex.kind))) {
+    warnings.push("faceToFarBackgroundTriangle")
+  }
+
+  return {
+    indices,
+    kind,
+    area,
+    aspectRatio,
+    warnings,
+  }
+}
+
+function classifyTriangleKind(kinds: MeshVertexKind[]): TriangleKind {
+  if (kinds.includes("screenEdgeAnchor")) {
+    return "edgeAnchor"
+  }
+  if (kinds.every((kind) => kind === "faceLandmark")) {
+    return "faceOnly"
+  }
+  if (kinds.includes("faceLandmark") && kinds.includes("nearFaceGrid")) {
+    return "faceToNearGrid"
+  }
+  if (kinds.every((kind) => kind === "nearFaceGrid")) {
+    return "nearGridOnly"
+  }
+  if (kinds.includes("nearFaceGrid") && kinds.includes("backgroundGrid")) {
+    return "nearToBackground"
+  }
+  if (kinds.every((kind) => kind === "backgroundGrid")) {
+    return "backgroundOnly"
+  }
+  return "mixed"
+}
+
+function isFaceToFarBackgroundTriangle(kinds: MeshVertexKind[]) {
+  return (
+    kinds.includes("faceLandmark") &&
+    (kinds.includes("backgroundGrid") || kinds.includes("screenEdgeAnchor"))
+  )
+}
+
+function shouldExcludeTriangle(triangle: TriangleMeshTriangle) {
+  return (
+    triangle.warnings.includes("degenerateTriangle") ||
+    triangle.warnings.includes("faceToFarBackgroundTriangle")
+  )
 }
 
 function buildDynamicGridVertices(
@@ -1892,6 +2227,7 @@ function summarizeCurrentIdealMeshPrototype({
   currentMeshSourceVertices,
   currentIdealMeshPairs,
   dynamicGrid,
+  triangleMesh,
 }: {
   currentLandmarkCount: number
   top1MatchedReferenceId: string | null
@@ -1901,12 +2237,14 @@ function summarizeCurrentIdealMeshPrototype({
   currentMeshSourceVertices: MeshSourceVertex[]
   currentIdealMeshPairs: MeshVertexPair[]
   dynamicGrid: DynamicGridDebug
+  triangleMesh: TriangleMeshDebug
 }): MeshPrototypeSummary {
   const usageWeights = currentIdealMeshPairs.map((pair) => pair.usageWeight)
   const allLandmarkVertices = [...acceptedCurrentLandmarks, ...excludedCurrentLandmarks]
 
   return {
     gridMode: dynamicGrid.mode,
+    triangleMode: triangleMesh.mode,
     top1MatchedReferenceId,
     currentLandmarkCount,
     candidateAlignedIdealLandmarkCount,
@@ -1930,6 +2268,15 @@ function summarizeCurrentIdealMeshPrototype({
     backgroundGridCount: countVerticesByKind(currentMeshSourceVertices, "backgroundGrid"),
     screenEdgeAnchorCount: countVerticesByKind(currentMeshSourceVertices, "screenEdgeAnchor"),
     meshPairCount: currentIdealMeshPairs.length,
+    vertexCount: triangleMesh.vertexCount,
+    triangleCount: triangleMesh.triangleCount,
+    validTriangleCount: triangleMesh.validTriangleCount,
+    warningTriangleCount: triangleMesh.warningTriangleCount,
+    excludedTriangleCount: triangleMesh.excludedTriangleCount,
+    triangleKindCounts: triangleMesh.triangleKindCounts,
+    triangleQuality: triangleMesh.triangleQuality,
+    triangleArea: triangleMesh.triangleArea,
+    triangleAspectRatio: triangleMesh.triangleAspectRatio,
     usageWeightAverage: usageWeights.length > 0 ? averageNumbers(usageWeights) : null,
     usageWeightMin: usageWeights.length > 0 ? Math.min(...usageWeights) : null,
     usageWeightMax: usageWeights.length > 0 ? Math.max(...usageWeights) : null,
@@ -2062,6 +2409,10 @@ function calculateNormalizedDistance(source: Point2D, target: Point2D) {
   return Math.hypot(target.x - source.x, target.y - source.y)
 }
 
+function signedTriangleArea(a: Point2D, b: Point2D, c: Point2D) {
+  return ((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y)) / 2
+}
+
 function calculateAspectCorrectedDistance(
   source: Point2D,
   target: Point2D,
@@ -2177,6 +2528,29 @@ function countVerticesWithReason(
   reason: string,
 ) {
   return vertices.filter((vertex) => vertex.reasons.includes(reason)).length
+}
+
+function createEmptyTriangleKindCounts(): TriangleKindCounts {
+  return TRIANGLE_KINDS.reduce((counts, kind) => {
+    counts[kind] = 0
+    return counts
+  }, {} as TriangleKindCounts)
+}
+
+function createEmptyTriangleWarningCounts(): TriangleWarningCounts {
+  return TRIANGLE_WARNINGS.reduce((counts, warning) => {
+    counts[warning] = 0
+    return counts
+  }, {} as TriangleWarningCounts)
+}
+
+function createMetricRange(values: number[]): TriangleMetricRange {
+  const validValues = values.filter(Number.isFinite)
+  return {
+    min: validValues.length > 0 ? Math.min(...validValues) : null,
+    median: medianNumber(validValues),
+    max: validValues.length > 0 ? Math.max(...validValues) : null,
+  }
 }
 
 function averageNumbers(values: number[]) {
@@ -2485,8 +2859,10 @@ function createEmptyTop1Match(): ReferenceMatchResult {
 
 function createEmptyMeshPrototypeSummary(videoAspectRatio = 1): MeshPrototypeSummary {
   const dynamicGrid = createEmptyDynamicGridDebug(videoAspectRatio)
+  const triangleMesh = createEmptyTriangleMeshDebug()
   return {
     gridMode: dynamicGrid.mode,
+    triangleMode: triangleMesh.mode,
     top1MatchedReferenceId: null,
     currentLandmarkCount: 0,
     candidateAlignedIdealLandmarkCount: 0,
@@ -2510,6 +2886,15 @@ function createEmptyMeshPrototypeSummary(videoAspectRatio = 1): MeshPrototypeSum
     backgroundGridCount: 0,
     screenEdgeAnchorCount: 0,
     meshPairCount: 0,
+    vertexCount: triangleMesh.vertexCount,
+    triangleCount: triangleMesh.triangleCount,
+    validTriangleCount: triangleMesh.validTriangleCount,
+    warningTriangleCount: triangleMesh.warningTriangleCount,
+    excludedTriangleCount: triangleMesh.excludedTriangleCount,
+    triangleKindCounts: triangleMesh.triangleKindCounts,
+    triangleQuality: triangleMesh.triangleQuality,
+    triangleArea: triangleMesh.triangleArea,
+    triangleAspectRatio: triangleMesh.triangleAspectRatio,
     usageWeightAverage: null,
     usageWeightMin: null,
     usageWeightMax: null,
@@ -2539,6 +2924,23 @@ function createEmptyDynamicGridDebug(videoAspectRatio = 1): DynamicGridDebug {
     expandedNearFaceBounds: null,
     videoAspectRatio,
     gridPointPreview: [],
+  }
+}
+
+function createEmptyTriangleMeshDebug(): TriangleMeshDebug {
+  return {
+    mode: "prototype",
+    vertexCount: 0,
+    triangleCount: 0,
+    validTriangleCount: 0,
+    warningTriangleCount: 0,
+    excludedTriangleCount: 0,
+    triangleKindCounts: createEmptyTriangleKindCounts(),
+    triangleQuality: createEmptyTriangleWarningCounts(),
+    triangleArea: createMetricRange([]),
+    triangleAspectRatio: createMetricRange([]),
+    triangles: [],
+    trianglePreview: [],
   }
 }
 
@@ -2573,6 +2975,7 @@ function createEmptyCurrentIdealMeshPrototype(
     currentMeshSourceVertices: [],
     idealMeshTargetVertices: [],
     currentIdealMeshPairs: [],
+    triangleMesh: createEmptyTriangleMeshDebug(),
     aspectDebug: createEmptyMeshAspectDebug(modelVideoAspectRatio, liveVideoAspectRatio),
     dynamicGrid: createEmptyDynamicGridDebug(liveVideoAspectRatio),
     summary: createEmptyMeshPrototypeSummary(liveVideoAspectRatio),
@@ -2664,6 +3067,8 @@ function renderControls() {
     state.overlay.showExcludedLandmarks
   getElement<HTMLInputElement>('[data-action="toggle-grid-anchors"]').checked =
     state.overlay.showGridAnchors
+  getElement<HTMLInputElement>('[data-action="toggle-triangle-mesh"]').checked =
+    state.overlay.showTriangleMesh
   renderModelReviewCard()
   renderLiveAnalysisCard()
 }
@@ -2813,6 +3218,7 @@ function createSummaryContent() {
     ["Expression distance", formatSeconds(state.top1Match.expressionDistance)],
     ["top1MatchedReferenceId", meshSummary.top1MatchedReferenceId ?? "-"],
     ["gridMode", meshSummary.gridMode],
+    ["triangleMode", meshSummary.triangleMode],
     ["currentLandmarkCount", String(meshSummary.currentLandmarkCount)],
     ["visibleCurrentLandmarkCount", String(meshSummary.visibleCurrentLandmarkCount)],
     ["excludedCurrentLandmarkCount", String(meshSummary.excludedCurrentLandmarkCount)],
@@ -2841,6 +3247,18 @@ function createSummaryContent() {
     ["backgroundGridCount", String(meshSummary.backgroundGridCount)],
     ["screenEdgeAnchorCount", String(meshSummary.screenEdgeAnchorCount)],
     ["meshPairCount", String(meshSummary.meshPairCount)],
+    ["vertexCount", String(meshSummary.vertexCount)],
+    ["triangleCount", String(meshSummary.triangleCount)],
+    ["validTriangleCount", String(meshSummary.validTriangleCount)],
+    ["warningTriangleCount", String(meshSummary.warningTriangleCount)],
+    ["excludedTriangleCount", String(meshSummary.excludedTriangleCount)],
+    ["triangleKindCounts", formatCounts(meshSummary.triangleKindCounts)],
+    ["triangleQuality", formatCounts(meshSummary.triangleQuality)],
+    ["triangleArea min / median / max", formatMetricRange(meshSummary.triangleArea)],
+    [
+      "triangleAspectRatio min / median / max",
+      formatMetricRange(meshSummary.triangleAspectRatio),
+    ],
     [
       "usageWeight average / min / max",
       `${formatMetric(meshSummary.usageWeightAverage)} / ${formatMetric(meshSummary.usageWeightMin)} / ${formatMetric(meshSummary.usageWeightMax)}`,
@@ -2870,6 +3288,7 @@ function createSummaryContent() {
       formatBoundsSummary(alignmentDebug?.currentBoundsAspectCorrected ?? null),
     ],
     ["Overlay 478 landmarks", state.overlay.showLandmarks478 ? "on" : "off"],
+    ["Overlay triangle mesh", state.overlay.showTriangleMesh ? "on" : "off"],
   ]
 
   appendDefinitionItems(summaryList, items)
@@ -3066,6 +3485,12 @@ function createMeshPrototypeContent() {
   targetList.className = "summary-list"
   appendDefinitionItems(targetList, [
     ["meshPairCount", String(summary.meshPairCount)],
+    ["triangleMode", summary.triangleMode],
+    ["vertexCount", String(summary.vertexCount)],
+    ["triangleCount", String(summary.triangleCount)],
+    ["validTriangleCount", String(summary.validTriangleCount)],
+    ["warningTriangleCount", String(summary.warningTriangleCount)],
+    ["excludedTriangleCount", String(summary.excludedTriangleCount)],
     [
       "usageWeight average / min / max",
       `${formatMetric(summary.usageWeightAverage)} / ${formatMetric(summary.usageWeightMin)} / ${formatMetric(summary.usageWeightMax)}`,
@@ -3073,6 +3498,28 @@ function createMeshPrototypeContent() {
     ["alignedIdeal rule", "candidate only; not final target for all 478 landmarks"],
     ["faceLandmark target", "selected current landmark index -> same candidate aligned ideal index"],
     ["grid / anchors target", "fixed source position"],
+  ])
+
+  const triangleHeading = document.createElement("h3")
+  triangleHeading.textContent = "Triangle Mesh"
+  const triangleList = document.createElement("dl")
+  triangleList.className = "summary-list"
+  appendDefinitionItems(triangleList, [
+    ["mode", mesh.triangleMesh.mode],
+    ["source coordinate", "source vertices; aspect-corrected quality evaluation"],
+    ["shared indices", "source mesh と target mesh で同じ triangle indices を使用"],
+    ["triangleCount", String(mesh.triangleMesh.triangleCount)],
+    ["validTriangleCount", String(mesh.triangleMesh.validTriangleCount)],
+    ["warningTriangleCount", String(mesh.triangleMesh.warningTriangleCount)],
+    ["excludedTriangleCount", String(mesh.triangleMesh.excludedTriangleCount)],
+    ["triangleKindCounts", formatCounts(mesh.triangleMesh.triangleKindCounts)],
+    ["triangleQuality", formatCounts(mesh.triangleMesh.triangleQuality)],
+    ["triangleArea min / median / max", formatMetricRange(mesh.triangleMesh.triangleArea)],
+    [
+      "triangleAspectRatio min / median / max",
+      formatMetricRange(mesh.triangleMesh.triangleAspectRatio),
+    ],
+    ["trianglePreview", formatTrianglePreview(mesh.triangleMesh.trianglePreview)],
   ])
 
   const dynamicGridHeading = document.createElement("h3")
@@ -3173,6 +3620,8 @@ function createMeshPrototypeContent() {
     sourceList,
     targetHeading,
     targetList,
+    triangleHeading,
+    triangleList,
     dynamicGridHeading,
     dynamicGridList,
     alignmentHeading,
@@ -3351,11 +3800,14 @@ function getCurrentIdealMeshPrototypeRawState() {
         mesh.summary.expandedNearFaceBounds,
       ),
       videoAspectRatio: roundMetricForState(mesh.summary.videoAspectRatio),
+      triangleArea: roundMetricRange(mesh.summary.triangleArea),
+      triangleAspectRatio: roundMetricRange(mesh.summary.triangleAspectRatio),
       usageWeightAverage: roundMetricForState(mesh.summary.usageWeightAverage),
       usageWeightMin: roundMetricForState(mesh.summary.usageWeightMin),
       usageWeightMax: roundMetricForState(mesh.summary.usageWeightMax),
     },
     dynamicGrid: roundDynamicGridDebug(mesh.dynamicGrid),
+    triangleMesh: roundTriangleMeshDebug(mesh.triangleMesh),
     aspectDebug: roundMeshAspectDebug(mesh.aspectDebug),
     candidateAlignedIdealLandmarkPreview: mesh.candidateAlignedIdealLandmarks
       .slice(0, LANDMARK_PREVIEW_COUNT)
@@ -3562,11 +4014,32 @@ function drawMeshPrototypeOverlay(
     state.overlay.showMeshTarget ||
     state.overlay.showMeshPairs ||
     state.overlay.showExcludedLandmarks ||
+    state.overlay.showTriangleMesh ||
     gridAnchorDisplay.showSourceGrid ||
     gridAnchorDisplay.showTargetGrid
 
   if (!showAnyMeshOverlay || mesh.currentIdealMeshPairs.length === 0) {
     return
+  }
+
+  if (state.overlay.showTriangleMesh && state.overlay.showMeshSource) {
+    drawTriangleWireframe(
+      context,
+      displayedContentRect,
+      mesh.triangleMesh,
+      mesh.currentMeshSourceVertices,
+      TRIANGLE_SOURCE_COLOR,
+    )
+  }
+
+  if (state.overlay.showTriangleMesh && state.overlay.showMeshTarget) {
+    drawTriangleWireframe(
+      context,
+      displayedContentRect,
+      mesh.triangleMesh,
+      mesh.idealMeshTargetVertices,
+      TRIANGLE_TARGET_COLOR,
+    )
   }
 
   if (state.overlay.showMeshPairs) {
@@ -3645,6 +4118,28 @@ function drawMeshPrototypeOverlay(
       "rgba(32, 38, 45, 0.55)",
       2.1,
     )
+  }
+}
+
+function drawTriangleWireframe(
+  context: CanvasRenderingContext2D,
+  displayedContentRect: Rect,
+  triangleMesh: TriangleMeshDebug,
+  vertices: Array<{ x: number; y: number }>,
+  color: string,
+) {
+  context.strokeStyle = color
+  context.lineWidth = 0.8
+  for (const triangle of triangleMesh.triangles) {
+    const [a, b, c] = triangle.indices.map((index) =>
+      normalizedLandmarkToPreviewPixel(vertices[index], displayedContentRect),
+    )
+    context.beginPath()
+    context.moveTo(a.x, a.y)
+    context.lineTo(b.x, b.y)
+    context.lineTo(c.x, c.y)
+    context.closePath()
+    context.stroke()
   }
 }
 
@@ -3848,6 +4343,10 @@ function formatCounts(counts: Record<string, number>) {
     : entries.map(([key, value]) => `${key}: ${value}`).join(" / ")
 }
 
+function formatMetricRange(range: TriangleMetricRange) {
+  return `${formatMetric(range.min)} / ${formatMetric(range.median)} / ${formatMetric(range.max)}`
+}
+
 function formatMeshLandmarkPreview(vertices: CurrentMeshLandmarkVertex[]) {
   if (vertices.length === 0) {
     return "-"
@@ -3868,6 +4367,19 @@ function formatDynamicGridPointPreview(points: DynamicGridPointPreview[]) {
     .map(
       (point) =>
         `${point.id} ${point.kind} (${formatMetric(point.x)}, ${formatMetric(point.y)}) ${point.reasons.join("|")}`,
+    )
+    .join(" / ")
+}
+
+function formatTrianglePreview(triangles: TriangleMeshTriangle[]) {
+  if (triangles.length === 0) {
+    return "-"
+  }
+
+  return triangles
+    .map(
+      (triangle) =>
+        `${triangle.indices.join(",")} ${triangle.kind} area:${formatMetric(triangle.area)} aspect:${formatMetric(triangle.aspectRatio)} warnings:${triangle.warnings.join("|") || "-"}`,
     )
     .join(" / ")
 }
@@ -3992,10 +4504,44 @@ function roundDynamicGridDebug(debug: DynamicGridDebug) {
   }
 }
 
+function roundTriangleMeshDebug(debug: TriangleMeshDebug) {
+  return {
+    mode: debug.mode,
+    vertexCount: debug.vertexCount,
+    triangleCount: debug.triangleCount,
+    validTriangleCount: debug.validTriangleCount,
+    warningTriangleCount: debug.warningTriangleCount,
+    excludedTriangleCount: debug.excludedTriangleCount,
+    triangleKindCounts: debug.triangleKindCounts,
+    triangleQuality: debug.triangleQuality,
+    triangleArea: roundMetricRange(debug.triangleArea),
+    triangleAspectRatio: roundMetricRange(debug.triangleAspectRatio),
+    trianglePreview: debug.trianglePreview.map(roundTriangleMeshTriangle),
+  }
+}
+
+function roundTriangleMeshTriangle(triangle: TriangleMeshTriangle) {
+  return {
+    indices: triangle.indices,
+    kind: triangle.kind,
+    area: roundMetricForState(triangle.area),
+    aspectRatio: roundMetricForState(triangle.aspectRatio),
+    warnings: triangle.warnings,
+  }
+}
+
 function roundPoint(point: Point2D) {
   return {
     x: roundForState(point.x),
     y: roundForState(point.y),
+  }
+}
+
+function roundMetricRange(range: TriangleMetricRange) {
+  return {
+    min: roundMetricForState(range.min),
+    median: roundMetricForState(range.median),
+    max: roundMetricForState(range.max),
   }
 }
 

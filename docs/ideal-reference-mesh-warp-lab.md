@@ -30,6 +30,8 @@ current
   -> current mesh source vertices 作成
   -> ideal mesh target vertices 作成
   -> mesh pair overlay / summary 確認
+  -> source vertices 基準の triangle indices 作成
+  -> triangle wireframe overlay / quality debug 確認
 ```
 
 `candidateAlignedIdealLandmarks` は最終 target ではありません。top1 ideal reference を current face へ位置合わせした候補であり、source 側で採用された current landmark index に対応する ideal candidate としてだけ使います。
@@ -120,7 +122,50 @@ Summary / Warp Mesh debug では以下を確認します。
 - `gridAnchorDisplay.showSourceGrid`
 - `gridAnchorDisplay.showTargetGrid`
 
-Raw debug は巨大配列を出さず、`dynamicGrid.gridPointPreview`、`candidateAlignedIdealLandmarkPreview`、`acceptedCurrentLandmarkPreview`、`excludedCurrentLandmarkPreview`、`meshPairPreview` の sample だけを出します。
+Raw debug は巨大配列を出さず、`dynamicGrid.gridPointPreview`、`candidateAlignedIdealLandmarkPreview`、`acceptedCurrentLandmarkPreview`、`excludedCurrentLandmarkPreview`、`meshPairPreview`、`trianglePreview` の sample だけを出します。
+
+## Triangle Indices Prototype
+
+Ideal Reference Mesh Warp Lab は dynamic grid prototype の次に、vertices から triangle indices を作る prototype に進みました。
+
+triangle indices は current mesh source vertices の位置を基準に作ります。texture を読む座標は source 側で決まるためです。source mesh と target mesh は同じ頂点数・同じ順番で作られている前提なので、同じ triangle indices を共通に使います。
+
+```text
+triangle index [a, b, c]
+
+source triangle:
+  sourceVertices[a], sourceVertices[b], sourceVertices[c]
+
+target triangle:
+  targetVertices[a], targetVertices[b], targetVertices[c]
+```
+
+初期 prototype では、外部ライブラリを追加せず、Lab 内の簡易 Delaunay triangulation で triangle indices を作ります。triangle quality は aspect-corrected image coordinate で評価します。
+
+```text
+x' = x * videoAspectRatio
+y' = y
+```
+
+評価する値:
+
+- triangleArea
+- edgeLength
+- aspectRatio
+- isLongThin
+- isLarge
+- isDegenerate
+- faceToFarBackgroundTriangle
+
+triangle kind は、含まれる vertex kind から `faceOnly`、`faceToNearGrid`、`nearGridOnly`、`nearToBackground`、`backgroundOnly`、`edgeAnchor`、`mixed` に分類します。
+
+危険な triangle は warning として数えます。特に `faceLandmark` と `backgroundGrid` / `screenEdgeAnchor` が直接つながる triangle と、面積が小さすぎる degenerate triangle は triangle indices から除外します。理想の接続は、`faceLandmark -> nearFaceGrid -> backgroundGrid -> screenEdgeAnchor` の段階的な接続です。
+
+live overlay では `triangle meshを表示` toggle を追加し、`mesh sourceを表示` と組み合わせて source triangle wireframe、`mesh targetを表示` と組み合わせて target triangle wireframe を表示します。
+
+Summary / Warp Mesh debug では `triangleMode`、`vertexCount`、`triangleCount`、`validTriangleCount`、`warningTriangleCount`、`excludedTriangleCount`、`triangleKindCounts`、`triangleQuality`、`triangleArea`、`triangleAspectRatio` を確認します。Raw debug は巨大配列を出さず、`trianglePreview` sample のみに留めます。
+
+現時点では triangle wireframe overlay と Summary / Warp Mesh / Raw debug による確認までで、WebGL mesh warp はまだ行いません。
 
 ## 本線から外したもの
 
@@ -137,9 +182,6 @@ PR5 以降で試した以下は本線から外しています。
 
 ## 今回まだ行わないこと
 
-- triangle indices 作成
-- triangle mesh 作成
-- Delaunay triangulation
 - WebGL warp
 - production mesh warp
 - topK weighted blend
