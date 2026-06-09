@@ -124,6 +124,20 @@ Summary / Warp Mesh debug では以下を確認します。
 
 Raw debug は巨大配列を出さず、`dynamicGrid.gridPointPreview`、`candidateAlignedIdealLandmarkPreview`、`acceptedCurrentLandmarkPreview`、`excludedCurrentLandmarkPreview`、`meshPairPreview`、`trianglePreview` の sample だけを出します。
 
+## Model Scan JSON export / import
+
+Ideal Reference Mesh Warp Lab は、model video scan によって作成した `rawIdealReferenceFrames` と accepted / excluded frame 管理を JSON として export / import できます。
+
+model scan JSON を読み込むと、毎回 model video を再解析しなくても reference library と top1 matching を再利用できます。読み込み後は `rawIdealReferenceFrames`、accepted frames、excluded frames、scan summary、accepted frame review state を復元し、live current analysis があれば既存の matching / mesh / WebGL preview debug にそのまま使います。
+
+export JSON の top-level は `schemaVersion: "ideal_reference_mesh_warp_model_scan_v1"`、`exportedAt`、`modelVideo` metadata、`scanSummary`、`rawIdealReferenceFrames`、`acceptedFrameIds`、`excludedFrameIds` を持ちます。`rawIdealReferenceFrames` は既存 state の shape を維持し、`frameId`、`frameIndex`、`timeSec`、`landmarks478`、`pose`、`blendshapes`、`expressionGroup`、`qualityScore`、`excluded`、`excludedReason` を含みます。
+
+JSON には model video 本体、live video 本体、HTMLVideoElement、Canvas、Blob URL、thumbnail data URL の全文、current live frame analysis、current mesh source、ideal mesh target、triangle indices、WebGL runtime state は含めません。
+
+import 時は軽量 validation として、schemaVersion、`rawIdealReferenceFrames` 配列、1件以上の frame、各 frame の 478点 `landmarks478`、`acceptedFrameIds` / `excludedFrameIds` 配列を確認します。不正 JSON の場合は app 全体を壊さず、`modelScanJsonImportStatus` / `modelScanJsonImportError` と log に error を出します。
+
+この機能は Lab 検証効率化のためであり、production runtime library、compression、IndexedDB / localStorage 保存、validator package 化、Engine Runtime 統合ではありません。
+
 ## Triangle Indices Prototype
 
 Ideal Reference Mesh Warp Lab は dynamic grid prototype の次に、vertices から triangle indices を作る prototype に進みました。
@@ -187,7 +201,9 @@ PR5 以降で試した以下は本線から外しています。
 - topK weighted blend
 - temporal smoothing
 - IndexedDB / localStorage 保存
-- JSON export / import
+- production runtime library 化
+- compression
+- validator package 化
 - Runtime / Engine 変更
 - Beauty Studio 変更
 - IdealFace Authoring Tool 変更
@@ -324,4 +340,4 @@ Summary / Warp Mesh / Raw debug には `webglPreviewEnabled`、`webglPreviewStat
 
 この実装は Lab 内の検証用 preview であり、Engine Runtime、Beauty Studio、production renderer には統合しない。texture flip 実験 UI、raw displacement mesh warp、`showRawWarp`、`rawWarpOnly`、`sideBySide`、raw warp coordinate debug は復活させない。`textureVMode` は `imageNormalizedNoFlip` として debug に残すが、この PR では切り替え UI を持たない。
 
-この段階では temporal smoothing、topK reference blend、visibilityWeight / warpSafetyWeight の本格化、production renderer lifecycle、performance hardening、IndexedDB / localStorage 保存、JSON export / import、IdealFace Authoring Tool 変更、nearFaceGrid 生成方針の大幅変更、visible / safe current landmarks 選択ロジックの大幅変更はまだ行わない。
+この段階では temporal smoothing、topK reference blend、visibilityWeight / warpSafetyWeight の本格化、production renderer lifecycle、performance hardening、IndexedDB / localStorage 保存、production runtime library 化、compression、validator package 化、IdealFace Authoring Tool 変更、nearFaceGrid 生成方針の大幅変更、visible / safe current landmarks 選択ロジックの大幅変更はまだ行わない。

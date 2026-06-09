@@ -91,6 +91,13 @@ h3 {
   gap: 10px;
 }
 
+.json-action-row {
+  align-items: start;
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+}
+
 .primary-button,
 .secondary-button,
 .small-button,

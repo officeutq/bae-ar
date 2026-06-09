@@ -9,7 +9,7 @@
 - `tools/mediapipe-canonical-lab` の MediaPipe 座標系調査とも目的を分けます。
 - 次段の `tools/mediapipe-render-consistency-lab` は、mesh（メッシュ化） / render（レンダリング） / MediaPipe re-detection（MediaPipe 再検出）前提で `projectionFitZ` と `meshReadyZ` の違いを検証する debug lab（検証用ラボ）として扱います。production 用 IdealFace asset を作る正式 authoring tool（作成ツール）ではありません。詳細は [MediaPipe Render Consistency Lab](docs/mediapipe-render-consistency-lab.md) を参照してください。
 - `tools/mediapipe-render-consistency-lab` は、MP4 import、auto scan（自動スキャン）、`acceptedFrames`、`thumbnailDataUrl`、MediaPipe metadata summary（MediaPipe メタデータ要約）、`acceptedFrames[].observed12pt`、pose（姿勢） / `expressionSummary`、`manualAdjustmentsByFrame`、`currentReviewIndex`、Debug Console（デバッグコンソール）、Current Frame（現在フレーム）タブ、`poseBucket125`、`frontCandidate` / `expressionTooStrong` badge（補助ラベル）まで実装済みです。MediaPipe face mesh topology（顔メッシュ接続情報）での478点 mesh 化、yaw / pitch / roll 指定 render、rendered image（レンダリング画像）の MediaPipe Face Landmarker 再入力、returned landmarks（返却ランドマーク）と geometric projected landmarks（幾何投影ランドマーク）の比較、alignment / residual evaluation（位置合わせ・残差評価）は未実装です。
-- `tools/ideal-reference-mesh-warp-lab` は、理想モデル動画から作る実測 MediaPipe 478 reference library と、ライブ動画を current face 代わりにした matching 検証のための debug lab です。現在は、モデル動画の MediaPipe 解析、raw ideal reference frames 作成、accepted / excluded frame 管理、ライブ動画 current frame の MediaPipe 解析、current478 overlay、raw ideal reference frames からの top1 reference matching までを本線として残します。PR5以降で試した alignedIdeal 478点全体 displacement / raw displacement mesh warp / rawWarpOnly / sideBySide / texture flip 実験は本線から外しました。次の本線は、alignedIdeal478 を最終 target とせず、visibilityWeight / warpSafetyWeight / face boundary anchors / near-face grid / background grid / screen edge anchors を使って finalSourceVertices / finalTargetVertices を作る prototype です。
+- `tools/ideal-reference-mesh-warp-lab` は、理想モデル動画から作る実測 MediaPipe 478 reference library と、ライブ動画を current face 代わりにした matching 検証のための debug lab です。現在は、モデル動画の MediaPipe 解析、raw ideal reference frames 作成、accepted / excluded frame 管理、model scan JSON export / import、ライブ動画 current frame の MediaPipe 解析、current478 overlay、raw ideal reference frames からの top1 reference matching までを本線として残します。model scan JSON は `rawIdealReferenceFrames` と accepted / excluded frame 管理を再利用するためのもので、model video 本体、live video 本体、current mesh、triangle indices、WebGL runtime state は含めません。PR5以降で試した alignedIdeal 478点全体 displacement / raw displacement mesh warp / rawWarpOnly / sideBySide / texture flip 実験は本線から外しました。次の本線は、alignedIdeal478 を最終 target とせず、visibilityWeight / warpSafetyWeight / face boundary anchors / near-face grid / background grid / screen edge anchors を使って finalSourceVertices / finalTargetVertices を作る prototype です。
 - Ideal Reference Mesh Warp Lab では、モデル動画解析用 MediaPipe とライブ動画 current 解析用 MediaPipe を分離します。モデル動画解析用は raw ideal reference frames 作成後に破棄し、ライブ動画解析用は Runtime 相当の current face 解析に使います。MediaPipe に渡す timestamp は `video.currentTime` ではなく、各解析 stream ごとの単調増加 timestamp を使います。
 - captured JSON を import し、`8pt_basic` / `12pt_rotation_center` / `24pt_structure` を比較します。現時点の 478点奥行き生成 prototype（試作）の推奨は `12pt_rotation_center` です。
 - 478点 z 生成は `canonical-face-depth-template-v1.json`（標準顔奥行きテンプレート）を基準に、`canonicalDepthBased` で仮 z を作り、`perLandmarkZSearch` で各 landmark（ランドマーク）を1次元探索として微調整します。
@@ -116,7 +116,7 @@ Engine Runtime に Studio / Authoring 用 UI や生成・編集処理は入れ�
 - `colorLayers` v1
 - Production Shape Warp
 - Ideal Reference Mesh Warp Lab topK / visibilityWeight / warpSafetyWeight / hybrid mesh / production mesh warp 実装
-- ideal reference library JSON export / validator / IndexedDB / compression
+- ideal reference library validator / IndexedDB / compression
 - Runtime renderer integration
 - Production WebGL mesh warp / renderer lifecycle / disposal / fallback
 - Color Processing
@@ -361,14 +361,14 @@ npm run start:ideal-reference-mesh-warp-lab
 - Engine 実装
 - Studio 実装
 - Authoring Tool UI 実装
-- JSON export 変更
+- Runtime / production 向け JSON export 変更
 - validator 変更
 - `expressionFollow v1` 実装
 - MP4 expression 3D analysis 実装
 - `landmarkFollowStrengths` 自動生成
 - Production Shape Warp
 - Ideal Reference Mesh Warp Lab topK / visibilityWeight / warpSafetyWeight / hybrid mesh / production mesh warp 実装
-- ideal reference library JSON export / validator / IndexedDB / compression
+- ideal reference library validator / IndexedDB / compression
 - Runtime renderer integration
 - Color Processing
 - Layer System

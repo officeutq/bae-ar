@@ -19,12 +19,15 @@ type MediaPipeStatus =
   | "initializing"
   | "ready"
   | "scanning"
+  | "notRequired"
   | "disposed"
   | "error"
 type ScanStatus = "idle" | "initializing" | "running" | "done" | "error"
 type PlaybackStatus = "stopped" | "playing" | "paused"
 type WebglPreviewStatus = "disabled" | "ready" | "drawing" | "fallback" | "error"
 type TextureVMode = "imageNormalizedNoFlip"
+type ModelScanSource = "none" | "videoScan" | "jsonImport"
+type ModelScanJsonImportStatus = "idle" | "loaded" | "error"
 type ExpressionGroup =
   | "neutral"
   | "mouthSmile"
@@ -74,6 +77,34 @@ type IdealReferenceFrame = {
   qualityScore: number
   excluded: boolean
   excludedReason: string | null
+}
+
+type IdealReferenceMeshWarpModelScanExportV1 = {
+  schemaVersion: typeof MODEL_SCAN_EXPORT_SCHEMA_VERSION
+  exportedAt: string
+  app?: {
+    tool: "ideal-reference-mesh-warp-lab"
+    version?: string
+  }
+  modelVideo: {
+    fileName?: string
+    durationSec?: number
+    width?: number
+    height?: number
+    scanFrameStepSec?: number
+    maxScanFrames?: number
+  }
+  scanSummary: {
+    totalScannedFrames: number
+    rawReferenceFrameCount: number
+    acceptedFrameCount: number
+    excludedFrameCount: number
+    excludedReasonCounts?: Record<string, number>
+  }
+  rawIdealReferenceFrames: IdealReferenceFrame[]
+  acceptedFrameIds: string[]
+  excludedFrameIds: string[]
+  currentReviewFrameId?: string | null
 }
 
 type CurrentLiveFrameAnalysis = {
@@ -507,6 +538,7 @@ type CurrentIdealMeshPrototypeState = {
 type ModelScanState = {
   mediaPipeStatus: MediaPipeStatus
   mediaPipeError: string | null
+  source: ModelScanSource
   modelTimestampMs: number
   scanStatus: ScanStatus
   scanProgress: number
@@ -518,6 +550,13 @@ type ModelScanState = {
   excludedFrames: number
   excludedReasonCounts: Record<string, number>
   lastError: string | null
+  jsonImportStatus: ModelScanJsonImportStatus
+  jsonImportError: string | null
+  loadedJsonSchemaVersion: string | null
+  loadedJsonExportedAt: string | null
+  loadedJsonRawReferenceFrameCount: number | null
+  loadedJsonAcceptedFrameCount: number | null
+  loadedJsonExcludedFrameCount: number | null
 }
 
 type LabState = {
@@ -564,6 +603,8 @@ const MAX_SCAN_FRAMES = 10000
 const SCAN_FRAME_STEP_SEC = 1 / 30
 const FRAME_STEP_SEC = 1 / 30
 const REQUIRED_LANDMARK_COUNT = 478
+const MODEL_SCAN_EXPORT_SCHEMA_VERSION = "ideal_reference_mesh_warp_model_scan_v1"
+const MODEL_SCAN_EXPORT_TOOL_VERSION = "0.1.0"
 const IRIS_LANDMARK_START_INDEX = 468
 const IRIS_LANDMARK_END_INDEX = 477
 const IRIS_EXCLUDED_INDEX_RANGE = `${IRIS_LANDMARK_START_INDEX}..${IRIS_LANDMARK_END_INDEX}`
@@ -710,6 +751,7 @@ const state: LabState = {
   modelScan: {
     mediaPipeStatus: "uninitialized",
     mediaPipeError: null,
+    source: "none",
     modelTimestampMs: 0,
     scanStatus: "idle",
     scanProgress: 0,
@@ -721,6 +763,13 @@ const state: LabState = {
     excludedFrames: 0,
     excludedReasonCounts: {},
     lastError: null,
+    jsonImportStatus: "idle",
+    jsonImportError: null,
+    loadedJsonSchemaVersion: null,
+    loadedJsonExportedAt: null,
+    loadedJsonRawReferenceFrameCount: null,
+    loadedJsonAcceptedFrameCount: null,
+    loadedJsonExcludedFrameCount: null,
   },
   rawIdealReferenceFrames: [],
   currentAcceptedReviewIndex: null,
@@ -760,10 +809,12 @@ app.innerHTML = `
       <div class="control-group">
         <button class="primary-button" type="button" data-action="load-model">モデル動画読込</button>
         <button class="primary-button" type="button" data-action="analyze">解析</button>
+        <button class="primary-button" type="button" data-action="load-model-scan-json">解析結果JSON読込</button>
         <button class="primary-button" type="button" data-action="load-live">ライブ動画読込</button>
         <button class="secondary-button" type="button" data-action="export-log">ログ出力</button>
       </div>
       <input class="visually-hidden" type="file" accept="video/*" data-input="model-video" />
+      <input class="visually-hidden" type="file" accept="application/json,.json" data-input="model-scan-json" />
       <input class="visually-hidden" type="file" accept="video/*" data-input="live-video" />
       <div class="status-note">
         モデル動画解析用 MediaPipe とライブ current 解析用 MediaPipe を分離し、各 stream の単調増加 timestamp で解析します。調整なしメッシュワープ試作は distortion 確認用です。topK、safety weight、hybrid mesh はまだ行いません。
@@ -833,6 +884,7 @@ const modelOverlayCanvas = getElement<HTMLCanvasElement>("[data-overlay='model']
 const liveOverlayCanvas = getElement<HTMLCanvasElement>("[data-overlay='live']")
 const liveWebglCanvas = getElement<HTMLCanvasElement>("[data-webgl-preview='live']")
 const modelFileInput = getElement<HTMLInputElement>("[data-input='model-video']")
+const modelScanJsonFileInput = getElement<HTMLInputElement>("[data-input='model-scan-json']")
 const liveFileInput = getElement<HTMLInputElement>("[data-input='live-video']")
 
 bindEvents()
@@ -887,6 +939,10 @@ function renderModelPreview() {
       </div>
       <div class="review-card" data-model-review>
         <p>解析後は accepted frame review に切り替わります。</p>
+      </div>
+      <div class="json-action-row">
+        <button class="secondary-button" type="button" data-action="download-model-scan-json">解析結果JSONをダウンロード</button>
+        <p class="control-help" data-model-scan-json-export-status>model scan 完了後に有効になります。</p>
       </div>
       <p class="control-help" data-model-control-help>戻る / 進むは PR2 の仮操作として 1/30 秒ずつ移動します。</p>
     </div>
@@ -945,6 +1001,16 @@ function bindEvents() {
       void scanModelVideo()
     },
   )
+  getElement<HTMLButtonElement>('[data-action="load-model-scan-json"]').addEventListener(
+    "click",
+    () => {
+      modelScanJsonFileInput.click()
+    },
+  )
+  getElement<HTMLButtonElement>('[data-action="download-model-scan-json"]').addEventListener(
+    "click",
+    handleDownloadModelScanJson,
+  )
   getElement<HTMLButtonElement>('[data-action="export-log"]').addEventListener(
     "click",
     handleExportLog,
@@ -963,6 +1029,9 @@ function bindEvents() {
   bindOverlayToggle("toggle-triangle-mesh", "showTriangleMesh")
   modelFileInput.addEventListener("change", () => {
     handleVideoFileSelection("model", modelFileInput.files?.[0] ?? null)
+  })
+  modelScanJsonFileInput.addEventListener("change", () => {
+    void handleModelScanJsonFileSelection(modelScanJsonFileInput.files?.[0] ?? null)
   })
   liveFileInput.addEventListener("change", () => {
     handleVideoFileSelection("live", liveFileInput.files?.[0] ?? null)
@@ -1145,7 +1214,9 @@ async function scanModelVideo() {
   state.activePreviewTab = "model"
   state.modelVideo.scanStatus = "initializing"
   state.modelScan.scanStatus = "initializing"
+  state.modelScan.source = "videoScan"
   state.modelScan.lastError = null
+  resetModelScanJsonImportDebug()
   state.rawIdealReferenceFrames = []
   state.currentAcceptedReviewIndex = null
   disposeModelFaceLandmarker("uninitialized")
@@ -3205,6 +3276,428 @@ function handleExportLog() {
   renderAll()
 }
 
+function handleDownloadModelScanJson() {
+  const readyReason = getModelScanJsonExportDisabledReason()
+  if (readyReason) {
+    addLog(`解析結果JSONをダウンロードできません: ${readyReason}`)
+    renderAll()
+    return
+  }
+
+  const payload = createModelScanExportPayload()
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {
+    type: "application/json",
+  })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement("a")
+  link.href = url
+  link.download = createModelScanExportFileName(payload.exportedAt)
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 0)
+  addLog(`解析結果JSONをダウンロードしました: ${link.download}`)
+  renderAll()
+}
+
+async function handleModelScanJsonFileSelection(file: File | null) {
+  if (!file) {
+    return
+  }
+
+  try {
+    const text = await file.text()
+    const parsed = JSON.parse(text) as unknown
+    const payload = validateModelScanJsonExport(parsed)
+    applyImportedModelScanJson(payload)
+    addLog(
+      `解析結果JSONを読み込みました: ${file.name} / raw ${payload.rawIdealReferenceFrames.length} / accepted ${payload.acceptedFrameIds.length} / excluded ${payload.excludedFrameIds.length}`,
+    )
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    state.modelScan.jsonImportStatus = "error"
+    state.modelScan.jsonImportError = message
+    state.modelScan.lastError = message
+    addLog(`解析結果JSON読込でエラーが発生しました: ${message}`)
+  } finally {
+    modelScanJsonFileInput.value = ""
+    renderAll()
+  }
+}
+
+function createModelScanExportPayload(): IdealReferenceMeshWarpModelScanExportV1 {
+  const acceptedFrameIds = getAcceptedFrames().map((frame) => frame.frameId)
+  const excludedFrameIds = state.rawIdealReferenceFrames
+    .filter((frame) => frame.excluded)
+    .map((frame) => frame.frameId)
+
+  return {
+    schemaVersion: MODEL_SCAN_EXPORT_SCHEMA_VERSION,
+    exportedAt: new Date().toISOString(),
+    app: {
+      tool: "ideal-reference-mesh-warp-lab",
+      version: MODEL_SCAN_EXPORT_TOOL_VERSION,
+    },
+    modelVideo: {
+      fileName: state.modelVideo.fileName ?? undefined,
+      durationSec: state.modelVideo.durationSec ?? undefined,
+      width: state.modelVideo.width ?? undefined,
+      height: state.modelVideo.height ?? undefined,
+      scanFrameStepSec: state.modelScan.scanFrameStepSec,
+      maxScanFrames: state.modelScan.maxScanFrames,
+    },
+    scanSummary: {
+      totalScannedFrames: state.modelScan.totalScannedFrames,
+      rawReferenceFrameCount: state.rawIdealReferenceFrames.length,
+      acceptedFrameCount: acceptedFrameIds.length,
+      excludedFrameCount: excludedFrameIds.length,
+      excludedReasonCounts: state.modelScan.excludedReasonCounts,
+    },
+    rawIdealReferenceFrames: state.rawIdealReferenceFrames,
+    acceptedFrameIds,
+    excludedFrameIds,
+    currentReviewFrameId: getCurrentAcceptedFrame()?.frameId ?? null,
+  }
+}
+
+function validateModelScanJsonExport(
+  input: unknown,
+): IdealReferenceMeshWarpModelScanExportV1 {
+  const object = requireRecord(input, "top-level JSON")
+  const schemaVersion = object.schemaVersion
+  if (schemaVersion !== MODEL_SCAN_EXPORT_SCHEMA_VERSION) {
+    throw new Error(
+      `schemaVersion が不正です: ${String(schemaVersion)} / expected ${MODEL_SCAN_EXPORT_SCHEMA_VERSION}`,
+    )
+  }
+
+  const rawFramesInput = object.rawIdealReferenceFrames
+  if (!Array.isArray(rawFramesInput)) {
+    throw new Error("rawIdealReferenceFrames が配列ではありません。")
+  }
+  if (rawFramesInput.length === 0) {
+    throw new Error("rawIdealReferenceFrames が空です。")
+  }
+
+  const acceptedFrameIds = readStringArray(object.acceptedFrameIds, "acceptedFrameIds")
+  const excludedFrameIds = readStringArray(object.excludedFrameIds, "excludedFrameIds")
+  const duplicateStateIds = acceptedFrameIds.filter((id) => excludedFrameIds.includes(id))
+  if (duplicateStateIds.length > 0) {
+    throw new Error(`accepted / excluded の両方に含まれる frameId があります: ${duplicateStateIds[0]}`)
+  }
+
+  const frameIds = new Set<string>()
+  const excludedFrameIdSet = new Set(excludedFrameIds)
+  const acceptedFrameIdSet = new Set(acceptedFrameIds)
+  const rawIdealReferenceFrames = rawFramesInput.map((frameInput, index) => {
+    const frame = normalizeImportedReferenceFrame(frameInput, index)
+    if (frameIds.has(frame.frameId)) {
+      throw new Error(`frameId が重複しています: ${frame.frameId}`)
+    }
+    frameIds.add(frame.frameId)
+
+    const listedAsAccepted = acceptedFrameIdSet.has(frame.frameId)
+    const listedAsExcluded = excludedFrameIdSet.has(frame.frameId)
+    return {
+      ...frame,
+      excluded: listedAsExcluded ? true : listedAsAccepted ? false : frame.excluded,
+      excludedReason: listedAsExcluded
+        ? frame.excludedReason ?? "jsonImportedExcludedFrame"
+        : listedAsAccepted
+          ? null
+          : frame.excludedReason,
+    }
+  })
+
+  const missingAcceptedFrameId = acceptedFrameIds.find((id) => !frameIds.has(id))
+  if (missingAcceptedFrameId) {
+    throw new Error(`acceptedFrameIds に rawIdealReferenceFrames に存在しない id があります: ${missingAcceptedFrameId}`)
+  }
+
+  const missingExcludedFrameId = excludedFrameIds.find((id) => !frameIds.has(id))
+  if (missingExcludedFrameId) {
+    throw new Error(`excludedFrameIds に rawIdealReferenceFrames に存在しない id があります: ${missingExcludedFrameId}`)
+  }
+
+  const modelVideo = requireRecord(object.modelVideo ?? {}, "modelVideo")
+  const scanSummary = requireRecord(object.scanSummary ?? {}, "scanSummary")
+  const appInfo = object.app === undefined ? undefined : requireRecord(object.app, "app")
+
+  return {
+    schemaVersion: MODEL_SCAN_EXPORT_SCHEMA_VERSION,
+    exportedAt: typeof object.exportedAt === "string" ? object.exportedAt : "",
+    app: appInfo
+      ? {
+          tool: "ideal-reference-mesh-warp-lab",
+          version: typeof appInfo.version === "string" ? appInfo.version : undefined,
+        }
+      : undefined,
+    modelVideo: {
+      fileName: typeof modelVideo.fileName === "string" ? modelVideo.fileName : undefined,
+      durationSec: readOptionalFiniteNumber(modelVideo.durationSec),
+      width: readOptionalFiniteNumber(modelVideo.width),
+      height: readOptionalFiniteNumber(modelVideo.height),
+      scanFrameStepSec: readOptionalFiniteNumber(modelVideo.scanFrameStepSec),
+      maxScanFrames: readOptionalFiniteNumber(modelVideo.maxScanFrames),
+    },
+    scanSummary: {
+      totalScannedFrames:
+        readOptionalFiniteNumber(scanSummary.totalScannedFrames) ?? rawIdealReferenceFrames.length,
+      rawReferenceFrameCount:
+        readOptionalFiniteNumber(scanSummary.rawReferenceFrameCount) ?? rawIdealReferenceFrames.length,
+      acceptedFrameCount:
+        readOptionalFiniteNumber(scanSummary.acceptedFrameCount) ?? acceptedFrameIds.length,
+      excludedFrameCount:
+        readOptionalFiniteNumber(scanSummary.excludedFrameCount) ?? excludedFrameIds.length,
+      excludedReasonCounts: readOptionalCounts(scanSummary.excludedReasonCounts),
+    },
+    rawIdealReferenceFrames,
+    acceptedFrameIds,
+    excludedFrameIds,
+    currentReviewFrameId:
+      typeof object.currentReviewFrameId === "string" || object.currentReviewFrameId === null
+        ? object.currentReviewFrameId
+        : null,
+  }
+}
+
+function normalizeImportedReferenceFrame(input: unknown, fallbackIndex: number): IdealReferenceFrame {
+  const object = requireRecord(input, `rawIdealReferenceFrames[${fallbackIndex}]`)
+  const frameId = readFrameId(object, fallbackIndex)
+  const landmarks478 = readLandmarks478(object.landmarks478, frameId)
+
+  return {
+    frameId,
+    frameIndex: readOptionalFiniteNumber(object.frameIndex) ?? fallbackIndex,
+    timeSec:
+      readOptionalFiniteNumber(object.timeSec) ??
+      readOptionalFiniteNumber(object.timestampSec) ??
+      0,
+    landmarks478,
+    pose: readPose(object.pose),
+    blendshapes: readBlendshapes(object.blendshapes),
+    expressionGroup: readExpressionGroup(object.expressionGroup),
+    qualityScore: readOptionalFiniteNumber(object.qualityScore) ?? 1,
+    excluded: Boolean(object.excluded),
+    excludedReason: typeof object.excludedReason === "string" ? object.excludedReason : null,
+  }
+}
+
+function applyImportedModelScanJson(payload: IdealReferenceMeshWarpModelScanExportV1) {
+  disposeModelFaceLandmarker("notRequired")
+  resetModelTimestamp()
+  state.rawIdealReferenceFrames = payload.rawIdealReferenceFrames
+  state.modelScan.source = "jsonImport"
+  state.modelScan.scanStatus = "done"
+  state.modelVideo.scanStatus = "done"
+  state.modelScan.scanProgress = payload.rawIdealReferenceFrames.length
+  state.modelScan.plannedScanFrames = payload.rawIdealReferenceFrames.length
+  state.modelScan.totalScannedFrames = payload.scanSummary.totalScannedFrames
+  state.modelScan.maxScanFrames =
+    payload.modelVideo.maxScanFrames ?? state.modelScan.maxScanFrames
+  state.modelScan.scanFrameStepSec =
+    payload.modelVideo.scanFrameStepSec ?? state.modelScan.scanFrameStepSec
+  state.modelScan.lastError = null
+  state.modelScan.jsonImportStatus = "loaded"
+  state.modelScan.jsonImportError = null
+  state.modelScan.loadedJsonSchemaVersion = payload.schemaVersion
+  state.modelScan.loadedJsonExportedAt = payload.exportedAt
+  state.modelScan.loadedJsonRawReferenceFrameCount = payload.rawIdealReferenceFrames.length
+  state.modelScan.loadedJsonAcceptedFrameCount = payload.acceptedFrameIds.length
+  state.modelScan.loadedJsonExcludedFrameCount = payload.excludedFrameIds.length
+
+  state.modelVideo.fileName = payload.modelVideo.fileName ?? state.modelVideo.fileName
+  state.modelVideo.durationSec = payload.modelVideo.durationSec ?? state.modelVideo.durationSec
+  state.modelVideo.width = payload.modelVideo.width ?? state.modelVideo.width
+  state.modelVideo.height = payload.modelVideo.height ?? state.modelVideo.height
+
+  updateScanCounters()
+  const acceptedFrames = getAcceptedFrames()
+  const reviewFrameId = payload.currentReviewFrameId
+  const reviewIndex =
+    reviewFrameId === null || reviewFrameId === undefined
+      ? -1
+      : acceptedFrames.findIndex((frame) => frame.frameId === reviewFrameId)
+  state.currentAcceptedReviewIndex =
+    acceptedFrames.length === 0 ? null : reviewIndex >= 0 ? reviewIndex : 0
+  updateTop1Match()
+  state.activePreviewTab = "model"
+  clearModelOverlay()
+}
+
+function requireRecord(input: unknown, label: string): Record<string, unknown> {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error(`${label} が object ではありません。`)
+  }
+  return input as Record<string, unknown>
+}
+
+function readStringArray(input: unknown, label: string) {
+  if (!Array.isArray(input)) {
+    throw new Error(`${label} が配列ではありません。`)
+  }
+  const invalidIndex = input.findIndex((value) => typeof value !== "string")
+  if (invalidIndex >= 0) {
+    throw new Error(`${label}[${invalidIndex}] が string ではありません。`)
+  }
+  return input as string[]
+}
+
+function readFrameId(object: Record<string, unknown>, fallbackIndex: number) {
+  const frameId = object.frameId ?? object.id
+  if (typeof frameId !== "string" || frameId.length === 0) {
+    throw new Error(`rawIdealReferenceFrames[${fallbackIndex}] に frameId がありません。`)
+  }
+  return frameId
+}
+
+function readLandmarks478(input: unknown, frameId: string): ReferenceLandmark[] {
+  if (!Array.isArray(input)) {
+    throw new Error(`${frameId}.landmarks478 が配列ではありません。`)
+  }
+  if (input.length !== REQUIRED_LANDMARK_COUNT) {
+    throw new Error(`${frameId}.landmarks478 が ${REQUIRED_LANDMARK_COUNT} 点ではありません: ${input.length}`)
+  }
+  return input.map((landmarkInput, index) => {
+    const landmark = requireRecord(landmarkInput, `${frameId}.landmarks478[${index}]`)
+    const x = readFiniteNumber(landmark.x, `${frameId}.landmarks478[${index}].x`)
+    const y = readFiniteNumber(landmark.y, `${frameId}.landmarks478[${index}].y`)
+    const z = readFiniteNumber(landmark.z, `${frameId}.landmarks478[${index}].z`)
+    return {
+      index: readOptionalFiniteNumber(landmark.index) ?? index,
+      x,
+      y,
+      z,
+    }
+  })
+}
+
+function readPose(input: unknown): ReferencePose {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return { yaw: null, pitch: null, roll: null }
+  }
+  const pose = input as Record<string, unknown>
+  return {
+    yaw: readOptionalNullableFiniteNumber(pose.yaw),
+    pitch: readOptionalNullableFiniteNumber(pose.pitch),
+    roll: readOptionalNullableFiniteNumber(pose.roll),
+  }
+}
+
+function readBlendshapes(input: unknown): ReferenceBlendshape[] {
+  if (!Array.isArray(input)) {
+    return []
+  }
+  return input.flatMap((blendshapeInput) => {
+    if (!blendshapeInput || typeof blendshapeInput !== "object" || Array.isArray(blendshapeInput)) {
+      return []
+    }
+    const blendshape = blendshapeInput as Record<string, unknown>
+    const categoryName = blendshape.categoryName
+    const score = blendshape.score
+    if (typeof categoryName !== "string" || typeof score !== "number" || !Number.isFinite(score)) {
+      return []
+    }
+    return [{ categoryName, score }]
+  })
+}
+
+function readExpressionGroup(input: unknown): ExpressionGroup {
+  return isExpressionGroup(input) ? input : "unknown"
+}
+
+function readOptionalCounts(input: unknown): Record<string, number> | undefined {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return undefined
+  }
+  return Object.fromEntries(
+    Object.entries(input as Record<string, unknown>).flatMap(([key, value]) =>
+      typeof value === "number" && Number.isFinite(value) ? [[key, value]] : [],
+    ),
+  )
+}
+
+function readFiniteNumber(input: unknown, label: string) {
+  if (typeof input !== "number" || !Number.isFinite(input)) {
+    throw new Error(`${label} が finite number ではありません。`)
+  }
+  return input
+}
+
+function readOptionalFiniteNumber(input: unknown) {
+  return typeof input === "number" && Number.isFinite(input) ? input : undefined
+}
+
+function readOptionalNullableFiniteNumber(input: unknown) {
+  if (input === null || input === undefined) {
+    return null
+  }
+  return typeof input === "number" && Number.isFinite(input) ? input : null
+}
+
+function isExpressionGroup(input: unknown): input is ExpressionGroup {
+  return (
+    input === "neutral" ||
+    input === "mouthSmile" ||
+    input === "jawOpen" ||
+    input === "mouthPucker" ||
+    input === "eyeBlink" ||
+    input === "eyeSquint" ||
+    input === "mixedExpression" ||
+    input === "unknown"
+  )
+}
+
+function getModelScanJsonExportReady() {
+  return getModelScanJsonExportDisabledReason() === null
+}
+
+function getModelScanJsonExportDisabledReason() {
+  if (state.modelScan.scanStatus === "initializing" || state.modelScan.scanStatus === "running") {
+    return "model scan 実行中です。"
+  }
+  if (state.modelScan.scanStatus !== "done") {
+    return "model scan が完了していません。"
+  }
+  if (state.rawIdealReferenceFrames.length === 0) {
+    return "rawIdealReferenceFrames が空です。"
+  }
+  return null
+}
+
+function createModelScanExportFileName(exportedAt: string) {
+  const timestamp = formatFileTimestamp(exportedAt)
+  const modelFile = state.modelVideo.fileName
+    ? `${sanitizeFileNamePart(state.modelVideo.fileName)}-`
+    : ""
+  return `ideal-reference-model-scan-${modelFile}${timestamp}.json`
+}
+
+function formatFileTimestamp(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return "unknown-time"
+  }
+  const pad = (part: number) => String(part).padStart(2, "0")
+  return [
+    date.getFullYear(),
+    pad(date.getMonth() + 1),
+    pad(date.getDate()),
+    "-",
+    pad(date.getHours()),
+    pad(date.getMinutes()),
+    pad(date.getSeconds()),
+  ].join("")
+}
+
+function sanitizeFileNamePart(value: string) {
+  return value
+    .replace(/\.[^.]+$/, "")
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80)
+}
+
 async function analyzeCurrentLiveFrame(reason: "manual" | "timeupdate" | "seeked" | "pause" | "ended") {
   if (!state.liveVideo.loaded || liveAnalysisInProgress) {
     return
@@ -3355,6 +3848,10 @@ async function seekToCurrentAcceptedFrame() {
 
   state.modelVideo.currentTimeSec = frame.timeSec
   state.modelVideo.currentReviewFrameIndex = frame.frameIndex
+  if (!state.modelVideo.loaded) {
+    clearModelOverlay()
+    return
+  }
   await seekVideoElement(modelVideoElement, frame.timeSec)
   drawModelOverlay()
 }
@@ -3414,6 +3911,7 @@ function resetModelScanResults() {
   state.currentAcceptedReviewIndex = null
   state.top1Match = createEmptyTop1Match()
   state.currentIdealMeshPrototype = createEmptyCurrentIdealMeshPrototype()
+  state.modelScan.source = "none"
   state.modelScan.scanStatus = "idle"
   state.modelScan.scanProgress = 0
   state.modelScan.plannedScanFrames = 0
@@ -3422,7 +3920,18 @@ function resetModelScanResults() {
   state.modelScan.excludedFrames = 0
   state.modelScan.excludedReasonCounts = {}
   state.modelScan.lastError = null
+  resetModelScanJsonImportDebug()
   clearModelOverlay()
+}
+
+function resetModelScanJsonImportDebug() {
+  state.modelScan.jsonImportStatus = "idle"
+  state.modelScan.jsonImportError = null
+  state.modelScan.loadedJsonSchemaVersion = null
+  state.modelScan.loadedJsonExportedAt = null
+  state.modelScan.loadedJsonRawReferenceFrameCount = null
+  state.modelScan.loadedJsonAcceptedFrameCount = null
+  state.modelScan.loadedJsonExcludedFrameCount = null
 }
 
 function resetLiveAnalysisResults() {
@@ -3798,11 +4307,13 @@ function renderControls() {
   const liveLoaded = state.liveVideo.loaded
   const scanBusy =
     state.modelScan.scanStatus === "initializing" || state.modelScan.scanStatus === "running"
+  const exportDisabledReason = getModelScanJsonExportDisabledReason()
 
   setDisabled('[data-action="analyze"]', !modelLoaded || scanBusy)
-  setDisabled('[data-action="model-prev"]', !modelLoaded || scanBusy || !canMoveModel(-1))
-  setDisabled('[data-action="model-next"]', !modelLoaded || scanBusy || !canMoveModel(1))
+  setDisabled('[data-action="model-prev"]', (!modelLoaded && !hasAcceptedFrames()) || scanBusy || !canMoveModel(-1))
+  setDisabled('[data-action="model-next"]', (!modelLoaded && !hasAcceptedFrames()) || scanBusy || !canMoveModel(1))
   setDisabled('[data-range="model"]', !modelLoaded || scanBusy)
+  setDisabled('[data-action="download-model-scan-json"]', exportDisabledReason !== null)
   setDisabled('[data-action="live-play"]', !liveLoaded || state.liveVideo.playbackStatus === "playing")
   setDisabled('[data-action="live-pause"]', !liveLoaded || state.liveVideo.playbackStatus !== "playing")
   setDisabled('[data-action="live-analyze-current"]', !liveLoaded || liveAnalysisInProgress)
@@ -3813,6 +4324,14 @@ function renderControls() {
   updateRange("live")
   setText("[data-status='model-time']", formatModelTimeStatus())
   setText("[data-status='live-time']", formatTimeStatus(state.liveVideo))
+  setText(
+    "[data-model-scan-json-export-status]",
+    exportDisabledReason
+      ? `無効: ${exportDisabledReason}`
+      : `export ready: raw ${state.rawIdealReferenceFrames.length} / accepted ${state.modelScan.acceptedFrames} / excluded ${state.modelScan.excludedFrames}`,
+  )
+  getElement<HTMLButtonElement>('[data-action="download-model-scan-json"]').title =
+    exportDisabledReason ?? "解析結果JSONをダウンロードできます。"
   setText("[data-model-range-label]", hasAcceptedFrames() ? "accepted frame" : "シーク")
   setText(
     "[data-model-control-help]",
@@ -4364,6 +4883,24 @@ function createSummaryContent() {
 
   const items: Array<[string, string]> = [
     ["Model MediaPipe", state.modelScan.mediaPipeStatus],
+    ["modelScanSource", state.modelScan.source],
+    ["modelScanJsonExportReady", getModelScanJsonExportReady() ? "true" : "false"],
+    ["modelScanJsonImportStatus", state.modelScan.jsonImportStatus],
+    ["modelScanJsonImportError", state.modelScan.jsonImportError ?? "null"],
+    ["loadedJsonSchemaVersion", state.modelScan.loadedJsonSchemaVersion ?? "-"],
+    ["loadedJsonExportedAt", state.modelScan.loadedJsonExportedAt ?? "-"],
+    [
+      "loadedJsonRawReferenceFrameCount",
+      formatNullableCount(state.modelScan.loadedJsonRawReferenceFrameCount),
+    ],
+    [
+      "loadedJsonAcceptedFrameCount",
+      formatNullableCount(state.modelScan.loadedJsonAcceptedFrameCount),
+    ],
+    [
+      "loadedJsonExcludedFrameCount",
+      formatNullableCount(state.modelScan.loadedJsonExcludedFrameCount),
+    ],
     ["Live MediaPipe", state.liveMediaPipe.status],
     ["modelTimestampMs", formatSeconds(state.modelScan.modelTimestampMs)],
     ["liveTimestampMs", formatSeconds(state.liveMediaPipe.liveTimestampMs)],
@@ -4537,8 +5074,26 @@ function createModelScanContent() {
   list.className = "summary-list"
   appendDefinitionItems(list, [
     ["scanStatus", state.modelScan.scanStatus],
+    ["modelScanSource", state.modelScan.source],
     ["mediaPipeStatus", state.modelScan.mediaPipeStatus],
     ["mediaPipeError", state.modelScan.mediaPipeError ?? "-"],
+    ["modelScanJsonExportReady", getModelScanJsonExportReady() ? "true" : "false"],
+    ["modelScanJsonImportStatus", state.modelScan.jsonImportStatus],
+    ["modelScanJsonImportError", state.modelScan.jsonImportError ?? "null"],
+    ["loadedJsonSchemaVersion", state.modelScan.loadedJsonSchemaVersion ?? "-"],
+    ["loadedJsonExportedAt", state.modelScan.loadedJsonExportedAt ?? "-"],
+    [
+      "loadedJsonRawReferenceFrameCount",
+      formatNullableCount(state.modelScan.loadedJsonRawReferenceFrameCount),
+    ],
+    [
+      "loadedJsonAcceptedFrameCount",
+      formatNullableCount(state.modelScan.loadedJsonAcceptedFrameCount),
+    ],
+    [
+      "loadedJsonExcludedFrameCount",
+      formatNullableCount(state.modelScan.loadedJsonExcludedFrameCount),
+    ],
     ["modelTimestampMs", formatSeconds(state.modelScan.modelTimestampMs)],
     ["scanProgress", `${state.modelScan.scanProgress} / ${state.modelScan.plannedScanFrames}`],
     ["maxScanFrames", String(state.modelScan.maxScanFrames)],
@@ -4558,6 +5113,9 @@ function createReferenceLibraryContent() {
   const list = document.createElement("dl")
   list.className = "summary-list"
   appendDefinitionItems(list, [
+    ["modelScanSource", state.modelScan.source],
+    ["modelScanJsonImportStatus", state.modelScan.jsonImportStatus],
+    ["loadedJsonExportedAt", state.modelScan.loadedJsonExportedAt ?? "-"],
     ["rawIdealReferenceFrames count", String(state.rawIdealReferenceFrames.length)],
     ["accepted count", String(state.modelScan.acceptedFrames)],
     ["excluded count", String(state.modelScan.excludedFrames)],
@@ -5080,6 +5638,15 @@ function getRawState() {
     modelScan: {
       mediaPipeStatus: state.modelScan.mediaPipeStatus,
       mediaPipeError: state.modelScan.mediaPipeError,
+      modelScanSource: state.modelScan.source,
+      modelScanJsonExportReady: getModelScanJsonExportReady(),
+      modelScanJsonImportStatus: state.modelScan.jsonImportStatus,
+      modelScanJsonImportError: state.modelScan.jsonImportError,
+      loadedJsonSchemaVersion: state.modelScan.loadedJsonSchemaVersion,
+      loadedJsonExportedAt: state.modelScan.loadedJsonExportedAt,
+      loadedJsonRawReferenceFrameCount: state.modelScan.loadedJsonRawReferenceFrameCount,
+      loadedJsonAcceptedFrameCount: state.modelScan.loadedJsonAcceptedFrameCount,
+      loadedJsonExcludedFrameCount: state.modelScan.loadedJsonExcludedFrameCount,
       modelTimestampMs: roundForState(state.modelScan.modelTimestampMs),
       maxScanFrames: state.modelScan.maxScanFrames,
       scanFrameStepSec: state.modelScan.scanFrameStepSec,
@@ -5642,15 +6209,15 @@ function normalizedLandmarkToPreviewPixel(
 }
 
 function formatModelTimeStatus() {
-  if (!state.modelVideo.loaded) {
-    return "current time: - / -"
-  }
-
   if (hasAcceptedFrames()) {
     const frame = getCurrentAcceptedFrame()
     return frame
       ? `accepted frame: ${formatAcceptedReviewPosition()} / ${formatSeconds(frame.timeSec)} sec`
       : "accepted frame: -"
+  }
+
+  if (!state.modelVideo.loaded) {
+    return "current time: - / -"
   }
 
   return formatTimeStatus(state.modelVideo)
@@ -5674,6 +6241,10 @@ function formatSeconds(value: number | null) {
   }
 
   return value.toFixed(2)
+}
+
+function formatNullableCount(value: number | null) {
+  return value === null ? "-" : String(value)
 }
 
 function formatMetric(value: number | null) {
@@ -6164,7 +6735,7 @@ function getMatchedIdealFrame() {
 }
 
 function canMoveModel(delta: number) {
-  if (!state.modelVideo.loaded) {
+  if (!state.modelVideo.loaded && !hasAcceptedFrames()) {
     return false
   }
 
