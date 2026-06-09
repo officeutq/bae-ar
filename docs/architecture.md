@@ -25,6 +25,9 @@ BAE AR
 ├─ tools/ideal-reference-mesh-warp-lab
 │  └─ 将来候補。理想モデル動画の実測 MediaPipe 478 reference library と hybrid mesh warp を検証する debug / research lab
 │
+├─ tools/ideal-obj-render-warp-lab
+│  └─ 将来候補。OBJ render から MediaPipe returned 478 を取得し mesh warp target 候補を検証する debug / research lab
+│
 └─ tools/layer-mask-authoring
    └─ 将来予定。LayerMaskSpec を作成する authoring tool
 ```
@@ -32,6 +35,8 @@ BAE AR
 現在 `tools/ideal-face-authoring` は Step 2-I-A/B/C と Step 2-H まで実装済みです。`tools/layer-mask-authoring` は将来予定です。
 
 `tools/ideal-reference-mesh-warp-lab` は未実装の検証ラボ候補です。production 用 authoring tool ではなく、理想モデル動画から姿勢非依存 `idealLandmarks3D` 478点を作る難しさを受けて、各フレームで MediaPipe が実測した 478 landmarks / pose / blendshapes を reference library として使う方式を検証します。詳細は [Ideal Reference Mesh Warp Lab](ideal-reference-mesh-warp-lab.md) に整理します。
+
+`tools/ideal-obj-render-warp-lab` は未実装の検証ラボ候補です。FaceBuilder + Blender sculpt で作成した neutral OBJ を current yaw / pitch / roll で render し、rendered ideal image を MediaPipe に再入力して `renderedIdeal478` を取得できるかを検証します。`ideal-reference-mesh-warp-lab` の座標系・dynamic grid・anchors・triangle indices・WebGL mesh warp preview を踏襲し、理想側供給元だけを OBJ render -> MediaPipe returned 478 に差し替えます。詳細は [Ideal OBJ Render Warp Lab](ideal-obj-render-warp-lab.md) に整理します。
 
 ## Engine Runtime の責務
 
@@ -70,6 +75,7 @@ Engine Runtime は UI を持たない中核 SDK です。
 - beauty_filter_asset_v1 foundation / validator / parser / converter
 - Production Shape Warp
 - Ideal Reference Mesh Warp Lab docs 方針検証
+- Ideal OBJ Render Warp Lab docs 方針検証
 - Production WebGL mesh warp / Runtime renderer integration
 - Color Processing
 - Layer System
@@ -80,6 +86,8 @@ Engine Runtime は UI を持たない中核 SDK です。
 Engine Runtime は定義済みの IdealFace / LayerMaskSpec を読み込んで使います。IdealFace の作成、2D 動画からの 3D 顔生成、LayerMaskSpec の作成、mask の手作業編集、Studio / Authoring 用 UI は Runtime に含めません。
 
 `Ideal Reference Mesh Warp Lab` の raw / runtime reference library 作成、保存、圧縮、検索 debug も Runtime 本体には混ぜません。将来 Runtime に接続する場合も、ライブ中はメモリ上の `runtimeIdealReferenceLibrary` だけを参照し、毎フレーム IndexedDB / localStorage を読む設計にはしません。
+
+`Ideal OBJ Render Warp Lab` の OBJ render、render image の MediaPipe re-detection、OBJ input、debug alignment、expression-sensitive current 固定 rule も Runtime 本体には混ぜません。OBJ vertex coordinate と MediaPipe image-normalized coordinate を Runtime の shape processing で混在させず、render image pixel coordinate は Lab 内の MediaPipe 入力用途に閉じ込めます。
 
 ## Beauty Studio の責務
 
@@ -171,6 +179,24 @@ Authoring Tool は `idealLandmarks3D` を same-unit coordinate として生成�
 このラボでは、理想モデル動画から姿勢非依存の `IdealFace 3D478` を作りません。理想顔メッシュを Runtime で回転・render・MediaPipe 再検出する方針でもありません。理想モデル動画の各フレームで MediaPipe が実際に返した 478 landmarks を pose / expression 付き reference frame として扱い、ライブ current frame に近い reference を検索する方針です。
 
 `rawIdealReferenceFrames` は最大10000フレーム程度の Authoring / debug / 再選抜用データとして大きく持てます。`runtimeIdealReferenceLibrary` は Runtime 実験で使う代表フレームだけを 100〜300 frames 程度へ圧縮する候補です。localStorage は UI 設定や選択中 filter id など小さい値だけに使い、library 保存は IndexedDB / file / Cache Storage を検討します。ライブ中の参照はメモリ上の TypedArray / JS object に限定します。
+
+### Ideal OBJ Render Warp Lab の位置づけ
+
+`Ideal OBJ Render Warp Lab` は、`Ideal Reference Mesh Warp Lab` の matching 中心の核を差し替える別の debug / research lab です。
+
+```text
+OBJ
+  -> current yaw / pitch / roll で render
+  -> rendered ideal image
+  -> MediaPipe re-detection
+  -> renderedIdeal478
+  -> current478 へ alignment
+  -> candidateAlignedIdealLandmarks
+```
+
+このラボでは、top1 reference matching を使いません。current pose で render した neutral OBJ を理想側の 1 フレームとして扱います。ただし、座標系は新設せず、MediaPipe returned landmarks は image-normalized coordinate として扱い、bounds / center / uniform scale / distance / large displacement は aspect-corrected image coordinate で計算します。
+
+mouth、lips、inner mouth、eyes、eyelids、iris 468..477、jawOpen で大きく動く下口周辺などの expression-sensitive landmarks は、初期 debug rule として current 固定から始めます。これは `expressionFollow v1` の正式実装ではなく、Engine schema / Runtime implementation / Authoring export には含めません。
 
 legacy / debug と分類した UI や helper には、今後の新機能を追加しません。confidence debug、手動微調整 UI、保存 / export は Step 2-I active workflow 側に追加します。
 
@@ -526,6 +552,8 @@ Shape Processing の入力は、カメラ映像から MediaPipe Face Landmarker 
 
 ただし、`Ideal Reference Mesh Warp Lab` では Projection 後の ideal 478 landmarks を作るのではなく、current pose / expression に近い ideal reference frame または topK reference blend を選び、`visibilityWeight` / `warpSafetyWeight` を通して source / target 対応を作る方式を検証します。478点すべてを同じ信頼度で使わず、危険な vertex / triangle は変形を弱めます。
 
+`Ideal OBJ Render Warp Lab` では、Projection 後の ideal 478 landmarks ではなく、current pose で render した OBJ を MediaPipe に再入力して得る `renderedIdeal478` を理想側 target 候補として検証します。これは production 方式確定ではなく、`ideal-reference-mesh-warp-lab` と同じ mesh / coordinate lifecycle に接続できるかを見る Lab 扱いです。
+
 現在の `natural_v1` の 6 点 controlPoints は、現段階の投影検証用データです。Projection の流れを検証するための暫定データであり、IdealFace 本体ではありません。
 
 ```text
@@ -580,3 +608,5 @@ same-unit coordinate は IdealFace Projection 内部の rotation / uniform align
 詳細は [Shape Warp production direction](shape-warp-production-direction.md) に整理します。Studio WebGL mesh warp v1 prototype は processed preview 限定で実装済みです。Runtime renderer integration、temporal smoothing、mask / boundary、glasses / hair、performance 対応は後段で扱います。
 
 hybrid mesh / adaptive grid、face boundary anchors、near-face grid、background grid、screen edge anchors を使って背景歪みを抑える検証は [Ideal Reference Mesh Warp Lab](ideal-reference-mesh-warp-lab.md) に分けます。
+
+OBJ render -> MediaPipe returned 478 を WebGL mesh warp の target 生成候補にする検証は [Ideal OBJ Render Warp Lab](ideal-obj-render-warp-lab.md) に分けます。Runtime には OBJ render / MediaPipe re-detection / authoring logic を混ぜません。

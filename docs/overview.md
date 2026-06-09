@@ -30,6 +30,8 @@ BAE AR
 
 `tools/ideal-reference-mesh-warp-lab` は、理想モデル動画から作る実測 MediaPipe 478 reference library と、ライブ動画を current face 代わりにした matching 検証のための debug lab です。現在は、モデル動画の MediaPipe 解析、raw ideal reference frames 作成、accepted / excluded frame 管理、ライブ動画 current frame の MediaPipe 解析、current478 overlay、raw ideal reference frames からの top1 reference matching までを本線として残します。PR5以降で試した alignedIdeal 478点全体 displacement / raw displacement mesh warp / rawWarpOnly / sideBySide / texture flip 実験は本線から外しました。次の本線は、alignedIdeal478 を最終 target とせず、visible / safe current landmarks と near-face grid / background grid / screen edge anchors で current mesh source を作り、対応する candidate aligned ideal landmarks と同じ grid / anchors で ideal mesh target を作る mesh pair prototype です。詳細は [Ideal Reference Mesh Warp Lab](ideal-reference-mesh-warp-lab.md) を参照してください。
 
+`tools/ideal-obj-render-warp-lab` は、FaceBuilder + Blender sculpt で作成した OBJ を current yaw / pitch / roll で render し、その rendered ideal image を MediaPipe に再入力して `renderedIdeal478` を取得する debug / research lab 候補です。`ideal-reference-mesh-warp-lab` とは異なり、理想モデル動画の top1 reference matching は使わず、OBJ render -> MediaPipe returned 478 を理想側 landmarks の供給元にします。座標系・dynamic grid・anchors・triangle indices・WebGL mesh warp preview は `ideal-reference-mesh-warp-lab` の coordinate lifecycle を踏襲し、OBJ vertex coordinate や render image pixel coordinate を alignment / mesh pair 処理へ混ぜません。詳細は [Ideal OBJ Render Warp Lab](ideal-obj-render-warp-lab.md) を参照してください。
+
 Ideal Reference Mesh Warp Lab の mesh prototype では、MediaPipe returned landmarks は
 image-normalized coordinate として保存します。ただし、bounds / center / uniform scale /
 distance / large displacement 判定では、Render Consistency Lab / Rotation Fit 系と同じ
@@ -67,6 +69,8 @@ Engine Runtime では、IdealFace の `idealLandmarks3D` 478点を現在顔の `
 2D 動画 / 複数画像から IdealFace を作る処理は、リアルタイム処理ではなく IdealFace Authoring Tool の責務です。IdealFace Authoring Tool は BAE AR 独自の IdealFace asset を作成・調整するツールであり、MediaPipe canonical face model そのものを作るツールではありません。`natural_v1` の controlPoints は現段階の投影検証用データであり、IdealFace 本体ではありません。
 
 ただし、理想モデル動画から MediaPipe に対応する姿勢非依存 `idealLandmarks3D` 478点を安定して作ることには難しさがあります。`Ideal Reference Mesh Warp Lab` では、`IdealFace 3D478` ではなく、理想モデル動画の実測 MediaPipe 478 landmarks を reference frame として保存し、pose / expression の近い reference を Runtime 実験で参照する別方針を検証します。
+
+別の debug line として、`Ideal OBJ Render Warp Lab` では neutral OBJ を current pose で render し、その render image を MediaPipe に通して得た `renderedIdeal478` を理想側 1 フレームとして扱う方針を検証します。これは production 方式確定ではなく、Runtime / Studio / Authoring Tool 本線にはまだ接続しません。
 
 ## correctionProfile v1 の位置づけ
 
