@@ -159,9 +159,17 @@ h3 {
   min-width: max-content;
 }
 
-.overlay-toggle span {
+.overlay-toggle span,
+.preview-toggle span {
   font-size: 13px;
   font-weight: 700;
+}
+
+.preview-toggle {
+  align-items: center;
+  display: inline-flex;
+  gap: 7px;
+  min-width: max-content;
 }
 
 .tab-list {
@@ -217,7 +225,22 @@ h3 {
   max-height: 62vh;
   min-height: 320px;
   object-fit: contain;
+  position: relative;
   width: 100%;
+  z-index: 0;
+}
+
+.webgl-warp-preview {
+  background: #111820;
+  display: none;
+  grid-area: 1 / 1;
+  height: 100%;
+  max-height: 62vh;
+  min-height: 320px;
+  pointer-events: none;
+  position: relative;
+  width: 100%;
+  z-index: 1;
 }
 
 .landmark-overlay {
@@ -236,6 +259,15 @@ h3 {
 }
 
 .preview-stage[data-loaded="true"] .video-preview {
+  display: block;
+}
+
+.preview-stage[data-loaded="true"][data-webgl-warp="true"] .video-preview {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.preview-stage[data-loaded="true"][data-webgl-warp="true"] .webgl-warp-preview {
   display: block;
 }
 
@@ -274,7 +306,7 @@ h3 {
 }
 
 .timeline-controls.live-controls {
-  grid-template-columns: auto auto auto minmax(180px, 1fr) auto;
+  grid-template-columns: auto auto auto auto minmax(180px, 1fr) auto;
 }
 
 .range-field {

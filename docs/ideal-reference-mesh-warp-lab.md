@@ -261,7 +261,7 @@ visible / safe current landmarks の選択方針は既存の本線を維持す�
 
 final triangle indices は、`faceLandmark` / `nearFaceGrid` / `backgroundGrid` / `screenEdgeAnchor` を含む source vertices から別途作る。source mesh と target mesh では、この final triangle indices を共通に使う。
 
-この段階では WebGL mesh warp、texture upload、shader、production mesh warp はまだ行わない。
+この段階の次として WebGL mesh warp input debug を追加し、さらに Lab 内限定の WebGL mesh warp preview prototype へ進める。ただし production mesh warp / Runtime renderer integration はまだ行わない。
 
 ## WebGL mesh warp input debug
 
@@ -290,4 +290,16 @@ triangle index [a, b, c]:
 
 Summary / Warp Mesh / Raw debug では、`webglInputReady`、`vertexCount`、`triangleCount`、`indexCount`、`sourceUvRange`、`targetClipRange`、`invalidIndexCount`、`outOfRangeUvCount`、`outOfRangeTargetCount`、`warnings` を確認する。Raw debug は巨大配列を出さず、`preview` と `indexPreview` の sample のみに留める。
 
-この段階では WebGL warp の実描画、WebGL context 初期化、texture upload、shader、`gl.drawElements`、production mesh warp はまだ行わない。texture V flip 実験 UI、`rawWarpOnly`、`sideBySide`、raw displacement mesh warp も復活させない。
+## WebGL mesh warp preview prototype
+
+Ideal Reference Mesh Warp Lab は、WebGL mesh warp input debug の次段として、Lab 内限定の WebGL mesh warp preview prototype を追加した。
+
+UI の `WebGL mesh warp を適用` checkbox が OFF の場合は従来の live video preview を表示し、overlay も従来どおり表示する。ON の場合は source UV / target clip position / triangle indices / live video texture を使って WebGL canvas に warped preview を描画する。同じ preview 領域で video preview と WebGL canvas を切り替え、overlay は image-normalized coordinate から displayedContentRect pixel へ変換する既存方針のまま、可能な範囲で WebGL canvas の上に重ねる。
+
+描画に使う値は WebGL mesh warp input debug と同じである。source vertices 由来の `u = source.x` / `v = source.y`、target vertices 由来の `clipX = target.x * 2 - 1` / `clipY = 1 - target.y * 2`、source vertices 基準の triangle indices を使う。`webglInputReady` が false の場合や WebGL context / shader / texture upload に失敗した場合は、app 全体を壊さず従来表示へ fallback する。
+
+Summary / Warp Mesh / Raw debug には `webglPreviewEnabled`、`webglPreviewStatus`、`webglPreviewError`、`webglCanvasSize`、`videoTextureReady`、`lastDrawTimestampMs`、`drawCallCount`、`lastDrawTriangleCount`、`lastDrawIndexCount`、`textureVMode`、`fallbackReason` を出す。Raw debug は巨大配列を増やさず、既存の summary と sample に留める。
+
+この実装は Lab 内の検証用 preview であり、Engine Runtime、Beauty Studio、production renderer には統合しない。texture flip 実験 UI、raw displacement mesh warp、`showRawWarp`、`rawWarpOnly`、`sideBySide`、raw warp coordinate debug は復活させない。`textureVMode` は `imageNormalizedNoFlip` として debug に残すが、この PR では切り替え UI を持たない。
+
+この段階では temporal smoothing、topK reference blend、visibilityWeight / warpSafetyWeight の本格化、production renderer lifecycle、performance hardening、IndexedDB / localStorage 保存、JSON export / import、IdealFace Authoring Tool 変更、nearFaceGrid 生成方針の大幅変更、visible / safe current landmarks 選択ロジックの大幅変更はまだ行わない。
