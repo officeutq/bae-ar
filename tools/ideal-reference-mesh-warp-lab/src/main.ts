@@ -23,6 +23,8 @@ type MediaPipeStatus =
   | "error"
 type ScanStatus = "idle" | "initializing" | "running" | "done" | "error"
 type PlaybackStatus = "stopped" | "playing" | "paused"
+type WebglPreviewStatus = "disabled" | "ready" | "drawing" | "fallback" | "error"
+type TextureVMode = "imageNormalizedNoFlip"
 type ExpressionGroup =
   | "neutral"
   | "mouthSmile"
@@ -383,6 +385,43 @@ type WebglMeshWarpInputDebug = {
   warningCount: number
 }
 
+type WebglPreviewRuntimeDebug = {
+  webglPreviewEnabled: boolean
+  webglPreviewStatus: WebglPreviewStatus
+  webglPreviewError: string | null
+  webglCanvasSize: {
+    width: number
+    height: number
+  }
+  videoTextureReady: boolean
+  lastDrawTimestampMs: number | null
+  drawCallCount: number
+  lastDrawTriangleCount: number
+  lastDrawIndexCount: number
+  textureVMode: TextureVMode
+  fallbackReason: string | null
+}
+
+type WebglMeshWarpPreviewDrawInput = {
+  videoElement: HTMLVideoElement
+  sourceVertices: MeshSourceVertex[]
+  targetVertices: MeshTargetVertex[]
+  triangles: TriangleMeshTriangle[]
+}
+
+type WebglMeshWarpPreviewDrawResult = {
+  canvasWidth: number
+  canvasHeight: number
+  videoTextureReady: boolean
+  triangleCount: number
+  indexCount: number
+}
+
+type WebglMeshWarpPreviewRenderer = {
+  draw: (input: WebglMeshWarpPreviewDrawInput) => WebglMeshWarpPreviewDrawResult
+  dispose: () => void
+}
+
 type MeshPrototypeSummary = {
   gridMode: "dynamic"
   nearFaceGridMode: NearFaceGridMode
@@ -470,6 +509,8 @@ type ModelScanState = {
 type LabState = {
   activePreviewTab: PreviewTab
   activeDebugTab: DebugTab
+  applyWebglMeshWarp: boolean
+  webglPreview: WebglPreviewRuntimeDebug
   overlay: {
     showLandmarks478: boolean
     showMeshSource: boolean
@@ -550,6 +591,7 @@ const GRID_SOURCE_COLOR = "rgba(20, 170, 130, 0.78)"
 const GRID_TARGET_COLOR = "rgba(244, 86, 120, 0.78)"
 const TRIANGLE_SOURCE_COLOR = "rgba(20, 170, 130, 0.34)"
 const TRIANGLE_TARGET_COLOR = "rgba(244, 86, 120, 0.34)"
+const WEBGL_PREVIEW_TEXTURE_V_MODE: TextureVMode = "imageNormalizedNoFlip"
 const TRIANGLE_KINDS: TriangleKind[] = [
   "faceOnly",
   "faceToNearGrid",
@@ -609,6 +651,8 @@ const debugTabs: TabOption<DebugTab>[] = [
 const state: LabState = {
   activePreviewTab: "model",
   activeDebugTab: "summary",
+  applyWebglMeshWarp: false,
+  webglPreview: createEmptyWebglPreviewRuntimeDebug(),
   overlay: {
     showLandmarks478: false,
     showMeshSource: false,
@@ -683,6 +727,9 @@ let liveFaceLandmarkerPromise: Promise<FaceLandmarker> | null = null
 let liveAnalysisInProgress = false
 let lastAutoLiveAnalysisAtSec = Number.NEGATIVE_INFINITY
 let liveAnalysisRequestId = 0
+let webglMeshWarpPreviewRenderer: WebglMeshWarpPreviewRenderer | null = null
+let webglPreviewAnimationFrameId: number | null = null
+let lastWebglDebugRenderAtMs = 0
 
 app.innerHTML = `
   <main class="lab-shell">
@@ -765,6 +812,7 @@ const modelVideoElement = getElement<HTMLVideoElement>("[data-video='model']")
 const liveVideoElement = getElement<HTMLVideoElement>("[data-video='live']")
 const modelOverlayCanvas = getElement<HTMLCanvasElement>("[data-overlay='model']")
 const liveOverlayCanvas = getElement<HTMLCanvasElement>("[data-overlay='live']")
+const liveWebglCanvas = getElement<HTMLCanvasElement>("[data-webgl-preview='live']")
 const modelFileInput = getElement<HTMLInputElement>("[data-input='model-video']")
 const liveFileInput = getElement<HTMLInputElement>("[data-input='live-video']")
 
@@ -831,6 +879,7 @@ function renderLivePreview() {
     <div class="preview-card" data-preview-panel="live">
       <div class="preview-stage" data-loaded="false">
         <video class="video-preview" data-video="live" preload="metadata" playsinline controls></video>
+        <canvas class="webgl-warp-preview" data-webgl-preview="live"></canvas>
         <canvas class="landmark-overlay" data-overlay="live"></canvas>
         <div class="preview-placeholder" data-placeholder="live">
           <h3>ライブ動画プレビュー</h3>
@@ -841,6 +890,10 @@ function renderLivePreview() {
         <button class="small-button" type="button" data-action="live-play">再生</button>
         <button class="small-button" type="button" data-action="live-pause">一時停止</button>
         <button class="small-button" type="button" data-action="live-analyze-current">現在フレーム解析</button>
+        <label class="preview-toggle">
+          <input type="checkbox" data-action="toggle-webgl-mesh-warp" />
+          <span>WebGL mesh warp を適用</span>
+        </label>
         <label class="range-field">
           <span>シーク</span>
           <input type="range" min="0" step="0.001" value="0" data-range="live" />
@@ -934,6 +987,12 @@ function bindEvents() {
     "click",
     () => {
       void analyzeCurrentLiveFrame("manual")
+    },
+  )
+  getElement<HTMLInputElement>('[data-action="toggle-webgl-mesh-warp"]').addEventListener(
+    "change",
+    (event) => {
+      handleToggleWebglMeshWarpPreview(event.currentTarget.checked)
     },
   )
   getElement<HTMLInputElement>('[data-range="live"]').addEventListener(
@@ -3116,6 +3175,29 @@ function handleToggleLandmarks478(checked: boolean) {
   renderAll()
 }
 
+function handleToggleWebglMeshWarpPreview(checked: boolean) {
+  state.applyWebglMeshWarp = checked
+  if (!checked) {
+    state.webglPreview = {
+      ...createEmptyWebglPreviewRuntimeDebug(),
+      webglPreviewStatus: "disabled",
+    }
+    stopWebglPreviewLoop()
+  } else {
+    state.webglPreview = {
+      ...state.webglPreview,
+      webglPreviewEnabled: true,
+      webglPreviewStatus: "ready",
+      webglPreviewError: null,
+      fallbackReason: null,
+    }
+    updateWebglMeshWarpPreview()
+    ensureWebglPreviewLoop()
+  }
+  addLog(`WebGL mesh warp preview を ${checked ? "ON" : "OFF"} にしました。`)
+  renderAll()
+}
+
 function bindOverlayToggle(
   action: string,
   key: Exclude<keyof LabState["overlay"], "showLandmarks478">,
@@ -3485,6 +3567,25 @@ function createEmptyWebglMeshWarpInputDebug(): WebglMeshWarpInputDebug {
   }
 }
 
+function createEmptyWebglPreviewRuntimeDebug(): WebglPreviewRuntimeDebug {
+  return {
+    webglPreviewEnabled: false,
+    webglPreviewStatus: "disabled",
+    webglPreviewError: null,
+    webglCanvasSize: {
+      width: 0,
+      height: 0,
+    },
+    videoTextureReady: false,
+    lastDrawTimestampMs: null,
+    drawCallCount: 0,
+    lastDrawTriangleCount: 0,
+    lastDrawIndexCount: 0,
+    textureVMode: WEBGL_PREVIEW_TEXTURE_V_MODE,
+    fallbackReason: null,
+  }
+}
+
 function createEmptyMeshAspectDebug(
   modelVideoAspectRatio = 1,
   liveVideoAspectRatio = 1,
@@ -3547,6 +3648,7 @@ function renderAll() {
   renderPreviewPanels()
   renderControls()
   renderDebugTabs()
+  updateWebglMeshWarpPreview()
   drawAllOverlays()
   renderDebugContent()
 }
@@ -3569,6 +3671,7 @@ function renderPreviewPanels() {
 
   modelStage.dataset.loaded = String(state.modelVideo.loaded)
   liveStage.dataset.loaded = String(state.liveVideo.loaded)
+  updateWebglPreviewStageVisibility()
 }
 
 function renderControls() {
@@ -3584,6 +3687,7 @@ function renderControls() {
   setDisabled('[data-action="live-play"]', !liveLoaded || state.liveVideo.playbackStatus === "playing")
   setDisabled('[data-action="live-pause"]', !liveLoaded || state.liveVideo.playbackStatus !== "playing")
   setDisabled('[data-action="live-analyze-current"]', !liveLoaded || liveAnalysisInProgress)
+  setDisabled('[data-action="toggle-webgl-mesh-warp"]', !liveLoaded)
   setDisabled('[data-range="live"]', !liveLoaded)
 
   updateModelRange()
@@ -3611,6 +3715,8 @@ function renderControls() {
     state.overlay.showGridAnchors
   getElement<HTMLInputElement>('[data-action="toggle-triangle-mesh"]').checked =
     state.overlay.showTriangleMesh
+  getElement<HTMLInputElement>('[data-action="toggle-webgl-mesh-warp"]').checked =
+    state.applyWebglMeshWarp
   renderModelReviewCard()
   renderLiveAnalysisCard()
 }
@@ -3666,6 +3772,402 @@ function renderLiveAnalysisCard() {
       <div><dt>matchScore</dt><dd>${formatSeconds(match.matchScore)}</dd></div>
     </dl>
   `
+}
+
+function updateWebglMeshWarpPreview() {
+  if (!state.applyWebglMeshWarp) {
+    state.webglPreview = {
+      ...state.webglPreview,
+      webglPreviewEnabled: false,
+      webglPreviewStatus: "disabled",
+      webglPreviewError: null,
+      videoTextureReady: false,
+      fallbackReason: null,
+      textureVMode: WEBGL_PREVIEW_TEXTURE_V_MODE,
+    }
+    updateWebglPreviewStageVisibility()
+    return
+  }
+
+  state.webglPreview.webglPreviewEnabled = true
+  state.webglPreview.textureVMode = WEBGL_PREVIEW_TEXTURE_V_MODE
+
+  const mesh = state.currentIdealMeshPrototype
+  const fallbackReason = getWebglMeshWarpPreviewFallbackReason(mesh)
+  if (fallbackReason) {
+    setWebglPreviewFallback(fallbackReason)
+    return
+  }
+
+  if (state.activePreviewTab !== "live") {
+    state.webglPreview = {
+      ...state.webglPreview,
+      webglPreviewStatus: "ready",
+      webglPreviewError: null,
+      fallbackReason: null,
+      videoTextureReady: liveVideoElement.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA,
+    }
+    updateWebglPreviewStageVisibility()
+    ensureWebglPreviewLoop()
+    return
+  }
+
+  try {
+    if (!webglMeshWarpPreviewRenderer) {
+      webglMeshWarpPreviewRenderer =
+        createWebglMeshWarpPreviewRenderer(liveWebglCanvas)
+    }
+
+    const result = webglMeshWarpPreviewRenderer.draw({
+      videoElement: liveVideoElement,
+      sourceVertices: mesh.currentMeshSourceVertices,
+      targetVertices: mesh.idealMeshTargetVertices,
+      triangles: mesh.triangleMesh.triangles,
+    })
+
+    state.webglPreview = {
+      ...state.webglPreview,
+      webglPreviewStatus: "drawing",
+      webglPreviewError: null,
+      webglCanvasSize: {
+        width: result.canvasWidth,
+        height: result.canvasHeight,
+      },
+      videoTextureReady: result.videoTextureReady,
+      lastDrawTimestampMs: performance.now(),
+      drawCallCount: state.webglPreview.drawCallCount + 1,
+      lastDrawTriangleCount: result.triangleCount,
+      lastDrawIndexCount: result.indexCount,
+      fallbackReason: null,
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    disposeWebglMeshWarpPreviewRenderer()
+    state.webglPreview = {
+      ...state.webglPreview,
+      webglPreviewStatus: "error",
+      webglPreviewError: message,
+      videoTextureReady: false,
+      fallbackReason: "webglPreviewError",
+    }
+  }
+
+  updateWebglPreviewStageVisibility()
+  ensureWebglPreviewLoop()
+}
+
+function getWebglMeshWarpPreviewFallbackReason(
+  mesh: CurrentIdealMeshPrototypeState,
+) {
+  if (!state.liveVideo.loaded) {
+    return "liveVideoNotLoaded"
+  }
+
+  if (
+    liveVideoElement.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
+    !liveVideoElement.videoWidth ||
+    !liveVideoElement.videoHeight
+  ) {
+    return "videoTextureNotReady"
+  }
+
+  if (!mesh.webglMeshWarpInput.webglInputReady) {
+    return "webglInputReadyFalse"
+  }
+
+  if (mesh.currentMeshSourceVertices.length !== mesh.idealMeshTargetVertices.length) {
+    return "sourceTargetVertexCountMismatch"
+  }
+
+  if (mesh.currentMeshSourceVertices.length > 65535) {
+    return "vertexCountExceedsUint16IndexLimit"
+  }
+
+  if (mesh.triangleMesh.triangles.length === 0) {
+    return "emptyTriangleIndices"
+  }
+
+  return null
+}
+
+function setWebglPreviewFallback(fallbackReason: string) {
+  state.webglPreview = {
+    ...state.webglPreview,
+    webglPreviewStatus: "fallback",
+    webglPreviewError: null,
+    videoTextureReady:
+      state.liveVideo.loaded &&
+      liveVideoElement.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA,
+    fallbackReason,
+  }
+  updateWebglPreviewStageVisibility()
+}
+
+function updateWebglPreviewStageVisibility() {
+  const liveStage = app.querySelector<HTMLElement>(
+    "[data-preview-panel='live'] .preview-stage",
+  )
+  if (!liveStage) {
+    return
+  }
+
+  const showWebglCanvas =
+    state.applyWebglMeshWarp &&
+    state.liveVideo.loaded &&
+    (state.webglPreview.webglPreviewStatus === "ready" ||
+      state.webglPreview.webglPreviewStatus === "drawing")
+
+  liveStage.dataset.webglWarp = String(showWebglCanvas)
+}
+
+function ensureWebglPreviewLoop() {
+  const status = state.webglPreview.webglPreviewStatus
+  if (
+    webglPreviewAnimationFrameId !== null ||
+    !state.applyWebglMeshWarp ||
+    state.activePreviewTab !== "live" ||
+    (status !== "ready" && status !== "drawing") ||
+    state.liveVideo.playbackStatus !== "playing"
+  ) {
+    return
+  }
+
+  webglPreviewAnimationFrameId = window.requestAnimationFrame(() => {
+    webglPreviewAnimationFrameId = null
+    updateWebglMeshWarpPreview()
+    maybeRenderWebglPreviewDebug()
+    ensureWebglPreviewLoop()
+  })
+}
+
+function stopWebglPreviewLoop() {
+  if (webglPreviewAnimationFrameId === null) {
+    return
+  }
+
+  window.cancelAnimationFrame(webglPreviewAnimationFrameId)
+  webglPreviewAnimationFrameId = null
+}
+
+function maybeRenderWebglPreviewDebug() {
+  if (
+    state.activeDebugTab !== "summary" &&
+    state.activeDebugTab !== "warpMesh" &&
+    state.activeDebugTab !== "raw"
+  ) {
+    return
+  }
+
+  const now = performance.now()
+  if (now - lastWebglDebugRenderAtMs < 250) {
+    return
+  }
+
+  lastWebglDebugRenderAtMs = now
+  renderDebugContent()
+}
+
+function createWebglMeshWarpPreviewRenderer(
+  canvas: HTMLCanvasElement,
+): WebglMeshWarpPreviewRenderer {
+  const gl = canvas.getContext("webgl", {
+    alpha: false,
+    premultipliedAlpha: false,
+  })
+
+  if (!gl) {
+    throw new Error("WebGL context を作成できませんでした。")
+  }
+
+  const vertexShader = compileWebglShader(
+    gl,
+    gl.VERTEX_SHADER,
+    `
+      attribute vec2 a_position;
+      attribute vec2 a_uv;
+      varying vec2 v_uv;
+
+      void main() {
+        gl_Position = vec4(a_position, 0.0, 1.0);
+        v_uv = a_uv;
+      }
+    `,
+  )
+  const fragmentShader = compileWebglShader(
+    gl,
+    gl.FRAGMENT_SHADER,
+    `
+      precision mediump float;
+      uniform sampler2D u_texture;
+      varying vec2 v_uv;
+
+      void main() {
+        gl_FragColor = texture2D(u_texture, v_uv);
+      }
+    `,
+  )
+  const program = linkWebglProgram(gl, vertexShader, fragmentShader)
+  const positionBuffer = gl.createBuffer()
+  const uvBuffer = gl.createBuffer()
+  const indexBuffer = gl.createBuffer()
+  const texture = gl.createTexture()
+  const positionLocation = gl.getAttribLocation(program, "a_position")
+  const uvLocation = gl.getAttribLocation(program, "a_uv")
+  const textureLocation = gl.getUniformLocation(program, "u_texture")
+
+  if (
+    !positionBuffer ||
+    !uvBuffer ||
+    !indexBuffer ||
+    !texture ||
+    positionLocation < 0 ||
+    uvLocation < 0 ||
+    textureLocation === null
+  ) {
+    throw new Error("WebGL mesh warp preview の buffer / attribute 初期化に失敗しました。")
+  }
+
+  gl.useProgram(program)
+  gl.activeTexture(gl.TEXTURE0)
+  gl.bindTexture(gl.TEXTURE_2D, texture)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+  gl.uniform1i(textureLocation, 0)
+
+  return {
+    draw(input) {
+      const vertexCount = input.sourceVertices.length
+      if (vertexCount !== input.targetVertices.length) {
+        throw new Error("source vertices と target vertices の件数が一致しません。")
+      }
+      if (vertexCount > 65535) {
+        throw new Error("WebGL1 Uint16 index の上限を超えています。")
+      }
+
+      const rect = canvas.getBoundingClientRect()
+      const dpr = window.devicePixelRatio || 1
+      const canvasWidth = Math.max(1, Math.round(rect.width * dpr))
+      const canvasHeight = Math.max(1, Math.round(rect.height * dpr))
+      if (canvas.width !== canvasWidth || canvas.height !== canvasHeight) {
+        canvas.width = canvasWidth
+        canvas.height = canvasHeight
+      }
+
+      const positions = new Float32Array(vertexCount * 2)
+      const uvs = new Float32Array(vertexCount * 2)
+      for (let index = 0; index < vertexCount; index += 1) {
+        const source = input.sourceVertices[index]
+        const target = input.targetVertices[index]
+        const clip = imageNormalizedToClipSpace(target)
+        positions[index * 2] = clip.x
+        positions[index * 2 + 1] = clip.y
+        uvs[index * 2] = source.x
+        uvs[index * 2 + 1] = source.y
+      }
+
+      const indices = new Uint16Array(
+        input.triangles.flatMap((triangle) => triangle.indices),
+      )
+
+      gl.viewport(0, 0, canvasWidth, canvasHeight)
+      gl.clearColor(0, 0, 0, 1)
+      gl.clear(gl.COLOR_BUFFER_BIT)
+      gl.useProgram(program)
+
+      gl.activeTexture(gl.TEXTURE0)
+      gl.bindTexture(gl.TEXTURE_2D, texture)
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false)
+      gl.texImage2D(
+        gl.TEXTURE_2D,
+        0,
+        gl.RGBA,
+        gl.RGBA,
+        gl.UNSIGNED_BYTE,
+        input.videoElement,
+      )
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer)
+      gl.bufferData(gl.ARRAY_BUFFER, positions, gl.DYNAMIC_DRAW)
+      gl.enableVertexAttribArray(positionLocation)
+      gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0)
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, uvBuffer)
+      gl.bufferData(gl.ARRAY_BUFFER, uvs, gl.DYNAMIC_DRAW)
+      gl.enableVertexAttribArray(uvLocation)
+      gl.vertexAttribPointer(uvLocation, 2, gl.FLOAT, false, 0, 0)
+
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer)
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.DYNAMIC_DRAW)
+      gl.drawElements(gl.TRIANGLES, indices.length, gl.UNSIGNED_SHORT, 0)
+
+      return {
+        canvasWidth,
+        canvasHeight,
+        videoTextureReady: true,
+        triangleCount: input.triangles.length,
+        indexCount: indices.length,
+      }
+    },
+    dispose() {
+      gl.deleteTexture(texture)
+      gl.deleteBuffer(positionBuffer)
+      gl.deleteBuffer(uvBuffer)
+      gl.deleteBuffer(indexBuffer)
+      gl.deleteProgram(program)
+      gl.deleteShader(vertexShader)
+      gl.deleteShader(fragmentShader)
+    },
+  }
+}
+
+function compileWebglShader(
+  gl: WebGLRenderingContext,
+  type: number,
+  source: string,
+) {
+  const shader = gl.createShader(type)
+  if (!shader) {
+    throw new Error("WebGL shader を作成できませんでした。")
+  }
+
+  gl.shaderSource(shader, source)
+  gl.compileShader(shader)
+  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+    const info = gl.getShaderInfoLog(shader) ?? "unknown shader compile error"
+    gl.deleteShader(shader)
+    throw new Error(info)
+  }
+
+  return shader
+}
+
+function linkWebglProgram(
+  gl: WebGLRenderingContext,
+  vertexShader: WebGLShader,
+  fragmentShader: WebGLShader,
+) {
+  const program = gl.createProgram()
+  if (!program) {
+    throw new Error("WebGL program を作成できませんでした。")
+  }
+
+  gl.attachShader(program, vertexShader)
+  gl.attachShader(program, fragmentShader)
+  gl.linkProgram(program)
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    const info = gl.getProgramInfoLog(program) ?? "unknown program link error"
+    gl.deleteProgram(program)
+    throw new Error(info)
+  }
+
+  return program
+}
+
+function disposeWebglMeshWarpPreviewRenderer() {
+  webglMeshWarpPreviewRenderer?.dispose()
+  webglMeshWarpPreviewRenderer = null
 }
 
 function renderDebugTabs() {
@@ -3821,6 +4323,20 @@ function createSummaryContent() {
     ["webglInputReady", meshSummary.webglInputReady ? "true" : "false"],
     ["webglInputWarningCount", String(meshSummary.webglInputWarningCount)],
     ["webglInputWarnings", formatWarnings(meshSummary.webglInputWarnings)],
+    ["webglPreviewEnabled", String(state.webglPreview.webglPreviewEnabled)],
+    ["webglPreviewStatus", state.webglPreview.webglPreviewStatus],
+    ["webglPreviewError", state.webglPreview.webglPreviewError ?? "-"],
+    ["webglCanvasSize", formatWebglCanvasSize(state.webglPreview.webglCanvasSize)],
+    ["videoTextureReady", String(state.webglPreview.videoTextureReady)],
+    [
+      "lastDrawTimestampMs",
+      formatMetric(state.webglPreview.lastDrawTimestampMs),
+    ],
+    ["drawCallCount", String(state.webglPreview.drawCallCount)],
+    ["lastDrawTriangleCount", String(state.webglPreview.lastDrawTriangleCount)],
+    ["lastDrawIndexCount", String(state.webglPreview.lastDrawIndexCount)],
+    ["textureVMode", state.webglPreview.textureVMode],
+    ["fallbackReason", state.webglPreview.fallbackReason ?? "-"],
     [
       "usageWeight average / min / max",
       `${formatMetric(meshSummary.usageWeightAverage)} / ${formatMetric(meshSummary.usageWeightMin)} / ${formatMetric(meshSummary.usageWeightMax)}`,
@@ -4155,6 +4671,27 @@ function createMeshPrototypeContent() {
     ["warnings", formatWarnings(mesh.webglMeshWarpInput.warnings)],
   ])
 
+  const webglPreviewHeading = document.createElement("h3")
+  webglPreviewHeading.textContent = "WebGL mesh warp preview runtime"
+  const webglPreviewList = document.createElement("dl")
+  webglPreviewList.className = "summary-list"
+  appendDefinitionItems(webglPreviewList, [
+    ["webglPreviewEnabled", String(state.webglPreview.webglPreviewEnabled)],
+    ["webglPreviewStatus", state.webglPreview.webglPreviewStatus],
+    ["webglPreviewError", state.webglPreview.webglPreviewError ?? "-"],
+    ["webglCanvasSize", formatWebglCanvasSize(state.webglPreview.webglCanvasSize)],
+    ["videoTextureReady", String(state.webglPreview.videoTextureReady)],
+    [
+      "lastDrawTimestampMs",
+      formatMetric(state.webglPreview.lastDrawTimestampMs),
+    ],
+    ["drawCallCount", String(state.webglPreview.drawCallCount)],
+    ["lastDrawTriangleCount", String(state.webglPreview.lastDrawTriangleCount)],
+    ["lastDrawIndexCount", String(state.webglPreview.lastDrawIndexCount)],
+    ["textureVMode", state.webglPreview.textureVMode],
+    ["fallbackReason", state.webglPreview.fallbackReason ?? "-"],
+  ])
+
   const dynamicGridHeading = document.createElement("h3")
   dynamicGridHeading.textContent = "Dynamic Grid"
   const dynamicGridList = document.createElement("dl")
@@ -4283,6 +4820,8 @@ function createMeshPrototypeContent() {
     triangleList,
     webglHeading,
     webglList,
+    webglPreviewHeading,
+    webglPreviewList,
     dynamicGridHeading,
     dynamicGridList,
     alignmentHeading,
@@ -4359,6 +4898,8 @@ function getRawState() {
   return {
     activePreviewTab: state.activePreviewTab,
     activeDebugTab: state.activeDebugTab,
+    applyWebglMeshWarp: state.applyWebglMeshWarp,
+    webglPreview: roundWebglPreviewRuntimeDebug(state.webglPreview),
     overlay: state.overlay,
     gridAnchorDisplay: getGridAnchorDisplayState(),
     modelVideo: {
@@ -5001,6 +5542,10 @@ function formatSize(width: number | null, height: number | null) {
   return width === null || height === null ? "-" : `${width} x ${height}`
 }
 
+function formatWebglCanvasSize(size: WebglPreviewRuntimeDebug["webglCanvasSize"]) {
+  return `${size.width} x ${size.height}`
+}
+
 function formatCounts(counts: Record<string, number>) {
   const entries = Object.entries(counts)
   return entries.length === 0
@@ -5293,6 +5838,22 @@ function roundWebglMeshWarpInputDebug(debug: WebglMeshWarpInputDebug) {
   }
 }
 
+function roundWebglPreviewRuntimeDebug(debug: WebglPreviewRuntimeDebug) {
+  return {
+    webglPreviewEnabled: debug.webglPreviewEnabled,
+    webglPreviewStatus: debug.webglPreviewStatus,
+    webglPreviewError: debug.webglPreviewError,
+    webglCanvasSize: debug.webglCanvasSize,
+    videoTextureReady: debug.videoTextureReady,
+    lastDrawTimestampMs: roundMetricForState(debug.lastDrawTimestampMs),
+    drawCallCount: debug.drawCallCount,
+    lastDrawTriangleCount: debug.lastDrawTriangleCount,
+    lastDrawIndexCount: debug.lastDrawIndexCount,
+    textureVMode: debug.textureVMode,
+    fallbackReason: debug.fallbackReason,
+  }
+}
+
 function roundWebglMeshWarpInputPreviewItem(item: WebglMeshWarpInputPreviewItem) {
   return {
     vertexIndex: item.vertexIndex,
@@ -5506,6 +6067,8 @@ function escapeHtml(value: string) {
 }
 
 function cleanup() {
+  stopWebglPreviewLoop()
+  disposeWebglMeshWarpPreviewRenderer()
   revokeObjectUrls()
   disposeModelFaceLandmarker("disposed")
   disposeLiveFaceLandmarker("disposed")
