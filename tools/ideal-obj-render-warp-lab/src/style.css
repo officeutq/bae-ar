@@ -201,7 +201,7 @@ h3 {
 }
 
 .live-preview-card {
-  grid-template-rows: 1fr;
+  grid-template-rows: 1fr auto;
   min-width: 0;
   overflow: hidden;
 }
@@ -434,6 +434,14 @@ h3 {
   align-items: flex-start;
 }
 
+.control-note {
+  color: #5b6875;
+  font-size: 12px;
+  line-height: 1.45;
+  margin: 0;
+  max-width: 360px;
+}
+
 .rendered-ideal-controls {
   justify-content: flex-start;
 }
@@ -503,6 +511,89 @@ h3 {
 
 .pose-sync-button {
   justify-self: start;
+}
+
+.realtime-control-panel {
+  border: 1px solid #d8e0e7;
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px;
+}
+
+.realtime-control-header {
+  align-items: start;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.realtime-control-header h3 {
+  margin-bottom: 4px;
+}
+
+.realtime-control-header p {
+  color: #5b6875;
+  font-size: 12px;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.realtime-buttons {
+  justify-content: flex-end;
+}
+
+.realtime-control-grid {
+  align-items: end;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(280px, 1fr) auto minmax(220px, auto);
+  min-width: 0;
+}
+
+.mode-fieldset {
+  border: 1px solid #d8e0e7;
+  border-radius: 6px;
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  min-width: 0;
+  padding: 10px;
+}
+
+.mode-fieldset legend {
+  color: #66727e;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 0 4px;
+}
+
+.radio-option {
+  align-items: center;
+  color: #26313b;
+  display: inline-flex;
+  font-size: 13px;
+  font-weight: 700;
+  gap: 8px;
+  min-width: 0;
+}
+
+.radio-option span {
+  overflow-wrap: anywhere;
+}
+
+.realtime-fps-field {
+  align-self: center;
+}
+
+.realtime-inline-status {
+  align-self: center;
+  color: #485461;
+  font-family:
+    "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 .timeline-controls {
@@ -677,6 +768,15 @@ input[type="range"] {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .realtime-control-header,
+  .realtime-control-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .realtime-buttons {
+    justify-content: flex-start;
+  }
+
   .timeline-controls.live-controls {
     grid-template-columns: auto auto auto;
   }
@@ -702,6 +802,10 @@ input[type="range"] {
   }
 
   .pose-sync-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .timeline-controls.live-controls {
     grid-template-columns: 1fr;
   }
 }
