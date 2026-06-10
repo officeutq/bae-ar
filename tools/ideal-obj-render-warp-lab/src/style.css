@@ -124,6 +124,7 @@ h3 {
 .small-button {
   min-height: 32px;
   padding: 6px 10px;
+  white-space: nowrap;
 }
 
 .status-note {
@@ -201,13 +202,16 @@ h3 {
 
 .live-preview-card {
   grid-template-rows: 1fr;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .live-preview-grid {
   display: grid;
   gap: 12px;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
   min-height: 0;
+  min-width: 0;
 }
 
 .live-column-panel {
@@ -217,6 +221,8 @@ h3 {
   gap: 12px;
   grid-template-rows: auto minmax(300px, 1fr) auto auto;
   min-height: 0;
+  min-width: 0;
+  overflow: hidden;
   padding: 12px;
 }
 
@@ -232,14 +238,17 @@ h3 {
   min-height: 0;
   overflow: hidden;
   position: relative;
+  width: 100%;
 }
 
 .video-preview {
   background: #111820;
+  box-sizing: border-box;
   display: none;
   grid-area: 1 / 1;
   height: 100%;
   max-height: 62vh;
+  max-width: 100%;
   min-height: 320px;
   object-fit: contain;
   position: relative;
@@ -248,10 +257,12 @@ h3 {
 }
 
 .landmark-overlay {
+  box-sizing: border-box;
   display: none;
   grid-area: 1 / 1;
   height: 100%;
   max-height: 62vh;
+  max-width: 100%;
   min-height: 320px;
   pointer-events: none;
   position: relative;
@@ -286,13 +297,21 @@ h3 {
     linear-gradient(0deg, rgba(32, 38, 45, 0.055) 1px, transparent 1px),
     #f8fafc;
   background-size: 24px 24px;
+  box-sizing: border-box;
   cursor: grab;
   display: none;
   grid-area: 1 / 1;
   height: 100%;
+  max-width: 100%;
   min-height: 420px;
   touch-action: none;
   width: 100%;
+}
+
+.live-face-stage .video-preview,
+.live-face-stage .landmark-overlay,
+.live-obj-preview-stage .obj-preview-canvas {
+  min-height: 300px;
 }
 
 .obj-preview-canvas:active {
@@ -386,6 +405,7 @@ h3 {
   flex-wrap: wrap;
   gap: 10px;
   justify-content: space-between;
+  min-width: 0;
 }
 
 .live-obj-controls {
@@ -397,6 +417,7 @@ h3 {
   display: grid;
   gap: 10px;
   grid-template-columns: repeat(4, minmax(0, auto));
+  min-width: 0;
 }
 
 .select-field {
@@ -404,6 +425,7 @@ h3 {
   display: inline-grid;
   gap: 8px;
   grid-template-columns: auto minmax(160px, 1fr);
+  min-width: 0;
 }
 
 .select-field span {
@@ -426,6 +448,7 @@ h3 {
   display: grid;
   gap: 6px;
   grid-template-columns: auto minmax(82px, 1fr);
+  min-width: 0;
 }
 
 .number-field span {
@@ -449,6 +472,11 @@ h3 {
   flex-wrap: wrap;
   gap: 6px;
   justify-content: flex-end;
+  min-width: 0;
+}
+
+.pose-sync-button {
+  justify-self: start;
 }
 
 .timeline-controls {
@@ -459,6 +487,7 @@ h3 {
 
 .timeline-controls.live-controls {
   grid-template-columns: auto auto auto minmax(180px, 1fr) auto;
+  min-width: 0;
 }
 
 .range-field {

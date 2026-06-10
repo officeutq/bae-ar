@@ -120,6 +120,9 @@ type ObjPoseSyncState = {
   yawOffsetDeg: number
   pitchOffsetDeg: number
   rollOffsetDeg: number
+  rotationCenterX: number
+  rotationCenterY: number
+  rotationCenterZ: number
   appliedYawDeg: number | null
   appliedPitchDeg: number | null
   appliedRollDeg: number | null
@@ -255,12 +258,12 @@ const previewTabs: TabOption<PreviewTab>[] = [
 ]
 
 const debugTabs: TabOption<DebugTab>[] = [
-  { label: "Summary", value: "summary" },
-  { label: "Current", value: "current" },
+  { label: "概要", value: "summary" },
+  { label: "現在顔", value: "current" },
   { label: "OBJ", value: "obj" },
-  { label: "Rendered Ideal", value: "renderedIdeal" },
-  { label: "Warp Mesh", value: "warpMesh" },
-  { label: "Raw", value: "raw" },
+  { label: "レンダー理想", value: "renderedIdeal" },
+  { label: "ワープメッシュ", value: "warpMesh" },
+  { label: "Raw Debug", value: "raw" },
 ]
 
 const state: LabState = {
@@ -439,18 +442,18 @@ function renderObjPreview() {
         <label class="select-field">
           <span>表示モード</span>
           <select data-control="obj-preview-mode">
-            <option value="points">points</option>
-            <option value="wireframe">wireframe</option>
-            <option value="points_wireframe">points + wireframe</option>
+            <option value="points">点群</option>
+            <option value="wireframe">ワイヤー</option>
+            <option value="points_wireframe">点群 + ワイヤー</option>
           </select>
         </label>
         <div class="button-row">
-          <button class="small-button" type="button" data-action="obj-preview-front">Front</button>
-          <button class="small-button" type="button" data-action="obj-preview-left">Left</button>
-          <button class="small-button" type="button" data-action="obj-preview-right">Right</button>
-          <button class="small-button" type="button" data-action="obj-preview-top">Top</button>
-          <button class="small-button" type="button" data-action="obj-preview-side">Side</button>
-          <button class="small-button" type="button" data-action="obj-preview-reset">Reset View</button>
+          <button class="small-button" type="button" data-action="obj-preview-front">正面</button>
+          <button class="small-button" type="button" data-action="obj-preview-left">左</button>
+          <button class="small-button" type="button" data-action="obj-preview-right">右</button>
+          <button class="small-button" type="button" data-action="obj-preview-top">上</button>
+          <button class="small-button" type="button" data-action="obj-preview-side">横</button>
+          <button class="small-button" type="button" data-action="obj-preview-reset">表示リセット</button>
         </div>
       </div>
       <div class="obj-preview-summary" data-obj-preview-summary></div>
@@ -493,10 +496,10 @@ function renderLivePreview() {
               <span>シーク</span>
               <input type="range" min="0" step="0.001" value="0" data-range="live" />
             </label>
-            <p class="frame-status" data-status="live-time">current time: - / -</p>
+            <p class="frame-status" data-status="live-time">現在時刻: - / -</p>
           </div>
           <div class="review-card" data-live-analysis>
-            <p>ライブ動画の current frame 解析結果はまだありません。</p>
+            <p>ライブ動画の現在フレーム解析結果はまだありません。</p>
           </div>
         </section>
 
@@ -513,20 +516,20 @@ function renderLivePreview() {
             <label class="select-field">
               <span>表示モード</span>
               <select data-control="live-obj-preview-mode">
-                <option value="points">points</option>
-                <option value="wireframe">wireframe</option>
-                <option value="points_wireframe">points + wireframe</option>
+                <option value="points">点群</option>
+                <option value="wireframe">ワイヤー</option>
+                <option value="points_wireframe">点群 + ワイヤー</option>
               </select>
             </label>
             <div class="button-row">
-              <button class="small-button" type="button" data-action="live-obj-current-pose">Current Pose</button>
-              <button class="small-button" type="button" data-action="live-obj-reset-view">Reset View</button>
+              <button class="small-button" type="button" data-action="live-obj-current-pose">現在姿勢</button>
+              <button class="small-button" type="button" data-action="live-obj-reset-view">表示リセット</button>
             </div>
           </div>
           <div class="pose-sync-controls" aria-label="現在姿勢 OBJ 同期設定">
             <label class="overlay-toggle">
               <input type="checkbox" data-action="obj-pose-sync-enabled" />
-              <span>pose sync enabled</span>
+              <span>姿勢同期</span>
             </label>
             <label class="overlay-toggle">
               <input type="checkbox" data-action="obj-pose-yaw-invert" />
@@ -541,17 +544,30 @@ function renderLivePreview() {
               <span>roll反転</span>
             </label>
             <label class="number-field">
-              <span>yawOffsetDeg</span>
+              <span>yaw補正角度</span>
               <input type="number" step="0.1" data-control="obj-pose-yaw-offset" />
             </label>
             <label class="number-field">
-              <span>pitchOffsetDeg</span>
+              <span>pitch補正角度</span>
               <input type="number" step="0.1" data-control="obj-pose-pitch-offset" />
             </label>
             <label class="number-field">
-              <span>rollOffsetDeg</span>
+              <span>roll補正角度</span>
               <input type="number" step="0.1" data-control="obj-pose-roll-offset" />
             </label>
+            <label class="number-field">
+              <span>回転中心X</span>
+              <input type="number" min="-0.5" max="0.5" step="0.01" data-control="obj-pose-rotation-center-x" />
+            </label>
+            <label class="number-field">
+              <span>回転中心Y</span>
+              <input type="number" min="-0.5" max="0.5" step="0.01" data-control="obj-pose-rotation-center-y" />
+            </label>
+            <label class="number-field">
+              <span>回転中心Z</span>
+              <input type="number" min="-0.5" max="0.5" step="0.01" data-control="obj-pose-rotation-center-z" />
+            </label>
+            <button class="small-button pose-sync-button" type="button" data-action="obj-pose-rotation-center-reset">回転中心リセット</button>
           </div>
           <div class="review-card" data-live-obj-pose-summary>
             <p>OBJを読み込むと、現在姿勢を反映したOBJ previewを表示します。</p>
@@ -695,6 +711,9 @@ function bindEvents() {
   bindObjPoseOffsetInput("obj-pose-yaw-offset", "yawOffsetDeg")
   bindObjPoseOffsetInput("obj-pose-pitch-offset", "pitchOffsetDeg")
   bindObjPoseOffsetInput("obj-pose-roll-offset", "rollOffsetDeg")
+  bindObjPoseRotationCenterInput("obj-pose-rotation-center-x", "rotationCenterX")
+  bindObjPoseRotationCenterInput("obj-pose-rotation-center-y", "rotationCenterY")
+  bindObjPoseRotationCenterInput("obj-pose-rotation-center-z", "rotationCenterZ")
 
   getElement<HTMLButtonElement>('[data-action="live-obj-current-pose"]').addEventListener("click", () => {
     updateObjPoseSyncFromCurrentAnalysis()
@@ -704,6 +723,16 @@ function bindEvents() {
   getElement<HTMLButtonElement>('[data-action="live-obj-reset-view"]').addEventListener("click", () => {
     state.objPoseSync = createDefaultObjPoseSyncState()
     updateObjPoseSyncFromCurrentAnalysis()
+    renderAll()
+  })
+
+  getElement<HTMLButtonElement>('[data-action="obj-pose-rotation-center-reset"]').addEventListener("click", () => {
+    state.objPoseSync = {
+      ...state.objPoseSync,
+      rotationCenterX: 0,
+      rotationCenterY: 0,
+      rotationCenterZ: 0,
+    }
     renderAll()
   })
 
@@ -849,6 +878,17 @@ function bindObjPoseOffsetInput(
     const value = Number(event.currentTarget.value)
     state.objPoseSync[key] = Number.isFinite(value) ? value : 0
     updateObjPoseSyncFromCurrentAnalysis()
+    renderAll()
+  })
+}
+
+function bindObjPoseRotationCenterInput(
+  control: string,
+  key: "rotationCenterX" | "rotationCenterY" | "rotationCenterZ",
+) {
+  getElement<HTMLInputElement>(`[data-control="${control}"]`).addEventListener("input", (event) => {
+    const value = Number(event.currentTarget.value)
+    state.objPoseSync[key] = Number.isFinite(value) ? clamp(value, -0.5, 0.5) : 0
     renderAll()
   })
 }
@@ -1364,6 +1404,9 @@ function renderControls() {
   setNumberValue("obj-pose-yaw-offset", state.objPoseSync.yawOffsetDeg)
   setNumberValue("obj-pose-pitch-offset", state.objPoseSync.pitchOffsetDeg)
   setNumberValue("obj-pose-roll-offset", state.objPoseSync.rollOffsetDeg)
+  setNumberValue("obj-pose-rotation-center-x", state.objPoseSync.rotationCenterX)
+  setNumberValue("obj-pose-rotation-center-y", state.objPoseSync.rotationCenterY)
+  setNumberValue("obj-pose-rotation-center-z", state.objPoseSync.rotationCenterZ)
   renderLiveObjPoseSummaryCard()
 }
 
@@ -1372,7 +1415,7 @@ function renderLiveAnalysisCard() {
   const analysis = state.currentAnalysis
 
   if (!state.liveVideo.loaded) {
-    card.innerHTML = `<p>ライブ動画を読み込むと、ここに video metadata と current frame 解析結果を表示します。</p>`
+    card.innerHTML = `<p>ライブ動画を読み込むと、ここに動画メタデータと現在フレーム解析結果を表示します。</p>`
     return
   }
 
@@ -1400,12 +1443,12 @@ function renderLiveObjPoseSummaryCard() {
   card.innerHTML = `
     <p>${escapeHtml(getObjPoseSyncMessage())}</p>
     <dl class="review-grid">
-      <div><dt>syncStatus</dt><dd>${getObjPoseSyncStatus()}</dd></div>
-      <div><dt>poseSource</dt><dd>${poseSync.source}</dd></div>
-      <div><dt>poseSyncEnabled</dt><dd>${String(poseSync.enabled)}</dd></div>
-      <div><dt>currentYawDeg</dt><dd>${formatNullableNumber(state.currentAnalysis.pose.yaw)}</dd></div>
-      <div><dt>currentPitchDeg</dt><dd>${formatNullableNumber(state.currentAnalysis.pose.pitch)}</dd></div>
-      <div><dt>currentRollDeg</dt><dd>${formatNullableNumber(state.currentAnalysis.pose.roll)}</dd></div>
+      <div><dt>同期状態</dt><dd>${getObjPoseSyncStatus()}</dd></div>
+      <div><dt>姿勢ソース</dt><dd>${poseSync.source}</dd></div>
+      <div><dt>姿勢同期</dt><dd>${String(poseSync.enabled)}</dd></div>
+      <div><dt>現在yaw角度</dt><dd>${formatNullableNumber(state.currentAnalysis.pose.yaw)}</dd></div>
+      <div><dt>現在pitch角度</dt><dd>${formatNullableNumber(state.currentAnalysis.pose.pitch)}</dd></div>
+      <div><dt>現在roll角度</dt><dd>${formatNullableNumber(state.currentAnalysis.pose.roll)}</dd></div>
       <div><dt>appliedYawDeg</dt><dd>${formatNullableNumber(poseSync.appliedYawDeg)}</dd></div>
       <div><dt>appliedPitchDeg</dt><dd>${formatNullableNumber(poseSync.appliedPitchDeg)}</dd></div>
       <div><dt>appliedRollDeg</dt><dd>${formatNullableNumber(poseSync.appliedRollDeg)}</dd></div>
@@ -1415,6 +1458,9 @@ function renderLiveObjPoseSummaryCard() {
       <div><dt>yawOffsetDeg</dt><dd>${formatNumber(poseSync.yawOffsetDeg)}</dd></div>
       <div><dt>pitchOffsetDeg</dt><dd>${formatNumber(poseSync.pitchOffsetDeg)}</dd></div>
       <div><dt>rollOffsetDeg</dt><dd>${formatNumber(poseSync.rollOffsetDeg)}</dd></div>
+      <div><dt>rotationCenterX</dt><dd>${formatNumber(poseSync.rotationCenterX)}</dd></div>
+      <div><dt>rotationCenterY</dt><dd>${formatNumber(poseSync.rotationCenterY)}</dd></div>
+      <div><dt>rotationCenterZ</dt><dd>${formatNumber(poseSync.rotationCenterZ)}</dd></div>
       <div><dt>sampledPointCount</dt><dd>${state.objPoseSyncStats.sampledPointCount}</dd></div>
       <div><dt>sampledEdgeCount</dt><dd>${state.objPoseSyncStats.sampledEdgeCount}</dd></div>
     </dl>
@@ -1439,12 +1485,13 @@ function renderObjPoseSyncCanvas() {
     sampledEdgeCount: 0,
   }
 
-  renderObjPreviewCanvasTo(liveObjPosePreviewCanvas, previewState)
+  renderObjPreviewCanvasTo(liveObjPosePreviewCanvas, previewState, getObjPoseSyncRotationCenter())
 }
 
 function renderObjPreviewCanvasTo(
   canvas: HTMLCanvasElement,
   previewState: ObjPreviewState,
+  rotationCenter: ObjVertex = { x: 0, y: 0, z: 0 },
 ) {
   const status = getObjPreviewStatus()
   const context = canvas.getContext("2d")
@@ -1488,11 +1535,11 @@ function renderObjPreviewCanvasTo(
   context.lineJoin = "round"
 
   if (previewState.mode === "wireframe" || previewState.mode === "points_wireframe") {
-    drawObjWireframe(context, summary.center, summary.maxDimension, viewport, previewState)
+    drawObjWireframe(context, summary.center, summary.maxDimension, viewport, previewState, rotationCenter)
   }
 
   if (previewState.mode === "points" || previewState.mode === "points_wireframe") {
-    drawObjPoints(context, summary.center, summary.maxDimension, viewport, previewState)
+    drawObjPoints(context, summary.center, summary.maxDimension, viewport, previewState, rotationCenter)
   }
 
   drawObjAxisGuide(context, rect.height, previewState)
@@ -1505,6 +1552,7 @@ function drawObjWireframe(
   maxDimension: number,
   viewport: { centerX: number; centerY: number; scale: number },
   previewState: ObjPreviewState,
+  rotationCenter: ObjVertex,
 ) {
   const edgeStep = getSampleStep(state.objGeometry.edges.length, previewState.maxEdges)
   context.strokeStyle = "rgba(67, 99, 132, 0.32)"
@@ -1519,8 +1567,8 @@ function drawObjWireframe(
       continue
     }
 
-    const p1 = projectObjVertex(from, center, maxDimension, viewport, previewState)
-    const p2 = projectObjVertex(to, center, maxDimension, viewport, previewState)
+    const p1 = projectObjVertex(from, center, maxDimension, viewport, previewState, rotationCenter)
+    const p2 = projectObjVertex(to, center, maxDimension, viewport, previewState, rotationCenter)
     context.moveTo(p1.x, p1.y)
     context.lineTo(p2.x, p2.y)
   }
@@ -1534,6 +1582,7 @@ function drawObjPoints(
   maxDimension: number,
   viewport: { centerX: number; centerY: number; scale: number },
   previewState: ObjPreviewState,
+  rotationCenter: ObjVertex,
 ) {
   const pointStep = getSampleStep(state.objGeometry.vertices.length, previewState.maxPoints)
   context.fillStyle = "rgba(18, 31, 44, 0.64)"
@@ -1545,6 +1594,7 @@ function drawObjPoints(
       maxDimension,
       viewport,
       previewState,
+      rotationCenter,
     )
     context.beginPath()
     context.arc(point.x, point.y, 1.35, 0, Math.PI * 2)
@@ -1588,13 +1638,24 @@ function projectObjVertex(
   maxDimension: number,
   viewport: { centerX: number; centerY: number; scale: number },
   previewState: ObjPreviewState,
+  rotationCenter: ObjVertex,
 ) {
   const normalized = {
     x: (vertex.x - center.x) / maxDimension,
     y: (vertex.y - center.y) / maxDimension,
     z: (vertex.z - center.z) / maxDimension,
   }
-  const rotated = rotateObjPoint(normalized, previewState)
+  const shifted = {
+    x: normalized.x - rotationCenter.x,
+    y: normalized.y - rotationCenter.y,
+    z: normalized.z - rotationCenter.z,
+  }
+  const rotatedShifted = rotateObjPoint(shifted, previewState)
+  const rotated = {
+    x: rotatedShifted.x + rotationCenter.x,
+    y: rotatedShifted.y + rotationCenter.y,
+    z: rotatedShifted.z + rotationCenter.z,
+  }
 
   return {
     x: viewport.centerX + (rotated.x * previewState.zoom + previewState.panX) * viewport.scale,
@@ -1807,12 +1868,18 @@ function getSummaryItems(): Array<[string, string]> {
     ["objSampledEdgeCount", formatNullableCount(state.objPreviewStats.sampledEdgeCount)],
     ["objPoseSyncEnabled", String(state.objPoseSync.enabled)],
     ["objPoseSyncSource", state.objPoseSync.source],
-    ["objAppliedYawDeg", formatNullableNumber(state.objPoseSync.appliedYawDeg)],
-    ["objAppliedPitchDeg", formatNullableNumber(state.objPoseSync.appliedPitchDeg)],
-    ["objAppliedRollDeg", formatNullableNumber(state.objPoseSync.appliedRollDeg)],
-    ["objYawSign", String(state.objPoseSync.yawSign)],
-    ["objPitchSign", String(state.objPoseSync.pitchSign)],
-    ["objRollSign", String(state.objPoseSync.rollSign)],
+    ["appliedYawDeg", formatNullableNumber(state.objPoseSync.appliedYawDeg)],
+    ["appliedPitchDeg", formatNullableNumber(state.objPoseSync.appliedPitchDeg)],
+    ["appliedRollDeg", formatNullableNumber(state.objPoseSync.appliedRollDeg)],
+    ["yawSign", String(state.objPoseSync.yawSign)],
+    ["pitchSign", String(state.objPoseSync.pitchSign)],
+    ["rollSign", String(state.objPoseSync.rollSign)],
+    ["yawOffsetDeg", formatNumber(state.objPoseSync.yawOffsetDeg)],
+    ["pitchOffsetDeg", formatNumber(state.objPoseSync.pitchOffsetDeg)],
+    ["rollOffsetDeg", formatNumber(state.objPoseSync.rollOffsetDeg)],
+    ["rotationCenterX", formatNumber(state.objPoseSync.rotationCenterX)],
+    ["rotationCenterY", formatNumber(state.objPoseSync.rotationCenterY)],
+    ["rotationCenterZ", formatNumber(state.objPoseSync.rotationCenterZ)],
     ["objErrorMessage", state.objErrorMessage ?? "null"],
     ["renderedIdealStatus", "not_implemented"],
     ["warpStatus", "not_implemented"],
@@ -1874,6 +1941,18 @@ function getObjItems(): Array<[string, string]> {
     ["objPoseSyncEnabled", String(state.objPoseSync.enabled)],
     ["objPoseSyncSource", state.objPoseSync.source],
     ["objAppliedPose", formatAppliedObjPose()],
+    ["appliedYawDeg", formatNullableNumber(state.objPoseSync.appliedYawDeg)],
+    ["appliedPitchDeg", formatNullableNumber(state.objPoseSync.appliedPitchDeg)],
+    ["appliedRollDeg", formatNullableNumber(state.objPoseSync.appliedRollDeg)],
+    ["yawSign", String(state.objPoseSync.yawSign)],
+    ["pitchSign", String(state.objPoseSync.pitchSign)],
+    ["rollSign", String(state.objPoseSync.rollSign)],
+    ["yawOffsetDeg", formatNumber(state.objPoseSync.yawOffsetDeg)],
+    ["pitchOffsetDeg", formatNumber(state.objPoseSync.pitchOffsetDeg)],
+    ["rollOffsetDeg", formatNumber(state.objPoseSync.rollOffsetDeg)],
+    ["rotationCenterX", formatNumber(state.objPoseSync.rotationCenterX)],
+    ["rotationCenterY", formatNumber(state.objPoseSync.rotationCenterY)],
+    ["rotationCenterZ", formatNumber(state.objPoseSync.rotationCenterZ)],
     ["objPoseSyncSampledPointCount", formatNullableCount(state.objPoseSyncStats.sampledPointCount)],
     ["objPoseSyncSampledEdgeCount", formatNullableCount(state.objPoseSyncStats.sampledEdgeCount)],
     ["errorMessage", state.objErrorMessage ?? "null"],
@@ -1913,6 +1992,15 @@ function getRawState() {
       yaw: roundForState(state.objPoseSync.appliedYawDeg),
       pitch: roundForState(state.objPoseSync.appliedPitchDeg),
       roll: roundForState(state.objPoseSync.appliedRollDeg),
+      yawSign: state.objPoseSync.yawSign,
+      pitchSign: state.objPoseSync.pitchSign,
+      rollSign: state.objPoseSync.rollSign,
+      yawOffsetDeg: roundForState(state.objPoseSync.yawOffsetDeg),
+      pitchOffsetDeg: roundForState(state.objPoseSync.pitchOffsetDeg),
+      rollOffsetDeg: roundForState(state.objPoseSync.rollOffsetDeg),
+      rotationCenterX: roundForState(state.objPoseSync.rotationCenterX),
+      rotationCenterY: roundForState(state.objPoseSync.rotationCenterY),
+      rotationCenterZ: roundForState(state.objPoseSync.rotationCenterZ),
       source: state.objPoseSync.source,
       enabled: state.objPoseSync.enabled,
     },
@@ -2091,6 +2179,9 @@ function createDefaultObjPoseSyncState(): ObjPoseSyncState {
     yawOffsetDeg: 0,
     pitchOffsetDeg: 0,
     rollOffsetDeg: 0,
+    rotationCenterX: 0,
+    rotationCenterY: 0,
+    rotationCenterZ: 0,
     appliedYawDeg: null,
     appliedPitchDeg: null,
     appliedRollDeg: null,
@@ -2253,7 +2344,7 @@ function getObjPoseSyncMessage() {
     return "現在フレーム解析を実行すると、OBJに現在姿勢を反映します。"
   }
   if (!state.objPoseSync.enabled) {
-    return "pose sync がOFFのため、現在姿勢はOBJ previewへ反映していません。"
+    return "姿勢同期がOFFのため、現在姿勢はOBJ previewへ反映していません。"
   }
   return "現在姿勢を反映したOBJ previewを表示しています。"
 }
@@ -2476,9 +2567,9 @@ function isObjPreviewMode(value: string): value is ObjPreviewMode {
 
 function formatTimeStatus(videoState: LiveVideoState) {
   if (!videoState.loaded) {
-    return "current time: - / -"
+    return "現在時刻: - / -"
   }
-  return `current time: ${formatSeconds(videoState.currentTimeSec)} / ${formatSeconds(videoState.durationSec)}`
+  return `現在時刻: ${formatSeconds(videoState.currentTimeSec)} / ${formatSeconds(videoState.durationSec)}`
 }
 
 function formatVideoSize() {
@@ -2622,10 +2713,21 @@ function getRoundedObjPoseSyncState() {
     yawOffsetDeg: roundForState(state.objPoseSync.yawOffsetDeg),
     pitchOffsetDeg: roundForState(state.objPoseSync.pitchOffsetDeg),
     rollOffsetDeg: roundForState(state.objPoseSync.rollOffsetDeg),
+    rotationCenterX: roundForState(state.objPoseSync.rotationCenterX),
+    rotationCenterY: roundForState(state.objPoseSync.rotationCenterY),
+    rotationCenterZ: roundForState(state.objPoseSync.rotationCenterZ),
     appliedYawDeg: roundForState(state.objPoseSync.appliedYawDeg),
     appliedPitchDeg: roundForState(state.objPoseSync.appliedPitchDeg),
     appliedRollDeg: roundForState(state.objPoseSync.appliedRollDeg),
     source: state.objPoseSync.source,
+  }
+}
+
+function getObjPoseSyncRotationCenter(): ObjVertex {
+  return {
+    x: state.objPoseSync.rotationCenterX,
+    y: state.objPoseSync.rotationCenterY,
+    z: state.objPoseSync.rotationCenterZ,
   }
 }
 
