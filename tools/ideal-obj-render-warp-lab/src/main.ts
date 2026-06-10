@@ -6,7 +6,7 @@ import type { Matrix, NormalizedLandmark } from "@mediapipe/tasks-vision"
 import "./style.css"
 
 type PreviewTab = "obj" | "renderedIdeal" | "live"
-type DebugTab = "summary" | "current" | "obj" | "renderedIdeal" | "warpMesh" | "raw"
+type DebugTab = "summary" | "current" | "obj" | "renderedIdeal" | "realtime" | "warpMesh" | "raw"
 type PlaybackStatus = "stopped" | "playing" | "paused"
 type ObjParseStatus = "not_loaded" | "not_parsed" | "parsed" | "error"
 type ObjPreviewMode = "points" | "wireframe" | "points_wireframe"
@@ -28,6 +28,14 @@ type MediaPipeStatus =
   | "initializing"
   | "ready"
   | "disposed"
+  | "error"
+type RealtimeMode =
+  | "current_analysis_obj_render"
+  | "current_analysis_obj_render_mediapipe_redetect"
+type RealtimeStatus =
+  | "idle"
+  | "running"
+  | "stopped"
   | "error"
 type ExpressionGroup =
   | "neutral"
@@ -219,6 +227,23 @@ type CurrentFrameAnalysis = {
   errorMessage: string | null
 }
 
+type RealtimeDebugState = {
+  status: RealtimeStatus
+  mode: RealtimeMode
+  targetFps: number
+  frameCount: number
+  skippedCount: number
+  errorCount: number
+  currentAnalysisMs: number | null
+  objRenderMs: number | null
+  mediaPipeRedetectMs: number | null
+  totalMs: number | null
+  averageTotalMs: number | null
+  effectiveFps: number | null
+  lastUpdatedAt: string | null
+  errorMessage: string | null
+}
+
 type Rect = {
   x: number
   y: number
@@ -254,6 +279,7 @@ type LabState = {
     liveTimestampMs: number
   }
   currentAnalysis: CurrentFrameAnalysis
+  realtimeDebug: RealtimeDebugState
   logs: string[]
 }
 
@@ -264,6 +290,7 @@ const REQUIRED_LANDMARK_COUNT = 478
 const LANDMARK_PREVIEW_COUNT = 5
 const MEDIAPIPE_TIMESTAMP_STEP_MS = 1000 / 30
 const LIVE_AUTO_ANALYSIS_INTERVAL_SEC = 0.35
+const REALTIME_TARGET_FPS_OPTIONS = [5, 10, 15, 30] as const
 const RAD_TO_DEG = 180 / Math.PI
 const STRONG_EXPRESSION_THRESHOLD = 0.35
 const MIXED_EXPRESSION_THRESHOLD = 0.28
@@ -291,9 +318,15 @@ const debugTabs: TabOption<DebugTab>[] = [
   { label: "現在顔", value: "current" },
   { label: "OBJ", value: "obj" },
   { label: "レンダー理想", value: "renderedIdeal" },
+  { label: "リアルタイム", value: "realtime" },
   { label: "ワープメッシュ", value: "warpMesh" },
   { label: "Raw Debug", value: "raw" },
 ]
+
+const realtimeModeLabels: Record<RealtimeMode, string> = {
+  current_analysis_obj_render: "現在顔解析 + OBJレンダー",
+  current_analysis_obj_render_mediapipe_redetect: "現在顔解析 + OBJレンダー + MediaPipe再検出",
+}
 
 const state: LabState = {
   activePreviewTab: "obj",
@@ -334,6 +367,7 @@ const state: LabState = {
     liveTimestampMs: 0,
   },
   currentAnalysis: createEmptyCurrentAnalysis(),
+  realtimeDebug: createDefaultRealtimeDebugState(),
   logs: ["ラボを初期化しました。レンダー理想2D preview は使用できます。renderedIdeal478 / WebGL warp は未実装です。"],
 }
 
@@ -411,6 +445,9 @@ let liveFaceLandmarkerPromise: Promise<FaceLandmarker> | null = null
 let liveAnalysisInProgress = false
 let liveAnalysisRequestId = 0
 let lastAutoLiveAnalysisAtSec = Number.NEGATIVE_INFINITY
+let realtimeTimerId: number | null = null
+let realtimeRunStartedAtMs: number | null = null
+let realtimeTickInProgress = false
 let objPreviewDrag:
   | {
       pointerId: number
@@ -567,14 +604,7 @@ function renderLivePreview() {
             </div>
           </div>
           <div class="obj-preview-controls live-obj-controls" aria-label="現在姿勢 OBJ preview 操作">
-            <label class="select-field">
-              <span>表示モード</span>
-              <select data-control="live-obj-preview-mode">
-                <option value="points">点群</option>
-                <option value="wireframe">ワイヤー</option>
-                <option value="points_wireframe">点群 + ワイヤー</option>
-              </select>
-            </label>
+            <p class="control-note">現在姿勢OBJは、姿勢同期確認用のワイヤー表示です。</p>
             <div class="button-row">
               <button class="small-button" type="button" data-action="live-obj-current-pose">現在姿勢</button>
               <button class="small-button" type="button" data-action="live-obj-reset-view">表示リセット</button>
@@ -628,6 +658,41 @@ function renderLivePreview() {
           </div>
         </section>
       </div>
+      <section class="realtime-control-panel" aria-label="リアルタイム検証">
+        <div class="realtime-control-header">
+          <div>
+            <h3>リアルタイム検証</h3>
+            <p>ライブ現在顔解析と現在姿勢OBJレンダーを、指定FPSの目安で繰り返します。</p>
+          </div>
+          <div class="button-row realtime-buttons">
+            <button class="small-button" type="button" data-action="realtime-start">開始</button>
+            <button class="small-button" type="button" data-action="realtime-stop">停止</button>
+            <button class="small-button" type="button" data-action="realtime-reset">リセット</button>
+          </div>
+        </div>
+        <div class="realtime-control-grid">
+          <fieldset class="mode-fieldset">
+            <legend>処理モード</legend>
+            <label class="radio-option">
+              <input type="radio" name="realtime-mode" value="current_analysis_obj_render" data-control="realtime-mode" />
+              <span>Mode A（現在顔解析 + OBJレンダー）</span>
+            </label>
+            <label class="radio-option">
+              <input type="radio" name="realtime-mode" value="current_analysis_obj_render_mediapipe_redetect" data-control="realtime-mode" disabled />
+              <span>Mode B（現在顔解析 + OBJレンダー + MediaPipe再検出 / 未実装）</span>
+            </label>
+          </fieldset>
+          <label class="select-field realtime-fps-field">
+            <span>目標FPS</span>
+            <select data-control="realtime-target-fps">
+              ${REALTIME_TARGET_FPS_OPTIONS.map((fps) => `<option value="${fps}">${fps}</option>`).join("")}
+            </select>
+          </label>
+          <div class="realtime-inline-status" data-realtime-inline-status>
+            状態: idle / 実効FPS: 未計測
+          </div>
+        </div>
+      </section>
     </div>
   `
 }
@@ -765,14 +830,6 @@ function bindEvents() {
     }
   })
 
-  getElement<HTMLSelectElement>('[data-control="live-obj-preview-mode"]').addEventListener("change", (event) => {
-    const value = event.currentTarget.value
-    if (isObjPreviewMode(value)) {
-      state.objPreview.mode = value
-      renderAll()
-    }
-  })
-
   getElement<HTMLInputElement>('[data-action="obj-pose-sync-enabled"]').addEventListener("change", (event) => {
     state.objPoseSync.enabled = event.currentTarget.checked
     updateObjPoseSyncFromCurrentAnalysis()
@@ -808,6 +865,45 @@ function bindEvents() {
       rotationCenterZ: 0,
     }
     renderAll()
+  })
+
+  getElement<HTMLButtonElement>('[data-action="realtime-start"]').addEventListener("click", () => {
+    startRealtimeValidation()
+  })
+
+  getElement<HTMLButtonElement>('[data-action="realtime-stop"]').addEventListener("click", () => {
+    stopRealtimeValidation("stopped")
+    renderAll()
+  })
+
+  getElement<HTMLButtonElement>('[data-action="realtime-reset"]').addEventListener("click", () => {
+    resetRealtimeValidation()
+    renderAll()
+  })
+
+  app.querySelectorAll<HTMLInputElement>('[data-control="realtime-mode"]').forEach((input) => {
+    input.addEventListener("change", (event) => {
+      const value = event.currentTarget.value
+      if (isRealtimeMode(value)) {
+        state.realtimeDebug.mode = value
+        state.realtimeDebug.errorMessage =
+          value === "current_analysis_obj_render_mediapipe_redetect"
+            ? "MediaPipe再検出は未実装です。"
+            : null
+        renderAll()
+      }
+    })
+  })
+
+  getElement<HTMLSelectElement>('[data-control="realtime-target-fps"]').addEventListener("change", (event) => {
+    const value = Number(event.currentTarget.value)
+    if (isRealtimeTargetFps(value)) {
+      state.realtimeDebug.targetFps = value
+      if (state.realtimeDebug.status === "running") {
+        restartRealtimeTimer()
+      }
+      renderAll()
+    }
   })
 
   bindObjPreviewPreset("obj-preview-front", { yawDeg: 0, pitchDeg: 0, rollDeg: 0 })
@@ -1017,6 +1113,7 @@ function loadLiveVideo(file: File) {
     URL.revokeObjectURL(state.liveVideo.objectUrl)
   }
 
+  stopRealtimeValidation("stopped")
   resetLiveAnalysisResults()
   const objectUrl = URL.createObjectURL(file)
   state.liveVideo = {
@@ -1089,7 +1186,8 @@ async function initializeFaceLandmarker() {
 }
 
 async function analyzeCurrentLiveFrame(
-  reason: "manual" | "timeupdate" | "seeked" | "pause" | "ended",
+  reason: "manual" | "timeupdate" | "seeked" | "pause" | "ended" | "realtime",
+  options: { skipFinalRender?: boolean } = {},
 ) {
   if (!state.liveVideo.loaded || liveAnalysisInProgress) {
     return
@@ -1103,7 +1201,9 @@ async function analyzeCurrentLiveFrame(
       errorMessage: "動画フレームがまだ読み込まれていません。",
     }
     updateObjPoseSyncFromCurrentAnalysis()
-    renderAll()
+    if (!options.skipFinalRender) {
+      renderAll()
+    }
     return
   }
 
@@ -1116,7 +1216,9 @@ async function analyzeCurrentLiveFrame(
     errorMessage: null,
   }
   updateObjPoseSyncFromCurrentAnalysis()
-  renderAll()
+  if (!options.skipFinalRender) {
+    renderAll()
+  }
 
   try {
     const detector = await getLiveFaceLandmarker()
@@ -1157,7 +1259,9 @@ async function analyzeCurrentLiveFrame(
     addLog(`ライブ動画 current frame 解析でエラーが発生しました: ${message}`)
   } finally {
     liveAnalysisInProgress = false
-    renderAll()
+    if (!options.skipFinalRender) {
+      renderAll()
+    }
   }
 }
 
@@ -1405,6 +1509,164 @@ function seekLiveVideoTo(targetSec: number) {
   renderAll()
 }
 
+function startRealtimeValidation() {
+  if (state.realtimeDebug.mode === "current_analysis_obj_render_mediapipe_redetect") {
+    state.realtimeDebug = {
+      ...state.realtimeDebug,
+      status: "error",
+      errorCount: state.realtimeDebug.errorCount + 1,
+      errorMessage: "Mode B（現在顔解析 + OBJレンダー + MediaPipe再検出）は未実装です。",
+      lastUpdatedAt: formatUpdatedAt(),
+    }
+    addLog("リアルタイム検証を開始できません。MediaPipe再検出は未実装です。")
+    renderAll()
+    return
+  }
+
+  if (!state.liveVideo.loaded) {
+    state.realtimeDebug = {
+      ...state.realtimeDebug,
+      status: "error",
+      errorCount: state.realtimeDebug.errorCount + 1,
+      errorMessage: "ライブ動画を読み込んでから開始してください。",
+      lastUpdatedAt: formatUpdatedAt(),
+    }
+    addLog("リアルタイム検証を開始できません。ライブ動画が未読込です。")
+    renderAll()
+    return
+  }
+
+  state.realtimeDebug = {
+    ...state.realtimeDebug,
+    status: "running",
+    errorMessage: null,
+    lastUpdatedAt: formatUpdatedAt(),
+  }
+  realtimeRunStartedAtMs = performance.now()
+  restartRealtimeTimer()
+  addLog("リアルタイム検証を開始しました。")
+  renderAll()
+  void runRealtimeTick()
+}
+
+function stopRealtimeValidation(nextStatus: Extract<RealtimeStatus, "idle" | "stopped" | "error">) {
+  if (realtimeTimerId !== null) {
+    window.clearInterval(realtimeTimerId)
+    realtimeTimerId = null
+  }
+  realtimeTickInProgress = false
+  realtimeRunStartedAtMs = null
+  if (state.realtimeDebug.status === "running" || nextStatus !== "stopped") {
+    state.realtimeDebug = {
+      ...state.realtimeDebug,
+      status: nextStatus,
+      lastUpdatedAt: formatUpdatedAt(),
+    }
+  }
+}
+
+function resetRealtimeValidation() {
+  const mode = state.realtimeDebug.mode
+  const targetFps = state.realtimeDebug.targetFps
+  stopRealtimeValidation("idle")
+  state.realtimeDebug = createDefaultRealtimeDebugState({ mode, targetFps })
+  addLog("リアルタイム検証をリセットしました。")
+}
+
+function restartRealtimeTimer() {
+  if (realtimeTimerId !== null) {
+    window.clearInterval(realtimeTimerId)
+  }
+  const intervalMs = Math.max(1, Math.round(1000 / state.realtimeDebug.targetFps))
+  realtimeTimerId = window.setInterval(() => {
+    void runRealtimeTick()
+  }, intervalMs)
+}
+
+async function runRealtimeTick() {
+  if (state.realtimeDebug.status !== "running") {
+    return
+  }
+
+  if (realtimeTickInProgress || liveAnalysisInProgress) {
+    state.realtimeDebug = {
+      ...state.realtimeDebug,
+      skippedCount: state.realtimeDebug.skippedCount + 1,
+      lastUpdatedAt: formatUpdatedAt(),
+    }
+    renderAll()
+    return
+  }
+
+  if (state.realtimeDebug.mode === "current_analysis_obj_render_mediapipe_redetect") {
+    state.realtimeDebug = {
+      ...state.realtimeDebug,
+      status: "error",
+      errorCount: state.realtimeDebug.errorCount + 1,
+      errorMessage: "MediaPipe再検出は未実装です。",
+      lastUpdatedAt: formatUpdatedAt(),
+    }
+    stopRealtimeValidation("error")
+    renderAll()
+    return
+  }
+
+  realtimeTickInProgress = true
+  const totalStartMs = performance.now()
+  let currentAnalysisMs: number | null = null
+  let objRenderMs: number | null = null
+
+  try {
+    const analysisStartMs = performance.now()
+    await analyzeCurrentLiveFrame("realtime", { skipFinalRender: true })
+    currentAnalysisMs = performance.now() - analysisStartMs
+
+    const renderStartMs = performance.now()
+    renderRenderedIdealCanvas()
+    objRenderMs = performance.now() - renderStartMs
+
+    const totalMs = performance.now() - totalStartMs
+    const frameCount = state.realtimeDebug.frameCount + 1
+    const averageTotalMs = state.realtimeDebug.averageTotalMs === null
+      ? totalMs
+      : ((state.realtimeDebug.averageTotalMs * state.realtimeDebug.frameCount) + totalMs) / frameCount
+    const elapsedSec = realtimeRunStartedAtMs === null
+      ? null
+      : (performance.now() - realtimeRunStartedAtMs) / 1000
+
+    state.realtimeDebug = {
+      ...state.realtimeDebug,
+      status: "running",
+      frameCount,
+      currentAnalysisMs,
+      objRenderMs,
+      mediaPipeRedetectMs: null,
+      totalMs,
+      averageTotalMs,
+      effectiveFps: elapsedSec && elapsedSec > 0 ? frameCount / elapsedSec : null,
+      lastUpdatedAt: formatUpdatedAt(),
+      errorMessage: null,
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    state.realtimeDebug = {
+      ...state.realtimeDebug,
+      status: "error",
+      errorCount: state.realtimeDebug.errorCount + 1,
+      currentAnalysisMs,
+      objRenderMs,
+      totalMs: performance.now() - totalStartMs,
+      lastUpdatedAt: formatUpdatedAt(),
+      errorMessage: message,
+    }
+    stopRealtimeValidation("error")
+    addLog(`リアルタイム検証でエラーが発生しました: ${message}`)
+  } finally {
+    realtimeTickInProgress = false
+    renderAll()
+  }
+}
+
 function renderAll() {
   updateObjPoseSyncFromCurrentAnalysis()
   renderPreviewTabs()
@@ -1478,7 +1740,6 @@ function renderControls() {
 
   renderLiveAnalysisCard()
   getElement<HTMLSelectElement>('[data-control="obj-preview-mode"]').value = state.objPreview.mode
-  getElement<HTMLSelectElement>('[data-control="live-obj-preview-mode"]').value = state.objPreview.mode
   setChecked("obj-pose-sync-enabled", state.objPoseSync.enabled)
   setChecked("obj-pose-yaw-invert", state.objPoseSync.yawSign === -1)
   setChecked("obj-pose-pitch-invert", state.objPoseSync.pitchSign === -1)
@@ -1490,6 +1751,22 @@ function renderControls() {
   setNumberValue("obj-pose-rotation-center-y", state.objPoseSync.rotationCenterY)
   setNumberValue("obj-pose-rotation-center-z", state.objPoseSync.rotationCenterZ)
   renderLiveObjPoseSummaryCard()
+  renderRealtimeControls()
+}
+
+function renderRealtimeControls() {
+  app.querySelectorAll<HTMLInputElement>('[data-control="realtime-mode"]').forEach((input) => {
+    input.checked = input.value === state.realtimeDebug.mode
+  })
+
+  getElement<HTMLSelectElement>('[data-control="realtime-target-fps"]').value = String(
+    state.realtimeDebug.targetFps,
+  )
+  setDisabled('[data-action="realtime-start"]', state.realtimeDebug.status === "running")
+  setDisabled('[data-action="realtime-stop"]', state.realtimeDebug.status !== "running")
+
+  getElement<HTMLElement>("[data-realtime-inline-status]").textContent =
+    `状態: ${formatRealtimeStatus(state.realtimeDebug.status)} / 実効FPS: ${formatRealtimeNullableNumber(state.realtimeDebug.effectiveFps)} / 判定: ${getRealtimeJudgement()}`
 }
 
 function renderLiveAnalysisCard() {
@@ -2128,6 +2405,9 @@ function renderDebugContent() {
   if (state.activeDebugTab === "renderedIdeal") {
     appendDefinitionItems(list, getRenderedIdealItems())
   }
+  if (state.activeDebugTab === "realtime") {
+    appendDefinitionItems(list, getRealtimeItems())
+  }
   if (state.activeDebugTab === "warpMesh") {
     appendDefinitionItems(list, getWarpMeshItems())
   }
@@ -2177,6 +2457,11 @@ function getSummaryItems(): Array<[string, string]> {
     ["renderedIdealRenderMode", state.renderedIdeal.summary.renderMode],
     ["renderedIdealDrawnFaceCount", formatNullableCount(state.renderedIdeal.summary.drawnFaceCount)],
     ["renderedIdealSkippedFaceCount", formatNullableCount(state.renderedIdeal.summary.skippedFaceCount)],
+    ["realtimeStatus", state.realtimeDebug.status],
+    ["realtimeMode", state.realtimeDebug.mode],
+    ["realtimeTargetFps", formatNumber(state.realtimeDebug.targetFps)],
+    ["realtimeEffectiveFps", formatRealtimeNullableNumber(state.realtimeDebug.effectiveFps)],
+    ["realtimeTotalMs", formatRealtimeNullableNumber(state.realtimeDebug.totalMs)],
     ["warpStatus", "not_implemented"],
   ]
 }
@@ -2273,6 +2558,26 @@ function getRenderedIdealItems(): Array<[string, string]> {
   ]
 }
 
+function getRealtimeItems(): Array<[string, string]> {
+  return [
+    ["状態", formatRealtimeStatus(state.realtimeDebug.status)],
+    ["処理モード", realtimeModeLabels[state.realtimeDebug.mode]],
+    ["目標FPS", formatNumber(state.realtimeDebug.targetFps)],
+    ["実効FPS", formatRealtimeNullableNumber(state.realtimeDebug.effectiveFps)],
+    ["処理フレーム数", formatNullableCount(state.realtimeDebug.frameCount)],
+    ["スキップ数", formatNullableCount(state.realtimeDebug.skippedCount)],
+    ["エラー数", formatNullableCount(state.realtimeDebug.errorCount)],
+    ["現在顔解析ms", formatRealtimeNullableNumber(state.realtimeDebug.currentAnalysisMs)],
+    ["OBJレンダーms", formatRealtimeNullableNumber(state.realtimeDebug.objRenderMs)],
+    ["MediaPipe再検出ms", formatRealtimeNullableNumber(state.realtimeDebug.mediaPipeRedetectMs)],
+    ["合計ms", formatRealtimeNullableNumber(state.realtimeDebug.totalMs)],
+    ["平均合計ms", formatRealtimeNullableNumber(state.realtimeDebug.averageTotalMs)],
+    ["最終更新時刻", state.realtimeDebug.lastUpdatedAt ?? "未計測"],
+    ["エラーメッセージ", state.realtimeDebug.errorMessage ?? "なし"],
+    ["判定", getRealtimeJudgement()],
+  ]
+}
+
 function getWarpMeshItems(): Array<[string, string]> {
   return [
     ["sourceVerticesStatus", "not_ready"],
@@ -2291,6 +2596,7 @@ function getRawState() {
     objFile: state.objFile,
     objSummary: state.objSummary,
     objPreviewState: getRoundedObjPreviewState(),
+    realtimeDebugState: getRoundedRealtimeDebugState(),
     objPoseSyncState: getRoundedObjPoseSyncState(),
     currentPoseSummary: roundPoseForState(state.currentAnalysis.pose),
     appliedPoseSummary: {
@@ -2596,6 +2902,27 @@ function createEmptyCurrentAnalysis(): CurrentFrameAnalysis {
   }
 }
 
+function createDefaultRealtimeDebugState(
+  overrides: Partial<Pick<RealtimeDebugState, "mode" | "targetFps">> = {},
+): RealtimeDebugState {
+  return {
+    status: "idle",
+    mode: overrides.mode ?? "current_analysis_obj_render",
+    targetFps: overrides.targetFps ?? 10,
+    frameCount: 0,
+    skippedCount: 0,
+    errorCount: 0,
+    currentAnalysisMs: null,
+    objRenderMs: null,
+    mediaPipeRedetectMs: null,
+    totalMs: null,
+    averageTotalMs: null,
+    effectiveFps: null,
+    lastUpdatedAt: null,
+    errorMessage: null,
+  }
+}
+
 function createFileObjSummary(file: File, parseStatus: ObjParseStatus): ObjSummary {
   return {
     ...createEmptyObjSummary(),
@@ -2867,6 +3194,7 @@ function clearLiveOverlay() {
 }
 
 function cleanup() {
+  stopRealtimeValidation("stopped")
   if (state.liveVideo.objectUrl) {
     URL.revokeObjectURL(state.liveVideo.objectUrl)
     state.liveVideo.objectUrl = null
@@ -2947,6 +3275,15 @@ function isDebugTab(value: string | undefined): value is DebugTab {
 
 function isObjPreviewMode(value: string): value is ObjPreviewMode {
   return value === "points" || value === "wireframe" || value === "points_wireframe"
+}
+
+function isRealtimeMode(value: string): value is RealtimeMode {
+  return value === "current_analysis_obj_render" ||
+    value === "current_analysis_obj_render_mediapipe_redetect"
+}
+
+function isRealtimeTargetFps(value: number): value is typeof REALTIME_TARGET_FPS_OPTIONS[number] {
+  return REALTIME_TARGET_FPS_OPTIONS.some((fps) => fps === value)
 }
 
 function isRenderedIdealBackgroundMode(value: string): value is RenderedIdealBackgroundMode {
@@ -3038,8 +3375,46 @@ function formatQualitySummary(summary: QualitySummary) {
   return `${summary.status} / landmarks ${summary.landmarkCount}/${summary.expectedLandmarkCount} / pose ${summary.hasPose ? "available" : "missing"}`
 }
 
+function formatRealtimeStatus(status: RealtimeStatus) {
+  if (status === "idle") {
+    return "未開始"
+  }
+  if (status === "running") {
+    return "実行中"
+  }
+  if (status === "stopped") {
+    return "停止"
+  }
+  return "エラー"
+}
+
+function formatRealtimeNullableNumber(value: number | null) {
+  return value === null || !Number.isFinite(value) ? "未計測" : formatNumber(value)
+}
+
+function getRealtimeJudgement() {
+  if (state.realtimeDebug.status === "error") {
+    return "エラー"
+  }
+  const effectiveFps = state.realtimeDebug.effectiveFps
+  if (effectiveFps === null || !Number.isFinite(effectiveFps)) {
+    return "未計測"
+  }
+  if (effectiveFps >= 15) {
+    return "良好"
+  }
+  if (effectiveFps >= 10) {
+    return "警告"
+  }
+  return "厳しい"
+}
+
 function formatNumber(value: number) {
   return Number(value.toFixed(6)).toString()
+}
+
+function formatUpdatedAt() {
+  return new Date().toLocaleTimeString("ja-JP", { hour12: false })
 }
 
 function formatSeconds(value: number | null) {
@@ -3115,6 +3490,18 @@ function getRoundedObjPoseSyncState() {
   }
 }
 
+function getRoundedRealtimeDebugState(): RealtimeDebugState {
+  return {
+    ...state.realtimeDebug,
+    currentAnalysisMs: roundForState(state.realtimeDebug.currentAnalysisMs),
+    objRenderMs: roundForState(state.realtimeDebug.objRenderMs),
+    mediaPipeRedetectMs: roundForState(state.realtimeDebug.mediaPipeRedetectMs),
+    totalMs: roundForState(state.realtimeDebug.totalMs),
+    averageTotalMs: roundForState(state.realtimeDebug.averageTotalMs),
+    effectiveFps: roundForState(state.realtimeDebug.effectiveFps),
+  }
+}
+
 function getObjPoseSyncRotationCenter(): ObjVertex {
   return {
     x: state.objPoseSync.rotationCenterX,
@@ -3132,6 +3519,7 @@ function getObjPoseSyncPreviewState(): ObjPreviewState {
     zoom: 1,
     panX: 0,
     panY: 0,
+    mode: "wireframe",
   }
 }
 
