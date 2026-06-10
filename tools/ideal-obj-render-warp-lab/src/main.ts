@@ -227,6 +227,14 @@ type CurrentFrameAnalysis = {
   errorMessage: string | null
 }
 
+type CurrentAnalysisTimingBreakdown = {
+  mediaPipeDetectMs: number | null
+  buildCurrentAnalysisMs: number | null
+  liveOverlayDrawMs: number | null
+  debugUpdateMs: number | null
+  currentAnalysisTotalMs: number | null
+}
+
 type RealtimeDebugState = {
   status: RealtimeStatus
   mode: RealtimeMode
@@ -238,10 +246,24 @@ type RealtimeDebugState = {
   objRenderMs: number | null
   mediaPipeRedetectMs: number | null
   totalMs: number | null
+  currentAnalysisTimingBreakdown: CurrentAnalysisTimingBreakdown
+  averageCurrentAnalysisTimingBreakdown: CurrentAnalysisTimingBreakdown
+  averageObjRenderMs: number | null
   averageTotalMs: number | null
   effectiveFps: number | null
   lastUpdatedAt: string | null
   errorMessage: string | null
+}
+
+type RealtimeTimingSample = {
+  currentAnalysisTimingBreakdown: CurrentAnalysisTimingBreakdown
+  objRenderMs: number | null
+  totalMs: number | null
+}
+
+type RenderUpdateTiming = {
+  liveOverlayDrawMs: number | null
+  debugUpdateMs: number | null
 }
 
 type Rect = {
@@ -291,6 +313,7 @@ const LANDMARK_PREVIEW_COUNT = 5
 const MEDIAPIPE_TIMESTAMP_STEP_MS = 1000 / 30
 const LIVE_AUTO_ANALYSIS_INTERVAL_SEC = 0.35
 const REALTIME_TARGET_FPS_OPTIONS = [5, 10, 15, 30] as const
+const REALTIME_AVERAGE_SAMPLE_COUNT = 30
 const RAD_TO_DEG = 180 / Math.PI
 const STRONG_EXPRESSION_THRESHOLD = 0.35
 const MIXED_EXPRESSION_THRESHOLD = 0.28
@@ -448,6 +471,7 @@ let lastAutoLiveAnalysisAtSec = Number.NEGATIVE_INFINITY
 let realtimeTimerId: number | null = null
 let realtimeRunStartedAtMs: number | null = null
 let realtimeTickInProgress = false
+let realtimeTimingSamples: RealtimeTimingSample[] = []
 let objPreviewDrag:
   | {
       pointerId: number
@@ -662,7 +686,8 @@ function renderLivePreview() {
         <div class="realtime-control-header">
           <div>
             <h3>リアルタイム検証</h3>
-            <p>ライブ現在顔解析と現在姿勢OBJレンダーを、指定FPSの目安で繰り返します。</p>
+            <p>動画を再生してから「開始」を押すと、再生中のフレームに対して現在顔解析とOBJレンダーを繰り返し、処理時間を測ります。</p>
+            <p class="realtime-playback-note" data-realtime-playback-note></p>
           </div>
           <div class="button-row realtime-buttons">
             <button class="small-button" type="button" data-action="realtime-start">開始</button>
@@ -1188,10 +1213,13 @@ async function initializeFaceLandmarker() {
 async function analyzeCurrentLiveFrame(
   reason: "manual" | "timeupdate" | "seeked" | "pause" | "ended" | "realtime",
   options: { skipFinalRender?: boolean } = {},
-) {
+): Promise<CurrentAnalysisTimingBreakdown | null> {
   if (!state.liveVideo.loaded || liveAnalysisInProgress) {
-    return
+    return null
   }
+
+  const analysisTiming = createEmptyCurrentAnalysisTimingBreakdown()
+  const analysisStartMs = performance.now()
 
   if (liveVideoElement.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
     state.currentAnalysis = {
@@ -1204,7 +1232,8 @@ async function analyzeCurrentLiveFrame(
     if (!options.skipFinalRender) {
       renderAll()
     }
-    return
+    analysisTiming.currentAnalysisTotalMs = performance.now() - analysisStartMs
+    return analysisTiming
   }
 
   const requestId = liveAnalysisRequestId + 1
@@ -1223,12 +1252,18 @@ async function analyzeCurrentLiveFrame(
   try {
     const detector = await getLiveFaceLandmarker()
     if (requestId !== liveAnalysisRequestId) {
-      return
+      analysisTiming.currentAnalysisTotalMs = performance.now() - analysisStartMs
+      return analysisTiming
     }
 
     const timeSec = liveVideoElement.currentTime || state.liveVideo.currentTimeSec || 0
+    const detectStartMs = performance.now()
     const result = detector.detectForVideo(liveVideoElement, nextLiveTimestampMs())
+    analysisTiming.mediaPipeDetectMs = performance.now() - detectStartMs
+
+    const buildStartMs = performance.now()
     state.currentAnalysis = buildCurrentFrameAnalysis(result, timeSec)
+    analysisTiming.buildCurrentAnalysisMs = performance.now() - buildStartMs
     updateObjPoseSyncFromCurrentAnalysis()
     lastAutoLiveAnalysisAtSec = timeSec
 
@@ -1259,10 +1294,18 @@ async function analyzeCurrentLiveFrame(
     addLog(`ライブ動画 current frame 解析でエラーが発生しました: ${message}`)
   } finally {
     liveAnalysisInProgress = false
+    analysisTiming.currentAnalysisTotalMs = sumNullableTimings(
+      analysisTiming.mediaPipeDetectMs,
+      analysisTiming.buildCurrentAnalysisMs,
+      analysisTiming.liveOverlayDrawMs,
+      analysisTiming.debugUpdateMs,
+    ) ?? (performance.now() - analysisStartMs)
     if (!options.skipFinalRender) {
       renderAll()
     }
   }
+
+  return analysisTiming
 }
 
 function maybeAnalyzeLiveFrame() {
@@ -1569,8 +1612,41 @@ function resetRealtimeValidation() {
   const mode = state.realtimeDebug.mode
   const targetFps = state.realtimeDebug.targetFps
   stopRealtimeValidation("idle")
+  realtimeTimingSamples = []
   state.realtimeDebug = createDefaultRealtimeDebugState({ mode, targetFps })
   addLog("リアルタイム検証をリセットしました。")
+}
+
+function addRealtimeTimingSample(sample: RealtimeTimingSample) {
+  realtimeTimingSamples = [...realtimeTimingSamples, sample].slice(-REALTIME_AVERAGE_SAMPLE_COUNT)
+}
+
+function calculateRealtimeAverageTiming() {
+  return {
+    averageCurrentAnalysisTimingBreakdown: {
+      mediaPipeDetectMs: averageNullableTiming(
+        realtimeTimingSamples.map((sample) => sample.currentAnalysisTimingBreakdown.mediaPipeDetectMs),
+      ),
+      buildCurrentAnalysisMs: averageNullableTiming(
+        realtimeTimingSamples.map((sample) => sample.currentAnalysisTimingBreakdown.buildCurrentAnalysisMs),
+      ),
+      liveOverlayDrawMs: averageNullableTiming(
+        realtimeTimingSamples.map((sample) => sample.currentAnalysisTimingBreakdown.liveOverlayDrawMs),
+      ),
+      debugUpdateMs: averageNullableTiming(
+        realtimeTimingSamples.map((sample) => sample.currentAnalysisTimingBreakdown.debugUpdateMs),
+      ),
+      currentAnalysisTotalMs: averageNullableTiming(
+        realtimeTimingSamples.map((sample) => sample.currentAnalysisTimingBreakdown.currentAnalysisTotalMs),
+      ),
+    },
+    averageObjRenderMs: averageNullableTiming(
+      realtimeTimingSamples.map((sample) => sample.objRenderMs),
+    ),
+    averageTotalMs: averageNullableTiming(
+      realtimeTimingSamples.map((sample) => sample.totalMs),
+    ),
+  }
 }
 
 function restartRealtimeTimer() {
@@ -1615,21 +1691,18 @@ async function runRealtimeTick() {
   const totalStartMs = performance.now()
   let currentAnalysisMs: number | null = null
   let objRenderMs: number | null = null
+  let currentAnalysisTimingBreakdown = createEmptyCurrentAnalysisTimingBreakdown()
 
   try {
-    const analysisStartMs = performance.now()
-    await analyzeCurrentLiveFrame("realtime", { skipFinalRender: true })
-    currentAnalysisMs = performance.now() - analysisStartMs
+    currentAnalysisTimingBreakdown =
+      await analyzeCurrentLiveFrame("realtime", { skipFinalRender: true }) ??
+      createEmptyCurrentAnalysisTimingBreakdown()
 
     const renderStartMs = performance.now()
     renderRenderedIdealCanvas()
     objRenderMs = performance.now() - renderStartMs
 
-    const totalMs = performance.now() - totalStartMs
     const frameCount = state.realtimeDebug.frameCount + 1
-    const averageTotalMs = state.realtimeDebug.averageTotalMs === null
-      ? totalMs
-      : ((state.realtimeDebug.averageTotalMs * state.realtimeDebug.frameCount) + totalMs) / frameCount
     const elapsedSec = realtimeRunStartedAtMs === null
       ? null
       : (performance.now() - realtimeRunStartedAtMs) / 1000
@@ -1638,15 +1711,49 @@ async function runRealtimeTick() {
       ...state.realtimeDebug,
       status: "running",
       frameCount,
-      currentAnalysisMs,
+      currentAnalysisMs: currentAnalysisTimingBreakdown.currentAnalysisTotalMs,
       objRenderMs,
       mediaPipeRedetectMs: null,
-      totalMs,
-      averageTotalMs,
+      totalMs: sumNullableTimings(currentAnalysisTimingBreakdown.currentAnalysisTotalMs, objRenderMs),
+      currentAnalysisTimingBreakdown,
       effectiveFps: elapsedSec && elapsedSec > 0 ? frameCount / elapsedSec : null,
       lastUpdatedAt: formatUpdatedAt(),
       errorMessage: null,
     }
+
+    const renderTiming = renderAll()
+    currentAnalysisTimingBreakdown = {
+      ...currentAnalysisTimingBreakdown,
+      liveOverlayDrawMs: renderTiming.liveOverlayDrawMs,
+      debugUpdateMs: renderTiming.debugUpdateMs,
+    }
+    currentAnalysisTimingBreakdown.currentAnalysisTotalMs = sumNullableTimings(
+      currentAnalysisTimingBreakdown.mediaPipeDetectMs,
+      currentAnalysisTimingBreakdown.buildCurrentAnalysisMs,
+      currentAnalysisTimingBreakdown.liveOverlayDrawMs,
+      currentAnalysisTimingBreakdown.debugUpdateMs,
+    )
+    currentAnalysisMs = currentAnalysisTimingBreakdown.currentAnalysisTotalMs
+    const totalMs = sumNullableTimings(currentAnalysisMs, objRenderMs)
+    addRealtimeTimingSample({
+      currentAnalysisTimingBreakdown,
+      objRenderMs,
+      totalMs,
+    })
+    const averageTiming = calculateRealtimeAverageTiming()
+
+    state.realtimeDebug = {
+      ...state.realtimeDebug,
+      currentAnalysisMs,
+      totalMs,
+      currentAnalysisTimingBreakdown,
+      averageCurrentAnalysisTimingBreakdown: averageTiming.averageCurrentAnalysisTimingBreakdown,
+      averageObjRenderMs: averageTiming.averageObjRenderMs,
+      averageTotalMs: averageTiming.averageTotalMs,
+      lastUpdatedAt: formatUpdatedAt(),
+    }
+    renderRealtimeControls()
+    renderDebugContent()
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     state.realtimeDebug = {
@@ -1655,6 +1762,7 @@ async function runRealtimeTick() {
       errorCount: state.realtimeDebug.errorCount + 1,
       currentAnalysisMs,
       objRenderMs,
+      currentAnalysisTimingBreakdown,
       totalMs: performance.now() - totalStartMs,
       lastUpdatedAt: formatUpdatedAt(),
       errorMessage: message,
@@ -1663,18 +1771,31 @@ async function runRealtimeTick() {
     addLog(`リアルタイム検証でエラーが発生しました: ${message}`)
   } finally {
     realtimeTickInProgress = false
-    renderAll()
+    if (state.realtimeDebug.status === "error") {
+      renderAll()
+    }
   }
 }
 
-function renderAll() {
+function renderAll(): RenderUpdateTiming {
   updateObjPoseSyncFromCurrentAnalysis()
   renderPreviewTabs()
   renderPreviewPanels()
   renderControls()
   renderDebugTabs()
+
+  const debugStartMs = performance.now()
   renderDebugContent()
+  const debugUpdateMs = performance.now() - debugStartMs
+
+  const overlayStartMs = performance.now()
   drawLiveOverlay()
+  const liveOverlayDrawMs = performance.now() - overlayStartMs
+
+  return {
+    liveOverlayDrawMs,
+    debugUpdateMs,
+  }
 }
 
 function renderPreviewTabs() {
@@ -1767,6 +1888,7 @@ function renderRealtimeControls() {
 
   getElement<HTMLElement>("[data-realtime-inline-status]").textContent =
     `状態: ${formatRealtimeStatus(state.realtimeDebug.status)} / 実効FPS: ${formatRealtimeNullableNumber(state.realtimeDebug.effectiveFps)} / 判定: ${getRealtimeJudgement()}`
+  getElement<HTMLElement>("[data-realtime-playback-note]").textContent = getRealtimePlaybackNote()
 }
 
 function renderLiveAnalysisCard() {
@@ -2462,6 +2584,10 @@ function getSummaryItems(): Array<[string, string]> {
     ["realtimeTargetFps", formatNumber(state.realtimeDebug.targetFps)],
     ["realtimeEffectiveFps", formatRealtimeNullableNumber(state.realtimeDebug.effectiveFps)],
     ["realtimeTotalMs", formatRealtimeNullableNumber(state.realtimeDebug.totalMs)],
+    ["mediaPipeDetectMs", formatRealtimeNullableNumber(state.realtimeDebug.currentAnalysisTimingBreakdown.mediaPipeDetectMs)],
+    ["buildCurrentAnalysisMs", formatRealtimeNullableNumber(state.realtimeDebug.currentAnalysisTimingBreakdown.buildCurrentAnalysisMs)],
+    ["liveOverlayDrawMs", formatRealtimeNullableNumber(state.realtimeDebug.currentAnalysisTimingBreakdown.liveOverlayDrawMs)],
+    ["debugUpdateMs", formatRealtimeNullableNumber(state.realtimeDebug.currentAnalysisTimingBreakdown.debugUpdateMs)],
     ["warpStatus", "not_implemented"],
   ]
 }
@@ -2559,6 +2685,8 @@ function getRenderedIdealItems(): Array<[string, string]> {
 }
 
 function getRealtimeItems(): Array<[string, string]> {
+  const breakdown = state.realtimeDebug.currentAnalysisTimingBreakdown
+  const averageBreakdown = state.realtimeDebug.averageCurrentAnalysisTimingBreakdown
   return [
     ["状態", formatRealtimeStatus(state.realtimeDebug.status)],
     ["処理モード", realtimeModeLabels[state.realtimeDebug.mode]],
@@ -2572,6 +2700,19 @@ function getRealtimeItems(): Array<[string, string]> {
     ["MediaPipe再検出ms", formatRealtimeNullableNumber(state.realtimeDebug.mediaPipeRedetectMs)],
     ["合計ms", formatRealtimeNullableNumber(state.realtimeDebug.totalMs)],
     ["平均合計ms", formatRealtimeNullableNumber(state.realtimeDebug.averageTotalMs)],
+    ["現在顔解析 内訳", ""],
+    ["MediaPipe検出ms", formatRealtimeNullableNumber(breakdown.mediaPipeDetectMs)],
+    ["解析結果整形ms", formatRealtimeNullableNumber(breakdown.buildCurrentAnalysisMs)],
+    ["ライブ重ね描画ms", formatRealtimeNullableNumber(breakdown.liveOverlayDrawMs)],
+    ["デバッグ更新ms", formatRealtimeNullableNumber(breakdown.debugUpdateMs)],
+    ["現在顔解析合計ms", formatRealtimeNullableNumber(breakdown.currentAnalysisTotalMs)],
+    ["平均MediaPipe検出ms", formatRealtimeNullableNumber(averageBreakdown.mediaPipeDetectMs)],
+    ["平均解析結果整形ms", formatRealtimeNullableNumber(averageBreakdown.buildCurrentAnalysisMs)],
+    ["平均ライブ重ね描画ms", formatRealtimeNullableNumber(averageBreakdown.liveOverlayDrawMs)],
+    ["平均デバッグ更新ms", formatRealtimeNullableNumber(averageBreakdown.debugUpdateMs)],
+    ["平均現在顔解析合計ms", formatRealtimeNullableNumber(averageBreakdown.currentAnalysisTotalMs)],
+    ["平均OBJレンダーms", formatRealtimeNullableNumber(state.realtimeDebug.averageObjRenderMs)],
+    ["ボトルネック", getRealtimeBottleneck()],
     ["最終更新時刻", state.realtimeDebug.lastUpdatedAt ?? "未計測"],
     ["エラーメッセージ", state.realtimeDebug.errorMessage ?? "なし"],
     ["判定", getRealtimeJudgement()],
@@ -2902,6 +3043,16 @@ function createEmptyCurrentAnalysis(): CurrentFrameAnalysis {
   }
 }
 
+function createEmptyCurrentAnalysisTimingBreakdown(): CurrentAnalysisTimingBreakdown {
+  return {
+    mediaPipeDetectMs: null,
+    buildCurrentAnalysisMs: null,
+    liveOverlayDrawMs: null,
+    debugUpdateMs: null,
+    currentAnalysisTotalMs: null,
+  }
+}
+
 function createDefaultRealtimeDebugState(
   overrides: Partial<Pick<RealtimeDebugState, "mode" | "targetFps">> = {},
 ): RealtimeDebugState {
@@ -2916,6 +3067,9 @@ function createDefaultRealtimeDebugState(
     objRenderMs: null,
     mediaPipeRedetectMs: null,
     totalMs: null,
+    currentAnalysisTimingBreakdown: createEmptyCurrentAnalysisTimingBreakdown(),
+    averageCurrentAnalysisTimingBreakdown: createEmptyCurrentAnalysisTimingBreakdown(),
+    averageObjRenderMs: null,
     averageTotalMs: null,
     effectiveFps: null,
     lastUpdatedAt: null,
@@ -3409,12 +3563,65 @@ function getRealtimeJudgement() {
   return "厳しい"
 }
 
+function getRealtimeBottleneck() {
+  const breakdown = state.realtimeDebug.currentAnalysisTimingBreakdown
+  const candidates: Array<[string, number | null]> = [
+    ["MediaPipe検出", breakdown.mediaPipeDetectMs],
+    ["解析結果整形", breakdown.buildCurrentAnalysisMs],
+    ["OBJレンダー", state.realtimeDebug.objRenderMs],
+    ["ライブ重ね描画", breakdown.liveOverlayDrawMs],
+    ["デバッグ更新", breakdown.debugUpdateMs],
+  ]
+  const measuredCandidates = candidates.filter((candidate): candidate is [string, number] =>
+    candidate[1] !== null && Number.isFinite(candidate[1]),
+  )
+  if (measuredCandidates.length === 0) {
+    return "未判定"
+  }
+  return measuredCandidates.reduce((largest, current) =>
+    current[1] > largest[1] ? current : largest,
+  )[0]
+}
+
 function formatNumber(value: number) {
   return Number(value.toFixed(6)).toString()
 }
 
 function formatUpdatedAt() {
   return new Date().toLocaleTimeString("ja-JP", { hour12: false })
+}
+
+function sumNullableTimings(...values: Array<number | null>) {
+  const measuredValues = values.filter((value): value is number =>
+    value !== null && Number.isFinite(value),
+  )
+  if (measuredValues.length === 0) {
+    return null
+  }
+  return measuredValues.reduce((sum, value) => sum + value, 0)
+}
+
+function averageNullableTiming(values: Array<number | null>) {
+  const measuredValues = values.filter((value): value is number =>
+    value !== null && Number.isFinite(value),
+  )
+  if (measuredValues.length === 0) {
+    return null
+  }
+  return measuredValues.reduce((sum, value) => sum + value, 0) / measuredValues.length
+}
+
+function getRealtimePlaybackNote() {
+  if (!state.liveVideo.loaded) {
+    return ""
+  }
+  if (state.realtimeDebug.status === "running" && state.liveVideo.playbackStatus !== "playing") {
+    return "ライブ動画が停止中のため、現在表示中のフレームを繰り返し解析しています。"
+  }
+  if (state.liveVideo.playbackStatus !== "playing") {
+    return "ライブ動画が停止中です。再生してから開始してください。"
+  }
+  return ""
 }
 
 function formatSeconds(value: number | null) {
@@ -3497,8 +3704,27 @@ function getRoundedRealtimeDebugState(): RealtimeDebugState {
     objRenderMs: roundForState(state.realtimeDebug.objRenderMs),
     mediaPipeRedetectMs: roundForState(state.realtimeDebug.mediaPipeRedetectMs),
     totalMs: roundForState(state.realtimeDebug.totalMs),
+    currentAnalysisTimingBreakdown: roundCurrentAnalysisTimingBreakdown(
+      state.realtimeDebug.currentAnalysisTimingBreakdown,
+    ),
+    averageCurrentAnalysisTimingBreakdown: roundCurrentAnalysisTimingBreakdown(
+      state.realtimeDebug.averageCurrentAnalysisTimingBreakdown,
+    ),
+    averageObjRenderMs: roundForState(state.realtimeDebug.averageObjRenderMs),
     averageTotalMs: roundForState(state.realtimeDebug.averageTotalMs),
     effectiveFps: roundForState(state.realtimeDebug.effectiveFps),
+  }
+}
+
+function roundCurrentAnalysisTimingBreakdown(
+  breakdown: CurrentAnalysisTimingBreakdown,
+): CurrentAnalysisTimingBreakdown {
+  return {
+    mediaPipeDetectMs: roundForState(breakdown.mediaPipeDetectMs),
+    buildCurrentAnalysisMs: roundForState(breakdown.buildCurrentAnalysisMs),
+    liveOverlayDrawMs: roundForState(breakdown.liveOverlayDrawMs),
+    debugUpdateMs: roundForState(breakdown.debugUpdateMs),
+    currentAnalysisTotalMs: roundForState(breakdown.currentAnalysisTotalMs),
   }
 }
 
