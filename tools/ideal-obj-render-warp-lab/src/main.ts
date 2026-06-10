@@ -6,7 +6,7 @@ import type { Matrix, NormalizedLandmark } from "@mediapipe/tasks-vision"
 import "./style.css"
 
 type PreviewTab = "obj" | "renderedIdeal" | "live"
-type DebugTab = "summary" | "current" | "obj" | "renderedIdeal" | "realtime" | "mediaPipeBenchmark" | "warpMesh" | "raw"
+type DebugTab = "summary" | "current" | "obj" | "renderedIdeal" | "realtime" | "warpMesh" | "raw"
 type PlaybackStatus = "stopped" | "playing" | "paused"
 type ObjParseStatus = "not_loaded" | "not_parsed" | "parsed" | "error"
 type ObjPreviewMode = "points" | "wireframe" | "points_wireframe"
@@ -36,17 +36,6 @@ type RealtimeStatus =
   | "idle"
   | "running"
   | "stopped"
-  | "error"
-type MediaPipeBenchmarkDelegate = "default" | "CPU" | "GPU"
-type MediaPipeBenchmarkOutputMode =
-  | "landmarks_only"
-  | "landmarks_matrix"
-  | "landmarks_blendshapes"
-  | "landmarks_matrix_blendshapes"
-type MediaPipeBenchmarkStatus =
-  | "idle"
-  | "running"
-  | "done"
   | "error"
 type ExpressionGroup =
   | "neutral"
@@ -282,36 +271,6 @@ type RenderUpdateTiming = {
   debugUpdateMs: number | null
 }
 
-type MediaPipeBenchmarkResult = {
-  id: string
-  createdAt: string
-  delegate: MediaPipeBenchmarkDelegate
-  outputMode: MediaPipeBenchmarkOutputMode
-  iterationCount: number
-  initializationMs: number | null
-  firstDetectMs: number | null
-  averageDetectMs: number | null
-  warmDetectAverageMs: number | null
-  minDetectMs: number | null
-  maxDetectMs: number | null
-  successCount: number
-  errorCount: number
-  errorMessage: string | null
-  videoWidth: number | null
-  videoHeight: number | null
-  videoCurrentTimeSec: number | null
-}
-
-type MediaPipeBenchmarkState = {
-  status: MediaPipeBenchmarkStatus
-  selectedDelegate: MediaPipeBenchmarkDelegate
-  selectedOutputMode: MediaPipeBenchmarkOutputMode
-  iterationCount: number
-  latestResult: MediaPipeBenchmarkResult | null
-  results: MediaPipeBenchmarkResult[]
-  errorMessage: string | null
-}
-
 type Rect = {
   x: number
   y: number
@@ -348,7 +307,6 @@ type LabState = {
   }
   currentAnalysis: CurrentFrameAnalysis
   realtimeDebug: RealtimeDebugState
-  mediaPipeBenchmark: MediaPipeBenchmarkState
   logs: string[]
 }
 
@@ -365,7 +323,6 @@ const MEDIAPIPE_TIMESTAMP_STEP_MS = 1000 / 30
 const LIVE_AUTO_ANALYSIS_INTERVAL_SEC = 0.35
 const REALTIME_TARGET_FPS_OPTIONS = [5, 10, 15, 30] as const
 const REALTIME_AVERAGE_SAMPLE_COUNT = 30
-const MEDIAPIPE_BENCHMARK_ITERATION_OPTIONS = [10, 30, 60] as const
 const RAD_TO_DEG = 180 / Math.PI
 const STRONG_EXPRESSION_THRESHOLD = 0.35
 const MIXED_EXPRESSION_THRESHOLD = 0.28
@@ -394,7 +351,6 @@ const debugTabs: TabOption<DebugTab>[] = [
   { label: "OBJ", value: "obj" },
   { label: "レンダー理想", value: "renderedIdeal" },
   { label: "リアルタイム", value: "realtime" },
-  { label: "MediaPipe比較", value: "mediaPipeBenchmark" },
   { label: "ワープメッシュ", value: "warpMesh" },
   { label: "Raw Debug", value: "raw" },
 ]
@@ -402,19 +358,6 @@ const debugTabs: TabOption<DebugTab>[] = [
 const realtimeModeLabels: Record<RealtimeMode, string> = {
   current_analysis_obj_render: "現在顔解析 + OBJレンダー",
   current_analysis_obj_render_mediapipe_redetect: "現在顔解析 + OBJレンダー + MediaPipe再検出",
-}
-
-const mediaPipeBenchmarkDelegateLabels: Record<MediaPipeBenchmarkDelegate, string> = {
-  default: "未指定",
-  CPU: "CPU（CPU実行）",
-  GPU: "GPU（GPU実行）",
-}
-
-const mediaPipeBenchmarkOutputModeLabels: Record<MediaPipeBenchmarkOutputMode, string> = {
-  landmarks_only: "478点のみ",
-  landmarks_matrix: "478点 + matrix（顔姿勢行列）",
-  landmarks_blendshapes: "478点 + blendshapes（表情係数）",
-  landmarks_matrix_blendshapes: "478点 + matrix + blendshapes",
 }
 
 const state: LabState = {
@@ -457,7 +400,6 @@ const state: LabState = {
   },
   currentAnalysis: createEmptyCurrentAnalysis(),
   realtimeDebug: createDefaultRealtimeDebugState(),
-  mediaPipeBenchmark: createDefaultMediaPipeBenchmarkState(),
   logs: ["ラボを初期化しました。レンダー理想2D preview は使用できます。renderedIdeal478 / WebGL warp は未実装です。"],
 }
 
@@ -754,7 +696,7 @@ function renderLivePreview() {
         <div class="realtime-control-header">
           <div>
             <h3>リアルタイム検証</h3>
-            <p>動画を再生してから「開始」を押すと、再生中のフレームに対して現在顔解析とOBJレンダーを繰り返し、処理時間を測ります。</p>
+            <p>MediaPipe検出は GPU delegate 固定で実行します。<br />動画を再生してから「開始」を押すと、再生中のフレームに対して現在顔解析とOBJレンダーを繰り返し、処理時間を測ります。</p>
             <p class="realtime-playback-note" data-realtime-playback-note></p>
           </div>
           <div class="button-row realtime-buttons">
@@ -783,43 +725,6 @@ function renderLivePreview() {
           </label>
           <div class="realtime-inline-status" data-realtime-inline-status>
             状態: idle / 実効FPS: 未計測
-          </div>
-        </div>
-      </section>
-      <section class="benchmark-control-panel" aria-label="MediaPipe性能比較">
-        <div class="realtime-control-header">
-          <div>
-            <h3>MediaPipe性能比較</h3>
-            <p>同じフルHD入力のまま、MediaPipeの出力オプションとdelegateを切り替えて detectForVideo（動画フレーム検出）の処理時間を比較します。</p>
-            <p class="realtime-playback-note" data-mediapipe-benchmark-note></p>
-          </div>
-          <div class="button-row realtime-buttons">
-            <button class="small-button" type="button" data-action="mediapipe-benchmark-run">比較実行</button>
-            <button class="small-button" type="button" data-action="mediapipe-benchmark-run-all">全条件比較</button>
-            <button class="small-button" type="button" data-action="mediapipe-benchmark-reset">結果リセット</button>
-          </div>
-        </div>
-        <div class="benchmark-control-grid">
-          <label class="select-field">
-            <span>実行回数</span>
-            <select data-control="mediapipe-benchmark-iteration-count">
-              ${MEDIAPIPE_BENCHMARK_ITERATION_OPTIONS.map((count) => `<option value="${count}">${count}</option>`).join("")}
-            </select>
-          </label>
-          <label class="select-field">
-            <span>delegate（実行バックエンド）</span>
-            <select data-control="mediapipe-benchmark-delegate">
-              ${Object.entries(mediaPipeBenchmarkDelegateLabels).map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}
-            </select>
-          </label>
-          <label class="select-field benchmark-output-field">
-            <span>出力オプション</span>
-            <select data-control="mediapipe-benchmark-output-mode">
-              ${Object.entries(mediaPipeBenchmarkOutputModeLabels).map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}
-            </select>
-          </label>
-          <div class="realtime-inline-status" data-mediapipe-benchmark-inline-status>
-            状態: 未開始 / 最新結果: 未計測
           </div>
         </div>
       </section>
@@ -1032,43 +937,6 @@ function bindEvents() {
       if (state.realtimeDebug.status === "running") {
         restartRealtimeTimer()
       }
-      renderAll()
-    }
-  })
-
-  getElement<HTMLButtonElement>('[data-action="mediapipe-benchmark-run"]').addEventListener("click", () => {
-    void runSelectedMediaPipeBenchmark()
-  })
-
-  getElement<HTMLButtonElement>('[data-action="mediapipe-benchmark-run-all"]').addEventListener("click", () => {
-    void runAllMediaPipeBenchmarks()
-  })
-
-  getElement<HTMLButtonElement>('[data-action="mediapipe-benchmark-reset"]').addEventListener("click", () => {
-    resetMediaPipeBenchmarkResults()
-    renderAll()
-  })
-
-  getElement<HTMLSelectElement>('[data-control="mediapipe-benchmark-iteration-count"]').addEventListener("change", (event) => {
-    const value = Number(event.currentTarget.value)
-    if (isMediaPipeBenchmarkIterationCount(value)) {
-      state.mediaPipeBenchmark.iterationCount = value
-      renderAll()
-    }
-  })
-
-  getElement<HTMLSelectElement>('[data-control="mediapipe-benchmark-delegate"]').addEventListener("change", (event) => {
-    const value = event.currentTarget.value
-    if (isMediaPipeBenchmarkDelegate(value)) {
-      state.mediaPipeBenchmark.selectedDelegate = value
-      renderAll()
-    }
-  })
-
-  getElement<HTMLSelectElement>('[data-control="mediapipe-benchmark-output-mode"]').addEventListener("change", (event) => {
-    const value = event.currentTarget.value
-    if (isMediaPipeBenchmarkOutputMode(value)) {
-      state.mediaPipeBenchmark.selectedOutputMode = value
       renderAll()
     }
   })
@@ -1338,11 +1206,7 @@ async function getLiveFaceLandmarker() {
 async function initializeFaceLandmarker() {
   const vision = await FilesetResolver.forVisionTasks(MEDIAPIPE_WASM_PATH)
 
-  return FaceLandmarker.createFromOptions(vision, createFaceLandmarkerOptions({
-    delegate: "default",
-    outputFaceBlendshapes: true,
-    outputFacialTransformationMatrixes: true,
-  }))
+  return FaceLandmarker.createFromOptions(vision, createLiveFaceLandmarkerOptions())
 }
 
 async function analyzeCurrentLiveFrame(
@@ -1801,152 +1665,6 @@ function calculateRealtimeAverageTiming() {
   }
 }
 
-async function runSelectedMediaPipeBenchmark() {
-  await runMediaPipeBenchmarkCondition({
-    delegate: state.mediaPipeBenchmark.selectedDelegate,
-    outputMode: state.mediaPipeBenchmark.selectedOutputMode,
-    iterationCount: state.mediaPipeBenchmark.iterationCount,
-  })
-}
-
-async function runAllMediaPipeBenchmarks() {
-  const delegates: MediaPipeBenchmarkDelegate[] = ["default", "CPU", "GPU"]
-  const outputModes: MediaPipeBenchmarkOutputMode[] = [
-    "landmarks_only",
-    "landmarks_matrix",
-    "landmarks_blendshapes",
-    "landmarks_matrix_blendshapes",
-  ]
-
-  for (const delegate of delegates) {
-    for (const outputMode of outputModes) {
-      await runMediaPipeBenchmarkCondition({
-        delegate,
-        outputMode,
-        iterationCount: state.mediaPipeBenchmark.iterationCount,
-      })
-    }
-  }
-}
-
-async function runMediaPipeBenchmarkCondition(options: {
-  delegate: MediaPipeBenchmarkDelegate
-  outputMode: MediaPipeBenchmarkOutputMode
-  iterationCount: number
-}) {
-  if (state.mediaPipeBenchmark.status === "running") {
-    return
-  }
-
-  const videoReady = state.liveVideo.loaded &&
-    liveVideoElement.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
-  if (!videoReady) {
-    state.mediaPipeBenchmark = {
-      ...state.mediaPipeBenchmark,
-      status: "error",
-      errorMessage: "ライブ動画を読み込み、現在フレームを表示してから比較してください。",
-    }
-    addLog("MediaPipe性能比較を開始できません。ライブ動画が未読込または未準備です。")
-    renderAll()
-    return
-  }
-
-  state.mediaPipeBenchmark = {
-    ...state.mediaPipeBenchmark,
-    status: "running",
-    selectedDelegate: options.delegate,
-    selectedOutputMode: options.outputMode,
-    iterationCount: options.iterationCount,
-    errorMessage: null,
-  }
-  renderAll()
-
-  const result = await runMediaPipeBenchmarkDetector(options)
-  state.mediaPipeBenchmark = {
-    ...state.mediaPipeBenchmark,
-    status: result.errorCount > 0 && result.successCount === 0 ? "error" : "done",
-    latestResult: result,
-    results: [result, ...state.mediaPipeBenchmark.results].slice(0, 40),
-    errorMessage: result.errorMessage,
-  }
-  addLog(
-    `MediaPipe性能比較: ${mediaPipeBenchmarkDelegateLabels[result.delegate]} / ${mediaPipeBenchmarkOutputModeLabels[result.outputMode]} / warm平均 ${formatRealtimeNullableNumber(result.warmDetectAverageMs)}`,
-  )
-  renderAll()
-}
-
-async function runMediaPipeBenchmarkDetector(options: {
-  delegate: MediaPipeBenchmarkDelegate
-  outputMode: MediaPipeBenchmarkOutputMode
-  iterationCount: number
-}): Promise<MediaPipeBenchmarkResult> {
-  const createdAt = new Date().toISOString()
-  const result: MediaPipeBenchmarkResult = {
-    id: `mediapipe-benchmark-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    createdAt,
-    delegate: options.delegate,
-    outputMode: options.outputMode,
-    iterationCount: options.iterationCount,
-    initializationMs: null,
-    firstDetectMs: null,
-    averageDetectMs: null,
-    warmDetectAverageMs: null,
-    minDetectMs: null,
-    maxDetectMs: null,
-    successCount: 0,
-    errorCount: 0,
-    errorMessage: null,
-    videoWidth: state.liveVideo.width ?? liveVideoElement.videoWidth ?? null,
-    videoHeight: state.liveVideo.height ?? liveVideoElement.videoHeight ?? null,
-    videoCurrentTimeSec: liveVideoElement.currentTime || state.liveVideo.currentTimeSec,
-  }
-
-  let detector: FaceLandmarker | null = null
-  try {
-    const initializationStartMs = performance.now()
-    const vision = await FilesetResolver.forVisionTasks(MEDIAPIPE_WASM_PATH)
-    detector = await FaceLandmarker.createFromOptions(
-      vision,
-      createFaceLandmarkerOptions(getMediaPipeBenchmarkFaceLandmarkerConfig(options)),
-    )
-    result.initializationMs = performance.now() - initializationStartMs
-
-    const detectTimes: number[] = []
-    let benchmarkTimestampMs = 0
-    for (let index = 0; index < options.iterationCount; index += 1) {
-      benchmarkTimestampMs += MEDIAPIPE_TIMESTAMP_STEP_MS
-      const detectStartMs = performance.now()
-      detector.detectForVideo(liveVideoElement, benchmarkTimestampMs)
-      const detectMs = performance.now() - detectStartMs
-      detectTimes.push(detectMs)
-      result.successCount += 1
-      await yieldToBrowser()
-    }
-
-    result.firstDetectMs = detectTimes[0] ?? null
-    result.averageDetectMs = averageNullableTiming(detectTimes)
-    result.warmDetectAverageMs = averageNullableTiming(detectTimes.slice(1))
-    result.minDetectMs = detectTimes.length > 0 ? Math.min(...detectTimes) : null
-    result.maxDetectMs = detectTimes.length > 0 ? Math.max(...detectTimes) : null
-  } catch (error) {
-    result.errorCount += 1
-    result.errorMessage = error instanceof Error ? error.message : String(error)
-  } finally {
-    detector?.close()
-  }
-
-  return result
-}
-
-function resetMediaPipeBenchmarkResults() {
-  state.mediaPipeBenchmark = createDefaultMediaPipeBenchmarkState({
-    selectedDelegate: state.mediaPipeBenchmark.selectedDelegate,
-    selectedOutputMode: state.mediaPipeBenchmark.selectedOutputMode,
-    iterationCount: state.mediaPipeBenchmark.iterationCount,
-  })
-  addLog("MediaPipe性能比較結果をリセットしました。")
-}
-
 function restartRealtimeTimer() {
   if (realtimeTimerId !== null) {
     window.clearInterval(realtimeTimerId)
@@ -2172,7 +1890,6 @@ function renderControls() {
   setNumberValue("obj-pose-rotation-center-z", state.objPoseSync.rotationCenterZ)
   renderLiveObjPoseSummaryCard()
   renderRealtimeControls()
-  renderMediaPipeBenchmarkControls()
 }
 
 function renderRealtimeControls() {
@@ -2189,26 +1906,6 @@ function renderRealtimeControls() {
   getElement<HTMLElement>("[data-realtime-inline-status]").textContent =
     `状態: ${formatRealtimeStatus(state.realtimeDebug.status)} / 実効FPS: ${formatRealtimeNullableNumber(state.realtimeDebug.effectiveFps)} / 判定: ${getRealtimeJudgement()}`
   getElement<HTMLElement>("[data-realtime-playback-note]").textContent = getRealtimePlaybackNote()
-}
-
-function renderMediaPipeBenchmarkControls() {
-  getElement<HTMLSelectElement>('[data-control="mediapipe-benchmark-iteration-count"]').value = String(
-    state.mediaPipeBenchmark.iterationCount,
-  )
-  getElement<HTMLSelectElement>('[data-control="mediapipe-benchmark-delegate"]').value =
-    state.mediaPipeBenchmark.selectedDelegate
-  getElement<HTMLSelectElement>('[data-control="mediapipe-benchmark-output-mode"]').value =
-    state.mediaPipeBenchmark.selectedOutputMode
-
-  const isRunning = state.mediaPipeBenchmark.status === "running"
-  const canRun = state.liveVideo.loaded && liveVideoElement.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
-  setDisabled('[data-action="mediapipe-benchmark-run"]', isRunning || !canRun)
-  setDisabled('[data-action="mediapipe-benchmark-run-all"]', isRunning || !canRun)
-  setDisabled('[data-action="mediapipe-benchmark-reset"]', isRunning)
-
-  getElement<HTMLElement>("[data-mediapipe-benchmark-inline-status]").textContent =
-    `状態: ${formatMediaPipeBenchmarkStatus(state.mediaPipeBenchmark.status)} / 最新結果: ${formatMediaPipeBenchmarkLatestInline()}`
-  getElement<HTMLElement>("[data-mediapipe-benchmark-note]").textContent = getMediaPipeBenchmarkNote()
 }
 
 function renderLiveAnalysisCard() {
@@ -2850,9 +2547,6 @@ function renderDebugContent() {
   if (state.activeDebugTab === "realtime") {
     appendDefinitionItems(list, getRealtimeItems())
   }
-  if (state.activeDebugTab === "mediaPipeBenchmark") {
-    appendDefinitionItems(list, getMediaPipeBenchmarkItems())
-  }
   if (state.activeDebugTab === "warpMesh") {
     appendDefinitionItems(list, getWarpMeshItems())
   }
@@ -2916,11 +2610,6 @@ function getSummaryItems(): Array<[string, string]> {
     ["skippedByInProgressCount", formatNullableCount(state.realtimeDebug.skippedByInProgressCount)],
     ["skippedByNoVideoCount", formatNullableCount(state.realtimeDebug.skippedByNoVideoCount)],
     ["skippedByPausedVideoCount", formatNullableCount(state.realtimeDebug.skippedByPausedVideoCount)],
-    ["mediaPipeBenchmarkLatestDelegate", state.mediaPipeBenchmark.latestResult?.delegate ?? "null"],
-    ["mediaPipeBenchmarkLatestOutputMode", state.mediaPipeBenchmark.latestResult?.outputMode ?? "null"],
-    ["mediaPipeBenchmarkLatestWarmAverageMs", formatRealtimeNullableNumber(state.mediaPipeBenchmark.latestResult?.warmDetectAverageMs ?? null)],
-    ["mediaPipeBenchmarkBestWarmAverageMs", formatRealtimeNullableNumber(getBestMediaPipeBenchmarkResult()?.warmDetectAverageMs ?? null)],
-    ["mediaPipeBenchmarkBestCondition", formatMediaPipeBenchmarkCondition(getBestMediaPipeBenchmarkResult())],
     ["warpStatus", "not_implemented"],
   ]
 }
@@ -3057,32 +2746,6 @@ function getRealtimeItems(): Array<[string, string]> {
   ]
 }
 
-function getMediaPipeBenchmarkItems(): Array<[string, string]> {
-  const latest = state.mediaPipeBenchmark.latestResult
-  const best = getBestMediaPipeBenchmarkResult()
-  return [
-    ["状態", formatMediaPipeBenchmarkStatus(state.mediaPipeBenchmark.status)],
-    ["選択delegate", mediaPipeBenchmarkDelegateLabels[state.mediaPipeBenchmark.selectedDelegate]],
-    ["選択出力オプション", mediaPipeBenchmarkOutputModeLabels[state.mediaPipeBenchmark.selectedOutputMode]],
-    ["実行回数", formatNullableCount(state.mediaPipeBenchmark.iterationCount)],
-    ["最新結果", latest ? formatMediaPipeBenchmarkCondition(latest) : "未計測"],
-    ["delegate", latest ? mediaPipeBenchmarkDelegateLabels[latest.delegate] : "未計測"],
-    ["出力オプション", latest ? mediaPipeBenchmarkOutputModeLabels[latest.outputMode] : "未計測"],
-    ["初期化ms", formatRealtimeNullableNumber(latest?.initializationMs ?? null)],
-    ["初回detect ms", formatRealtimeNullableNumber(latest?.firstDetectMs ?? null)],
-    ["2回目以降平均ms", formatRealtimeNullableNumber(latest?.warmDetectAverageMs ?? null)],
-    ["平均detect ms", formatRealtimeNullableNumber(latest?.averageDetectMs ?? null)],
-    ["最小detect ms", formatRealtimeNullableNumber(latest?.minDetectMs ?? null)],
-    ["最大detect ms", formatRealtimeNullableNumber(latest?.maxDetectMs ?? null)],
-    ["成功回数", formatNullableCount(latest?.successCount ?? null)],
-    ["エラー回数", formatNullableCount(latest?.errorCount ?? null)],
-    ["エラーメッセージ", latest?.errorMessage ?? state.mediaPipeBenchmark.errorMessage ?? "なし"],
-    ["最良条件", formatMediaPipeBenchmarkCondition(best)],
-    ["最良warm平均ms", formatRealtimeNullableNumber(best?.warmDetectAverageMs ?? null)],
-    ["比較履歴", formatMediaPipeBenchmarkHistory()],
-  ]
-}
-
 function getWarpMeshItems(): Array<[string, string]> {
   return [
     ["sourceVerticesStatus", "not_ready"],
@@ -3102,8 +2765,6 @@ function getRawState() {
     objSummary: state.objSummary,
     objPreviewState: getRoundedObjPreviewState(),
     realtimeDebugState: getRoundedRealtimeDebugState(),
-    mediaPipeBenchmarkState: getMediaPipeBenchmarkRawState(),
-    mediaPipeBenchmarkResultsPreview: state.mediaPipeBenchmark.results.slice(0, 8).map(roundMediaPipeBenchmarkResult),
     debugExportPreview: getDebugExportPreview(),
     objPoseSyncState: getRoundedObjPoseSyncState(),
     currentPoseSummary: roundPoseForState(state.currentAnalysis.pose),
@@ -3449,53 +3110,16 @@ function createDefaultRealtimeDebugState(
   }
 }
 
-function createDefaultMediaPipeBenchmarkState(
-  overrides: Partial<Pick<MediaPipeBenchmarkState, "selectedDelegate" | "selectedOutputMode" | "iterationCount">> = {},
-): MediaPipeBenchmarkState {
+function createLiveFaceLandmarkerOptions(): FaceLandmarkerOptions {
   return {
-    status: "idle",
-    selectedDelegate: overrides.selectedDelegate ?? "default",
-    selectedOutputMode: overrides.selectedOutputMode ?? "landmarks_matrix_blendshapes",
-    iterationCount: overrides.iterationCount ?? 10,
-    latestResult: null,
-    results: [],
-    errorMessage: null,
-  }
-}
-
-function createFaceLandmarkerOptions(config: {
-  delegate: MediaPipeBenchmarkDelegate
-  outputFaceBlendshapes: boolean
-  outputFacialTransformationMatrixes: boolean
-}): FaceLandmarkerOptions {
-  const baseOptions: FaceLandmarkerOptions["baseOptions"] = {
-    modelAssetPath: MEDIAPIPE_FACE_LANDMARKER_MODEL_ASSET_PATH,
-  }
-  if (config.delegate !== "default") {
-    baseOptions.delegate = config.delegate
-  }
-
-  return {
-    baseOptions,
+    baseOptions: {
+      modelAssetPath: MEDIAPIPE_FACE_LANDMARKER_MODEL_ASSET_PATH,
+      delegate: "GPU",
+    },
     runningMode: "VIDEO",
     numFaces: 1,
-    outputFaceBlendshapes: config.outputFaceBlendshapes,
-    outputFacialTransformationMatrixes: config.outputFacialTransformationMatrixes,
-  }
-}
-
-function getMediaPipeBenchmarkFaceLandmarkerConfig(options: {
-  delegate: MediaPipeBenchmarkDelegate
-  outputMode: MediaPipeBenchmarkOutputMode
-}) {
-  return {
-    delegate: options.delegate,
-    outputFaceBlendshapes:
-      options.outputMode === "landmarks_blendshapes" ||
-      options.outputMode === "landmarks_matrix_blendshapes",
-    outputFacialTransformationMatrixes:
-      options.outputMode === "landmarks_matrix" ||
-      options.outputMode === "landmarks_matrix_blendshapes",
+    outputFaceBlendshapes: true,
+    outputFacialTransformationMatrixes: true,
   }
 }
 
@@ -3751,7 +3375,7 @@ function buildDebugExport() {
     createdAt: new Date().toISOString(),
     tool: {
       id: "ideal-obj-render-warp-lab",
-      purpose: "MediaPipe detectForVideo performance comparison and OBJ render warp lab debugging",
+      purpose: "OBJ render warp lab debugging",
     },
     environment: getEnvironmentDebugExport(),
     input: {
@@ -3786,16 +3410,8 @@ function buildDebugExport() {
     mediaPipeOptions: {
       currentLiveOptions: getCurrentLiveMediaPipeOptionsDebug(),
     },
-    mediaPipeBenchmark: {
-      latestResult: state.mediaPipeBenchmark.latestResult
-        ? roundMediaPipeBenchmarkResult(state.mediaPipeBenchmark.latestResult)
-        : null,
-      results: state.mediaPipeBenchmark.results.map(roundMediaPipeBenchmarkResult),
-      summary: getMediaPipeBenchmarkSummary(),
-    },
     notes: [
       "vertices/faces/current478/MediaPipe result/canvas data URL are intentionally omitted.",
-      "Benchmark initializationMs is measured separately from detectForVideo timings.",
     ],
   }
 }
@@ -3931,23 +3547,6 @@ function isRealtimeMode(value: string): value is RealtimeMode {
 
 function isRealtimeTargetFps(value: number): value is typeof REALTIME_TARGET_FPS_OPTIONS[number] {
   return REALTIME_TARGET_FPS_OPTIONS.some((fps) => fps === value)
-}
-
-function isMediaPipeBenchmarkIterationCount(
-  value: number,
-): value is typeof MEDIAPIPE_BENCHMARK_ITERATION_OPTIONS[number] {
-  return MEDIAPIPE_BENCHMARK_ITERATION_OPTIONS.some((count) => count === value)
-}
-
-function isMediaPipeBenchmarkDelegate(value: string): value is MediaPipeBenchmarkDelegate {
-  return value === "default" || value === "CPU" || value === "GPU"
-}
-
-function isMediaPipeBenchmarkOutputMode(value: string): value is MediaPipeBenchmarkOutputMode {
-  return value === "landmarks_only" ||
-    value === "landmarks_matrix" ||
-    value === "landmarks_blendshapes" ||
-    value === "landmarks_matrix_blendshapes"
 }
 
 function isRenderedIdealBackgroundMode(value: string): value is RenderedIdealBackgroundMode {
@@ -4093,93 +3692,14 @@ function getRealtimeBottleneck() {
   )[0]
 }
 
-function getBestMediaPipeBenchmarkResult() {
-  return state.mediaPipeBenchmark.results
-    .filter((result) => result.warmDetectAverageMs !== null && result.successCount > 0)
-    .reduce<MediaPipeBenchmarkResult | null>((best, result) => {
-      if (!best) {
-        return result
-      }
-      return (result.warmDetectAverageMs ?? Number.POSITIVE_INFINITY) <
-        (best.warmDetectAverageMs ?? Number.POSITIVE_INFINITY)
-        ? result
-        : best
-    }, null)
-}
-
-function formatMediaPipeBenchmarkStatus(status: MediaPipeBenchmarkStatus) {
-  if (status === "idle") {
-    return "未開始"
-  }
-  if (status === "running") {
-    return "実行中"
-  }
-  if (status === "done") {
-    return "完了"
-  }
-  return "エラー"
-}
-
-function formatMediaPipeBenchmarkLatestInline() {
-  const latest = state.mediaPipeBenchmark.latestResult
-  if (!latest) {
-    return "未計測"
-  }
-  return `${mediaPipeBenchmarkDelegateLabels[latest.delegate]} / ${mediaPipeBenchmarkOutputModeLabels[latest.outputMode]} / warm平均 ${formatRealtimeNullableNumber(latest.warmDetectAverageMs)}`
-}
-
-function formatMediaPipeBenchmarkCondition(result: MediaPipeBenchmarkResult | null) {
-  if (!result) {
-    return "未計測"
-  }
-  return `${mediaPipeBenchmarkDelegateLabels[result.delegate]} / ${mediaPipeBenchmarkOutputModeLabels[result.outputMode]}`
-}
-
-function formatMediaPipeBenchmarkHistory() {
-  if (state.mediaPipeBenchmark.results.length === 0) {
-    return "未計測"
-  }
-  return state.mediaPipeBenchmark.results
-    .slice(0, 12)
-    .map((result) =>
-      `${formatMediaPipeBenchmarkCondition(result)} / warm平均 ${formatRealtimeNullableNumber(result.warmDetectAverageMs)} / 初回 ${formatRealtimeNullableNumber(result.firstDetectMs)} / 成功 ${result.successCount} / エラー ${result.errorCount}`,
-    )
-    .join("\n")
-}
-
-function getMediaPipeBenchmarkSummary() {
-  const best = getBestMediaPipeBenchmarkResult()
-  return {
-    resultCount: state.mediaPipeBenchmark.results.length,
-    latestCondition: formatMediaPipeBenchmarkCondition(state.mediaPipeBenchmark.latestResult),
-    latestWarmDetectAverageMs: roundForState(state.mediaPipeBenchmark.latestResult?.warmDetectAverageMs ?? null),
-    bestCondition: formatMediaPipeBenchmarkCondition(best),
-    bestWarmDetectAverageMs: roundForState(best?.warmDetectAverageMs ?? null),
-  }
-}
-
-function getMediaPipeBenchmarkRawState() {
-  return {
-    status: state.mediaPipeBenchmark.status,
-    selectedDelegate: state.mediaPipeBenchmark.selectedDelegate,
-    selectedOutputMode: state.mediaPipeBenchmark.selectedOutputMode,
-    iterationCount: state.mediaPipeBenchmark.iterationCount,
-    latestResult: state.mediaPipeBenchmark.latestResult
-      ? roundMediaPipeBenchmarkResult(state.mediaPipeBenchmark.latestResult)
-      : null,
-    resultCount: state.mediaPipeBenchmark.results.length,
-    errorMessage: state.mediaPipeBenchmark.errorMessage,
-    summary: getMediaPipeBenchmarkSummary(),
-  }
-}
-
 function getDebugExportPreview() {
   const debugExport = buildDebugExport()
   return {
     schemaVersion: debugExport.schemaVersion,
     createdAt: debugExport.createdAt,
     environment: debugExport.environment,
-    mediaPipeBenchmark: debugExport.mediaPipeBenchmark.summary,
+    mediaPipeOptions: debugExport.mediaPipeOptions,
+    realtime: debugExport.realtime,
     notes: debugExport.notes,
   }
 }
@@ -4190,7 +3710,7 @@ function getCurrentLiveMediaPipeOptionsDebug() {
     numFaces: 1,
     outputFaceBlendshapes: true,
     outputFacialTransformationMatrixes: true,
-    delegate: null,
+    delegate: "GPU",
     modelAssetPath: MEDIAPIPE_FACE_LANDMARKER_MODEL_ASSET_PATH,
     wasmPath: MEDIAPIPE_WASM_PATH,
   }
@@ -4233,19 +3753,6 @@ function getWebglInfo() {
       ? String(context.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL))
       : String(context.getParameter(context.VENDOR)),
   }
-}
-
-function getMediaPipeBenchmarkNote() {
-  if (!state.liveVideo.loaded) {
-    return "ライブ動画を読み込むと比較できます。"
-  }
-  if (liveVideoElement.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
-    return "ライブ動画の現在フレームがまだ準備できていません。"
-  }
-  if (state.mediaPipeBenchmark.status === "running") {
-    return "比較実行中です。benchmark専用 detector を使うため、通常の live current detector は壊しません。"
-  }
-  return ""
 }
 
 function formatNumber(value: number) {
@@ -4393,19 +3900,6 @@ function roundCurrentAnalysisTimingBreakdown(
   }
 }
 
-function roundMediaPipeBenchmarkResult(result: MediaPipeBenchmarkResult): MediaPipeBenchmarkResult {
-  return {
-    ...result,
-    initializationMs: roundForState(result.initializationMs),
-    firstDetectMs: roundForState(result.firstDetectMs),
-    averageDetectMs: roundForState(result.averageDetectMs),
-    warmDetectAverageMs: roundForState(result.warmDetectAverageMs),
-    minDetectMs: roundForState(result.minDetectMs),
-    maxDetectMs: roundForState(result.maxDetectMs),
-    videoCurrentTimeSec: roundForState(result.videoCurrentTimeSec),
-  }
-}
-
 function getObjPoseSyncRotationCenter(): ObjVertex {
   return {
     x: state.objPoseSync.rotationCenterX,
@@ -4452,12 +3946,6 @@ function getSampledCount(total: number, maxCount: number) {
     return 0
   }
   return Math.ceil(total / getSampleStep(total, maxCount))
-}
-
-function yieldToBrowser() {
-  return new Promise<void>((resolve) => {
-    window.setTimeout(resolve, 0)
-  })
 }
 
 function getObjCanvasScale(canvas: HTMLCanvasElement = objPreviewCanvas) {
