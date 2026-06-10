@@ -525,8 +525,7 @@ h3 {
   justify-self: start;
 }
 
-.realtime-control-panel,
-.benchmark-control-panel {
+.realtime-control-panel {
   border: 1px solid #d8e0e7;
   border-radius: 8px;
   display: grid;
@@ -573,18 +572,6 @@ h3 {
   gap: 12px;
   grid-template-columns: minmax(280px, 1fr) auto minmax(220px, auto);
   min-width: 0;
-}
-
-.benchmark-control-grid {
-  align-items: end;
-  display: grid;
-  gap: 12px;
-  grid-template-columns: auto minmax(190px, auto) minmax(240px, 1fr) minmax(220px, auto);
-  min-width: 0;
-}
-
-.benchmark-output-field {
-  min-width: 240px;
 }
 
 .mode-fieldset {
@@ -804,8 +791,7 @@ input[type="range"] {
   }
 
   .realtime-control-header,
-  .realtime-control-grid,
-  .benchmark-control-grid {
+  .realtime-control-grid {
     grid-template-columns: 1fr;
   }
 
