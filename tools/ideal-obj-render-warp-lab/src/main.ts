@@ -11,6 +11,10 @@ type PlaybackStatus = "stopped" | "playing" | "paused"
 type ObjParseStatus = "not_loaded" | "not_parsed" | "parsed" | "error"
 type ObjPreviewMode = "points" | "wireframe" | "points_wireframe"
 type ObjPreviewStatus = "not_ready" | "ready" | "error"
+type RenderedIdealRenderStatus = "not_ready" | "ready" | "rendered" | "error"
+type RenderedIdealRenderMode = "shaded_faces"
+type RenderedIdealBackgroundMode = "light" | "dark"
+type RenderedIdealColorMode = "clay" | "grayscale"
 type LiveVideoStatus = "not_loaded" | "loaded" | "metadata_ready" | "error"
 type CurrentAnalysisStatus =
   | "not_ready"
@@ -134,6 +138,28 @@ type ObjPreviewStats = {
   sampledEdgeCount: number
 }
 
+type RenderedIdealRenderSummary = {
+  status: RenderedIdealRenderStatus
+  canvasWidth: number
+  canvasHeight: number
+  renderMode: RenderedIdealRenderMode
+  faceCount: number
+  drawnFaceCount: number
+  skippedFaceCount: number
+  lightDirection: { x: number; y: number; z: number }
+  appliedYawDeg: number | null
+  appliedPitchDeg: number | null
+  appliedRollDeg: number | null
+  rotationCenter: { x: number; y: number; z: number }
+  errorMessage: string | null
+}
+
+type RenderedIdealState = {
+  backgroundMode: RenderedIdealBackgroundMode
+  colorMode: RenderedIdealColorMode
+  summary: RenderedIdealRenderSummary
+}
+
 type ReferenceLandmark = {
   index: number
   x: number
@@ -219,6 +245,7 @@ type LabState = {
   objPreviewStats: ObjPreviewStats
   objPoseSync: ObjPoseSyncState
   objPoseSyncStats: ObjPreviewStats
+  renderedIdeal: RenderedIdealState
   objErrorMessage: string | null
   liveVideo: LiveVideoState
   liveMediaPipe: {
@@ -240,6 +267,8 @@ const LIVE_AUTO_ANALYSIS_INTERVAL_SEC = 0.35
 const RAD_TO_DEG = 180 / Math.PI
 const STRONG_EXPRESSION_THRESHOLD = 0.35
 const MIXED_EXPRESSION_THRESHOLD = 0.28
+const RENDERED_IDEAL_FALLBACK_CANVAS_SIZE = 640
+const RENDERED_IDEAL_LIGHT_DIRECTION = normalizeVector({ x: -0.35, y: 0.55, z: 0.76 })
 const MATCH_BLENDSHAPE_KEYS = [
   "jawOpen",
   "mouthSmileLeft",
@@ -296,6 +325,7 @@ const state: LabState = {
     sampledPointCount: 0,
     sampledEdgeCount: 0,
   },
+  renderedIdeal: createDefaultRenderedIdealState(),
   objErrorMessage: null,
   liveVideo: createEmptyLiveVideoState(),
   liveMediaPipe: {
@@ -304,7 +334,7 @@ const state: LabState = {
     liveTimestampMs: 0,
   },
   currentAnalysis: createEmptyCurrentAnalysis(),
-  logs: ["ラボを初期化しました。OBJ render / renderedIdeal478 / WebGL warp は未実装です。"],
+  logs: ["ラボを初期化しました。レンダー理想2D preview は使用できます。renderedIdeal478 / WebGL warp は未実装です。"],
 }
 
 const app = document.querySelector<HTMLDivElement>("#app")
@@ -374,6 +404,7 @@ const liveFileInput = getElement<HTMLInputElement>("[data-input='live-video']")
 const liveVideoElement = getElement<HTMLVideoElement>("[data-video='live']")
 const liveOverlayCanvas = getElement<HTMLCanvasElement>("[data-overlay='live']")
 const objPreviewCanvas = getElement<HTMLCanvasElement>('[data-canvas="obj-preview"]')
+const renderedIdealCanvas = getElement<HTMLCanvasElement>('[data-canvas="rendered-ideal"]')
 const liveObjPosePreviewCanvas = getElement<HTMLCanvasElement>('[data-canvas="live-obj-pose-preview"]')
 let liveFaceLandmarker: FaceLandmarker | null = null
 let liveFaceLandmarkerPromise: Promise<FaceLandmarker> | null = null
@@ -464,11 +495,34 @@ function renderObjPreview() {
 function renderRenderedIdealPreview() {
   return `
     <div class="preview-card" data-preview-panel="renderedIdeal">
-      <div class="preview-stage">
+      <div class="preview-stage rendered-ideal-stage" data-rendered-ideal-stage data-render-status="not_ready">
+        <canvas class="rendered-ideal-canvas" data-canvas="rendered-ideal" aria-label="レンダー理想 2D preview"></canvas>
         <div class="preview-placeholder">
           <h3>レンダー理想プレビュー</h3>
-          <p>OBJ を現在姿勢でレンダリングした画像をここに表示します。OBJ render / renderedIdeal478 取得はまだ未実装です。</p>
+          <p data-rendered-ideal-message>OBJを読み込むと、ここにレンダー理想2Dプレビューを表示します。</p>
         </div>
+      </div>
+      <div class="obj-preview-controls rendered-ideal-controls" aria-label="レンダー理想 preview 操作">
+        <div class="button-row">
+          <button class="small-button" type="button" data-action="rendered-ideal-refresh">レンダー更新</button>
+        </div>
+        <label class="select-field">
+          <span>背景色</span>
+          <select data-control="rendered-ideal-background">
+            <option value="light">light</option>
+            <option value="dark">dark</option>
+          </select>
+        </label>
+        <label class="select-field">
+          <span>色</span>
+          <select data-control="rendered-ideal-color">
+            <option value="clay">clay</option>
+            <option value="grayscale">grayscale</option>
+          </select>
+        </label>
+      </div>
+      <div class="review-card" data-rendered-ideal-summary>
+        <p>OBJを読み込むと、ここにレンダー理想2Dプレビューを表示します。</p>
       </div>
     </div>
   `
@@ -676,6 +730,26 @@ function bindEvents() {
     },
   )
 
+  getElement<HTMLButtonElement>('[data-action="rendered-ideal-refresh"]').addEventListener("click", () => {
+    renderAll()
+  })
+
+  getElement<HTMLSelectElement>('[data-control="rendered-ideal-background"]').addEventListener("change", (event) => {
+    const value = event.currentTarget.value
+    if (isRenderedIdealBackgroundMode(value)) {
+      state.renderedIdeal.backgroundMode = value
+      renderAll()
+    }
+  })
+
+  getElement<HTMLSelectElement>('[data-control="rendered-ideal-color"]').addEventListener("change", (event) => {
+    const value = event.currentTarget.value
+    if (isRenderedIdealColorMode(value)) {
+      state.renderedIdeal.colorMode = value
+      renderAll()
+    }
+  })
+
   getElement<HTMLInputElement>("[data-range='live']").addEventListener("input", (event) => {
     const value = Number(event.currentTarget.value)
     if (Number.isFinite(value)) {
@@ -801,6 +875,7 @@ function bindEvents() {
 
   window.addEventListener("resize", () => {
     renderObjPreviewCanvas()
+    renderRenderedIdealCanvas()
     renderObjPoseSyncCanvas()
     drawLiveOverlay()
   })
@@ -1365,6 +1440,9 @@ function renderPreviewPanels() {
   const objSummary = getElement<HTMLElement>("[data-obj-preview-summary]")
   objSummary.innerHTML = renderObjPreviewSummary()
 
+  renderRenderedIdealCanvas()
+  renderRenderedIdealSummaryCard()
+
   const liveObjStage = getElement<HTMLElement>("[data-live-obj-stage]")
   liveObjStage.dataset.previewStatus = objPreviewStatus
   getElement<HTMLElement>("[data-live-obj-preview-message]").textContent = getObjPoseSyncMessage()
@@ -1393,6 +1471,10 @@ function renderControls() {
   getElement<HTMLElement>("[data-status='live-time']").textContent = formatTimeStatus(
     state.liveVideo,
   )
+
+  getElement<HTMLSelectElement>('[data-control="rendered-ideal-background"]').value = state.renderedIdeal.backgroundMode
+  getElement<HTMLSelectElement>('[data-control="rendered-ideal-color"]').value = state.renderedIdeal.colorMode
+  setDisabled('[data-action="rendered-ideal-refresh"]', !canRenderRenderedIdeal())
 
   renderLiveAnalysisCard()
   getElement<HTMLSelectElement>('[data-control="obj-preview-mode"]').value = state.objPreview.mode
@@ -1486,6 +1568,216 @@ function renderObjPoseSyncCanvas() {
   }
 
   renderObjPreviewCanvasTo(liveObjPosePreviewCanvas, previewState, getObjPoseSyncRotationCenter())
+}
+
+function renderRenderedIdealCanvas() {
+  const stage = getElement<HTMLElement>("[data-rendered-ideal-stage]")
+  const message = getElement<HTMLElement>("[data-rendered-ideal-message]")
+
+  try {
+    state.renderedIdeal.summary = renderRenderedIdealCanvasTo(renderedIdealCanvas)
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error)
+    console.error("Rendered ideal render failed", error)
+    state.renderedIdeal.summary = createRenderedIdealRenderSummary("error", {
+      errorMessage,
+      canvasWidth: renderedIdealCanvas.width,
+      canvasHeight: renderedIdealCanvas.height,
+    })
+  }
+
+  stage.dataset.renderStatus = state.renderedIdeal.summary.status
+  message.textContent = getRenderedIdealMessage()
+}
+
+function renderRenderedIdealCanvasTo(canvas: HTMLCanvasElement): RenderedIdealRenderSummary {
+  const context = canvas.getContext("2d")
+  if (!context) {
+    return createRenderedIdealRenderSummary("error", {
+      errorMessage: "2D canvas context を取得できませんでした。",
+    })
+  }
+
+  const rect = canvas.getBoundingClientRect()
+  const cssWidth = rect.width > 0 ? rect.width : RENDERED_IDEAL_FALLBACK_CANVAS_SIZE
+  const cssHeight = rect.height > 0 ? rect.height : RENDERED_IDEAL_FALLBACK_CANVAS_SIZE
+  const dpr = window.devicePixelRatio || 1
+  const targetWidth = Math.max(1, Math.round(cssWidth * dpr))
+  const targetHeight = Math.max(1, Math.round(cssHeight * dpr))
+  if (canvas.width !== targetWidth || canvas.height !== targetHeight) {
+    canvas.width = targetWidth
+    canvas.height = targetHeight
+  }
+
+  context.setTransform(dpr, 0, 0, dpr, 0, 0)
+  drawRenderedIdealBackground(context, cssWidth, cssHeight)
+
+  if (!state.objFile.loaded || getObjPreviewStatus() !== "ready") {
+    return createRenderedIdealRenderSummary("not_ready", {
+      canvasWidth: targetWidth,
+      canvasHeight: targetHeight,
+      errorMessage: null,
+    })
+  }
+
+  if (state.currentAnalysis.status !== "detected" || !hasFullPose(state.currentAnalysis.pose)) {
+    return createRenderedIdealRenderSummary("not_ready", {
+      canvasWidth: targetWidth,
+      canvasHeight: targetHeight,
+      errorMessage: null,
+    })
+  }
+
+  const summary = state.objSummary
+  if (!summary.center || !summary.maxDimension || summary.maxDimension <= 0) {
+    return createRenderedIdealRenderSummary("not_ready", {
+      canvasWidth: targetWidth,
+      canvasHeight: targetHeight,
+      errorMessage: "OBJ bounds が不足しています。",
+    })
+  }
+
+  const previewState = getObjPoseSyncPreviewState()
+  const rotationCenter = getObjPoseSyncRotationCenter()
+  const viewport = {
+    centerX: cssWidth / 2,
+    centerY: cssHeight / 2,
+    scale: Math.max(1, Math.min(cssWidth, cssHeight) * 0.44),
+  }
+  const transformedVertices = state.objGeometry.vertices.map((vertex) =>
+    transformObjVertexForRender(vertex, summary.center!, summary.maxDimension!, previewState, rotationCenter),
+  )
+  const faceDrawItems = createRenderedIdealFaceDrawItems(transformedVertices, viewport, previewState)
+
+  faceDrawItems.sort((a, b) => a.averageZ - b.averageZ)
+
+  let drawnFaceCount = 0
+  let skippedFaceCount = 0
+
+  context.save()
+  context.lineJoin = "round"
+  context.lineWidth = 0.65
+  for (const item of faceDrawItems) {
+    if (item.points.length < 3) {
+      skippedFaceCount += 1
+      continue
+    }
+
+    context.beginPath()
+    context.moveTo(item.points[0].x, item.points[0].y)
+    for (let index = 1; index < item.points.length; index += 1) {
+      context.lineTo(item.points[index].x, item.points[index].y)
+    }
+    context.closePath()
+    context.fillStyle = getRenderedIdealFaceColor(item.brightness)
+    context.strokeStyle = getRenderedIdealFaceStrokeColor(item.brightness)
+    context.fill()
+    context.stroke()
+    drawnFaceCount += 1
+  }
+  context.restore()
+
+  skippedFaceCount += state.objGeometry.faces.length - faceDrawItems.length
+
+  return createRenderedIdealRenderSummary("rendered", {
+    canvasWidth: targetWidth,
+    canvasHeight: targetHeight,
+    drawnFaceCount,
+    skippedFaceCount,
+    errorMessage: null,
+  })
+}
+
+function createRenderedIdealFaceDrawItems(
+  transformedVertices: ObjVertex[],
+  viewport: { centerX: number; centerY: number; scale: number },
+  previewState: ObjPreviewState,
+) {
+  return state.objGeometry.faces.flatMap((face) => {
+    const vertices: ObjVertex[] = []
+    face.indices.forEach((index) => {
+      const vertex = transformedVertices[index]
+      if (vertex) {
+        vertices.push(vertex)
+      }
+    })
+    if (vertices.length < 3) {
+      return []
+    }
+
+    const normal = orientNormalToCamera(calculateFaceNormal(vertices))
+    if (!normal) {
+      return []
+    }
+
+    const brightness = clamp(
+      0.35 + 0.65 * Math.max(0, dotVector(normal, RENDERED_IDEAL_LIGHT_DIRECTION)),
+      0.25,
+      1,
+    )
+    const averageZ = vertices.reduce((sum, vertex) => sum + vertex.z, 0) / vertices.length
+    const points = vertices.map((vertex) => ({
+      x: viewport.centerX + (vertex.x * previewState.zoom + previewState.panX) * viewport.scale,
+      y: viewport.centerY - (vertex.y * previewState.zoom + previewState.panY) * viewport.scale,
+    }))
+
+    return [{ averageZ, brightness, points }]
+  })
+}
+
+function transformObjVertexForRender(
+  vertex: ObjVertex,
+  center: ObjVertex,
+  maxDimension: number,
+  previewState: ObjPreviewState,
+  rotationCenter: ObjVertex,
+): ObjVertex {
+  const normalized = {
+    x: (vertex.x - center.x) / maxDimension,
+    y: (vertex.y - center.y) / maxDimension,
+    z: (vertex.z - center.z) / maxDimension,
+  }
+  const shifted = {
+    x: normalized.x - rotationCenter.x,
+    y: normalized.y - rotationCenter.y,
+    z: normalized.z - rotationCenter.z,
+  }
+  const rotatedShifted = rotateObjPoint(shifted, previewState)
+
+  return {
+    x: rotatedShifted.x + rotationCenter.x,
+    y: rotatedShifted.y + rotationCenter.y,
+    z: rotatedShifted.z + rotationCenter.z,
+  }
+}
+
+function drawRenderedIdealBackground(
+  context: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+) {
+  context.fillStyle = state.renderedIdeal.backgroundMode === "dark" ? "#1a2028" : "#f5f7f9"
+  context.fillRect(0, 0, width, height)
+}
+
+function renderRenderedIdealSummaryCard() {
+  const card = getElement<HTMLElement>("[data-rendered-ideal-summary]")
+  const summary = state.renderedIdeal.summary
+  card.innerHTML = `
+    <p>${escapeHtml(getRenderedIdealMessage())}</p>
+    <dl class="review-grid">
+      <div><dt>render status</dt><dd>${summary.status}</dd></div>
+      <div><dt>faceCount</dt><dd>${summary.faceCount}</dd></div>
+      <div><dt>drawnFaceCount</dt><dd>${summary.drawnFaceCount}</dd></div>
+      <div><dt>skippedFaceCount</dt><dd>${summary.skippedFaceCount}</dd></div>
+      <div><dt>render mode</dt><dd>${summary.renderMode}</dd></div>
+      <div><dt>light direction</dt><dd>${escapeHtml(formatPoint(summary.lightDirection))}</dd></div>
+      <div><dt>pose source</dt><dd>${state.objPoseSync.source}</dd></div>
+      <div><dt>applied yaw / pitch / roll</dt><dd>${escapeHtml(formatAppliedObjPose())}</dd></div>
+      <div><dt>rotation center</dt><dd>${escapeHtml(formatPoint(summary.rotationCenter))}</dd></div>
+      <div><dt>errorMessage</dt><dd>${escapeHtml(summary.errorMessage ?? "null")}</dd></div>
+    </dl>
+  `
 }
 
 function renderObjPreviewCanvasTo(
@@ -1881,7 +2173,10 @@ function getSummaryItems(): Array<[string, string]> {
     ["rotationCenterY", formatNumber(state.objPoseSync.rotationCenterY)],
     ["rotationCenterZ", formatNumber(state.objPoseSync.rotationCenterZ)],
     ["objErrorMessage", state.objErrorMessage ?? "null"],
-    ["renderedIdealStatus", "not_implemented"],
+    ["renderedIdealStatus", state.renderedIdeal.summary.status],
+    ["renderedIdealRenderMode", state.renderedIdeal.summary.renderMode],
+    ["renderedIdealDrawnFaceCount", formatNullableCount(state.renderedIdeal.summary.drawnFaceCount)],
+    ["renderedIdealSkippedFaceCount", formatNullableCount(state.renderedIdeal.summary.skippedFaceCount)],
     ["warpStatus", "not_implemented"],
   ]
 }
@@ -1960,11 +2255,21 @@ function getObjItems(): Array<[string, string]> {
 }
 
 function getRenderedIdealItems(): Array<[string, string]> {
+  const summary = state.renderedIdeal.summary
   return [
-    ["renderStatus", "not_implemented"],
-    ["mediaPipeStatus", "not_implemented"],
-    ["renderedIdeal478Count", "null"],
-    ["renderedIdealPose", "null"],
+    ["status", summary.status],
+    ["canvasWidth", formatNullableCount(summary.canvasWidth)],
+    ["canvasHeight", formatNullableCount(summary.canvasHeight)],
+    ["faceCount", formatNullableCount(summary.faceCount)],
+    ["drawnFaceCount", formatNullableCount(summary.drawnFaceCount)],
+    ["skippedFaceCount", formatNullableCount(summary.skippedFaceCount)],
+    ["renderMode", summary.renderMode],
+    ["lightDirection", formatPoint(summary.lightDirection)],
+    ["appliedYawDeg", formatNullableNumber(summary.appliedYawDeg)],
+    ["appliedPitchDeg", formatNullableNumber(summary.appliedPitchDeg)],
+    ["appliedRollDeg", formatNullableNumber(summary.appliedRollDeg)],
+    ["rotationCenter", formatPoint(summary.rotationCenter)],
+    ["errorMessage", summary.errorMessage ?? "null"],
   ]
 }
 
@@ -2021,8 +2326,10 @@ function getRawState() {
     currentLandmarksPreview: state.currentAnalysis.landmarks478
       .slice(0, LANDMARK_PREVIEW_COUNT)
       .map(roundLandmarkForState),
+    renderedIdealRenderSummary: state.renderedIdeal.summary,
     renderedIdeal: {
-      renderStatus: "not_implemented",
+      renderStatus: state.renderedIdeal.summary.status,
+      renderMode: state.renderedIdeal.summary.renderMode,
       mediaPipeStatus: "not_implemented",
       renderedIdeal478Count: null,
       renderedIdealPose: null,
@@ -2186,6 +2493,61 @@ function createDefaultObjPoseSyncState(): ObjPoseSyncState {
     appliedPitchDeg: null,
     appliedRollDeg: null,
     source: "none",
+  }
+}
+
+function createDefaultRenderedIdealState(): RenderedIdealState {
+  return {
+    backgroundMode: "light",
+    colorMode: "clay",
+    summary: {
+      status: "not_ready",
+      canvasWidth: 0,
+      canvasHeight: 0,
+      renderMode: "shaded_faces",
+      faceCount: 0,
+      drawnFaceCount: 0,
+      skippedFaceCount: 0,
+      lightDirection: {
+        x: roundForState(RENDERED_IDEAL_LIGHT_DIRECTION.x) ?? 0,
+        y: roundForState(RENDERED_IDEAL_LIGHT_DIRECTION.y) ?? 0,
+        z: roundForState(RENDERED_IDEAL_LIGHT_DIRECTION.z) ?? 0,
+      },
+      appliedYawDeg: null,
+      appliedPitchDeg: null,
+      appliedRollDeg: null,
+      rotationCenter: { x: 0, y: 0, z: 0 },
+      errorMessage: null,
+    },
+  }
+}
+
+function createRenderedIdealRenderSummary(
+  status: RenderedIdealRenderStatus,
+  overrides: Partial<RenderedIdealRenderSummary> = {},
+): RenderedIdealRenderSummary {
+  return {
+    status,
+    canvasWidth: overrides.canvasWidth ?? 0,
+    canvasHeight: overrides.canvasHeight ?? 0,
+    renderMode: "shaded_faces",
+    faceCount: state.objGeometry.faces.length,
+    drawnFaceCount: overrides.drawnFaceCount ?? 0,
+    skippedFaceCount: overrides.skippedFaceCount ?? 0,
+    lightDirection: {
+      x: roundForState(RENDERED_IDEAL_LIGHT_DIRECTION.x) ?? 0,
+      y: roundForState(RENDERED_IDEAL_LIGHT_DIRECTION.y) ?? 0,
+      z: roundForState(RENDERED_IDEAL_LIGHT_DIRECTION.z) ?? 0,
+    },
+    appliedYawDeg: roundForState(state.objPoseSync.appliedYawDeg),
+    appliedPitchDeg: roundForState(state.objPoseSync.appliedPitchDeg),
+    appliedRollDeg: roundForState(state.objPoseSync.appliedRollDeg),
+    rotationCenter: {
+      x: roundForState(state.objPoseSync.rotationCenterX) ?? 0,
+      y: roundForState(state.objPoseSync.rotationCenterY) ?? 0,
+      z: roundForState(state.objPoseSync.rotationCenterZ) ?? 0,
+    },
+    errorMessage: overrides.errorMessage ?? null,
   }
 }
 
@@ -2357,6 +2719,28 @@ function getObjPoseSyncStatus() {
     return "disabled"
   }
   return state.objPoseSync.source === "current_frame" ? "synced" : "waiting_current_frame"
+}
+
+function canRenderRenderedIdeal() {
+  return (
+    state.objFile.loaded &&
+    getObjPreviewStatus() === "ready" &&
+    state.currentAnalysis.status === "detected" &&
+    hasFullPose(state.currentAnalysis.pose)
+  )
+}
+
+function getRenderedIdealMessage() {
+  if (!state.objFile.loaded || getObjPreviewStatus() !== "ready") {
+    return "OBJを読み込むと、ここにレンダー理想2Dプレビューを表示します。"
+  }
+  if (state.currentAnalysis.status !== "detected" || !hasFullPose(state.currentAnalysis.pose)) {
+    return "現在フレーム解析を実行すると、現在姿勢でOBJをレンダリングできます。"
+  }
+  if (state.renderedIdeal.summary.status === "error") {
+    return "レンダー中にエラーが発生しました。"
+  }
+  return "現在姿勢を反映したOBJの2Dレンダーを表示しています。"
 }
 
 function renderObjPreviewSummary() {
@@ -2563,6 +2947,14 @@ function isDebugTab(value: string | undefined): value is DebugTab {
 
 function isObjPreviewMode(value: string): value is ObjPreviewMode {
   return value === "points" || value === "wireframe" || value === "points_wireframe"
+}
+
+function isRenderedIdealBackgroundMode(value: string): value is RenderedIdealBackgroundMode {
+  return value === "light" || value === "dark"
+}
+
+function isRenderedIdealColorMode(value: string): value is RenderedIdealColorMode {
+  return value === "clay" || value === "grayscale"
 }
 
 function formatTimeStatus(videoState: LiveVideoState) {
@@ -2792,6 +3184,80 @@ function normalizeDegrees(value: number) {
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max)
+}
+
+function calculateFaceNormal(vertices: ObjVertex[]): ObjVertex | null {
+  const a = vertices[0]
+  for (let bIndex = 1; bIndex < vertices.length - 1; bIndex += 1) {
+    const b = vertices[bIndex]
+    const c = vertices[bIndex + 1]
+    const normal = normalizeVector(crossVector(subtractVector(b, a), subtractVector(c, a)))
+    if (normal.x !== 0 || normal.y !== 0 || normal.z !== 0) {
+      return normal
+    }
+  }
+  return null
+}
+
+function orientNormalToCamera(normal: ObjVertex | null): ObjVertex | null {
+  if (!normal) {
+    return null
+  }
+  return normal.z < 0 ? { x: -normal.x, y: -normal.y, z: -normal.z } : normal
+}
+
+function subtractVector(a: ObjVertex, b: ObjVertex): ObjVertex {
+  return {
+    x: a.x - b.x,
+    y: a.y - b.y,
+    z: a.z - b.z,
+  }
+}
+
+function crossVector(a: ObjVertex, b: ObjVertex): ObjVertex {
+  return {
+    x: a.y * b.z - a.z * b.y,
+    y: a.z * b.x - a.x * b.z,
+    z: a.x * b.y - a.y * b.x,
+  }
+}
+
+function dotVector(a: ObjVertex, b: ObjVertex) {
+  return a.x * b.x + a.y * b.y + a.z * b.z
+}
+
+function normalizeVector(vector: ObjVertex): ObjVertex {
+  const length = Math.hypot(vector.x, vector.y, vector.z)
+  if (!Number.isFinite(length) || length <= 0) {
+    return { x: 0, y: 0, z: 0 }
+  }
+
+  return {
+    x: vector.x / length,
+    y: vector.y / length,
+    z: vector.z / length,
+  }
+}
+
+function getRenderedIdealFaceColor(brightness: number) {
+  const base = state.renderedIdeal.colorMode === "grayscale"
+    ? { r: 184, g: 188, b: 192 }
+    : { r: 205, g: 177, b: 151 }
+  return rgbToCss({
+    r: Math.round(base.r * brightness),
+    g: Math.round(base.g * brightness),
+    b: Math.round(base.b * brightness),
+  })
+}
+
+function getRenderedIdealFaceStrokeColor(brightness: number) {
+  const alpha = state.renderedIdeal.backgroundMode === "dark" ? 0.38 : 0.18
+  const channel = Math.round(40 + 60 * brightness)
+  return `rgba(${channel}, ${channel}, ${channel}, ${alpha})`
+}
+
+function rgbToCss(color: { r: number; g: number; b: number }) {
+  return `rgb(${clamp(color.r, 0, 255)}, ${clamp(color.g, 0, 255)}, ${clamp(color.b, 0, 255)})`
 }
 
 function escapeHtml(value: string) {
