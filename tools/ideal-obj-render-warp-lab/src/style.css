@@ -540,6 +540,16 @@ h3 {
   margin: 0;
 }
 
+.realtime-playback-note {
+  color: #8a5a13;
+  font-weight: 700;
+  margin-top: 6px;
+}
+
+.realtime-playback-note:empty {
+  display: none;
+}
+
 .realtime-buttons {
   justify-content: flex-end;
 }
