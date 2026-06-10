@@ -16,6 +16,26 @@ type RenderedIdealRenderMode = "shaded_faces"
 type RenderedIdealBackgroundMode = "light" | "dark"
 type RenderedIdealColorMode = "clay" | "grayscale"
 type LiveVideoStatus = "not_loaded" | "loaded" | "metadata_ready" | "error"
+type LiveInputSourceType = "video_file" | "camera"
+type LiveInputState = {
+  sourceType: LiveInputSourceType | null
+  status: string
+  fileName: string | null
+  width: number | null
+  height: number | null
+  durationSec: number | null
+  currentTimeSec: number | null
+  paused: boolean | null
+  readyState: number | null
+}
+type CameraState = {
+  status: "not_started" | "starting" | "running" | "stopped" | "error"
+  errorMessage: string | null
+  width: number | null
+  height: number | null
+  frameRate: number | null
+  deviceLabel: string | null
+}
 type CurrentAnalysisStatus =
   | "not_ready"
   | "ready"
@@ -30,8 +50,8 @@ type MediaPipeStatus =
   | "disposed"
   | "error"
 type RealtimeMode =
+  | "current_analysis_only"
   | "current_analysis_obj_render"
-  | "current_analysis_obj_render_mediapipe_redetect"
 type RealtimeStatus =
   | "idle"
   | "running"
@@ -300,6 +320,8 @@ type LabState = {
   renderedIdeal: RenderedIdealState
   objErrorMessage: string | null
   liveVideo: LiveVideoState
+  liveInput: LiveInputState
+  camera: CameraState
   liveMediaPipe: {
     status: MediaPipeStatus
     error: string | null
@@ -356,8 +378,8 @@ const debugTabs: TabOption<DebugTab>[] = [
 ]
 
 const realtimeModeLabels: Record<RealtimeMode, string> = {
+  current_analysis_only: "現在顔解析のみ",
   current_analysis_obj_render: "現在顔解析 + OBJレンダー",
-  current_analysis_obj_render_mediapipe_redetect: "現在顔解析 + OBJレンダー + MediaPipe再検出",
 }
 
 const state: LabState = {
@@ -393,6 +415,8 @@ const state: LabState = {
   renderedIdeal: createDefaultRenderedIdealState(),
   objErrorMessage: null,
   liveVideo: createEmptyLiveVideoState(),
+  liveInput: createEmptyLiveInputState(),
+  camera: createEmptyCameraState(),
   liveMediaPipe: {
     status: "uninitialized",
     error: null,
@@ -418,7 +442,9 @@ app.innerHTML = `
       </div>
       <div class="control-group">
         <button class="primary-button" type="button" data-action="load-obj">OBJ読込</button>
-        <button class="primary-button" type="button" data-action="load-live">ライブ動画読込</button>
+        <button class="primary-button" type="button" data-action="load-live">MP4読込</button>
+        <button class="secondary-button" type="button" data-action="camera-start">カメラ開始</button>
+        <button class="secondary-button" type="button" data-action="camera-stop">カメラ停止</button>
         <button class="secondary-button" type="button" data-action="export-debug">デバッグ出力</button>
       </div>
       <input class="visually-hidden" type="file" accept=".obj,text/plain,model/obj" data-input="obj-file" />
@@ -482,6 +508,7 @@ let realtimeTimerId: number | null = null
 let realtimeRunStartedAtMs: number | null = null
 let realtimeTickInProgress = false
 let realtimeTimingSamples: RealtimeTimingSample[] = []
+let cameraStream: MediaStream | null = null
 let objPreviewDrag:
   | {
       pointerId: number
@@ -613,16 +640,25 @@ function renderLivePreview() {
               <p>ライブ動画を読み込むと、ここにライブプレビューを表示します。</p>
             </div>
           </div>
-          <div class="timeline-controls live-controls" aria-label="ライブ動画操作">
-            <button class="small-button" type="button" data-action="live-play">再生</button>
-            <button class="small-button" type="button" data-action="live-pause">一時停止</button>
-            <button class="small-button" type="button" data-action="live-analyze-current">現在フレーム解析</button>
-            <label class="range-field">
-              <span>シーク</span>
-              <input type="range" min="0" step="0.001" value="0" data-range="live" />
-            </label>
-            <p class="frame-status" data-status="live-time">現在時刻: - / -</p>
+          <div class="review-card live-input-source-card" data-live-input-source>
+            <p>入力ソース: 未選択</p>
           </div>
+          <div class="timeline-controls live-controls" aria-label="MP4再生操作">
+            <button class="small-button" type="button" data-action="live-play">MP4再生</button>
+            <button class="small-button" type="button" data-action="live-pause">MP4停止</button>
+          </div>
+          <details class="mp4-debug-details" data-mp4-debug-details>
+            <summary>詳細MP4デバッグ</summary>
+            <p class="control-note" data-mp4-debug-note>MP4入力時のみ使用できます。</p>
+            <div class="timeline-controls live-controls" aria-label="詳細MP4デバッグ操作">
+              <button class="small-button" type="button" data-action="live-analyze-current">現在フレーム解析</button>
+              <label class="range-field">
+                <span>シーク</span>
+                <input type="range" min="0" step="0.001" value="0" data-range="live" />
+              </label>
+              <p class="frame-status" data-status="live-time">現在時刻: - / -</p>
+            </div>
+          </details>
           <div class="review-card" data-live-analysis>
             <p>ライブ動画の現在フレーム解析結果はまだありません。</p>
           </div>
@@ -696,7 +732,7 @@ function renderLivePreview() {
         <div class="realtime-control-header">
           <div>
             <h3>リアルタイム検証</h3>
-            <p>MediaPipe検出は GPU delegate 固定で実行します。<br />動画を再生してから「開始」を押すと、再生中のフレームに対して現在顔解析とOBJレンダーを繰り返し、処理時間を測ります。</p>
+            <p>MediaPipe検出は GPU delegate 固定で実行します。<br />入力ソースが MP4 の場合は、MP4デコード負荷を含む参考値です。入力ソースがカメラの場合は、本番想定に近い値として確認します。まず「現在顔解析のみ」で MediaPipe検出ms を確認し、その後「現在顔解析 + OBJレンダー」を確認してください。</p>
             <p class="realtime-playback-note" data-realtime-playback-note></p>
           </div>
           <div class="button-row realtime-buttons">
@@ -709,12 +745,12 @@ function renderLivePreview() {
           <fieldset class="mode-fieldset">
             <legend>処理モード</legend>
             <label class="radio-option">
-              <input type="radio" name="realtime-mode" value="current_analysis_obj_render" data-control="realtime-mode" />
-              <span>Mode A（現在顔解析 + OBJレンダー）</span>
+              <input type="radio" name="realtime-mode" value="current_analysis_only" data-control="realtime-mode" />
+              <span>現在顔解析のみ</span>
             </label>
             <label class="radio-option">
-              <input type="radio" name="realtime-mode" value="current_analysis_obj_render_mediapipe_redetect" data-control="realtime-mode" disabled />
-              <span>Mode B（現在顔解析 + OBJレンダー + MediaPipe再検出 / 未実装）</span>
+              <input type="radio" name="realtime-mode" value="current_analysis_obj_render" data-control="realtime-mode" />
+              <span>現在顔解析 + OBJレンダー</span>
             </label>
           </fieldset>
           <label class="select-field realtime-fps-field">
@@ -739,6 +775,15 @@ function bindEvents() {
 
   getElement<HTMLButtonElement>('[data-action="load-live"]').addEventListener("click", () => {
     liveFileInput.click()
+  })
+
+  getElement<HTMLButtonElement>('[data-action="camera-start"]').addEventListener("click", () => {
+    void startCameraInput()
+  })
+
+  getElement<HTMLButtonElement>('[data-action="camera-stop"]').addEventListener("click", () => {
+    stopCameraInput()
+    renderAll()
   })
 
   getElement<HTMLButtonElement>('[data-action="export-debug"]').addEventListener("click", () => {
@@ -773,6 +818,9 @@ function bindEvents() {
   })
 
   liveVideoElement.addEventListener("seeked", () => {
+    if (state.liveInput.sourceType !== "video_file" || state.realtimeDebug.status === "running") {
+      return
+    }
     syncLiveCurrentTime()
     void analyzeCurrentLiveFrame("seeked")
   })
@@ -781,17 +829,20 @@ function bindEvents() {
     const message = liveVideoElement.error?.message || "動画の読み込みに失敗しました。"
     state.liveVideo.status = "error"
     state.liveVideo.errorMessage = message
+    syncLiveInputState()
     addLog(`ライブ動画読み込みでエラーが発生しました: ${message}`)
     renderAll()
   })
 
   liveVideoElement.addEventListener("play", () => {
     state.liveVideo.playbackStatus = "playing"
+    syncLiveInputState()
     renderAll()
   })
 
   liveVideoElement.addEventListener("pause", () => {
     state.liveVideo.playbackStatus = state.liveVideo.loaded ? "paused" : "stopped"
+    syncLiveInputState()
     if (state.liveVideo.loaded) {
       void analyzeCurrentLiveFrame("pause")
     }
@@ -800,6 +851,7 @@ function bindEvents() {
 
   liveVideoElement.addEventListener("ended", () => {
     state.liveVideo.playbackStatus = "stopped"
+    syncLiveInputState()
     if (state.liveVideo.loaded) {
       void analyzeCurrentLiveFrame("ended")
     }
@@ -807,8 +859,8 @@ function bindEvents() {
   })
 
   getElement<HTMLButtonElement>('[data-action="live-play"]').addEventListener("click", () => {
-    if (!state.liveVideo.loaded) {
-      addLog("ライブ動画が未読込のため再生できません。")
+    if (!isVideoFileInput()) {
+      addLog("MP4ファイル入力時のみ再生できます。")
       renderAll()
       return
     }
@@ -820,6 +872,9 @@ function bindEvents() {
   })
 
   getElement<HTMLButtonElement>('[data-action="live-pause"]').addEventListener("click", () => {
+    if (!isVideoFileInput()) {
+      return
+    }
     liveVideoElement.pause()
   })
 
@@ -921,10 +976,7 @@ function bindEvents() {
       const value = event.currentTarget.value
       if (isRealtimeMode(value)) {
         state.realtimeDebug.mode = value
-        state.realtimeDebug.errorMessage =
-          value === "current_analysis_obj_render_mediapipe_redetect"
-            ? "MediaPipe再検出は未実装です。"
-            : null
+        state.realtimeDebug.errorMessage = null
         renderAll()
       }
     })
@@ -1144,6 +1196,7 @@ async function loadObjFile(file: File) {
 }
 
 function loadLiveVideo(file: File) {
+  stopCameraInput()
   if (state.liveVideo.objectUrl) {
     URL.revokeObjectURL(state.liveVideo.objectUrl)
   }
@@ -1165,11 +1218,142 @@ function loadLiveVideo(file: File) {
     status: "loaded",
     errorMessage: null,
   }
+  state.liveInput = {
+    sourceType: "video_file",
+    status: "loaded",
+    fileName: file.name,
+    width: null,
+    height: null,
+    durationSec: null,
+    currentTimeSec: 0,
+    paused: true,
+    readyState: liveVideoElement.readyState,
+  }
+  state.camera = createEmptyCameraState()
+  liveVideoElement.srcObject = null
   liveVideoElement.src = objectUrl
   liveVideoElement.load()
   state.activePreviewTab = "live"
-  addLog(`ライブ動画を読み込みました: ${file.name}`)
+  addLog(`MP4ファイルを読み込みました: ${file.name}`)
   renderAll()
+}
+
+async function startCameraInput() {
+  stopRealtimeValidation("stopped")
+  resetLiveAnalysisResults()
+  stopCameraInput({ preserveCameraState: false })
+  if (state.liveVideo.objectUrl) {
+    URL.revokeObjectURL(state.liveVideo.objectUrl)
+  }
+
+  state.camera = {
+    ...createEmptyCameraState(),
+    status: "starting",
+  }
+  state.liveVideo = {
+    loaded: false,
+    fileName: null,
+    fileSize: null,
+    fileType: null,
+    objectUrl: null,
+    durationSec: null,
+    width: null,
+    height: null,
+    currentTimeSec: null,
+    playbackStatus: "stopped",
+    status: "loaded",
+    errorMessage: null,
+  }
+  state.liveInput = {
+    ...createEmptyLiveInputState(),
+    sourceType: "camera",
+    status: "starting",
+  }
+  state.activePreviewTab = "live"
+  renderAll()
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+        frameRate: { ideal: 30 },
+      },
+      audio: false,
+    })
+    cameraStream = stream
+    liveVideoElement.removeAttribute("src")
+    liveVideoElement.srcObject = stream
+    liveVideoElement.muted = true
+    liveVideoElement.playsInline = true
+    state.liveVideo = {
+      loaded: true,
+      fileName: null,
+      fileSize: null,
+      fileType: "camera",
+      objectUrl: null,
+      durationSec: null,
+      width: null,
+      height: null,
+      currentTimeSec: 0,
+      playbackStatus: "playing",
+      status: "loaded",
+      errorMessage: null,
+    }
+    syncCameraSettings()
+    syncLiveInputState()
+    await liveVideoElement.play()
+    state.liveVideo.playbackStatus = "playing"
+    state.camera.status = "running"
+    syncLiveVideoMetadata()
+    addLog("カメラ入力を開始しました。")
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    stopCameraInput({ preserveCameraState: true })
+    state.camera = {
+      ...state.camera,
+      status: "error",
+      errorMessage: "カメラを開始できませんでした。ブラウザの権限または接続状態を確認してください。",
+    }
+    state.liveVideo = {
+      ...createEmptyLiveVideoState(),
+      status: "error",
+      errorMessage: state.camera.errorMessage,
+    }
+    state.liveInput = {
+      ...createEmptyLiveInputState(),
+      sourceType: "camera",
+      status: "error",
+    }
+    addLog(`カメラ開始に失敗しました: ${message}`)
+  } finally {
+    renderAll()
+  }
+}
+
+function stopCameraInput(options: { preserveCameraState?: boolean } = {}) {
+  if (cameraStream) {
+    cameraStream.getTracks().forEach((track) => track.stop())
+    cameraStream = null
+  }
+
+  if (state.liveInput.sourceType === "camera" || liveVideoElement.srcObject) {
+    stopRealtimeValidation("stopped")
+    liveVideoElement.pause()
+    liveVideoElement.srcObject = null
+    liveVideoElement.removeAttribute("src")
+    liveVideoElement.load()
+    state.liveVideo = createEmptyLiveVideoState()
+    state.liveInput = createEmptyLiveInputState()
+    resetLiveAnalysisResults()
+  }
+
+  if (!options.preserveCameraState) {
+    state.camera = {
+      ...createEmptyCameraState(),
+      status: "stopped",
+    }
+  }
 }
 
 async function getLiveFaceLandmarker() {
@@ -1314,6 +1498,10 @@ async function analyzeCurrentLiveFrame(
 }
 
 function maybeAnalyzeLiveFrame() {
+  if (state.realtimeDebug.status === "running") {
+    return
+  }
+
   if (state.liveVideo.playbackStatus !== "playing") {
     state.realtimeDebug.skippedByPausedVideoCount += 1
   }
@@ -1549,15 +1737,21 @@ function syncLiveVideoMetadata() {
   state.liveVideo.height = liveVideoElement.videoHeight || null
   state.liveVideo.status = "metadata_ready"
   state.liveVideo.errorMessage = null
+  if (state.liveInput.sourceType === "camera") {
+    state.camera.status = "running"
+    syncCameraSettings()
+  }
   syncLiveCurrentTime()
+  syncLiveInputState()
 }
 
 function syncLiveCurrentTime() {
   state.liveVideo.currentTimeSec = liveVideoElement.currentTime || 0
+  syncLiveInputState()
 }
 
 function seekLiveVideoTo(targetSec: number) {
-  if (!state.liveVideo.loaded || !Number.isFinite(targetSec)) {
+  if (!isVideoFileInput() || state.realtimeDebug.status === "running" || !Number.isFinite(targetSec)) {
     return
   }
 
@@ -1565,23 +1759,40 @@ function seekLiveVideoTo(targetSec: number) {
   const nextTime = clamp(targetSec, 0, Number.isFinite(duration) ? duration : targetSec)
   liveVideoElement.currentTime = nextTime
   state.liveVideo.currentTimeSec = nextTime
+  syncLiveInputState()
   renderAll()
 }
 
-function startRealtimeValidation() {
-  if (state.realtimeDebug.mode === "current_analysis_obj_render_mediapipe_redetect") {
-    state.realtimeDebug = {
-      ...state.realtimeDebug,
-      status: "error",
-      errorCount: state.realtimeDebug.errorCount + 1,
-      errorMessage: "Mode B（現在顔解析 + OBJレンダー + MediaPipe再検出）は未実装です。",
-      lastUpdatedAt: formatUpdatedAt(),
-    }
-    addLog("リアルタイム検証を開始できません。MediaPipe再検出は未実装です。")
-    renderAll()
-    return
+function syncLiveInputState() {
+  const sourceType = state.liveInput.sourceType
+  state.liveInput = {
+    sourceType,
+    status: state.liveVideo.status,
+    fileName: sourceType === "video_file" ? state.liveVideo.fileName : null,
+    width: state.liveVideo.width,
+    height: state.liveVideo.height,
+    durationSec: state.liveVideo.durationSec,
+    currentTimeSec: state.liveVideo.currentTimeSec,
+    paused: state.liveVideo.loaded ? liveVideoElement.paused : null,
+    readyState: state.liveVideo.loaded ? liveVideoElement.readyState : null,
   }
+}
 
+function syncCameraSettings() {
+  const track = cameraStream?.getVideoTracks()[0]
+  const settings = track?.getSettings()
+  state.camera = {
+    ...state.camera,
+    width: settings?.width ?? state.liveVideo.width,
+    height: settings?.height ?? state.liveVideo.height,
+    frameRate: settings?.frameRate ?? null,
+    deviceLabel: track?.label || null,
+  }
+  state.liveVideo.width = state.liveVideo.width ?? state.camera.width
+  state.liveVideo.height = state.liveVideo.height ?? state.camera.height
+}
+
+function startRealtimeValidation() {
   if (!state.liveVideo.loaded) {
     state.realtimeDebug = {
       ...state.realtimeDebug,
@@ -1690,19 +1901,6 @@ async function runRealtimeTick() {
     return
   }
 
-  if (state.realtimeDebug.mode === "current_analysis_obj_render_mediapipe_redetect") {
-    state.realtimeDebug = {
-      ...state.realtimeDebug,
-      status: "error",
-      errorCount: state.realtimeDebug.errorCount + 1,
-      errorMessage: "MediaPipe再検出は未実装です。",
-      lastUpdatedAt: formatUpdatedAt(),
-    }
-    stopRealtimeValidation("error")
-    renderAll()
-    return
-  }
-
   realtimeTickInProgress = true
   const totalStartMs = performance.now()
   let currentAnalysisMs: number | null = null
@@ -1715,9 +1913,11 @@ async function runRealtimeTick() {
       await analyzeCurrentLiveFrame("realtime", { skipFinalRender: true }) ??
       createEmptyCurrentAnalysisTimingBreakdown()
 
-    const renderStartMs = performance.now()
-    renderRenderedIdealCanvas()
-    objRenderMs = performance.now() - renderStartMs
+    if (state.realtimeDebug.mode === "current_analysis_obj_render") {
+      const renderStartMs = performance.now()
+      renderRenderedIdealCanvas()
+      objRenderMs = performance.now() - renderStartMs
+    }
 
     const frameCount = state.realtimeDebug.frameCount + 1
     const elapsedSec = realtimeRunStartedAtMs === null
@@ -1738,7 +1938,9 @@ async function runRealtimeTick() {
       errorMessage: null,
     }
 
-    const renderTiming = renderAll()
+    const renderTiming = renderAll({
+      skipObjRender: state.realtimeDebug.mode === "current_analysis_only",
+    })
     currentAnalysisTimingBreakdown = {
       ...currentAnalysisTimingBreakdown,
       liveOverlayDrawMs: renderTiming.liveOverlayDrawMs,
@@ -1794,10 +1996,10 @@ async function runRealtimeTick() {
   }
 }
 
-function renderAll(): RenderUpdateTiming {
+function renderAll(options: { skipObjRender?: boolean } = {}): RenderUpdateTiming {
   updateObjPoseSyncFromCurrentAnalysis()
   renderPreviewTabs()
-  renderPreviewPanels()
+  renderPreviewPanels(options)
   renderControls()
   renderDebugTabs()
 
@@ -1823,7 +2025,7 @@ function renderPreviewTabs() {
   })
 }
 
-function renderPreviewPanels() {
+function renderPreviewPanels(options: { skipObjRender?: boolean } = {}) {
   app.querySelectorAll<HTMLElement>("[data-preview-panel]").forEach((panel) => {
     panel.hidden = panel.dataset.previewPanel !== state.activePreviewTab
   })
@@ -1840,13 +2042,17 @@ function renderPreviewPanels() {
   const objSummary = getElement<HTMLElement>("[data-obj-preview-summary]")
   objSummary.innerHTML = renderObjPreviewSummary()
 
-  renderRenderedIdealCanvas()
+  if (!options.skipObjRender) {
+    renderRenderedIdealCanvas()
+  }
   renderRenderedIdealSummaryCard()
 
   const liveObjStage = getElement<HTMLElement>("[data-live-obj-stage]")
   liveObjStage.dataset.previewStatus = objPreviewStatus
   getElement<HTMLElement>("[data-live-obj-preview-message]").textContent = getObjPoseSyncMessage()
-  renderObjPoseSyncCanvas()
+  if (!options.skipObjRender) {
+    renderObjPoseSyncCanvas()
+  }
 }
 
 function renderControls() {
@@ -1860,17 +2066,31 @@ function renderControls() {
 
   const duration = state.liveVideo.durationSec ?? 0
   const range = getElement<HTMLInputElement>("[data-range='live']")
+  const canUseMp4Debug = isVideoFileInput() && state.realtimeDebug.status !== "running"
   range.max = String(duration)
   range.value = String(clamp(state.liveVideo.currentTimeSec ?? 0, 0, duration))
-  range.disabled = !state.liveVideo.loaded
+  range.disabled = !canUseMp4Debug
 
-  setDisabled('[data-action="live-play"]', !state.liveVideo.loaded || state.liveVideo.playbackStatus === "playing")
-  setDisabled('[data-action="live-pause"]', !state.liveVideo.loaded || state.liveVideo.playbackStatus !== "playing")
-  setDisabled('[data-action="live-analyze-current"]', !state.liveVideo.loaded || liveAnalysisInProgress)
+  setDisabled('[data-action="camera-start"]', state.camera.status === "starting" || isCameraInput())
+  setDisabled('[data-action="camera-stop"]', !cameraStream && state.camera.status !== "running")
+  setDisabled('[data-action="live-play"]', !isVideoFileInput() || state.liveVideo.playbackStatus === "playing")
+  setDisabled('[data-action="live-pause"]', !isVideoFileInput() || state.liveVideo.playbackStatus !== "playing")
+  setDisabled('[data-action="live-analyze-current"]', !canUseMp4Debug || liveAnalysisInProgress)
 
   getElement<HTMLElement>("[data-status='live-time']").textContent = formatTimeStatus(
     state.liveVideo,
   )
+  getElement<HTMLElement>("[data-mp4-debug-note]").textContent =
+    state.liveInput.sourceType === "camera"
+      ? "MP4入力時のみ使用できます。"
+      : state.realtimeDebug.status === "running"
+        ? "リアルタイム検証中はシークと現在フレーム解析を無効にしています。"
+        : "MP4入力時のみ使用できます。"
+  getElement<HTMLDetailsElement>("[data-mp4-debug-details]").classList.toggle(
+    "is-disabled",
+    state.liveInput.sourceType !== "video_file",
+  )
+  renderLiveInputSourceCard()
 
   getElement<HTMLSelectElement>('[data-control="rendered-ideal-background"]').value = state.renderedIdeal.backgroundMode
   getElement<HTMLSelectElement>('[data-control="rendered-ideal-color"]').value = state.renderedIdeal.colorMode
@@ -1906,6 +2126,20 @@ function renderRealtimeControls() {
   getElement<HTMLElement>("[data-realtime-inline-status]").textContent =
     `状態: ${formatRealtimeStatus(state.realtimeDebug.status)} / 実効FPS: ${formatRealtimeNullableNumber(state.realtimeDebug.effectiveFps)} / 判定: ${getRealtimeJudgement()}`
   getElement<HTMLElement>("[data-realtime-playback-note]").textContent = getRealtimePlaybackNote()
+}
+
+function renderLiveInputSourceCard() {
+  const card = getElement<HTMLElement>("[data-live-input-source]")
+  card.innerHTML = `
+    <dl class="review-grid">
+      <div><dt>入力ソース</dt><dd>${formatLiveInputSourceLabel(state.liveInput.sourceType)}</dd></div>
+      <div><dt>状態</dt><dd>${escapeHtml(state.liveInput.status)}</dd></div>
+      <div><dt>幅</dt><dd>${formatNullableCount(state.liveInput.width)}</dd></div>
+      <div><dt>高さ</dt><dd>${formatNullableCount(state.liveInput.height)}</dd></div>
+      <div><dt>カメラFPS</dt><dd>${formatNullableNumber(state.camera.frameRate)}</dd></div>
+      <div><dt>カメラエラー</dt><dd>${escapeHtml(state.camera.errorMessage ?? "-")}</dd></div>
+    </dl>
+  `
 }
 
 function renderLiveAnalysisCard() {
@@ -2562,7 +2796,14 @@ function getSummaryItems(): Array<[string, string]> {
   const objFileStatus = getObjFileStatus()
   return [
     ["labName", LAB_NAME],
+    ["liveInputSourceType", state.liveInput.sourceType ?? "null"],
     ["liveVideoStatus", state.liveVideo.status],
+    ["realtimeMode", state.realtimeDebug.mode],
+    ["currentAnalysisOnlySupported", "true"],
+    ["cameraStatus", state.camera.status],
+    ["cameraWidth", formatNullableCount(state.camera.width)],
+    ["cameraHeight", formatNullableCount(state.camera.height)],
+    ["cameraFrameRate", formatNullableNumber(state.camera.frameRate)],
     ["currentAnalysisStatus", state.currentAnalysis.status],
     ["currentLandmarkCount", formatNullableCount(state.currentAnalysis.status === "not_ready" ? null : state.currentAnalysis.landmarkCount)],
     ["currentPoseYaw", formatNullableNumber(state.currentAnalysis.pose.yaw)],
@@ -2597,7 +2838,6 @@ function getSummaryItems(): Array<[string, string]> {
     ["renderedIdealDrawnFaceCount", formatNullableCount(state.renderedIdeal.summary.drawnFaceCount)],
     ["renderedIdealSkippedFaceCount", formatNullableCount(state.renderedIdeal.summary.skippedFaceCount)],
     ["realtimeStatus", state.realtimeDebug.status],
-    ["realtimeMode", state.realtimeDebug.mode],
     ["realtimeTargetFps", formatNumber(state.realtimeDebug.targetFps)],
     ["realtimeEffectiveFps", formatRealtimeNullableNumber(state.realtimeDebug.effectiveFps)],
     ["realtimeTotalMs", formatRealtimeNullableNumber(state.realtimeDebug.totalMs)],
@@ -2616,6 +2856,7 @@ function getSummaryItems(): Array<[string, string]> {
 
 function getCurrentItems(): Array<[string, string]> {
   return [
+    ["liveInputSourceType", state.liveInput.sourceType ?? "null"],
     ["liveVideoStatus", state.liveVideo.status],
     ["fileName", state.liveVideo.fileName ?? "null"],
     ["width", formatNullableCount(state.liveVideo.width)],
@@ -2710,35 +2951,34 @@ function getRealtimeItems(): Array<[string, string]> {
   const breakdown = state.realtimeDebug.currentAnalysisTimingBreakdown
   const averageBreakdown = state.realtimeDebug.averageCurrentAnalysisTimingBreakdown
   return [
-    ["状態", formatRealtimeStatus(state.realtimeDebug.status)],
-    ["処理モード", realtimeModeLabels[state.realtimeDebug.mode]],
-    ["目標FPS", formatNumber(state.realtimeDebug.targetFps)],
-    ["実効FPS", formatRealtimeNullableNumber(state.realtimeDebug.effectiveFps)],
-    ["処理フレーム数", formatNullableCount(state.realtimeDebug.frameCount)],
-    ["スキップ数", formatNullableCount(state.realtimeDebug.skippedCount)],
-    ["エラー数", formatNullableCount(state.realtimeDebug.errorCount)],
-    ["現在顔解析ms", formatRealtimeNullableNumber(state.realtimeDebug.currentAnalysisMs)],
-    ["OBJレンダーms", formatRealtimeNullableNumber(state.realtimeDebug.objRenderMs)],
-    ["MediaPipe再検出ms", formatRealtimeNullableNumber(state.realtimeDebug.mediaPipeRedetectMs)],
-    ["合計ms", formatRealtimeNullableNumber(state.realtimeDebug.totalMs)],
-    ["平均合計ms", formatRealtimeNullableNumber(state.realtimeDebug.averageTotalMs)],
-    ["現在顔解析 内訳", ""],
+    ["入力ソース", formatLiveInputSourceLabel(state.liveInput.sourceType)],
+    ["リアルタイムモード", realtimeModeLabels[state.realtimeDebug.mode]],
     ["MediaPipe検出ms", formatRealtimeNullableNumber(breakdown.mediaPipeDetectMs)],
     ["解析結果整形ms", formatRealtimeNullableNumber(breakdown.buildCurrentAnalysisMs)],
     ["ライブ重ね描画ms", formatRealtimeNullableNumber(breakdown.liveOverlayDrawMs)],
     ["デバッグ更新ms", formatRealtimeNullableNumber(breakdown.debugUpdateMs)],
+    ["OBJレンダーms", formatRealtimeObjRenderMs()],
+    ["合計ms", formatRealtimeNullableNumber(state.realtimeDebug.totalMs)],
+    ["実効FPS", formatRealtimeNullableNumber(state.realtimeDebug.effectiveFps)],
+    ["ボトルネック", getRealtimeBottleneck()],
+    ["timeupdate / realtime tick counters", `${state.realtimeDebug.timeupdateAnalysisRequestCount} / ${state.realtimeDebug.realtimeTickAnalysisRequestCount}`],
+    ["状態", formatRealtimeStatus(state.realtimeDebug.status)],
+    ["目標FPS", formatNumber(state.realtimeDebug.targetFps)],
+    ["処理フレーム数", formatNullableCount(state.realtimeDebug.frameCount)],
+    ["スキップ数", formatNullableCount(state.realtimeDebug.skippedCount)],
+    ["エラー数", formatNullableCount(state.realtimeDebug.errorCount)],
+    ["現在顔解析ms", formatRealtimeNullableNumber(state.realtimeDebug.currentAnalysisMs)],
     ["現在顔解析合計ms", formatRealtimeNullableNumber(breakdown.currentAnalysisTotalMs)],
     ["平均MediaPipe検出ms", formatRealtimeNullableNumber(averageBreakdown.mediaPipeDetectMs)],
     ["平均解析結果整形ms", formatRealtimeNullableNumber(averageBreakdown.buildCurrentAnalysisMs)],
     ["平均ライブ重ね描画ms", formatRealtimeNullableNumber(averageBreakdown.liveOverlayDrawMs)],
     ["平均デバッグ更新ms", formatRealtimeNullableNumber(averageBreakdown.debugUpdateMs)],
     ["平均現在顔解析合計ms", formatRealtimeNullableNumber(averageBreakdown.currentAnalysisTotalMs)],
-    ["平均OBJレンダーms", formatRealtimeNullableNumber(state.realtimeDebug.averageObjRenderMs)],
-    ["ボトルネック", getRealtimeBottleneck()],
+    ["平均OBJレンダーms", formatRealtimeAverageObjRenderMs()],
     ["timeupdate解析要求数", formatNullableCount(state.realtimeDebug.timeupdateAnalysisRequestCount)],
     ["realtime tick解析要求数", formatNullableCount(state.realtimeDebug.realtimeTickAnalysisRequestCount)],
     ["処理中skip数", formatNullableCount(state.realtimeDebug.skippedByInProgressCount)],
-    ["動画なしskip数", formatNullableCount(state.realtimeDebug.skippedByNoVideoCount)],
+    ["入力なしskip数", formatNullableCount(state.realtimeDebug.skippedByNoVideoCount)],
     ["停止中skip数", formatNullableCount(state.realtimeDebug.skippedByPausedVideoCount)],
     ["最終更新時刻", state.realtimeDebug.lastUpdatedAt ?? "未計測"],
     ["エラーメッセージ", state.realtimeDebug.errorMessage ?? "なし"],
@@ -2764,7 +3004,6 @@ function getRawState() {
     objFile: state.objFile,
     objSummary: state.objSummary,
     objPreviewState: getRoundedObjPreviewState(),
-    realtimeDebugState: getRoundedRealtimeDebugState(),
     debugExportPreview: getDebugExportPreview(),
     objPoseSyncState: getRoundedObjPoseSyncState(),
     currentPoseSummary: roundPoseForState(state.currentAnalysis.pose),
@@ -2791,6 +3030,12 @@ function getRawState() {
     poseSyncSampledPointCount: state.objPoseSyncStats.sampledPointCount,
     poseSyncSampledEdgeCount: state.objPoseSyncStats.sampledEdgeCount,
     objErrorMessage: state.objErrorMessage,
+    liveInputState: getLiveInputRawSummary(),
+    cameraState: getCameraRawSummary(),
+    realtimeDebugState: getRoundedRealtimeDebugState(),
+    currentAnalysisTimingBreakdown: roundCurrentAnalysisTimingBreakdown(
+      state.realtimeDebug.currentAnalysisTimingBreakdown,
+    ),
     liveVideo: getLiveVideoRawSummary(),
     liveMediaPipe: {
       status: state.liveMediaPipe.status,
@@ -3043,6 +3288,31 @@ function createEmptyLiveVideoState(): LiveVideoState {
   }
 }
 
+function createEmptyLiveInputState(): LiveInputState {
+  return {
+    sourceType: null,
+    status: "not_loaded",
+    fileName: null,
+    width: null,
+    height: null,
+    durationSec: null,
+    currentTimeSec: null,
+    paused: null,
+    readyState: null,
+  }
+}
+
+function createEmptyCameraState(): CameraState {
+  return {
+    status: "not_started",
+    errorMessage: null,
+    width: null,
+    height: null,
+    frameRate: null,
+    deviceLabel: null,
+  }
+}
+
 function createEmptyQualitySummary(): QualitySummary {
   return {
     status: "not_ready",
@@ -3086,7 +3356,7 @@ function createDefaultRealtimeDebugState(
 ): RealtimeDebugState {
   return {
     status: "idle",
-    mode: overrides.mode ?? "current_analysis_obj_render",
+    mode: overrides.mode ?? "current_analysis_only",
     targetFps: overrides.targetFps ?? 10,
     frameCount: 0,
     skippedCount: 0,
@@ -3394,6 +3664,8 @@ function buildDebugExport() {
         paused: state.liveVideo.loaded ? liveVideoElement.paused : null,
         readyState: state.liveVideo.loaded ? liveVideoElement.readyState : null,
       },
+      liveInput: getLiveInputRawSummary(),
+      camera: getCameraRawSummary(),
     },
     currentFace: {
       status: state.currentAnalysis.status,
@@ -3458,6 +3730,7 @@ function clearLiveOverlay() {
 
 function cleanup() {
   stopRealtimeValidation("stopped")
+  stopCameraInput()
   if (state.liveVideo.objectUrl) {
     URL.revokeObjectURL(state.liveVideo.objectUrl)
     state.liveVideo.objectUrl = null
@@ -3477,6 +3750,31 @@ function getLiveVideoRawSummary() {
     currentTimeSec: roundForState(state.liveVideo.currentTimeSec),
     playbackStatus: state.liveVideo.playbackStatus,
     errorMessage: state.liveVideo.errorMessage,
+  }
+}
+
+function getLiveInputRawSummary() {
+  return {
+    sourceType: state.liveInput.sourceType,
+    status: state.liveInput.status,
+    fileName: state.liveInput.fileName,
+    width: state.liveInput.width,
+    height: state.liveInput.height,
+    durationSec: roundForState(state.liveInput.durationSec),
+    currentTimeSec: roundForState(state.liveInput.currentTimeSec),
+    paused: state.liveInput.paused,
+    readyState: state.liveInput.readyState,
+  }
+}
+
+function getCameraRawSummary() {
+  return {
+    status: state.camera.status,
+    errorMessage: state.camera.errorMessage,
+    width: state.camera.width,
+    height: state.camera.height,
+    frameRate: roundForState(state.camera.frameRate),
+    deviceLabel: state.camera.deviceLabel,
   }
 }
 
@@ -3541,8 +3839,15 @@ function isObjPreviewMode(value: string): value is ObjPreviewMode {
 }
 
 function isRealtimeMode(value: string): value is RealtimeMode {
-  return value === "current_analysis_obj_render" ||
-    value === "current_analysis_obj_render_mediapipe_redetect"
+  return value === "current_analysis_only" || value === "current_analysis_obj_render"
+}
+
+function isVideoFileInput() {
+  return state.liveInput.sourceType === "video_file" && state.liveVideo.loaded
+}
+
+function isCameraInput() {
+  return state.liveInput.sourceType === "camera" && state.liveVideo.loaded
 }
 
 function isRealtimeTargetFps(value: number): value is typeof REALTIME_TARGET_FPS_OPTIONS[number] {
@@ -3568,6 +3873,16 @@ function formatVideoSize() {
   return state.liveVideo.width === null || state.liveVideo.height === null
     ? "-"
     : `${state.liveVideo.width} x ${state.liveVideo.height}`
+}
+
+function formatLiveInputSourceLabel(sourceType: LiveInputSourceType | null) {
+  if (sourceType === "video_file") {
+    return "MP4ファイル"
+  }
+  if (sourceType === "camera") {
+    return "カメラ"
+  }
+  return "未選択"
 }
 
 function formatBytes(value: number | null) {
@@ -3655,6 +3970,18 @@ function formatRealtimeNullableNumber(value: number | null) {
   return value === null || !Number.isFinite(value) ? "未計測" : formatNumber(value)
 }
 
+function formatRealtimeObjRenderMs() {
+  return state.realtimeDebug.mode === "current_analysis_only"
+    ? "未実行"
+    : formatRealtimeNullableNumber(state.realtimeDebug.objRenderMs)
+}
+
+function formatRealtimeAverageObjRenderMs() {
+  return state.realtimeDebug.mode === "current_analysis_only"
+    ? "未実行"
+    : formatRealtimeNullableNumber(state.realtimeDebug.averageObjRenderMs)
+}
+
 function getRealtimeJudgement() {
   if (state.realtimeDebug.status === "error") {
     return "エラー"
@@ -3698,6 +4025,7 @@ function getDebugExportPreview() {
     schemaVersion: debugExport.schemaVersion,
     createdAt: debugExport.createdAt,
     environment: debugExport.environment,
+    input: debugExport.input,
     mediaPipeOptions: debugExport.mediaPipeOptions,
     realtime: debugExport.realtime,
     notes: debugExport.notes,

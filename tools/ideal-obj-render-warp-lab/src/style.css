@@ -454,6 +454,33 @@ h3 {
   max-width: 360px;
 }
 
+.live-input-source-card {
+  margin: 0;
+}
+
+.mp4-debug-details {
+  background: #f8fafc;
+  border: 1px solid #d8e0e7;
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.mp4-debug-details summary {
+  color: #26313b;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.mp4-debug-details.is-disabled {
+  opacity: 0.72;
+}
+
+.mp4-debug-details .control-note {
+  margin: 8px 0 10px;
+  max-width: none;
+}
+
 .rendered-ideal-controls {
   justify-content: flex-start;
 }
