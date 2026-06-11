@@ -6,7 +6,7 @@ import type { Matrix, NormalizedLandmark } from "@mediapipe/tasks-vision"
 import "./style.css"
 
 type PreviewTab = "obj" | "renderedIdeal" | "live"
-type DebugTab = "summary" | "current" | "obj" | "renderedIdeal" | "realtime" | "warpMesh" | "raw"
+type DebugTab = "summary" | "current" | "obj" | "renderedIdeal" | "objPoseCalibration" | "realtime" | "warpMesh" | "raw"
 type PlaybackStatus = "stopped" | "playing" | "paused"
 type ObjParseStatus = "not_loaded" | "not_parsed" | "parsed" | "error"
 type ObjPreviewMode = "points" | "wireframe" | "points_wireframe"
@@ -291,6 +291,234 @@ type PoseCenterSearchFrameResult = {
   errorMessage: string | null
 }
 
+type ObjPoseCalibrationStatus =
+  | "idle"
+  | "running"
+  | "completed"
+  | "error"
+
+type ObjPoseCalibrationPose = {
+  id: string
+  label: string
+  yawDeg: number
+  pitchDeg: number
+  rollDeg: number
+}
+
+type ObjPoseCalibrationPoseResult = {
+  poseId: string
+  poseLabel: string
+  basePose: {
+    yaw: number
+    pitch: number
+    roll: number
+  }
+  renderPoseOffset: {
+    yawDeg: number
+    pitchDeg: number
+    rollDeg: number
+  }
+  renderPose: {
+    yaw: number
+    pitch: number
+    roll: number
+  }
+  expectedPoseForComparison: {
+    yaw: number
+    pitch: number
+    roll: number
+  }
+  returnedPose: {
+    yaw: number | null
+    pitch: number | null
+    roll: number | null
+  }
+  poseError: number | null
+  yawError: number | null
+  pitchError: number | null
+  rollError: number | null
+  detected: boolean
+  detectMs: number | null
+  errorMessage: string | null
+}
+
+type ObjPoseCalibrationCandidate = {
+  rotationCenterX: number
+  rotationCenterY: number
+  rotationCenterZ: number
+  renderPoseOffset: {
+    yawDeg: number
+    pitchDeg: number
+    rollDeg: number
+  }
+  score: number | null
+  averagePoseError: number | null
+  maxPoseError: number | null
+  yawErrorAvg: number | null
+  pitchErrorAvg: number | null
+  rollErrorAvg: number | null
+  yawErrorMax: number | null
+  pitchErrorMax: number | null
+  rollErrorMax: number | null
+  failedPoseCount: number
+  poseResultsPreview: ObjPoseCalibrationPoseResult[]
+  detectMsTotal: number | null
+  errorMessage: string | null
+}
+
+type ObjPoseCalibrationPoseWiseBestCandidate = {
+  rotationCenterX: number
+  rotationCenterY: number
+  rotationCenterZ: number
+  renderPoseOffset: {
+    yawDeg: number
+    pitchDeg: number
+    rollDeg: number
+  }
+  renderPose: {
+    yaw: number
+    pitch: number
+    roll: number
+  }
+  expectedPoseForComparison: {
+    yaw: number
+    pitch: number
+    roll: number
+  }
+  returnedPose: {
+    yaw: number | null
+    pitch: number | null
+    roll: number | null
+  }
+  poseError: number | null
+  yawError: number | null
+  pitchError: number | null
+  rollError: number | null
+  detected: boolean
+  detectMs: number | null
+  errorMessage: string | null
+}
+
+type ObjPoseCalibrationPoseWiseTopCandidate = {
+  rank: number
+  rotationCenterX: number
+  rotationCenterY: number
+  rotationCenterZ: number
+  renderPoseOffset: {
+    yawDeg: number
+    pitchDeg: number
+    rollDeg: number
+  }
+  poseError: number | null
+  yawError: number | null
+  pitchError: number | null
+  rollError: number | null
+  returnedPose: {
+    yaw: number | null
+    pitch: number | null
+    roll: number | null
+  }
+  detected: boolean
+}
+
+type ObjPoseCalibrationPoseWiseBest = {
+  poseId: string
+  poseLabel: string
+  basePose: {
+    yaw: number
+    pitch: number
+    roll: number
+  }
+  bestCandidate: ObjPoseCalibrationPoseWiseBestCandidate | null
+  topCandidates: ObjPoseCalibrationPoseWiseTopCandidate[]
+}
+
+type ObjPoseCalibrationPoseWiseGroupSummary = {
+  groupId: string
+  label: string
+  poseIds: string[]
+  averageBestPoseError: number | null
+  averageBestYawError: number | null
+  averageBestPitchError: number | null
+  averageBestRollError: number | null
+  rotationCenterYRange: {
+    min: number | null
+    max: number | null
+  }
+  rotationCenterZRange: {
+    min: number | null
+    max: number | null
+  }
+  pitchOffsetDegRange: {
+    min: number | null
+    max: number | null
+  }
+}
+
+type ObjPoseCalibrationPosePairSummary = {
+  pairId: string
+  label: string
+  negativePoseId: string
+  positivePoseId: string
+  negativeBest: {
+    rotationCenterY: number | null
+    rotationCenterZ: number | null
+    pitchOffsetDeg: number | null
+    poseError: number | null
+  }
+  positiveBest: {
+    rotationCenterY: number | null
+    rotationCenterZ: number | null
+    pitchOffsetDeg: number | null
+    poseError: number | null
+  }
+  delta: {
+    rotationCenterY: number | null
+    rotationCenterZ: number | null
+    pitchOffsetDeg: number | null
+    poseError: number | null
+  }
+}
+
+type ObjPoseCalibrationCandidatePoint = {
+  rotationCenter: ObjVertex
+  renderPoseOffset: {
+    yawDeg: number
+    pitchDeg: number
+    rollDeg: number
+  }
+}
+
+type ObjPoseCalibrationSearchRange = {
+  rotationCenterX: { fixed: true; value: 0 }
+  rotationCenterY: { min: -0.3; max: 0.3; step: 0.05 }
+  rotationCenterZ: { min: -0.4; max: 0.1; step: 0.05 }
+  pitchOffsetDeg: { min: -10; max: 10; step: 2 }
+}
+
+type ObjPoseCalibrationState = {
+  status: ObjPoseCalibrationStatus
+  startedAt: string | null
+  completedAt: string | null
+  elapsedMs: number | null
+  estimatedRemainingMs: number | null
+  searchRange: ObjPoseCalibrationSearchRange
+  poseCount: number
+  candidateCount: number
+  totalEvaluationCount: number
+  evaluatedCandidateCount: number
+  evaluatedPoseCount: number
+  failedCandidateCount: number
+  failedPoseEvaluationCount: number
+  currentBestCandidate: ObjPoseCalibrationCandidate | null
+  bestCandidate: ObjPoseCalibrationCandidate | null
+  topCandidates: ObjPoseCalibrationCandidate[]
+  poseWiseBest: ObjPoseCalibrationPoseWiseBest[]
+  poseWiseGroupSummary: ObjPoseCalibrationPoseWiseGroupSummary[]
+  posePairSummary: ObjPoseCalibrationPosePairSummary[]
+  errorMessage: string | null
+}
+
 type PoseCenterSearchCandidate = {
   rotationCenterX: number
   rotationCenterY: number
@@ -465,6 +693,7 @@ type LabState = {
   objPoseSync: ObjPoseSyncState
   objPoseSyncStats: ObjPreviewStats
   renderedIdeal: RenderedIdealState
+  objPoseCalibration: ObjPoseCalibrationState
   poseSearchFrames: PoseCenterSearchFrame[]
   selectedPoseSearchFrameId: string | null
   poseCenterSearch: PoseCenterSearchState
@@ -482,7 +711,7 @@ type LabState = {
   logs: string[]
 }
 
-type FaceLandmarkerResultLike = ReturnType<FaceLandmarker["detectForVideo"]>
+type FaceLandmarkerResultLike = ReturnType<FaceLandmarker["detect"]>
 type FaceLandmarkerOptions = Parameters<typeof FaceLandmarker.createFromOptions>[1]
 type VideoFrameCallbackMetadataLike = {
   mediaTime?: number
@@ -516,6 +745,81 @@ const POSE_CENTER_SEARCH_RANGE = {
 } as const
 const POSE_CENTER_SEARCH_TOP_CANDIDATE_COUNT = 5
 const POSE_CENTER_SEARCH_FRAME_RESULTS_PREVIEW_COUNT = 12
+const OBJ_POSE_CALIBRATION_RANGE = {
+  rotationCenterX: { fixed: true, value: 0 },
+  rotationCenterY: { min: -0.3, max: 0.3, step: 0.05 },
+  rotationCenterZ: { min: -0.4, max: 0.1, step: 0.05 },
+  pitchOffsetDeg: { min: -10, max: 10, step: 2 },
+} as const
+const OBJ_POSE_CALIBRATION_TOP_CANDIDATE_COUNT = 10
+const OBJ_POSE_COMPARISON_SIGN = {
+  yaw: -1,
+  pitch: -1,
+  roll: -1,
+} as const
+const OBJ_POSE_CALIBRATION_POSES: ObjPoseCalibrationPose[] = [
+  { id: "front", label: "正面", yawDeg: 0, pitchDeg: 0, rollDeg: 0 },
+  { id: "yaw_negative_15", label: "yaw負方向 15度", yawDeg: -15, pitchDeg: 0, rollDeg: 0 },
+  { id: "yaw_positive_15", label: "yaw正方向 15度", yawDeg: 15, pitchDeg: 0, rollDeg: 0 },
+  { id: "yaw_negative_30", label: "yaw負方向 30度", yawDeg: -30, pitchDeg: 0, rollDeg: 0 },
+  { id: "yaw_positive_30", label: "yaw正方向 30度", yawDeg: 30, pitchDeg: 0, rollDeg: 0 },
+  { id: "pitch_negative_10", label: "pitch負方向 10度", yawDeg: 0, pitchDeg: -10, rollDeg: 0 },
+  { id: "pitch_positive_10", label: "pitch正方向 10度", yawDeg: 0, pitchDeg: 10, rollDeg: 0 },
+  { id: "pitch_negative_20", label: "pitch負方向 20度", yawDeg: 0, pitchDeg: -20, rollDeg: 0 },
+  { id: "pitch_positive_20", label: "pitch正方向 20度", yawDeg: 0, pitchDeg: 20, rollDeg: 0 },
+  { id: "roll_negative_10", label: "roll負方向 10度", yawDeg: 0, pitchDeg: 0, rollDeg: -10 },
+  { id: "roll_positive_10", label: "roll正方向 10度", yawDeg: 0, pitchDeg: 0, rollDeg: 10 },
+  { id: "mixed_1", label: "複合姿勢 1", yawDeg: 20, pitchDeg: -10, rollDeg: 5 },
+  { id: "mixed_2", label: "複合姿勢 2", yawDeg: -20, pitchDeg: -10, rollDeg: -5 },
+]
+const OBJ_POSE_WISE_TOP_CANDIDATE_COUNT = 3
+const OBJ_POSE_WISE_GROUPS = [
+  { groupId: "front", label: "正面", poseIds: ["front"] },
+  {
+    groupId: "yaw",
+    label: "yaw",
+    poseIds: ["yaw_negative_15", "yaw_positive_15", "yaw_negative_30", "yaw_positive_30"],
+  },
+  {
+    groupId: "pitch",
+    label: "pitch",
+    poseIds: ["pitch_negative_10", "pitch_positive_10", "pitch_negative_20", "pitch_positive_20"],
+  },
+  { groupId: "roll", label: "roll", poseIds: ["roll_negative_10", "roll_positive_10"] },
+  { groupId: "mixed", label: "複合姿勢", poseIds: ["mixed_1", "mixed_2"] },
+] as const
+const OBJ_POSE_PAIR_SUMMARY_PAIRS = [
+  {
+    pairId: "yaw_15",
+    label: "yaw -15 / +15",
+    negativePoseId: "yaw_negative_15",
+    positivePoseId: "yaw_positive_15",
+  },
+  {
+    pairId: "yaw_30",
+    label: "yaw -30 / +30",
+    negativePoseId: "yaw_negative_30",
+    positivePoseId: "yaw_positive_30",
+  },
+  {
+    pairId: "roll_10",
+    label: "roll -10 / +10",
+    negativePoseId: "roll_negative_10",
+    positivePoseId: "roll_positive_10",
+  },
+  {
+    pairId: "pitch_10",
+    label: "pitch -10 / +10",
+    negativePoseId: "pitch_negative_10",
+    positivePoseId: "pitch_positive_10",
+  },
+  {
+    pairId: "pitch_20",
+    label: "pitch -20 / +20",
+    negativePoseId: "pitch_negative_20",
+    positivePoseId: "pitch_positive_20",
+  },
+] as const
 const poseSearchFrameBucketLabels: Record<PoseSearchFrameBucket, string> = {
   front: "正面",
   yawLeft: "yaw負方向",
@@ -547,6 +851,7 @@ const debugTabs: TabOption<DebugTab>[] = [
   { label: "現在顔", value: "current" },
   { label: "OBJ", value: "obj" },
   { label: "レンダー理想", value: "renderedIdeal" },
+  { label: "OBJ解析", value: "objPoseCalibration" },
   { label: "リアルタイム", value: "realtime" },
   { label: "ワープメッシュ", value: "warpMesh" },
   { label: "Raw Debug", value: "raw" },
@@ -594,6 +899,7 @@ const state: LabState = {
     sampledEdgeCount: 0,
   },
   renderedIdeal: createDefaultRenderedIdealState(),
+  objPoseCalibration: createDefaultObjPoseCalibrationState(),
   poseSearchFrames: [],
   selectedPoseSearchFrameId: null,
   poseCenterSearch: createDefaultPoseCenterSearchState(),
@@ -626,15 +932,13 @@ app.innerHTML = `
       </div>
       <div class="control-group">
         <button class="primary-button" type="button" data-action="load-obj">OBJ読込</button>
-        <button class="primary-button" type="button" data-action="load-live">MP4読込</button>
-        <button class="secondary-button" type="button" data-action="camera-start">カメラ開始</button>
-        <button class="secondary-button" type="button" data-action="camera-stop">カメラ停止</button>
+        <button class="primary-button" type="button" data-action="obj-pose-calibration-start">OBJ解析</button>
         <button class="secondary-button" type="button" data-action="export-debug">デバッグ出力</button>
       </div>
       <input class="visually-hidden" type="file" accept=".obj,text/plain,model/obj" data-input="obj-file" />
       <input class="visually-hidden" type="file" accept="video/*" data-input="live-video" />
       <div class="status-note">
-        OBJ読込と Canvas 2D preview に加えて、ライブ動画の current frame を MediaPipe で解析します。今回は current478 overlay までを確認し、renderedIdeal478 や mesh warp はまだ接続しません。
+        OBJ単体に基準姿勢を与えてレンダーし、IMAGE mode の MediaPipe で返却姿勢を評価します。MP4 / カメラ入力には依存しません。
       </div>
       <p class="export-status" data-debug-export-status></p>
     </section>
@@ -798,13 +1102,6 @@ function renderRenderedIdealPreview() {
       <div class="obj-preview-controls rendered-ideal-controls" aria-label="レンダー理想 preview 操作">
         <div class="button-row">
           <button class="small-button" type="button" data-action="rendered-ideal-refresh">レンダー更新</button>
-          <button class="small-button" type="button" data-action="pose-search-frame-add">探索フレームに追加</button>
-          <button class="small-button" type="button" data-action="pose-search-frames-clear">探索フレームをクリア</button>
-          <button class="small-button" type="button" data-action="pose-search-frame-delete">選択フレームを削除</button>
-          <button class="small-button" type="button" data-action="pose-center-search-start">現在フレームで探索</button>
-          <button class="small-button" type="button" data-action="pose-center-search-multi-start">複数姿勢で探索</button>
-          <button class="small-button" type="button" data-action="pose-center-search-apply-best">bestを適用</button>
-          <button class="small-button" type="button" data-action="pose-center-search-reset">探索リセット</button>
         </div>
         <label class="select-field">
           <span>背景色</span>
@@ -823,9 +1120,6 @@ function renderRenderedIdealPreview() {
       </div>
       <div class="review-card" data-rendered-ideal-summary>
         <p>OBJを読み込むと、ここにレンダー理想2Dプレビューを表示します。</p>
-      </div>
-      <div class="review-card pose-search-frames-card" data-pose-search-frames>
-        <p>探索フレームはまだ登録されていません。</p>
       </div>
     </div>
   `
@@ -976,32 +1270,14 @@ function renderLivePreview() {
 
 function bindEvents() {
   getElement<HTMLButtonElement>('[data-action="load-obj"]').addEventListener("click", () => {
-    if (isPoseCenterSearchRunning()) {
+    if (isObjPoseCalibrationRunning()) {
       return
     }
     objFileInput.click()
   })
 
-  getElement<HTMLButtonElement>('[data-action="load-live"]').addEventListener("click", () => {
-    if (isPoseCenterSearchRunning()) {
-      return
-    }
-    liveFileInput.click()
-  })
-
-  getElement<HTMLButtonElement>('[data-action="camera-start"]').addEventListener("click", () => {
-    if (isPoseCenterSearchRunning()) {
-      return
-    }
-    void startCameraInput()
-  })
-
-  getElement<HTMLButtonElement>('[data-action="camera-stop"]').addEventListener("click", () => {
-    if (isPoseCenterSearchRunning()) {
-      return
-    }
-    stopCameraInput()
-    renderAll()
+  getElement<HTMLButtonElement>('[data-action="obj-pose-calibration-start"]').addEventListener("click", () => {
+    void startObjPoseCalibration()
   })
 
   getElement<HTMLButtonElement>('[data-action="export-debug"]').addEventListener("click", () => {
@@ -1010,7 +1286,7 @@ function bindEvents() {
 
   objFileInput.addEventListener("change", (event) => {
     const file = getSelectedFile(event)
-    if (file && !isPoseCenterSearchRunning()) {
+    if (file && !isObjPoseCalibrationRunning()) {
       void loadObjFile(file)
     }
   })
@@ -1114,45 +1390,6 @@ function bindEvents() {
 
   getElement<HTMLButtonElement>('[data-action="rendered-ideal-refresh"]').addEventListener("click", () => {
     renderAll()
-  })
-
-  getElement<HTMLButtonElement>('[data-action="pose-search-frame-add"]').addEventListener("click", () => {
-    addCurrentPoseSearchFrame()
-  })
-
-  getElement<HTMLButtonElement>('[data-action="pose-search-frames-clear"]').addEventListener("click", () => {
-    clearPoseSearchFrames()
-  })
-
-  getElement<HTMLButtonElement>('[data-action="pose-search-frame-delete"]').addEventListener("click", () => {
-    deleteSelectedPoseSearchFrame()
-  })
-
-  getElement<HTMLButtonElement>('[data-action="pose-center-search-start"]').addEventListener("click", () => {
-    void startPoseCenterSearch("single_frame")
-  })
-
-  getElement<HTMLButtonElement>('[data-action="pose-center-search-multi-start"]').addEventListener("click", () => {
-    void startPoseCenterSearch("multi_frame")
-  })
-
-  getElement<HTMLButtonElement>('[data-action="pose-center-search-apply-best"]').addEventListener("click", () => {
-    applyPoseCenterSearchBest()
-  })
-
-  getElement<HTMLButtonElement>('[data-action="pose-center-search-reset"]').addEventListener("click", () => {
-    state.poseCenterSearch = createDefaultPoseCenterSearchState()
-    renderAll()
-  })
-
-  app.addEventListener("change", (event) => {
-    if (
-      event.target instanceof HTMLSelectElement &&
-      event.target.matches('[data-control="pose-search-frame-select"]')
-    ) {
-      state.selectedPoseSearchFrameId = event.target.value || null
-      renderControls()
-    }
   })
 
   getElement<HTMLSelectElement>('[data-control="rendered-ideal-background"]').addEventListener("change", (event) => {
@@ -1984,9 +2221,8 @@ async function detectRenderedIdealCanvas(renderSeq: number) {
 
   try {
     const detector = await getRenderedIdealFaceLandmarker()
-    const timestampMs = nextRenderedIdealTimestampMs()
     const detectStartMs = performance.now()
-    const result = detector.detectForVideo(renderedIdealCanvas, timestampMs)
+    const result = detector.detect(renderedIdealCanvas)
     const detectMs = performance.now() - detectStartMs
     addRenderedIdealDetectionTimingSample(detectMs)
     const averageDetectMs = averageNullableTiming(renderedIdealDetectionTimingSamples)
@@ -2108,6 +2344,388 @@ function addRenderedIdealDetectionTimingSample(detectMs: number) {
     detectMs,
     ...renderedIdealDetectionTimingSamples,
   ].slice(0, REALTIME_AVERAGE_SAMPLE_COUNT)
+}
+
+async function startObjPoseCalibration() {
+  if (isObjPoseCalibrationRunning()) {
+    return
+  }
+
+  if (!canRenderRenderedIdealGeometry()) {
+    state.objPoseCalibration = {
+      ...createDefaultObjPoseCalibrationState(),
+      status: "error",
+      startedAt: new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+      poseCount: OBJ_POSE_CALIBRATION_POSES.length,
+      errorMessage: "OBJ読込を完了してからOBJ解析を実行してください。",
+    }
+    addLog("OBJ解析を開始できません。OBJ読込を完了してください。")
+    renderAll()
+    return
+  }
+
+  stopRealtimeValidation("stopped")
+  const candidates = createObjPoseCalibrationCandidatePoints()
+  const startedAtMs = performance.now()
+  state.activeDebugTab = "objPoseCalibration"
+  state.objPoseCalibration = {
+    ...createDefaultObjPoseCalibrationState(),
+    status: "running",
+    startedAt: new Date().toISOString(),
+    poseCount: OBJ_POSE_CALIBRATION_POSES.length,
+    candidateCount: candidates.length,
+    totalEvaluationCount: candidates.length * OBJ_POSE_CALIBRATION_POSES.length,
+  }
+  addLog(`OBJ解析を開始しました: ${candidates.length}候補 / ${OBJ_POSE_CALIBRATION_POSES.length} pose`)
+  renderAll()
+
+  try {
+    const detectionIdle = await waitForRenderedIdealDetectionIdle()
+    if (!detectionIdle) {
+      throw new Error("rendered ideal detection is still running")
+    }
+
+    const detector = await getRenderedIdealFaceLandmarker()
+    for (const [index, candidatePoint] of candidates.entries()) {
+      const candidate = evaluateObjPoseCalibrationCandidate(detector, candidatePoint)
+      updateObjPoseCalibrationProgress(candidate, startedAtMs)
+      renderRenderedIdealSummaryCard()
+      renderDebugContent()
+
+      if (index % 1 === 0) {
+        await waitForNextFrame()
+      }
+    }
+
+    state.objPoseCalibration = {
+      ...state.objPoseCalibration,
+      status: "completed",
+      completedAt: new Date().toISOString(),
+      elapsedMs: performance.now() - startedAtMs,
+      estimatedRemainingMs: 0,
+      errorMessage: null,
+    }
+    addLog(
+      state.objPoseCalibration.bestCandidate
+        ? `OBJ解析が完了しました。best score: ${formatNullableNumber(state.objPoseCalibration.bestCandidate.score)}`
+        : "OBJ解析が完了しましたが、検出できた候補がありませんでした。",
+    )
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    console.error("OBJ pose calibration failed", error)
+    state.objPoseCalibration = {
+      ...state.objPoseCalibration,
+      status: "error",
+      completedAt: new Date().toISOString(),
+      elapsedMs: performance.now() - startedAtMs,
+      errorMessage: message,
+    }
+    addLog(`OBJ解析でエラーが発生しました: ${message}`)
+  } finally {
+    renderAll()
+  }
+}
+
+function evaluateObjPoseCalibrationCandidate(
+  detector: FaceLandmarker,
+  candidatePoint: ObjPoseCalibrationCandidatePoint,
+): ObjPoseCalibrationCandidate {
+  const poseResults = OBJ_POSE_CALIBRATION_POSES.map((pose) =>
+    evaluateObjPoseCalibrationCandidateOnPose(detector, candidatePoint, pose),
+  )
+  return buildObjPoseCalibrationCandidate(candidatePoint, poseResults)
+}
+
+function evaluateObjPoseCalibrationCandidateOnPose(
+  detector: FaceLandmarker,
+  candidatePoint: ObjPoseCalibrationCandidatePoint,
+  pose: ObjPoseCalibrationPose,
+): ObjPoseCalibrationPoseResult {
+  const basePose = {
+    yaw: pose.yawDeg,
+    pitch: pose.pitchDeg,
+    roll: pose.rollDeg,
+  }
+  const renderPose = {
+    yaw: basePose.yaw + candidatePoint.renderPoseOffset.yawDeg,
+    pitch: basePose.pitch + candidatePoint.renderPoseOffset.pitchDeg,
+    roll: basePose.roll + candidatePoint.renderPoseOffset.rollDeg,
+  }
+  const expectedPoseForComparison = applyObjPoseComparisonSign(basePose)
+  const baseResult: ObjPoseCalibrationPoseResult = {
+    poseId: pose.id,
+    poseLabel: pose.label,
+    basePose,
+    renderPoseOffset: candidatePoint.renderPoseOffset,
+    renderPose,
+    expectedPoseForComparison,
+    returnedPose: {
+      yaw: null,
+      pitch: null,
+      roll: null,
+    },
+    poseError: null,
+    yawError: null,
+    pitchError: null,
+    rollError: null,
+    detected: false,
+    detectMs: null,
+    errorMessage: null,
+  }
+
+  try {
+    const renderSummary = renderRenderedIdealCanvasTo(renderedIdealCanvas, candidatePoint.rotationCenter, renderPose)
+    if (renderSummary.status !== "rendered") {
+      return {
+        ...baseResult,
+        errorMessage: renderSummary.errorMessage ?? renderSummary.status,
+      }
+    }
+
+    const detectStartMs = performance.now()
+    const result = detector.detect(renderedIdealCanvas)
+    const detectMs = performance.now() - detectStartMs
+    const detection = buildRenderedIdealDetectionState(result, -1, detectMs, null)
+    const returnedPose = detection.pose
+
+    if (detection.status !== "detected" || !hasFullPose(returnedPose)) {
+      return {
+        ...baseResult,
+        returnedPose: roundPoseForState(returnedPose),
+        detectMs,
+        errorMessage: detection.errorMessage ?? detection.status,
+      }
+    }
+
+    const yawError = Math.abs(expectedPoseForComparison.yaw - returnedPose.yaw!)
+    const pitchError = Math.abs(expectedPoseForComparison.pitch - returnedPose.pitch!)
+    const rollError = Math.abs(expectedPoseForComparison.roll - returnedPose.roll!)
+    const poseError = yawError + pitchError + rollError
+
+    return {
+      ...baseResult,
+      returnedPose: roundPoseForState(returnedPose),
+      poseError: roundForState(poseError),
+      yawError: roundForState(yawError),
+      pitchError: roundForState(pitchError),
+      rollError: roundForState(rollError),
+      detected: true,
+      detectMs,
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return {
+      ...baseResult,
+      errorMessage: message,
+    }
+  }
+}
+
+function buildObjPoseCalibrationCandidate(
+  candidatePoint: ObjPoseCalibrationCandidatePoint,
+  poseResults: ObjPoseCalibrationPoseResult[],
+): ObjPoseCalibrationCandidate {
+  const detectedResults = poseResults.filter((result) => result.detected && result.poseError !== null)
+  const failedPoseCount = poseResults.length - detectedResults.length
+  const poseErrors = detectedResults.map((result) => result.poseError!)
+  const yawErrors = detectedResults.map((result) => result.yawError!)
+  const pitchErrors = detectedResults.map((result) => result.pitchError!)
+  const rollErrors = detectedResults.map((result) => result.rollError!)
+  const averagePoseError = averageNumbers(poseErrors)
+  const maxPoseError = maxNumbers(poseErrors)
+  const yawErrorAvg = averageNumbers(yawErrors)
+  const pitchErrorAvg = averageNumbers(pitchErrors)
+  const rollErrorAvg = averageNumbers(rollErrors)
+  const yawErrorMax = maxNumbers(yawErrors)
+  const pitchErrorMax = maxNumbers(pitchErrors)
+  const rollErrorMax = maxNumbers(rollErrors)
+  const score = averagePoseError === null || maxPoseError === null
+    ? failedPoseCount * 100
+    : averagePoseError + maxPoseError + failedPoseCount * 100
+
+  return {
+    rotationCenterX: roundForState(candidatePoint.rotationCenter.x) ?? 0,
+    rotationCenterY: roundForState(candidatePoint.rotationCenter.y) ?? 0,
+    rotationCenterZ: roundForState(candidatePoint.rotationCenter.z) ?? 0,
+    renderPoseOffset: roundObjPoseRenderOffset(candidatePoint.renderPoseOffset),
+    score: roundForState(score),
+    averagePoseError: roundForState(averagePoseError),
+    maxPoseError: roundForState(maxPoseError),
+    yawErrorAvg: roundForState(yawErrorAvg),
+    pitchErrorAvg: roundForState(pitchErrorAvg),
+    rollErrorAvg: roundForState(rollErrorAvg),
+    yawErrorMax: roundForState(yawErrorMax),
+    pitchErrorMax: roundForState(pitchErrorMax),
+    rollErrorMax: roundForState(rollErrorMax),
+    failedPoseCount,
+    poseResultsPreview: poseResults.map(roundObjPoseCalibrationPoseResult),
+    detectMsTotal: roundForState(sumNumbers(poseResults.map((result) => result.detectMs))),
+    errorMessage: failedPoseCount > 0 ? `${failedPoseCount}件のpose評価に失敗しました。` : null,
+  }
+}
+
+function updateObjPoseCalibrationProgress(candidate: ObjPoseCalibrationCandidate, startedAtMs: number) {
+  const rankedCandidates = [
+    ...state.objPoseCalibration.topCandidates,
+    candidate,
+  ].filter((item) => item.score !== null)
+  const topCandidates = rankedCandidates
+    .sort((a, b) => (a.score ?? Number.POSITIVE_INFINITY) - (b.score ?? Number.POSITIVE_INFINITY))
+    .slice(0, OBJ_POSE_CALIBRATION_TOP_CANDIDATE_COUNT)
+  const bestCandidate = topCandidates[0] ?? state.objPoseCalibration.bestCandidate
+  const evaluatedCandidateCount = state.objPoseCalibration.evaluatedCandidateCount + 1
+  const evaluatedPoseCount =
+    state.objPoseCalibration.evaluatedPoseCount + state.objPoseCalibration.poseCount
+  const elapsedMs = performance.now() - startedAtMs
+  const averageCandidateMs = elapsedMs / Math.max(1, evaluatedCandidateCount)
+  const remainingCandidateCount = Math.max(0, state.objPoseCalibration.candidateCount - evaluatedCandidateCount)
+  const poseWiseBest = updateObjPoseCalibrationPoseWiseBest(
+    state.objPoseCalibration.poseWiseBest,
+    candidate,
+  )
+
+  state.objPoseCalibration = {
+    ...state.objPoseCalibration,
+    evaluatedCandidateCount,
+    evaluatedPoseCount,
+    failedCandidateCount:
+      state.objPoseCalibration.failedCandidateCount + (candidate.failedPoseCount > 0 ? 1 : 0),
+    failedPoseEvaluationCount:
+      state.objPoseCalibration.failedPoseEvaluationCount + candidate.failedPoseCount,
+    currentBestCandidate: bestCandidate,
+    bestCandidate,
+    topCandidates,
+    poseWiseBest,
+    poseWiseGroupSummary: buildObjPoseWiseGroupSummary(poseWiseBest),
+    posePairSummary: buildObjPosePairSummary(poseWiseBest),
+    elapsedMs,
+    estimatedRemainingMs: averageCandidateMs * remainingCandidateCount,
+  }
+}
+
+function updateObjPoseCalibrationPoseWiseBest(
+  currentPoseWiseBest: ObjPoseCalibrationPoseWiseBest[],
+  candidate: ObjPoseCalibrationCandidate,
+): ObjPoseCalibrationPoseWiseBest[] {
+  const currentByPoseId = new Map(currentPoseWiseBest.map((item) => [item.poseId, item]))
+
+  return OBJ_POSE_CALIBRATION_POSES.map((pose) => {
+    const current = currentByPoseId.get(pose.id) ?? createDefaultObjPoseWiseBestForPose(pose)
+    const result = candidate.poseResultsPreview.find((item) => item.poseId === pose.id)
+    if (!result || !result.detected || result.poseError === null) {
+      return current
+    }
+
+    const topCandidates = [
+      ...current.topCandidates,
+      createObjPoseWiseTopCandidate(candidate, result, 0),
+    ]
+      .filter((item) => item.detected && item.poseError !== null)
+      .sort((a, b) => (a.poseError ?? Number.POSITIVE_INFINITY) - (b.poseError ?? Number.POSITIVE_INFINITY))
+      .slice(0, OBJ_POSE_WISE_TOP_CANDIDATE_COUNT)
+      .map((item, index) => ({
+        ...item,
+        rank: index + 1,
+      }))
+    const bestCandidate =
+      current.bestCandidate === null ||
+      (result.poseError ?? Number.POSITIVE_INFINITY) <
+        (current.bestCandidate.poseError ?? Number.POSITIVE_INFINITY)
+        ? createObjPoseWiseBestCandidate(candidate, result)
+        : current.bestCandidate
+
+    return {
+      ...current,
+      bestCandidate,
+      topCandidates,
+    }
+  })
+}
+
+function createObjPoseWiseTopCandidate(
+  candidate: ObjPoseCalibrationCandidate,
+  result: ObjPoseCalibrationPoseResult,
+  rank: number,
+): ObjPoseCalibrationPoseWiseTopCandidate {
+  return {
+    rank,
+    rotationCenterX: candidate.rotationCenterX,
+    rotationCenterY: candidate.rotationCenterY,
+    rotationCenterZ: candidate.rotationCenterZ,
+    renderPoseOffset: candidate.renderPoseOffset,
+    poseError: result.poseError,
+    yawError: result.yawError,
+    pitchError: result.pitchError,
+    rollError: result.rollError,
+    returnedPose: result.returnedPose,
+    detected: result.detected,
+  }
+}
+
+function createObjPoseWiseBestCandidate(
+  candidate: ObjPoseCalibrationCandidate,
+  result: ObjPoseCalibrationPoseResult,
+): ObjPoseCalibrationPoseWiseBestCandidate {
+  return {
+    rotationCenterX: candidate.rotationCenterX,
+    rotationCenterY: candidate.rotationCenterY,
+    rotationCenterZ: candidate.rotationCenterZ,
+    renderPoseOffset: candidate.renderPoseOffset,
+    renderPose: result.renderPose,
+    expectedPoseForComparison: result.expectedPoseForComparison,
+    returnedPose: result.returnedPose,
+    poseError: result.poseError,
+    yawError: result.yawError,
+    pitchError: result.pitchError,
+    rollError: result.rollError,
+    detected: result.detected,
+    detectMs: result.detectMs,
+    errorMessage: result.errorMessage,
+  }
+}
+
+function createObjPoseCalibrationCandidatePoints(): ObjPoseCalibrationCandidatePoint[] {
+  const yValues = createSteppedValues(
+    OBJ_POSE_CALIBRATION_RANGE.rotationCenterY.min,
+    OBJ_POSE_CALIBRATION_RANGE.rotationCenterY.max,
+    OBJ_POSE_CALIBRATION_RANGE.rotationCenterY.step,
+  )
+  const zValues = createSteppedValues(
+    OBJ_POSE_CALIBRATION_RANGE.rotationCenterZ.min,
+    OBJ_POSE_CALIBRATION_RANGE.rotationCenterZ.max,
+    OBJ_POSE_CALIBRATION_RANGE.rotationCenterZ.step,
+  )
+  const pitchOffsetValues = createSteppedValues(
+    OBJ_POSE_CALIBRATION_RANGE.pitchOffsetDeg.min,
+    OBJ_POSE_CALIBRATION_RANGE.pitchOffsetDeg.max,
+    OBJ_POSE_CALIBRATION_RANGE.pitchOffsetDeg.step,
+  )
+
+  return yValues.flatMap((y) =>
+    zValues.flatMap((z) =>
+      pitchOffsetValues.map((pitchDeg) => ({
+        rotationCenter: {
+          x: OBJ_POSE_CALIBRATION_RANGE.rotationCenterX.value,
+          y,
+          z,
+        },
+        renderPoseOffset: {
+          yawDeg: 0,
+          pitchDeg,
+          rollDeg: 0,
+        },
+      })),
+    ),
+  )
+}
+
+function applyObjPoseComparisonSign(pose: { yaw: number; pitch: number; roll: number }) {
+  return {
+    yaw: pose.yaw * OBJ_POSE_COMPARISON_SIGN.yaw,
+    pitch: pose.pitch * OBJ_POSE_COMPARISON_SIGN.pitch,
+    roll: pose.roll * OBJ_POSE_COMPARISON_SIGN.roll,
+  }
 }
 
 function addCurrentPoseSearchFrame() {
@@ -2385,9 +3003,8 @@ function evaluatePoseCenterCandidateOnFrame(
       }
     }
 
-    const timestampMs = nextRenderedIdealTimestampMs()
     const detectStartMs = performance.now()
-    const result = detector.detectForVideo(renderedIdealCanvas, timestampMs)
+    const result = detector.detect(renderedIdealCanvas)
     const detectMs = performance.now() - detectStartMs
     const detection = buildRenderedIdealDetectionState(result, -1, detectMs, null)
     const renderedPose = detection.pose
@@ -3191,7 +3808,6 @@ function renderPreviewPanels(options: { skipObjRender?: boolean } = {}) {
     renderRenderedIdealCanvas()
   }
   renderRenderedIdealSummaryCard()
-  renderPoseSearchFramesCard()
 
   const liveObjStage = getElement<HTMLElement>("[data-live-obj-stage]")
   liveObjStage.dataset.previewStatus = objPreviewStatus
@@ -3220,11 +3836,12 @@ function renderControls() {
   range.disabled = !canUseMp4Debug
 
   setDisabled('[data-action="load-obj"]', poseSearchRunning)
-  setDisabled('[data-action="load-live"]', poseSearchRunning)
+  setDisabled(
+    '[data-action="obj-pose-calibration-start"]',
+    poseSearchRunning || !canRenderRenderedIdealGeometry(),
+  )
   objFileInput.disabled = poseSearchRunning
   liveFileInput.disabled = poseSearchRunning
-  setDisabled('[data-action="camera-start"]', poseSearchRunning || state.camera.status === "starting" || isCameraInput())
-  setDisabled('[data-action="camera-stop"]', poseSearchRunning || (!cameraStream && state.camera.status !== "running"))
   setDisabled('[data-action="live-play"]', poseSearchRunning || !isVideoFileInput() || state.liveVideo.playbackStatus === "playing")
   setDisabled('[data-action="live-pause"]', poseSearchRunning || !isVideoFileInput() || state.liveVideo.playbackStatus !== "playing")
   setDisabled('[data-action="live-analyze-current"]', !canUseMp4Debug || liveAnalysisInProgress)
@@ -3246,28 +3863,7 @@ function renderControls() {
 
   getElement<HTMLSelectElement>('[data-control="rendered-ideal-background"]').value = state.renderedIdeal.backgroundMode
   getElement<HTMLSelectElement>('[data-control="rendered-ideal-color"]').value = state.renderedIdeal.colorMode
-  setDisabled('[data-action="rendered-ideal-refresh"]', poseSearchRunning || !canRenderRenderedIdeal())
-  setDisabled('[data-action="pose-center-search-start"]', poseSearchRunning || !canRenderRenderedIdeal())
-  setDisabled(
-    '[data-action="pose-center-search-multi-start"]',
-    poseSearchRunning || !canRenderRenderedIdealGeometry() || state.poseSearchFrames.length === 0,
-  )
-  setDisabled(
-    '[data-action="pose-search-frame-add"]',
-    poseSearchRunning || state.currentAnalysis.status !== "detected" || !hasFullPose(state.currentAnalysis.pose),
-  )
-  setDisabled('[data-action="pose-search-frames-clear"]', poseSearchRunning || state.poseSearchFrames.length === 0)
-  setDisabled(
-    '[data-action="pose-search-frame-delete"]',
-    poseSearchRunning || state.poseSearchFrames.length === 0 || !state.selectedPoseSearchFrameId,
-  )
-  setDisabled('[data-action="pose-center-search-apply-best"]', poseSearchRunning || !state.poseCenterSearch.bestCandidate)
-  setDisabled('[data-action="pose-center-search-reset"]', poseSearchRunning)
-  const poseSearchFrameSelect = app.querySelector<HTMLSelectElement>('[data-control="pose-search-frame-select"]')
-  if (poseSearchFrameSelect) {
-    poseSearchFrameSelect.disabled = poseSearchRunning || state.poseSearchFrames.length === 0
-    poseSearchFrameSelect.value = state.selectedPoseSearchFrameId ?? state.poseSearchFrames[0]?.id ?? ""
-  }
+  setDisabled('[data-action="rendered-ideal-refresh"]', poseSearchRunning || !canRenderRenderedIdealGeometry())
 
   renderLiveAnalysisCard()
   getElement<HTMLSelectElement>('[data-control="obj-preview-mode"]').value = state.objPreview.mode
@@ -3540,7 +4136,8 @@ function renderRenderedIdealCanvasTo(
     })
   }
 
-  if (!hasFullPose(poseOverride ?? state.currentAnalysis.pose)) {
+  const renderPose = poseOverride ?? getRenderedIdealPreviewPose()
+  if (!hasFullPose(renderPose)) {
     return createRenderedIdealRenderSummary("not_ready", {
       canvasWidth: targetWidth,
       canvasHeight: targetHeight,
@@ -3557,7 +4154,7 @@ function renderRenderedIdealCanvasTo(
     })
   }
 
-  const previewState = getObjPoseSyncPreviewState(poseOverride)
+  const previewState = getObjPoseSyncPreviewState(renderPose)
   const rotationCenter = rotationCenterOverride ?? getObjPoseSyncRotationCenter()
   const viewport = {
     centerX: cssWidth / 2,
@@ -3604,6 +4201,9 @@ function renderRenderedIdealCanvasTo(
     canvasHeight: targetHeight,
     drawnFaceCount,
     skippedFaceCount,
+    appliedYawDeg: previewState.yawDeg,
+    appliedPitchDeg: previewState.pitchDeg,
+    appliedRollDeg: previewState.rollDeg,
     rotationCenter: {
       x: roundForState(rotationCenter.x) ?? 0,
       y: roundForState(rotationCenter.y) ?? 0,
@@ -3689,7 +4289,7 @@ function renderRenderedIdealSummaryCard() {
   const card = getElement<HTMLElement>("[data-rendered-ideal-summary]")
   const summary = state.renderedIdeal.summary
   const detection = state.renderedIdeal.detection
-  const poseSearch = state.poseCenterSearch
+  const calibration = state.objPoseCalibration
   card.innerHTML = `
     <p>${escapeHtml(getRenderedIdealMessage())}</p>
     <dl class="review-grid">
@@ -3706,22 +4306,20 @@ function renderRenderedIdealSummaryCard() {
       <div><dt>レンダー理想検出ms</dt><dd>${formatRealtimeNullableNumber(detection.detectMs)}</dd></div>
       <div><dt>レンダー理想ランドマーク数</dt><dd>${formatNullableCount(detection.landmarkCount)}</dd></div>
       <div><dt>レンダー理想drop数</dt><dd>${formatNullableCount(detection.droppedCount)}</dd></div>
-      <div><dt>探索状態</dt><dd>${poseSearch.status}</dd></div>
-      <div><dt>探索モード</dt><dd>${formatPoseCenterSearchMode(poseSearch.mode)}</dd></div>
-      <div><dt>登録フレーム数</dt><dd>${formatNullableCount(poseSearch.frameCount)}</dd></div>
-      <div><dt>候補数</dt><dd>${formatNullableCount(poseSearch.candidateCount)}</dd></div>
-      <div><dt>総評価数</dt><dd>${formatNullableCount(poseSearch.totalEvaluationCount)}</dd></div>
-      <div><dt>評価済み候補数</dt><dd>${formatNullableCount(poseSearch.evaluatedCandidateCount)}</dd></div>
-      <div><dt>評価済みフレーム数</dt><dd>${formatNullableCount(poseSearch.evaluatedFrameCount)}</dd></div>
-      <div><dt>失敗候補数</dt><dd>${formatNullableCount(poseSearch.failedCandidateCount)}</dd></div>
-      <div><dt>失敗フレーム評価数</dt><dd>${formatNullableCount(poseSearch.failedFrameEvaluationCount)}</dd></div>
-      <div><dt>経過時間ms</dt><dd>${formatRealtimeNullableNumber(poseSearch.elapsedMs)}</dd></div>
-      <div><dt>推定残り時間ms</dt><dd>${formatRealtimeNullableNumber(poseSearch.estimatedRemainingMs)}</dd></div>
-      <div><dt>best rotationCenter</dt><dd>${escapeHtml(formatPoseCenterSearchBestRotationCenter())}</dd></div>
-      <div><dt>best score</dt><dd>${formatNullableNumber(poseSearch.bestCandidate?.score ?? null)}</dd></div>
-      <div><dt>averagePoseError</dt><dd>${formatNullableNumber(poseSearch.bestCandidate?.averagePoseError ?? null)}</dd></div>
-      <div><dt>maxPoseError</dt><dd>${formatNullableNumber(poseSearch.bestCandidate?.maxPoseError ?? null)}</dd></div>
-      <div><dt>best適用</dt><dd>${escapeHtml(getPoseCenterSearchApplyMessage())}</dd></div>
+      <div><dt>OBJ解析状態</dt><dd>${calibration.status}</dd></div>
+      <div><dt>pose数</dt><dd>${formatNullableCount(calibration.poseCount)}</dd></div>
+      <div><dt>候補数</dt><dd>${formatNullableCount(calibration.candidateCount)}</dd></div>
+      <div><dt>総評価数</dt><dd>${formatNullableCount(calibration.totalEvaluationCount)}</dd></div>
+      <div><dt>評価済み候補数</dt><dd>${formatNullableCount(calibration.evaluatedCandidateCount)}</dd></div>
+      <div><dt>評価済みpose数</dt><dd>${formatNullableCount(calibration.evaluatedPoseCount)}</dd></div>
+      <div><dt>失敗候補数</dt><dd>${formatNullableCount(calibration.failedCandidateCount)}</dd></div>
+      <div><dt>失敗pose評価数</dt><dd>${formatNullableCount(calibration.failedPoseEvaluationCount)}</dd></div>
+      <div><dt>経過時間ms</dt><dd>${formatRealtimeNullableNumber(calibration.elapsedMs)}</dd></div>
+      <div><dt>推定残り時間ms</dt><dd>${formatRealtimeNullableNumber(calibration.estimatedRemainingMs)}</dd></div>
+      <div><dt>best rotationCenter</dt><dd>${escapeHtml(formatObjPoseCalibrationBestRotationCenter())}</dd></div>
+      <div><dt>best score</dt><dd>${formatNullableNumber(calibration.bestCandidate?.score ?? null)}</dd></div>
+      <div><dt>averagePoseError</dt><dd>${formatNullableNumber(calibration.bestCandidate?.averagePoseError ?? null)}</dd></div>
+      <div><dt>maxPoseError</dt><dd>${formatNullableNumber(calibration.bestCandidate?.maxPoseError ?? null)}</dd></div>
       <div><dt>errorMessage</dt><dd>${escapeHtml(summary.errorMessage ?? "null")}</dd></div>
     </dl>
   `
@@ -4115,6 +4713,9 @@ function renderDebugContent() {
   if (state.activeDebugTab === "renderedIdeal") {
     appendDefinitionItems(list, getRenderedIdealItems())
   }
+  if (state.activeDebugTab === "objPoseCalibration") {
+    appendDefinitionItems(list, getObjPoseCalibrationItems())
+  }
   if (state.activeDebugTab === "realtime") {
     appendDefinitionItems(list, getRealtimeItems())
   }
@@ -4131,7 +4732,7 @@ function renderDebugContent() {
 
 function getSummaryItems(): Array<[string, string]> {
   const objFileStatus = getObjFileStatus()
-  const bestPoseCenterCandidate = state.poseCenterSearch.bestCandidate
+  const bestObjPoseCalibrationCandidate = state.objPoseCalibration.bestCandidate
   return [
     ["labName", LAB_NAME],
     ["liveInputSourceType", state.liveInput.sourceType ?? "null"],
@@ -4184,20 +4785,25 @@ function getSummaryItems(): Array<[string, string]> {
     ["renderedIdealErrorCount", formatNullableCount(state.renderedIdeal.detection.errorCount)],
     ["renderedIdealRenderSeq", formatNullableCount(state.renderedIdeal.detection.renderSeq)],
     ["renderedIdealDetectedRenderSeq", formatNullableCount(state.renderedIdeal.detection.detectedRenderSeq)],
-    ["poseSearchFrameCount", formatNullableCount(state.poseSearchFrames.length)],
-    ["poseCenterSearchMode", state.poseCenterSearch.mode],
-    ["poseCenterSearchStatus", state.poseCenterSearch.status],
-    ["poseCenterSearchBestRotationCenterX", formatNullableNumber(bestPoseCenterCandidate?.rotationCenterX ?? null)],
-    ["poseCenterSearchBestRotationCenterY", formatNullableNumber(bestPoseCenterCandidate?.rotationCenterY ?? null)],
-    ["poseCenterSearchBestRotationCenterZ", formatNullableNumber(bestPoseCenterCandidate?.rotationCenterZ ?? null)],
-    ["poseCenterSearchBestScore", formatNullableNumber(bestPoseCenterCandidate?.score ?? null)],
-    ["poseCenterSearchAveragePoseError", formatNullableNumber(bestPoseCenterCandidate?.averagePoseError ?? null)],
-    ["poseCenterSearchMaxPoseError", formatNullableNumber(bestPoseCenterCandidate?.maxPoseError ?? null)],
-    ["poseCenterSearchEvaluatedCandidateCount", formatNullableCount(state.poseCenterSearch.evaluatedCandidateCount)],
-    ["poseCenterSearchEvaluatedFrameCount", formatNullableCount(state.poseCenterSearch.evaluatedFrameCount)],
-    ["poseCenterSearchFailedFrameEvaluationCount", formatNullableCount(state.poseCenterSearch.failedFrameEvaluationCount)],
-    ["poseCenterSearchEvaluatedCount", formatNullableCount(state.poseCenterSearch.evaluatedCount)],
-    ["poseCenterSearchFailedCandidateCount", formatNullableCount(state.poseCenterSearch.failedCandidateCount)],
+    ["objPoseCalibrationStatus", state.objPoseCalibration.status],
+    ["objPoseCalibrationComparisonYawSign", formatNumber(OBJ_POSE_COMPARISON_SIGN.yaw)],
+    ["objPoseCalibrationComparisonPitchSign", formatNumber(OBJ_POSE_COMPARISON_SIGN.pitch)],
+    ["objPoseCalibrationComparisonRollSign", formatNumber(OBJ_POSE_COMPARISON_SIGN.roll)],
+    ["objPoseCalibrationPoseCount", formatNullableCount(state.objPoseCalibration.poseCount)],
+    ["objPoseCalibrationCandidateCount", formatNullableCount(state.objPoseCalibration.candidateCount)],
+    ["objPoseCalibrationBestPitchOffsetDeg", formatNullableNumber(bestObjPoseCalibrationCandidate?.renderPoseOffset.pitchDeg ?? null)],
+    ["objPoseCalibrationSearchPitchOffsetMin", formatNumber(state.objPoseCalibration.searchRange.pitchOffsetDeg.min)],
+    ["objPoseCalibrationSearchPitchOffsetMax", formatNumber(state.objPoseCalibration.searchRange.pitchOffsetDeg.max)],
+    ["objPoseCalibrationSearchPitchOffsetStep", formatNumber(state.objPoseCalibration.searchRange.pitchOffsetDeg.step)],
+    ["objPoseCalibrationBestRotationCenterX", formatNullableNumber(bestObjPoseCalibrationCandidate?.rotationCenterX ?? null)],
+    ["objPoseCalibrationBestRotationCenterY", formatNullableNumber(bestObjPoseCalibrationCandidate?.rotationCenterY ?? null)],
+    ["objPoseCalibrationBestRotationCenterZ", formatNullableNumber(bestObjPoseCalibrationCandidate?.rotationCenterZ ?? null)],
+    ["objPoseCalibrationBestScore", formatNullableNumber(bestObjPoseCalibrationCandidate?.score ?? null)],
+    ["objPoseCalibrationAveragePoseError", formatNullableNumber(bestObjPoseCalibrationCandidate?.averagePoseError ?? null)],
+    ["objPoseCalibrationMaxPoseError", formatNullableNumber(bestObjPoseCalibrationCandidate?.maxPoseError ?? null)],
+    ["objPoseCalibrationPoseWiseBestCount", formatNullableCount(state.objPoseCalibration.poseWiseBest.length)],
+    ["objPoseCalibrationPoseWiseGroupSummaryCount", formatNullableCount(state.objPoseCalibration.poseWiseGroupSummary.length)],
+    ["objPoseCalibrationPosePairSummaryCount", formatNullableCount(state.objPoseCalibration.posePairSummary.length)],
     ["realtimeStatus", state.realtimeDebug.status],
     ["realtimeTargetFps", formatNumber(state.realtimeDebug.targetFps)],
     ["realtimeEffectiveFps", formatRealtimeNullableNumber(state.realtimeDebug.effectiveFps)],
@@ -4299,8 +4905,6 @@ function getObjItems(): Array<[string, string]> {
 function getRenderedIdealItems(): Array<[string, string]> {
   const summary = state.renderedIdeal.summary
   const detection = state.renderedIdeal.detection
-  const poseSearch = state.poseCenterSearch
-  const best = poseSearch.bestCandidate
   return [
     ["status", summary.status],
     ["canvasWidth", formatNullableCount(summary.canvasWidth)],
@@ -4335,38 +4939,44 @@ function getRenderedIdealItems(): Array<[string, string]> {
     ["quality score", formatNullableNumber(detection.qualityScore)],
     ["errorMessage", summary.errorMessage ?? "null"],
     ["レンダー理想検出error message", detection.errorMessage ?? "null"],
-    ["ポーズ固定値探索", ""],
-    ["探索状態", poseSearch.status],
-    ["探索モード", formatPoseCenterSearchMode(poseSearch.mode)],
-    ["登録フレーム数", formatNullableCount(poseSearch.frameCount)],
-    ["候補数", formatNullableCount(poseSearch.candidateCount)],
-    ["総評価数", formatNullableCount(poseSearch.totalEvaluationCount)],
-    ["評価済み候補数", formatNullableCount(poseSearch.evaluatedCandidateCount)],
-    ["評価済みフレーム数", formatNullableCount(poseSearch.evaluatedFrameCount)],
-    ["失敗候補数", formatNullableCount(poseSearch.failedCandidateCount)],
-    ["失敗フレーム評価数", formatNullableCount(poseSearch.failedFrameEvaluationCount)],
-    ["探索時間ms", formatRealtimeNullableNumber(poseSearch.elapsedMs)],
-    ["推定残り時間ms", formatRealtimeNullableNumber(poseSearch.estimatedRemainingMs)],
-    ["現在のbest score", formatNullableNumber(poseSearch.currentBestCandidate?.score ?? null)],
-    ["current yaw", formatNullableNumber(poseSearch.currentPose.yaw)],
-    ["current pitch", formatNullableNumber(poseSearch.currentPose.pitch)],
-    ["current roll", formatNullableNumber(poseSearch.currentPose.roll)],
+  ]
+}
+
+function getObjPoseCalibrationItems(): Array<[string, string]> {
+  const calibration = state.objPoseCalibration
+  const best = calibration.bestCandidate
+  return [
+    ["状態", calibration.status],
+    ["比較用pose符号", formatObjPoseComparisonSign()],
+    ["比較ルール", "OBJ描画poseとMediaPipe返却poseの符号規約が異なるため、score計算では基準poseの yaw / pitch / roll を反転して比較します。"],
+    ["renderPoseOffset", "OBJを描画するときだけ加える姿勢補正です。score計算で使う expected pose には加えません。今回は pitchOffsetDeg のみ探索します。"],
+    ["探索範囲 pitchOffsetDeg", formatPitchOffsetSearchRange()],
+    ["pose数", formatNullableCount(calibration.poseCount)],
+    ["候補数", formatNullableCount(calibration.candidateCount)],
+    ["総評価数", formatNullableCount(calibration.totalEvaluationCount)],
+    ["評価済み候補数", formatNullableCount(calibration.evaluatedCandidateCount)],
+    ["評価済みpose数", formatNullableCount(calibration.evaluatedPoseCount)],
+    ["失敗候補数", formatNullableCount(calibration.failedCandidateCount)],
+    ["失敗pose評価数", formatNullableCount(calibration.failedPoseEvaluationCount)],
+    ["経過時間ms", formatRealtimeNullableNumber(calibration.elapsedMs)],
+    ["推定残り時間ms", formatRealtimeNullableNumber(calibration.estimatedRemainingMs)],
     ["best rotationCenterX", formatNullableNumber(best?.rotationCenterX ?? null)],
     ["best rotationCenterY", formatNullableNumber(best?.rotationCenterY ?? null)],
     ["best rotationCenterZ", formatNullableNumber(best?.rotationCenterZ ?? null)],
+    ["best renderPitchOffsetDeg", formatNullableNumber(best?.renderPoseOffset.pitchDeg ?? null)],
     ["best score", formatNullableNumber(best?.score ?? null)],
     ["averagePoseError", formatNullableNumber(best?.averagePoseError ?? null)],
     ["maxPoseError", formatNullableNumber(best?.maxPoseError ?? null)],
     ["yawErrorAvg / pitchErrorAvg / rollErrorAvg", formatPoseErrorTriple(best?.yawErrorAvg ?? null, best?.pitchErrorAvg ?? null, best?.rollErrorAvg ?? null)],
     ["yawErrorMax / pitchErrorMax / rollErrorMax", formatPoseErrorTriple(best?.yawErrorMax ?? null, best?.pitchErrorMax ?? null, best?.rollErrorMax ?? null)],
-    ["failedFrameCount", formatNullableCount(best?.failedFrameCount ?? null)],
-    ["best rendered yaw", formatNullableNumber(best?.renderedPose.yaw ?? null)],
-    ["best rendered pitch", formatNullableNumber(best?.renderedPose.pitch ?? null)],
-    ["best rendered roll", formatNullableNumber(best?.renderedPose.roll ?? null)],
-    ["best適用", getPoseCenterSearchApplyMessage()],
-    ["top candidates", formatPoseCenterSearchTopCandidatesText()],
-    ["best frameResultsPreview", formatPoseCenterSearchFrameResultsText(best?.frameResultsPreview ?? [])],
-    ["探索error message", poseSearch.errorMessage ?? "null"],
+    ["failedPoseCount", formatNullableCount(best?.failedPoseCount ?? null)],
+    ["detectMsTotal", formatRealtimeNullableNumber(best?.detectMsTotal ?? null)],
+    ["top candidates", formatObjPoseCalibrationTopCandidatesText()],
+    ["best poseResultsPreview", formatObjPoseCalibrationPoseResultsText(best?.poseResultsPreview ?? [])],
+    ["pose別best", formatObjPoseWiseBestText()],
+    ["group summary", formatObjPoseWiseGroupSummaryText()],
+    ["pair summary", formatObjPosePairSummaryText()],
+    ["errorMessage", calibration.errorMessage ?? "null"],
   ]
 }
 
@@ -4496,9 +5106,14 @@ function getRawState() {
       renderedIdeal478Count: state.renderedIdeal.detection.landmarkCount,
       renderedIdealPose: roundPoseForState(state.renderedIdeal.detection.pose),
     },
-    poseSearchFramesPreview: state.poseSearchFrames.map(roundPoseCenterSearchFrame),
-    poseCenterSearchState: getPoseCenterSearchRawSummary(),
-    poseCenterSearchTopCandidates: state.poseCenterSearch.topCandidates.map(roundPoseCenterSearchCandidate),
+    objPoseCalibrationComparisonSign: getObjPoseComparisonSignDebug(),
+    objPoseCalibrationSearchRange: state.objPoseCalibration.searchRange,
+    objPoseCalibrationState: getObjPoseCalibrationRawSummary(),
+    objPoseCalibrationTopCandidates: state.objPoseCalibration.topCandidates.map(roundObjPoseCalibrationCandidate),
+    objPoseCalibrationPoseSet: OBJ_POSE_CALIBRATION_POSES.map((pose) => ({ ...pose })),
+    objPoseCalibrationPoseWiseBest: state.objPoseCalibration.poseWiseBest.map(roundObjPoseWiseBest),
+    objPoseCalibrationPoseWiseGroupSummary: state.objPoseCalibration.poseWiseGroupSummary,
+    objPoseCalibrationPosePairSummary: state.objPoseCalibration.posePairSummary,
     warpMesh: {
       sourceVerticesStatus: "not_ready",
       targetVerticesStatus: "not_ready",
@@ -4714,6 +5329,149 @@ function createEmptyRenderedIdealDetectionState(): RenderedIdealDetectionState {
   }
 }
 
+function createDefaultObjPoseCalibrationState(): ObjPoseCalibrationState {
+  const poseWiseBest = createDefaultObjPoseCalibrationPoseWiseBest()
+  return {
+    status: "idle",
+    startedAt: null,
+    completedAt: null,
+    elapsedMs: null,
+    estimatedRemainingMs: null,
+    searchRange: createObjPoseCalibrationSearchRange(),
+    poseCount: OBJ_POSE_CALIBRATION_POSES.length,
+    candidateCount: 0,
+    totalEvaluationCount: 0,
+    evaluatedCandidateCount: 0,
+    evaluatedPoseCount: 0,
+    failedCandidateCount: 0,
+    failedPoseEvaluationCount: 0,
+    currentBestCandidate: null,
+    bestCandidate: null,
+    topCandidates: [],
+    poseWiseBest,
+    poseWiseGroupSummary: buildObjPoseWiseGroupSummary(poseWiseBest),
+    posePairSummary: buildObjPosePairSummary(poseWiseBest),
+    errorMessage: null,
+  }
+}
+
+function createObjPoseCalibrationSearchRange(): ObjPoseCalibrationSearchRange {
+  return {
+    rotationCenterX: { fixed: true, value: OBJ_POSE_CALIBRATION_RANGE.rotationCenterX.value },
+    rotationCenterY: {
+      min: OBJ_POSE_CALIBRATION_RANGE.rotationCenterY.min,
+      max: OBJ_POSE_CALIBRATION_RANGE.rotationCenterY.max,
+      step: OBJ_POSE_CALIBRATION_RANGE.rotationCenterY.step,
+    },
+    rotationCenterZ: {
+      min: OBJ_POSE_CALIBRATION_RANGE.rotationCenterZ.min,
+      max: OBJ_POSE_CALIBRATION_RANGE.rotationCenterZ.max,
+      step: OBJ_POSE_CALIBRATION_RANGE.rotationCenterZ.step,
+    },
+    pitchOffsetDeg: {
+      min: OBJ_POSE_CALIBRATION_RANGE.pitchOffsetDeg.min,
+      max: OBJ_POSE_CALIBRATION_RANGE.pitchOffsetDeg.max,
+      step: OBJ_POSE_CALIBRATION_RANGE.pitchOffsetDeg.step,
+    },
+  }
+}
+
+function createDefaultObjPoseCalibrationPoseWiseBest(): ObjPoseCalibrationPoseWiseBest[] {
+  return OBJ_POSE_CALIBRATION_POSES.map(createDefaultObjPoseWiseBestForPose)
+}
+
+function createDefaultObjPoseWiseBestForPose(
+  pose: ObjPoseCalibrationPose,
+): ObjPoseCalibrationPoseWiseBest {
+  return {
+    poseId: pose.id,
+    poseLabel: pose.label,
+    basePose: {
+      yaw: pose.yawDeg,
+      pitch: pose.pitchDeg,
+      roll: pose.rollDeg,
+    },
+    bestCandidate: null,
+    topCandidates: [],
+  }
+}
+
+function buildObjPoseWiseGroupSummary(
+  poseWiseBest: ObjPoseCalibrationPoseWiseBest[],
+): ObjPoseCalibrationPoseWiseGroupSummary[] {
+  return OBJ_POSE_WISE_GROUPS.map((group) => {
+    const bestCandidates = group.poseIds
+      .map((poseId) => poseWiseBest.find((item) => item.poseId === poseId)?.bestCandidate ?? null)
+      .filter((candidate): candidate is ObjPoseCalibrationPoseWiseBestCandidate => candidate !== null)
+
+    return {
+      groupId: group.groupId,
+      label: group.label,
+      poseIds: [...group.poseIds],
+      averageBestPoseError: roundForState(averageNumbers(bestCandidates.map((candidate) => candidate.poseError ?? Number.NaN))),
+      averageBestYawError: roundForState(averageNumbers(bestCandidates.map((candidate) => candidate.yawError ?? Number.NaN))),
+      averageBestPitchError: roundForState(averageNumbers(bestCandidates.map((candidate) => candidate.pitchError ?? Number.NaN))),
+      averageBestRollError: roundForState(averageNumbers(bestCandidates.map((candidate) => candidate.rollError ?? Number.NaN))),
+      rotationCenterYRange: createNullableRange(bestCandidates.map((candidate) => candidate.rotationCenterY)),
+      rotationCenterZRange: createNullableRange(bestCandidates.map((candidate) => candidate.rotationCenterZ)),
+      pitchOffsetDegRange: createNullableRange(bestCandidates.map((candidate) => candidate.renderPoseOffset.pitchDeg)),
+    }
+  })
+}
+
+function buildObjPosePairSummary(
+  poseWiseBest: ObjPoseCalibrationPoseWiseBest[],
+): ObjPoseCalibrationPosePairSummary[] {
+  return OBJ_POSE_PAIR_SUMMARY_PAIRS.map((pair) => {
+    const negativeBest = poseWiseBest.find((item) => item.poseId === pair.negativePoseId)?.bestCandidate ?? null
+    const positiveBest = poseWiseBest.find((item) => item.poseId === pair.positivePoseId)?.bestCandidate ?? null
+    const negativeSummary = createObjPosePairBestSummary(negativeBest)
+    const positiveSummary = createObjPosePairBestSummary(positiveBest)
+
+    return {
+      pairId: pair.pairId,
+      label: pair.label,
+      negativePoseId: pair.negativePoseId,
+      positivePoseId: pair.positivePoseId,
+      negativeBest: negativeSummary,
+      positiveBest: positiveSummary,
+      delta: {
+        rotationCenterY: subtractNullable(positiveSummary.rotationCenterY, negativeSummary.rotationCenterY),
+        rotationCenterZ: subtractNullable(positiveSummary.rotationCenterZ, negativeSummary.rotationCenterZ),
+        pitchOffsetDeg: subtractNullable(positiveSummary.pitchOffsetDeg, negativeSummary.pitchOffsetDeg),
+        poseError: subtractNullable(positiveSummary.poseError, negativeSummary.poseError),
+      },
+    }
+  })
+}
+
+function createObjPosePairBestSummary(candidate: ObjPoseCalibrationPoseWiseBestCandidate | null) {
+  return {
+    rotationCenterY: roundForState(candidate?.rotationCenterY ?? null),
+    rotationCenterZ: roundForState(candidate?.rotationCenterZ ?? null),
+    pitchOffsetDeg: roundForState(candidate?.renderPoseOffset.pitchDeg ?? null),
+    poseError: roundForState(candidate?.poseError ?? null),
+  }
+}
+
+function createNullableRange(values: number[]) {
+  const finiteValues = values.filter((value) => Number.isFinite(value))
+  if (finiteValues.length === 0) {
+    return {
+      min: null,
+      max: null,
+    }
+  }
+  return {
+    min: roundForState(Math.min(...finiteValues)),
+    max: roundForState(Math.max(...finiteValues)),
+  }
+}
+
+function subtractNullable(a: number | null, b: number | null) {
+  return a === null || b === null ? null : roundForState(a - b)
+}
+
 function createDefaultPoseCenterSearchState(): PoseCenterSearchState {
   return {
     status: "idle",
@@ -4780,9 +5538,9 @@ function createRenderedIdealRenderSummary(
       y: roundForState(RENDERED_IDEAL_LIGHT_DIRECTION.y) ?? 0,
       z: roundForState(RENDERED_IDEAL_LIGHT_DIRECTION.z) ?? 0,
     },
-    appliedYawDeg: roundForState(state.objPoseSync.appliedYawDeg),
-    appliedPitchDeg: roundForState(state.objPoseSync.appliedPitchDeg),
-    appliedRollDeg: roundForState(state.objPoseSync.appliedRollDeg),
+    appliedYawDeg: roundForState(overrides.appliedYawDeg ?? state.objPoseSync.appliedYawDeg),
+    appliedPitchDeg: roundForState(overrides.appliedPitchDeg ?? state.objPoseSync.appliedPitchDeg),
+    appliedRollDeg: roundForState(overrides.appliedRollDeg ?? state.objPoseSync.appliedRollDeg),
     rotationCenter: overrides.rotationCenter ?? {
       x: roundForState(state.objPoseSync.rotationCenterX) ?? 0,
       y: roundForState(state.objPoseSync.rotationCenterY) ?? 0,
@@ -4928,7 +5686,16 @@ function createLiveFaceLandmarkerOptions(): FaceLandmarkerOptions {
 }
 
 function createRenderedIdealFaceLandmarkerOptions(): FaceLandmarkerOptions {
-  return createLiveFaceLandmarkerOptions()
+  return {
+    baseOptions: {
+      modelAssetPath: MEDIAPIPE_FACE_LANDMARKER_MODEL_ASSET_PATH,
+      delegate: "GPU",
+    },
+    runningMode: "IMAGE",
+    numFaces: 1,
+    outputFaceBlendshapes: true,
+    outputFacialTransformationMatrixes: true,
+  }
 }
 
 function createFileObjSummary(file: File, parseStatus: ObjParseStatus): ObjSummary {
@@ -5057,11 +5824,7 @@ function getObjPoseSyncStatus() {
 }
 
 function canRenderRenderedIdeal() {
-  return (
-    canRenderRenderedIdealGeometry() &&
-    state.currentAnalysis.status === "detected" &&
-    hasFullPose(state.currentAnalysis.pose)
-  )
+  return canRenderRenderedIdealGeometry()
 }
 
 function canRenderRenderedIdealGeometry() {
@@ -5069,20 +5832,35 @@ function canRenderRenderedIdealGeometry() {
 }
 
 function isPoseCenterSearchRunning() {
-  return state.poseCenterSearch.status === "running"
+  return state.poseCenterSearch.status === "running" || isObjPoseCalibrationRunning()
+}
+
+function isObjPoseCalibrationRunning() {
+  return state.objPoseCalibration.status === "running"
 }
 
 function getRenderedIdealMessage() {
   if (!state.objFile.loaded || getObjPreviewStatus() !== "ready") {
     return "OBJを読み込むと、ここにレンダー理想2Dプレビューを表示します。"
   }
-  if (state.currentAnalysis.status !== "detected" || !hasFullPose(state.currentAnalysis.pose)) {
-    return "現在フレーム解析を実行すると、現在姿勢でOBJをレンダリングできます。"
-  }
   if (state.renderedIdeal.summary.status === "error") {
     return "レンダー中にエラーが発生しました。"
   }
+  if (state.currentAnalysis.status !== "detected" || !hasFullPose(state.currentAnalysis.pose)) {
+    return "現在顔がないため、OBJを正面基準姿勢でレンダリングしています。"
+  }
   return "現在姿勢を反映したOBJの2Dレンダーを表示しています。"
+}
+
+function getRenderedIdealPreviewPose(): ReferencePose {
+  if (state.currentAnalysis.status === "detected" && hasFullPose(state.currentAnalysis.pose)) {
+    return state.currentAnalysis.pose
+  }
+  return {
+    yaw: 0,
+    pitch: 0,
+    roll: 0,
+  }
 }
 
 function renderObjPreviewSummary() {
@@ -5225,14 +6003,13 @@ function buildDebugExport() {
       bottleneck: getRealtimeBottleneck(),
     },
     renderedIdealDetection: getRenderedIdealDetectionDebugExport(),
-    poseSearchFrames: state.poseSearchFrames.map(roundPoseCenterSearchFrame),
-    poseCenterSearch: getPoseCenterSearchDebugExport(),
+    objPoseCalibration: getObjPoseCalibrationDebugExport(),
     mediaPipeOptions: {
       currentLiveOptions: getCurrentLiveMediaPipeOptionsDebug(),
       renderedIdealOptions: getRenderedIdealMediaPipeOptionsDebug(),
     },
     notes: [
-      "vertices/faces/current478/renderedIdeal478/MediaPipe result/canvas data URL are intentionally omitted.",
+      "vertices/faces/current478/renderedIdeal478/MediaPipe result/canvas data URL/all pose result arrays are intentionally omitted.",
     ],
   }
 }
@@ -5390,6 +6167,36 @@ function getRenderedIdealDetectionRawSummary() {
     droppedCount: detection.droppedCount,
     errorCount: detection.errorCount,
     skippedByPoseSearchCount: detection.skippedByPoseSearchCount,
+  }
+}
+
+function getObjPoseCalibrationRawSummary() {
+  return {
+    status: state.objPoseCalibration.status,
+    comparisonSign: getObjPoseComparisonSignDebug(),
+    searchRange: state.objPoseCalibration.searchRange,
+    startedAt: state.objPoseCalibration.startedAt,
+    completedAt: state.objPoseCalibration.completedAt,
+    elapsedMs: roundForState(state.objPoseCalibration.elapsedMs),
+    estimatedRemainingMs: roundForState(state.objPoseCalibration.estimatedRemainingMs),
+    poseCount: state.objPoseCalibration.poseCount,
+    candidateCount: state.objPoseCalibration.candidateCount,
+    totalEvaluationCount: state.objPoseCalibration.totalEvaluationCount,
+    evaluatedCandidateCount: state.objPoseCalibration.evaluatedCandidateCount,
+    evaluatedPoseCount: state.objPoseCalibration.evaluatedPoseCount,
+    failedCandidateCount: state.objPoseCalibration.failedCandidateCount,
+    failedPoseEvaluationCount: state.objPoseCalibration.failedPoseEvaluationCount,
+    currentBestCandidate: state.objPoseCalibration.currentBestCandidate
+      ? roundObjPoseCalibrationCandidate(state.objPoseCalibration.currentBestCandidate)
+      : null,
+    bestCandidate: state.objPoseCalibration.bestCandidate
+      ? roundObjPoseCalibrationCandidate(state.objPoseCalibration.bestCandidate)
+      : null,
+    topCandidates: state.objPoseCalibration.topCandidates.map(roundObjPoseCalibrationCandidate),
+    poseWiseBest: state.objPoseCalibration.poseWiseBest.map(roundObjPoseWiseBest),
+    poseWiseGroupSummary: state.objPoseCalibration.poseWiseGroupSummary,
+    posePairSummary: state.objPoseCalibration.posePairSummary,
+    errorMessage: state.objPoseCalibration.errorMessage,
   }
 }
 
@@ -5579,6 +6386,35 @@ function formatPoseCenterSearchBestRotationCenter() {
   return `x=${formatNumber(best.rotationCenterX)}, y=${formatNumber(best.rotationCenterY)}, z=${formatNumber(best.rotationCenterZ)}`
 }
 
+function formatObjPoseComparisonSign() {
+  return `yaw=${formatNumber(OBJ_POSE_COMPARISON_SIGN.yaw)} / pitch=${formatNumber(OBJ_POSE_COMPARISON_SIGN.pitch)} / roll=${formatNumber(OBJ_POSE_COMPARISON_SIGN.roll)}`
+}
+
+function formatPitchOffsetSearchRange() {
+  const range = state.objPoseCalibration.searchRange.pitchOffsetDeg
+  return `min=${formatNumber(range.min)} / max=${formatNumber(range.max)} / step=${formatNumber(range.step)}`
+}
+
+function formatObjPoseCalibrationBestRotationCenter() {
+  const best = state.objPoseCalibration.bestCandidate
+  if (!best) {
+    return "null"
+  }
+  return `x=${formatNumber(best.rotationCenterX)}, y=${formatNumber(best.rotationCenterY)}, z=${formatNumber(best.rotationCenterZ)}`
+}
+
+function formatObjPoseCalibrationTopCandidatesText() {
+  if (state.objPoseCalibration.topCandidates.length === 0) {
+    return "[]"
+  }
+
+  return state.objPoseCalibration.topCandidates
+    .map((candidate, index) =>
+      `${index + 1}. rotationCenter x=${formatNumber(candidate.rotationCenterX)}, y=${formatNumber(candidate.rotationCenterY)}, z=${formatNumber(candidate.rotationCenterZ)}, pitchOffsetDeg=${formatNumber(candidate.renderPoseOffset.pitchDeg)}, score=${formatNullableNumber(candidate.score)}, avg=${formatNullableNumber(candidate.averagePoseError)}, max=${formatNullableNumber(candidate.maxPoseError)}, failedPoses=${candidate.failedPoseCount}`,
+    )
+    .join("\n")
+}
+
 function formatPoseCenterSearchTopCandidatesText() {
   if (state.poseCenterSearch.topCandidates.length === 0) {
     return "[]"
@@ -5595,6 +6431,10 @@ function formatPoseErrorTriple(yaw: number | null, pitch: number | null, roll: n
   return `yaw ${formatNullableNumber(yaw)} / pitch ${formatNullableNumber(pitch)} / roll ${formatNullableNumber(roll)}`
 }
 
+function formatObjPoseRenderOffset(offset: { yawDeg: number; pitchDeg: number; rollDeg: number }) {
+  return `yawDeg ${formatNumber(offset.yawDeg)} / pitchDeg ${formatNumber(offset.pitchDeg)} / rollDeg ${formatNumber(offset.rollDeg)}`
+}
+
 function formatPoseCenterSearchFrameResultsText(results: PoseCenterSearchFrameResult[]) {
   if (results.length === 0) {
     return "[]"
@@ -5604,6 +6444,78 @@ function formatPoseCenterSearchFrameResultsText(results: PoseCenterSearchFrameRe
       `${result.frameLabel}: current ${formatPose(result.currentPose)} / rendered ${formatPose(result.renderedPose)} / poseError ${formatNullableNumber(result.poseError)}`,
     )
     .join("\n")
+}
+
+function formatObjPoseCalibrationPoseResultsText(results: ObjPoseCalibrationPoseResult[]) {
+  if (results.length === 0) {
+    return "[]"
+  }
+  return results
+    .map((result) =>
+      `${result.poseLabel}: base ${formatPose(result.basePose)} / offset ${formatObjPoseRenderOffset(result.renderPoseOffset)} / render ${formatPose(result.renderPose)} / expectedForComparison ${formatPose(result.expectedPoseForComparison)} / returned ${formatPose(result.returnedPose)} / yaw/pitch/roll error ${formatPoseErrorTriple(result.yawError, result.pitchError, result.rollError)} / poseError ${formatNullableNumber(result.poseError)} / detected ${String(result.detected)}`,
+    )
+    .join("\n")
+}
+
+function formatObjPoseWiseBestText() {
+  if (state.objPoseCalibration.poseWiseBest.length === 0) {
+    return "[]"
+  }
+
+  return state.objPoseCalibration.poseWiseBest
+    .map((item) => {
+      const best = item.bestCandidate
+      if (!best) {
+        return `${item.poseId} (${item.poseLabel})\n  basePose: ${formatPose(item.basePose)}\n  best: null`
+      }
+      return [
+        `${item.poseId} (${item.poseLabel})`,
+        `  basePose: ${formatPose(item.basePose)}`,
+        `  best: center x=${formatNumber(best.rotationCenterX)}, y=${formatNumber(best.rotationCenterY)}, z=${formatNumber(best.rotationCenterZ)}, pitchOffsetDeg=${formatNumber(best.renderPoseOffset.pitchDeg)}`,
+        `  returned: ${formatPose(best.returnedPose)}`,
+        `  error: pose=${formatNullableNumber(best.poseError)} / yaw=${formatNullableNumber(best.yawError)} / pitch=${formatNullableNumber(best.pitchError)} / roll=${formatNullableNumber(best.rollError)}`,
+      ].join("\n")
+    })
+    .join("\n\n")
+}
+
+function formatObjPoseWiseGroupSummaryText() {
+  if (state.objPoseCalibration.poseWiseGroupSummary.length === 0) {
+    return "[]"
+  }
+
+  return state.objPoseCalibration.poseWiseGroupSummary
+    .map((group) =>
+      [
+        `${group.label} (${group.poseIds.join(", ")})`,
+        `  average error: pose=${formatNullableNumber(group.averageBestPoseError)} / yaw=${formatNullableNumber(group.averageBestYawError)} / pitch=${formatNullableNumber(group.averageBestPitchError)} / roll=${formatNullableNumber(group.averageBestRollError)}`,
+        `  centerY range: ${formatNullableRange(group.rotationCenterYRange)}`,
+        `  centerZ range: ${formatNullableRange(group.rotationCenterZRange)}`,
+        `  pitchOffsetDeg range: ${formatNullableRange(group.pitchOffsetDegRange)}`,
+      ].join("\n"),
+    )
+    .join("\n\n")
+}
+
+function formatObjPosePairSummaryText() {
+  if (state.objPoseCalibration.posePairSummary.length === 0) {
+    return "[]"
+  }
+
+  return state.objPoseCalibration.posePairSummary
+    .map((pair) =>
+      [
+        `${pair.label}`,
+        `  negative(${pair.negativePoseId}): y=${formatNullableNumber(pair.negativeBest.rotationCenterY)} / z=${formatNullableNumber(pair.negativeBest.rotationCenterZ)} / pitchOffset=${formatNullableNumber(pair.negativeBest.pitchOffsetDeg)} / error=${formatNullableNumber(pair.negativeBest.poseError)}`,
+        `  positive(${pair.positivePoseId}): y=${formatNullableNumber(pair.positiveBest.rotationCenterY)} / z=${formatNullableNumber(pair.positiveBest.rotationCenterZ)} / pitchOffset=${formatNullableNumber(pair.positiveBest.pitchOffsetDeg)} / error=${formatNullableNumber(pair.positiveBest.poseError)}`,
+        `  delta(pos-neg): y=${formatNullableNumber(pair.delta.rotationCenterY)} / z=${formatNullableNumber(pair.delta.rotationCenterZ)} / pitchOffset=${formatNullableNumber(pair.delta.pitchOffsetDeg)} / error=${formatNullableNumber(pair.delta.poseError)}`,
+      ].join("\n"),
+    )
+    .join("\n\n")
+}
+
+function formatNullableRange(range: { min: number | null; max: number | null }) {
+  return `min=${formatNullableNumber(range.min)} / max=${formatNullableNumber(range.max)}`
 }
 
 function getPoseCenterSearchApplyMessage() {
@@ -5716,8 +6628,7 @@ function getDebugExportPreview() {
     mediaPipeOptions: debugExport.mediaPipeOptions,
     realtime: debugExport.realtime,
     renderedIdealDetection: debugExport.renderedIdealDetection,
-    poseSearchFrames: debugExport.poseSearchFrames,
-    poseCenterSearch: debugExport.poseCenterSearch,
+    objPoseCalibration: debugExport.objPoseCalibration,
     notes: debugExport.notes,
   }
 }
@@ -5735,7 +6646,15 @@ function getCurrentLiveMediaPipeOptionsDebug() {
 }
 
 function getRenderedIdealMediaPipeOptionsDebug() {
-  return getCurrentLiveMediaPipeOptionsDebug()
+  return {
+    runningMode: "IMAGE",
+    numFaces: 1,
+    outputFaceBlendshapes: true,
+    outputFacialTransformationMatrixes: true,
+    delegate: "GPU",
+    modelAssetPath: MEDIAPIPE_FACE_LANDMARKER_MODEL_ASSET_PATH,
+    wasmPath: MEDIAPIPE_WASM_PATH,
+  }
 }
 
 function getRenderedIdealDetectionDebugExport() {
@@ -5754,6 +6673,39 @@ function getRenderedIdealDetectionDebugExport() {
     errorCount: detection.errorCount,
     skippedByPoseSearchCount: detection.skippedByPoseSearchCount,
     pose: detection.pose,
+  }
+}
+
+function getObjPoseComparisonSignDebug() {
+  return {
+    yaw: OBJ_POSE_COMPARISON_SIGN.yaw,
+    pitch: OBJ_POSE_COMPARISON_SIGN.pitch,
+    roll: OBJ_POSE_COMPARISON_SIGN.roll,
+  }
+}
+
+function getObjPoseCalibrationDebugExport() {
+  return {
+    status: state.objPoseCalibration.status,
+    comparisonSign: getObjPoseComparisonSignDebug(),
+    searchRange: state.objPoseCalibration.searchRange,
+    poseCount: state.objPoseCalibration.poseCount,
+    candidateCount: state.objPoseCalibration.candidateCount,
+    totalEvaluationCount: state.objPoseCalibration.totalEvaluationCount,
+    evaluatedCandidateCount: state.objPoseCalibration.evaluatedCandidateCount,
+    evaluatedPoseCount: state.objPoseCalibration.evaluatedPoseCount,
+    failedCandidateCount: state.objPoseCalibration.failedCandidateCount,
+    failedPoseEvaluationCount: state.objPoseCalibration.failedPoseEvaluationCount,
+    elapsedMs: roundForState(state.objPoseCalibration.elapsedMs),
+    estimatedRemainingMs: roundForState(state.objPoseCalibration.estimatedRemainingMs),
+    bestCandidate: state.objPoseCalibration.bestCandidate
+      ? roundObjPoseCalibrationCandidateForExport(state.objPoseCalibration.bestCandidate)
+      : null,
+    topCandidates: state.objPoseCalibration.topCandidates.map(roundObjPoseCalibrationCandidateForExport),
+    poseWiseBest: state.objPoseCalibration.poseWiseBest.map(roundObjPoseWiseBest),
+    poseWiseGroupSummary: state.objPoseCalibration.poseWiseGroupSummary,
+    posePairSummary: state.objPoseCalibration.posePairSummary,
+    errorMessage: state.objPoseCalibration.errorMessage,
   }
 }
 
@@ -5921,6 +6873,14 @@ function roundPoseForState(pose: ReferencePose): ReferencePose {
   }
 }
 
+function roundObjPoseRenderOffset(offset: { yawDeg: number; pitchDeg: number; rollDeg: number }) {
+  return {
+    yawDeg: roundForState(offset.yawDeg) ?? 0,
+    pitchDeg: roundForState(offset.pitchDeg) ?? 0,
+    rollDeg: roundForState(offset.rollDeg) ?? 0,
+  }
+}
+
 function roundPoseCenterSearchCandidate(candidate: PoseCenterSearchCandidate): PoseCenterSearchCandidate {
   return {
     rotationCenterX: roundForState(candidate.rotationCenterX) ?? 0,
@@ -5944,6 +6904,113 @@ function roundPoseCenterSearchCandidate(candidate: PoseCenterSearchCandidate): P
     detected: candidate.detected,
     detectMs: roundForState(candidate.detectMs),
     errorMessage: candidate.errorMessage,
+  }
+}
+
+function roundObjPoseCalibrationCandidate(
+  candidate: ObjPoseCalibrationCandidate,
+): ObjPoseCalibrationCandidate {
+  return {
+    rotationCenterX: roundForState(candidate.rotationCenterX) ?? 0,
+    rotationCenterY: roundForState(candidate.rotationCenterY) ?? 0,
+    rotationCenterZ: roundForState(candidate.rotationCenterZ) ?? 0,
+    renderPoseOffset: roundObjPoseRenderOffset(candidate.renderPoseOffset),
+    score: roundForState(candidate.score),
+    averagePoseError: roundForState(candidate.averagePoseError),
+    maxPoseError: roundForState(candidate.maxPoseError),
+    yawErrorAvg: roundForState(candidate.yawErrorAvg),
+    pitchErrorAvg: roundForState(candidate.pitchErrorAvg),
+    rollErrorAvg: roundForState(candidate.rollErrorAvg),
+    yawErrorMax: roundForState(candidate.yawErrorMax),
+    pitchErrorMax: roundForState(candidate.pitchErrorMax),
+    rollErrorMax: roundForState(candidate.rollErrorMax),
+    failedPoseCount: candidate.failedPoseCount,
+    poseResultsPreview: candidate.poseResultsPreview.map(roundObjPoseCalibrationPoseResult),
+    detectMsTotal: roundForState(candidate.detectMsTotal),
+    errorMessage: candidate.errorMessage,
+  }
+}
+
+function roundObjPoseCalibrationCandidateForExport(candidate: ObjPoseCalibrationCandidate) {
+  return {
+    rotationCenterX: roundForState(candidate.rotationCenterX),
+    rotationCenterY: roundForState(candidate.rotationCenterY),
+    rotationCenterZ: roundForState(candidate.rotationCenterZ),
+    renderPoseOffset: roundObjPoseRenderOffset(candidate.renderPoseOffset),
+    score: roundForState(candidate.score),
+    averagePoseError: roundForState(candidate.averagePoseError),
+    maxPoseError: roundForState(candidate.maxPoseError),
+    yawErrorAvg: roundForState(candidate.yawErrorAvg),
+    pitchErrorAvg: roundForState(candidate.pitchErrorAvg),
+    rollErrorAvg: roundForState(candidate.rollErrorAvg),
+    yawErrorMax: roundForState(candidate.yawErrorMax),
+    pitchErrorMax: roundForState(candidate.pitchErrorMax),
+    rollErrorMax: roundForState(candidate.rollErrorMax),
+    failedPoseCount: candidate.failedPoseCount,
+    poseResultsPreview: candidate.poseResultsPreview.map(roundObjPoseCalibrationPoseResult),
+    detectMsTotal: roundForState(candidate.detectMsTotal),
+    errorMessage: candidate.errorMessage,
+  }
+}
+
+function roundObjPoseWiseBest(item: ObjPoseCalibrationPoseWiseBest): ObjPoseCalibrationPoseWiseBest {
+  return {
+    poseId: item.poseId,
+    poseLabel: item.poseLabel,
+    basePose: {
+      yaw: roundForState(item.basePose.yaw) ?? 0,
+      pitch: roundForState(item.basePose.pitch) ?? 0,
+      roll: roundForState(item.basePose.roll) ?? 0,
+    },
+    bestCandidate: item.bestCandidate ? roundObjPoseWiseBestCandidate(item.bestCandidate) : null,
+    topCandidates: item.topCandidates.map(roundObjPoseWiseTopCandidate),
+  }
+}
+
+function roundObjPoseWiseBestCandidate(
+  candidate: ObjPoseCalibrationPoseWiseBestCandidate,
+): ObjPoseCalibrationPoseWiseBestCandidate {
+  return {
+    rotationCenterX: roundForState(candidate.rotationCenterX) ?? 0,
+    rotationCenterY: roundForState(candidate.rotationCenterY) ?? 0,
+    rotationCenterZ: roundForState(candidate.rotationCenterZ) ?? 0,
+    renderPoseOffset: roundObjPoseRenderOffset(candidate.renderPoseOffset),
+    renderPose: {
+      yaw: roundForState(candidate.renderPose.yaw) ?? 0,
+      pitch: roundForState(candidate.renderPose.pitch) ?? 0,
+      roll: roundForState(candidate.renderPose.roll) ?? 0,
+    },
+    expectedPoseForComparison: {
+      yaw: roundForState(candidate.expectedPoseForComparison.yaw) ?? 0,
+      pitch: roundForState(candidate.expectedPoseForComparison.pitch) ?? 0,
+      roll: roundForState(candidate.expectedPoseForComparison.roll) ?? 0,
+    },
+    returnedPose: roundPoseForState(candidate.returnedPose),
+    poseError: roundForState(candidate.poseError),
+    yawError: roundForState(candidate.yawError),
+    pitchError: roundForState(candidate.pitchError),
+    rollError: roundForState(candidate.rollError),
+    detected: candidate.detected,
+    detectMs: roundForState(candidate.detectMs),
+    errorMessage: candidate.errorMessage,
+  }
+}
+
+function roundObjPoseWiseTopCandidate(
+  candidate: ObjPoseCalibrationPoseWiseTopCandidate,
+): ObjPoseCalibrationPoseWiseTopCandidate {
+  return {
+    rank: candidate.rank,
+    rotationCenterX: roundForState(candidate.rotationCenterX) ?? 0,
+    rotationCenterY: roundForState(candidate.rotationCenterY) ?? 0,
+    rotationCenterZ: roundForState(candidate.rotationCenterZ) ?? 0,
+    renderPoseOffset: roundObjPoseRenderOffset(candidate.renderPoseOffset),
+    poseError: roundForState(candidate.poseError),
+    yawError: roundForState(candidate.yawError),
+    pitchError: roundForState(candidate.pitchError),
+    rollError: roundForState(candidate.rollError),
+    returnedPose: roundPoseForState(candidate.returnedPose),
+    detected: candidate.detected,
   }
 }
 
@@ -5998,6 +7065,36 @@ function roundPoseCenterSearchFrameResult(
       roll: roundForState(result.currentPose.roll) ?? 0,
     },
     renderedPose: roundPoseForState(result.renderedPose),
+    poseError: roundForState(result.poseError),
+    yawError: roundForState(result.yawError),
+    pitchError: roundForState(result.pitchError),
+    rollError: roundForState(result.rollError),
+    detectMs: roundForState(result.detectMs),
+  }
+}
+
+function roundObjPoseCalibrationPoseResult(
+  result: ObjPoseCalibrationPoseResult,
+): ObjPoseCalibrationPoseResult {
+  return {
+    ...result,
+    basePose: {
+      yaw: roundForState(result.basePose.yaw) ?? 0,
+      pitch: roundForState(result.basePose.pitch) ?? 0,
+      roll: roundForState(result.basePose.roll) ?? 0,
+    },
+    renderPoseOffset: roundObjPoseRenderOffset(result.renderPoseOffset),
+    renderPose: {
+      yaw: roundForState(result.renderPose.yaw) ?? 0,
+      pitch: roundForState(result.renderPose.pitch) ?? 0,
+      roll: roundForState(result.renderPose.roll) ?? 0,
+    },
+    expectedPoseForComparison: {
+      yaw: roundForState(result.expectedPoseForComparison.yaw) ?? 0,
+      pitch: roundForState(result.expectedPoseForComparison.pitch) ?? 0,
+      roll: roundForState(result.expectedPoseForComparison.roll) ?? 0,
+    },
+    returnedPose: roundPoseForState(result.returnedPose),
     poseError: roundForState(result.poseError),
     yawError: roundForState(result.yawError),
     pitchError: roundForState(result.pitchError),
