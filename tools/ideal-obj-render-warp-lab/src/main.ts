@@ -16,6 +16,69 @@ type RenderedIdealDetectionStatus = "idle" | "detecting" | "detected" | "not_det
 type RenderedIdealRenderMode = "shaded_faces"
 type RenderedIdealBackgroundMode = "light" | "dark"
 type RenderedIdealColorMode = "clay" | "grayscale"
+
+type ObjRenderAppearanceProfileId =
+  | "current"
+  | "soft_light_no_shadow"
+  | "camera_soft_light"
+  | "high_contrast_background"
+  | "yaw_edge_friendly"
+  | "stable_crop_fov"
+
+type ObjRenderAppearanceProfile = {
+  id: ObjRenderAppearanceProfileId
+  label: string
+  description: string
+  backgroundColor: string
+  skinColor: string
+  material: {
+    mode: "matte" | "flat" | "lambert"
+    diffuse: number
+    ambient: number
+    specular: number
+  }
+  lighting: {
+    mode: "none" | "camera_front" | "fixed_directional" | "dual_soft"
+    ambientIntensity: number
+    keyLightIntensity: number
+    fillLightIntensity?: number
+    rimLightIntensity?: number
+    keyLightDirection?: { x: number; y: number; z: number }
+    fillLightDirection?: { x: number; y: number; z: number }
+    rimLightDirection?: { x: number; y: number; z: number }
+    castShadow: boolean
+  }
+  camera: {
+    projection: "perspective" | "orthographic_like"
+    fovDeg: number
+    scale: number
+    verticalOffset: number
+  }
+  renderResolution: {
+    width: number
+    height: number
+  }
+  notes?: string
+}
+
+type AppliedObjRenderAppearanceProfile = ObjRenderAppearanceProfile & {
+  implementation: {
+    backgroundColor: true
+    skinColor: true
+    materialMode: true
+    diffuse: true
+    ambient: true
+    specular: false
+    lightingMode: true
+    castShadow: false
+    projection: false
+    fovDeg: false
+    scale: true
+    verticalOffset: true
+    renderResolution: true
+    notes: string[]
+  }
+}
 type PoseCenterSearchStatus = "idle" | "running" | "completed" | "error"
 type PoseCenterSearchMode = "single_frame" | "multi_frame"
 type PoseSearchFrameBucket =
@@ -200,6 +263,7 @@ type RenderedIdealRenderSummary = {
 type RenderedIdealState = {
   backgroundMode: RenderedIdealBackgroundMode
   colorMode: RenderedIdealColorMode
+  renderAppearanceProfileId: ObjRenderAppearanceProfileId
   summary: RenderedIdealRenderSummary
   detection: RenderedIdealDetectionState
 }
@@ -599,6 +663,12 @@ type ObjPoseMappingDatasetV2 = {
     rotationCenter: ObjVertex
     notes: "rotationCenter is fixed render setting, not an estimated value"
   }
+  renderAppearance: {
+    profileId: ObjRenderAppearanceProfileId
+    profileLabel: string
+    applied: AppliedObjRenderAppearanceProfile
+    notes: string
+  }
   mediapipeSettings: {
     runningMode: "IMAGE"
     numFaces: 1
@@ -960,6 +1030,177 @@ const STRONG_EXPRESSION_THRESHOLD = 0.35
 const MIXED_EXPRESSION_THRESHOLD = 0.28
 const RENDERED_IDEAL_FALLBACK_CANVAS_SIZE = 640
 const RENDERED_IDEAL_LIGHT_DIRECTION = normalizeVector({ x: -0.35, y: 0.55, z: 0.76 })
+const RENDERED_IDEAL_DEFAULT_RESOLUTION = { width: 640, height: 640 } as const
+const OBJ_RENDER_APPEARANCE_PROFILES: Record<ObjRenderAppearanceProfileId, ObjRenderAppearanceProfile> = {
+  current: {
+    id: "current",
+    label: "current（現在のレンダー条件）",
+    description: "既存挙動との比較基準です。背景色と顔色は既存のレンダー理想preview設定を使います。",
+    backgroundColor: "#f5f7f9",
+    skinColor: "#cdb197",
+    material: {
+      mode: "lambert",
+      diffuse: 0.65,
+      ambient: 0.35,
+      specular: 0,
+    },
+    lighting: {
+      mode: "fixed_directional",
+      ambientIntensity: 1,
+      keyLightIntensity: 1,
+      keyLightDirection: RENDERED_IDEAL_LIGHT_DIRECTION,
+      castShadow: false,
+    },
+    camera: {
+      projection: "orthographic_like",
+      fovDeg: 28,
+      scale: 1,
+      verticalOffset: 0,
+    },
+    renderResolution: { ...RENDERED_IDEAL_DEFAULT_RESOLUTION },
+    notes: "Existing Canvas2D baseline. Background/color controls are reflected only for this profile.",
+  },
+  soft_light_no_shadow: {
+    id: "soft_light_no_shadow",
+    label: "soft_light_no_shadow（影なし・柔らかい光）",
+    description: "MediaPipe が形状を読みやすいように、環境光を強めて影を弱くした条件です。",
+    backgroundColor: "#f2f2f2",
+    skinColor: "#d8b6a0",
+    material: {
+      mode: "matte",
+      diffuse: 0.28,
+      ambient: 0.72,
+      specular: 0,
+    },
+    lighting: {
+      mode: "fixed_directional",
+      ambientIntensity: 0.9,
+      keyLightIntensity: 0.28,
+      keyLightDirection: { x: -0.2, y: 0.35, z: 0.92 },
+      castShadow: false,
+    },
+    camera: {
+      projection: "orthographic_like",
+      fovDeg: 24,
+      scale: 1,
+      verticalOffset: 0,
+    },
+    renderResolution: { ...RENDERED_IDEAL_DEFAULT_RESOLUTION },
+  },
+  camera_soft_light: {
+    id: "camera_soft_light",
+    label: "camera_soft_light（カメラ正面固定ライト）",
+    description: "OBJ姿勢が変わっても影方向が大きく変わりにくいカメラ正面ライト条件です。",
+    backgroundColor: "#f3f4f5",
+    skinColor: "#d6b39c",
+    material: {
+      mode: "matte",
+      diffuse: 0.24,
+      ambient: 0.76,
+      specular: 0,
+    },
+    lighting: {
+      mode: "camera_front",
+      ambientIntensity: 0.9,
+      keyLightIntensity: 0.22,
+      keyLightDirection: { x: 0, y: 0, z: 1 },
+      castShadow: false,
+    },
+    camera: {
+      projection: "orthographic_like",
+      fovDeg: 24,
+      scale: 1,
+      verticalOffset: 0,
+    },
+    renderResolution: { ...RENDERED_IDEAL_DEFAULT_RESOLUTION },
+  },
+  high_contrast_background: {
+    id: "high_contrast_background",
+    label: "high_contrast_background（背景コントラスト確認）",
+    description: "横向きや輪郭で顔が背景に溶けないか確認する条件です。",
+    backgroundColor: "#e6ebef",
+    skinColor: "#d3aa91",
+    material: {
+      mode: "matte",
+      diffuse: 0.34,
+      ambient: 0.66,
+      specular: 0,
+    },
+    lighting: {
+      mode: "fixed_directional",
+      ambientIntensity: 0.82,
+      keyLightIntensity: 0.36,
+      keyLightDirection: { x: -0.25, y: 0.35, z: 0.9 },
+      castShadow: false,
+    },
+    camera: {
+      projection: "orthographic_like",
+      fovDeg: 24,
+      scale: 1,
+      verticalOffset: 0,
+    },
+    renderResolution: { ...RENDERED_IDEAL_DEFAULT_RESOLUTION },
+  },
+  yaw_edge_friendly: {
+    id: "yaw_edge_friendly",
+    label: "yaw_edge_friendly（横向き輪郭補助）",
+    description: "yaw端の輪郭・鼻・頬が読みやすくなるかを見るため、弱いrim lightを足した条件です。",
+    backgroundColor: "#f2f2f2",
+    skinColor: "#d8b6a0",
+    material: {
+      mode: "matte",
+      diffuse: 0.28,
+      ambient: 0.7,
+      specular: 0,
+    },
+    lighting: {
+      mode: "dual_soft",
+      ambientIntensity: 0.86,
+      keyLightIntensity: 0.24,
+      fillLightIntensity: 0.12,
+      rimLightIntensity: 0.16,
+      keyLightDirection: { x: -0.2, y: 0.35, z: 0.92 },
+      fillLightDirection: { x: 0.35, y: 0.2, z: 0.9 },
+      rimLightDirection: { x: 0, y: 0.1, z: -1 },
+      castShadow: false,
+    },
+    camera: {
+      projection: "orthographic_like",
+      fovDeg: 24,
+      scale: 1,
+      verticalOffset: 0,
+    },
+    renderResolution: { ...RENDERED_IDEAL_DEFAULT_RESOLUTION },
+  },
+  stable_crop_fov: {
+    id: "stable_crop_fov",
+    label: "stable_crop_fov（安定した顔サイズ・視野角）",
+    description: "最大姿勢でも額・顎・輪郭が切れにくいように、顔サイズと視野角を安定させる条件です。",
+    backgroundColor: "#f2f2f2",
+    skinColor: "#d8b6a0",
+    material: {
+      mode: "matte",
+      diffuse: 0.28,
+      ambient: 0.72,
+      specular: 0,
+    },
+    lighting: {
+      mode: "fixed_directional",
+      ambientIntensity: 0.9,
+      keyLightIntensity: 0.26,
+      keyLightDirection: { x: -0.2, y: 0.35, z: 0.92 },
+      castShadow: false,
+    },
+    camera: {
+      projection: "orthographic_like",
+      fovDeg: 20,
+      scale: 0.82,
+      verticalOffset: -0.02,
+    },
+    renderResolution: { width: 720, height: 720 },
+    notes: "Canvas2D renderer uses orthographic-like scale/crop. fovDeg is recorded but not physically projected yet.",
+  },
+} as const
 const POSE_CENTER_SEARCH_RANGE = {
   x: { fixed: true, value: 0 },
   y: { min: -0.3, max: 0.3, step: 0.05 },
@@ -1361,6 +1602,17 @@ function renderRenderedIdealPreview() {
           <button class="small-button" type="button" data-action="rendered-ideal-refresh">レンダー更新</button>
         </div>
         <label class="select-field">
+          <span>Render Appearance（レンダー見た目）</span>
+          <select data-control="render-appearance-profile">
+            <option value="current">current（現在の条件）</option>
+            <option value="soft_light_no_shadow">soft_light_no_shadow（影なし・柔らかい光）</option>
+            <option value="camera_soft_light">camera_soft_light（カメラ正面固定ライト）</option>
+            <option value="high_contrast_background">high_contrast_background（背景コントラスト確認）</option>
+            <option value="yaw_edge_friendly">yaw_edge_friendly（横向き輪郭補助）</option>
+            <option value="stable_crop_fov">stable_crop_fov（安定した顔サイズ・視野角）</option>
+          </select>
+        </label>
+        <label class="select-field">
           <span>背景色</span>
           <select data-control="rendered-ideal-background">
             <option value="light">light</option>
@@ -1665,6 +1917,14 @@ function bindEvents() {
     const value = event.currentTarget.value
     if (isRenderedIdealColorMode(value)) {
       state.renderedIdeal.colorMode = value
+      renderAll()
+    }
+  })
+
+  getElement<HTMLSelectElement>('[data-control="render-appearance-profile"]').addEventListener("change", (event) => {
+    const value = event.currentTarget.value
+    if (isObjRenderAppearanceProfileId(value)) {
+      state.renderedIdeal.renderAppearanceProfileId = value
       renderAll()
     }
   })
@@ -3192,6 +3452,10 @@ function buildObjPoseMappingDataset(samples: ObjPoseMappingSample[]): ObjPoseMap
   const detectedSamples = samples.filter((sample) => sample.detected && hasFullPose(sample.P))
   const failedSamples = samples.filter((sample) => !sample.detected || !hasFullPose(sample.P))
   const rotationCenter = getFixedObjPoseRenderSettings().rotationCenter
+  const appliedAppearance = getAppliedObjRenderAppearanceProfile({
+    width: renderedIdealCanvas.width,
+    height: renderedIdealCanvas.height,
+  })
 
   return {
     schemaVersion: "obj_pose_mapping_dataset_v2",
@@ -3206,6 +3470,16 @@ function buildObjPoseMappingDataset(samples: ObjPoseMappingSample[]): ObjPoseMap
       canvasHeight: renderedIdealCanvas.height,
       rotationCenter: { ...rotationCenter },
       notes: "rotationCenter is fixed render setting, not an estimated value",
+    },
+    renderAppearance: {
+      profileId: appliedAppearance.id,
+      profileLabel: appliedAppearance.label,
+      applied: appliedAppearance,
+      notes: [
+        appliedAppearance.description,
+        appliedAppearance.notes ?? "",
+        ...appliedAppearance.implementation.notes,
+      ].filter(Boolean).join(" "),
     },
     mediapipeSettings: {
       runningMode: "IMAGE",
@@ -4634,6 +4908,8 @@ function renderControls() {
 
   getElement<HTMLSelectElement>('[data-control="rendered-ideal-background"]').value = state.renderedIdeal.backgroundMode
   getElement<HTMLSelectElement>('[data-control="rendered-ideal-color"]').value = state.renderedIdeal.colorMode
+  getElement<HTMLSelectElement>('[data-control="render-appearance-profile"]').value =
+    state.renderedIdeal.renderAppearanceProfileId
   setDisabled('[data-action="rendered-ideal-refresh"]', poseSearchRunning || !canRenderRenderedIdealGeometry())
 
   renderLiveAnalysisCard()
@@ -4885,19 +5161,23 @@ function renderRenderedIdealCanvasTo(
     })
   }
 
+  const appearance = getAppliedObjRenderAppearanceProfile()
   const rect = canvas.getBoundingClientRect()
-  const cssWidth = rect.width > 0 ? rect.width : RENDERED_IDEAL_FALLBACK_CANVAS_SIZE
-  const cssHeight = rect.height > 0 ? rect.height : RENDERED_IDEAL_FALLBACK_CANVAS_SIZE
+  const fallbackCssWidth = rect.width > 0 ? rect.width : RENDERED_IDEAL_FALLBACK_CANVAS_SIZE
+  const fallbackCssHeight = rect.height > 0 ? rect.height : RENDERED_IDEAL_FALLBACK_CANVAS_SIZE
   const dpr = window.devicePixelRatio || 1
-  const targetWidth = Math.max(1, Math.round(cssWidth * dpr))
-  const targetHeight = Math.max(1, Math.round(cssHeight * dpr))
+  const useProfileResolution = appearance.id !== "current"
+  const cssWidth = useProfileResolution ? appearance.renderResolution.width : fallbackCssWidth
+  const cssHeight = useProfileResolution ? appearance.renderResolution.height : fallbackCssHeight
+  const targetWidth = Math.max(1, Math.round(useProfileResolution ? appearance.renderResolution.width : cssWidth * dpr))
+  const targetHeight = Math.max(1, Math.round(useProfileResolution ? appearance.renderResolution.height : cssHeight * dpr))
   if (canvas.width !== targetWidth || canvas.height !== targetHeight) {
     canvas.width = targetWidth
     canvas.height = targetHeight
   }
 
-  context.setTransform(dpr, 0, 0, dpr, 0, 0)
-  drawRenderedIdealBackground(context, cssWidth, cssHeight)
+  context.setTransform(useProfileResolution ? 1 : dpr, 0, 0, useProfileResolution ? 1 : dpr, 0, 0)
+  drawRenderedIdealBackground(context, cssWidth, cssHeight, appearance)
 
   if (!state.objFile.loaded || getObjPreviewStatus() !== "ready") {
     return createRenderedIdealRenderSummary("not_ready", {
@@ -4929,13 +5209,13 @@ function renderRenderedIdealCanvasTo(
   const rotationCenter = rotationCenterOverride ?? getObjPoseSyncRotationCenter()
   const viewport = {
     centerX: cssWidth / 2,
-    centerY: cssHeight / 2,
-    scale: Math.max(1, Math.min(cssWidth, cssHeight) * 0.44),
+    centerY: cssHeight / 2 + cssHeight * appearance.camera.verticalOffset,
+    scale: Math.max(1, Math.min(cssWidth, cssHeight) * 0.44 * appearance.camera.scale),
   }
   const transformedVertices = state.objGeometry.vertices.map((vertex) =>
     transformObjVertexForRender(vertex, summary.center!, summary.maxDimension!, previewState, rotationCenter),
   )
-  const faceDrawItems = createRenderedIdealFaceDrawItems(transformedVertices, viewport, previewState)
+  const faceDrawItems = createRenderedIdealFaceDrawItems(transformedVertices, viewport, previewState, appearance)
 
   faceDrawItems.sort((a, b) => a.averageZ - b.averageZ)
 
@@ -4957,8 +5237,8 @@ function renderRenderedIdealCanvasTo(
       context.lineTo(item.points[index].x, item.points[index].y)
     }
     context.closePath()
-    context.fillStyle = getRenderedIdealFaceColor(item.brightness)
-    context.strokeStyle = getRenderedIdealFaceStrokeColor(item.brightness)
+    context.fillStyle = getRenderedIdealFaceColor(item.brightness, appearance)
+    context.strokeStyle = getRenderedIdealFaceStrokeColor(item.brightness, appearance)
     context.fill()
     context.stroke()
     drawnFaceCount += 1
@@ -4988,6 +5268,7 @@ function createRenderedIdealFaceDrawItems(
   transformedVertices: ObjVertex[],
   viewport: { centerX: number; centerY: number; scale: number },
   previewState: ObjPreviewState,
+  appearance: AppliedObjRenderAppearanceProfile,
 ) {
   return state.objGeometry.faces.flatMap((face) => {
     const vertices: ObjVertex[] = []
@@ -5006,11 +5287,7 @@ function createRenderedIdealFaceDrawItems(
       return []
     }
 
-    const brightness = clamp(
-      0.35 + 0.65 * Math.max(0, dotVector(normal, RENDERED_IDEAL_LIGHT_DIRECTION)),
-      0.25,
-      1,
-    )
+    const brightness = calculateRenderedIdealBrightness(normal, appearance)
     const averageZ = vertices.reduce((sum, vertex) => sum + vertex.z, 0) / vertices.length
     const points = vertices.map((vertex) => ({
       x: viewport.centerX + (vertex.x * previewState.zoom + previewState.panX) * viewport.scale,
@@ -5051,8 +5328,9 @@ function drawRenderedIdealBackground(
   context: CanvasRenderingContext2D,
   width: number,
   height: number,
+  appearance: AppliedObjRenderAppearanceProfile,
 ) {
-  context.fillStyle = state.renderedIdeal.backgroundMode === "dark" ? "#1a2028" : "#f5f7f9"
+  context.fillStyle = appearance.backgroundColor
   context.fillRect(0, 0, width, height)
 }
 
@@ -5061,9 +5339,18 @@ function renderRenderedIdealSummaryCard() {
   const summary = state.renderedIdeal.summary
   const detection = state.renderedIdeal.detection
   const calibration = state.objPoseCalibration
+  const appearance = getAppliedObjRenderAppearanceProfile({
+    width: summary.canvasWidth || getAppliedObjRenderAppearanceProfile().renderResolution.width,
+    height: summary.canvasHeight || getAppliedObjRenderAppearanceProfile().renderResolution.height,
+  })
   card.innerHTML = `
     <p>${escapeHtml(getRenderedIdealMessage())}</p>
     <dl class="review-grid">
+      <div><dt>Render Appearance</dt><dd>${escapeHtml(appearance.label)}</dd></div>
+      <div><dt>background</dt><dd>${escapeHtml(appearance.backgroundColor)}</dd></div>
+      <div><dt>skin</dt><dd>${escapeHtml(appearance.skinColor)}</dd></div>
+      <div><dt>lighting</dt><dd>${escapeHtml(formatRenderAppearanceLighting(appearance))}</dd></div>
+      <div><dt>camera</dt><dd>${escapeHtml(formatRenderAppearanceCamera(appearance))}</dd></div>
       <div><dt>render status</dt><dd>${summary.status}</dd></div>
       <div><dt>faceCount</dt><dd>${summary.faceCount}</dd></div>
       <div><dt>drawnFaceCount</dt><dd>${summary.drawnFaceCount}</dd></div>
@@ -5541,6 +5828,7 @@ function getSummaryItems(): Array<[string, string]> {
     ["rotationCenterZ", formatNumber(state.objPoseSync.rotationCenterZ)],
     ["objErrorMessage", state.objErrorMessage ?? "null"],
     ["renderedIdealStatus", state.renderedIdeal.summary.status],
+    ["renderAppearanceProfile", state.renderedIdeal.renderAppearanceProfileId],
     ["renderedIdealRenderMode", state.renderedIdeal.summary.renderMode],
     ["renderedIdealDrawnFaceCount", formatNullableCount(state.renderedIdeal.summary.drawnFaceCount)],
     ["renderedIdealSkippedFaceCount", formatNullableCount(state.renderedIdeal.summary.skippedFaceCount)],
@@ -5663,8 +5951,17 @@ function getObjItems(): Array<[string, string]> {
 function getRenderedIdealItems(): Array<[string, string]> {
   const summary = state.renderedIdeal.summary
   const detection = state.renderedIdeal.detection
+  const appearance = getAppliedObjRenderAppearanceProfile({
+    width: summary.canvasWidth || getAppliedObjRenderAppearanceProfile().renderResolution.width,
+    height: summary.canvasHeight || getAppliedObjRenderAppearanceProfile().renderResolution.height,
+  })
   return [
     ["status", summary.status],
+    ["renderAppearance profile", appearance.label],
+    ["renderAppearance background", appearance.backgroundColor],
+    ["renderAppearance skin", appearance.skinColor],
+    ["renderAppearance lighting", formatRenderAppearanceLighting(appearance)],
+    ["renderAppearance camera", formatRenderAppearanceCamera(appearance)],
     ["canvasWidth", formatNullableCount(summary.canvasWidth)],
     ["canvasHeight", formatNullableCount(summary.canvasHeight)],
     ["faceCount", formatNullableCount(summary.faceCount)],
@@ -6020,6 +6317,7 @@ function createDefaultRenderedIdealState(): RenderedIdealState {
   return {
     backgroundMode: "light",
     colorMode: "clay",
+    renderAppearanceProfileId: "current",
     detection: createEmptyRenderedIdealDetectionState(),
     summary: {
       status: "not_ready",
@@ -6287,11 +6585,7 @@ function createRenderedIdealRenderSummary(
     faceCount: state.objGeometry.faces.length,
     drawnFaceCount: overrides.drawnFaceCount ?? 0,
     skippedFaceCount: overrides.skippedFaceCount ?? 0,
-    lightDirection: {
-      x: roundForState(RENDERED_IDEAL_LIGHT_DIRECTION.x) ?? 0,
-      y: roundForState(RENDERED_IDEAL_LIGHT_DIRECTION.y) ?? 0,
-      z: roundForState(RENDERED_IDEAL_LIGHT_DIRECTION.z) ?? 0,
-    },
+    lightDirection: overrides.lightDirection ?? getPrimaryRenderAppearanceLightDirection(),
     appliedYawDeg: roundForState(overrides.appliedYawDeg ?? state.objPoseSync.appliedYawDeg),
     appliedPitchDeg: roundForState(overrides.appliedPitchDeg ?? state.objPoseSync.appliedPitchDeg),
     appliedRollDeg: roundForState(overrides.appliedRollDeg ?? state.objPoseSync.appliedRollDeg),
@@ -6714,7 +7008,7 @@ async function exportObjPoseMappingDataset() {
   }
 
   const json = JSON.stringify(dataset, null, 2)
-  const fileName = `obj-pose-mapping-dataset-${formatTimestampForFileName(dataset.createdAt)}.json`
+  const fileName = `obj-pose-mapping-dataset-${dataset.renderAppearance.profileId}-${formatTimestampForFileName(dataset.createdAt)}.json`
   downloadTextFile(fileName, json, "application/json;charset=utf-8")
   status.textContent = "p,P dataset JSONをダウンロードしました。"
   addLog("p,P dataset JSONをダウンロードしました。")
@@ -7040,6 +7334,8 @@ function getObjPoseCalibrationRawSummary() {
     status: state.objPoseCalibration.status,
     poseSamplingPreset: state.objPoseMapping.poseSamplingPreset,
     poseSampling: getCurrentObjPoseSamplingPreset(),
+    selectedRenderAppearanceProfileId: state.renderedIdeal.renderAppearanceProfileId,
+    renderAppearance: getRenderAppearanceDebugSummary(),
     fixedRotationCenter: getFixedObjPoseRenderSettings().rotationCenter,
     startedAt: state.objPoseCalibration.startedAt,
     completedAt: state.objPoseCalibration.completedAt,
@@ -7135,6 +7431,10 @@ function isObjPreviewMode(value: string): value is ObjPreviewMode {
 
 function isObjPoseSamplingPresetName(value: string): value is ObjPoseSamplingPresetName {
   return value === "quick" || value === "standard" || value === "dense"
+}
+
+function isObjRenderAppearanceProfileId(value: string): value is ObjRenderAppearanceProfileId {
+  return value in OBJ_RENDER_APPEARANCE_PROFILES
 }
 
 function isRealtimeMode(value: string): value is RealtimeMode {
@@ -7388,6 +7688,24 @@ function formatObjPoseSamplingPreset(preset: ObjPoseSamplingPreset) {
     `yaw min=${formatNumber(preset.yaw.min)} max=${formatNumber(preset.yaw.max)} step=${formatNumber(preset.yaw.step)}`,
     `pitch min=${formatNumber(preset.pitch.min)} max=${formatNumber(preset.pitch.max)} step=${formatNumber(preset.pitch.step)}`,
     `roll min=${formatNumber(preset.roll.min)} max=${formatNumber(preset.roll.max)} step=${formatNumber(preset.roll.step)}`,
+  ].join(" / ")
+}
+
+function formatRenderAppearanceLighting(appearance: AppliedObjRenderAppearanceProfile) {
+  return [
+    appearance.lighting.mode,
+    `ambient ${formatNumber(appearance.lighting.ambientIntensity)}`,
+    `key ${formatNumber(appearance.lighting.keyLightIntensity)}`,
+    `shadow ${appearance.lighting.castShadow ? "on" : "off"}`,
+  ].join(" / ")
+}
+
+function formatRenderAppearanceCamera(appearance: AppliedObjRenderAppearanceProfile) {
+  return [
+    appearance.camera.projection,
+    `fov ${formatNumber(appearance.camera.fovDeg)}`,
+    `scale ${formatNumber(appearance.camera.scale)}`,
+    `verticalOffset ${formatNumber(appearance.camera.verticalOffset)}`,
   ].join(" / ")
 }
 
@@ -7698,11 +8016,31 @@ function getObjPoseComparisonSignDebug() {
   }
 }
 
+function getRenderAppearanceDebugSummary() {
+  const appearance = getAppliedObjRenderAppearanceProfile({
+    width: renderedIdealCanvas.width || getAppliedObjRenderAppearanceProfile().renderResolution.width,
+    height: renderedIdealCanvas.height || getAppliedObjRenderAppearanceProfile().renderResolution.height,
+  })
+  return {
+    profileId: appearance.id,
+    profileLabel: appearance.label,
+    backgroundColor: appearance.backgroundColor,
+    skinColor: appearance.skinColor,
+    material: appearance.material,
+    lighting: appearance.lighting,
+    camera: appearance.camera,
+    renderResolution: appearance.renderResolution,
+    implementation: appearance.implementation,
+  }
+}
+
 function getObjPoseCalibrationDebugExport() {
   return {
     status: state.objPoseCalibration.status,
     poseSamplingPreset: state.objPoseMapping.poseSamplingPreset,
     poseSampling: getCurrentObjPoseSamplingPreset(),
+    selectedRenderAppearanceProfileId: state.renderedIdeal.renderAppearanceProfileId,
+    renderAppearance: getRenderAppearanceDebugSummary(),
     fixedRotationCenter: getFixedObjPoseRenderSettings().rotationCenter,
     poseCount: state.objPoseCalibration.poseCount,
     totalEvaluationCount: state.objPoseCalibration.totalEvaluationCount,
@@ -7717,6 +8055,8 @@ function getObjPoseCalibrationDebugExport() {
 function getObjPoseMappingDebugExport() {
   const dataset = objPoseMappingDataset
   return {
+    selectedRenderAppearanceProfileId: state.renderedIdeal.renderAppearanceProfileId,
+    renderAppearance: getRenderAppearanceDebugSummary(),
     dataset: {
       schemaVersion: "obj_pose_mapping_dataset_v2",
       sampleCount: state.objPoseMapping.dataset.sampleCount,
@@ -7729,6 +8069,7 @@ function getObjPoseMappingDebugExport() {
             createdAt: dataset.createdAt,
             source: dataset.source,
             renderSettings: dataset.renderSettings,
+            renderAppearance: dataset.renderAppearance,
             mediapipeSettings: dataset.mediapipeSettings,
             poseSampling: dataset.poseSampling,
             summary: dataset.summary,
@@ -8359,10 +8700,90 @@ function normalizeVector(vector: ObjVertex): ObjVertex {
   }
 }
 
-function getRenderedIdealFaceColor(brightness: number) {
-  const base = state.renderedIdeal.colorMode === "grayscale"
-    ? { r: 184, g: 188, b: 192 }
-    : { r: 205, g: 177, b: 151 }
+function getAppliedObjRenderAppearanceProfile(
+  renderResolutionOverride?: { width: number; height: number },
+): AppliedObjRenderAppearanceProfile {
+  const base = OBJ_RENDER_APPEARANCE_PROFILES[state.renderedIdeal.renderAppearanceProfileId]
+  const profile = base.id === "current"
+    ? {
+        ...base,
+        backgroundColor: state.renderedIdeal.backgroundMode === "dark" ? "#1a2028" : "#f5f7f9",
+        skinColor: state.renderedIdeal.colorMode === "grayscale" ? "#b8bcc0" : "#cdb197",
+      }
+    : base
+
+  return {
+    ...profile,
+    material: { ...profile.material },
+    lighting: {
+      ...profile.lighting,
+      keyLightDirection: profile.lighting.keyLightDirection ? normalizeVector(profile.lighting.keyLightDirection) : undefined,
+      fillLightDirection: profile.lighting.fillLightDirection ? normalizeVector(profile.lighting.fillLightDirection) : undefined,
+      rimLightDirection: profile.lighting.rimLightDirection ? normalizeVector(profile.lighting.rimLightDirection) : undefined,
+    },
+    camera: { ...profile.camera },
+    renderResolution: renderResolutionOverride ? { ...renderResolutionOverride } : { ...profile.renderResolution },
+    implementation: {
+      backgroundColor: true,
+      skinColor: true,
+      materialMode: true,
+      diffuse: true,
+      ambient: true,
+      specular: false,
+      lightingMode: true,
+      castShadow: false,
+      projection: false,
+      fovDeg: false,
+      scale: true,
+      verticalOffset: true,
+      renderResolution: true,
+      notes: [
+        "Canvas2D renderer applies backgroundColor, skinColor, material ambient/diffuse, lighting intensities/directions, scale, verticalOffset, and renderResolution.",
+        "specular, castShadow, physical perspective projection, and fovDeg are recorded for comparison metadata but are not physically implemented yet.",
+      ],
+    },
+  }
+}
+
+function calculateRenderedIdealBrightness(
+  normal: ObjVertex,
+  appearance: AppliedObjRenderAppearanceProfile,
+) {
+  if (appearance.material.mode === "flat" || appearance.lighting.mode === "none") {
+    return clamp(appearance.material.ambient * appearance.lighting.ambientIntensity, 0.35, 1)
+  }
+
+  const keyDirection = appearance.lighting.mode === "camera_front"
+    ? { x: 0, y: 0, z: 1 }
+    : appearance.lighting.keyLightDirection ?? RENDERED_IDEAL_LIGHT_DIRECTION
+  const fillDirection = appearance.lighting.fillLightDirection ?? { x: 0.35, y: 0.15, z: 0.92 }
+  const key = Math.max(0, dotVector(normal, normalizeVector(keyDirection))) * appearance.lighting.keyLightIntensity
+  const fill = Math.max(0, dotVector(normal, normalizeVector(fillDirection))) * (appearance.lighting.fillLightIntensity ?? 0)
+  const cameraFacing = Math.max(0, dotVector(normal, { x: 0, y: 0, z: 1 }))
+  const rim = (1 - cameraFacing) * (appearance.lighting.rimLightIntensity ?? 0)
+
+  return clamp(
+    appearance.material.ambient * appearance.lighting.ambientIntensity +
+      appearance.material.diffuse * (key + fill + rim),
+    0.25,
+    1,
+  )
+}
+
+function getPrimaryRenderAppearanceLightDirection() {
+  const appearance = getAppliedObjRenderAppearanceProfile()
+  const direction = appearance.lighting.mode === "camera_front"
+    ? { x: 0, y: 0, z: 1 }
+    : appearance.lighting.keyLightDirection ?? RENDERED_IDEAL_LIGHT_DIRECTION
+  return {
+    x: roundForState(direction.x) ?? 0,
+    y: roundForState(direction.y) ?? 0,
+    z: roundForState(direction.z) ?? 0,
+  }
+}
+
+function getRenderedIdealFaceColor(brightness: number, appearance: AppliedObjRenderAppearanceProfile) {
+  const base = hexToRgb(appearance.skinColor) ?? { r: 205, g: 177, b: 151 }
   return rgbToCss({
     r: Math.round(base.r * brightness),
     g: Math.round(base.g * brightness),
@@ -8370,10 +8791,25 @@ function getRenderedIdealFaceColor(brightness: number) {
   })
 }
 
-function getRenderedIdealFaceStrokeColor(brightness: number) {
-  const alpha = state.renderedIdeal.backgroundMode === "dark" ? 0.38 : 0.18
+function getRenderedIdealFaceStrokeColor(brightness: number, appearance: AppliedObjRenderAppearanceProfile) {
+  const background = hexToRgb(appearance.backgroundColor)
+  const isDarkBackground = background ? (background.r + background.g + background.b) / 3 < 120 : false
+  const alpha = isDarkBackground ? 0.38 : appearance.id === "yaw_edge_friendly" ? 0.24 : 0.16
   const channel = Math.round(40 + 60 * brightness)
   return `rgba(${channel}, ${channel}, ${channel}, ${alpha})`
+}
+
+function hexToRgb(value: string) {
+  const match = value.trim().match(/^#?([0-9a-fA-F]{6})$/)
+  if (!match) {
+    return null
+  }
+  const hex = match[1]
+  return {
+    r: parseInt(hex.slice(0, 2), 16),
+    g: parseInt(hex.slice(2, 4), 16),
+    b: parseInt(hex.slice(4, 6), 16),
+  }
 }
 
 function rgbToCss(color: { r: number; g: number; b: number }) {
