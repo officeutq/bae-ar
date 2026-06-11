@@ -579,6 +579,10 @@ h3 {
   margin: 0;
 }
 
+.realtime-drive-note {
+  margin-top: 6px !important;
+}
+
 .realtime-playback-note {
   color: #8a5a13;
   font-weight: 700;

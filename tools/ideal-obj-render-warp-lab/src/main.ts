@@ -52,6 +52,10 @@ type MediaPipeStatus =
 type RealtimeMode =
   | "current_analysis_only"
   | "current_analysis_obj_render"
+type RealtimeDriveMode =
+  | "video_frame_callback"
+  | "animation_frame_fallback"
+  | "interval_legacy"
 type RealtimeStatus =
   | "idle"
   | "running"
@@ -258,6 +262,7 @@ type CurrentAnalysisTimingBreakdown = {
 type RealtimeDebugState = {
   status: RealtimeStatus
   mode: RealtimeMode
+  driveMode: RealtimeDriveMode
   targetFps: number
   frameCount: number
   skippedCount: number
@@ -275,15 +280,34 @@ type RealtimeDebugState = {
   errorMessage: string | null
   timeupdateAnalysisRequestCount: number
   realtimeTickAnalysisRequestCount: number
+  videoFrameCallbackCount: number
+  animationFrameFallbackCount: number
+  intervalLegacyTickCount: number
+  processedVideoFrameCount: number
+  skippedBySameVideoFrameCount: number
   skippedByInProgressCount: number
   skippedByNoVideoCount: number
   skippedByPausedVideoCount: number
+  skippedTimeupdateDuringRealtimeCount: number
+  videoFrameMetadataMediaTime: number | null
+  videoFrameTimestampMs: number | null
+  timestampFallbackUsed: boolean
+  lastVideoFrameMediaTimeSec: number | null
+  lastVideoFrameTimestampMs: number | null
+  timestampFallbackUsedCount: number
 }
 
 type RealtimeTimingSample = {
   currentAnalysisTimingBreakdown: CurrentAnalysisTimingBreakdown
   objRenderMs: number | null
   totalMs: number | null
+}
+
+type RealtimeFrameTick = {
+  driveMode: RealtimeDriveMode
+  timestampMs: number
+  mediaTimeSec: number | null
+  timestampFallbackUsed: boolean
 }
 
 type RenderUpdateTiming = {
@@ -334,6 +358,15 @@ type LabState = {
 
 type FaceLandmarkerResultLike = ReturnType<FaceLandmarker["detectForVideo"]>
 type FaceLandmarkerOptions = Parameters<typeof FaceLandmarker.createFromOptions>[1]
+type VideoFrameCallbackMetadataLike = {
+  mediaTime?: number
+}
+type VideoElementWithFrameCallback = HTMLVideoElement & {
+  requestVideoFrameCallback?: (
+    callback: (now: DOMHighResTimeStamp, metadata: VideoFrameCallbackMetadataLike) => void,
+  ) => number
+  cancelVideoFrameCallback?: (handle: number) => void
+}
 
 const LAB_NAME = "Ideal OBJ Render Warp Lab"
 const MEDIAPIPE_WASM_PATH = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm"
@@ -380,6 +413,12 @@ const debugTabs: TabOption<DebugTab>[] = [
 const realtimeModeLabels: Record<RealtimeMode, string> = {
   current_analysis_only: "現在顔解析のみ",
   current_analysis_obj_render: "現在顔解析 + OBJレンダー",
+}
+
+const realtimeDriveModeLabels: Record<RealtimeDriveMode, string> = {
+  video_frame_callback: "動画フレーム同期 requestVideoFrameCallback",
+  animation_frame_fallback: "画面描画同期 fallback requestAnimationFrame",
+  interval_legacy: "旧setInterval 一定間隔タイマー",
 }
 
 const state: LabState = {
@@ -505,9 +544,12 @@ let liveAnalysisInProgress = false
 let liveAnalysisRequestId = 0
 let lastAutoLiveAnalysisAtSec = Number.NEGATIVE_INFINITY
 let realtimeTimerId: number | null = null
+let realtimeVideoFrameCallbackId: number | null = null
+let realtimeAnimationFrameId: number | null = null
 let realtimeRunStartedAtMs: number | null = null
 let realtimeTickInProgress = false
 let realtimeTimingSamples: RealtimeTimingSample[] = []
+let lastRealtimeAnimationFrameCurrentTimeSec: number | null = null
 let cameraStream: MediaStream | null = null
 let objPreviewDrag:
   | {
@@ -733,6 +775,7 @@ function renderLivePreview() {
           <div>
             <h3>リアルタイム検証</h3>
             <p>MediaPipe検出は GPU delegate 固定で実行します。<br />入力ソースが MP4 の場合は、MP4デコード負荷を含む参考値です。入力ソースがカメラの場合は、本番想定に近い値として確認します。まず「現在顔解析のみ」で MediaPipe検出ms を確認し、その後「現在顔解析 + OBJレンダー」を確認してください。</p>
+            <p class="realtime-drive-note">リアルタイム検証は、通常 requestVideoFrameCallback（動画フレーム更新コールバック）で実フレーム更新に同期して実行します。requestVideoFrameCallback が使えない場合のみ requestAnimationFrame（画面描画タイミング）へ fallback します。</p>
             <p class="realtime-playback-note" data-realtime-playback-note></p>
           </div>
           <div class="button-row realtime-buttons">
@@ -843,7 +886,7 @@ function bindEvents() {
   liveVideoElement.addEventListener("pause", () => {
     state.liveVideo.playbackStatus = state.liveVideo.loaded ? "paused" : "stopped"
     syncLiveInputState()
-    if (state.liveVideo.loaded) {
+    if (state.liveVideo.loaded && state.realtimeDebug.status !== "running") {
       void analyzeCurrentLiveFrame("pause")
     }
     renderAll()
@@ -852,7 +895,7 @@ function bindEvents() {
   liveVideoElement.addEventListener("ended", () => {
     state.liveVideo.playbackStatus = "stopped"
     syncLiveInputState()
-    if (state.liveVideo.loaded) {
+    if (state.liveVideo.loaded && state.realtimeDebug.status !== "running") {
       void analyzeCurrentLiveFrame("ended")
     }
     renderAll()
@@ -986,8 +1029,11 @@ function bindEvents() {
     const value = Number(event.currentTarget.value)
     if (isRealtimeTargetFps(value)) {
       state.realtimeDebug.targetFps = value
-      if (state.realtimeDebug.status === "running") {
-        restartRealtimeTimer()
+      if (
+        state.realtimeDebug.status === "running" &&
+        state.realtimeDebug.driveMode === "interval_legacy"
+      ) {
+        restartRealtimeDrive()
       }
       renderAll()
     }
@@ -1395,7 +1441,7 @@ async function initializeFaceLandmarker() {
 
 async function analyzeCurrentLiveFrame(
   reason: "manual" | "timeupdate" | "seeked" | "pause" | "ended" | "realtime",
-  options: { skipFinalRender?: boolean } = {},
+  options: { skipFinalRender?: boolean; timestampMs?: number } = {},
 ): Promise<CurrentAnalysisTimingBreakdown | null> {
   if (!state.liveVideo.loaded || liveAnalysisInProgress) {
     if (!state.liveVideo.loaded) {
@@ -1446,8 +1492,10 @@ async function analyzeCurrentLiveFrame(
     }
 
     const timeSec = liveVideoElement.currentTime || state.liveVideo.currentTimeSec || 0
+    const timestampMs = options.timestampMs ?? nextLiveTimestampMs()
+    state.liveMediaPipe.liveTimestampMs = timestampMs
     const detectStartMs = performance.now()
-    const result = detector.detectForVideo(liveVideoElement, nextLiveTimestampMs())
+    const result = detector.detectForVideo(liveVideoElement, timestampMs)
     analysisTiming.mediaPipeDetectMs = performance.now() - detectStartMs
 
     const buildStartMs = performance.now()
@@ -1499,6 +1547,7 @@ async function analyzeCurrentLiveFrame(
 
 function maybeAnalyzeLiveFrame() {
   if (state.realtimeDebug.status === "running") {
+    state.realtimeDebug.skippedTimeupdateDuringRealtimeCount += 1
     return
   }
 
@@ -1809,23 +1858,22 @@ function startRealtimeValidation() {
   state.realtimeDebug = {
     ...state.realtimeDebug,
     status: "running",
+    driveMode: resolveRealtimeDriveMode(state.realtimeDebug.driveMode),
     errorMessage: null,
     lastUpdatedAt: formatUpdatedAt(),
   }
   realtimeRunStartedAtMs = performance.now()
-  restartRealtimeTimer()
+  lastRealtimeAnimationFrameCurrentTimeSec = null
+  restartRealtimeDrive()
   addLog("リアルタイム検証を開始しました。")
   renderAll()
-  void runRealtimeTick()
 }
 
 function stopRealtimeValidation(nextStatus: Extract<RealtimeStatus, "idle" | "stopped" | "error">) {
-  if (realtimeTimerId !== null) {
-    window.clearInterval(realtimeTimerId)
-    realtimeTimerId = null
-  }
+  cancelRealtimeDrive()
   realtimeTickInProgress = false
   realtimeRunStartedAtMs = null
+  lastRealtimeAnimationFrameCurrentTimeSec = null
   if (state.realtimeDebug.status === "running" || nextStatus !== "stopped") {
     state.realtimeDebug = {
       ...state.realtimeDebug,
@@ -1837,10 +1885,11 @@ function stopRealtimeValidation(nextStatus: Extract<RealtimeStatus, "idle" | "st
 
 function resetRealtimeValidation() {
   const mode = state.realtimeDebug.mode
+  const driveMode = state.realtimeDebug.driveMode
   const targetFps = state.realtimeDebug.targetFps
   stopRealtimeValidation("idle")
   realtimeTimingSamples = []
-  state.realtimeDebug = createDefaultRealtimeDebugState({ mode, targetFps })
+  state.realtimeDebug = createDefaultRealtimeDebugState({ mode, driveMode, targetFps })
   addLog("リアルタイム検証をリセットしました。")
 }
 
@@ -1876,28 +1925,172 @@ function calculateRealtimeAverageTiming() {
   }
 }
 
-function restartRealtimeTimer() {
+function restartRealtimeDrive() {
+  cancelRealtimeDrive()
+  scheduleRealtimeDrive()
+}
+
+function cancelRealtimeDrive() {
+  const video = liveVideoElement as VideoElementWithFrameCallback
+  if (realtimeVideoFrameCallbackId !== null) {
+    video.cancelVideoFrameCallback?.(realtimeVideoFrameCallbackId)
+    realtimeVideoFrameCallbackId = null
+  }
+  if (realtimeAnimationFrameId !== null) {
+    window.cancelAnimationFrame(realtimeAnimationFrameId)
+    realtimeAnimationFrameId = null
+  }
   if (realtimeTimerId !== null) {
     window.clearInterval(realtimeTimerId)
+    realtimeTimerId = null
+  }
+}
+
+function scheduleRealtimeDrive() {
+  if (state.realtimeDebug.status !== "running") {
+    return
+  }
+
+  if (state.realtimeDebug.driveMode === "video_frame_callback") {
+    const video = liveVideoElement as VideoElementWithFrameCallback
+    if (!video.requestVideoFrameCallback) {
+      state.realtimeDebug = {
+        ...state.realtimeDebug,
+        driveMode: "animation_frame_fallback",
+        lastUpdatedAt: formatUpdatedAt(),
+      }
+      scheduleRealtimeDrive()
+      return
+    }
+
+    realtimeVideoFrameCallbackId = video.requestVideoFrameCallback((_now, metadata) => {
+      realtimeVideoFrameCallbackId = null
+      state.realtimeDebug.videoFrameCallbackCount += 1
+      if (shouldSkipRealtimeVideoFrame(metadata)) {
+        recordRealtimeSkip("same_video_frame")
+        scheduleRealtimeDrive()
+        return
+      }
+      const tick = createRealtimeFrameTick("video_frame_callback", metadata)
+      void runRealtimeTick(tick).finally(() => {
+        scheduleRealtimeDrive()
+      })
+    })
+    return
+  }
+
+  if (state.realtimeDebug.driveMode === "animation_frame_fallback") {
+    realtimeAnimationFrameId = window.requestAnimationFrame(() => {
+      realtimeAnimationFrameId = null
+      state.realtimeDebug.animationFrameFallbackCount += 1
+      const currentTimeSec = liveVideoElement.currentTime || state.liveVideo.currentTimeSec || 0
+      if (
+        lastRealtimeAnimationFrameCurrentTimeSec !== null &&
+        Math.abs(currentTimeSec - lastRealtimeAnimationFrameCurrentTimeSec) < 0.000001
+      ) {
+        recordRealtimeSkip("same_video_frame")
+        scheduleRealtimeDrive()
+        return
+      }
+      lastRealtimeAnimationFrameCurrentTimeSec = currentTimeSec
+      const tick = createRealtimeFrameTick("animation_frame_fallback")
+      void runRealtimeTick(tick).finally(() => {
+        scheduleRealtimeDrive()
+      })
+    })
+    return
+  }
+
+  if (realtimeTimerId !== null) {
+    return
   }
   const intervalMs = Math.max(1, Math.round(1000 / state.realtimeDebug.targetFps))
   realtimeTimerId = window.setInterval(() => {
-    void runRealtimeTick()
+    state.realtimeDebug.intervalLegacyTickCount += 1
+    const tick = createRealtimeFrameTick("interval_legacy")
+    void runRealtimeTick(tick)
   }, intervalMs)
 }
 
-async function runRealtimeTick() {
+function shouldSkipRealtimeVideoFrame(metadata: VideoFrameCallbackMetadataLike) {
+  const mediaTimeSec = Number.isFinite(metadata.mediaTime) ? metadata.mediaTime ?? null : null
+  return (
+    mediaTimeSec !== null &&
+    state.realtimeDebug.lastVideoFrameMediaTimeSec !== null &&
+    Math.abs(mediaTimeSec - state.realtimeDebug.lastVideoFrameMediaTimeSec) < 0.000001
+  )
+}
+
+function recordRealtimeSkip(reason: "same_video_frame" | "in_progress" | "no_video" | "paused_video") {
+  state.realtimeDebug = {
+    ...state.realtimeDebug,
+    skippedCount: state.realtimeDebug.skippedCount + 1,
+    skippedBySameVideoFrameCount:
+      state.realtimeDebug.skippedBySameVideoFrameCount + (reason === "same_video_frame" ? 1 : 0),
+    skippedByInProgressCount:
+      state.realtimeDebug.skippedByInProgressCount + (reason === "in_progress" ? 1 : 0),
+    skippedByNoVideoCount:
+      state.realtimeDebug.skippedByNoVideoCount + (reason === "no_video" ? 1 : 0),
+    skippedByPausedVideoCount:
+      state.realtimeDebug.skippedByPausedVideoCount + (reason === "paused_video" ? 1 : 0),
+    lastUpdatedAt: formatUpdatedAt(),
+  }
+  renderRealtimeControls()
+  renderDebugContent()
+}
+
+function createRealtimeFrameTick(
+  driveMode: RealtimeDriveMode,
+  metadata: VideoFrameCallbackMetadataLike | null = null,
+): RealtimeFrameTick {
+  const mediaTimeSec =
+    metadata && Number.isFinite(metadata.mediaTime)
+      ? metadata.mediaTime ?? null
+      : null
+  const timestampFallbackUsed = mediaTimeSec === null
+  const rawTimestampMs = timestampFallbackUsed ? performance.now() : mediaTimeSec * 1000
+  const lastTimestampMs = Math.max(
+    state.realtimeDebug.lastVideoFrameTimestampMs ?? Number.NEGATIVE_INFINITY,
+    state.liveMediaPipe.liveTimestampMs,
+  )
+  const timestampMs = rawTimestampMs <= lastTimestampMs ? lastTimestampMs + 1 : rawTimestampMs
+  return {
+    driveMode,
+    timestampMs,
+    mediaTimeSec,
+    timestampFallbackUsed,
+  }
+}
+
+function resolveRealtimeDriveMode(preferredMode: RealtimeDriveMode): RealtimeDriveMode {
+  if (preferredMode === "interval_legacy") {
+    return "interval_legacy"
+  }
+  if (preferredMode === "animation_frame_fallback") {
+    return "animation_frame_fallback"
+  }
+  return (liveVideoElement as VideoElementWithFrameCallback).requestVideoFrameCallback
+    ? "video_frame_callback"
+    : "animation_frame_fallback"
+}
+
+async function runRealtimeTick(frameTick: RealtimeFrameTick) {
   if (state.realtimeDebug.status !== "running") {
     return
   }
 
   if (realtimeTickInProgress || liveAnalysisInProgress) {
-    state.realtimeDebug = {
-      ...state.realtimeDebug,
-      skippedCount: state.realtimeDebug.skippedCount + 1,
-      lastUpdatedAt: formatUpdatedAt(),
-    }
-    renderAll()
+    recordRealtimeSkip("in_progress")
+    return
+  }
+
+  if (!state.liveVideo.loaded || liveVideoElement.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+    recordRealtimeSkip("no_video")
+    return
+  }
+
+  if (state.liveVideo.playbackStatus !== "playing") {
+    recordRealtimeSkip("paused_video")
     return
   }
 
@@ -1909,8 +2102,22 @@ async function runRealtimeTick() {
 
   try {
     state.realtimeDebug.realtimeTickAnalysisRequestCount += 1
+    state.realtimeDebug = {
+      ...state.realtimeDebug,
+      driveMode: frameTick.driveMode,
+      videoFrameMetadataMediaTime: frameTick.mediaTimeSec,
+      videoFrameTimestampMs: frameTick.timestampMs,
+      timestampFallbackUsed: frameTick.timestampFallbackUsed,
+      lastVideoFrameMediaTimeSec: frameTick.mediaTimeSec,
+      lastVideoFrameTimestampMs: frameTick.timestampMs,
+      timestampFallbackUsedCount:
+        state.realtimeDebug.timestampFallbackUsedCount + (frameTick.timestampFallbackUsed ? 1 : 0),
+    }
     currentAnalysisTimingBreakdown =
-      await analyzeCurrentLiveFrame("realtime", { skipFinalRender: true }) ??
+      await analyzeCurrentLiveFrame("realtime", {
+        skipFinalRender: true,
+        timestampMs: frameTick.timestampMs,
+      }) ??
       createEmptyCurrentAnalysisTimingBreakdown()
 
     if (state.realtimeDebug.mode === "current_analysis_obj_render") {
@@ -1920,6 +2127,7 @@ async function runRealtimeTick() {
     }
 
     const frameCount = state.realtimeDebug.frameCount + 1
+    const processedVideoFrameCount = state.realtimeDebug.processedVideoFrameCount + 1
     const elapsedSec = realtimeRunStartedAtMs === null
       ? null
       : (performance.now() - realtimeRunStartedAtMs) / 1000
@@ -1928,6 +2136,7 @@ async function runRealtimeTick() {
       ...state.realtimeDebug,
       status: "running",
       frameCount,
+      processedVideoFrameCount,
       currentAnalysisMs: currentAnalysisTimingBreakdown.currentAnalysisTotalMs,
       objRenderMs,
       mediaPipeRedetectMs: null,
@@ -2124,7 +2333,7 @@ function renderRealtimeControls() {
   setDisabled('[data-action="realtime-stop"]', state.realtimeDebug.status !== "running")
 
   getElement<HTMLElement>("[data-realtime-inline-status]").textContent =
-    `状態: ${formatRealtimeStatus(state.realtimeDebug.status)} / 実効FPS: ${formatRealtimeNullableNumber(state.realtimeDebug.effectiveFps)} / 判定: ${getRealtimeJudgement()}`
+    `状態: ${formatRealtimeStatus(state.realtimeDebug.status)} / 駆動: ${realtimeDriveModeLabels[state.realtimeDebug.driveMode]} / 実効FPS: ${formatRealtimeNullableNumber(state.realtimeDebug.effectiveFps)} / 判定: ${getRealtimeJudgement()}`
   getElement<HTMLElement>("[data-realtime-playback-note]").textContent = getRealtimePlaybackNote()
 }
 
@@ -2799,6 +3008,7 @@ function getSummaryItems(): Array<[string, string]> {
     ["liveInputSourceType", state.liveInput.sourceType ?? "null"],
     ["liveVideoStatus", state.liveVideo.status],
     ["realtimeMode", state.realtimeDebug.mode],
+    ["realtimeDriveMode", state.realtimeDebug.driveMode],
     ["currentAnalysisOnlySupported", "true"],
     ["cameraStatus", state.camera.status],
     ["cameraWidth", formatNullableCount(state.camera.width)],
@@ -2845,6 +3055,13 @@ function getSummaryItems(): Array<[string, string]> {
     ["buildCurrentAnalysisMs", formatRealtimeNullableNumber(state.realtimeDebug.currentAnalysisTimingBreakdown.buildCurrentAnalysisMs)],
     ["liveOverlayDrawMs", formatRealtimeNullableNumber(state.realtimeDebug.currentAnalysisTimingBreakdown.liveOverlayDrawMs)],
     ["debugUpdateMs", formatRealtimeNullableNumber(state.realtimeDebug.currentAnalysisTimingBreakdown.debugUpdateMs)],
+    ["videoFrameCallbackCount", formatNullableCount(state.realtimeDebug.videoFrameCallbackCount)],
+    ["animationFrameFallbackCount", formatNullableCount(state.realtimeDebug.animationFrameFallbackCount)],
+    ["processedVideoFrameCount", formatNullableCount(state.realtimeDebug.processedVideoFrameCount)],
+    ["videoFrameMetadataMediaTime", formatRealtimeNullableNumber(state.realtimeDebug.videoFrameMetadataMediaTime)],
+    ["videoFrameTimestampMs", formatRealtimeNullableNumber(state.realtimeDebug.videoFrameTimestampMs)],
+    ["timestampFallbackUsed", String(state.realtimeDebug.timestampFallbackUsed)],
+    ["timestampFallbackUsedCount", formatNullableCount(state.realtimeDebug.timestampFallbackUsedCount)],
     ["timeupdateAnalysisRequestCount", formatNullableCount(state.realtimeDebug.timeupdateAnalysisRequestCount)],
     ["realtimeTickAnalysisRequestCount", formatNullableCount(state.realtimeDebug.realtimeTickAnalysisRequestCount)],
     ["skippedByInProgressCount", formatNullableCount(state.realtimeDebug.skippedByInProgressCount)],
@@ -2953,6 +3170,18 @@ function getRealtimeItems(): Array<[string, string]> {
   return [
     ["入力ソース", formatLiveInputSourceLabel(state.liveInput.sourceType)],
     ["リアルタイムモード", realtimeModeLabels[state.realtimeDebug.mode]],
+    ["駆動方式", realtimeDriveModeLabels[state.realtimeDebug.driveMode]],
+    ["video frame callback 回数", formatNullableCount(state.realtimeDebug.videoFrameCallbackCount)],
+    ["animation frame fallback 回数", formatNullableCount(state.realtimeDebug.animationFrameFallbackCount)],
+    ["処理済み video frame 数", formatNullableCount(state.realtimeDebug.processedVideoFrameCount)],
+    ["同一フレームskip数", formatNullableCount(state.realtimeDebug.skippedBySameVideoFrameCount)],
+    ["inProgress skip数", formatNullableCount(state.realtimeDebug.skippedByInProgressCount)],
+    ["timestamp fallback 使用回数", formatNullableCount(state.realtimeDebug.timestampFallbackUsedCount)],
+    ["videoFrameMetadataMediaTime", formatRealtimeNullableNumber(state.realtimeDebug.videoFrameMetadataMediaTime)],
+    ["videoFrameTimestampMs", formatRealtimeNullableNumber(state.realtimeDebug.videoFrameTimestampMs)],
+    ["timestampFallbackUsed", String(state.realtimeDebug.timestampFallbackUsed)],
+    ["last mediaTime", formatRealtimeNullableNumber(state.realtimeDebug.lastVideoFrameMediaTimeSec)],
+    ["last timestampMs", formatRealtimeNullableNumber(state.realtimeDebug.lastVideoFrameTimestampMs)],
     ["MediaPipe検出ms", formatRealtimeNullableNumber(breakdown.mediaPipeDetectMs)],
     ["解析結果整形ms", formatRealtimeNullableNumber(breakdown.buildCurrentAnalysisMs)],
     ["ライブ重ね描画ms", formatRealtimeNullableNumber(breakdown.liveOverlayDrawMs)],
@@ -2962,6 +3191,7 @@ function getRealtimeItems(): Array<[string, string]> {
     ["実効FPS", formatRealtimeNullableNumber(state.realtimeDebug.effectiveFps)],
     ["ボトルネック", getRealtimeBottleneck()],
     ["timeupdate / realtime tick counters", `${state.realtimeDebug.timeupdateAnalysisRequestCount} / ${state.realtimeDebug.realtimeTickAnalysisRequestCount}`],
+    ["video frame / animation frame / interval counters", `${state.realtimeDebug.videoFrameCallbackCount} / ${state.realtimeDebug.animationFrameFallbackCount} / ${state.realtimeDebug.intervalLegacyTickCount}`],
     ["状態", formatRealtimeStatus(state.realtimeDebug.status)],
     ["目標FPS", formatNumber(state.realtimeDebug.targetFps)],
     ["処理フレーム数", formatNullableCount(state.realtimeDebug.frameCount)],
@@ -2976,6 +3206,7 @@ function getRealtimeItems(): Array<[string, string]> {
     ["平均現在顔解析合計ms", formatRealtimeNullableNumber(averageBreakdown.currentAnalysisTotalMs)],
     ["平均OBJレンダーms", formatRealtimeAverageObjRenderMs()],
     ["timeupdate解析要求数", formatNullableCount(state.realtimeDebug.timeupdateAnalysisRequestCount)],
+    ["リアルタイム中timeupdate skip数", formatNullableCount(state.realtimeDebug.skippedTimeupdateDuringRealtimeCount)],
     ["realtime tick解析要求数", formatNullableCount(state.realtimeDebug.realtimeTickAnalysisRequestCount)],
     ["処理中skip数", formatNullableCount(state.realtimeDebug.skippedByInProgressCount)],
     ["入力なしskip数", formatNullableCount(state.realtimeDebug.skippedByNoVideoCount)],
@@ -3352,11 +3583,12 @@ function createEmptyCurrentAnalysisTimingBreakdown(): CurrentAnalysisTimingBreak
 }
 
 function createDefaultRealtimeDebugState(
-  overrides: Partial<Pick<RealtimeDebugState, "mode" | "targetFps">> = {},
+  overrides: Partial<Pick<RealtimeDebugState, "mode" | "driveMode" | "targetFps">> = {},
 ): RealtimeDebugState {
   return {
     status: "idle",
     mode: overrides.mode ?? "current_analysis_only",
+    driveMode: overrides.driveMode ?? "video_frame_callback",
     targetFps: overrides.targetFps ?? 10,
     frameCount: 0,
     skippedCount: 0,
@@ -3374,9 +3606,21 @@ function createDefaultRealtimeDebugState(
     errorMessage: null,
     timeupdateAnalysisRequestCount: 0,
     realtimeTickAnalysisRequestCount: 0,
+    videoFrameCallbackCount: 0,
+    animationFrameFallbackCount: 0,
+    intervalLegacyTickCount: 0,
+    processedVideoFrameCount: 0,
+    skippedBySameVideoFrameCount: 0,
     skippedByInProgressCount: 0,
     skippedByNoVideoCount: 0,
     skippedByPausedVideoCount: 0,
+    skippedTimeupdateDuringRealtimeCount: 0,
+    videoFrameMetadataMediaTime: null,
+    videoFrameTimestampMs: null,
+    timestampFallbackUsed: false,
+    lastVideoFrameMediaTimeSec: null,
+    lastVideoFrameTimestampMs: null,
+    timestampFallbackUsedCount: 0,
   }
 }
 
@@ -4213,6 +4457,10 @@ function getRoundedRealtimeDebugState(): RealtimeDebugState {
     averageObjRenderMs: roundForState(state.realtimeDebug.averageObjRenderMs),
     averageTotalMs: roundForState(state.realtimeDebug.averageTotalMs),
     effectiveFps: roundForState(state.realtimeDebug.effectiveFps),
+    videoFrameMetadataMediaTime: roundForState(state.realtimeDebug.videoFrameMetadataMediaTime),
+    videoFrameTimestampMs: roundForState(state.realtimeDebug.videoFrameTimestampMs),
+    lastVideoFrameMediaTimeSec: roundForState(state.realtimeDebug.lastVideoFrameMediaTimeSec),
+    lastVideoFrameTimestampMs: roundForState(state.realtimeDebug.lastVideoFrameTimestampMs),
   }
 }
 
