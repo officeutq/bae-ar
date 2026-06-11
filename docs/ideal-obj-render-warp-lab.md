@@ -59,6 +59,33 @@ OBJ
   -> image-normalized coordinate
 ```
 
+## p,P dataset と renderAppearanceProfile
+
+現在のラボの主な役割は、OBJ を複数の `renderPose p` でレンダーし、その画像を
+MediaPipe に通して `P = MediaPipe returnedPose` を取得し、p,P dataset JSON として
+ダウンロードすることです。統計要約、関数推定、model tree / regression / KNN 比較、
+`poseMappingProfile` 候補作成は Google Colab / Python 側で行います。
+
+MediaPipe が見ているのは OBJ の 3D 形状そのものではなく、レンダリングされた 2D 画像です。
+そのため、p,P mapping は光、影、背景色、顔色、FOV、scale / crop、canvas 解像度に依存します。
+ラボでは `renderAppearanceProfile` を選択し、同じ pose sampling に対して見た目条件だけを
+変えた dataset を取り直せるようにします。
+
+dataset JSON には、選択した profile id だけでなく、実際に適用した
+`backgroundColor`、`skinColor`、`material`、`lighting`、`camera`、`renderResolution` を
+`renderAppearance.applied` として保存します。Canvas2D renderer でまだ物理的に実装していない
+specular、cast shadow、perspective projection、FOV は `implementation` notes に未実装として
+記録し、解析側で適用済み条件と誤解しないようにします。
+
+初期 profile:
+
+- `current`: 既存レンダー条件の baseline
+- `soft_light_no_shadow`: 影なし・柔らかい光
+- `camera_soft_light`: カメラ正面固定ライト
+- `high_contrast_background`: 背景コントラスト確認
+- `yaw_edge_friendly`: 横向き輪郭補助
+- `stable_crop_fov`: 安定した顔サイズ・視野角
+
 alignment では、aspect-corrected image coordinate を使います。
 
 ```text

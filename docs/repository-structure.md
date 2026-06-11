@@ -48,6 +48,14 @@ y' = y
 
 OBJ vertex coordinate と MediaPipe image-normalized coordinate は混ぜません。render image の pixel coordinate は MediaPipe 入力用に閉じ込め、MediaPipe から戻ってきた後の `renderedIdeal478` だけを mesh pair / target vertices 生成へ渡します。
 
+現在の `tools/ideal-obj-render-warp-lab` は、OBJ を複数の `renderPose p` でレンダーし、
+MediaPipe returnedPose `P` を取得して p,P dataset JSON として出力する検証フローも持ちます。
+MediaPipe が見るのは OBJ の 3D 形状そのものではなくレンダリング画像であるため、
+光・影・背景色・顔色・FOV・scale / crop・canvas 解像度は p,P mapping の条件です。
+これらは `renderAppearanceProfile` として選択し、dataset JSON の `renderAppearance.applied` に
+実際に適用された値を保存します。統計解析、線形回帰、二次回帰、model tree、KNN 比較、
+`poseMappingProfile` 生成はラボ側ではなく Python / Colab 側で行います。
+
 ## `tools/ideal-face-fitting-lab`
 
 IdealFace Fitting Lab は、production 用 IdealFace asset を直接作る正式ツールではありません。captured JSON の current landmarks 478 から semanticPointSet（意味点セット）を取り出し、8点 / 12点 / 24点を比較しながら、IdealFace478 の z、`rotationCenter`（回転中心） / `pivotZ`（投影基準奥行き）、canonicalDepthBased（標準顔奥行きベース方式）、perLandmarkZSearch（ランドマーク単位 z 探索）の候補を検証する debug lab（検証ラボ）です。
