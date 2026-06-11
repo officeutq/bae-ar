@@ -344,6 +344,18 @@ h3 {
   width: 100%;
 }
 
+.rendered-ideal-landmark-overlay {
+  display: none;
+  grid-area: 1 / 1;
+  height: 100%;
+  max-width: 100%;
+  min-height: 420px;
+  pointer-events: none;
+  position: relative;
+  width: 100%;
+  z-index: 2;
+}
+
 .obj-preview-stage[data-preview-status="ready"] .obj-preview-canvas {
   display: block;
 }
@@ -353,6 +365,10 @@ h3 {
 }
 
 .rendered-ideal-stage[data-render-status="rendered"] .rendered-ideal-canvas {
+  display: block;
+}
+
+.rendered-ideal-stage[data-render-status="rendered"] .rendered-ideal-landmark-overlay {
   display: block;
 }
 

@@ -12,6 +12,7 @@ type ObjParseStatus = "not_loaded" | "not_parsed" | "parsed" | "error"
 type ObjPreviewMode = "points" | "wireframe" | "points_wireframe"
 type ObjPreviewStatus = "not_ready" | "ready" | "error"
 type RenderedIdealRenderStatus = "not_ready" | "ready" | "rendered" | "error"
+type RenderedIdealDetectionStatus = "idle" | "detecting" | "detected" | "not_detected" | "error"
 type RenderedIdealRenderMode = "shaded_faces"
 type RenderedIdealBackgroundMode = "light" | "dark"
 type RenderedIdealColorMode = "clay" | "grayscale"
@@ -190,6 +191,7 @@ type RenderedIdealState = {
   backgroundMode: RenderedIdealBackgroundMode
   colorMode: RenderedIdealColorMode
   summary: RenderedIdealRenderSummary
+  detection: RenderedIdealDetectionState
 }
 
 type ReferenceLandmark = {
@@ -221,6 +223,25 @@ type QualitySummary = {
   expectedLandmarkCount: number
   landmarkCount: number
   hasPose: boolean
+}
+
+type RenderedIdealDetectionState = {
+  status: RenderedIdealDetectionStatus
+  landmarks478: ReferenceLandmark[] | null
+  detectMs: number | null
+  averageDetectMs: number | null
+  landmarkCount: number | null
+  pose: ReferencePose
+  expressionSummary: ExpressionSummary | null
+  qualityScore: number | null
+  errorMessage: string | null
+  renderSeq: number | null
+  detectedRenderSeq: number | null
+  requestCount: number
+  startedCount: number
+  completedCount: number
+  droppedCount: number
+  errorCount: number
 }
 
 type LiveVideoState = {
@@ -537,11 +558,18 @@ const liveVideoElement = getElement<HTMLVideoElement>("[data-video='live']")
 const liveOverlayCanvas = getElement<HTMLCanvasElement>("[data-overlay='live']")
 const objPreviewCanvas = getElement<HTMLCanvasElement>('[data-canvas="obj-preview"]')
 const renderedIdealCanvas = getElement<HTMLCanvasElement>('[data-canvas="rendered-ideal"]')
+const renderedIdealOverlayCanvas = getElement<HTMLCanvasElement>('[data-overlay="rendered-ideal"]')
 const liveObjPosePreviewCanvas = getElement<HTMLCanvasElement>('[data-canvas="live-obj-pose-preview"]')
 let liveFaceLandmarker: FaceLandmarker | null = null
 let liveFaceLandmarkerPromise: Promise<FaceLandmarker> | null = null
+let renderedIdealFaceLandmarker: FaceLandmarker | null = null
+let renderedIdealFaceLandmarkerPromise: Promise<FaceLandmarker> | null = null
 let liveAnalysisInProgress = false
 let liveAnalysisRequestId = 0
+let renderedIdealDetectInProgress = false
+let renderedIdealTimestampMs = 0
+let renderedIdealRenderSeq = 0
+let renderedIdealDetectionTimingSamples: number[] = []
 let lastAutoLiveAnalysisAtSec = Number.NEGATIVE_INFINITY
 let realtimeTimerId: number | null = null
 let realtimeVideoFrameCallbackId: number | null = null
@@ -637,6 +665,7 @@ function renderRenderedIdealPreview() {
     <div class="preview-card" data-preview-panel="renderedIdeal">
       <div class="preview-stage rendered-ideal-stage" data-rendered-ideal-stage data-render-status="not_ready">
         <canvas class="rendered-ideal-canvas" data-canvas="rendered-ideal" aria-label="レンダー理想 2D preview"></canvas>
+        <canvas class="rendered-ideal-landmark-overlay" data-overlay="rendered-ideal" aria-label="レンダー理想478点 overlay"></canvas>
         <div class="preview-placeholder">
           <h3>レンダー理想プレビュー</h3>
           <p data-rendered-ideal-message>OBJを読み込むと、ここにレンダー理想2Dプレビューを表示します。</p>
@@ -1107,6 +1136,7 @@ function bindEvents() {
     renderRenderedIdealCanvas()
     renderObjPoseSyncCanvas()
     drawLiveOverlay()
+    drawRenderedIdealOverlay()
   })
 
   window.addEventListener("beforeunload", () => {
@@ -1433,10 +1463,34 @@ async function getLiveFaceLandmarker() {
   }
 }
 
+async function getRenderedIdealFaceLandmarker() {
+  if (renderedIdealFaceLandmarker) {
+    return renderedIdealFaceLandmarker
+  }
+
+  if (renderedIdealFaceLandmarkerPromise) {
+    return renderedIdealFaceLandmarkerPromise
+  }
+
+  renderedIdealFaceLandmarkerPromise = initializeRenderedIdealFaceLandmarker()
+  try {
+    renderedIdealFaceLandmarker = await renderedIdealFaceLandmarkerPromise
+    return renderedIdealFaceLandmarker
+  } finally {
+    renderedIdealFaceLandmarkerPromise = null
+  }
+}
+
 async function initializeFaceLandmarker() {
   const vision = await FilesetResolver.forVisionTasks(MEDIAPIPE_WASM_PATH)
 
   return FaceLandmarker.createFromOptions(vision, createLiveFaceLandmarkerOptions())
+}
+
+async function initializeRenderedIdealFaceLandmarker() {
+  const vision = await FilesetResolver.forVisionTasks(MEDIAPIPE_WASM_PATH)
+
+  return FaceLandmarker.createFromOptions(vision, createRenderedIdealFaceLandmarkerOptions())
 }
 
 async function analyzeCurrentLiveFrame(
@@ -1676,6 +1730,174 @@ function buildCurrentFrameAnalysis(
     },
     errorMessage: null,
   }
+}
+
+function requestRenderedIdealDetection(renderSeq: number) {
+  state.renderedIdeal.detection = {
+    ...state.renderedIdeal.detection,
+    renderSeq,
+    requestCount: state.renderedIdeal.detection.requestCount + 1,
+  }
+
+  if (renderedIdealDetectInProgress) {
+    state.renderedIdeal.detection = {
+      ...state.renderedIdeal.detection,
+      droppedCount: state.renderedIdeal.detection.droppedCount + 1,
+    }
+    return
+  }
+
+  void detectRenderedIdealCanvas(renderSeq)
+}
+
+async function detectRenderedIdealCanvas(renderSeq: number) {
+  renderedIdealDetectInProgress = true
+  state.renderedIdeal.detection = {
+    ...state.renderedIdeal.detection,
+    status: "detecting",
+    landmarks478: null,
+    landmarkCount: null,
+    pose: {
+      yaw: null,
+      pitch: null,
+      roll: null,
+    },
+    expressionSummary: null,
+    qualityScore: null,
+    errorMessage: null,
+    detectedRenderSeq: null,
+    renderSeq,
+    startedCount: state.renderedIdeal.detection.startedCount + 1,
+  }
+  renderRenderedIdealSummaryCard()
+  renderDebugContent()
+
+  try {
+    const detector = await getRenderedIdealFaceLandmarker()
+    const timestampMs = nextRenderedIdealTimestampMs()
+    const detectStartMs = performance.now()
+    const result = detector.detectForVideo(renderedIdealCanvas, timestampMs)
+    const detectMs = performance.now() - detectStartMs
+    addRenderedIdealDetectionTimingSample(detectMs)
+    const averageDetectMs = averageNullableTiming(renderedIdealDetectionTimingSamples)
+    const nextDetection = buildRenderedIdealDetectionState(result, renderSeq, detectMs, averageDetectMs)
+    const currentDetection = state.renderedIdeal.detection
+
+    if (currentDetection.renderSeq !== renderSeq) {
+      state.renderedIdeal.detection = {
+        ...currentDetection,
+        status: "not_detected",
+        landmarks478: null,
+        detectMs,
+        averageDetectMs,
+        landmarkCount: null,
+        pose: nextDetection.pose,
+        expressionSummary: nextDetection.expressionSummary,
+        qualityScore: null,
+        errorMessage: "stale_render_seq",
+        detectedRenderSeq: renderSeq,
+        completedCount: currentDetection.completedCount + 1,
+      }
+    } else {
+      state.renderedIdeal.detection = {
+        ...currentDetection,
+        ...nextDetection,
+        completedCount: currentDetection.completedCount + 1,
+      }
+    }
+    state.realtimeDebug.mediaPipeRedetectMs = detectMs
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    console.error("Rendered ideal MediaPipe detection failed", error)
+    state.renderedIdeal.detection = {
+      ...state.renderedIdeal.detection,
+      status: "error",
+      landmarks478: null,
+      landmarkCount: null,
+      qualityScore: null,
+      errorMessage: `MediaPipe error: ${message}`,
+      detectedRenderSeq: renderSeq,
+      errorCount: state.renderedIdeal.detection.errorCount + 1,
+    }
+  } finally {
+    renderedIdealDetectInProgress = false
+    drawRenderedIdealOverlay()
+    renderRenderedIdealSummaryCard()
+    renderRealtimeControls()
+    renderDebugContent()
+  }
+}
+
+function buildRenderedIdealDetectionState(
+  result: FaceLandmarkerResultLike,
+  renderSeq: number,
+  detectMs: number,
+  averageDetectMs: number | null,
+): Omit<
+  RenderedIdealDetectionState,
+  "requestCount" | "startedCount" | "completedCount" | "droppedCount" | "errorCount"
+> {
+  const landmarks = result.faceLandmarks[0] ?? []
+  const blendshapes = (result.faceBlendshapes[0]?.categories ?? []).map((category) => ({
+    categoryName: category.categoryName,
+    score: category.score,
+  }))
+  const pose = estimateNullablePose(result.facialTransformationMatrixes[0])
+  const hasFace = result.faceLandmarks.length > 0
+  const validLandmarks = landmarks.length === REQUIRED_LANDMARK_COUNT
+
+  if (!hasFace) {
+    return {
+      status: "not_detected",
+      landmarks478: null,
+      detectMs,
+      averageDetectMs,
+      landmarkCount: 0,
+      pose,
+      expressionSummary: createExpressionSummary(blendshapes, "unknown"),
+      qualityScore: 0,
+      errorMessage: "no_face",
+      renderSeq,
+      detectedRenderSeq: renderSeq,
+    }
+  }
+
+  if (!validLandmarks) {
+    return {
+      status: "error",
+      landmarks478: null,
+      detectMs,
+      averageDetectMs,
+      landmarkCount: landmarks.length,
+      pose,
+      expressionSummary: createExpressionSummary(blendshapes, "unknown"),
+      qualityScore: 0,
+      errorMessage: `invalid_landmarks: ${landmarks.length}`,
+      renderSeq,
+      detectedRenderSeq: renderSeq,
+    }
+  }
+
+  return {
+    status: "detected",
+    landmarks478: mapLandmarks(landmarks),
+    detectMs,
+    averageDetectMs,
+    landmarkCount: landmarks.length,
+    pose,
+    expressionSummary: createExpressionSummary(blendshapes, classifyExpressionGroup(blendshapes)),
+    qualityScore: 1,
+    errorMessage: null,
+    renderSeq,
+    detectedRenderSeq: renderSeq,
+  }
+}
+
+function addRenderedIdealDetectionTimingSample(detectMs: number) {
+  renderedIdealDetectionTimingSamples = [
+    detectMs,
+    ...renderedIdealDetectionTimingSamples,
+  ].slice(0, REALTIME_AVERAGE_SAMPLE_COUNT)
 }
 
 function mapLandmarks(landmarks: NormalizedLandmark[]): ReferenceLandmark[] {
@@ -2148,7 +2370,7 @@ async function runRealtimeTick(frameTick: RealtimeFrameTick) {
     }
 
     const renderTiming = renderAll({
-      skipObjRender: state.realtimeDebug.mode === "current_analysis_only",
+      skipObjRender: true,
     })
     currentAnalysisTimingBreakdown = {
       ...currentAnalysisTimingBreakdown,
@@ -2218,6 +2440,7 @@ function renderAll(options: { skipObjRender?: boolean } = {}): RenderUpdateTimin
 
   const overlayStartMs = performance.now()
   drawLiveOverlay()
+  drawRenderedIdealOverlay()
   const liveOverlayDrawMs = performance.now() - overlayStartMs
 
   return {
@@ -2445,6 +2668,33 @@ function renderRenderedIdealCanvas() {
     })
   }
 
+  if (state.renderedIdeal.summary.status === "rendered") {
+    renderedIdealRenderSeq += 1
+    state.renderedIdeal.detection = {
+      ...state.renderedIdeal.detection,
+      renderSeq: renderedIdealRenderSeq,
+    }
+    requestRenderedIdealDetection(renderedIdealRenderSeq)
+  } else {
+    state.renderedIdeal.detection = {
+      ...state.renderedIdeal.detection,
+      status: "idle",
+      landmarks478: null,
+      landmarkCount: null,
+      pose: {
+        yaw: null,
+        pitch: null,
+        roll: null,
+      },
+      expressionSummary: null,
+      qualityScore: null,
+      errorMessage: null,
+      renderSeq: renderedIdealRenderSeq > 0 ? renderedIdealRenderSeq : null,
+      detectedRenderSeq: null,
+    }
+    drawRenderedIdealOverlay()
+  }
+
   stage.dataset.renderStatus = state.renderedIdeal.summary.status
   message.textContent = getRenderedIdealMessage()
 }
@@ -2622,6 +2872,7 @@ function drawRenderedIdealBackground(
 function renderRenderedIdealSummaryCard() {
   const card = getElement<HTMLElement>("[data-rendered-ideal-summary]")
   const summary = state.renderedIdeal.summary
+  const detection = state.renderedIdeal.detection
   card.innerHTML = `
     <p>${escapeHtml(getRenderedIdealMessage())}</p>
     <dl class="review-grid">
@@ -2634,6 +2885,10 @@ function renderRenderedIdealSummaryCard() {
       <div><dt>pose source</dt><dd>${state.objPoseSync.source}</dd></div>
       <div><dt>applied yaw / pitch / roll</dt><dd>${escapeHtml(formatAppliedObjPose())}</dd></div>
       <div><dt>rotation center</dt><dd>${escapeHtml(formatPoint(summary.rotationCenter))}</dd></div>
+      <div><dt>レンダー理想検出状態</dt><dd>${detection.status}</dd></div>
+      <div><dt>レンダー理想検出ms</dt><dd>${formatRealtimeNullableNumber(detection.detectMs)}</dd></div>
+      <div><dt>レンダー理想ランドマーク数</dt><dd>${formatNullableCount(detection.landmarkCount)}</dd></div>
+      <div><dt>レンダー理想drop数</dt><dd>${formatNullableCount(detection.droppedCount)}</dd></div>
       <div><dt>errorMessage</dt><dd>${escapeHtml(summary.errorMessage ?? "null")}</dd></div>
     </dl>
   `
@@ -2880,6 +3135,46 @@ function drawLiveOverlay() {
   )
 }
 
+function drawRenderedIdealOverlay() {
+  const context = renderedIdealOverlayCanvas.getContext("2d")
+  if (!context) {
+    return
+  }
+
+  const rect = renderedIdealOverlayCanvas.getBoundingClientRect()
+  const dpr = window.devicePixelRatio || 1
+  renderedIdealOverlayCanvas.width = Math.max(1, Math.round(rect.width * dpr))
+  renderedIdealOverlayCanvas.height = Math.max(1, Math.round(rect.height * dpr))
+  context.setTransform(dpr, 0, 0, dpr, 0, 0)
+  context.clearRect(0, 0, rect.width, rect.height)
+
+  const landmarks = state.renderedIdeal.detection.landmarks478
+  if (
+    state.activePreviewTab !== "renderedIdeal" ||
+    !state.overlay.showLandmarks478 ||
+    state.renderedIdeal.summary.status !== "rendered" ||
+    !landmarks ||
+    landmarks.length !== REQUIRED_LANDMARK_COUNT ||
+    rect.width <= 0 ||
+    rect.height <= 0
+  ) {
+    return
+  }
+
+  drawLandmarkPoints(
+    context,
+    {
+      x: 0,
+      y: 0,
+      width: rect.width,
+      height: rect.height,
+    },
+    landmarks,
+    "rgba(219, 68, 85, 0.9)",
+    1.35,
+  )
+}
+
 function drawLandmarkPoints(
   context: CanvasRenderingContext2D,
   displayedContentRect: Rect,
@@ -3047,6 +3342,14 @@ function getSummaryItems(): Array<[string, string]> {
     ["renderedIdealRenderMode", state.renderedIdeal.summary.renderMode],
     ["renderedIdealDrawnFaceCount", formatNullableCount(state.renderedIdeal.summary.drawnFaceCount)],
     ["renderedIdealSkippedFaceCount", formatNullableCount(state.renderedIdeal.summary.skippedFaceCount)],
+    ["renderedIdealDetectionStatus", state.renderedIdeal.detection.status],
+    ["renderedIdealDetectMs", formatRealtimeNullableNumber(state.renderedIdeal.detection.detectMs)],
+    ["renderedIdealAverageDetectMs", formatRealtimeNullableNumber(state.renderedIdeal.detection.averageDetectMs)],
+    ["renderedIdealLandmarkCount", formatNullableCount(state.renderedIdeal.detection.landmarkCount)],
+    ["renderedIdealDroppedCount", formatNullableCount(state.renderedIdeal.detection.droppedCount)],
+    ["renderedIdealErrorCount", formatNullableCount(state.renderedIdeal.detection.errorCount)],
+    ["renderedIdealRenderSeq", formatNullableCount(state.renderedIdeal.detection.renderSeq)],
+    ["renderedIdealDetectedRenderSeq", formatNullableCount(state.renderedIdeal.detection.detectedRenderSeq)],
     ["realtimeStatus", state.realtimeDebug.status],
     ["realtimeTargetFps", formatNumber(state.realtimeDebug.targetFps)],
     ["realtimeEffectiveFps", formatRealtimeNullableNumber(state.realtimeDebug.effectiveFps)],
@@ -3147,6 +3450,7 @@ function getObjItems(): Array<[string, string]> {
 
 function getRenderedIdealItems(): Array<[string, string]> {
   const summary = state.renderedIdeal.summary
+  const detection = state.renderedIdeal.detection
   return [
     ["status", summary.status],
     ["canvasWidth", formatNullableCount(summary.canvasWidth)],
@@ -3160,7 +3464,26 @@ function getRenderedIdealItems(): Array<[string, string]> {
     ["appliedPitchDeg", formatNullableNumber(summary.appliedPitchDeg)],
     ["appliedRollDeg", formatNullableNumber(summary.appliedRollDeg)],
     ["rotationCenter", formatPoint(summary.rotationCenter)],
+    ["Rendered Ideal MediaPipe再検出", ""],
+    ["レンダー理想検出状態", detection.status],
+    ["レンダー理想検出中", String(renderedIdealDetectInProgress)],
+    ["レンダー理想検出ms", formatRealtimeNullableNumber(detection.detectMs)],
+    ["レンダー理想平均検出ms", formatRealtimeNullableNumber(detection.averageDetectMs)],
+    ["レンダー理想ランドマーク数", formatNullableCount(detection.landmarkCount)],
+    ["renderSeq", formatNullableCount(detection.renderSeq)],
+    ["detectedRenderSeq", formatNullableCount(detection.detectedRenderSeq)],
+    ["request count", formatNullableCount(detection.requestCount)],
+    ["started count", formatNullableCount(detection.startedCount)],
+    ["completed count", formatNullableCount(detection.completedCount)],
+    ["dropped count", formatNullableCount(detection.droppedCount)],
+    ["error count", formatNullableCount(detection.errorCount)],
+    ["pose yaw", formatNullableNumber(detection.pose.yaw)],
+    ["pose pitch", formatNullableNumber(detection.pose.pitch)],
+    ["pose roll", formatNullableNumber(detection.pose.roll)],
+    ["expression summary", formatExpressionSummary(detection.expressionSummary)],
+    ["quality score", formatNullableNumber(detection.qualityScore)],
     ["errorMessage", summary.errorMessage ?? "null"],
+    ["レンダー理想検出error message", detection.errorMessage ?? "null"],
   ]
 }
 
@@ -3187,6 +3510,9 @@ function getRealtimeItems(): Array<[string, string]> {
     ["ライブ重ね描画ms", formatRealtimeNullableNumber(breakdown.liveOverlayDrawMs)],
     ["デバッグ更新ms", formatRealtimeNullableNumber(breakdown.debugUpdateMs)],
     ["OBJレンダーms", formatRealtimeObjRenderMs()],
+    ["Rendered Ideal 再検出ms", formatRealtimeNullableNumber(state.renderedIdeal.detection.detectMs)],
+    ["Rendered Ideal drop数", formatNullableCount(state.renderedIdeal.detection.droppedCount)],
+    ["Rendered Ideal landmark数", formatNullableCount(state.renderedIdeal.detection.landmarkCount)],
     ["合計ms", formatRealtimeNullableNumber(state.realtimeDebug.totalMs)],
     ["実効FPS", formatRealtimeNullableNumber(state.realtimeDebug.effectiveFps)],
     ["ボトルネック", getRealtimeBottleneck()],
@@ -3278,12 +3604,14 @@ function getRawState() {
       .slice(0, LANDMARK_PREVIEW_COUNT)
       .map(roundLandmarkForState),
     renderedIdealRenderSummary: state.renderedIdeal.summary,
+    renderedIdealDetectionState: getRenderedIdealDetectionRawSummary(),
+    renderedIdealLandmarkPreview: getRenderedIdealLandmarkPreview(),
     renderedIdeal: {
       renderStatus: state.renderedIdeal.summary.status,
       renderMode: state.renderedIdeal.summary.renderMode,
-      mediaPipeStatus: "not_implemented",
-      renderedIdeal478Count: null,
-      renderedIdealPose: null,
+      mediaPipeStatus: state.renderedIdeal.detection.status,
+      renderedIdeal478Count: state.renderedIdeal.detection.landmarkCount,
+      renderedIdealPose: roundPoseForState(state.renderedIdeal.detection.pose),
     },
     warpMesh: {
       sourceVerticesStatus: "not_ready",
@@ -3451,6 +3779,7 @@ function createDefaultRenderedIdealState(): RenderedIdealState {
   return {
     backgroundMode: "light",
     colorMode: "clay",
+    detection: createEmptyRenderedIdealDetectionState(),
     summary: {
       status: "not_ready",
       canvasWidth: 0,
@@ -3470,6 +3799,31 @@ function createDefaultRenderedIdealState(): RenderedIdealState {
       rotationCenter: { x: 0, y: 0, z: 0 },
       errorMessage: null,
     },
+  }
+}
+
+function createEmptyRenderedIdealDetectionState(): RenderedIdealDetectionState {
+  return {
+    status: "idle",
+    landmarks478: null,
+    detectMs: null,
+    averageDetectMs: null,
+    landmarkCount: null,
+    pose: {
+      yaw: null,
+      pitch: null,
+      roll: null,
+    },
+    expressionSummary: null,
+    qualityScore: null,
+    errorMessage: null,
+    renderSeq: null,
+    detectedRenderSeq: null,
+    requestCount: 0,
+    startedCount: 0,
+    completedCount: 0,
+    droppedCount: 0,
+    errorCount: 0,
   }
 }
 
@@ -3635,6 +3989,10 @@ function createLiveFaceLandmarkerOptions(): FaceLandmarkerOptions {
     outputFaceBlendshapes: true,
     outputFacialTransformationMatrixes: true,
   }
+}
+
+function createRenderedIdealFaceLandmarkerOptions(): FaceLandmarkerOptions {
+  return createLiveFaceLandmarkerOptions()
 }
 
 function createFileObjSummary(file: File, parseStatus: ObjParseStatus): ObjSummary {
@@ -3923,11 +4281,13 @@ function buildDebugExport() {
       timingBreakdown: getRoundedRealtimeDebugState().currentAnalysisTimingBreakdown,
       bottleneck: getRealtimeBottleneck(),
     },
+    renderedIdealDetection: getRenderedIdealDetectionDebugExport(),
     mediaPipeOptions: {
       currentLiveOptions: getCurrentLiveMediaPipeOptionsDebug(),
+      renderedIdealOptions: getRenderedIdealMediaPipeOptionsDebug(),
     },
     notes: [
-      "vertices/faces/current478/MediaPipe result/canvas data URL are intentionally omitted.",
+      "vertices/faces/current478/renderedIdeal478/MediaPipe result/canvas data URL are intentionally omitted.",
     ],
   }
 }
@@ -3955,6 +4315,12 @@ function disposeLiveFaceLandmarker(nextStatus: MediaPipeStatus = "disposed") {
   state.liveMediaPipe.status = nextStatus
 }
 
+function disposeRenderedIdealFaceLandmarker() {
+  renderedIdealFaceLandmarker?.close()
+  renderedIdealFaceLandmarker = null
+  renderedIdealFaceLandmarkerPromise = null
+}
+
 function resetLiveTimestamp() {
   state.liveMediaPipe.liveTimestampMs = 0
 }
@@ -3962,6 +4328,15 @@ function resetLiveTimestamp() {
 function nextLiveTimestampMs() {
   state.liveMediaPipe.liveTimestampMs += MEDIAPIPE_TIMESTAMP_STEP_MS
   return state.liveMediaPipe.liveTimestampMs
+}
+
+function resetRenderedIdealTimestamp() {
+  renderedIdealTimestampMs = 0
+}
+
+function nextRenderedIdealTimestampMs() {
+  renderedIdealTimestampMs += MEDIAPIPE_TIMESTAMP_STEP_MS
+  return renderedIdealTimestampMs
 }
 
 function clearLiveOverlay() {
@@ -3980,6 +4355,7 @@ function cleanup() {
     state.liveVideo.objectUrl = null
   }
   disposeLiveFaceLandmarker("disposed")
+  disposeRenderedIdealFaceLandmarker()
 }
 
 function getLiveVideoRawSummary() {
@@ -4042,6 +4418,39 @@ function getCurrentAnalysisRawSummary() {
     qualitySummary: state.currentAnalysis.qualitySummary,
     errorMessage: state.currentAnalysis.errorMessage,
   }
+}
+
+function getRenderedIdealDetectionRawSummary() {
+  const detection = state.renderedIdeal.detection
+  return {
+    status: detection.status,
+    detectMs: roundForState(detection.detectMs),
+    averageDetectMs: roundForState(detection.averageDetectMs),
+    landmarkCount: detection.landmarkCount,
+    pose: roundPoseForState(detection.pose),
+    expressionSummary: detection.expressionSummary
+      ? {
+          group: detection.expressionSummary.group,
+          topBlendshapes: detection.expressionSummary.topBlendshapes.map(roundBlendshapeForState),
+          missingBlendshapeKeys: detection.expressionSummary.missingBlendshapeKeys,
+        }
+      : null,
+    qualityScore: roundForState(detection.qualityScore),
+    errorMessage: detection.errorMessage,
+    renderSeq: detection.renderSeq,
+    detectedRenderSeq: detection.detectedRenderSeq,
+    requestCount: detection.requestCount,
+    startedCount: detection.startedCount,
+    completedCount: detection.completedCount,
+    droppedCount: detection.droppedCount,
+    errorCount: detection.errorCount,
+  }
+}
+
+function getRenderedIdealLandmarkPreview() {
+  return (state.renderedIdeal.detection.landmarks478 ?? [])
+    .slice(0, LANDMARK_PREVIEW_COUNT)
+    .map(roundLandmarkForState)
 }
 
 function getElement<TElement extends Element>(selector: string): TElement {
@@ -4272,6 +4681,7 @@ function getDebugExportPreview() {
     input: debugExport.input,
     mediaPipeOptions: debugExport.mediaPipeOptions,
     realtime: debugExport.realtime,
+    renderedIdealDetection: debugExport.renderedIdealDetection,
     notes: debugExport.notes,
   }
 }
@@ -4285,6 +4695,28 @@ function getCurrentLiveMediaPipeOptionsDebug() {
     delegate: "GPU",
     modelAssetPath: MEDIAPIPE_FACE_LANDMARKER_MODEL_ASSET_PATH,
     wasmPath: MEDIAPIPE_WASM_PATH,
+  }
+}
+
+function getRenderedIdealMediaPipeOptionsDebug() {
+  return getCurrentLiveMediaPipeOptionsDebug()
+}
+
+function getRenderedIdealDetectionDebugExport() {
+  const detection = getRenderedIdealDetectionRawSummary()
+  return {
+    status: detection.status,
+    detectMs: detection.detectMs,
+    averageDetectMs: detection.averageDetectMs,
+    landmarkCount: detection.landmarkCount,
+    renderSeq: detection.renderSeq,
+    detectedRenderSeq: detection.detectedRenderSeq,
+    requestCount: detection.requestCount,
+    startedCount: detection.startedCount,
+    completedCount: detection.completedCount,
+    droppedCount: detection.droppedCount,
+    errorCount: detection.errorCount,
+    pose: detection.pose,
   }
 }
 
