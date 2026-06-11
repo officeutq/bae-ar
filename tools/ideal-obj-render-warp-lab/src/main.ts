@@ -16,6 +16,7 @@ type RenderedIdealDetectionStatus = "idle" | "detecting" | "detected" | "not_det
 type RenderedIdealRenderMode = "shaded_faces"
 type RenderedIdealBackgroundMode = "light" | "dark"
 type RenderedIdealColorMode = "clay" | "grayscale"
+type PoseCenterSearchStatus = "idle" | "running" | "completed" | "error"
 type LiveVideoStatus = "not_loaded" | "loaded" | "metadata_ready" | "error"
 type LiveInputSourceType = "video_file" | "camera"
 type LiveInputState = {
@@ -242,6 +243,43 @@ type RenderedIdealDetectionState = {
   completedCount: number
   droppedCount: number
   errorCount: number
+  skippedByPoseSearchCount: number
+}
+
+type PoseCenterSearchCandidate = {
+  rotationCenterX: number
+  rotationCenterY: number
+  rotationCenterZ: number
+  score: number | null
+  yawError: number | null
+  pitchError: number | null
+  rollError: number | null
+  renderedPose: ReferencePose
+  detected: boolean
+  detectMs: number | null
+  errorMessage: string | null
+}
+
+type PoseCenterSearchState = {
+  status: PoseCenterSearchStatus
+  startedAt: string | null
+  completedAt: string | null
+  errorMessage: string | null
+  range: {
+    x: { fixed: true; value: 0 }
+    y: { min: -0.3; max: 0.3; step: 0.05 }
+    z: { min: -0.3; max: 0.3; step: 0.05 }
+  }
+  candidateCount: number
+  evaluatedCount: number
+  failedCandidateCount: number
+  currentPose: ReferencePose
+  bestCandidate: PoseCenterSearchCandidate | null
+  topCandidates: PoseCenterSearchCandidate[]
+  elapsedMs: number | null
+  appliedBestAutomatically: boolean
+  appliedBestManually: boolean
+  bestAppliedAt: string | null
 }
 
 type LiveVideoState = {
@@ -363,6 +401,7 @@ type LabState = {
   objPoseSync: ObjPoseSyncState
   objPoseSyncStats: ObjPreviewStats
   renderedIdeal: RenderedIdealState
+  poseCenterSearch: PoseCenterSearchState
   objErrorMessage: string | null
   liveVideo: LiveVideoState
   liveInput: LiveInputState
@@ -404,6 +443,12 @@ const STRONG_EXPRESSION_THRESHOLD = 0.35
 const MIXED_EXPRESSION_THRESHOLD = 0.28
 const RENDERED_IDEAL_FALLBACK_CANVAS_SIZE = 640
 const RENDERED_IDEAL_LIGHT_DIRECTION = normalizeVector({ x: -0.35, y: 0.55, z: 0.76 })
+const POSE_CENTER_SEARCH_RANGE = {
+  x: { fixed: true, value: 0 },
+  y: { min: -0.3, max: 0.3, step: 0.05 },
+  z: { min: -0.3, max: 0.3, step: 0.05 },
+} as const
+const POSE_CENTER_SEARCH_TOP_CANDIDATE_COUNT = 5
 const MATCH_BLENDSHAPE_KEYS = [
   "jawOpen",
   "mouthSmileLeft",
@@ -473,6 +518,7 @@ const state: LabState = {
     sampledEdgeCount: 0,
   },
   renderedIdeal: createDefaultRenderedIdealState(),
+  poseCenterSearch: createDefaultPoseCenterSearchState(),
   objErrorMessage: null,
   liveVideo: createEmptyLiveVideoState(),
   liveInput: createEmptyLiveInputState(),
@@ -674,6 +720,9 @@ function renderRenderedIdealPreview() {
       <div class="obj-preview-controls rendered-ideal-controls" aria-label="レンダー理想 preview 操作">
         <div class="button-row">
           <button class="small-button" type="button" data-action="rendered-ideal-refresh">レンダー更新</button>
+          <button class="small-button" type="button" data-action="pose-center-search-start">ポーズ固定値探索</button>
+          <button class="small-button" type="button" data-action="pose-center-search-apply-best">bestを適用</button>
+          <button class="small-button" type="button" data-action="pose-center-search-reset">探索リセット</button>
         </div>
         <label class="select-field">
           <span>背景色</span>
@@ -842,18 +891,30 @@ function renderLivePreview() {
 
 function bindEvents() {
   getElement<HTMLButtonElement>('[data-action="load-obj"]').addEventListener("click", () => {
+    if (isPoseCenterSearchRunning()) {
+      return
+    }
     objFileInput.click()
   })
 
   getElement<HTMLButtonElement>('[data-action="load-live"]').addEventListener("click", () => {
+    if (isPoseCenterSearchRunning()) {
+      return
+    }
     liveFileInput.click()
   })
 
   getElement<HTMLButtonElement>('[data-action="camera-start"]').addEventListener("click", () => {
+    if (isPoseCenterSearchRunning()) {
+      return
+    }
     void startCameraInput()
   })
 
   getElement<HTMLButtonElement>('[data-action="camera-stop"]').addEventListener("click", () => {
+    if (isPoseCenterSearchRunning()) {
+      return
+    }
     stopCameraInput()
     renderAll()
   })
@@ -864,14 +925,14 @@ function bindEvents() {
 
   objFileInput.addEventListener("change", (event) => {
     const file = getSelectedFile(event)
-    if (file) {
+    if (file && !isPoseCenterSearchRunning()) {
       void loadObjFile(file)
     }
   })
 
   liveFileInput.addEventListener("change", (event) => {
     const file = getSelectedFile(event)
-    if (file) {
+    if (file && !isPoseCenterSearchRunning()) {
       loadLiveVideo(file)
     }
   })
@@ -915,7 +976,7 @@ function bindEvents() {
   liveVideoElement.addEventListener("pause", () => {
     state.liveVideo.playbackStatus = state.liveVideo.loaded ? "paused" : "stopped"
     syncLiveInputState()
-    if (state.liveVideo.loaded && state.realtimeDebug.status !== "running") {
+    if (state.liveVideo.loaded && state.realtimeDebug.status !== "running" && !isPoseCenterSearchRunning()) {
       void analyzeCurrentLiveFrame("pause")
     }
     renderAll()
@@ -924,13 +985,16 @@ function bindEvents() {
   liveVideoElement.addEventListener("ended", () => {
     state.liveVideo.playbackStatus = "stopped"
     syncLiveInputState()
-    if (state.liveVideo.loaded && state.realtimeDebug.status !== "running") {
+    if (state.liveVideo.loaded && state.realtimeDebug.status !== "running" && !isPoseCenterSearchRunning()) {
       void analyzeCurrentLiveFrame("ended")
     }
     renderAll()
   })
 
   getElement<HTMLButtonElement>('[data-action="live-play"]').addEventListener("click", () => {
+    if (isPoseCenterSearchRunning()) {
+      return
+    }
     if (!isVideoFileInput()) {
       addLog("MP4ファイル入力時のみ再生できます。")
       renderAll()
@@ -944,6 +1008,9 @@ function bindEvents() {
   })
 
   getElement<HTMLButtonElement>('[data-action="live-pause"]').addEventListener("click", () => {
+    if (isPoseCenterSearchRunning()) {
+      return
+    }
     if (!isVideoFileInput()) {
       return
     }
@@ -953,11 +1020,27 @@ function bindEvents() {
   getElement<HTMLButtonElement>('[data-action="live-analyze-current"]').addEventListener(
     "click",
     () => {
+      if (isPoseCenterSearchRunning()) {
+        return
+      }
       void analyzeCurrentLiveFrame("manual")
     },
   )
 
   getElement<HTMLButtonElement>('[data-action="rendered-ideal-refresh"]').addEventListener("click", () => {
+    renderAll()
+  })
+
+  getElement<HTMLButtonElement>('[data-action="pose-center-search-start"]').addEventListener("click", () => {
+    void startPoseCenterSearch()
+  })
+
+  getElement<HTMLButtonElement>('[data-action="pose-center-search-apply-best"]').addEventListener("click", () => {
+    applyPoseCenterSearchBest()
+  })
+
+  getElement<HTMLButtonElement>('[data-action="pose-center-search-reset"]').addEventListener("click", () => {
+    state.poseCenterSearch = createDefaultPoseCenterSearchState()
     renderAll()
   })
 
@@ -1497,6 +1580,10 @@ async function analyzeCurrentLiveFrame(
   reason: "manual" | "timeupdate" | "seeked" | "pause" | "ended" | "realtime",
   options: { skipFinalRender?: boolean; timestampMs?: number } = {},
 ): Promise<CurrentAnalysisTimingBreakdown | null> {
+  if (isPoseCenterSearchRunning()) {
+    return null
+  }
+
   if (!state.liveVideo.loaded || liveAnalysisInProgress) {
     if (!state.liveVideo.loaded) {
       state.realtimeDebug.skippedByNoVideoCount += 1
@@ -1600,6 +1687,10 @@ async function analyzeCurrentLiveFrame(
 }
 
 function maybeAnalyzeLiveFrame() {
+  if (isPoseCenterSearchRunning()) {
+    return
+  }
+
   if (state.realtimeDebug.status === "running") {
     state.realtimeDebug.skippedTimeupdateDuringRealtimeCount += 1
     return
@@ -1737,6 +1828,14 @@ function requestRenderedIdealDetection(renderSeq: number) {
     ...state.renderedIdeal.detection,
     renderSeq,
     requestCount: state.renderedIdeal.detection.requestCount + 1,
+  }
+
+  if (isPoseCenterSearchRunning()) {
+    state.renderedIdeal.detection = {
+      ...state.renderedIdeal.detection,
+      skippedByPoseSearchCount: state.renderedIdeal.detection.skippedByPoseSearchCount + 1,
+    }
+    return
   }
 
   if (renderedIdealDetectInProgress) {
@@ -1900,6 +1999,254 @@ function addRenderedIdealDetectionTimingSample(detectMs: number) {
   ].slice(0, REALTIME_AVERAGE_SAMPLE_COUNT)
 }
 
+async function startPoseCenterSearch() {
+  if (isPoseCenterSearchRunning()) {
+    return
+  }
+
+  if (!canRenderRenderedIdeal() || !hasFullPose(state.currentAnalysis.pose)) {
+    state.poseCenterSearch = {
+      ...createDefaultPoseCenterSearchState(),
+      status: "error",
+      startedAt: new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+      errorMessage: "OBJ読込と現在フレーム解析を完了してから探索してください。",
+      currentPose: roundPoseForState(state.currentAnalysis.pose),
+    }
+    addLog("ポーズ固定値探索を開始できません。OBJ読込と現在フレーム解析を確認してください。")
+    renderAll()
+    return
+  }
+
+  stopRealtimeValidation("stopped")
+
+  const candidates = createPoseCenterSearchCandidatePoints()
+  const searchStartedAtMs = performance.now()
+  state.poseCenterSearch = {
+    ...createDefaultPoseCenterSearchState(),
+    status: "running",
+    startedAt: new Date().toISOString(),
+    candidateCount: candidates.length,
+    currentPose: roundPoseForState(state.currentAnalysis.pose),
+  }
+  addLog(`ポーズ固定値探索を開始しました: ${candidates.length}候補`)
+  renderAll()
+
+  try {
+    const detectionIdle = await waitForRenderedIdealDetectionIdle()
+    if (!detectionIdle) {
+      throw new Error("rendered ideal detection is still running")
+    }
+
+    const detector = await getRenderedIdealFaceLandmarker()
+    const currentPose = state.currentAnalysis.pose
+
+    for (const [index, candidatePoint] of candidates.entries()) {
+      const candidate = evaluatePoseCenterCandidate(detector, currentPose, candidatePoint)
+      updatePoseCenterSearchProgress(candidate, searchStartedAtMs)
+
+      renderRenderedIdealSummaryCard()
+      renderDebugContent()
+
+      if (index % 5 === 4) {
+        await waitForNextFrame()
+      }
+    }
+
+    state.poseCenterSearch = {
+      ...state.poseCenterSearch,
+      status: "completed",
+      completedAt: new Date().toISOString(),
+      elapsedMs: performance.now() - searchStartedAtMs,
+      errorMessage: null,
+      appliedBestAutomatically: false,
+    }
+    addLog(
+      state.poseCenterSearch.bestCandidate
+        ? `ポーズ固定値探索が完了しました。best score: ${formatNullableNumber(state.poseCenterSearch.bestCandidate.score)}`
+        : "ポーズ固定値探索が完了しましたが、検出できた候補がありませんでした。",
+    )
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    console.error("Pose center search failed", error)
+    state.poseCenterSearch = {
+      ...state.poseCenterSearch,
+      status: "error",
+      completedAt: new Date().toISOString(),
+      elapsedMs: performance.now() - searchStartedAtMs,
+      errorMessage: message,
+    }
+    addLog(`ポーズ固定値探索でエラーが発生しました: ${message}`)
+  } finally {
+    renderAll()
+  }
+}
+
+function evaluatePoseCenterCandidate(
+  detector: FaceLandmarker,
+  currentPose: ReferencePose,
+  rotationCenter: ObjVertex,
+): PoseCenterSearchCandidate {
+  const baseCandidate = createPoseCenterSearchCandidate(rotationCenter)
+
+  try {
+    const renderSummary = renderRenderedIdealCanvasTo(renderedIdealCanvas, rotationCenter)
+    if (renderSummary.status !== "rendered") {
+      return {
+        ...baseCandidate,
+        detected: false,
+        errorMessage: renderSummary.errorMessage ?? renderSummary.status,
+      }
+    }
+
+    const timestampMs = nextRenderedIdealTimestampMs()
+    const detectStartMs = performance.now()
+    const result = detector.detectForVideo(renderedIdealCanvas, timestampMs)
+    const detectMs = performance.now() - detectStartMs
+    const detection = buildRenderedIdealDetectionState(result, -1, detectMs, null)
+    const renderedPose = detection.pose
+
+    if (detection.status !== "detected" || !hasFullPose(renderedPose)) {
+      return {
+        ...baseCandidate,
+        detected: false,
+        detectMs,
+        renderedPose: roundPoseForState(renderedPose),
+        errorMessage: detection.errorMessage ?? detection.status,
+      }
+    }
+
+    const yawError = Math.abs(currentPose.yaw! - renderedPose.yaw!)
+    const pitchError = Math.abs(currentPose.pitch! - renderedPose.pitch!)
+    const rollError = Math.abs(currentPose.roll! - renderedPose.roll!)
+    const score = yawError + pitchError + rollError
+
+    return {
+      ...baseCandidate,
+      detected: true,
+      detectMs,
+      renderedPose: roundPoseForState(renderedPose),
+      yawError: roundForState(yawError),
+      pitchError: roundForState(pitchError),
+      rollError: roundForState(rollError),
+      score: roundForState(score),
+      errorMessage: null,
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return {
+      ...baseCandidate,
+      detected: false,
+      errorMessage: message,
+    }
+  }
+}
+
+function updatePoseCenterSearchProgress(candidate: PoseCenterSearchCandidate, startedAtMs: number) {
+  const detectedCandidates = [
+    ...state.poseCenterSearch.topCandidates,
+    candidate,
+  ].filter((item) => item.detected && item.score !== null)
+  const topCandidates = detectedCandidates
+    .sort((a, b) => (a.score ?? Number.POSITIVE_INFINITY) - (b.score ?? Number.POSITIVE_INFINITY))
+    .slice(0, POSE_CENTER_SEARCH_TOP_CANDIDATE_COUNT)
+  const bestCandidate = topCandidates[0] ?? state.poseCenterSearch.bestCandidate
+
+  state.poseCenterSearch = {
+    ...state.poseCenterSearch,
+    evaluatedCount: state.poseCenterSearch.evaluatedCount + 1,
+    failedCandidateCount: state.poseCenterSearch.failedCandidateCount + (candidate.detected ? 0 : 1),
+    bestCandidate,
+    topCandidates,
+    elapsedMs: performance.now() - startedAtMs,
+  }
+}
+
+function applyPoseCenterSearchBest() {
+  const bestCandidate = state.poseCenterSearch.bestCandidate
+  if (!bestCandidate || isPoseCenterSearchRunning()) {
+    return
+  }
+
+  state.objPoseSync = {
+    ...state.objPoseSync,
+    rotationCenterX: bestCandidate.rotationCenterX,
+    rotationCenterY: bestCandidate.rotationCenterY,
+    rotationCenterZ: bestCandidate.rotationCenterZ,
+  }
+  state.poseCenterSearch = {
+    ...state.poseCenterSearch,
+    appliedBestManually: true,
+    bestAppliedAt: new Date().toISOString(),
+  }
+  addLog(
+    `ポーズ固定値探索のbestを適用しました: X ${formatNumber(bestCandidate.rotationCenterX)} / Y ${formatNumber(bestCandidate.rotationCenterY)} / Z ${formatNumber(bestCandidate.rotationCenterZ)}`,
+  )
+  renderAll()
+}
+
+function createPoseCenterSearchCandidatePoints(): ObjVertex[] {
+  const yValues = createSteppedValues(
+    POSE_CENTER_SEARCH_RANGE.y.min,
+    POSE_CENTER_SEARCH_RANGE.y.max,
+    POSE_CENTER_SEARCH_RANGE.y.step,
+  )
+  const zValues = createSteppedValues(
+    POSE_CENTER_SEARCH_RANGE.z.min,
+    POSE_CENTER_SEARCH_RANGE.z.max,
+    POSE_CENTER_SEARCH_RANGE.z.step,
+  )
+
+  return yValues.flatMap((y) =>
+    zValues.map((z) => ({
+      x: POSE_CENTER_SEARCH_RANGE.x.value,
+      y,
+      z,
+    })),
+  )
+}
+
+function createSteppedValues(min: number, max: number, step: number) {
+  const count = Math.round((max - min) / step)
+  return Array.from({ length: count + 1 }, (_, index) => roundForState(min + step * index) ?? 0)
+}
+
+function createPoseCenterSearchCandidate(rotationCenter: ObjVertex): PoseCenterSearchCandidate {
+  return {
+    rotationCenterX: roundForState(rotationCenter.x) ?? 0,
+    rotationCenterY: roundForState(rotationCenter.y) ?? 0,
+    rotationCenterZ: roundForState(rotationCenter.z) ?? 0,
+    score: null,
+    yawError: null,
+    pitchError: null,
+    rollError: null,
+    renderedPose: {
+      yaw: null,
+      pitch: null,
+      roll: null,
+    },
+    detected: false,
+    detectMs: null,
+    errorMessage: null,
+  }
+}
+
+function waitForNextFrame() {
+  return new Promise<void>((resolve) => {
+    requestAnimationFrame(() => resolve())
+  })
+}
+
+async function waitForRenderedIdealDetectionIdle() {
+  for (let frame = 0; frame < 120; frame += 1) {
+    if (!renderedIdealDetectInProgress) {
+      return true
+    }
+    await waitForNextFrame()
+  }
+  return false
+}
+
 function mapLandmarks(landmarks: NormalizedLandmark[]): ReferenceLandmark[] {
   return landmarks.map((landmark, index) => ({
     index,
@@ -2022,7 +2369,12 @@ function syncLiveCurrentTime() {
 }
 
 function seekLiveVideoTo(targetSec: number) {
-  if (!isVideoFileInput() || state.realtimeDebug.status === "running" || !Number.isFinite(targetSec)) {
+  if (
+    !isVideoFileInput() ||
+    state.realtimeDebug.status === "running" ||
+    isPoseCenterSearchRunning() ||
+    !Number.isFinite(targetSec)
+  ) {
     return
   }
 
@@ -2064,6 +2416,10 @@ function syncCameraSettings() {
 }
 
 function startRealtimeValidation() {
+  if (isPoseCenterSearchRunning()) {
+    return
+  }
+
   if (!state.liveVideo.loaded) {
     state.realtimeDebug = {
       ...state.realtimeDebug,
@@ -2488,6 +2844,8 @@ function renderPreviewPanels(options: { skipObjRender?: boolean } = {}) {
 }
 
 function renderControls() {
+  const poseSearchRunning = isPoseCenterSearchRunning()
+
   setChecked("toggle-landmarks", state.overlay.showLandmarks478)
   setChecked("toggle-mesh-source", state.overlay.showMeshSource)
   setChecked("toggle-mesh-target", state.overlay.showMeshTarget)
@@ -2498,15 +2856,19 @@ function renderControls() {
 
   const duration = state.liveVideo.durationSec ?? 0
   const range = getElement<HTMLInputElement>("[data-range='live']")
-  const canUseMp4Debug = isVideoFileInput() && state.realtimeDebug.status !== "running"
+  const canUseMp4Debug = isVideoFileInput() && state.realtimeDebug.status !== "running" && !poseSearchRunning
   range.max = String(duration)
   range.value = String(clamp(state.liveVideo.currentTimeSec ?? 0, 0, duration))
   range.disabled = !canUseMp4Debug
 
-  setDisabled('[data-action="camera-start"]', state.camera.status === "starting" || isCameraInput())
-  setDisabled('[data-action="camera-stop"]', !cameraStream && state.camera.status !== "running")
-  setDisabled('[data-action="live-play"]', !isVideoFileInput() || state.liveVideo.playbackStatus === "playing")
-  setDisabled('[data-action="live-pause"]', !isVideoFileInput() || state.liveVideo.playbackStatus !== "playing")
+  setDisabled('[data-action="load-obj"]', poseSearchRunning)
+  setDisabled('[data-action="load-live"]', poseSearchRunning)
+  objFileInput.disabled = poseSearchRunning
+  liveFileInput.disabled = poseSearchRunning
+  setDisabled('[data-action="camera-start"]', poseSearchRunning || state.camera.status === "starting" || isCameraInput())
+  setDisabled('[data-action="camera-stop"]', poseSearchRunning || (!cameraStream && state.camera.status !== "running"))
+  setDisabled('[data-action="live-play"]', poseSearchRunning || !isVideoFileInput() || state.liveVideo.playbackStatus === "playing")
+  setDisabled('[data-action="live-pause"]', poseSearchRunning || !isVideoFileInput() || state.liveVideo.playbackStatus !== "playing")
   setDisabled('[data-action="live-analyze-current"]', !canUseMp4Debug || liveAnalysisInProgress)
 
   getElement<HTMLElement>("[data-status='live-time']").textContent = formatTimeStatus(
@@ -2526,7 +2888,10 @@ function renderControls() {
 
   getElement<HTMLSelectElement>('[data-control="rendered-ideal-background"]').value = state.renderedIdeal.backgroundMode
   getElement<HTMLSelectElement>('[data-control="rendered-ideal-color"]').value = state.renderedIdeal.colorMode
-  setDisabled('[data-action="rendered-ideal-refresh"]', !canRenderRenderedIdeal())
+  setDisabled('[data-action="rendered-ideal-refresh"]', poseSearchRunning || !canRenderRenderedIdeal())
+  setDisabled('[data-action="pose-center-search-start"]', poseSearchRunning || !canRenderRenderedIdeal())
+  setDisabled('[data-action="pose-center-search-apply-best"]', poseSearchRunning || !state.poseCenterSearch.bestCandidate)
+  setDisabled('[data-action="pose-center-search-reset"]', poseSearchRunning)
 
   renderLiveAnalysisCard()
   getElement<HTMLSelectElement>('[data-control="obj-preview-mode"]').value = state.objPreview.mode
@@ -2552,7 +2917,7 @@ function renderRealtimeControls() {
   getElement<HTMLSelectElement>('[data-control="realtime-target-fps"]').value = String(
     state.realtimeDebug.targetFps,
   )
-  setDisabled('[data-action="realtime-start"]', state.realtimeDebug.status === "running")
+  setDisabled('[data-action="realtime-start"]', isPoseCenterSearchRunning() || state.realtimeDebug.status === "running")
   setDisabled('[data-action="realtime-stop"]', state.realtimeDebug.status !== "running")
 
   getElement<HTMLElement>("[data-realtime-inline-status]").textContent =
@@ -2699,7 +3064,10 @@ function renderRenderedIdealCanvas() {
   message.textContent = getRenderedIdealMessage()
 }
 
-function renderRenderedIdealCanvasTo(canvas: HTMLCanvasElement): RenderedIdealRenderSummary {
+function renderRenderedIdealCanvasTo(
+  canvas: HTMLCanvasElement,
+  rotationCenterOverride: ObjVertex | null = null,
+): RenderedIdealRenderSummary {
   const context = canvas.getContext("2d")
   if (!context) {
     return createRenderedIdealRenderSummary("error", {
@@ -2747,7 +3115,7 @@ function renderRenderedIdealCanvasTo(canvas: HTMLCanvasElement): RenderedIdealRe
   }
 
   const previewState = getObjPoseSyncPreviewState()
-  const rotationCenter = getObjPoseSyncRotationCenter()
+  const rotationCenter = rotationCenterOverride ?? getObjPoseSyncRotationCenter()
   const viewport = {
     centerX: cssWidth / 2,
     centerY: cssHeight / 2,
@@ -2793,6 +3161,11 @@ function renderRenderedIdealCanvasTo(canvas: HTMLCanvasElement): RenderedIdealRe
     canvasHeight: targetHeight,
     drawnFaceCount,
     skippedFaceCount,
+    rotationCenter: {
+      x: roundForState(rotationCenter.x) ?? 0,
+      y: roundForState(rotationCenter.y) ?? 0,
+      z: roundForState(rotationCenter.z) ?? 0,
+    },
     errorMessage: null,
   })
 }
@@ -2873,6 +3246,7 @@ function renderRenderedIdealSummaryCard() {
   const card = getElement<HTMLElement>("[data-rendered-ideal-summary]")
   const summary = state.renderedIdeal.summary
   const detection = state.renderedIdeal.detection
+  const poseSearch = state.poseCenterSearch
   card.innerHTML = `
     <p>${escapeHtml(getRenderedIdealMessage())}</p>
     <dl class="review-grid">
@@ -2889,6 +3263,11 @@ function renderRenderedIdealSummaryCard() {
       <div><dt>レンダー理想検出ms</dt><dd>${formatRealtimeNullableNumber(detection.detectMs)}</dd></div>
       <div><dt>レンダー理想ランドマーク数</dt><dd>${formatNullableCount(detection.landmarkCount)}</dd></div>
       <div><dt>レンダー理想drop数</dt><dd>${formatNullableCount(detection.droppedCount)}</dd></div>
+      <div><dt>探索状態</dt><dd>${poseSearch.status}</dd></div>
+      <div><dt>探索進捗</dt><dd>${poseSearch.evaluatedCount} / ${poseSearch.candidateCount}</dd></div>
+      <div><dt>best rotationCenter</dt><dd>${escapeHtml(formatPoseCenterSearchBestRotationCenter())}</dd></div>
+      <div><dt>best score</dt><dd>${formatNullableNumber(poseSearch.bestCandidate?.score ?? null)}</dd></div>
+      <div><dt>best適用</dt><dd>${escapeHtml(getPoseCenterSearchApplyMessage())}</dd></div>
       <div><dt>errorMessage</dt><dd>${escapeHtml(summary.errorMessage ?? "null")}</dd></div>
     </dl>
   `
@@ -3298,6 +3677,7 @@ function renderDebugContent() {
 
 function getSummaryItems(): Array<[string, string]> {
   const objFileStatus = getObjFileStatus()
+  const bestPoseCenterCandidate = state.poseCenterSearch.bestCandidate
   return [
     ["labName", LAB_NAME],
     ["liveInputSourceType", state.liveInput.sourceType ?? "null"],
@@ -3350,6 +3730,13 @@ function getSummaryItems(): Array<[string, string]> {
     ["renderedIdealErrorCount", formatNullableCount(state.renderedIdeal.detection.errorCount)],
     ["renderedIdealRenderSeq", formatNullableCount(state.renderedIdeal.detection.renderSeq)],
     ["renderedIdealDetectedRenderSeq", formatNullableCount(state.renderedIdeal.detection.detectedRenderSeq)],
+    ["poseCenterSearchStatus", state.poseCenterSearch.status],
+    ["poseCenterSearchBestRotationCenterX", formatNullableNumber(bestPoseCenterCandidate?.rotationCenterX ?? null)],
+    ["poseCenterSearchBestRotationCenterY", formatNullableNumber(bestPoseCenterCandidate?.rotationCenterY ?? null)],
+    ["poseCenterSearchBestRotationCenterZ", formatNullableNumber(bestPoseCenterCandidate?.rotationCenterZ ?? null)],
+    ["poseCenterSearchBestScore", formatNullableNumber(bestPoseCenterCandidate?.score ?? null)],
+    ["poseCenterSearchEvaluatedCount", formatNullableCount(state.poseCenterSearch.evaluatedCount)],
+    ["poseCenterSearchFailedCandidateCount", formatNullableCount(state.poseCenterSearch.failedCandidateCount)],
     ["realtimeStatus", state.realtimeDebug.status],
     ["realtimeTargetFps", formatNumber(state.realtimeDebug.targetFps)],
     ["realtimeEffectiveFps", formatRealtimeNullableNumber(state.realtimeDebug.effectiveFps)],
@@ -3451,6 +3838,8 @@ function getObjItems(): Array<[string, string]> {
 function getRenderedIdealItems(): Array<[string, string]> {
   const summary = state.renderedIdeal.summary
   const detection = state.renderedIdeal.detection
+  const poseSearch = state.poseCenterSearch
+  const best = poseSearch.bestCandidate
   return [
     ["status", summary.status],
     ["canvasWidth", formatNullableCount(summary.canvasWidth)],
@@ -3477,6 +3866,7 @@ function getRenderedIdealItems(): Array<[string, string]> {
     ["completed count", formatNullableCount(detection.completedCount)],
     ["dropped count", formatNullableCount(detection.droppedCount)],
     ["error count", formatNullableCount(detection.errorCount)],
+    ["pose search skip count", formatNullableCount(detection.skippedByPoseSearchCount)],
     ["pose yaw", formatNullableNumber(detection.pose.yaw)],
     ["pose pitch", formatNullableNumber(detection.pose.pitch)],
     ["pose roll", formatNullableNumber(detection.pose.roll)],
@@ -3484,6 +3874,28 @@ function getRenderedIdealItems(): Array<[string, string]> {
     ["quality score", formatNullableNumber(detection.qualityScore)],
     ["errorMessage", summary.errorMessage ?? "null"],
     ["レンダー理想検出error message", detection.errorMessage ?? "null"],
+    ["ポーズ固定値探索", ""],
+    ["探索状態", poseSearch.status],
+    ["候補数", formatNullableCount(poseSearch.candidateCount)],
+    ["評価済み数", formatNullableCount(poseSearch.evaluatedCount)],
+    ["失敗候補数", formatNullableCount(poseSearch.failedCandidateCount)],
+    ["探索時間ms", formatRealtimeNullableNumber(poseSearch.elapsedMs)],
+    ["current yaw", formatNullableNumber(poseSearch.currentPose.yaw)],
+    ["current pitch", formatNullableNumber(poseSearch.currentPose.pitch)],
+    ["current roll", formatNullableNumber(poseSearch.currentPose.roll)],
+    ["best rotationCenterX", formatNullableNumber(best?.rotationCenterX ?? null)],
+    ["best rotationCenterY", formatNullableNumber(best?.rotationCenterY ?? null)],
+    ["best rotationCenterZ", formatNullableNumber(best?.rotationCenterZ ?? null)],
+    ["best score", formatNullableNumber(best?.score ?? null)],
+    ["best yaw error", formatNullableNumber(best?.yawError ?? null)],
+    ["best pitch error", formatNullableNumber(best?.pitchError ?? null)],
+    ["best roll error", formatNullableNumber(best?.rollError ?? null)],
+    ["best rendered yaw", formatNullableNumber(best?.renderedPose.yaw ?? null)],
+    ["best rendered pitch", formatNullableNumber(best?.renderedPose.pitch ?? null)],
+    ["best rendered roll", formatNullableNumber(best?.renderedPose.roll ?? null)],
+    ["best適用", getPoseCenterSearchApplyMessage()],
+    ["top candidates", formatPoseCenterSearchTopCandidatesText()],
+    ["探索error message", poseSearch.errorMessage ?? "null"],
   ]
 }
 
@@ -3613,6 +4025,8 @@ function getRawState() {
       renderedIdeal478Count: state.renderedIdeal.detection.landmarkCount,
       renderedIdealPose: roundPoseForState(state.renderedIdeal.detection.pose),
     },
+    poseCenterSearchState: getPoseCenterSearchRawSummary(),
+    poseCenterSearchTopCandidates: state.poseCenterSearch.topCandidates.map(roundPoseCenterSearchCandidate),
     warpMesh: {
       sourceVerticesStatus: "not_ready",
       targetVerticesStatus: "not_ready",
@@ -3824,6 +4238,47 @@ function createEmptyRenderedIdealDetectionState(): RenderedIdealDetectionState {
     completedCount: 0,
     droppedCount: 0,
     errorCount: 0,
+    skippedByPoseSearchCount: 0,
+  }
+}
+
+function createDefaultPoseCenterSearchState(): PoseCenterSearchState {
+  return {
+    status: "idle",
+    startedAt: null,
+    completedAt: null,
+    errorMessage: null,
+    range: createPoseCenterSearchRange(),
+    candidateCount: 0,
+    evaluatedCount: 0,
+    failedCandidateCount: 0,
+    currentPose: {
+      yaw: null,
+      pitch: null,
+      roll: null,
+    },
+    bestCandidate: null,
+    topCandidates: [],
+    elapsedMs: null,
+    appliedBestAutomatically: false,
+    appliedBestManually: false,
+    bestAppliedAt: null,
+  }
+}
+
+function createPoseCenterSearchRange(): PoseCenterSearchState["range"] {
+  return {
+    x: { fixed: true, value: POSE_CENTER_SEARCH_RANGE.x.value },
+    y: {
+      min: POSE_CENTER_SEARCH_RANGE.y.min,
+      max: POSE_CENTER_SEARCH_RANGE.y.max,
+      step: POSE_CENTER_SEARCH_RANGE.y.step,
+    },
+    z: {
+      min: POSE_CENTER_SEARCH_RANGE.z.min,
+      max: POSE_CENTER_SEARCH_RANGE.z.max,
+      step: POSE_CENTER_SEARCH_RANGE.z.step,
+    },
   }
 }
 
@@ -3847,7 +4302,7 @@ function createRenderedIdealRenderSummary(
     appliedYawDeg: roundForState(state.objPoseSync.appliedYawDeg),
     appliedPitchDeg: roundForState(state.objPoseSync.appliedPitchDeg),
     appliedRollDeg: roundForState(state.objPoseSync.appliedRollDeg),
-    rotationCenter: {
+    rotationCenter: overrides.rotationCenter ?? {
       x: roundForState(state.objPoseSync.rotationCenterX) ?? 0,
       y: roundForState(state.objPoseSync.rotationCenterY) ?? 0,
       z: roundForState(state.objPoseSync.rotationCenterZ) ?? 0,
@@ -4129,6 +4584,10 @@ function canRenderRenderedIdeal() {
   )
 }
 
+function isPoseCenterSearchRunning() {
+  return state.poseCenterSearch.status === "running"
+}
+
 function getRenderedIdealMessage() {
   if (!state.objFile.loaded || getObjPreviewStatus() !== "ready") {
     return "OBJを読み込むと、ここにレンダー理想2Dプレビューを表示します。"
@@ -4282,6 +4741,7 @@ function buildDebugExport() {
       bottleneck: getRealtimeBottleneck(),
     },
     renderedIdealDetection: getRenderedIdealDetectionDebugExport(),
+    poseCenterSearch: getPoseCenterSearchDebugExport(),
     mediaPipeOptions: {
       currentLiveOptions: getCurrentLiveMediaPipeOptionsDebug(),
       renderedIdealOptions: getRenderedIdealMediaPipeOptionsDebug(),
@@ -4444,6 +4904,29 @@ function getRenderedIdealDetectionRawSummary() {
     completedCount: detection.completedCount,
     droppedCount: detection.droppedCount,
     errorCount: detection.errorCount,
+    skippedByPoseSearchCount: detection.skippedByPoseSearchCount,
+  }
+}
+
+function getPoseCenterSearchRawSummary() {
+  return {
+    status: state.poseCenterSearch.status,
+    startedAt: state.poseCenterSearch.startedAt,
+    completedAt: state.poseCenterSearch.completedAt,
+    errorMessage: state.poseCenterSearch.errorMessage,
+    range: state.poseCenterSearch.range,
+    candidateCount: state.poseCenterSearch.candidateCount,
+    evaluatedCount: state.poseCenterSearch.evaluatedCount,
+    failedCandidateCount: state.poseCenterSearch.failedCandidateCount,
+    currentPose: roundPoseForState(state.poseCenterSearch.currentPose),
+    bestCandidate: state.poseCenterSearch.bestCandidate
+      ? roundPoseCenterSearchCandidate(state.poseCenterSearch.bestCandidate)
+      : null,
+    topCandidates: state.poseCenterSearch.topCandidates.map(roundPoseCenterSearchCandidate),
+    elapsedMs: roundForState(state.poseCenterSearch.elapsedMs),
+    appliedBestAutomatically: state.poseCenterSearch.appliedBestAutomatically,
+    appliedBestManually: state.poseCenterSearch.appliedBestManually,
+    bestAppliedAt: state.poseCenterSearch.bestAppliedAt,
   }
 }
 
@@ -4588,6 +5071,39 @@ function formatAppliedObjPose() {
   return `yaw ${formatNullableNumber(state.objPoseSync.appliedYawDeg)} / pitch ${formatNullableNumber(state.objPoseSync.appliedPitchDeg)} / roll ${formatNullableNumber(state.objPoseSync.appliedRollDeg)}`
 }
 
+function formatPoseCenterSearchBestRotationCenter() {
+  const best = state.poseCenterSearch.bestCandidate
+  if (!best) {
+    return "null"
+  }
+  return `x=${formatNumber(best.rotationCenterX)}, y=${formatNumber(best.rotationCenterY)}, z=${formatNumber(best.rotationCenterZ)}`
+}
+
+function formatPoseCenterSearchTopCandidatesText() {
+  if (state.poseCenterSearch.topCandidates.length === 0) {
+    return "[]"
+  }
+
+  return state.poseCenterSearch.topCandidates
+    .map((candidate, index) =>
+      `${index + 1}. x=${formatNumber(candidate.rotationCenterX)}, y=${formatNumber(candidate.rotationCenterY)}, z=${formatNumber(candidate.rotationCenterZ)}, score=${formatNullableNumber(candidate.score)}, yaw=${formatNullableNumber(candidate.yawError)}, pitch=${formatNullableNumber(candidate.pitchError)}, roll=${formatNullableNumber(candidate.rollError)}`,
+    )
+    .join("\n")
+}
+
+function getPoseCenterSearchApplyMessage() {
+  if (state.poseCenterSearch.appliedBestAutomatically) {
+    return "bestを自動適用済み"
+  }
+  if (state.poseCenterSearch.appliedBestManually) {
+    return "bestを手動適用済み"
+  }
+  if (state.poseCenterSearch.bestCandidate) {
+    return "bestは自動適用しません。bestを適用ボタンで反映します。"
+  }
+  return "best未検出"
+}
+
 function formatExpressionSummary(summary: ExpressionSummary | null) {
   if (!summary) {
     return "not_ready"
@@ -4716,7 +5232,26 @@ function getRenderedIdealDetectionDebugExport() {
     completedCount: detection.completedCount,
     droppedCount: detection.droppedCount,
     errorCount: detection.errorCount,
+    skippedByPoseSearchCount: detection.skippedByPoseSearchCount,
     pose: detection.pose,
+  }
+}
+
+function getPoseCenterSearchDebugExport() {
+  return {
+    status: state.poseCenterSearch.status,
+    candidateCount: state.poseCenterSearch.candidateCount,
+    evaluatedCount: state.poseCenterSearch.evaluatedCount,
+    failedCandidateCount: state.poseCenterSearch.failedCandidateCount,
+    elapsedMs: roundForState(state.poseCenterSearch.elapsedMs),
+    currentPose: roundPoseForState(state.poseCenterSearch.currentPose),
+    bestCandidate: state.poseCenterSearch.bestCandidate
+      ? roundPoseCenterSearchCandidateForExport(state.poseCenterSearch.bestCandidate)
+      : null,
+    topCandidates: state.poseCenterSearch.topCandidates.map(roundPoseCenterSearchCandidateForExport),
+    appliedBestAutomatically: state.poseCenterSearch.appliedBestAutomatically,
+    appliedBestManually: state.poseCenterSearch.appliedBestManually,
+    errorMessage: state.poseCenterSearch.errorMessage,
   }
 }
 
@@ -4830,6 +5365,38 @@ function roundPoseForState(pose: ReferencePose): ReferencePose {
     yaw: roundForState(pose.yaw),
     pitch: roundForState(pose.pitch),
     roll: roundForState(pose.roll),
+  }
+}
+
+function roundPoseCenterSearchCandidate(candidate: PoseCenterSearchCandidate): PoseCenterSearchCandidate {
+  return {
+    rotationCenterX: roundForState(candidate.rotationCenterX) ?? 0,
+    rotationCenterY: roundForState(candidate.rotationCenterY) ?? 0,
+    rotationCenterZ: roundForState(candidate.rotationCenterZ) ?? 0,
+    score: roundForState(candidate.score),
+    yawError: roundForState(candidate.yawError),
+    pitchError: roundForState(candidate.pitchError),
+    rollError: roundForState(candidate.rollError),
+    renderedPose: roundPoseForState(candidate.renderedPose),
+    detected: candidate.detected,
+    detectMs: roundForState(candidate.detectMs),
+    errorMessage: candidate.errorMessage,
+  }
+}
+
+function roundPoseCenterSearchCandidateForExport(candidate: PoseCenterSearchCandidate) {
+  return {
+    rotationCenterX: roundForState(candidate.rotationCenterX),
+    rotationCenterY: roundForState(candidate.rotationCenterY),
+    rotationCenterZ: roundForState(candidate.rotationCenterZ),
+    score: roundForState(candidate.score),
+    yawError: roundForState(candidate.yawError),
+    pitchError: roundForState(candidate.pitchError),
+    rollError: roundForState(candidate.rollError),
+    renderedPose: roundPoseForState(candidate.renderedPose),
+    detected: candidate.detected,
+    detectMs: roundForState(candidate.detectMs),
+    errorMessage: candidate.errorMessage,
   }
 }
 
