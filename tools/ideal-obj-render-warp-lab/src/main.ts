@@ -366,6 +366,120 @@ type ObjPoseCalibrationCandidate = {
   errorMessage: string | null
 }
 
+type ObjPoseCalibrationPoseWiseBestCandidate = {
+  rotationCenterX: number
+  rotationCenterY: number
+  rotationCenterZ: number
+  renderPoseOffset: {
+    yawDeg: number
+    pitchDeg: number
+    rollDeg: number
+  }
+  renderPose: {
+    yaw: number
+    pitch: number
+    roll: number
+  }
+  expectedPoseForComparison: {
+    yaw: number
+    pitch: number
+    roll: number
+  }
+  returnedPose: {
+    yaw: number | null
+    pitch: number | null
+    roll: number | null
+  }
+  poseError: number | null
+  yawError: number | null
+  pitchError: number | null
+  rollError: number | null
+  detected: boolean
+  detectMs: number | null
+  errorMessage: string | null
+}
+
+type ObjPoseCalibrationPoseWiseTopCandidate = {
+  rank: number
+  rotationCenterX: number
+  rotationCenterY: number
+  rotationCenterZ: number
+  renderPoseOffset: {
+    yawDeg: number
+    pitchDeg: number
+    rollDeg: number
+  }
+  poseError: number | null
+  yawError: number | null
+  pitchError: number | null
+  rollError: number | null
+  returnedPose: {
+    yaw: number | null
+    pitch: number | null
+    roll: number | null
+  }
+  detected: boolean
+}
+
+type ObjPoseCalibrationPoseWiseBest = {
+  poseId: string
+  poseLabel: string
+  basePose: {
+    yaw: number
+    pitch: number
+    roll: number
+  }
+  bestCandidate: ObjPoseCalibrationPoseWiseBestCandidate | null
+  topCandidates: ObjPoseCalibrationPoseWiseTopCandidate[]
+}
+
+type ObjPoseCalibrationPoseWiseGroupSummary = {
+  groupId: string
+  label: string
+  poseIds: string[]
+  averageBestPoseError: number | null
+  averageBestYawError: number | null
+  averageBestPitchError: number | null
+  averageBestRollError: number | null
+  rotationCenterYRange: {
+    min: number | null
+    max: number | null
+  }
+  rotationCenterZRange: {
+    min: number | null
+    max: number | null
+  }
+  pitchOffsetDegRange: {
+    min: number | null
+    max: number | null
+  }
+}
+
+type ObjPoseCalibrationPosePairSummary = {
+  pairId: string
+  label: string
+  negativePoseId: string
+  positivePoseId: string
+  negativeBest: {
+    rotationCenterY: number | null
+    rotationCenterZ: number | null
+    pitchOffsetDeg: number | null
+    poseError: number | null
+  }
+  positiveBest: {
+    rotationCenterY: number | null
+    rotationCenterZ: number | null
+    pitchOffsetDeg: number | null
+    poseError: number | null
+  }
+  delta: {
+    rotationCenterY: number | null
+    rotationCenterZ: number | null
+    pitchOffsetDeg: number | null
+    poseError: number | null
+  }
+}
+
 type ObjPoseCalibrationCandidatePoint = {
   rotationCenter: ObjVertex
   renderPoseOffset: {
@@ -399,6 +513,9 @@ type ObjPoseCalibrationState = {
   currentBestCandidate: ObjPoseCalibrationCandidate | null
   bestCandidate: ObjPoseCalibrationCandidate | null
   topCandidates: ObjPoseCalibrationCandidate[]
+  poseWiseBest: ObjPoseCalibrationPoseWiseBest[]
+  poseWiseGroupSummary: ObjPoseCalibrationPoseWiseGroupSummary[]
+  posePairSummary: ObjPoseCalibrationPosePairSummary[]
   errorMessage: string | null
 }
 
@@ -655,6 +772,54 @@ const OBJ_POSE_CALIBRATION_POSES: ObjPoseCalibrationPose[] = [
   { id: "mixed_1", label: "複合姿勢 1", yawDeg: 20, pitchDeg: -10, rollDeg: 5 },
   { id: "mixed_2", label: "複合姿勢 2", yawDeg: -20, pitchDeg: -10, rollDeg: -5 },
 ]
+const OBJ_POSE_WISE_TOP_CANDIDATE_COUNT = 3
+const OBJ_POSE_WISE_GROUPS = [
+  { groupId: "front", label: "正面", poseIds: ["front"] },
+  {
+    groupId: "yaw",
+    label: "yaw",
+    poseIds: ["yaw_negative_15", "yaw_positive_15", "yaw_negative_30", "yaw_positive_30"],
+  },
+  {
+    groupId: "pitch",
+    label: "pitch",
+    poseIds: ["pitch_negative_10", "pitch_positive_10", "pitch_negative_20", "pitch_positive_20"],
+  },
+  { groupId: "roll", label: "roll", poseIds: ["roll_negative_10", "roll_positive_10"] },
+  { groupId: "mixed", label: "複合姿勢", poseIds: ["mixed_1", "mixed_2"] },
+] as const
+const OBJ_POSE_PAIR_SUMMARY_PAIRS = [
+  {
+    pairId: "yaw_15",
+    label: "yaw -15 / +15",
+    negativePoseId: "yaw_negative_15",
+    positivePoseId: "yaw_positive_15",
+  },
+  {
+    pairId: "yaw_30",
+    label: "yaw -30 / +30",
+    negativePoseId: "yaw_negative_30",
+    positivePoseId: "yaw_positive_30",
+  },
+  {
+    pairId: "roll_10",
+    label: "roll -10 / +10",
+    negativePoseId: "roll_negative_10",
+    positivePoseId: "roll_positive_10",
+  },
+  {
+    pairId: "pitch_10",
+    label: "pitch -10 / +10",
+    negativePoseId: "pitch_negative_10",
+    positivePoseId: "pitch_positive_10",
+  },
+  {
+    pairId: "pitch_20",
+    label: "pitch -20 / +20",
+    negativePoseId: "pitch_negative_20",
+    positivePoseId: "pitch_positive_20",
+  },
+] as const
 const poseSearchFrameBucketLabels: Record<PoseSearchFrameBucket, string> = {
   front: "正面",
   yawLeft: "yaw負方向",
@@ -2415,6 +2580,10 @@ function updateObjPoseCalibrationProgress(candidate: ObjPoseCalibrationCandidate
   const elapsedMs = performance.now() - startedAtMs
   const averageCandidateMs = elapsedMs / Math.max(1, evaluatedCandidateCount)
   const remainingCandidateCount = Math.max(0, state.objPoseCalibration.candidateCount - evaluatedCandidateCount)
+  const poseWiseBest = updateObjPoseCalibrationPoseWiseBest(
+    state.objPoseCalibration.poseWiseBest,
+    candidate,
+  )
 
   state.objPoseCalibration = {
     ...state.objPoseCalibration,
@@ -2427,8 +2596,92 @@ function updateObjPoseCalibrationProgress(candidate: ObjPoseCalibrationCandidate
     currentBestCandidate: bestCandidate,
     bestCandidate,
     topCandidates,
+    poseWiseBest,
+    poseWiseGroupSummary: buildObjPoseWiseGroupSummary(poseWiseBest),
+    posePairSummary: buildObjPosePairSummary(poseWiseBest),
     elapsedMs,
     estimatedRemainingMs: averageCandidateMs * remainingCandidateCount,
+  }
+}
+
+function updateObjPoseCalibrationPoseWiseBest(
+  currentPoseWiseBest: ObjPoseCalibrationPoseWiseBest[],
+  candidate: ObjPoseCalibrationCandidate,
+): ObjPoseCalibrationPoseWiseBest[] {
+  const currentByPoseId = new Map(currentPoseWiseBest.map((item) => [item.poseId, item]))
+
+  return OBJ_POSE_CALIBRATION_POSES.map((pose) => {
+    const current = currentByPoseId.get(pose.id) ?? createDefaultObjPoseWiseBestForPose(pose)
+    const result = candidate.poseResultsPreview.find((item) => item.poseId === pose.id)
+    if (!result || !result.detected || result.poseError === null) {
+      return current
+    }
+
+    const topCandidates = [
+      ...current.topCandidates,
+      createObjPoseWiseTopCandidate(candidate, result, 0),
+    ]
+      .filter((item) => item.detected && item.poseError !== null)
+      .sort((a, b) => (a.poseError ?? Number.POSITIVE_INFINITY) - (b.poseError ?? Number.POSITIVE_INFINITY))
+      .slice(0, OBJ_POSE_WISE_TOP_CANDIDATE_COUNT)
+      .map((item, index) => ({
+        ...item,
+        rank: index + 1,
+      }))
+    const bestCandidate =
+      current.bestCandidate === null ||
+      (result.poseError ?? Number.POSITIVE_INFINITY) <
+        (current.bestCandidate.poseError ?? Number.POSITIVE_INFINITY)
+        ? createObjPoseWiseBestCandidate(candidate, result)
+        : current.bestCandidate
+
+    return {
+      ...current,
+      bestCandidate,
+      topCandidates,
+    }
+  })
+}
+
+function createObjPoseWiseTopCandidate(
+  candidate: ObjPoseCalibrationCandidate,
+  result: ObjPoseCalibrationPoseResult,
+  rank: number,
+): ObjPoseCalibrationPoseWiseTopCandidate {
+  return {
+    rank,
+    rotationCenterX: candidate.rotationCenterX,
+    rotationCenterY: candidate.rotationCenterY,
+    rotationCenterZ: candidate.rotationCenterZ,
+    renderPoseOffset: candidate.renderPoseOffset,
+    poseError: result.poseError,
+    yawError: result.yawError,
+    pitchError: result.pitchError,
+    rollError: result.rollError,
+    returnedPose: result.returnedPose,
+    detected: result.detected,
+  }
+}
+
+function createObjPoseWiseBestCandidate(
+  candidate: ObjPoseCalibrationCandidate,
+  result: ObjPoseCalibrationPoseResult,
+): ObjPoseCalibrationPoseWiseBestCandidate {
+  return {
+    rotationCenterX: candidate.rotationCenterX,
+    rotationCenterY: candidate.rotationCenterY,
+    rotationCenterZ: candidate.rotationCenterZ,
+    renderPoseOffset: candidate.renderPoseOffset,
+    renderPose: result.renderPose,
+    expectedPoseForComparison: result.expectedPoseForComparison,
+    returnedPose: result.returnedPose,
+    poseError: result.poseError,
+    yawError: result.yawError,
+    pitchError: result.pitchError,
+    rollError: result.rollError,
+    detected: result.detected,
+    detectMs: result.detectMs,
+    errorMessage: result.errorMessage,
   }
 }
 
@@ -4548,6 +4801,9 @@ function getSummaryItems(): Array<[string, string]> {
     ["objPoseCalibrationBestScore", formatNullableNumber(bestObjPoseCalibrationCandidate?.score ?? null)],
     ["objPoseCalibrationAveragePoseError", formatNullableNumber(bestObjPoseCalibrationCandidate?.averagePoseError ?? null)],
     ["objPoseCalibrationMaxPoseError", formatNullableNumber(bestObjPoseCalibrationCandidate?.maxPoseError ?? null)],
+    ["objPoseCalibrationPoseWiseBestCount", formatNullableCount(state.objPoseCalibration.poseWiseBest.length)],
+    ["objPoseCalibrationPoseWiseGroupSummaryCount", formatNullableCount(state.objPoseCalibration.poseWiseGroupSummary.length)],
+    ["objPoseCalibrationPosePairSummaryCount", formatNullableCount(state.objPoseCalibration.posePairSummary.length)],
     ["realtimeStatus", state.realtimeDebug.status],
     ["realtimeTargetFps", formatNumber(state.realtimeDebug.targetFps)],
     ["realtimeEffectiveFps", formatRealtimeNullableNumber(state.realtimeDebug.effectiveFps)],
@@ -4717,6 +4973,9 @@ function getObjPoseCalibrationItems(): Array<[string, string]> {
     ["detectMsTotal", formatRealtimeNullableNumber(best?.detectMsTotal ?? null)],
     ["top candidates", formatObjPoseCalibrationTopCandidatesText()],
     ["best poseResultsPreview", formatObjPoseCalibrationPoseResultsText(best?.poseResultsPreview ?? [])],
+    ["pose別best", formatObjPoseWiseBestText()],
+    ["group summary", formatObjPoseWiseGroupSummaryText()],
+    ["pair summary", formatObjPosePairSummaryText()],
     ["errorMessage", calibration.errorMessage ?? "null"],
   ]
 }
@@ -4852,6 +5111,9 @@ function getRawState() {
     objPoseCalibrationState: getObjPoseCalibrationRawSummary(),
     objPoseCalibrationTopCandidates: state.objPoseCalibration.topCandidates.map(roundObjPoseCalibrationCandidate),
     objPoseCalibrationPoseSet: OBJ_POSE_CALIBRATION_POSES.map((pose) => ({ ...pose })),
+    objPoseCalibrationPoseWiseBest: state.objPoseCalibration.poseWiseBest.map(roundObjPoseWiseBest),
+    objPoseCalibrationPoseWiseGroupSummary: state.objPoseCalibration.poseWiseGroupSummary,
+    objPoseCalibrationPosePairSummary: state.objPoseCalibration.posePairSummary,
     warpMesh: {
       sourceVerticesStatus: "not_ready",
       targetVerticesStatus: "not_ready",
@@ -5068,6 +5330,7 @@ function createEmptyRenderedIdealDetectionState(): RenderedIdealDetectionState {
 }
 
 function createDefaultObjPoseCalibrationState(): ObjPoseCalibrationState {
+  const poseWiseBest = createDefaultObjPoseCalibrationPoseWiseBest()
   return {
     status: "idle",
     startedAt: null,
@@ -5085,6 +5348,9 @@ function createDefaultObjPoseCalibrationState(): ObjPoseCalibrationState {
     currentBestCandidate: null,
     bestCandidate: null,
     topCandidates: [],
+    poseWiseBest,
+    poseWiseGroupSummary: buildObjPoseWiseGroupSummary(poseWiseBest),
+    posePairSummary: buildObjPosePairSummary(poseWiseBest),
     errorMessage: null,
   }
 }
@@ -5108,6 +5374,102 @@ function createObjPoseCalibrationSearchRange(): ObjPoseCalibrationSearchRange {
       step: OBJ_POSE_CALIBRATION_RANGE.pitchOffsetDeg.step,
     },
   }
+}
+
+function createDefaultObjPoseCalibrationPoseWiseBest(): ObjPoseCalibrationPoseWiseBest[] {
+  return OBJ_POSE_CALIBRATION_POSES.map(createDefaultObjPoseWiseBestForPose)
+}
+
+function createDefaultObjPoseWiseBestForPose(
+  pose: ObjPoseCalibrationPose,
+): ObjPoseCalibrationPoseWiseBest {
+  return {
+    poseId: pose.id,
+    poseLabel: pose.label,
+    basePose: {
+      yaw: pose.yawDeg,
+      pitch: pose.pitchDeg,
+      roll: pose.rollDeg,
+    },
+    bestCandidate: null,
+    topCandidates: [],
+  }
+}
+
+function buildObjPoseWiseGroupSummary(
+  poseWiseBest: ObjPoseCalibrationPoseWiseBest[],
+): ObjPoseCalibrationPoseWiseGroupSummary[] {
+  return OBJ_POSE_WISE_GROUPS.map((group) => {
+    const bestCandidates = group.poseIds
+      .map((poseId) => poseWiseBest.find((item) => item.poseId === poseId)?.bestCandidate ?? null)
+      .filter((candidate): candidate is ObjPoseCalibrationPoseWiseBestCandidate => candidate !== null)
+
+    return {
+      groupId: group.groupId,
+      label: group.label,
+      poseIds: [...group.poseIds],
+      averageBestPoseError: roundForState(averageNumbers(bestCandidates.map((candidate) => candidate.poseError ?? Number.NaN))),
+      averageBestYawError: roundForState(averageNumbers(bestCandidates.map((candidate) => candidate.yawError ?? Number.NaN))),
+      averageBestPitchError: roundForState(averageNumbers(bestCandidates.map((candidate) => candidate.pitchError ?? Number.NaN))),
+      averageBestRollError: roundForState(averageNumbers(bestCandidates.map((candidate) => candidate.rollError ?? Number.NaN))),
+      rotationCenterYRange: createNullableRange(bestCandidates.map((candidate) => candidate.rotationCenterY)),
+      rotationCenterZRange: createNullableRange(bestCandidates.map((candidate) => candidate.rotationCenterZ)),
+      pitchOffsetDegRange: createNullableRange(bestCandidates.map((candidate) => candidate.renderPoseOffset.pitchDeg)),
+    }
+  })
+}
+
+function buildObjPosePairSummary(
+  poseWiseBest: ObjPoseCalibrationPoseWiseBest[],
+): ObjPoseCalibrationPosePairSummary[] {
+  return OBJ_POSE_PAIR_SUMMARY_PAIRS.map((pair) => {
+    const negativeBest = poseWiseBest.find((item) => item.poseId === pair.negativePoseId)?.bestCandidate ?? null
+    const positiveBest = poseWiseBest.find((item) => item.poseId === pair.positivePoseId)?.bestCandidate ?? null
+    const negativeSummary = createObjPosePairBestSummary(negativeBest)
+    const positiveSummary = createObjPosePairBestSummary(positiveBest)
+
+    return {
+      pairId: pair.pairId,
+      label: pair.label,
+      negativePoseId: pair.negativePoseId,
+      positivePoseId: pair.positivePoseId,
+      negativeBest: negativeSummary,
+      positiveBest: positiveSummary,
+      delta: {
+        rotationCenterY: subtractNullable(positiveSummary.rotationCenterY, negativeSummary.rotationCenterY),
+        rotationCenterZ: subtractNullable(positiveSummary.rotationCenterZ, negativeSummary.rotationCenterZ),
+        pitchOffsetDeg: subtractNullable(positiveSummary.pitchOffsetDeg, negativeSummary.pitchOffsetDeg),
+        poseError: subtractNullable(positiveSummary.poseError, negativeSummary.poseError),
+      },
+    }
+  })
+}
+
+function createObjPosePairBestSummary(candidate: ObjPoseCalibrationPoseWiseBestCandidate | null) {
+  return {
+    rotationCenterY: roundForState(candidate?.rotationCenterY ?? null),
+    rotationCenterZ: roundForState(candidate?.rotationCenterZ ?? null),
+    pitchOffsetDeg: roundForState(candidate?.renderPoseOffset.pitchDeg ?? null),
+    poseError: roundForState(candidate?.poseError ?? null),
+  }
+}
+
+function createNullableRange(values: number[]) {
+  const finiteValues = values.filter((value) => Number.isFinite(value))
+  if (finiteValues.length === 0) {
+    return {
+      min: null,
+      max: null,
+    }
+  }
+  return {
+    min: roundForState(Math.min(...finiteValues)),
+    max: roundForState(Math.max(...finiteValues)),
+  }
+}
+
+function subtractNullable(a: number | null, b: number | null) {
+  return a === null || b === null ? null : roundForState(a - b)
 }
 
 function createDefaultPoseCenterSearchState(): PoseCenterSearchState {
@@ -5831,6 +6193,9 @@ function getObjPoseCalibrationRawSummary() {
       ? roundObjPoseCalibrationCandidate(state.objPoseCalibration.bestCandidate)
       : null,
     topCandidates: state.objPoseCalibration.topCandidates.map(roundObjPoseCalibrationCandidate),
+    poseWiseBest: state.objPoseCalibration.poseWiseBest.map(roundObjPoseWiseBest),
+    poseWiseGroupSummary: state.objPoseCalibration.poseWiseGroupSummary,
+    posePairSummary: state.objPoseCalibration.posePairSummary,
     errorMessage: state.objPoseCalibration.errorMessage,
   }
 }
@@ -6092,6 +6457,67 @@ function formatObjPoseCalibrationPoseResultsText(results: ObjPoseCalibrationPose
     .join("\n")
 }
 
+function formatObjPoseWiseBestText() {
+  if (state.objPoseCalibration.poseWiseBest.length === 0) {
+    return "[]"
+  }
+
+  return state.objPoseCalibration.poseWiseBest
+    .map((item) => {
+      const best = item.bestCandidate
+      if (!best) {
+        return `${item.poseId} (${item.poseLabel})\n  basePose: ${formatPose(item.basePose)}\n  best: null`
+      }
+      return [
+        `${item.poseId} (${item.poseLabel})`,
+        `  basePose: ${formatPose(item.basePose)}`,
+        `  best: center x=${formatNumber(best.rotationCenterX)}, y=${formatNumber(best.rotationCenterY)}, z=${formatNumber(best.rotationCenterZ)}, pitchOffsetDeg=${formatNumber(best.renderPoseOffset.pitchDeg)}`,
+        `  returned: ${formatPose(best.returnedPose)}`,
+        `  error: pose=${formatNullableNumber(best.poseError)} / yaw=${formatNullableNumber(best.yawError)} / pitch=${formatNullableNumber(best.pitchError)} / roll=${formatNullableNumber(best.rollError)}`,
+      ].join("\n")
+    })
+    .join("\n\n")
+}
+
+function formatObjPoseWiseGroupSummaryText() {
+  if (state.objPoseCalibration.poseWiseGroupSummary.length === 0) {
+    return "[]"
+  }
+
+  return state.objPoseCalibration.poseWiseGroupSummary
+    .map((group) =>
+      [
+        `${group.label} (${group.poseIds.join(", ")})`,
+        `  average error: pose=${formatNullableNumber(group.averageBestPoseError)} / yaw=${formatNullableNumber(group.averageBestYawError)} / pitch=${formatNullableNumber(group.averageBestPitchError)} / roll=${formatNullableNumber(group.averageBestRollError)}`,
+        `  centerY range: ${formatNullableRange(group.rotationCenterYRange)}`,
+        `  centerZ range: ${formatNullableRange(group.rotationCenterZRange)}`,
+        `  pitchOffsetDeg range: ${formatNullableRange(group.pitchOffsetDegRange)}`,
+      ].join("\n"),
+    )
+    .join("\n\n")
+}
+
+function formatObjPosePairSummaryText() {
+  if (state.objPoseCalibration.posePairSummary.length === 0) {
+    return "[]"
+  }
+
+  return state.objPoseCalibration.posePairSummary
+    .map((pair) =>
+      [
+        `${pair.label}`,
+        `  negative(${pair.negativePoseId}): y=${formatNullableNumber(pair.negativeBest.rotationCenterY)} / z=${formatNullableNumber(pair.negativeBest.rotationCenterZ)} / pitchOffset=${formatNullableNumber(pair.negativeBest.pitchOffsetDeg)} / error=${formatNullableNumber(pair.negativeBest.poseError)}`,
+        `  positive(${pair.positivePoseId}): y=${formatNullableNumber(pair.positiveBest.rotationCenterY)} / z=${formatNullableNumber(pair.positiveBest.rotationCenterZ)} / pitchOffset=${formatNullableNumber(pair.positiveBest.pitchOffsetDeg)} / error=${formatNullableNumber(pair.positiveBest.poseError)}`,
+        `  delta(pos-neg): y=${formatNullableNumber(pair.delta.rotationCenterY)} / z=${formatNullableNumber(pair.delta.rotationCenterZ)} / pitchOffset=${formatNullableNumber(pair.delta.pitchOffsetDeg)} / error=${formatNullableNumber(pair.delta.poseError)}`,
+      ].join("\n"),
+    )
+    .join("\n\n")
+}
+
+function formatNullableRange(range: { min: number | null; max: number | null }) {
+  return `min=${formatNullableNumber(range.min)} / max=${formatNullableNumber(range.max)}`
+}
+
 function getPoseCenterSearchApplyMessage() {
   if (state.poseCenterSearch.appliedBestAutomatically) {
     return "bestを自動適用済み"
@@ -6276,6 +6702,9 @@ function getObjPoseCalibrationDebugExport() {
       ? roundObjPoseCalibrationCandidateForExport(state.objPoseCalibration.bestCandidate)
       : null,
     topCandidates: state.objPoseCalibration.topCandidates.map(roundObjPoseCalibrationCandidateForExport),
+    poseWiseBest: state.objPoseCalibration.poseWiseBest.map(roundObjPoseWiseBest),
+    poseWiseGroupSummary: state.objPoseCalibration.poseWiseGroupSummary,
+    posePairSummary: state.objPoseCalibration.posePairSummary,
     errorMessage: state.objPoseCalibration.errorMessage,
   }
 }
@@ -6521,6 +6950,67 @@ function roundObjPoseCalibrationCandidateForExport(candidate: ObjPoseCalibration
     poseResultsPreview: candidate.poseResultsPreview.map(roundObjPoseCalibrationPoseResult),
     detectMsTotal: roundForState(candidate.detectMsTotal),
     errorMessage: candidate.errorMessage,
+  }
+}
+
+function roundObjPoseWiseBest(item: ObjPoseCalibrationPoseWiseBest): ObjPoseCalibrationPoseWiseBest {
+  return {
+    poseId: item.poseId,
+    poseLabel: item.poseLabel,
+    basePose: {
+      yaw: roundForState(item.basePose.yaw) ?? 0,
+      pitch: roundForState(item.basePose.pitch) ?? 0,
+      roll: roundForState(item.basePose.roll) ?? 0,
+    },
+    bestCandidate: item.bestCandidate ? roundObjPoseWiseBestCandidate(item.bestCandidate) : null,
+    topCandidates: item.topCandidates.map(roundObjPoseWiseTopCandidate),
+  }
+}
+
+function roundObjPoseWiseBestCandidate(
+  candidate: ObjPoseCalibrationPoseWiseBestCandidate,
+): ObjPoseCalibrationPoseWiseBestCandidate {
+  return {
+    rotationCenterX: roundForState(candidate.rotationCenterX) ?? 0,
+    rotationCenterY: roundForState(candidate.rotationCenterY) ?? 0,
+    rotationCenterZ: roundForState(candidate.rotationCenterZ) ?? 0,
+    renderPoseOffset: roundObjPoseRenderOffset(candidate.renderPoseOffset),
+    renderPose: {
+      yaw: roundForState(candidate.renderPose.yaw) ?? 0,
+      pitch: roundForState(candidate.renderPose.pitch) ?? 0,
+      roll: roundForState(candidate.renderPose.roll) ?? 0,
+    },
+    expectedPoseForComparison: {
+      yaw: roundForState(candidate.expectedPoseForComparison.yaw) ?? 0,
+      pitch: roundForState(candidate.expectedPoseForComparison.pitch) ?? 0,
+      roll: roundForState(candidate.expectedPoseForComparison.roll) ?? 0,
+    },
+    returnedPose: roundPoseForState(candidate.returnedPose),
+    poseError: roundForState(candidate.poseError),
+    yawError: roundForState(candidate.yawError),
+    pitchError: roundForState(candidate.pitchError),
+    rollError: roundForState(candidate.rollError),
+    detected: candidate.detected,
+    detectMs: roundForState(candidate.detectMs),
+    errorMessage: candidate.errorMessage,
+  }
+}
+
+function roundObjPoseWiseTopCandidate(
+  candidate: ObjPoseCalibrationPoseWiseTopCandidate,
+): ObjPoseCalibrationPoseWiseTopCandidate {
+  return {
+    rank: candidate.rank,
+    rotationCenterX: roundForState(candidate.rotationCenterX) ?? 0,
+    rotationCenterY: roundForState(candidate.rotationCenterY) ?? 0,
+    rotationCenterZ: roundForState(candidate.rotationCenterZ) ?? 0,
+    renderPoseOffset: roundObjPoseRenderOffset(candidate.renderPoseOffset),
+    poseError: roundForState(candidate.poseError),
+    yawError: roundForState(candidate.yawError),
+    pitchError: roundForState(candidate.pitchError),
+    rollError: roundForState(candidate.rollError),
+    returnedPose: roundPoseForState(candidate.returnedPose),
+    detected: candidate.detected,
   }
 }
 
