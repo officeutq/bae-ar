@@ -33,6 +33,41 @@
 
 `tools/ideal-obj-render-warp-lab` では、これらの座標系・メッシュ生成・WebGL mesh warp を踏襲し、理想側 landmarks の供給元だけを差し替えます。
 
+## MediaPipe mode comparison
+
+このラボには、同じ MP4 フレームを MediaPipe FaceLandmarker の `detect()` と
+`detectForVideo()` の両方に通し、pose / 478 landmarks / 実行時間の差を比較する
+`モード比較` 実験を追加します。
+
+実運用では current face（現在顔）は動画またはカメラ入力から取得するため
+`detectForVideo()` になりやすく、rendered ideal face（レンダー理想顔）は OBJ を
+canvas にレンダーした静止画像として扱うため `detect()` になりやすいです。
+そのため、両モードの pose / 478 landmarks に系統差があるかを確認します。
+
+比較では、以前の 0.41秒ズレ問題を避けるため、MP4 の現在フレームを一度だけ
+固定 canvas に `drawImage()` し、その同じ canvas frame を `detect(canvas)` と
+`detectForVideo(canvas, timestampMs)` の両方へ渡します。`detectForVideo(video, timestampMs)`
+のように video element を直接渡す比較は行いません。
+
+実験条件:
+
+- `imageLandmarker`: `runningMode: "IMAGE"` / `detect(canvas)` / `delegate: "GPU"`
+- `videoLandmarker`: `runningMode: "VIDEO"` / `detectForVideo(canvas, timestampMs)` / `delegate: "GPU"`
+- IMAGE mode と VIDEO mode は別インスタンスにし、runningMode の切り替えは行わない
+- frame driver は `requestVideoFrameCallback（動画フレーム単位コールバック）`
+- timestamp は `metadata.mediaTime * 1000`
+- timestamp が同一または巻き戻った frame は skip する
+- `requestVideoFrameCallback()` が使えないブラウザでは実験不可として表示し、fallback しない
+- 最大 10000 frames まで比較する
+
+出力:
+
+- UI summary: processed / skipped / success / mismatch count、`detect()` / `detectForVideo()` ms、
+  yaw / pitch / roll の平均差・最大差、478 landmarks の平均距離・最大距離、
+  `presentedFrames` 差分
+- JSON download: raw per-frame result と summary
+- CSV download: 主要列のみの per-frame summary
+
 ## 基本方針
 
 最重要方針は、座標系を新設しないことです。
