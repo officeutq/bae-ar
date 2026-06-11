@@ -739,6 +739,7 @@ input[type="range"] {
     "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
   margin: 0;
   overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .debug-content {
@@ -774,6 +775,7 @@ input[type="range"] {
   font-size: 13px;
   margin: 0;
   overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .placeholder-text {
