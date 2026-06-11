@@ -1002,6 +1002,31 @@ type ModeComparisonPreviewSnapshot = {
   createdAt: string
 }
 
+type ModeComparisonDebugOptions = {
+  previewSnapshotEnabled: boolean
+  uiUpdateIntervalFrames: number
+  summaryUpdateIntervalFrames: number
+}
+
+type ModeComparisonDebugCounters = {
+  rvfcCallbackCount: number
+  processedFrameCount: number
+  intentionalSkipCount: number
+  timestampSkipCount: number
+  busySkipCount: number
+  missingMediaTimeSkipCount: number
+  presentedFramesDeltaSummary: TimingDistribution
+  callbackWallDeltaMs: TimingDistribution
+  mediaTimeDeltaMs: TimingDistribution
+  processingMeasuredMs: TimingDistribution
+  unmeasuredOverheadEstimateMs: TimingDistribution
+  latestCallbackWallDeltaMs: number | null
+  latestMediaTimeDeltaMs: number | null
+  latestProcessingMeasuredMs: number | null
+  latestUnmeasuredOverheadEstimateMs: number | null
+  nextCallbackRegistrationTiming: "beforeProcessing" | "afterProcessing"
+}
+
 type ModeComparisonPoseDiff = {
   yaw: number | null
   pitch: number | null
@@ -1033,10 +1058,14 @@ type ModeComparisonFrameResult = {
   timestampSource: "metadata.mediaTime"
   presentedFrames: number | null
   presentedFramesDelta: number | null
+  callbackWallDeltaMs: number | null
+  mediaTimeDeltaMs: number | null
   drawImageMs: number | null
   imageDetectMs: number | null
   videoDetectMs: number | null
   totalFrameProcessingMs: number | null
+  processingMeasuredMs: number | null
+  unmeasuredOverheadEstimateMs: number | null
   imageDetectSuccess: boolean
   videoDetectSuccess: boolean
   imageDetected: boolean
@@ -1094,6 +1123,7 @@ type ModeComparisonSummary = {
   }
   presentedFramesDelta: TimingDistribution
   importantFrames: ModeComparisonImportantFrames
+  debugCounters: ModeComparisonDebugCounters
 }
 
 type ModeComparisonExport = {
@@ -1132,6 +1162,8 @@ type ModeComparisonState = {
   errorMessage: string | null
   result: ModeComparisonExport | null
   previewSnapshots: Record<ModeComparisonPreviewKind, ModeComparisonPreviewSnapshot | null>
+  debugOptions: ModeComparisonDebugOptions
+  debugCounters: ModeComparisonDebugCounters
 }
 
 type RenderUpdateTiming = {
@@ -1706,6 +1738,13 @@ let realtimeAnimationFrameId: number | null = null
 let modeComparisonVideoFrameCallbackId: number | null = null
 let modeComparisonRunId = 0
 let modeComparisonFrames: ModeComparisonFrameResult[] = []
+let modeComparisonProcessing = false
+let modeComparisonLastCallbackWallMs: number | null = null
+let modeComparisonLastCallbackMediaTimeSec: number | null = null
+let modeComparisonCallbackWallDeltaSamples: number[] = []
+let modeComparisonMediaTimeDeltaSamples: number[] = []
+let modeComparisonProcessingMeasuredSamples: number[] = []
+let modeComparisonUnmeasuredOverheadSamples: number[] = []
 const modeComparisonCanvas = document.createElement("canvas")
 let realtimeRunStartedAtMs: number | null = null
 let realtimeTickInProgress = false
@@ -2271,6 +2310,36 @@ function bindEvents() {
     }
   })
 
+  app.addEventListener("change", (event) => {
+    const target = event.target
+    if (!(target instanceof HTMLInputElement)) {
+      return
+    }
+    if (target.dataset.control === "mode-comparison-preview-snapshot-enabled") {
+      state.modeComparison = {
+        ...state.modeComparison,
+        debugOptions: {
+          ...state.modeComparison.debugOptions,
+          previewSnapshotEnabled: target.checked,
+        },
+      }
+      renderDebugContent()
+    }
+  })
+
+  app.addEventListener("input", (event) => {
+    const target = event.target
+    if (!(target instanceof HTMLInputElement)) {
+      return
+    }
+    if (target.dataset.control === "mode-comparison-ui-update-interval") {
+      updateModeComparisonDebugOptionNumber("uiUpdateIntervalFrames", target.value)
+    }
+    if (target.dataset.control === "mode-comparison-summary-update-interval") {
+      updateModeComparisonDebugOptionNumber("summaryUpdateIntervalFrames", target.value)
+    }
+  })
+
   bindObjPreviewPreset("obj-preview-front", { yawDeg: 0, pitchDeg: 0, rollDeg: 0 })
   bindObjPreviewPreset("obj-preview-left", { yawDeg: -90, pitchDeg: 0, rollDeg: 0 })
   bindObjPreviewPreset("obj-preview-right", { yawDeg: 90, pitchDeg: 0, rollDeg: 0 })
@@ -2445,6 +2514,23 @@ function bindObjPoseRotationCenterInput(
     state.objPoseSync[key] = Number.isFinite(value) ? clamp(value, -0.5, 0.5) : 0
     renderAll()
   })
+}
+
+function updateModeComparisonDebugOptionNumber(
+  key: "uiUpdateIntervalFrames" | "summaryUpdateIntervalFrames",
+  valueText: string,
+) {
+  const value = Math.max(1, Math.round(Number(valueText) || 1))
+  state.modeComparison = {
+    ...state.modeComparison,
+    debugOptions: {
+      ...state.modeComparison.debugOptions,
+      [key]: value,
+    },
+  }
+  if (state.activeDebugTab === "modeComparison") {
+    renderDebugContent()
+  }
 }
 
 async function loadObjFile(file: File) {
@@ -4762,8 +4848,10 @@ async function startModeComparison() {
   modeComparisonRunId += 1
   const runId = modeComparisonRunId
   modeComparisonFrames = []
+  resetModeComparisonRuntimeDebugSamples()
   state.modeComparison = {
     ...createDefaultModeComparisonState(),
+    debugOptions: state.modeComparison.debugOptions,
     status: "running",
     startedAt: new Date().toISOString(),
   }
@@ -4884,13 +4972,49 @@ function registerModeComparisonFrameCallback(
   )
 }
 
+function resetModeComparisonRuntimeDebugSamples() {
+  modeComparisonProcessing = false
+  modeComparisonLastCallbackWallMs = null
+  modeComparisonLastCallbackMediaTimeSec = null
+  modeComparisonCallbackWallDeltaSamples = []
+  modeComparisonMediaTimeDeltaSamples = []
+  modeComparisonProcessingMeasuredSamples = []
+  modeComparisonUnmeasuredOverheadSamples = []
+}
+
 function processModeComparisonFrame(
   runId: number,
   metadata: VideoFrameCallbackMetadataLike,
   imageLandmarker: FaceLandmarker,
   videoLandmarker: FaceLandmarker,
 ) {
+  const callbackWallMs = performance.now()
+  const mediaTimeSec = metadata.mediaTime
+  const callbackWallDeltaMs =
+    modeComparisonLastCallbackWallMs === null ? null : callbackWallMs - modeComparisonLastCallbackWallMs
+  const mediaTimeDeltaMs =
+    Number.isFinite(mediaTimeSec) && modeComparisonLastCallbackMediaTimeSec !== null
+      ? (mediaTimeSec - modeComparisonLastCallbackMediaTimeSec) * 1000
+      : null
+  modeComparisonLastCallbackWallMs = callbackWallMs
+  if (Number.isFinite(mediaTimeSec)) {
+    modeComparisonLastCallbackMediaTimeSec = mediaTimeSec
+  }
+  recordModeComparisonDebugCallback(callbackWallDeltaMs, mediaTimeDeltaMs)
+
   if (runId !== modeComparisonRunId || state.modeComparison.status !== "running") {
+    return
+  }
+
+  if (modeComparisonProcessing) {
+    state.modeComparison = {
+      ...state.modeComparison,
+      debugCounters: {
+        ...state.modeComparison.debugCounters,
+        busySkipCount: state.modeComparison.debugCounters.busySkipCount + 1,
+      },
+    }
+    registerModeComparisonFrameCallback(runId, imageLandmarker, videoLandmarker)
     return
   }
 
@@ -4899,11 +5023,14 @@ function processModeComparisonFrame(
     return
   }
 
-  const mediaTimeSec = metadata.mediaTime
   if (!Number.isFinite(mediaTimeSec)) {
     state.modeComparison = {
       ...state.modeComparison,
       skippedFrameCount: state.modeComparison.skippedFrameCount + 1,
+      debugCounters: {
+        ...state.modeComparison.debugCounters,
+        missingMediaTimeSkipCount: state.modeComparison.debugCounters.missingMediaTimeSkipCount + 1,
+      },
       errorMessage: "metadata.mediaTime が取得できないフレームを skip しました。",
     }
     registerModeComparisonFrameCallback(runId, imageLandmarker, videoLandmarker)
@@ -4918,6 +5045,10 @@ function processModeComparisonFrame(
     state.modeComparison = {
       ...state.modeComparison,
       skippedFrameCount: state.modeComparison.skippedFrameCount + 1,
+      debugCounters: {
+        ...state.modeComparison.debugCounters,
+        timestampSkipCount: state.modeComparison.debugCounters.timestampSkipCount + 1,
+      },
       lastMediaTimeSec: mediaTimeSec,
       errorMessage: "同一または巻き戻り timestamp のフレームを skip しました。",
     }
@@ -4927,6 +5058,7 @@ function processModeComparisonFrame(
   }
 
   try {
+    modeComparisonProcessing = true
     const frameStartMs = performance.now()
     const context = modeComparisonCanvas.getContext("2d")
     if (!context) {
@@ -4945,6 +5077,9 @@ function processModeComparisonFrame(
     const videoResult = videoLandmarker.detectForVideo(modeComparisonCanvas, timestampMs)
     const videoDetectMs = performance.now() - videoDetectStartMs
     const totalFrameProcessingMs = performance.now() - frameStartMs
+    const unmeasuredOverheadEstimateMs =
+      callbackWallDeltaMs === null ? null : callbackWallDeltaMs - totalFrameProcessingMs
+    recordModeComparisonProcessingDebugSample(totalFrameProcessingMs, unmeasuredOverheadEstimateMs)
 
     const presentedFrames = Number.isFinite(metadata.presentedFrames)
       ? metadata.presentedFrames ?? null
@@ -4960,30 +5095,37 @@ function processModeComparisonFrame(
       timestampMs,
       presentedFrames,
       presentedFramesDelta,
+      callbackWallDeltaMs,
+      mediaTimeDeltaMs,
       drawImageMs,
       imageDetectMs,
       videoDetectMs,
       totalFrameProcessingMs,
+      unmeasuredOverheadEstimateMs,
       imageResult,
       videoResult,
     })
     modeComparisonFrames.push(frame)
     updateModeComparisonPreviewSnapshots(frame)
 
+    const nextDebugCounters = buildModeComparisonDebugCounters()
     state.modeComparison = {
       ...state.modeComparison,
-      progressFrameCount: modeComparisonFrames.length,
+      progressFrameCount: shouldUpdateModeComparisonState(frame.frameIndex)
+        ? modeComparisonFrames.length
+        : state.modeComparison.progressFrameCount,
       lastTimestampMs: timestampMs,
       lastMediaTimeSec: mediaTimeSec,
       lastPresentedFrames: presentedFrames,
+      debugCounters: nextDebugCounters,
       errorMessage: null,
     }
 
-    if (modeComparisonFrames.length % 10 === 0) {
+    if (shouldRenderModeComparisonControls(frame.frameIndex)) {
       renderModeComparisonControls()
-      if (state.activeDebugTab === "modeComparison") {
-        renderDebugContent()
-      }
+    }
+    if (state.activeDebugTab === "modeComparison" && shouldRenderModeComparisonSummary(frame.frameIndex)) {
+      renderDebugContent()
     }
 
     if (modeComparisonFrames.length >= MODE_COMPARISON_MAX_FRAMES || liveVideoElement.ended) {
@@ -4995,6 +5137,8 @@ function processModeComparisonFrame(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     finishModeComparison("error", message)
+  } finally {
+    modeComparisonProcessing = false
   }
 }
 
@@ -5004,10 +5148,13 @@ function buildModeComparisonFrameResult(input: {
   timestampMs: number
   presentedFrames: number | null
   presentedFramesDelta: number | null
+  callbackWallDeltaMs: number | null
+  mediaTimeDeltaMs: number | null
   drawImageMs: number
   imageDetectMs: number
   videoDetectMs: number
   totalFrameProcessingMs: number
+  unmeasuredOverheadEstimateMs: number | null
   imageResult: FaceLandmarkerResultLike
   videoResult: FaceLandmarkerResultLike
 }): ModeComparisonFrameResult {
@@ -5030,10 +5177,14 @@ function buildModeComparisonFrameResult(input: {
     timestampSource: "metadata.mediaTime",
     presentedFrames: input.presentedFrames,
     presentedFramesDelta: input.presentedFramesDelta,
+    callbackWallDeltaMs: input.callbackWallDeltaMs,
+    mediaTimeDeltaMs: input.mediaTimeDeltaMs,
     drawImageMs: input.drawImageMs,
     imageDetectMs: input.imageDetectMs,
     videoDetectMs: input.videoDetectMs,
     totalFrameProcessingMs: input.totalFrameProcessingMs,
+    processingMeasuredMs: input.totalFrameProcessingMs,
+    unmeasuredOverheadEstimateMs: input.unmeasuredOverheadEstimateMs,
     imageDetectSuccess: imageDetected,
     videoDetectSuccess: videoDetected,
     imageDetected,
@@ -5057,12 +5208,75 @@ function buildModeComparisonFrameResult(input: {
   }
 }
 
+function recordModeComparisonDebugCallback(
+  callbackWallDeltaMs: number | null,
+  mediaTimeDeltaMs: number | null,
+) {
+  if (callbackWallDeltaMs !== null && Number.isFinite(callbackWallDeltaMs)) {
+    modeComparisonCallbackWallDeltaSamples.push(callbackWallDeltaMs)
+  }
+  if (mediaTimeDeltaMs !== null && Number.isFinite(mediaTimeDeltaMs)) {
+    modeComparisonMediaTimeDeltaSamples.push(mediaTimeDeltaMs)
+  }
+  state.modeComparison = {
+    ...state.modeComparison,
+    debugCounters: {
+      ...state.modeComparison.debugCounters,
+      rvfcCallbackCount: state.modeComparison.debugCounters.rvfcCallbackCount + 1,
+      latestCallbackWallDeltaMs: callbackWallDeltaMs,
+      latestMediaTimeDeltaMs: mediaTimeDeltaMs,
+      callbackWallDeltaMs: summarizeNullableNumbers(modeComparisonCallbackWallDeltaSamples),
+      mediaTimeDeltaMs: summarizeNullableNumbers(modeComparisonMediaTimeDeltaSamples),
+    },
+  }
+}
+
+function recordModeComparisonProcessingDebugSample(
+  processingMeasuredMs: number,
+  unmeasuredOverheadEstimateMs: number | null,
+) {
+  modeComparisonProcessingMeasuredSamples.push(processingMeasuredMs)
+  if (unmeasuredOverheadEstimateMs !== null && Number.isFinite(unmeasuredOverheadEstimateMs)) {
+    modeComparisonUnmeasuredOverheadSamples.push(unmeasuredOverheadEstimateMs)
+  }
+}
+
+function buildModeComparisonDebugCounters(): ModeComparisonDebugCounters {
+  return {
+    ...state.modeComparison.debugCounters,
+    processedFrameCount: modeComparisonFrames.length,
+    presentedFramesDeltaSummary: summarizeNullableNumbers(
+      modeComparisonFrames.map((frame) => frame.presentedFramesDelta),
+    ),
+    callbackWallDeltaMs: summarizeNullableNumbers(modeComparisonCallbackWallDeltaSamples),
+    mediaTimeDeltaMs: summarizeNullableNumbers(modeComparisonMediaTimeDeltaSamples),
+    processingMeasuredMs: summarizeNullableNumbers(modeComparisonProcessingMeasuredSamples),
+    unmeasuredOverheadEstimateMs: summarizeNullableNumbers(modeComparisonUnmeasuredOverheadSamples),
+    latestProcessingMeasuredMs: modeComparisonProcessingMeasuredSamples.at(-1) ?? null,
+    latestUnmeasuredOverheadEstimateMs: modeComparisonUnmeasuredOverheadSamples.at(-1) ?? null,
+    nextCallbackRegistrationTiming: "afterProcessing",
+  }
+}
+
+function shouldUpdateModeComparisonState(frameIndex: number) {
+  return frameIndex === 1 || frameIndex % state.modeComparison.debugOptions.uiUpdateIntervalFrames === 0
+}
+
+function shouldRenderModeComparisonControls(frameIndex: number) {
+  return frameIndex === 1 || frameIndex % state.modeComparison.debugOptions.uiUpdateIntervalFrames === 0
+}
+
+function shouldRenderModeComparisonSummary(frameIndex: number) {
+  return frameIndex === 1 || frameIndex % state.modeComparison.debugOptions.summaryUpdateIntervalFrames === 0
+}
+
 function updateModeComparisonPreviewSnapshots(frame: ModeComparisonFrameResult) {
+  if (!state.modeComparison.debugOptions.previewSnapshotEnabled) {
+    return
+  }
   const nextSnapshots = {
     ...state.modeComparison.previewSnapshots,
   }
-  nextSnapshots.latest = createModeComparisonPreviewSnapshot("latest", frame)
-
   const currentWorstPoseFrame = findFrameBySnapshot(nextSnapshots.worst_pose_diff)
   const framePoseMagnitude = getModeComparisonPoseMagnitude(frame)
   if (
@@ -5218,17 +5432,36 @@ function finishModeComparison(status: ModeComparisonStatus, errorMessage: string
   modeComparisonVideoFrameCallbackId = null
   liveVideoElement.pause()
   syncLiveCurrentTime()
+  updateLatestModeComparisonPreviewSnapshot()
   const result = buildModeComparisonExport(modeComparisonFrames, state.modeComparison.skippedFrameCount)
   state.modeComparison = {
     ...state.modeComparison,
     status,
     completedAt: new Date().toISOString(),
     progressFrameCount: modeComparisonFrames.length,
+    debugCounters: buildModeComparisonDebugCounters(),
     errorMessage,
     result,
   }
   addLog(`モード比較を終了しました: ${formatModeComparisonStatus(status)} / processed ${modeComparisonFrames.length} / skipped ${state.modeComparison.skippedFrameCount}`)
   renderAll()
+}
+
+function updateLatestModeComparisonPreviewSnapshot() {
+  if (!state.modeComparison.debugOptions.previewSnapshotEnabled) {
+    return
+  }
+  const latestFrame = modeComparisonFrames[modeComparisonFrames.length - 1]
+  if (!latestFrame) {
+    return
+  }
+  state.modeComparison = {
+    ...state.modeComparison,
+    previewSnapshots: {
+      ...state.modeComparison.previewSnapshots,
+      latest: createModeComparisonPreviewSnapshot("latest", latestFrame),
+    },
+  }
 }
 
 function buildModeComparisonExport(
@@ -5303,6 +5536,11 @@ function summarizeModeComparisonFrames(
     },
     presentedFramesDelta: summarizeNullableNumbers(frames.map((frame) => frame.presentedFramesDelta)),
     importantFrames: getModeComparisonImportantFrames(frames),
+    debugCounters: {
+      ...buildModeComparisonDebugCounters(),
+      processedFrameCount: frames.length,
+      presentedFramesDeltaSummary: summarizeNullableNumbers(frames.map((frame) => frame.presentedFramesDelta)),
+    },
   }
 }
 
@@ -5946,6 +6184,47 @@ function renderModeComparisonDebugTab() {
     </section>
 
     <section class="debug-section">
+      <h3>デバッグカウンタ（Debug counters）</h3>
+      <dl class="summary-list">
+        <div><dt>rvfcCallbackCount</dt><dd>${summary.debugCounters.rvfcCallbackCount}</dd></div>
+        <div><dt>processedFrameCount</dt><dd>${summary.debugCounters.processedFrameCount}</dd></div>
+        <div><dt>intentionalSkipCount</dt><dd>${summary.debugCounters.intentionalSkipCount}</dd></div>
+        <div><dt>timestampSkipCount</dt><dd>${summary.debugCounters.timestampSkipCount}</dd></div>
+        <div><dt>busySkipCount</dt><dd>${summary.debugCounters.busySkipCount}</dd></div>
+        <div><dt>missingMediaTimeSkipCount</dt><dd>${summary.debugCounters.missingMediaTimeSkipCount}</dd></div>
+        <div><dt>presentedFramesDeltaSummary</dt><dd>${formatTimingDistribution(summary.debugCounters.presentedFramesDeltaSummary)}</dd></div>
+        <div><dt>callbackWallDeltaMs</dt><dd>${formatTimingDistribution(summary.debugCounters.callbackWallDeltaMs)}</dd></div>
+        <div><dt>mediaTimeDeltaMs</dt><dd>${formatTimingDistribution(summary.debugCounters.mediaTimeDeltaMs)}</dd></div>
+        <div><dt>processingMeasuredMs</dt><dd>${formatTimingDistribution(summary.debugCounters.processingMeasuredMs)}</dd></div>
+        <div><dt>unmeasuredOverheadEstimateMs</dt><dd>${formatTimingDistribution(summary.debugCounters.unmeasuredOverheadEstimateMs)}</dd></div>
+        <div><dt>latest callbackWallDeltaMs</dt><dd>${formatNullableNumber(summary.debugCounters.latestCallbackWallDeltaMs)}</dd></div>
+        <div><dt>latest mediaTimeDeltaMs</dt><dd>${formatNullableNumber(summary.debugCounters.latestMediaTimeDeltaMs)}</dd></div>
+        <div><dt>latest processingMeasuredMs</dt><dd>${formatNullableNumber(summary.debugCounters.latestProcessingMeasuredMs)}</dd></div>
+        <div><dt>latest unmeasuredOverheadEstimateMs</dt><dd>${formatNullableNumber(summary.debugCounters.latestUnmeasuredOverheadEstimateMs)}</dd></div>
+        <div><dt>nextCallbackRegistrationTiming</dt><dd>${summary.debugCounters.nextCallbackRegistrationTiming}</dd></div>
+      </dl>
+    </section>
+
+    <section class="debug-section">
+      <h3>デバッグオプション（Debug options）</h3>
+      <div class="mode-comparison-debug-options">
+        <label class="overlay-toggle">
+          <input type="checkbox" data-control="mode-comparison-preview-snapshot-enabled" ${comparison.debugOptions.previewSnapshotEnabled ? "checked" : ""} ${comparison.status === "running" ? "disabled" : ""} />
+          <span>preview snapshot（プレビュー画像保存）を有効化</span>
+        </label>
+        <label class="number-field">
+          <span>UI state update interval（UI状態更新間隔frames）</span>
+          <input type="number" min="1" step="1" data-control="mode-comparison-ui-update-interval" value="${comparison.debugOptions.uiUpdateIntervalFrames}" ${comparison.status === "running" ? "disabled" : ""} />
+        </label>
+        <label class="number-field">
+          <span>summary update interval（要約更新間隔frames）</span>
+          <input type="number" min="1" step="1" data-control="mode-comparison-summary-update-interval" value="${comparison.debugOptions.summaryUpdateIntervalFrames}" ${comparison.status === "running" ? "disabled" : ""} />
+        </label>
+      </div>
+      <p class="control-note">raw per-frame result（フレームごとの結果）は維持し、UI反映と summary 再描画だけを間引きます。</p>
+    </section>
+
+    <section class="debug-section">
       <h3>Run options（実行条件）</h3>
       <dl class="summary-list">
         <div><dt>delegate GPU（GPU実行）</dt><dd>GPU</dd></div>
@@ -5955,6 +6234,7 @@ function renderModeComparisonDebugTab() {
         <div><dt>timestampSource</dt><dd>metadata.mediaTime</dd></div>
         <div><dt>sameCanvasFrame（同一キャンバスフレーム）</dt><dd>true</dd></div>
         <div><dt>同一フレーム保証</dt><dd>MP4現在フレームを1回だけ固定 canvas に drawImage し、その同じ canvas を detect() と detectForVideo() に渡します。</dd></div>
+        <div><dt>totalFrameProcessingMs の範囲</dt><dd>drawImage、detect()、detectForVideo() を含みます。frame result構築、raw frames push、UI state update、summary再描画、preview snapshot toDataURL は含みません。</dd></div>
       </dl>
     </section>
 
@@ -7914,6 +8194,37 @@ function createDefaultModeComparisonState(): ModeComparisonState {
     errorMessage: null,
     result: null,
     previewSnapshots: createEmptyModeComparisonPreviewSnapshots(),
+    debugOptions: createDefaultModeComparisonDebugOptions(),
+    debugCounters: createEmptyModeComparisonDebugCounters(),
+  }
+}
+
+function createDefaultModeComparisonDebugOptions(): ModeComparisonDebugOptions {
+  return {
+    previewSnapshotEnabled: true,
+    uiUpdateIntervalFrames: 30,
+    summaryUpdateIntervalFrames: 30,
+  }
+}
+
+function createEmptyModeComparisonDebugCounters(): ModeComparisonDebugCounters {
+  return {
+    rvfcCallbackCount: 0,
+    processedFrameCount: 0,
+    intentionalSkipCount: 0,
+    timestampSkipCount: 0,
+    busySkipCount: 0,
+    missingMediaTimeSkipCount: 0,
+    presentedFramesDeltaSummary: createEmptyTimingDistribution(),
+    callbackWallDeltaMs: createEmptyTimingDistribution(),
+    mediaTimeDeltaMs: createEmptyTimingDistribution(),
+    processingMeasuredMs: createEmptyTimingDistribution(),
+    unmeasuredOverheadEstimateMs: createEmptyTimingDistribution(),
+    latestCallbackWallDeltaMs: null,
+    latestMediaTimeDeltaMs: null,
+    latestProcessingMeasuredMs: null,
+    latestUnmeasuredOverheadEstimateMs: null,
+    nextCallbackRegistrationTiming: "afterProcessing",
   }
 }
 
@@ -7971,6 +8282,7 @@ function createEmptyModeComparisonSummary(): ModeComparisonSummary {
     },
     presentedFramesDelta: createEmptyTimingDistribution(),
     importantFrames: createEmptyModeComparisonImportantFrames(),
+    debugCounters: createEmptyModeComparisonDebugCounters(),
   }
 }
 
@@ -8389,10 +8701,14 @@ function buildModeComparisonCsv(frames: ModeComparisonFrameResult[]) {
     "timestampMs",
     "presentedFrames",
     "presentedFramesDelta",
+    "callbackWallDeltaMs",
+    "mediaTimeDeltaMs",
     "drawImageMs",
     "imageDetectMs",
     "videoDetectMs",
     "totalFrameProcessingMs",
+    "processingMeasuredMs",
+    "unmeasuredOverheadEstimateMs",
     "imageDetected",
     "videoDetected",
     "imageLandmarkCount",
@@ -8411,10 +8727,14 @@ function buildModeComparisonCsv(frames: ModeComparisonFrameResult[]) {
     frame.timestampMs,
     frame.presentedFrames ?? "",
     frame.presentedFramesDelta ?? "",
+    frame.callbackWallDeltaMs ?? "",
+    frame.mediaTimeDeltaMs ?? "",
     frame.drawImageMs ?? "",
     frame.imageDetectMs ?? "",
     frame.videoDetectMs ?? "",
     frame.totalFrameProcessingMs ?? "",
+    frame.processingMeasuredMs ?? "",
+    frame.unmeasuredOverheadEstimateMs ?? "",
     frame.imageDetected,
     frame.videoDetected,
     frame.imageLandmarkCount,

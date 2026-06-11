@@ -191,6 +191,11 @@ h3 {
   gap: 10px;
 }
 
+.mode-comparison-debug-options {
+  display: grid;
+  gap: 8px;
+}
+
 .mode-comparison-frame-card {
   border: 1px solid #d8e0e7;
   border-radius: 8px;
