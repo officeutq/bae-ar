@@ -305,6 +305,21 @@ type ObjPoseCalibrationPose = {
   rollDeg: number
 }
 
+type ObjPoseSamplingPresetName = "quick" | "standard" | "dense"
+
+type ObjPoseSamplingRange = {
+  min: number
+  max: number
+  step: number
+}
+
+type ObjPoseSamplingPreset = {
+  preset: ObjPoseSamplingPresetName
+  yaw: ObjPoseSamplingRange
+  pitch: ObjPoseSamplingRange
+  roll: ObjPoseSamplingRange
+}
+
 type ObjPoseCalibrationPoseResult = {
   poseId: string
   poseLabel: string
@@ -552,6 +567,54 @@ type ObjPoseMappingDataset = {
   samples: ObjPoseMappingSample[]
 }
 
+type ObjPoseMappingDetectedSampleV2 = {
+  sampleId: string
+  poseId: string
+  p: ObjPoseMappingPose
+  P: ObjPoseMappingPose
+  detected: true
+  detectMs: number | null
+}
+
+type ObjPoseMappingFailedSampleV2 = {
+  sampleId: string
+  poseId: string
+  p: ObjPoseMappingPose
+  detected: false
+  detectMs: number | null
+  failureReason: string
+}
+
+type ObjPoseMappingDatasetV2 = {
+  schemaVersion: "obj_pose_mapping_dataset_v2"
+  createdAt: string
+  source: {
+    objFileName: string | null
+    vertexCount: number | null
+    faceCount: number | null
+  }
+  renderSettings: {
+    canvasWidth: number
+    canvasHeight: number
+    rotationCenter: ObjVertex
+    notes: "rotationCenter is fixed render setting, not an estimated value"
+  }
+  mediapipeSettings: {
+    runningMode: "IMAGE"
+    numFaces: 1
+    outputFaceBlendshapes: false
+    outputFacialTransformationMatrixes: true
+  }
+  poseSampling: ObjPoseSamplingPreset
+  summary: {
+    sampleCount: number
+    detectedCount: number
+    failedCount: number
+  }
+  samples: ObjPoseMappingDetectedSampleV2[]
+  failedSamples: ObjPoseMappingFailedSampleV2[]
+}
+
 type NumericSummary = {
   min: number
   max: number
@@ -633,6 +696,7 @@ type ObjPoseMappingDatasetSummary = {
 
 type ObjPoseMappingState = {
   dataset: ObjPoseMappingDatasetSummary
+  poseSamplingPreset: ObjPoseSamplingPresetName
   statistics: ObjPoseMappingStatistics | null
   statusMessage: string | null
 }
@@ -913,6 +977,26 @@ const OBJ_POSE_CALIBRATION_TOP_CANDIDATE_COUNT = 10
 const OBJ_POSE_MAPPING_TOP_SAMPLE_COUNT = 20
 const OBJ_POSE_MAPPING_INTERVAL_SAMPLE_TARGET_COUNT = 50
 const OBJ_POSE_MAPPING_MAX_REPRESENTATIVE_SAMPLE_COUNT = 100
+const OBJ_POSE_SAMPLING_PRESETS: Record<ObjPoseSamplingPresetName, ObjPoseSamplingPreset> = {
+  quick: {
+    preset: "quick",
+    yaw: { min: -30, max: 30, step: 10 },
+    pitch: { min: -20, max: 20, step: 10 },
+    roll: { min: -10, max: 10, step: 10 },
+  },
+  standard: {
+    preset: "standard",
+    yaw: { min: -35, max: 35, step: 5 },
+    pitch: { min: -25, max: 25, step: 5 },
+    roll: { min: -15, max: 15, step: 5 },
+  },
+  dense: {
+    preset: "dense",
+    yaw: { min: -35, max: 35, step: 2.5 },
+    pitch: { min: -25, max: 25, step: 2.5 },
+    roll: { min: -15, max: 15, step: 5 },
+  },
+} as const
 const OBJ_POSE_COMPARISON_SIGN = {
   yaw: -1,
   pitch: -1,
@@ -1012,7 +1096,7 @@ const debugTabs: TabOption<DebugTab>[] = [
   { label: "現在顔", value: "current" },
   { label: "OBJ", value: "obj" },
   { label: "レンダー理想", value: "renderedIdeal" },
-  { label: "OBJ解析", value: "objPoseCalibration" },
+  { label: "p,Pデータ", value: "objPoseCalibration" },
   { label: "リアルタイム", value: "realtime" },
   { label: "ワープメッシュ", value: "warpMesh" },
   { label: "Raw Debug", value: "raw" },
@@ -1094,16 +1178,22 @@ app.innerHTML = `
       </div>
       <div class="control-group">
         <button class="primary-button" type="button" data-action="load-obj">OBJ読込</button>
-        <button class="primary-button" type="button" data-action="obj-pose-calibration-start">OBJ解析</button>
-        <button class="secondary-button" type="button" data-action="export-obj-pose-mapping-dataset">p,Pデータ出力</button>
-        <button class="secondary-button" type="button" data-action="build-obj-pose-mapping-statistics">統計要約</button>
-        <button class="secondary-button" type="button" data-action="export-obj-pose-mapping-report">要約出力</button>
+        <label class="select-field">
+          <span>姿勢サンプリング</span>
+          <select data-control="obj-pose-sampling-preset">
+            <option value="quick">quick（簡易）</option>
+            <option value="standard">standard（標準）</option>
+            <option value="dense">dense（高密度）</option>
+          </select>
+        </label>
+        <button class="primary-button" type="button" data-action="obj-pose-calibration-start">p,Pデータ生成</button>
+        <button class="secondary-button" type="button" data-action="export-obj-pose-mapping-dataset">p,P Dataset JSONをダウンロード</button>
         <button class="secondary-button" type="button" data-action="export-debug">デバッグ出力</button>
       </div>
       <input class="visually-hidden" type="file" accept=".obj,text/plain,model/obj" data-input="obj-file" />
       <input class="visually-hidden" type="file" accept="video/*" data-input="live-video" />
       <div class="status-note">
-        OBJ単体に基準姿勢を与えてレンダーし、IMAGE mode の MediaPipe で返却姿勢を評価します。MP4 / カメラ入力には依存しません。
+        OBJ Pose Dataset（OBJ姿勢データ）を生成します。OBJに与えた renderPose を p、MediaPipe の returnedPose を P としてJSONに保存します。
       </div>
       <p class="export-status" data-debug-export-status></p>
     </section>
@@ -1173,7 +1263,7 @@ let realtimeTimingSamples: RealtimeTimingSample[] = []
 let lastRealtimeAnimationFrameCurrentTimeSec: number | null = null
 let cameraStream: MediaStream | null = null
 let objPoseMappingDatasetSamples: ObjPoseMappingSample[] = []
-let objPoseMappingDataset: ObjPoseMappingDataset | null = null
+let objPoseMappingDataset: ObjPoseMappingDatasetV2 | null = null
 let objPreviewDrag:
   | {
       pointerId: number
@@ -1455,18 +1545,6 @@ function bindEvents() {
     void exportObjPoseMappingDataset()
   })
 
-  getElement<HTMLButtonElement>('[data-action="build-obj-pose-mapping-statistics"]').addEventListener("click", () => {
-    const statistics = buildAndStoreObjPoseMappingStatistics()
-    getElement<HTMLElement>("[data-debug-export-status]").textContent = statistics
-      ? "統計要約を作成しました。"
-      : "OBJ解析結果がありません。先にOBJ解析を実行してください。"
-    renderAll()
-  })
-
-  getElement<HTMLButtonElement>('[data-action="export-obj-pose-mapping-report"]').addEventListener("click", () => {
-    void exportObjPoseMappingCompactReport()
-  })
-
   objFileInput.addEventListener("change", (event) => {
     const file = getSelectedFile(event)
     if (file && !isObjPoseCalibrationRunning()) {
@@ -1602,6 +1680,17 @@ function bindEvents() {
     const value = event.currentTarget.value
     if (isObjPreviewMode(value)) {
       state.objPreview.mode = value
+      renderAll()
+    }
+  })
+
+  getElement<HTMLSelectElement>('[data-control="obj-pose-sampling-preset"]').addEventListener("change", (event) => {
+    const value = event.currentTarget.value
+    if (isObjPoseSamplingPresetName(value)) {
+      state.objPoseMapping = {
+        ...state.objPoseMapping,
+        poseSamplingPreset: value,
+      }
       renderAll()
     }
   })
@@ -2540,16 +2629,18 @@ async function startObjPoseCalibration() {
       status: "error",
       startedAt: new Date().toISOString(),
       completedAt: new Date().toISOString(),
-      poseCount: OBJ_POSE_CALIBRATION_POSES.length,
-      errorMessage: "OBJ読込を完了してからOBJ解析を実行してください。",
+      poseCount: 0,
+      errorMessage: "OBJ読込を完了してからp,Pデータ生成を実行してください。",
     }
-    addLog("OBJ解析を開始できません。OBJ読込を完了してください。")
+    addLog("p,Pデータ生成を開始できません。OBJ読込を完了してください。")
     renderAll()
     return
   }
 
   stopRealtimeValidation("stopped")
-  const candidates = createObjPoseCalibrationCandidatePoints()
+  const poseSampling = getCurrentObjPoseSamplingPreset()
+  const poses = createObjPoseSamplingPoses(poseSampling)
+  const renderSettings = getFixedObjPoseRenderSettings()
   const startedAtMs = performance.now()
   resetObjPoseMappingDataset()
   state.activeDebugTab = "objPoseCalibration"
@@ -2557,11 +2648,11 @@ async function startObjPoseCalibration() {
     ...createDefaultObjPoseCalibrationState(),
     status: "running",
     startedAt: new Date().toISOString(),
-    poseCount: OBJ_POSE_CALIBRATION_POSES.length,
-    candidateCount: candidates.length,
-    totalEvaluationCount: candidates.length * OBJ_POSE_CALIBRATION_POSES.length,
+    poseCount: poses.length,
+    candidateCount: 0,
+    totalEvaluationCount: poses.length,
   }
-  addLog(`OBJ解析を開始しました: ${candidates.length}候補 / ${OBJ_POSE_CALIBRATION_POSES.length} pose`)
+  addLog(`p,Pデータ生成を開始しました: ${poseSampling.preset} / ${poses.length} pose`)
   renderAll()
 
   try {
@@ -2571,13 +2662,13 @@ async function startObjPoseCalibration() {
     }
 
     const detector = await getRenderedIdealFaceLandmarker()
-    for (const [index, candidatePoint] of candidates.entries()) {
-      const candidate = evaluateObjPoseCalibrationCandidate(detector, candidatePoint)
-      updateObjPoseCalibrationProgress(candidate, startedAtMs)
+    for (const [index, pose] of poses.entries()) {
+      const result = evaluateObjPoseCalibrationCandidateOnPose(detector, renderSettings, pose)
+      updateObjPoseMappingGenerationProgress(result, index + 1, poses.length, startedAtMs, renderSettings.rotationCenter)
       renderRenderedIdealSummaryCard()
       renderDebugContent()
 
-      if (index % 1 === 0) {
+      if (index % 10 === 0) {
         await waitForNextFrame()
       }
     }
@@ -2592,14 +2683,10 @@ async function startObjPoseCalibration() {
     }
     objPoseMappingDataset = buildObjPoseMappingDataset(objPoseMappingDatasetSamples)
     updateObjPoseMappingDatasetSummary()
-    addLog(
-      state.objPoseCalibration.bestCandidate
-        ? `OBJ解析が完了しました。best score: ${formatNullableNumber(state.objPoseCalibration.bestCandidate.score)}`
-        : "OBJ解析が完了しましたが、検出できた候補がありませんでした。",
-    )
+    addLog(`p,Pデータ生成が完了しました: ${state.objPoseMapping.dataset.detectedCount} detected / ${state.objPoseMapping.dataset.failedCount} failed`)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    console.error("OBJ pose calibration failed", error)
+    console.error("OBJ pose dataset generation failed", error)
     state.objPoseCalibration = {
       ...state.objPoseCalibration,
       status: "error",
@@ -2607,7 +2694,7 @@ async function startObjPoseCalibration() {
       elapsedMs: performance.now() - startedAtMs,
       errorMessage: message,
     }
-    addLog(`OBJ解析でエラーが発生しました: ${message}`)
+    addLog(`p,Pデータ生成でエラーが発生しました: ${message}`)
   } finally {
     renderAll()
   }
@@ -2621,6 +2708,49 @@ function evaluateObjPoseCalibrationCandidate(
     evaluateObjPoseCalibrationCandidateOnPose(detector, candidatePoint, pose),
   )
   return buildObjPoseCalibrationCandidate(candidatePoint, poseResults)
+}
+
+function getCurrentObjPoseSamplingPreset(): ObjPoseSamplingPreset {
+  return OBJ_POSE_SAMPLING_PRESETS[state.objPoseMapping.poseSamplingPreset]
+}
+
+function createObjPoseSamplingPoses(preset: ObjPoseSamplingPreset): ObjPoseCalibrationPose[] {
+  const yawValues = createSteppedValues(preset.yaw.min, preset.yaw.max, preset.yaw.step)
+  const pitchValues = createSteppedValues(preset.pitch.min, preset.pitch.max, preset.pitch.step)
+  const rollValues = createSteppedValues(preset.roll.min, preset.roll.max, preset.roll.step)
+  const poses: ObjPoseCalibrationPose[] = []
+
+  yawValues.forEach((yaw) => {
+    pitchValues.forEach((pitch) => {
+      rollValues.forEach((roll) => {
+        const sampleIndex = poses.length + 1
+        poses.push({
+          id: `pose_${String(sampleIndex).padStart(6, "0")}`,
+          label: `yaw ${formatNumber(yaw)} / pitch ${formatNumber(pitch)} / roll ${formatNumber(roll)}`,
+          yawDeg: yaw,
+          pitchDeg: pitch,
+          rollDeg: roll,
+        })
+      })
+    })
+  })
+
+  return poses
+}
+
+function getFixedObjPoseRenderSettings(): ObjPoseCalibrationCandidatePoint {
+  return {
+    rotationCenter: {
+      x: state.objPoseSync.rotationCenterX,
+      y: state.objPoseSync.rotationCenterY,
+      z: state.objPoseSync.rotationCenterZ,
+    },
+    renderPoseOffset: {
+      yawDeg: 0,
+      pitchDeg: 0,
+      rollDeg: 0,
+    },
+  }
 }
 
 function evaluateObjPoseCalibrationCandidateOnPose(
@@ -2678,24 +2808,15 @@ function evaluateObjPoseCalibrationCandidateOnPose(
     if (detection.status !== "detected" || !hasFullPose(returnedPose)) {
       return {
         ...baseResult,
-        returnedPose: roundPoseForState(returnedPose),
+        returnedPose: clonePose(returnedPose),
         detectMs,
         errorMessage: detection.errorMessage ?? detection.status,
       }
     }
 
-    const yawError = Math.abs(expectedPoseForComparison.yaw - returnedPose.yaw!)
-    const pitchError = Math.abs(expectedPoseForComparison.pitch - returnedPose.pitch!)
-    const rollError = Math.abs(expectedPoseForComparison.roll - returnedPose.roll!)
-    const poseError = yawError + pitchError + rollError
-
     return {
       ...baseResult,
-      returnedPose: roundPoseForState(returnedPose),
-      poseError: roundForState(poseError),
-      yawError: roundForState(yawError),
-      pitchError: roundForState(pitchError),
-      rollError: roundForState(rollError),
+      returnedPose: clonePose(returnedPose),
       detected: true,
       detectMs,
     }
@@ -2748,6 +2869,84 @@ function buildObjPoseCalibrationCandidate(
     poseResultsPreview: poseResults.map(roundObjPoseCalibrationPoseResult),
     detectMsTotal: roundForState(sumNumbers(poseResults.map((result) => result.detectMs))),
     errorMessage: failedPoseCount > 0 ? `${failedPoseCount}件のpose評価に失敗しました。` : null,
+  }
+}
+
+function updateObjPoseMappingGenerationProgress(
+  result: ObjPoseCalibrationPoseResult,
+  sampleNumber: number,
+  totalSampleCount: number,
+  startedAtMs: number,
+  rotationCenter: ObjVertex,
+) {
+  appendObjPoseMappingResult(result, sampleNumber, rotationCenter)
+  const elapsedMs = performance.now() - startedAtMs
+  const averageSampleMs = elapsedMs / Math.max(1, sampleNumber)
+  const remainingSampleCount = Math.max(0, totalSampleCount - sampleNumber)
+
+  state.objPoseCalibration = {
+    ...state.objPoseCalibration,
+    evaluatedPoseCount: sampleNumber,
+    failedPoseEvaluationCount:
+      state.objPoseMapping.dataset.failedCount,
+    elapsedMs,
+    estimatedRemainingMs: averageSampleMs * remainingSampleCount,
+  }
+}
+
+function appendObjPoseMappingResult(result: ObjPoseCalibrationPoseResult, sampleNumber: number, rotationCenter: ObjVertex) {
+  const sample = createObjPoseMappingSampleFromResult(result, sampleNumber, rotationCenter)
+  objPoseMappingDatasetSamples = [
+    ...objPoseMappingDatasetSamples,
+    sample,
+  ]
+  updateObjPoseMappingDatasetSummary()
+}
+
+function createObjPoseMappingSampleFromResult(
+  result: ObjPoseCalibrationPoseResult,
+  sampleNumber: number,
+  rotationCenter: ObjVertex,
+): ObjPoseMappingSample {
+  const sampleId = `sample_${String(sampleNumber).padStart(6, "0")}`
+  return {
+    sampleId,
+    candidateId: "fixed_render_settings",
+    poseId: result.poseId,
+    poseLabel: result.poseLabel,
+    p: {
+      yaw: result.renderPose.yaw,
+      pitch: result.renderPose.pitch,
+      roll: result.renderPose.roll,
+    },
+    P: clonePose(result.returnedPose),
+    auxiliary: {
+      basePose: {
+        yaw: result.basePose.yaw,
+        pitch: result.basePose.pitch,
+        roll: result.basePose.roll,
+      },
+      renderPoseOffset: {
+        yawDeg: 0,
+        pitchDeg: 0,
+        rollDeg: 0,
+      },
+      rotationCenter: { ...rotationCenter },
+      expectedPoseForComparison: {
+        yaw: result.expectedPoseForComparison.yaw,
+        pitch: result.expectedPoseForComparison.pitch,
+        roll: result.expectedPoseForComparison.roll,
+      },
+    },
+    errors: {
+      poseError: null,
+      yawError: null,
+      pitchError: null,
+      rollError: null,
+    },
+    detected: result.detected,
+    detectMs: result.detectMs,
+    errorMessage: result.errorMessage,
   }
 }
 
@@ -2909,9 +3108,13 @@ function createObjPoseCalibrationCandidatePoints(): ObjPoseCalibrationCandidateP
 }
 
 function resetObjPoseMappingDataset() {
+  const poseSamplingPreset = state.objPoseMapping.poseSamplingPreset
   objPoseMappingDatasetSamples = []
   objPoseMappingDataset = null
-  state.objPoseMapping = createDefaultObjPoseMappingState()
+  state.objPoseMapping = {
+    ...createDefaultObjPoseMappingState(),
+    poseSamplingPreset,
+  }
 }
 
 function appendObjPoseMappingSamples(candidate: ObjPoseCalibrationCandidate, candidateNumber: number) {
@@ -2941,7 +3144,7 @@ function createObjPoseMappingSample(
       pitch: roundForState(result.renderPose.pitch) ?? 0,
       roll: roundForState(result.renderPose.roll) ?? 0,
     },
-    P: roundPoseForState(result.returnedPose),
+    P: clonePose(result.returnedPose),
     auxiliary: {
       basePose: {
         yaw: roundForState(result.basePose.yaw) ?? 0,
@@ -2985,33 +3188,57 @@ function updateObjPoseMappingDatasetSummary() {
   }
 }
 
-function buildObjPoseMappingDataset(samples: ObjPoseMappingSample[]): ObjPoseMappingDataset {
+function buildObjPoseMappingDataset(samples: ObjPoseMappingSample[]): ObjPoseMappingDatasetV2 {
+  const detectedSamples = samples.filter((sample) => sample.detected && hasFullPose(sample.P))
+  const failedSamples = samples.filter((sample) => !sample.detected || !hasFullPose(sample.P))
+  const rotationCenter = getFixedObjPoseRenderSettings().rotationCenter
+
   return {
-    schemaVersion: "obj_pose_mapping_dataset_v1",
+    schemaVersion: "obj_pose_mapping_dataset_v2",
     createdAt: new Date().toISOString(),
-    tool: {
-      id: "ideal-obj-render-warp-lab",
-      purpose: "Collect p=renderPose and P=MediaPipe returnedPose mappings for OBJ pose estimation.",
-    },
-    objSummary: {
-      fileName: state.objFile.fileName,
+    source: {
+      objFileName: state.objFile.fileName,
       vertexCount: state.objFile.loaded ? state.objSummary.vertexCount : null,
       faceCount: state.objFile.loaded ? state.objSummary.faceCount : null,
-      bounds: state.objSummary.bounds,
     },
-    primaryVariables: {
-      inputCandidate: "p = renderPose",
-      observedOutput: "P = MediaPipe returnedPose",
-      intendedInverseFunction: "p = g(P_camera)",
+    renderSettings: {
+      canvasWidth: renderedIdealCanvas.width,
+      canvasHeight: renderedIdealCanvas.height,
+      rotationCenter: { ...rotationCenter },
+      notes: "rotationCenter is fixed render setting, not an estimated value",
     },
-    comparisonSign: getObjPoseComparisonSignDebug(),
-    searchRange: createObjPoseCalibrationSearchRange(),
-    counts: {
+    mediapipeSettings: {
+      runningMode: "IMAGE",
+      numFaces: 1,
+      outputFaceBlendshapes: false,
+      outputFacialTransformationMatrixes: true,
+    },
+    poseSampling: getCurrentObjPoseSamplingPreset(),
+    summary: {
       sampleCount: samples.length,
-      detectedCount: samples.filter((sample) => sample.detected).length,
-      failedCount: samples.filter((sample) => !sample.detected).length,
+      detectedCount: detectedSamples.length,
+      failedCount: failedSamples.length,
     },
-    samples: samples.map(cloneObjPoseMappingSample),
+    samples: detectedSamples.map((sample) => ({
+      sampleId: sample.sampleId,
+      poseId: sample.poseId,
+      p: { ...sample.p },
+      P: {
+        yaw: sample.P.yaw!,
+        pitch: sample.P.pitch!,
+        roll: sample.P.roll!,
+      },
+      detected: true,
+      detectMs: sample.detectMs,
+    })),
+    failedSamples: failedSamples.map((sample) => ({
+      sampleId: sample.sampleId,
+      poseId: sample.poseId,
+      p: { ...sample.p },
+      detected: false,
+      detectMs: sample.detectMs,
+      failureReason: sample.errorMessage ?? "unknown",
+    })),
   }
 }
 
@@ -3031,25 +3258,16 @@ function cloneObjPoseMappingSample(sample: ObjPoseMappingSample): ObjPoseMapping
 }
 
 function buildAndStoreObjPoseMappingStatistics(): ObjPoseMappingStatistics | null {
-  const dataset = ensureObjPoseMappingDataset()
-  if (!dataset) {
-    const message = "OBJ解析結果がありません。先にOBJ解析を実行してください。"
-    setObjPoseMappingStatusMessage(message)
-    addLog(message)
-    return null
-  }
-
-  const statistics = buildObjPoseMappingStatistics(dataset)
-  state.objPoseMapping = {
-    ...state.objPoseMapping,
-    statistics,
-    statusMessage: "統計要約を作成しました。",
-  }
-  addLog("p,P dataset の統計要約を作成しました。")
-  return statistics
+  const message = "統計要約は廃止しました。Colab側で解析してください。"
+  setObjPoseMappingStatusMessage(message)
+  addLog(message)
+  return null
 }
 
-function ensureObjPoseMappingDataset(): ObjPoseMappingDataset | null {
+function ensureObjPoseMappingDataset(): ObjPoseMappingDatasetV2 | null {
+  if (objPoseMappingDataset) {
+    return objPoseMappingDataset
+  }
   if (objPoseMappingDatasetSamples.length === 0) {
     return null
   }
@@ -4391,6 +4609,8 @@ function renderControls() {
     '[data-action="obj-pose-calibration-start"]',
     poseSearchRunning || !canRenderRenderedIdealGeometry(),
   )
+  getElement<HTMLSelectElement>('[data-control="obj-pose-sampling-preset"]').value = state.objPoseMapping.poseSamplingPreset
+  setDisabled('[data-control="obj-pose-sampling-preset"]', poseSearchRunning || isObjPoseCalibrationRunning())
   objFileInput.disabled = poseSearchRunning
   liveFileInput.disabled = poseSearchRunning
   setDisabled('[data-action="live-play"]', poseSearchRunning || !isVideoFileInput() || state.liveVideo.playbackStatus === "playing")
@@ -4857,24 +5077,17 @@ function renderRenderedIdealSummaryCard() {
       <div><dt>レンダー理想検出ms</dt><dd>${formatRealtimeNullableNumber(detection.detectMs)}</dd></div>
       <div><dt>レンダー理想ランドマーク数</dt><dd>${formatNullableCount(detection.landmarkCount)}</dd></div>
       <div><dt>レンダー理想drop数</dt><dd>${formatNullableCount(detection.droppedCount)}</dd></div>
-      <div><dt>OBJ解析状態</dt><dd>${calibration.status}</dd></div>
+      <div><dt>p,Pデータ生成状態</dt><dd>${calibration.status}</dd></div>
+      <div><dt>姿勢サンプリング</dt><dd>${state.objPoseMapping.poseSamplingPreset}</dd></div>
       <div><dt>pose数</dt><dd>${formatNullableCount(calibration.poseCount)}</dd></div>
-      <div><dt>候補数</dt><dd>${formatNullableCount(calibration.candidateCount)}</dd></div>
       <div><dt>総評価数</dt><dd>${formatNullableCount(calibration.totalEvaluationCount)}</dd></div>
-      <div><dt>評価済み候補数</dt><dd>${formatNullableCount(calibration.evaluatedCandidateCount)}</dd></div>
       <div><dt>評価済みpose数</dt><dd>${formatNullableCount(calibration.evaluatedPoseCount)}</dd></div>
-      <div><dt>失敗候補数</dt><dd>${formatNullableCount(calibration.failedCandidateCount)}</dd></div>
       <div><dt>失敗pose評価数</dt><dd>${formatNullableCount(calibration.failedPoseEvaluationCount)}</dd></div>
       <div><dt>経過時間ms</dt><dd>${formatRealtimeNullableNumber(calibration.elapsedMs)}</dd></div>
       <div><dt>推定残り時間ms</dt><dd>${formatRealtimeNullableNumber(calibration.estimatedRemainingMs)}</dd></div>
-      <div><dt>best rotationCenter</dt><dd>${escapeHtml(formatObjPoseCalibrationBestRotationCenter())}</dd></div>
-      <div><dt>best score</dt><dd>${formatNullableNumber(calibration.bestCandidate?.score ?? null)}</dd></div>
-      <div><dt>averagePoseError</dt><dd>${formatNullableNumber(calibration.bestCandidate?.averagePoseError ?? null)}</dd></div>
-      <div><dt>maxPoseError</dt><dd>${formatNullableNumber(calibration.bestCandidate?.maxPoseError ?? null)}</dd></div>
       <div><dt>p,P dataset sampleCount</dt><dd>${formatNullableCount(state.objPoseMapping.dataset.sampleCount)}</dd></div>
       <div><dt>p,P dataset detectedCount</dt><dd>${formatNullableCount(state.objPoseMapping.dataset.detectedCount)}</dd></div>
       <div><dt>p,P dataset failedCount</dt><dd>${formatNullableCount(state.objPoseMapping.dataset.failedCount)}</dd></div>
-      <div><dt>statistics status</dt><dd>${state.objPoseMapping.statistics ? "generated" : "not_generated"}</dd></div>
       <div><dt>errorMessage</dt><dd>${escapeHtml(summary.errorMessage ?? "null")}</dd></div>
     </dl>
   `
@@ -5287,7 +5500,6 @@ function renderDebugContent() {
 
 function getSummaryItems(): Array<[string, string]> {
   const objFileStatus = getObjFileStatus()
-  const bestObjPoseCalibrationCandidate = state.objPoseCalibration.bestCandidate
   return [
     ["labName", LAB_NAME],
     ["liveInputSourceType", state.liveInput.sourceType ?? "null"],
@@ -5340,25 +5552,16 @@ function getSummaryItems(): Array<[string, string]> {
     ["renderedIdealErrorCount", formatNullableCount(state.renderedIdeal.detection.errorCount)],
     ["renderedIdealRenderSeq", formatNullableCount(state.renderedIdeal.detection.renderSeq)],
     ["renderedIdealDetectedRenderSeq", formatNullableCount(state.renderedIdeal.detection.detectedRenderSeq)],
-    ["objPoseCalibrationStatus", state.objPoseCalibration.status],
-    ["objPoseCalibrationComparisonYawSign", formatNumber(OBJ_POSE_COMPARISON_SIGN.yaw)],
-    ["objPoseCalibrationComparisonPitchSign", formatNumber(OBJ_POSE_COMPARISON_SIGN.pitch)],
-    ["objPoseCalibrationComparisonRollSign", formatNumber(OBJ_POSE_COMPARISON_SIGN.roll)],
-    ["objPoseCalibrationPoseCount", formatNullableCount(state.objPoseCalibration.poseCount)],
-    ["objPoseCalibrationCandidateCount", formatNullableCount(state.objPoseCalibration.candidateCount)],
-    ["objPoseCalibrationBestPitchOffsetDeg", formatNullableNumber(bestObjPoseCalibrationCandidate?.renderPoseOffset.pitchDeg ?? null)],
-    ["objPoseCalibrationSearchPitchOffsetMin", formatNumber(state.objPoseCalibration.searchRange.pitchOffsetDeg.min)],
-    ["objPoseCalibrationSearchPitchOffsetMax", formatNumber(state.objPoseCalibration.searchRange.pitchOffsetDeg.max)],
-    ["objPoseCalibrationSearchPitchOffsetStep", formatNumber(state.objPoseCalibration.searchRange.pitchOffsetDeg.step)],
-    ["objPoseCalibrationBestRotationCenterX", formatNullableNumber(bestObjPoseCalibrationCandidate?.rotationCenterX ?? null)],
-    ["objPoseCalibrationBestRotationCenterY", formatNullableNumber(bestObjPoseCalibrationCandidate?.rotationCenterY ?? null)],
-    ["objPoseCalibrationBestRotationCenterZ", formatNullableNumber(bestObjPoseCalibrationCandidate?.rotationCenterZ ?? null)],
-    ["objPoseCalibrationBestScore", formatNullableNumber(bestObjPoseCalibrationCandidate?.score ?? null)],
-    ["objPoseCalibrationAveragePoseError", formatNullableNumber(bestObjPoseCalibrationCandidate?.averagePoseError ?? null)],
-    ["objPoseCalibrationMaxPoseError", formatNullableNumber(bestObjPoseCalibrationCandidate?.maxPoseError ?? null)],
-    ["objPoseCalibrationPoseWiseBestCount", formatNullableCount(state.objPoseCalibration.poseWiseBest.length)],
-    ["objPoseCalibrationPoseWiseGroupSummaryCount", formatNullableCount(state.objPoseCalibration.poseWiseGroupSummary.length)],
-    ["objPoseCalibrationPosePairSummaryCount", formatNullableCount(state.objPoseCalibration.posePairSummary.length)],
+    ["objPoseDatasetGenerationStatus", state.objPoseCalibration.status],
+    ["objPoseSamplingPreset", state.objPoseMapping.poseSamplingPreset],
+    ["objPoseSamplingRange", formatObjPoseSamplingPreset(getCurrentObjPoseSamplingPreset())],
+    ["objPoseDatasetPoseCount", formatNullableCount(state.objPoseCalibration.poseCount)],
+    ["objPoseDatasetTotalEvaluationCount", formatNullableCount(state.objPoseCalibration.totalEvaluationCount)],
+    ["objPoseDatasetEvaluatedPoseCount", formatNullableCount(state.objPoseCalibration.evaluatedPoseCount)],
+    ["objPoseDatasetFailedPoseCount", formatNullableCount(state.objPoseCalibration.failedPoseEvaluationCount)],
+    ["objPoseDatasetSampleCount", formatNullableCount(state.objPoseMapping.dataset.sampleCount)],
+    ["objPoseDatasetDetectedCount", formatNullableCount(state.objPoseMapping.dataset.detectedCount)],
+    ["objPoseDatasetFailedCount", formatNullableCount(state.objPoseMapping.dataset.failedCount)],
     ["realtimeStatus", state.realtimeDebug.status],
     ["realtimeTargetFps", formatNumber(state.realtimeDebug.targetFps)],
     ["realtimeEffectiveFps", formatRealtimeNullableNumber(state.realtimeDebug.effectiveFps)],
@@ -5499,52 +5702,26 @@ function getRenderedIdealItems(): Array<[string, string]> {
 
 function getObjPoseCalibrationItems(): Array<[string, string]> {
   const calibration = state.objPoseCalibration
-  const best = calibration.bestCandidate
   const mapping = state.objPoseMapping
-  const statistics = mapping.statistics
   return [
     ["状態", calibration.status],
-    ["比較用pose符号", formatObjPoseComparisonSign()],
-    ["比較ルール", "OBJ描画poseとMediaPipe返却poseの符号規約が異なるため、score計算では基準poseの yaw / pitch / roll を反転して比較します。"],
-    ["renderPoseOffset", "OBJを描画するときだけ加える姿勢補正です。score計算で使う expected pose には加えません。今回は pitchOffsetDeg のみ探索します。"],
+    ["役割", "OBJを複数のrenderPose pでレンダーし、MediaPipe returnedPose Pを取得してp,P dataset JSONを生成します。"],
     ["関数推定の主データ", "p=renderPose, P=returnedPose"],
-    ["pitchOffsetDegの扱い", "pitchOffsetDeg は補助情報です。関数の主出力にはしません。"],
-    ["探索範囲 pitchOffsetDeg", formatPitchOffsetSearchRange()],
+    ["推定・統計", "ラボ側では実行しません。Colab側で解析します。"],
+    ["姿勢サンプリング", mapping.poseSamplingPreset],
+    ["姿勢サンプリング範囲", formatObjPoseSamplingPreset(getCurrentObjPoseSamplingPreset())],
+    ["固定rotationCenter", formatPoint(getFixedObjPoseRenderSettings().rotationCenter)],
     ["pose数", formatNullableCount(calibration.poseCount)],
-    ["候補数", formatNullableCount(calibration.candidateCount)],
     ["総評価数", formatNullableCount(calibration.totalEvaluationCount)],
-    ["評価済み候補数", formatNullableCount(calibration.evaluatedCandidateCount)],
     ["評価済みpose数", formatNullableCount(calibration.evaluatedPoseCount)],
-    ["失敗候補数", formatNullableCount(calibration.failedCandidateCount)],
     ["失敗pose評価数", formatNullableCount(calibration.failedPoseEvaluationCount)],
     ["経過時間ms", formatRealtimeNullableNumber(calibration.elapsedMs)],
     ["推定残り時間ms", formatRealtimeNullableNumber(calibration.estimatedRemainingMs)],
-    ["best rotationCenterX", formatNullableNumber(best?.rotationCenterX ?? null)],
-    ["best rotationCenterY", formatNullableNumber(best?.rotationCenterY ?? null)],
-    ["best rotationCenterZ", formatNullableNumber(best?.rotationCenterZ ?? null)],
-    ["best renderPitchOffsetDeg", formatNullableNumber(best?.renderPoseOffset.pitchDeg ?? null)],
-    ["best score", formatNullableNumber(best?.score ?? null)],
-    ["averagePoseError", formatNullableNumber(best?.averagePoseError ?? null)],
-    ["maxPoseError", formatNullableNumber(best?.maxPoseError ?? null)],
-    ["yawErrorAvg / pitchErrorAvg / rollErrorAvg", formatPoseErrorTriple(best?.yawErrorAvg ?? null, best?.pitchErrorAvg ?? null, best?.rollErrorAvg ?? null)],
-    ["yawErrorMax / pitchErrorMax / rollErrorMax", formatPoseErrorTriple(best?.yawErrorMax ?? null, best?.pitchErrorMax ?? null, best?.rollErrorMax ?? null)],
-    ["failedPoseCount", formatNullableCount(best?.failedPoseCount ?? null)],
-    ["detectMsTotal", formatRealtimeNullableNumber(best?.detectMsTotal ?? null)],
-    ["top candidates", formatObjPoseCalibrationTopCandidatesText()],
-    ["best poseResultsPreview", formatObjPoseCalibrationPoseResultsText(best?.poseResultsPreview ?? [])],
-    ["pose別best", formatObjPoseWiseBestText()],
-    ["group summary", formatObjPoseWiseGroupSummaryText()],
-    ["pair summary", formatObjPosePairSummaryText()],
     ["p,P dataset sampleCount", formatNullableCount(mapping.dataset.sampleCount)],
     ["p,P dataset detectedCount", formatNullableCount(mapping.dataset.detectedCount)],
     ["p,P dataset failedCount", formatNullableCount(mapping.dataset.failedCount)],
     ["p,P dataset lastGeneratedAt", mapping.dataset.lastGeneratedAt ?? "未生成"],
-    ["statistics status", statistics ? "generated" : "not_generated"],
-    ["statistics sampleCount", formatNullableCount(statistics?.sampleCount ?? null)],
-    ["statistics global poseError mean / max", statistics?.globalErrorSummary.poseError ? `${formatNumber(statistics.globalErrorSummary.poseError.mean)} / ${formatNumber(statistics.globalErrorSummary.poseError.max)}` : "null"],
-    ["statistics topSamples count", formatNullableCount(statistics?.topSamples.length ?? null)],
-    ["statistics representativeSamples count", formatNullableCount(statistics?.representativeSamples.length ?? null)],
-    ["dataset / statistics message", mapping.statusMessage ?? "null"],
+    ["dataset message", mapping.statusMessage ?? "null"],
     ["errorMessage", calibration.errorMessage ?? "null"],
   ]
 }
@@ -5675,14 +5852,7 @@ function getRawState() {
       renderedIdeal478Count: state.renderedIdeal.detection.landmarkCount,
       renderedIdealPose: roundPoseForState(state.renderedIdeal.detection.pose),
     },
-    objPoseCalibrationComparisonSign: getObjPoseComparisonSignDebug(),
-    objPoseCalibrationSearchRange: state.objPoseCalibration.searchRange,
-    objPoseCalibrationState: getObjPoseCalibrationRawSummary(),
-    objPoseCalibrationTopCandidates: state.objPoseCalibration.topCandidates.map(roundObjPoseCalibrationCandidate),
-    objPoseCalibrationPoseSet: OBJ_POSE_CALIBRATION_POSES.map((pose) => ({ ...pose })),
-    objPoseCalibrationPoseWiseBest: state.objPoseCalibration.poseWiseBest.map(roundObjPoseWiseBest),
-    objPoseCalibrationPoseWiseGroupSummary: state.objPoseCalibration.poseWiseGroupSummary,
-    objPoseCalibrationPosePairSummary: state.objPoseCalibration.posePairSummary,
+    objPoseDatasetGenerationState: getObjPoseCalibrationRawSummary(),
     objPoseMapping: getObjPoseMappingDebugExport(),
     warpMesh: {
       sourceVerticesStatus: "not_ready",
@@ -5933,6 +6103,7 @@ function createDefaultObjPoseMappingState(): ObjPoseMappingState {
       failedCount: 0,
       lastGeneratedAt: null,
     },
+    poseSamplingPreset: "standard",
     statistics: null,
     statusMessage: null,
   }
@@ -6523,15 +6694,9 @@ async function exportDebug() {
   const json = JSON.stringify(debugExport, null, 2)
   const status = getElement<HTMLElement>("[data-debug-export-status]")
 
-  try {
-    await navigator.clipboard.writeText(json)
-    status.textContent = "デバッグJSONをクリップボードにコピーしました。"
-    addLog("デバッグJSONをクリップボードにコピーしました。")
-  } catch {
-    downloadTextFile("ideal-obj-render-warp-lab-debug-export.json", json, "application/json;charset=utf-8")
-    status.textContent = "クリップボードにコピーできなかったため、デバッグJSONをダウンロードしました。"
-    addLog("デバッグJSONをダウンロードしました。")
-  }
+  downloadTextFile("ideal-obj-render-warp-lab-debug-export.json", json, "application/json;charset=utf-8")
+  status.textContent = "デバッグJSONをダウンロードしました。"
+  addLog("デバッグJSONをダウンロードしました。")
 
   renderAll()
 }
@@ -6540,7 +6705,7 @@ async function exportObjPoseMappingDataset() {
   const dataset = ensureObjPoseMappingDataset()
   const status = getElement<HTMLElement>("[data-debug-export-status]")
   if (!dataset) {
-    const message = "OBJ解析結果がありません。先にOBJ解析を実行してください。"
+    const message = "p,Pデータがありません。先にp,Pデータ生成を実行してください。"
     setObjPoseMappingStatusMessage(message)
     status.textContent = message
     addLog(message)
@@ -6550,51 +6715,20 @@ async function exportObjPoseMappingDataset() {
 
   const json = JSON.stringify(dataset, null, 2)
   const fileName = `obj-pose-mapping-dataset-${formatTimestampForFileName(dataset.createdAt)}.json`
-  try {
-    await navigator.clipboard.writeText(json)
-    status.textContent = "p,P dataset JSONをクリップボードにコピーしました。"
-    addLog("p,P dataset JSONをクリップボードにコピーしました。")
-  } catch {
-    downloadTextFile(fileName, json, "application/json;charset=utf-8")
-    status.textContent = "クリップボードにコピーできなかったため、p,P dataset JSONをダウンロードしました。"
-    addLog("p,P dataset JSONをダウンロードしました。")
-  }
+  downloadTextFile(fileName, json, "application/json;charset=utf-8")
+  status.textContent = "p,P dataset JSONをダウンロードしました。"
+  addLog("p,P dataset JSONをダウンロードしました。")
 
   setObjPoseMappingStatusMessage(status.textContent ?? "")
   renderAll()
 }
 
 async function exportObjPoseMappingCompactReport() {
-  const dataset = ensureObjPoseMappingDataset()
   const status = getElement<HTMLElement>("[data-debug-export-status]")
-  if (!dataset) {
-    const message = "OBJ解析結果がありません。先にOBJ解析を実行してください。"
-    setObjPoseMappingStatusMessage(message)
-    status.textContent = message
-    addLog(message)
-    renderAll()
-    return
-  }
-
-  const statistics = state.objPoseMapping.statistics ?? buildObjPoseMappingStatistics(dataset)
-  state.objPoseMapping = {
-    ...state.objPoseMapping,
-    statistics,
-  }
-  const report = buildObjPoseMappingCompactReport(dataset, statistics)
-  const fileName = `obj-pose-mapping-compact-report-${formatTimestampForFileName(statistics.createdAt)}.md`
-
-  try {
-    await navigator.clipboard.writeText(report)
-    status.textContent = "compact reportをクリップボードにコピーしました。"
-    addLog("compact reportをクリップボードにコピーしました。")
-  } catch {
-    downloadTextFile(fileName, report, "text/markdown;charset=utf-8")
-    status.textContent = "クリップボードにコピーできなかったため、compact reportをダウンロードしました。"
-    addLog("compact reportをダウンロードしました。")
-  }
-
-  setObjPoseMappingStatusMessage(status.textContent ?? "")
+  const message = "compact report は廃止しました。p,P Dataset JSONをColab側で解析してください。"
+  status.textContent = message
+  setObjPoseMappingStatusMessage(message)
+  addLog(message)
   renderAll()
 }
 
@@ -6733,7 +6867,7 @@ function buildDebugExport() {
       bottleneck: getRealtimeBottleneck(),
     },
     renderedIdealDetection: getRenderedIdealDetectionDebugExport(),
-    objPoseCalibration: getObjPoseCalibrationDebugExport(),
+    objPoseDatasetGeneration: getObjPoseCalibrationDebugExport(),
     objPoseMapping: getObjPoseMappingDebugExport(),
     mediaPipeOptions: {
       currentLiveOptions: getCurrentLiveMediaPipeOptionsDebug(),
@@ -6904,29 +7038,20 @@ function getRenderedIdealDetectionRawSummary() {
 function getObjPoseCalibrationRawSummary() {
   return {
     status: state.objPoseCalibration.status,
-    comparisonSign: getObjPoseComparisonSignDebug(),
-    searchRange: state.objPoseCalibration.searchRange,
+    poseSamplingPreset: state.objPoseMapping.poseSamplingPreset,
+    poseSampling: getCurrentObjPoseSamplingPreset(),
+    fixedRotationCenter: getFixedObjPoseRenderSettings().rotationCenter,
     startedAt: state.objPoseCalibration.startedAt,
     completedAt: state.objPoseCalibration.completedAt,
     elapsedMs: roundForState(state.objPoseCalibration.elapsedMs),
     estimatedRemainingMs: roundForState(state.objPoseCalibration.estimatedRemainingMs),
     poseCount: state.objPoseCalibration.poseCount,
-    candidateCount: state.objPoseCalibration.candidateCount,
     totalEvaluationCount: state.objPoseCalibration.totalEvaluationCount,
-    evaluatedCandidateCount: state.objPoseCalibration.evaluatedCandidateCount,
     evaluatedPoseCount: state.objPoseCalibration.evaluatedPoseCount,
-    failedCandidateCount: state.objPoseCalibration.failedCandidateCount,
     failedPoseEvaluationCount: state.objPoseCalibration.failedPoseEvaluationCount,
-    currentBestCandidate: state.objPoseCalibration.currentBestCandidate
-      ? roundObjPoseCalibrationCandidate(state.objPoseCalibration.currentBestCandidate)
-      : null,
-    bestCandidate: state.objPoseCalibration.bestCandidate
-      ? roundObjPoseCalibrationCandidate(state.objPoseCalibration.bestCandidate)
-      : null,
-    topCandidates: state.objPoseCalibration.topCandidates.map(roundObjPoseCalibrationCandidate),
-    poseWiseBest: state.objPoseCalibration.poseWiseBest.map(roundObjPoseWiseBest),
-    poseWiseGroupSummary: state.objPoseCalibration.poseWiseGroupSummary,
-    posePairSummary: state.objPoseCalibration.posePairSummary,
+    sampleCount: state.objPoseMapping.dataset.sampleCount,
+    detectedCount: state.objPoseMapping.dataset.detectedCount,
+    failedCount: state.objPoseMapping.dataset.failedCount,
     errorMessage: state.objPoseCalibration.errorMessage,
   }
 }
@@ -7006,6 +7131,10 @@ function isDebugTab(value: string | undefined): value is DebugTab {
 
 function isObjPreviewMode(value: string): value is ObjPreviewMode {
   return value === "points" || value === "wireframe" || value === "points_wireframe"
+}
+
+function isObjPoseSamplingPresetName(value: string): value is ObjPoseSamplingPresetName {
+  return value === "quick" || value === "standard" || value === "dense"
 }
 
 function isRealtimeMode(value: string): value is RealtimeMode {
@@ -7251,6 +7380,14 @@ function formatObjPoseMappingSearchRange(range: ObjPoseCalibrationSearchRange) {
     `rotationCenterY min=${formatNumber(range.rotationCenterY.min)} max=${formatNumber(range.rotationCenterY.max)} step=${formatNumber(range.rotationCenterY.step)}`,
     `rotationCenterZ min=${formatNumber(range.rotationCenterZ.min)} max=${formatNumber(range.rotationCenterZ.max)} step=${formatNumber(range.rotationCenterZ.step)}`,
     `pitchOffsetDeg min=${formatNumber(range.pitchOffsetDeg.min)} max=${formatNumber(range.pitchOffsetDeg.max)} step=${formatNumber(range.pitchOffsetDeg.step)}`,
+  ].join(" / ")
+}
+
+function formatObjPoseSamplingPreset(preset: ObjPoseSamplingPreset) {
+  return [
+    `yaw min=${formatNumber(preset.yaw.min)} max=${formatNumber(preset.yaw.max)} step=${formatNumber(preset.yaw.step)}`,
+    `pitch min=${formatNumber(preset.pitch.min)} max=${formatNumber(preset.pitch.max)} step=${formatNumber(preset.pitch.step)}`,
+    `roll min=${formatNumber(preset.roll.min)} max=${formatNumber(preset.roll.max)} step=${formatNumber(preset.roll.step)}`,
   ].join(" / ")
 }
 
@@ -7504,7 +7641,8 @@ function getDebugExportPreview() {
     mediaPipeOptions: debugExport.mediaPipeOptions,
     realtime: debugExport.realtime,
     renderedIdealDetection: debugExport.renderedIdealDetection,
-    objPoseCalibration: debugExport.objPoseCalibration,
+    objPoseDatasetGeneration: debugExport.objPoseDatasetGeneration,
+    objPoseMapping: debugExport.objPoseMapping,
     notes: debugExport.notes,
   }
 }
@@ -7563,55 +7701,45 @@ function getObjPoseComparisonSignDebug() {
 function getObjPoseCalibrationDebugExport() {
   return {
     status: state.objPoseCalibration.status,
-    comparisonSign: getObjPoseComparisonSignDebug(),
-    searchRange: state.objPoseCalibration.searchRange,
+    poseSamplingPreset: state.objPoseMapping.poseSamplingPreset,
+    poseSampling: getCurrentObjPoseSamplingPreset(),
+    fixedRotationCenter: getFixedObjPoseRenderSettings().rotationCenter,
     poseCount: state.objPoseCalibration.poseCount,
-    candidateCount: state.objPoseCalibration.candidateCount,
     totalEvaluationCount: state.objPoseCalibration.totalEvaluationCount,
-    evaluatedCandidateCount: state.objPoseCalibration.evaluatedCandidateCount,
     evaluatedPoseCount: state.objPoseCalibration.evaluatedPoseCount,
-    failedCandidateCount: state.objPoseCalibration.failedCandidateCount,
     failedPoseEvaluationCount: state.objPoseCalibration.failedPoseEvaluationCount,
     elapsedMs: roundForState(state.objPoseCalibration.elapsedMs),
     estimatedRemainingMs: roundForState(state.objPoseCalibration.estimatedRemainingMs),
-    bestCandidate: state.objPoseCalibration.bestCandidate
-      ? roundObjPoseCalibrationCandidateForExport(state.objPoseCalibration.bestCandidate)
-      : null,
-    topCandidates: state.objPoseCalibration.topCandidates.map(roundObjPoseCalibrationCandidateForExport),
-    poseWiseBest: state.objPoseCalibration.poseWiseBest.map(roundObjPoseWiseBest),
-    poseWiseGroupSummary: state.objPoseCalibration.poseWiseGroupSummary,
-    posePairSummary: state.objPoseCalibration.posePairSummary,
     errorMessage: state.objPoseCalibration.errorMessage,
   }
 }
 
 function getObjPoseMappingDebugExport() {
-  const statistics = state.objPoseMapping.statistics
+  const dataset = objPoseMappingDataset
   return {
     dataset: {
-      schemaVersion: "obj_pose_mapping_dataset_v1",
+      schemaVersion: "obj_pose_mapping_dataset_v2",
       sampleCount: state.objPoseMapping.dataset.sampleCount,
       detectedCount: state.objPoseMapping.dataset.detectedCount,
       failedCount: state.objPoseMapping.dataset.failedCount,
       lastGeneratedAt: state.objPoseMapping.dataset.lastGeneratedAt,
+      poseSamplingPreset: state.objPoseMapping.poseSamplingPreset,
+      lastGeneratedDatasetMetadata: dataset
+        ? {
+            createdAt: dataset.createdAt,
+            source: dataset.source,
+            renderSettings: dataset.renderSettings,
+            mediapipeSettings: dataset.mediapipeSettings,
+            poseSampling: dataset.poseSampling,
+            summary: dataset.summary,
+          }
+        : null,
       primaryVariables: {
-        inputCandidate: "p = renderPose",
-        observedOutput: "P = MediaPipe returnedPose",
+        input: "P_camera yaw / pitch / roll",
+        output: "p renderPose yaw / pitch / roll",
         intendedInverseFunction: "p = g(P_camera)",
       },
     },
-    statistics: statistics
-      ? {
-          schemaVersion: statistics.schemaVersion,
-          createdAt: statistics.createdAt,
-          sampleCount: statistics.sampleCount,
-          detectedCount: statistics.detectedCount,
-          failedCount: statistics.failedCount,
-          globalErrorSummary: statistics.globalErrorSummary,
-          topSamples: statistics.topSamples,
-          representativeSamples: statistics.representativeSamples,
-        }
-      : null,
     statusMessage: state.objPoseMapping.statusMessage,
   }
 }
@@ -7779,6 +7907,14 @@ function roundPoseForState(pose: ReferencePose): ReferencePose {
     yaw: roundForState(pose.yaw),
     pitch: roundForState(pose.pitch),
     roll: roundForState(pose.roll),
+  }
+}
+
+function clonePose(pose: ReferencePose): ReferencePose {
+  return {
+    yaw: pose.yaw,
+    pitch: pose.pitch,
+    roll: pose.roll,
   }
 }
 
