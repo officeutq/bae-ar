@@ -308,7 +308,12 @@ type ObjPoseCalibrationPose = {
 type ObjPoseCalibrationPoseResult = {
   poseId: string
   poseLabel: string
-  expectedPose: {
+  renderPose: {
+    yaw: number
+    pitch: number
+    roll: number
+  }
+  expectedPoseForComparison: {
     yaw: number
     pitch: number
     roll: number
@@ -597,6 +602,11 @@ const OBJ_POSE_CALIBRATION_RANGE = {
   z: { min: -0.4, max: 0.1, step: 0.05 },
 } as const
 const OBJ_POSE_CALIBRATION_TOP_CANDIDATE_COUNT = 10
+const OBJ_POSE_COMPARISON_SIGN = {
+  yaw: -1,
+  pitch: -1,
+  roll: -1,
+} as const
 const OBJ_POSE_CALIBRATION_POSES: ObjPoseCalibrationPose[] = [
   { id: "front", label: "正面", yawDeg: 0, pitchDeg: 0, rollDeg: 0 },
   { id: "yaw_negative_15", label: "yaw負方向 15度", yawDeg: -15, pitchDeg: 0, rollDeg: 0 },
@@ -2234,15 +2244,17 @@ function evaluateObjPoseCalibrationCandidateOnPose(
   rotationCenter: ObjVertex,
   pose: ObjPoseCalibrationPose,
 ): ObjPoseCalibrationPoseResult {
-  const expectedPose = {
+  const renderPose = {
     yaw: pose.yawDeg,
     pitch: pose.pitchDeg,
     roll: pose.rollDeg,
   }
+  const expectedPoseForComparison = applyObjPoseComparisonSign(renderPose)
   const baseResult: ObjPoseCalibrationPoseResult = {
     poseId: pose.id,
     poseLabel: pose.label,
-    expectedPose,
+    renderPose,
+    expectedPoseForComparison,
     returnedPose: {
       yaw: null,
       pitch: null,
@@ -2258,7 +2270,7 @@ function evaluateObjPoseCalibrationCandidateOnPose(
   }
 
   try {
-    const renderSummary = renderRenderedIdealCanvasTo(renderedIdealCanvas, rotationCenter, expectedPose)
+    const renderSummary = renderRenderedIdealCanvasTo(renderedIdealCanvas, rotationCenter, renderPose)
     if (renderSummary.status !== "rendered") {
       return {
         ...baseResult,
@@ -2281,9 +2293,9 @@ function evaluateObjPoseCalibrationCandidateOnPose(
       }
     }
 
-    const yawError = Math.abs(expectedPose.yaw - returnedPose.yaw!)
-    const pitchError = Math.abs(expectedPose.pitch - returnedPose.pitch!)
-    const rollError = Math.abs(expectedPose.roll - returnedPose.roll!)
+    const yawError = Math.abs(expectedPoseForComparison.yaw - returnedPose.yaw!)
+    const pitchError = Math.abs(expectedPoseForComparison.pitch - returnedPose.pitch!)
+    const rollError = Math.abs(expectedPoseForComparison.roll - returnedPose.roll!)
     const poseError = yawError + pitchError + rollError
 
     return {
@@ -2398,6 +2410,14 @@ function createObjPoseCalibrationCandidatePoints(): ObjVertex[] {
       z,
     })),
   )
+}
+
+function applyObjPoseComparisonSign(pose: { yaw: number; pitch: number; roll: number }) {
+  return {
+    yaw: pose.yaw * OBJ_POSE_COMPARISON_SIGN.yaw,
+    pitch: pose.pitch * OBJ_POSE_COMPARISON_SIGN.pitch,
+    roll: pose.roll * OBJ_POSE_COMPARISON_SIGN.roll,
+  }
 }
 
 function addCurrentPoseSearchFrame() {
@@ -4458,6 +4478,9 @@ function getSummaryItems(): Array<[string, string]> {
     ["renderedIdealRenderSeq", formatNullableCount(state.renderedIdeal.detection.renderSeq)],
     ["renderedIdealDetectedRenderSeq", formatNullableCount(state.renderedIdeal.detection.detectedRenderSeq)],
     ["objPoseCalibrationStatus", state.objPoseCalibration.status],
+    ["objPoseCalibrationComparisonYawSign", formatNumber(OBJ_POSE_COMPARISON_SIGN.yaw)],
+    ["objPoseCalibrationComparisonPitchSign", formatNumber(OBJ_POSE_COMPARISON_SIGN.pitch)],
+    ["objPoseCalibrationComparisonRollSign", formatNumber(OBJ_POSE_COMPARISON_SIGN.roll)],
     ["objPoseCalibrationPoseCount", formatNullableCount(state.objPoseCalibration.poseCount)],
     ["objPoseCalibrationCandidateCount", formatNullableCount(state.objPoseCalibration.candidateCount)],
     ["objPoseCalibrationBestRotationCenterX", formatNullableNumber(bestObjPoseCalibrationCandidate?.rotationCenterX ?? null)],
@@ -4609,6 +4632,8 @@ function getObjPoseCalibrationItems(): Array<[string, string]> {
   const best = calibration.bestCandidate
   return [
     ["状態", calibration.status],
+    ["比較用pose符号", formatObjPoseComparisonSign()],
+    ["比較ルール", "OBJ描画poseとMediaPipe返却poseの符号規約が異なるため、score計算では基準poseの yaw / pitch / roll を反転して比較します。"],
     ["pose数", formatNullableCount(calibration.poseCount)],
     ["候補数", formatNullableCount(calibration.candidateCount)],
     ["総評価数", formatNullableCount(calibration.totalEvaluationCount)],
@@ -4760,6 +4785,7 @@ function getRawState() {
       renderedIdeal478Count: state.renderedIdeal.detection.landmarkCount,
       renderedIdealPose: roundPoseForState(state.renderedIdeal.detection.pose),
     },
+    objPoseCalibrationComparisonSign: getObjPoseComparisonSignDebug(),
     objPoseCalibrationState: getObjPoseCalibrationRawSummary(),
     objPoseCalibrationTopCandidates: state.objPoseCalibration.topCandidates.map(roundObjPoseCalibrationCandidate),
     objPoseCalibrationPoseSet: OBJ_POSE_CALIBRATION_POSES.map((pose) => ({ ...pose })),
@@ -5700,6 +5726,7 @@ function getRenderedIdealDetectionRawSummary() {
 function getObjPoseCalibrationRawSummary() {
   return {
     status: state.objPoseCalibration.status,
+    comparisonSign: getObjPoseComparisonSignDebug(),
     startedAt: state.objPoseCalibration.startedAt,
     completedAt: state.objPoseCalibration.completedAt,
     elapsedMs: roundForState(state.objPoseCalibration.elapsedMs),
@@ -5908,6 +5935,10 @@ function formatPoseCenterSearchBestRotationCenter() {
   return `x=${formatNumber(best.rotationCenterX)}, y=${formatNumber(best.rotationCenterY)}, z=${formatNumber(best.rotationCenterZ)}`
 }
 
+function formatObjPoseComparisonSign() {
+  return `yaw=${formatNumber(OBJ_POSE_COMPARISON_SIGN.yaw)} / pitch=${formatNumber(OBJ_POSE_COMPARISON_SIGN.pitch)} / roll=${formatNumber(OBJ_POSE_COMPARISON_SIGN.roll)}`
+}
+
 function formatObjPoseCalibrationBestRotationCenter() {
   const best = state.objPoseCalibration.bestCandidate
   if (!best) {
@@ -5961,7 +5992,7 @@ function formatObjPoseCalibrationPoseResultsText(results: ObjPoseCalibrationPose
   }
   return results
     .map((result) =>
-      `${result.poseLabel}: expected ${formatPose(result.expectedPose)} / returned ${formatPose(result.returnedPose)} / poseError ${formatNullableNumber(result.poseError)} / detected ${String(result.detected)}`,
+      `${result.poseLabel}: render ${formatPose(result.renderPose)} / expectedForComparison ${formatPose(result.expectedPoseForComparison)} / returned ${formatPose(result.returnedPose)} / yaw/pitch/roll error ${formatPoseErrorTriple(result.yawError, result.pitchError, result.rollError)} / poseError ${formatNullableNumber(result.poseError)} / detected ${String(result.detected)}`,
     )
     .join("\n")
 }
@@ -6124,9 +6155,18 @@ function getRenderedIdealDetectionDebugExport() {
   }
 }
 
+function getObjPoseComparisonSignDebug() {
+  return {
+    yaw: OBJ_POSE_COMPARISON_SIGN.yaw,
+    pitch: OBJ_POSE_COMPARISON_SIGN.pitch,
+    roll: OBJ_POSE_COMPARISON_SIGN.roll,
+  }
+}
+
 function getObjPoseCalibrationDebugExport() {
   return {
     status: state.objPoseCalibration.status,
+    comparisonSign: getObjPoseComparisonSignDebug(),
     poseCount: state.objPoseCalibration.poseCount,
     candidateCount: state.objPoseCalibration.candidateCount,
     totalEvaluationCount: state.objPoseCalibration.totalEvaluationCount,
@@ -6372,6 +6412,7 @@ function roundObjPoseCalibrationCandidateForExport(candidate: ObjPoseCalibration
     pitchErrorMax: roundForState(candidate.pitchErrorMax),
     rollErrorMax: roundForState(candidate.rollErrorMax),
     failedPoseCount: candidate.failedPoseCount,
+    poseResultsPreview: candidate.poseResultsPreview.map(roundObjPoseCalibrationPoseResult),
     detectMsTotal: roundForState(candidate.detectMsTotal),
     errorMessage: candidate.errorMessage,
   }
@@ -6441,10 +6482,15 @@ function roundObjPoseCalibrationPoseResult(
 ): ObjPoseCalibrationPoseResult {
   return {
     ...result,
-    expectedPose: {
-      yaw: roundForState(result.expectedPose.yaw) ?? 0,
-      pitch: roundForState(result.expectedPose.pitch) ?? 0,
-      roll: roundForState(result.expectedPose.roll) ?? 0,
+    renderPose: {
+      yaw: roundForState(result.renderPose.yaw) ?? 0,
+      pitch: roundForState(result.renderPose.pitch) ?? 0,
+      roll: roundForState(result.renderPose.roll) ?? 0,
+    },
+    expectedPoseForComparison: {
+      yaw: roundForState(result.expectedPoseForComparison.yaw) ?? 0,
+      pitch: roundForState(result.expectedPoseForComparison.pitch) ?? 0,
+      roll: roundForState(result.expectedPoseForComparison.roll) ?? 0,
     },
     returnedPose: roundPoseForState(result.returnedPose),
     poseError: roundForState(result.poseError),
