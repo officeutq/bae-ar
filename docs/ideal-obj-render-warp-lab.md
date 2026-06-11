@@ -62,11 +62,26 @@ canvas にレンダーした静止画像として扱うため `detect()` にな�
 
 出力:
 
-- UI summary: processed / skipped / success / mismatch count、`detect()` / `detectForVideo()` ms、
-  yaw / pitch / roll の平均差・最大差、478 landmarks の平均距離・最大距離、
-  `presentedFrames` 差分
-- JSON download: raw per-frame result と summary
+- UI summary: 右ペイン Debug（デバッグ）の `モード比較` タブに表示する。
+  左ペインは `MP4読込`、短い説明、`モード比較`、`停止 / cancel` の操作中心にする。
+- `モード比較` タブ: source、run status、run options、detection summary、timing summary、
+  pose diff（姿勢差分）、landmark diff（ランドマーク差分）、frame consistency、
+  JSON / CSV download を表示する。
+- JSON download: raw per-frame result と summary を含める。summary には
+  `worstYawDiffFrame`、`worstPitchDiffFrame`、`worstRollDiffFrame`、
+  `worstPoseMagnitudeDiffFrame`、`worstMean2dDistanceFrame`、
+  `worstMax2dDistanceFrame`、`firstMismatchFrame`、`latestFrame` を含める。
 - CSV download: 主要列のみの per-frame summary
+- preview export（プレビュー書き出し）: 全 frames の画像は保持しない。`detect()` と
+  `detectForVideo()` に渡した同一 canvas frame から、latest frame、worst pose diff frame、
+  worst landmark diff frame、first mismatch frame の preview snapshot だけを保持して
+  PNG download できるようにする。保持上限は最大20枚、現時点の実装では最大4枚。
+
+TODO:
+
+- preview overlay（重ね表示プレビュー）は未実装。現時点では raw frame preview（元フレーム画像）
+  のみを保存する。将来、IMAGE mode / VIDEO mode の landmarks、pose diff、frameIndex /
+  mediaTimeSec を重ねる。
 
 ## 基本方針
 
