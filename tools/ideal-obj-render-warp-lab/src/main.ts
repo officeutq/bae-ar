@@ -17,6 +17,15 @@ type RenderedIdealRenderMode = "shaded_faces"
 type RenderedIdealBackgroundMode = "light" | "dark"
 type RenderedIdealColorMode = "clay" | "grayscale"
 type PoseCenterSearchStatus = "idle" | "running" | "completed" | "error"
+type PoseCenterSearchMode = "single_frame" | "multi_frame"
+type PoseSearchFrameBucket =
+  | "front"
+  | "yawLeft"
+  | "yawRight"
+  | "pitchUp"
+  | "pitchDown"
+  | "roll"
+  | "mixed"
 type LiveVideoStatus = "not_loaded" | "loaded" | "metadata_ready" | "error"
 type LiveInputSourceType = "video_file" | "camera"
 type LiveInputState = {
@@ -246,11 +255,57 @@ type RenderedIdealDetectionState = {
   skippedByPoseSearchCount: number
 }
 
+type PoseCenterSearchFrame = {
+  id: string
+  addedAt: string
+  sourceType: LiveInputSourceType | null
+  timeSec: number | null
+  label: string
+  autoPoseBucket: PoseSearchFrameBucket
+  currentPose: {
+    yaw: number
+    pitch: number
+    roll: number
+  }
+  expressionGroup: ExpressionGroup | null
+  qualityScore: number | null
+}
+
+type PoseCenterSearchFrameResult = {
+  frameId: string
+  frameLabel: string
+  sourceType: LiveInputSourceType | string | null
+  timeSec: number | null
+  currentPose: {
+    yaw: number
+    pitch: number
+    roll: number
+  }
+  renderedPose: ReferencePose
+  poseError: number | null
+  yawError: number | null
+  pitchError: number | null
+  rollError: number | null
+  detected: boolean
+  detectMs: number | null
+  errorMessage: string | null
+}
+
 type PoseCenterSearchCandidate = {
   rotationCenterX: number
   rotationCenterY: number
   rotationCenterZ: number
   score: number | null
+  averagePoseError: number | null
+  maxPoseError: number | null
+  yawErrorAvg: number | null
+  pitchErrorAvg: number | null
+  rollErrorAvg: number | null
+  yawErrorMax: number | null
+  pitchErrorMax: number | null
+  rollErrorMax: number | null
+  failedFrameCount: number
+  frameResultsPreview: PoseCenterSearchFrameResult[]
   yawError: number | null
   pitchError: number | null
   rollError: number | null
@@ -262,23 +317,32 @@ type PoseCenterSearchCandidate = {
 
 type PoseCenterSearchState = {
   status: PoseCenterSearchStatus
+  mode: PoseCenterSearchMode
   startedAt: string | null
   completedAt: string | null
+  elapsedMs: number | null
+  estimatedRemainingMs: number | null
   errorMessage: string | null
   range: {
     x: { fixed: true; value: 0 }
     y: { min: -0.3; max: 0.3; step: 0.05 }
-    z: { min: -0.3; max: 0.3; step: 0.05 }
+    z: { min: -0.4; max: 0.1; step: 0.05 }
   }
+  frameCount: number
   candidateCount: number
+  totalEvaluationCount: number
+  evaluatedCandidateCount: number
+  evaluatedFrameCount: number
+  failedFrameEvaluationCount: number
   evaluatedCount: number
   failedCandidateCount: number
   currentPose: ReferencePose
+  currentBestCandidate: PoseCenterSearchCandidate | null
   bestCandidate: PoseCenterSearchCandidate | null
   topCandidates: PoseCenterSearchCandidate[]
-  elapsedMs: number | null
   appliedBestAutomatically: boolean
   appliedBestManually: boolean
+  appliedBestSourceMode: PoseCenterSearchMode | null
   bestAppliedAt: string | null
 }
 
@@ -401,6 +465,8 @@ type LabState = {
   objPoseSync: ObjPoseSyncState
   objPoseSyncStats: ObjPreviewStats
   renderedIdeal: RenderedIdealState
+  poseSearchFrames: PoseCenterSearchFrame[]
+  selectedPoseSearchFrameId: string | null
   poseCenterSearch: PoseCenterSearchState
   objErrorMessage: string | null
   liveVideo: LiveVideoState
@@ -446,9 +512,19 @@ const RENDERED_IDEAL_LIGHT_DIRECTION = normalizeVector({ x: -0.35, y: 0.55, z: 0
 const POSE_CENTER_SEARCH_RANGE = {
   x: { fixed: true, value: 0 },
   y: { min: -0.3, max: 0.3, step: 0.05 },
-  z: { min: -0.3, max: 0.3, step: 0.05 },
+  z: { min: -0.4, max: 0.1, step: 0.05 },
 } as const
 const POSE_CENTER_SEARCH_TOP_CANDIDATE_COUNT = 5
+const POSE_CENTER_SEARCH_FRAME_RESULTS_PREVIEW_COUNT = 12
+const poseSearchFrameBucketLabels: Record<PoseSearchFrameBucket, string> = {
+  front: "正面",
+  yawLeft: "yaw負方向",
+  yawRight: "yaw正方向",
+  pitchUp: "pitch正方向",
+  pitchDown: "pitch負方向",
+  roll: "傾きあり",
+  mixed: "混合姿勢",
+}
 const MATCH_BLENDSHAPE_KEYS = [
   "jawOpen",
   "mouthSmileLeft",
@@ -518,6 +594,8 @@ const state: LabState = {
     sampledEdgeCount: 0,
   },
   renderedIdeal: createDefaultRenderedIdealState(),
+  poseSearchFrames: [],
+  selectedPoseSearchFrameId: null,
   poseCenterSearch: createDefaultPoseCenterSearchState(),
   objErrorMessage: null,
   liveVideo: createEmptyLiveVideoState(),
@@ -720,7 +798,11 @@ function renderRenderedIdealPreview() {
       <div class="obj-preview-controls rendered-ideal-controls" aria-label="レンダー理想 preview 操作">
         <div class="button-row">
           <button class="small-button" type="button" data-action="rendered-ideal-refresh">レンダー更新</button>
-          <button class="small-button" type="button" data-action="pose-center-search-start">ポーズ固定値探索</button>
+          <button class="small-button" type="button" data-action="pose-search-frame-add">探索フレームに追加</button>
+          <button class="small-button" type="button" data-action="pose-search-frames-clear">探索フレームをクリア</button>
+          <button class="small-button" type="button" data-action="pose-search-frame-delete">選択フレームを削除</button>
+          <button class="small-button" type="button" data-action="pose-center-search-start">現在フレームで探索</button>
+          <button class="small-button" type="button" data-action="pose-center-search-multi-start">複数姿勢で探索</button>
           <button class="small-button" type="button" data-action="pose-center-search-apply-best">bestを適用</button>
           <button class="small-button" type="button" data-action="pose-center-search-reset">探索リセット</button>
         </div>
@@ -741,6 +823,9 @@ function renderRenderedIdealPreview() {
       </div>
       <div class="review-card" data-rendered-ideal-summary>
         <p>OBJを読み込むと、ここにレンダー理想2Dプレビューを表示します。</p>
+      </div>
+      <div class="review-card pose-search-frames-card" data-pose-search-frames>
+        <p>探索フレームはまだ登録されていません。</p>
       </div>
     </div>
   `
@@ -1031,8 +1116,24 @@ function bindEvents() {
     renderAll()
   })
 
+  getElement<HTMLButtonElement>('[data-action="pose-search-frame-add"]').addEventListener("click", () => {
+    addCurrentPoseSearchFrame()
+  })
+
+  getElement<HTMLButtonElement>('[data-action="pose-search-frames-clear"]').addEventListener("click", () => {
+    clearPoseSearchFrames()
+  })
+
+  getElement<HTMLButtonElement>('[data-action="pose-search-frame-delete"]').addEventListener("click", () => {
+    deleteSelectedPoseSearchFrame()
+  })
+
   getElement<HTMLButtonElement>('[data-action="pose-center-search-start"]').addEventListener("click", () => {
-    void startPoseCenterSearch()
+    void startPoseCenterSearch("single_frame")
+  })
+
+  getElement<HTMLButtonElement>('[data-action="pose-center-search-multi-start"]').addEventListener("click", () => {
+    void startPoseCenterSearch("multi_frame")
   })
 
   getElement<HTMLButtonElement>('[data-action="pose-center-search-apply-best"]').addEventListener("click", () => {
@@ -1042,6 +1143,16 @@ function bindEvents() {
   getElement<HTMLButtonElement>('[data-action="pose-center-search-reset"]').addEventListener("click", () => {
     state.poseCenterSearch = createDefaultPoseCenterSearchState()
     renderAll()
+  })
+
+  app.addEventListener("change", (event) => {
+    if (
+      event.target instanceof HTMLSelectElement &&
+      event.target.matches('[data-control="pose-search-frame-select"]')
+    ) {
+      state.selectedPoseSearchFrameId = event.target.value || null
+      renderControls()
+    }
   })
 
   getElement<HTMLSelectElement>('[data-control="rendered-ideal-background"]').addEventListener("change", (event) => {
@@ -1999,18 +2110,161 @@ function addRenderedIdealDetectionTimingSample(detectMs: number) {
   ].slice(0, REALTIME_AVERAGE_SAMPLE_COUNT)
 }
 
-async function startPoseCenterSearch() {
+function addCurrentPoseSearchFrame() {
   if (isPoseCenterSearchRunning()) {
     return
   }
 
-  if (!canRenderRenderedIdeal() || !hasFullPose(state.currentAnalysis.pose)) {
+  if (state.currentAnalysis.status !== "detected" || !hasFullPose(state.currentAnalysis.pose)) {
+    addLog("探索フレームに追加できません。現在フレーム解析で顔姿勢を取得してください。")
+    return
+  }
+
+  const frame = createPoseCenterSearchFrameFromCurrentAnalysis()
+  state.poseSearchFrames = [frame, ...state.poseSearchFrames].slice(0, 20)
+  state.selectedPoseSearchFrameId = frame.id
+  addLog(`探索フレームに追加しました: ${frame.label}`)
+  renderAll()
+}
+
+function clearPoseSearchFrames() {
+  if (isPoseCenterSearchRunning()) {
+    return
+  }
+  state.poseSearchFrames = []
+  state.selectedPoseSearchFrameId = null
+  addLog("探索フレームをクリアしました。")
+  renderAll()
+}
+
+function deleteSelectedPoseSearchFrame() {
+  if (isPoseCenterSearchRunning() || !state.selectedPoseSearchFrameId) {
+    return
+  }
+  const selectedId = state.selectedPoseSearchFrameId
+  const selectedIndex = state.poseSearchFrames.findIndex((frame) => frame.id === selectedId)
+  state.poseSearchFrames = state.poseSearchFrames.filter((frame) => frame.id !== selectedId)
+  state.selectedPoseSearchFrameId =
+    state.poseSearchFrames[Math.max(0, selectedIndex - 1)]?.id ?? state.poseSearchFrames[0]?.id ?? null
+  addLog("選択フレームを削除しました。")
+  renderAll()
+}
+
+function createPoseCenterSearchFrameFromCurrentAnalysis(): PoseCenterSearchFrame {
+  const pose = state.currentAnalysis.pose
+  const bucket = classifyPoseSearchFrameBucket({
+    yaw: pose.yaw!,
+    pitch: pose.pitch!,
+    roll: pose.roll!,
+  })
+  const timeSec = state.liveInput.sourceType === "video_file"
+    ? state.liveVideo.currentTimeSec
+    : null
+  const label = `${poseSearchFrameBucketLabels[bucket]} #${state.poseSearchFrames.length + 1}`
+
+  return {
+    id: `frame-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    addedAt: new Date().toISOString(),
+    sourceType: state.liveInput.sourceType,
+    timeSec: roundForState(timeSec),
+    label,
+    autoPoseBucket: bucket,
+    currentPose: {
+      yaw: roundForState(pose.yaw) ?? 0,
+      pitch: roundForState(pose.pitch) ?? 0,
+      roll: roundForState(pose.roll) ?? 0,
+    },
+    expressionGroup: state.currentAnalysis.expressionSummary?.group ?? null,
+    qualityScore: roundForState(state.currentAnalysis.qualityScore),
+  }
+}
+
+function createPoseCenterSearchFrameFromCurrentPose(): PoseCenterSearchFrame | null {
+  if (!hasFullPose(state.currentAnalysis.pose)) {
+    return null
+  }
+  const pose = state.currentAnalysis.pose
+  const bucket = classifyPoseSearchFrameBucket({
+    yaw: pose.yaw!,
+    pitch: pose.pitch!,
+    roll: pose.roll!,
+  })
+
+  return {
+    id: "current-frame",
+    addedAt: new Date().toISOString(),
+    sourceType: state.liveInput.sourceType,
+    timeSec: state.liveInput.sourceType === "video_file" ? roundForState(state.liveVideo.currentTimeSec) : null,
+    label: `現在フレーム（${poseSearchFrameBucketLabels[bucket]}）`,
+    autoPoseBucket: bucket,
+    currentPose: {
+      yaw: pose.yaw!,
+      pitch: pose.pitch!,
+      roll: pose.roll!,
+    },
+    expressionGroup: state.currentAnalysis.expressionSummary?.group ?? null,
+    qualityScore: roundForState(state.currentAnalysis.qualityScore),
+  }
+}
+
+function classifyPoseSearchFrameBucket(pose: { yaw: number; pitch: number; roll: number }): PoseSearchFrameBucket {
+  const yawAbs = Math.abs(pose.yaw)
+  const pitchAbs = Math.abs(pose.pitch)
+  const rollAbs = Math.abs(pose.roll)
+  const strongAxes = [yawAbs >= 10, pitchAbs >= 8, rollAbs >= 8].filter(Boolean).length
+
+  if (strongAxes >= 2) {
+    return "mixed"
+  }
+  if (rollAbs >= 8) {
+    return "roll"
+  }
+  if (yawAbs >= 10) {
+    return pose.yaw < 0 ? "yawLeft" : "yawRight"
+  }
+  if (pitchAbs >= 8) {
+    return pose.pitch < 0 ? "pitchDown" : "pitchUp"
+  }
+  return "front"
+}
+
+async function startPoseCenterSearch(mode: PoseCenterSearchMode) {
+  if (isPoseCenterSearchRunning()) {
+    return
+  }
+
+  const searchFrames = mode === "single_frame"
+    ? [createPoseCenterSearchFrameFromCurrentPose()].filter((frame): frame is PoseCenterSearchFrame => frame !== null)
+    : state.poseSearchFrames
+
+  if (mode === "multi_frame" && searchFrames.length === 0) {
     state.poseCenterSearch = {
       ...createDefaultPoseCenterSearchState(),
       status: "error",
+      mode,
       startedAt: new Date().toISOString(),
       completedAt: new Date().toISOString(),
-      errorMessage: "OBJ読込と現在フレーム解析を完了してから探索してください。",
+      errorMessage: "探索フレームが未登録です。まず「探索フレームに追加」を押してください。",
+    }
+    addLog("探索フレームが未登録です。まず「探索フレームに追加」を押してください。")
+    renderAll()
+    return
+  }
+
+  const canRenderForSearch = mode === "multi_frame"
+    ? canRenderRenderedIdealGeometry()
+    : canRenderRenderedIdeal()
+
+  if (!canRenderForSearch || searchFrames.length === 0) {
+    state.poseCenterSearch = {
+      ...createDefaultPoseCenterSearchState(),
+      status: "error",
+      mode,
+      startedAt: new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+    errorMessage: mode === "multi_frame"
+      ? "OBJ読込を完了してから探索してください。"
+      : "OBJ読込と現在フレーム解析を完了してから探索してください。",
       currentPose: roundPoseForState(state.currentAnalysis.pose),
     }
     addLog("ポーズ固定値探索を開始できません。OBJ読込と現在フレーム解析を確認してください。")
@@ -2025,11 +2279,14 @@ async function startPoseCenterSearch() {
   state.poseCenterSearch = {
     ...createDefaultPoseCenterSearchState(),
     status: "running",
+    mode,
     startedAt: new Date().toISOString(),
+    frameCount: searchFrames.length,
     candidateCount: candidates.length,
-    currentPose: roundPoseForState(state.currentAnalysis.pose),
+    totalEvaluationCount: candidates.length * searchFrames.length,
+    currentPose: roundPoseForState(searchFrames[0].currentPose),
   }
-  addLog(`ポーズ固定値探索を開始しました: ${candidates.length}候補`)
+  addLog(`ポーズ固定値探索を開始しました: ${candidates.length}候補 / ${searchFrames.length}フレーム`)
   renderAll()
 
   try {
@@ -2039,10 +2296,8 @@ async function startPoseCenterSearch() {
     }
 
     const detector = await getRenderedIdealFaceLandmarker()
-    const currentPose = state.currentAnalysis.pose
-
     for (const [index, candidatePoint] of candidates.entries()) {
-      const candidate = evaluatePoseCenterCandidate(detector, currentPose, candidatePoint)
+      const candidate = evaluatePoseCenterCandidate(detector, searchFrames, candidatePoint)
       updatePoseCenterSearchProgress(candidate, searchStartedAtMs)
 
       renderRenderedIdealSummaryCard()
@@ -2058,6 +2313,7 @@ async function startPoseCenterSearch() {
       status: "completed",
       completedAt: new Date().toISOString(),
       elapsedMs: performance.now() - searchStartedAtMs,
+      estimatedRemainingMs: 0,
       errorMessage: null,
       appliedBestAutomatically: false,
     }
@@ -2084,16 +2340,46 @@ async function startPoseCenterSearch() {
 
 function evaluatePoseCenterCandidate(
   detector: FaceLandmarker,
-  currentPose: ReferencePose,
+  frames: PoseCenterSearchFrame[],
   rotationCenter: ObjVertex,
 ): PoseCenterSearchCandidate {
   const baseCandidate = createPoseCenterSearchCandidate(rotationCenter)
+  const frameResults = frames.map((frame) =>
+    evaluatePoseCenterCandidateOnFrame(detector, frame, rotationCenter),
+  )
+  return buildPoseCenterSearchCandidateFromFrameResults(baseCandidate, frameResults)
+}
+
+function evaluatePoseCenterCandidateOnFrame(
+  detector: FaceLandmarker,
+  frame: PoseCenterSearchFrame,
+  rotationCenter: ObjVertex,
+): PoseCenterSearchFrameResult {
+  const baseResult: PoseCenterSearchFrameResult = {
+    frameId: frame.id,
+    frameLabel: frame.label,
+    sourceType: frame.sourceType,
+    timeSec: frame.timeSec,
+    currentPose: frame.currentPose,
+    renderedPose: {
+      yaw: null,
+      pitch: null,
+      roll: null,
+    },
+    poseError: null,
+    yawError: null,
+    pitchError: null,
+    rollError: null,
+    detected: false,
+    detectMs: null,
+    errorMessage: null,
+  }
 
   try {
-    const renderSummary = renderRenderedIdealCanvasTo(renderedIdealCanvas, rotationCenter)
+    const renderSummary = renderRenderedIdealCanvasTo(renderedIdealCanvas, rotationCenter, frame.currentPose)
     if (renderSummary.status !== "rendered") {
       return {
-        ...baseCandidate,
+        ...baseResult,
         detected: false,
         errorMessage: renderSummary.errorMessage ?? renderSummary.status,
       }
@@ -2108,7 +2394,7 @@ function evaluatePoseCenterCandidate(
 
     if (detection.status !== "detected" || !hasFullPose(renderedPose)) {
       return {
-        ...baseCandidate,
+        ...baseResult,
         detected: false,
         detectMs,
         renderedPose: roundPoseForState(renderedPose),
@@ -2116,29 +2402,77 @@ function evaluatePoseCenterCandidate(
       }
     }
 
-    const yawError = Math.abs(currentPose.yaw! - renderedPose.yaw!)
-    const pitchError = Math.abs(currentPose.pitch! - renderedPose.pitch!)
-    const rollError = Math.abs(currentPose.roll! - renderedPose.roll!)
-    const score = yawError + pitchError + rollError
+    const yawError = Math.abs(frame.currentPose.yaw - renderedPose.yaw!)
+    const pitchError = Math.abs(frame.currentPose.pitch - renderedPose.pitch!)
+    const rollError = Math.abs(frame.currentPose.roll - renderedPose.roll!)
+    const poseError = yawError + pitchError + rollError
 
     return {
-      ...baseCandidate,
+      ...baseResult,
       detected: true,
       detectMs,
       renderedPose: roundPoseForState(renderedPose),
+      poseError: roundForState(poseError),
       yawError: roundForState(yawError),
       pitchError: roundForState(pitchError),
       rollError: roundForState(rollError),
-      score: roundForState(score),
       errorMessage: null,
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return {
-      ...baseCandidate,
+      ...baseResult,
       detected: false,
       errorMessage: message,
     }
+  }
+}
+
+function buildPoseCenterSearchCandidateFromFrameResults(
+  baseCandidate: PoseCenterSearchCandidate,
+  frameResults: PoseCenterSearchFrameResult[],
+): PoseCenterSearchCandidate {
+  const detectedResults = frameResults.filter((result) => result.detected && result.poseError !== null)
+  const failedFrameCount = frameResults.length - detectedResults.length
+  const poseErrors = detectedResults.map((result) => result.poseError!)
+  const yawErrors = detectedResults.map((result) => result.yawError!)
+  const pitchErrors = detectedResults.map((result) => result.pitchError!)
+  const rollErrors = detectedResults.map((result) => result.rollError!)
+  const averagePoseError = averageNumbers(poseErrors)
+  const maxPoseError = maxNumbers(poseErrors)
+  const yawErrorAvg = averageNumbers(yawErrors)
+  const pitchErrorAvg = averageNumbers(pitchErrors)
+  const rollErrorAvg = averageNumbers(rollErrors)
+  const yawErrorMax = maxNumbers(yawErrors)
+  const pitchErrorMax = maxNumbers(pitchErrors)
+  const rollErrorMax = maxNumbers(rollErrors)
+  const score = averagePoseError === null || maxPoseError === null
+    ? failedFrameCount * 100
+    : averagePoseError + maxPoseError + failedFrameCount * 100
+  const firstDetected = detectedResults[0]
+
+  return {
+    ...baseCandidate,
+    score: roundForState(score),
+    averagePoseError: roundForState(averagePoseError),
+    maxPoseError: roundForState(maxPoseError),
+    yawErrorAvg: roundForState(yawErrorAvg),
+    pitchErrorAvg: roundForState(pitchErrorAvg),
+    rollErrorAvg: roundForState(rollErrorAvg),
+    yawErrorMax: roundForState(yawErrorMax),
+    pitchErrorMax: roundForState(pitchErrorMax),
+    rollErrorMax: roundForState(rollErrorMax),
+    failedFrameCount,
+    frameResultsPreview: frameResults
+      .slice(0, POSE_CENTER_SEARCH_FRAME_RESULTS_PREVIEW_COUNT)
+      .map(roundPoseCenterSearchFrameResult),
+    yawError: roundForState(yawErrorAvg),
+    pitchError: roundForState(pitchErrorAvg),
+    rollError: roundForState(rollErrorAvg),
+    renderedPose: firstDetected?.renderedPose ?? baseCandidate.renderedPose,
+    detected: detectedResults.length > 0,
+    detectMs: roundForState(sumNumbers(frameResults.map((result) => result.detectMs))),
+    errorMessage: failedFrameCount > 0 ? `${failedFrameCount}件のフレーム評価に失敗しました。` : null,
   }
 }
 
@@ -2146,19 +2480,31 @@ function updatePoseCenterSearchProgress(candidate: PoseCenterSearchCandidate, st
   const detectedCandidates = [
     ...state.poseCenterSearch.topCandidates,
     candidate,
-  ].filter((item) => item.detected && item.score !== null)
+  ].filter((item) => item.score !== null)
   const topCandidates = detectedCandidates
     .sort((a, b) => (a.score ?? Number.POSITIVE_INFINITY) - (b.score ?? Number.POSITIVE_INFINITY))
     .slice(0, POSE_CENTER_SEARCH_TOP_CANDIDATE_COUNT)
   const bestCandidate = topCandidates[0] ?? state.poseCenterSearch.bestCandidate
+  const evaluatedCandidateCount = state.poseCenterSearch.evaluatedCandidateCount + 1
+  const evaluatedFrameCount =
+    state.poseCenterSearch.evaluatedFrameCount + state.poseCenterSearch.frameCount
+  const elapsedMs = performance.now() - startedAtMs
+  const averageCandidateMs = elapsedMs / Math.max(1, evaluatedCandidateCount)
+  const remainingCandidateCount = Math.max(0, state.poseCenterSearch.candidateCount - evaluatedCandidateCount)
 
   state.poseCenterSearch = {
     ...state.poseCenterSearch,
+    evaluatedCandidateCount,
+    evaluatedFrameCount,
     evaluatedCount: state.poseCenterSearch.evaluatedCount + 1,
-    failedCandidateCount: state.poseCenterSearch.failedCandidateCount + (candidate.detected ? 0 : 1),
+    failedCandidateCount: state.poseCenterSearch.failedCandidateCount + (candidate.failedFrameCount > 0 ? 1 : 0),
+    failedFrameEvaluationCount:
+      state.poseCenterSearch.failedFrameEvaluationCount + candidate.failedFrameCount,
+    currentBestCandidate: bestCandidate,
     bestCandidate,
     topCandidates,
-    elapsedMs: performance.now() - startedAtMs,
+    elapsedMs,
+    estimatedRemainingMs: averageCandidateMs * remainingCandidateCount,
   }
 }
 
@@ -2177,6 +2523,7 @@ function applyPoseCenterSearchBest() {
   state.poseCenterSearch = {
     ...state.poseCenterSearch,
     appliedBestManually: true,
+    appliedBestSourceMode: state.poseCenterSearch.mode,
     bestAppliedAt: new Date().toISOString(),
   }
   addLog(
@@ -2217,6 +2564,16 @@ function createPoseCenterSearchCandidate(rotationCenter: ObjVertex): PoseCenterS
     rotationCenterY: roundForState(rotationCenter.y) ?? 0,
     rotationCenterZ: roundForState(rotationCenter.z) ?? 0,
     score: null,
+    averagePoseError: null,
+    maxPoseError: null,
+    yawErrorAvg: null,
+    pitchErrorAvg: null,
+    rollErrorAvg: null,
+    yawErrorMax: null,
+    pitchErrorMax: null,
+    rollErrorMax: null,
+    failedFrameCount: 0,
+    frameResultsPreview: [],
     yawError: null,
     pitchError: null,
     rollError: null,
@@ -2834,6 +3191,7 @@ function renderPreviewPanels(options: { skipObjRender?: boolean } = {}) {
     renderRenderedIdealCanvas()
   }
   renderRenderedIdealSummaryCard()
+  renderPoseSearchFramesCard()
 
   const liveObjStage = getElement<HTMLElement>("[data-live-obj-stage]")
   liveObjStage.dataset.previewStatus = objPreviewStatus
@@ -2890,8 +3248,26 @@ function renderControls() {
   getElement<HTMLSelectElement>('[data-control="rendered-ideal-color"]').value = state.renderedIdeal.colorMode
   setDisabled('[data-action="rendered-ideal-refresh"]', poseSearchRunning || !canRenderRenderedIdeal())
   setDisabled('[data-action="pose-center-search-start"]', poseSearchRunning || !canRenderRenderedIdeal())
+  setDisabled(
+    '[data-action="pose-center-search-multi-start"]',
+    poseSearchRunning || !canRenderRenderedIdealGeometry() || state.poseSearchFrames.length === 0,
+  )
+  setDisabled(
+    '[data-action="pose-search-frame-add"]',
+    poseSearchRunning || state.currentAnalysis.status !== "detected" || !hasFullPose(state.currentAnalysis.pose),
+  )
+  setDisabled('[data-action="pose-search-frames-clear"]', poseSearchRunning || state.poseSearchFrames.length === 0)
+  setDisabled(
+    '[data-action="pose-search-frame-delete"]',
+    poseSearchRunning || state.poseSearchFrames.length === 0 || !state.selectedPoseSearchFrameId,
+  )
   setDisabled('[data-action="pose-center-search-apply-best"]', poseSearchRunning || !state.poseCenterSearch.bestCandidate)
   setDisabled('[data-action="pose-center-search-reset"]', poseSearchRunning)
+  const poseSearchFrameSelect = app.querySelector<HTMLSelectElement>('[data-control="pose-search-frame-select"]')
+  if (poseSearchFrameSelect) {
+    poseSearchFrameSelect.disabled = poseSearchRunning || state.poseSearchFrames.length === 0
+    poseSearchFrameSelect.value = state.selectedPoseSearchFrameId ?? state.poseSearchFrames[0]?.id ?? ""
+  }
 
   renderLiveAnalysisCard()
   getElement<HTMLSelectElement>('[data-control="obj-preview-mode"]').value = state.objPreview.mode
@@ -2962,6 +3338,72 @@ function renderLiveAnalysisCard() {
       <div><dt>qualityScore</dt><dd>${formatNullableNumber(analysis.qualityScore)}</dd></div>
       <div><dt>errorMessage</dt><dd>${escapeHtml(analysis.errorMessage ?? "-")}</dd></div>
     </dl>
+  `
+}
+
+function renderPoseSearchFramesCard() {
+  const card = getElement<HTMLElement>("[data-pose-search-frames]")
+  const frames = state.poseSearchFrames
+
+  if (frames.length === 0) {
+    card.innerHTML = `
+      <p>探索フレームはまだ登録されていません。</p>
+      <div class="pose-search-frame-controls">
+        <label class="select-field">
+          <span>選択フレーム</span>
+          <select data-control="pose-search-frame-select" disabled>
+            <option value="">未登録</option>
+          </select>
+        </label>
+      </div>
+    `
+    return
+  }
+
+  const selectedId = state.selectedPoseSearchFrameId ?? frames[0]?.id ?? ""
+  card.innerHTML = `
+    <div class="pose-search-frame-header">
+      <div>
+        <h3>探索フレーム</h3>
+        <p>登録数: ${frames.length}</p>
+      </div>
+      <label class="select-field">
+        <span>選択フレーム</span>
+        <select data-control="pose-search-frame-select">
+          ${frames.map((frame) => `
+            <option value="${escapeHtml(frame.id)}" ${frame.id === selectedId ? "selected" : ""}>
+              ${escapeHtml(frame.label)}
+            </option>
+          `).join("")}
+        </select>
+      </label>
+    </div>
+    <div class="pose-search-frame-table-wrap">
+      <table class="pose-search-frame-table">
+        <thead>
+          <tr>
+            <th>ラベル</th>
+            <th>sourceType</th>
+            <th>timeSec</th>
+            <th>yaw / pitch / roll</th>
+            <th>expressionGroup</th>
+            <th>qualityScore</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${frames.map((frame) => `
+            <tr class="${frame.id === selectedId ? "is-selected" : ""}">
+              <td>${escapeHtml(frame.label)}</td>
+              <td>${formatLiveInputSourceLabel(frame.sourceType)}</td>
+              <td>${formatNullableNumber(frame.timeSec)}</td>
+              <td>${escapeHtml(formatPose(frame.currentPose))}</td>
+              <td>${escapeHtml(frame.expressionGroup ?? "null")}</td>
+              <td>${formatNullableNumber(frame.qualityScore)}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
   `
 }
 
@@ -3067,6 +3509,7 @@ function renderRenderedIdealCanvas() {
 function renderRenderedIdealCanvasTo(
   canvas: HTMLCanvasElement,
   rotationCenterOverride: ObjVertex | null = null,
+  poseOverride: ReferencePose | null = null,
 ): RenderedIdealRenderSummary {
   const context = canvas.getContext("2d")
   if (!context) {
@@ -3097,7 +3540,7 @@ function renderRenderedIdealCanvasTo(
     })
   }
 
-  if (state.currentAnalysis.status !== "detected" || !hasFullPose(state.currentAnalysis.pose)) {
+  if (!hasFullPose(poseOverride ?? state.currentAnalysis.pose)) {
     return createRenderedIdealRenderSummary("not_ready", {
       canvasWidth: targetWidth,
       canvasHeight: targetHeight,
@@ -3114,7 +3557,7 @@ function renderRenderedIdealCanvasTo(
     })
   }
 
-  const previewState = getObjPoseSyncPreviewState()
+  const previewState = getObjPoseSyncPreviewState(poseOverride)
   const rotationCenter = rotationCenterOverride ?? getObjPoseSyncRotationCenter()
   const viewport = {
     centerX: cssWidth / 2,
@@ -3264,9 +3707,20 @@ function renderRenderedIdealSummaryCard() {
       <div><dt>レンダー理想ランドマーク数</dt><dd>${formatNullableCount(detection.landmarkCount)}</dd></div>
       <div><dt>レンダー理想drop数</dt><dd>${formatNullableCount(detection.droppedCount)}</dd></div>
       <div><dt>探索状態</dt><dd>${poseSearch.status}</dd></div>
-      <div><dt>探索進捗</dt><dd>${poseSearch.evaluatedCount} / ${poseSearch.candidateCount}</dd></div>
+      <div><dt>探索モード</dt><dd>${formatPoseCenterSearchMode(poseSearch.mode)}</dd></div>
+      <div><dt>登録フレーム数</dt><dd>${formatNullableCount(poseSearch.frameCount)}</dd></div>
+      <div><dt>候補数</dt><dd>${formatNullableCount(poseSearch.candidateCount)}</dd></div>
+      <div><dt>総評価数</dt><dd>${formatNullableCount(poseSearch.totalEvaluationCount)}</dd></div>
+      <div><dt>評価済み候補数</dt><dd>${formatNullableCount(poseSearch.evaluatedCandidateCount)}</dd></div>
+      <div><dt>評価済みフレーム数</dt><dd>${formatNullableCount(poseSearch.evaluatedFrameCount)}</dd></div>
+      <div><dt>失敗候補数</dt><dd>${formatNullableCount(poseSearch.failedCandidateCount)}</dd></div>
+      <div><dt>失敗フレーム評価数</dt><dd>${formatNullableCount(poseSearch.failedFrameEvaluationCount)}</dd></div>
+      <div><dt>経過時間ms</dt><dd>${formatRealtimeNullableNumber(poseSearch.elapsedMs)}</dd></div>
+      <div><dt>推定残り時間ms</dt><dd>${formatRealtimeNullableNumber(poseSearch.estimatedRemainingMs)}</dd></div>
       <div><dt>best rotationCenter</dt><dd>${escapeHtml(formatPoseCenterSearchBestRotationCenter())}</dd></div>
       <div><dt>best score</dt><dd>${formatNullableNumber(poseSearch.bestCandidate?.score ?? null)}</dd></div>
+      <div><dt>averagePoseError</dt><dd>${formatNullableNumber(poseSearch.bestCandidate?.averagePoseError ?? null)}</dd></div>
+      <div><dt>maxPoseError</dt><dd>${formatNullableNumber(poseSearch.bestCandidate?.maxPoseError ?? null)}</dd></div>
       <div><dt>best適用</dt><dd>${escapeHtml(getPoseCenterSearchApplyMessage())}</dd></div>
       <div><dt>errorMessage</dt><dd>${escapeHtml(summary.errorMessage ?? "null")}</dd></div>
     </dl>
@@ -3730,11 +4184,18 @@ function getSummaryItems(): Array<[string, string]> {
     ["renderedIdealErrorCount", formatNullableCount(state.renderedIdeal.detection.errorCount)],
     ["renderedIdealRenderSeq", formatNullableCount(state.renderedIdeal.detection.renderSeq)],
     ["renderedIdealDetectedRenderSeq", formatNullableCount(state.renderedIdeal.detection.detectedRenderSeq)],
+    ["poseSearchFrameCount", formatNullableCount(state.poseSearchFrames.length)],
+    ["poseCenterSearchMode", state.poseCenterSearch.mode],
     ["poseCenterSearchStatus", state.poseCenterSearch.status],
     ["poseCenterSearchBestRotationCenterX", formatNullableNumber(bestPoseCenterCandidate?.rotationCenterX ?? null)],
     ["poseCenterSearchBestRotationCenterY", formatNullableNumber(bestPoseCenterCandidate?.rotationCenterY ?? null)],
     ["poseCenterSearchBestRotationCenterZ", formatNullableNumber(bestPoseCenterCandidate?.rotationCenterZ ?? null)],
     ["poseCenterSearchBestScore", formatNullableNumber(bestPoseCenterCandidate?.score ?? null)],
+    ["poseCenterSearchAveragePoseError", formatNullableNumber(bestPoseCenterCandidate?.averagePoseError ?? null)],
+    ["poseCenterSearchMaxPoseError", formatNullableNumber(bestPoseCenterCandidate?.maxPoseError ?? null)],
+    ["poseCenterSearchEvaluatedCandidateCount", formatNullableCount(state.poseCenterSearch.evaluatedCandidateCount)],
+    ["poseCenterSearchEvaluatedFrameCount", formatNullableCount(state.poseCenterSearch.evaluatedFrameCount)],
+    ["poseCenterSearchFailedFrameEvaluationCount", formatNullableCount(state.poseCenterSearch.failedFrameEvaluationCount)],
     ["poseCenterSearchEvaluatedCount", formatNullableCount(state.poseCenterSearch.evaluatedCount)],
     ["poseCenterSearchFailedCandidateCount", formatNullableCount(state.poseCenterSearch.failedCandidateCount)],
     ["realtimeStatus", state.realtimeDebug.status],
@@ -3876,10 +4337,17 @@ function getRenderedIdealItems(): Array<[string, string]> {
     ["レンダー理想検出error message", detection.errorMessage ?? "null"],
     ["ポーズ固定値探索", ""],
     ["探索状態", poseSearch.status],
+    ["探索モード", formatPoseCenterSearchMode(poseSearch.mode)],
+    ["登録フレーム数", formatNullableCount(poseSearch.frameCount)],
     ["候補数", formatNullableCount(poseSearch.candidateCount)],
-    ["評価済み数", formatNullableCount(poseSearch.evaluatedCount)],
+    ["総評価数", formatNullableCount(poseSearch.totalEvaluationCount)],
+    ["評価済み候補数", formatNullableCount(poseSearch.evaluatedCandidateCount)],
+    ["評価済みフレーム数", formatNullableCount(poseSearch.evaluatedFrameCount)],
     ["失敗候補数", formatNullableCount(poseSearch.failedCandidateCount)],
+    ["失敗フレーム評価数", formatNullableCount(poseSearch.failedFrameEvaluationCount)],
     ["探索時間ms", formatRealtimeNullableNumber(poseSearch.elapsedMs)],
+    ["推定残り時間ms", formatRealtimeNullableNumber(poseSearch.estimatedRemainingMs)],
+    ["現在のbest score", formatNullableNumber(poseSearch.currentBestCandidate?.score ?? null)],
     ["current yaw", formatNullableNumber(poseSearch.currentPose.yaw)],
     ["current pitch", formatNullableNumber(poseSearch.currentPose.pitch)],
     ["current roll", formatNullableNumber(poseSearch.currentPose.roll)],
@@ -3887,14 +4355,17 @@ function getRenderedIdealItems(): Array<[string, string]> {
     ["best rotationCenterY", formatNullableNumber(best?.rotationCenterY ?? null)],
     ["best rotationCenterZ", formatNullableNumber(best?.rotationCenterZ ?? null)],
     ["best score", formatNullableNumber(best?.score ?? null)],
-    ["best yaw error", formatNullableNumber(best?.yawError ?? null)],
-    ["best pitch error", formatNullableNumber(best?.pitchError ?? null)],
-    ["best roll error", formatNullableNumber(best?.rollError ?? null)],
+    ["averagePoseError", formatNullableNumber(best?.averagePoseError ?? null)],
+    ["maxPoseError", formatNullableNumber(best?.maxPoseError ?? null)],
+    ["yawErrorAvg / pitchErrorAvg / rollErrorAvg", formatPoseErrorTriple(best?.yawErrorAvg ?? null, best?.pitchErrorAvg ?? null, best?.rollErrorAvg ?? null)],
+    ["yawErrorMax / pitchErrorMax / rollErrorMax", formatPoseErrorTriple(best?.yawErrorMax ?? null, best?.pitchErrorMax ?? null, best?.rollErrorMax ?? null)],
+    ["failedFrameCount", formatNullableCount(best?.failedFrameCount ?? null)],
     ["best rendered yaw", formatNullableNumber(best?.renderedPose.yaw ?? null)],
     ["best rendered pitch", formatNullableNumber(best?.renderedPose.pitch ?? null)],
     ["best rendered roll", formatNullableNumber(best?.renderedPose.roll ?? null)],
     ["best適用", getPoseCenterSearchApplyMessage()],
     ["top candidates", formatPoseCenterSearchTopCandidatesText()],
+    ["best frameResultsPreview", formatPoseCenterSearchFrameResultsText(best?.frameResultsPreview ?? [])],
     ["探索error message", poseSearch.errorMessage ?? "null"],
   ]
 }
@@ -4025,6 +4496,7 @@ function getRawState() {
       renderedIdeal478Count: state.renderedIdeal.detection.landmarkCount,
       renderedIdealPose: roundPoseForState(state.renderedIdeal.detection.pose),
     },
+    poseSearchFramesPreview: state.poseSearchFrames.map(roundPoseCenterSearchFrame),
     poseCenterSearchState: getPoseCenterSearchRawSummary(),
     poseCenterSearchTopCandidates: state.poseCenterSearch.topCandidates.map(roundPoseCenterSearchCandidate),
     warpMesh: {
@@ -4245,11 +4717,19 @@ function createEmptyRenderedIdealDetectionState(): RenderedIdealDetectionState {
 function createDefaultPoseCenterSearchState(): PoseCenterSearchState {
   return {
     status: "idle",
+    mode: "single_frame",
     startedAt: null,
     completedAt: null,
+    elapsedMs: null,
+    estimatedRemainingMs: null,
     errorMessage: null,
     range: createPoseCenterSearchRange(),
+    frameCount: 0,
     candidateCount: 0,
+    totalEvaluationCount: 0,
+    evaluatedCandidateCount: 0,
+    evaluatedFrameCount: 0,
+    failedFrameEvaluationCount: 0,
     evaluatedCount: 0,
     failedCandidateCount: 0,
     currentPose: {
@@ -4257,11 +4737,12 @@ function createDefaultPoseCenterSearchState(): PoseCenterSearchState {
       pitch: null,
       roll: null,
     },
+    currentBestCandidate: null,
     bestCandidate: null,
     topCandidates: [],
-    elapsedMs: null,
     appliedBestAutomatically: false,
     appliedBestManually: false,
+    appliedBestSourceMode: null,
     bestAppliedAt: null,
   }
 }
@@ -4577,11 +5058,14 @@ function getObjPoseSyncStatus() {
 
 function canRenderRenderedIdeal() {
   return (
-    state.objFile.loaded &&
-    getObjPreviewStatus() === "ready" &&
+    canRenderRenderedIdealGeometry() &&
     state.currentAnalysis.status === "detected" &&
     hasFullPose(state.currentAnalysis.pose)
   )
+}
+
+function canRenderRenderedIdealGeometry() {
+  return state.objFile.loaded && getObjPreviewStatus() === "ready"
 }
 
 function isPoseCenterSearchRunning() {
@@ -4741,6 +5225,7 @@ function buildDebugExport() {
       bottleneck: getRealtimeBottleneck(),
     },
     renderedIdealDetection: getRenderedIdealDetectionDebugExport(),
+    poseSearchFrames: state.poseSearchFrames.map(roundPoseCenterSearchFrame),
     poseCenterSearch: getPoseCenterSearchDebugExport(),
     mediaPipeOptions: {
       currentLiveOptions: getCurrentLiveMediaPipeOptionsDebug(),
@@ -4911,21 +5396,32 @@ function getRenderedIdealDetectionRawSummary() {
 function getPoseCenterSearchRawSummary() {
   return {
     status: state.poseCenterSearch.status,
+    mode: state.poseCenterSearch.mode,
     startedAt: state.poseCenterSearch.startedAt,
     completedAt: state.poseCenterSearch.completedAt,
+    elapsedMs: roundForState(state.poseCenterSearch.elapsedMs),
+    estimatedRemainingMs: roundForState(state.poseCenterSearch.estimatedRemainingMs),
     errorMessage: state.poseCenterSearch.errorMessage,
     range: state.poseCenterSearch.range,
+    frameCount: state.poseCenterSearch.frameCount,
     candidateCount: state.poseCenterSearch.candidateCount,
+    totalEvaluationCount: state.poseCenterSearch.totalEvaluationCount,
+    evaluatedCandidateCount: state.poseCenterSearch.evaluatedCandidateCount,
+    evaluatedFrameCount: state.poseCenterSearch.evaluatedFrameCount,
+    failedFrameEvaluationCount: state.poseCenterSearch.failedFrameEvaluationCount,
     evaluatedCount: state.poseCenterSearch.evaluatedCount,
     failedCandidateCount: state.poseCenterSearch.failedCandidateCount,
     currentPose: roundPoseForState(state.poseCenterSearch.currentPose),
+    currentBestCandidate: state.poseCenterSearch.currentBestCandidate
+      ? roundPoseCenterSearchCandidate(state.poseCenterSearch.currentBestCandidate)
+      : null,
     bestCandidate: state.poseCenterSearch.bestCandidate
       ? roundPoseCenterSearchCandidate(state.poseCenterSearch.bestCandidate)
       : null,
     topCandidates: state.poseCenterSearch.topCandidates.map(roundPoseCenterSearchCandidate),
-    elapsedMs: roundForState(state.poseCenterSearch.elapsedMs),
     appliedBestAutomatically: state.poseCenterSearch.appliedBestAutomatically,
     appliedBestManually: state.poseCenterSearch.appliedBestManually,
+    appliedBestSourceMode: state.poseCenterSearch.appliedBestSourceMode,
     bestAppliedAt: state.poseCenterSearch.bestAppliedAt,
   }
 }
@@ -5067,6 +5563,10 @@ function formatPose(pose: ReferencePose) {
   return `yaw ${formatNullableNumber(pose.yaw)} / pitch ${formatNullableNumber(pose.pitch)} / roll ${formatNullableNumber(pose.roll)}`
 }
 
+function formatPoseCenterSearchMode(mode: PoseCenterSearchMode) {
+  return mode === "multi_frame" ? "複数姿勢" : "現在フレーム"
+}
+
 function formatAppliedObjPose() {
   return `yaw ${formatNullableNumber(state.objPoseSync.appliedYawDeg)} / pitch ${formatNullableNumber(state.objPoseSync.appliedPitchDeg)} / roll ${formatNullableNumber(state.objPoseSync.appliedRollDeg)}`
 }
@@ -5086,7 +5586,22 @@ function formatPoseCenterSearchTopCandidatesText() {
 
   return state.poseCenterSearch.topCandidates
     .map((candidate, index) =>
-      `${index + 1}. x=${formatNumber(candidate.rotationCenterX)}, y=${formatNumber(candidate.rotationCenterY)}, z=${formatNumber(candidate.rotationCenterZ)}, score=${formatNullableNumber(candidate.score)}, yaw=${formatNullableNumber(candidate.yawError)}, pitch=${formatNullableNumber(candidate.pitchError)}, roll=${formatNullableNumber(candidate.rollError)}`,
+      `${index + 1}. x=${formatNumber(candidate.rotationCenterX)}, y=${formatNumber(candidate.rotationCenterY)}, z=${formatNumber(candidate.rotationCenterZ)}, score=${formatNullableNumber(candidate.score)}, avg=${formatNullableNumber(candidate.averagePoseError)}, max=${formatNullableNumber(candidate.maxPoseError)}, failedFrames=${candidate.failedFrameCount}`,
+    )
+    .join("\n")
+}
+
+function formatPoseErrorTriple(yaw: number | null, pitch: number | null, roll: number | null) {
+  return `yaw ${formatNullableNumber(yaw)} / pitch ${formatNullableNumber(pitch)} / roll ${formatNullableNumber(roll)}`
+}
+
+function formatPoseCenterSearchFrameResultsText(results: PoseCenterSearchFrameResult[]) {
+  if (results.length === 0) {
+    return "[]"
+  }
+  return results
+    .map((result) =>
+      `${result.frameLabel}: current ${formatPose(result.currentPose)} / rendered ${formatPose(result.renderedPose)} / poseError ${formatNullableNumber(result.poseError)}`,
     )
     .join("\n")
 }
@@ -5096,7 +5611,10 @@ function getPoseCenterSearchApplyMessage() {
     return "bestを自動適用済み"
   }
   if (state.poseCenterSearch.appliedBestManually) {
-    return "bestを手動適用済み"
+    const sourceMode = state.poseCenterSearch.appliedBestSourceMode
+      ? ` / ${formatPoseCenterSearchMode(state.poseCenterSearch.appliedBestSourceMode)}`
+      : ""
+    return `bestを手動適用済み${sourceMode}`
   }
   if (state.poseCenterSearch.bestCandidate) {
     return "bestは自動適用しません。bestを適用ボタンで反映します。"
@@ -5198,6 +5716,8 @@ function getDebugExportPreview() {
     mediaPipeOptions: debugExport.mediaPipeOptions,
     realtime: debugExport.realtime,
     renderedIdealDetection: debugExport.renderedIdealDetection,
+    poseSearchFrames: debugExport.poseSearchFrames,
+    poseCenterSearch: debugExport.poseCenterSearch,
     notes: debugExport.notes,
   }
 }
@@ -5239,11 +5759,17 @@ function getRenderedIdealDetectionDebugExport() {
 
 function getPoseCenterSearchDebugExport() {
   return {
+    mode: state.poseCenterSearch.mode,
     status: state.poseCenterSearch.status,
+    frameCount: state.poseCenterSearch.frameCount,
     candidateCount: state.poseCenterSearch.candidateCount,
-    evaluatedCount: state.poseCenterSearch.evaluatedCount,
+    totalEvaluationCount: state.poseCenterSearch.totalEvaluationCount,
+    evaluatedCandidateCount: state.poseCenterSearch.evaluatedCandidateCount,
+    evaluatedFrameCount: state.poseCenterSearch.evaluatedFrameCount,
     failedCandidateCount: state.poseCenterSearch.failedCandidateCount,
+    failedFrameEvaluationCount: state.poseCenterSearch.failedFrameEvaluationCount,
     elapsedMs: roundForState(state.poseCenterSearch.elapsedMs),
+    estimatedRemainingMs: roundForState(state.poseCenterSearch.estimatedRemainingMs),
     currentPose: roundPoseForState(state.poseCenterSearch.currentPose),
     bestCandidate: state.poseCenterSearch.bestCandidate
       ? roundPoseCenterSearchCandidateForExport(state.poseCenterSearch.bestCandidate)
@@ -5251,6 +5777,7 @@ function getPoseCenterSearchDebugExport() {
     topCandidates: state.poseCenterSearch.topCandidates.map(roundPoseCenterSearchCandidateForExport),
     appliedBestAutomatically: state.poseCenterSearch.appliedBestAutomatically,
     appliedBestManually: state.poseCenterSearch.appliedBestManually,
+    appliedBestSourceMode: state.poseCenterSearch.appliedBestSourceMode,
     errorMessage: state.poseCenterSearch.errorMessage,
   }
 }
@@ -5322,6 +5849,32 @@ function averageNullableTiming(values: Array<number | null>) {
   return measuredValues.reduce((sum, value) => sum + value, 0) / measuredValues.length
 }
 
+function averageNumbers(values: number[]) {
+  const finiteValues = values.filter((value) => Number.isFinite(value))
+  if (finiteValues.length === 0) {
+    return null
+  }
+  return finiteValues.reduce((sum, value) => sum + value, 0) / finiteValues.length
+}
+
+function maxNumbers(values: number[]) {
+  const finiteValues = values.filter((value) => Number.isFinite(value))
+  if (finiteValues.length === 0) {
+    return null
+  }
+  return Math.max(...finiteValues)
+}
+
+function sumNumbers(values: Array<number | null>) {
+  const finiteValues = values.filter((value): value is number =>
+    value !== null && Number.isFinite(value),
+  )
+  if (finiteValues.length === 0) {
+    return null
+  }
+  return finiteValues.reduce((sum, value) => sum + value, 0)
+}
+
 function getRealtimePlaybackNote() {
   if (!state.liveVideo.loaded) {
     return ""
@@ -5374,6 +5927,16 @@ function roundPoseCenterSearchCandidate(candidate: PoseCenterSearchCandidate): P
     rotationCenterY: roundForState(candidate.rotationCenterY) ?? 0,
     rotationCenterZ: roundForState(candidate.rotationCenterZ) ?? 0,
     score: roundForState(candidate.score),
+    averagePoseError: roundForState(candidate.averagePoseError),
+    maxPoseError: roundForState(candidate.maxPoseError),
+    yawErrorAvg: roundForState(candidate.yawErrorAvg),
+    pitchErrorAvg: roundForState(candidate.pitchErrorAvg),
+    rollErrorAvg: roundForState(candidate.rollErrorAvg),
+    yawErrorMax: roundForState(candidate.yawErrorMax),
+    pitchErrorMax: roundForState(candidate.pitchErrorMax),
+    rollErrorMax: roundForState(candidate.rollErrorMax),
+    failedFrameCount: candidate.failedFrameCount,
+    frameResultsPreview: candidate.frameResultsPreview.map(roundPoseCenterSearchFrameResult),
     yawError: roundForState(candidate.yawError),
     pitchError: roundForState(candidate.pitchError),
     rollError: roundForState(candidate.rollError),
@@ -5390,6 +5953,16 @@ function roundPoseCenterSearchCandidateForExport(candidate: PoseCenterSearchCand
     rotationCenterY: roundForState(candidate.rotationCenterY),
     rotationCenterZ: roundForState(candidate.rotationCenterZ),
     score: roundForState(candidate.score),
+    averagePoseError: roundForState(candidate.averagePoseError),
+    maxPoseError: roundForState(candidate.maxPoseError),
+    yawErrorAvg: roundForState(candidate.yawErrorAvg),
+    pitchErrorAvg: roundForState(candidate.pitchErrorAvg),
+    rollErrorAvg: roundForState(candidate.rollErrorAvg),
+    yawErrorMax: roundForState(candidate.yawErrorMax),
+    pitchErrorMax: roundForState(candidate.pitchErrorMax),
+    rollErrorMax: roundForState(candidate.rollErrorMax),
+    failedFrameCount: candidate.failedFrameCount,
+    frameResultsPreview: candidate.frameResultsPreview.map(roundPoseCenterSearchFrameResult),
     yawError: roundForState(candidate.yawError),
     pitchError: roundForState(candidate.pitchError),
     rollError: roundForState(candidate.rollError),
@@ -5397,6 +5970,39 @@ function roundPoseCenterSearchCandidateForExport(candidate: PoseCenterSearchCand
     detected: candidate.detected,
     detectMs: roundForState(candidate.detectMs),
     errorMessage: candidate.errorMessage,
+  }
+}
+
+function roundPoseCenterSearchFrame(frame: PoseCenterSearchFrame): PoseCenterSearchFrame {
+  return {
+    ...frame,
+    timeSec: roundForState(frame.timeSec),
+    currentPose: {
+      yaw: roundForState(frame.currentPose.yaw) ?? 0,
+      pitch: roundForState(frame.currentPose.pitch) ?? 0,
+      roll: roundForState(frame.currentPose.roll) ?? 0,
+    },
+    qualityScore: roundForState(frame.qualityScore),
+  }
+}
+
+function roundPoseCenterSearchFrameResult(
+  result: PoseCenterSearchFrameResult,
+): PoseCenterSearchFrameResult {
+  return {
+    ...result,
+    timeSec: roundForState(result.timeSec),
+    currentPose: {
+      yaw: roundForState(result.currentPose.yaw) ?? 0,
+      pitch: roundForState(result.currentPose.pitch) ?? 0,
+      roll: roundForState(result.currentPose.roll) ?? 0,
+    },
+    renderedPose: roundPoseForState(result.renderedPose),
+    poseError: roundForState(result.poseError),
+    yawError: roundForState(result.yawError),
+    pitchError: roundForState(result.pitchError),
+    rollError: roundForState(result.rollError),
+    detectMs: roundForState(result.detectMs),
   }
 }
 
@@ -5483,12 +6089,23 @@ function getObjPoseSyncRotationCenter(): ObjVertex {
   }
 }
 
-function getObjPoseSyncPreviewState(): ObjPreviewState {
+function getObjPoseSyncPreviewState(poseOverride: ReferencePose | null = null): ObjPreviewState {
+  const pose = poseOverride
+    ? {
+      yaw: (poseOverride.yaw ?? 0) * state.objPoseSync.yawSign + state.objPoseSync.yawOffsetDeg,
+      pitch: (poseOverride.pitch ?? 0) * state.objPoseSync.pitchSign + state.objPoseSync.pitchOffsetDeg,
+      roll: (poseOverride.roll ?? 0) * state.objPoseSync.rollSign + state.objPoseSync.rollOffsetDeg,
+    }
+    : {
+      yaw: state.objPoseSync.appliedYawDeg,
+      pitch: state.objPoseSync.appliedPitchDeg,
+      roll: state.objPoseSync.appliedRollDeg,
+    }
   return {
     ...state.objPreview,
-    yawDeg: state.objPoseSync.appliedYawDeg ?? 0,
-    pitchDeg: state.objPoseSync.appliedPitchDeg ?? 0,
-    rollDeg: state.objPoseSync.appliedRollDeg ?? 0,
+    yawDeg: pose.yaw ?? 0,
+    pitchDeg: pose.pitch ?? 0,
+    rollDeg: pose.roll ?? 0,
     zoom: 1,
     panX: 0,
     panY: 0,

@@ -577,6 +577,72 @@ h3 {
   padding: 12px;
 }
 
+.pose-search-frames-card {
+  display: grid;
+  gap: 10px;
+}
+
+.pose-search-frame-header {
+  align-items: start;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, auto);
+}
+
+.pose-search-frame-header h3 {
+  margin-bottom: 4px;
+}
+
+.pose-search-frame-header p {
+  color: #5b6875;
+  font-size: 12px;
+  margin: 0;
+}
+
+.pose-search-frame-controls {
+  display: grid;
+  justify-content: start;
+}
+
+.pose-search-frame-table-wrap {
+  border: 1px solid #d8e0e7;
+  border-radius: 6px;
+  overflow: auto;
+}
+
+.pose-search-frame-table {
+  border-collapse: collapse;
+  font-size: 12px;
+  min-width: 760px;
+  width: 100%;
+}
+
+.pose-search-frame-table th,
+.pose-search-frame-table td {
+  border-bottom: 1px solid #edf1f4;
+  padding: 7px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.pose-search-frame-table th {
+  background: #f1f5f8;
+  color: #66727e;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.pose-search-frame-table td {
+  color: #26313b;
+  font-family:
+    "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  overflow-wrap: anywhere;
+}
+
+.pose-search-frame-table tr.is-selected td {
+  background: #eef7f3;
+}
+
 .realtime-control-header {
   align-items: start;
   display: grid;
