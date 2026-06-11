@@ -308,6 +308,16 @@ type ObjPoseCalibrationPose = {
 type ObjPoseCalibrationPoseResult = {
   poseId: string
   poseLabel: string
+  basePose: {
+    yaw: number
+    pitch: number
+    roll: number
+  }
+  renderPoseOffset: {
+    yawDeg: number
+    pitchDeg: number
+    rollDeg: number
+  }
   renderPose: {
     yaw: number
     pitch: number
@@ -336,6 +346,11 @@ type ObjPoseCalibrationCandidate = {
   rotationCenterX: number
   rotationCenterY: number
   rotationCenterZ: number
+  renderPoseOffset: {
+    yawDeg: number
+    pitchDeg: number
+    rollDeg: number
+  }
   score: number | null
   averagePoseError: number | null
   maxPoseError: number | null
@@ -351,12 +366,29 @@ type ObjPoseCalibrationCandidate = {
   errorMessage: string | null
 }
 
+type ObjPoseCalibrationCandidatePoint = {
+  rotationCenter: ObjVertex
+  renderPoseOffset: {
+    yawDeg: number
+    pitchDeg: number
+    rollDeg: number
+  }
+}
+
+type ObjPoseCalibrationSearchRange = {
+  rotationCenterX: { fixed: true; value: 0 }
+  rotationCenterY: { min: -0.3; max: 0.3; step: 0.05 }
+  rotationCenterZ: { min: -0.4; max: 0.1; step: 0.05 }
+  pitchOffsetDeg: { min: -10; max: 10; step: 2 }
+}
+
 type ObjPoseCalibrationState = {
   status: ObjPoseCalibrationStatus
   startedAt: string | null
   completedAt: string | null
   elapsedMs: number | null
   estimatedRemainingMs: number | null
+  searchRange: ObjPoseCalibrationSearchRange
   poseCount: number
   candidateCount: number
   totalEvaluationCount: number
@@ -597,9 +629,10 @@ const POSE_CENTER_SEARCH_RANGE = {
 const POSE_CENTER_SEARCH_TOP_CANDIDATE_COUNT = 5
 const POSE_CENTER_SEARCH_FRAME_RESULTS_PREVIEW_COUNT = 12
 const OBJ_POSE_CALIBRATION_RANGE = {
-  x: { fixed: true, value: 0 },
-  y: { min: -0.3, max: 0.3, step: 0.05 },
-  z: { min: -0.4, max: 0.1, step: 0.05 },
+  rotationCenterX: { fixed: true, value: 0 },
+  rotationCenterY: { min: -0.3, max: 0.3, step: 0.05 },
+  rotationCenterZ: { min: -0.4, max: 0.1, step: 0.05 },
+  pitchOffsetDeg: { min: -10, max: 10, step: 2 },
 } as const
 const OBJ_POSE_CALIBRATION_TOP_CANDIDATE_COUNT = 10
 const OBJ_POSE_COMPARISON_SIGN = {
@@ -2189,8 +2222,8 @@ async function startObjPoseCalibration() {
     }
 
     const detector = await getRenderedIdealFaceLandmarker()
-    for (const [index, rotationCenter] of candidates.entries()) {
-      const candidate = evaluateObjPoseCalibrationCandidate(detector, rotationCenter)
+    for (const [index, candidatePoint] of candidates.entries()) {
+      const candidate = evaluateObjPoseCalibrationCandidate(detector, candidatePoint)
       updateObjPoseCalibrationProgress(candidate, startedAtMs)
       renderRenderedIdealSummaryCard()
       renderDebugContent()
@@ -2231,28 +2264,35 @@ async function startObjPoseCalibration() {
 
 function evaluateObjPoseCalibrationCandidate(
   detector: FaceLandmarker,
-  rotationCenter: ObjVertex,
+  candidatePoint: ObjPoseCalibrationCandidatePoint,
 ): ObjPoseCalibrationCandidate {
   const poseResults = OBJ_POSE_CALIBRATION_POSES.map((pose) =>
-    evaluateObjPoseCalibrationCandidateOnPose(detector, rotationCenter, pose),
+    evaluateObjPoseCalibrationCandidateOnPose(detector, candidatePoint, pose),
   )
-  return buildObjPoseCalibrationCandidate(rotationCenter, poseResults)
+  return buildObjPoseCalibrationCandidate(candidatePoint, poseResults)
 }
 
 function evaluateObjPoseCalibrationCandidateOnPose(
   detector: FaceLandmarker,
-  rotationCenter: ObjVertex,
+  candidatePoint: ObjPoseCalibrationCandidatePoint,
   pose: ObjPoseCalibrationPose,
 ): ObjPoseCalibrationPoseResult {
-  const renderPose = {
+  const basePose = {
     yaw: pose.yawDeg,
     pitch: pose.pitchDeg,
     roll: pose.rollDeg,
   }
-  const expectedPoseForComparison = applyObjPoseComparisonSign(renderPose)
+  const renderPose = {
+    yaw: basePose.yaw + candidatePoint.renderPoseOffset.yawDeg,
+    pitch: basePose.pitch + candidatePoint.renderPoseOffset.pitchDeg,
+    roll: basePose.roll + candidatePoint.renderPoseOffset.rollDeg,
+  }
+  const expectedPoseForComparison = applyObjPoseComparisonSign(basePose)
   const baseResult: ObjPoseCalibrationPoseResult = {
     poseId: pose.id,
     poseLabel: pose.label,
+    basePose,
+    renderPoseOffset: candidatePoint.renderPoseOffset,
     renderPose,
     expectedPoseForComparison,
     returnedPose: {
@@ -2270,7 +2310,7 @@ function evaluateObjPoseCalibrationCandidateOnPose(
   }
 
   try {
-    const renderSummary = renderRenderedIdealCanvasTo(renderedIdealCanvas, rotationCenter, renderPose)
+    const renderSummary = renderRenderedIdealCanvasTo(renderedIdealCanvas, candidatePoint.rotationCenter, renderPose)
     if (renderSummary.status !== "rendered") {
       return {
         ...baseResult,
@@ -2318,7 +2358,7 @@ function evaluateObjPoseCalibrationCandidateOnPose(
 }
 
 function buildObjPoseCalibrationCandidate(
-  rotationCenter: ObjVertex,
+  candidatePoint: ObjPoseCalibrationCandidatePoint,
   poseResults: ObjPoseCalibrationPoseResult[],
 ): ObjPoseCalibrationCandidate {
   const detectedResults = poseResults.filter((result) => result.detected && result.poseError !== null)
@@ -2340,9 +2380,10 @@ function buildObjPoseCalibrationCandidate(
     : averagePoseError + maxPoseError + failedPoseCount * 100
 
   return {
-    rotationCenterX: roundForState(rotationCenter.x) ?? 0,
-    rotationCenterY: roundForState(rotationCenter.y) ?? 0,
-    rotationCenterZ: roundForState(rotationCenter.z) ?? 0,
+    rotationCenterX: roundForState(candidatePoint.rotationCenter.x) ?? 0,
+    rotationCenterY: roundForState(candidatePoint.rotationCenter.y) ?? 0,
+    rotationCenterZ: roundForState(candidatePoint.rotationCenter.z) ?? 0,
+    renderPoseOffset: roundObjPoseRenderOffset(candidatePoint.renderPoseOffset),
     score: roundForState(score),
     averagePoseError: roundForState(averagePoseError),
     maxPoseError: roundForState(maxPoseError),
@@ -2391,24 +2432,38 @@ function updateObjPoseCalibrationProgress(candidate: ObjPoseCalibrationCandidate
   }
 }
 
-function createObjPoseCalibrationCandidatePoints(): ObjVertex[] {
+function createObjPoseCalibrationCandidatePoints(): ObjPoseCalibrationCandidatePoint[] {
   const yValues = createSteppedValues(
-    OBJ_POSE_CALIBRATION_RANGE.y.min,
-    OBJ_POSE_CALIBRATION_RANGE.y.max,
-    OBJ_POSE_CALIBRATION_RANGE.y.step,
+    OBJ_POSE_CALIBRATION_RANGE.rotationCenterY.min,
+    OBJ_POSE_CALIBRATION_RANGE.rotationCenterY.max,
+    OBJ_POSE_CALIBRATION_RANGE.rotationCenterY.step,
   )
   const zValues = createSteppedValues(
-    OBJ_POSE_CALIBRATION_RANGE.z.min,
-    OBJ_POSE_CALIBRATION_RANGE.z.max,
-    OBJ_POSE_CALIBRATION_RANGE.z.step,
+    OBJ_POSE_CALIBRATION_RANGE.rotationCenterZ.min,
+    OBJ_POSE_CALIBRATION_RANGE.rotationCenterZ.max,
+    OBJ_POSE_CALIBRATION_RANGE.rotationCenterZ.step,
+  )
+  const pitchOffsetValues = createSteppedValues(
+    OBJ_POSE_CALIBRATION_RANGE.pitchOffsetDeg.min,
+    OBJ_POSE_CALIBRATION_RANGE.pitchOffsetDeg.max,
+    OBJ_POSE_CALIBRATION_RANGE.pitchOffsetDeg.step,
   )
 
   return yValues.flatMap((y) =>
-    zValues.map((z) => ({
-      x: OBJ_POSE_CALIBRATION_RANGE.x.value,
-      y,
-      z,
-    })),
+    zValues.flatMap((z) =>
+      pitchOffsetValues.map((pitchDeg) => ({
+        rotationCenter: {
+          x: OBJ_POSE_CALIBRATION_RANGE.rotationCenterX.value,
+          y,
+          z,
+        },
+        renderPoseOffset: {
+          yawDeg: 0,
+          pitchDeg,
+          rollDeg: 0,
+        },
+      })),
+    ),
   )
 }
 
@@ -4483,6 +4538,10 @@ function getSummaryItems(): Array<[string, string]> {
     ["objPoseCalibrationComparisonRollSign", formatNumber(OBJ_POSE_COMPARISON_SIGN.roll)],
     ["objPoseCalibrationPoseCount", formatNullableCount(state.objPoseCalibration.poseCount)],
     ["objPoseCalibrationCandidateCount", formatNullableCount(state.objPoseCalibration.candidateCount)],
+    ["objPoseCalibrationBestPitchOffsetDeg", formatNullableNumber(bestObjPoseCalibrationCandidate?.renderPoseOffset.pitchDeg ?? null)],
+    ["objPoseCalibrationSearchPitchOffsetMin", formatNumber(state.objPoseCalibration.searchRange.pitchOffsetDeg.min)],
+    ["objPoseCalibrationSearchPitchOffsetMax", formatNumber(state.objPoseCalibration.searchRange.pitchOffsetDeg.max)],
+    ["objPoseCalibrationSearchPitchOffsetStep", formatNumber(state.objPoseCalibration.searchRange.pitchOffsetDeg.step)],
     ["objPoseCalibrationBestRotationCenterX", formatNullableNumber(bestObjPoseCalibrationCandidate?.rotationCenterX ?? null)],
     ["objPoseCalibrationBestRotationCenterY", formatNullableNumber(bestObjPoseCalibrationCandidate?.rotationCenterY ?? null)],
     ["objPoseCalibrationBestRotationCenterZ", formatNullableNumber(bestObjPoseCalibrationCandidate?.rotationCenterZ ?? null)],
@@ -4634,6 +4693,8 @@ function getObjPoseCalibrationItems(): Array<[string, string]> {
     ["状態", calibration.status],
     ["比較用pose符号", formatObjPoseComparisonSign()],
     ["比較ルール", "OBJ描画poseとMediaPipe返却poseの符号規約が異なるため、score計算では基準poseの yaw / pitch / roll を反転して比較します。"],
+    ["renderPoseOffset", "OBJを描画するときだけ加える姿勢補正です。score計算で使う expected pose には加えません。今回は pitchOffsetDeg のみ探索します。"],
+    ["探索範囲 pitchOffsetDeg", formatPitchOffsetSearchRange()],
     ["pose数", formatNullableCount(calibration.poseCount)],
     ["候補数", formatNullableCount(calibration.candidateCount)],
     ["総評価数", formatNullableCount(calibration.totalEvaluationCount)],
@@ -4646,6 +4707,7 @@ function getObjPoseCalibrationItems(): Array<[string, string]> {
     ["best rotationCenterX", formatNullableNumber(best?.rotationCenterX ?? null)],
     ["best rotationCenterY", formatNullableNumber(best?.rotationCenterY ?? null)],
     ["best rotationCenterZ", formatNullableNumber(best?.rotationCenterZ ?? null)],
+    ["best renderPitchOffsetDeg", formatNullableNumber(best?.renderPoseOffset.pitchDeg ?? null)],
     ["best score", formatNullableNumber(best?.score ?? null)],
     ["averagePoseError", formatNullableNumber(best?.averagePoseError ?? null)],
     ["maxPoseError", formatNullableNumber(best?.maxPoseError ?? null)],
@@ -4786,6 +4848,7 @@ function getRawState() {
       renderedIdealPose: roundPoseForState(state.renderedIdeal.detection.pose),
     },
     objPoseCalibrationComparisonSign: getObjPoseComparisonSignDebug(),
+    objPoseCalibrationSearchRange: state.objPoseCalibration.searchRange,
     objPoseCalibrationState: getObjPoseCalibrationRawSummary(),
     objPoseCalibrationTopCandidates: state.objPoseCalibration.topCandidates.map(roundObjPoseCalibrationCandidate),
     objPoseCalibrationPoseSet: OBJ_POSE_CALIBRATION_POSES.map((pose) => ({ ...pose })),
@@ -5011,6 +5074,7 @@ function createDefaultObjPoseCalibrationState(): ObjPoseCalibrationState {
     completedAt: null,
     elapsedMs: null,
     estimatedRemainingMs: null,
+    searchRange: createObjPoseCalibrationSearchRange(),
     poseCount: OBJ_POSE_CALIBRATION_POSES.length,
     candidateCount: 0,
     totalEvaluationCount: 0,
@@ -5022,6 +5086,27 @@ function createDefaultObjPoseCalibrationState(): ObjPoseCalibrationState {
     bestCandidate: null,
     topCandidates: [],
     errorMessage: null,
+  }
+}
+
+function createObjPoseCalibrationSearchRange(): ObjPoseCalibrationSearchRange {
+  return {
+    rotationCenterX: { fixed: true, value: OBJ_POSE_CALIBRATION_RANGE.rotationCenterX.value },
+    rotationCenterY: {
+      min: OBJ_POSE_CALIBRATION_RANGE.rotationCenterY.min,
+      max: OBJ_POSE_CALIBRATION_RANGE.rotationCenterY.max,
+      step: OBJ_POSE_CALIBRATION_RANGE.rotationCenterY.step,
+    },
+    rotationCenterZ: {
+      min: OBJ_POSE_CALIBRATION_RANGE.rotationCenterZ.min,
+      max: OBJ_POSE_CALIBRATION_RANGE.rotationCenterZ.max,
+      step: OBJ_POSE_CALIBRATION_RANGE.rotationCenterZ.step,
+    },
+    pitchOffsetDeg: {
+      min: OBJ_POSE_CALIBRATION_RANGE.pitchOffsetDeg.min,
+      max: OBJ_POSE_CALIBRATION_RANGE.pitchOffsetDeg.max,
+      step: OBJ_POSE_CALIBRATION_RANGE.pitchOffsetDeg.step,
+    },
   }
 }
 
@@ -5727,6 +5812,7 @@ function getObjPoseCalibrationRawSummary() {
   return {
     status: state.objPoseCalibration.status,
     comparisonSign: getObjPoseComparisonSignDebug(),
+    searchRange: state.objPoseCalibration.searchRange,
     startedAt: state.objPoseCalibration.startedAt,
     completedAt: state.objPoseCalibration.completedAt,
     elapsedMs: roundForState(state.objPoseCalibration.elapsedMs),
@@ -5939,6 +6025,11 @@ function formatObjPoseComparisonSign() {
   return `yaw=${formatNumber(OBJ_POSE_COMPARISON_SIGN.yaw)} / pitch=${formatNumber(OBJ_POSE_COMPARISON_SIGN.pitch)} / roll=${formatNumber(OBJ_POSE_COMPARISON_SIGN.roll)}`
 }
 
+function formatPitchOffsetSearchRange() {
+  const range = state.objPoseCalibration.searchRange.pitchOffsetDeg
+  return `min=${formatNumber(range.min)} / max=${formatNumber(range.max)} / step=${formatNumber(range.step)}`
+}
+
 function formatObjPoseCalibrationBestRotationCenter() {
   const best = state.objPoseCalibration.bestCandidate
   if (!best) {
@@ -5954,7 +6045,7 @@ function formatObjPoseCalibrationTopCandidatesText() {
 
   return state.objPoseCalibration.topCandidates
     .map((candidate, index) =>
-      `${index + 1}. x=${formatNumber(candidate.rotationCenterX)}, y=${formatNumber(candidate.rotationCenterY)}, z=${formatNumber(candidate.rotationCenterZ)}, score=${formatNullableNumber(candidate.score)}, avg=${formatNullableNumber(candidate.averagePoseError)}, max=${formatNullableNumber(candidate.maxPoseError)}, failedPoses=${candidate.failedPoseCount}`,
+      `${index + 1}. rotationCenter x=${formatNumber(candidate.rotationCenterX)}, y=${formatNumber(candidate.rotationCenterY)}, z=${formatNumber(candidate.rotationCenterZ)}, pitchOffsetDeg=${formatNumber(candidate.renderPoseOffset.pitchDeg)}, score=${formatNullableNumber(candidate.score)}, avg=${formatNullableNumber(candidate.averagePoseError)}, max=${formatNullableNumber(candidate.maxPoseError)}, failedPoses=${candidate.failedPoseCount}`,
     )
     .join("\n")
 }
@@ -5975,6 +6066,10 @@ function formatPoseErrorTriple(yaw: number | null, pitch: number | null, roll: n
   return `yaw ${formatNullableNumber(yaw)} / pitch ${formatNullableNumber(pitch)} / roll ${formatNullableNumber(roll)}`
 }
 
+function formatObjPoseRenderOffset(offset: { yawDeg: number; pitchDeg: number; rollDeg: number }) {
+  return `yawDeg ${formatNumber(offset.yawDeg)} / pitchDeg ${formatNumber(offset.pitchDeg)} / rollDeg ${formatNumber(offset.rollDeg)}`
+}
+
 function formatPoseCenterSearchFrameResultsText(results: PoseCenterSearchFrameResult[]) {
   if (results.length === 0) {
     return "[]"
@@ -5992,7 +6087,7 @@ function formatObjPoseCalibrationPoseResultsText(results: ObjPoseCalibrationPose
   }
   return results
     .map((result) =>
-      `${result.poseLabel}: render ${formatPose(result.renderPose)} / expectedForComparison ${formatPose(result.expectedPoseForComparison)} / returned ${formatPose(result.returnedPose)} / yaw/pitch/roll error ${formatPoseErrorTriple(result.yawError, result.pitchError, result.rollError)} / poseError ${formatNullableNumber(result.poseError)} / detected ${String(result.detected)}`,
+      `${result.poseLabel}: base ${formatPose(result.basePose)} / offset ${formatObjPoseRenderOffset(result.renderPoseOffset)} / render ${formatPose(result.renderPose)} / expectedForComparison ${formatPose(result.expectedPoseForComparison)} / returned ${formatPose(result.returnedPose)} / yaw/pitch/roll error ${formatPoseErrorTriple(result.yawError, result.pitchError, result.rollError)} / poseError ${formatNullableNumber(result.poseError)} / detected ${String(result.detected)}`,
     )
     .join("\n")
 }
@@ -6167,6 +6262,7 @@ function getObjPoseCalibrationDebugExport() {
   return {
     status: state.objPoseCalibration.status,
     comparisonSign: getObjPoseComparisonSignDebug(),
+    searchRange: state.objPoseCalibration.searchRange,
     poseCount: state.objPoseCalibration.poseCount,
     candidateCount: state.objPoseCalibration.candidateCount,
     totalEvaluationCount: state.objPoseCalibration.totalEvaluationCount,
@@ -6348,6 +6444,14 @@ function roundPoseForState(pose: ReferencePose): ReferencePose {
   }
 }
 
+function roundObjPoseRenderOffset(offset: { yawDeg: number; pitchDeg: number; rollDeg: number }) {
+  return {
+    yawDeg: roundForState(offset.yawDeg) ?? 0,
+    pitchDeg: roundForState(offset.pitchDeg) ?? 0,
+    rollDeg: roundForState(offset.rollDeg) ?? 0,
+  }
+}
+
 function roundPoseCenterSearchCandidate(candidate: PoseCenterSearchCandidate): PoseCenterSearchCandidate {
   return {
     rotationCenterX: roundForState(candidate.rotationCenterX) ?? 0,
@@ -6381,6 +6485,7 @@ function roundObjPoseCalibrationCandidate(
     rotationCenterX: roundForState(candidate.rotationCenterX) ?? 0,
     rotationCenterY: roundForState(candidate.rotationCenterY) ?? 0,
     rotationCenterZ: roundForState(candidate.rotationCenterZ) ?? 0,
+    renderPoseOffset: roundObjPoseRenderOffset(candidate.renderPoseOffset),
     score: roundForState(candidate.score),
     averagePoseError: roundForState(candidate.averagePoseError),
     maxPoseError: roundForState(candidate.maxPoseError),
@@ -6402,6 +6507,7 @@ function roundObjPoseCalibrationCandidateForExport(candidate: ObjPoseCalibration
     rotationCenterX: roundForState(candidate.rotationCenterX),
     rotationCenterY: roundForState(candidate.rotationCenterY),
     rotationCenterZ: roundForState(candidate.rotationCenterZ),
+    renderPoseOffset: roundObjPoseRenderOffset(candidate.renderPoseOffset),
     score: roundForState(candidate.score),
     averagePoseError: roundForState(candidate.averagePoseError),
     maxPoseError: roundForState(candidate.maxPoseError),
@@ -6482,6 +6588,12 @@ function roundObjPoseCalibrationPoseResult(
 ): ObjPoseCalibrationPoseResult {
   return {
     ...result,
+    basePose: {
+      yaw: roundForState(result.basePose.yaw) ?? 0,
+      pitch: roundForState(result.basePose.pitch) ?? 0,
+      roll: roundForState(result.basePose.roll) ?? 0,
+    },
+    renderPoseOffset: roundObjPoseRenderOffset(result.renderPoseOffset),
     renderPose: {
       yaw: roundForState(result.renderPose.yaw) ?? 0,
       pitch: roundForState(result.renderPose.pitch) ?? 0,
