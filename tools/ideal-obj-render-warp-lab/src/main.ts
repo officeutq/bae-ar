@@ -971,6 +971,14 @@ type PoseMappingDisplacementSummary = {
   p95: number | null
   max: number | null
 }
+type PoseMappingBounds = {
+  minX: number
+  maxX: number
+  minY: number
+  maxY: number
+  width: number
+  height: number
+}
 type PoseMappingAlignmentState = {
   status: PoseMappingAlignmentStatus
   mode: "center_uniform_scale"
@@ -980,6 +988,14 @@ type PoseMappingAlignmentState = {
   idealCenter: { x: number; y: number } | null
   scale: number | null
   videoAspectRatio: number | null
+  renderAspectRatio: number | null
+  currentBoundsImage: PoseMappingBounds | null
+  renderedIdealBoundsImage: PoseMappingBounds | null
+  currentBoundsAspectWork: PoseMappingBounds | null
+  renderedIdealBoundsAspectWork: PoseMappingBounds | null
+  alignedIdealBoundsAspectWork: PoseMappingBounds | null
+  alignedRenderedIdealBoundsImage: PoseMappingBounds | null
+  displayedContentRect: Rect | null
   excludedReasonCounts: PoseMappingExcludedReasonCounts
   displacementSummary: PoseMappingDisplacementSummary
   anchorIndices: number[]
@@ -4098,6 +4114,7 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
     const alignmentResult = buildPoseMappingAlignment(
       state.currentAnalysis.landmarks478,
       detection.landmarks478,
+      renderer.canvas.width / Math.max(1, renderer.canvas.height),
     )
     const previewSize = drawPoseMappingPreviewFromDetectCanvas(renderer.canvas, detection.landmarks478)
     renderSettings.previewCanvasWidth = previewSize.width
@@ -6274,15 +6291,16 @@ function getPoseMappingSkippedStatus(reason: PoseMappingSkippedReason): PoseMapp
 }
 
 function buildPoseMappingAlignment(
-  current478: ReferenceLandmark[] | null,
-  renderedIdeal478: ReferenceLandmark[] | null,
+  currentLandmarksImage: ReferenceLandmark[] | null,
+  renderedIdealLandmarksImage: ReferenceLandmark[] | null,
+  renderAspectRatio: number,
 ): {
   alignedRenderedIdeal478: ReferenceLandmark[] | null
   meshSourceVertices: ReferenceLandmark[] | null
   meshTargetVertices: ReferenceLandmark[] | null
   alignment: PoseMappingAlignmentState
 } {
-  if (!current478 || current478.length !== REQUIRED_LANDMARK_COUNT) {
+  if (!currentLandmarksImage || currentLandmarksImage.length !== REQUIRED_LANDMARK_COUNT) {
     return {
       alignedRenderedIdeal478: null,
       meshSourceVertices: null,
@@ -6290,23 +6308,38 @@ function buildPoseMappingAlignment(
       alignment: createEmptyPoseMappingAlignmentState("missing_current"),
     }
   }
-  if (!renderedIdeal478 || renderedIdeal478.length !== REQUIRED_LANDMARK_COUNT) {
+  if (!renderedIdealLandmarksImage || renderedIdealLandmarksImage.length !== REQUIRED_LANDMARK_COUNT) {
     return {
       alignedRenderedIdeal478: null,
-      meshSourceVertices: current478.map(cloneReferenceLandmark),
+      meshSourceVertices: currentLandmarksImage.map(cloneReferenceLandmark),
       meshTargetVertices: null,
-      alignment: createEmptyPoseMappingAlignmentState("missing_rendered_ideal"),
+      alignment: {
+        ...createEmptyPoseMappingAlignmentState("missing_rendered_ideal"),
+        videoAspectRatio: getLiveVideoAspectRatio(),
+        renderAspectRatio,
+        currentBoundsImage: calculateLandmarkBounds(currentLandmarksImage),
+      },
     }
   }
 
   const videoAspectRatio = getLiveVideoAspectRatio()
+  const currentLandmarksAspectWork = currentLandmarksImage.map((landmark) =>
+    toAspectWorkLandmark(landmark, videoAspectRatio),
+  )
+  const renderedIdealLandmarksAspectWork = renderedIdealLandmarksImage.map((landmark) =>
+    toAspectWorkLandmark(landmark, renderAspectRatio),
+  )
+  const currentBoundsImage = calculateLandmarkBounds(currentLandmarksImage)
+  const renderedIdealBoundsImage = calculateLandmarkBounds(renderedIdealLandmarksImage)
+  const currentBoundsAspectWork = calculateLandmarkBounds(currentLandmarksAspectWork)
+  const renderedIdealBoundsAspectWork = calculateLandmarkBounds(renderedIdealLandmarksAspectWork)
   const reasons = Array.from({ length: REQUIRED_LANDMARK_COUNT }, () => [] as PoseMappingExcludedReason[])
   const reasonCounts = createEmptyPoseMappingExcludedReasonCounts()
   const anchorIndices: number[] = []
 
   for (let index = 0; index < REQUIRED_LANDMARK_COUNT; index += 1) {
-    const current = current478[index]
-    const ideal = renderedIdeal478[index]
+    const current = currentLandmarksImage[index]
+    const ideal = renderedIdealLandmarksImage[index]
     const landmarkReasons = getInitialAlignmentExcludedReasons(current, ideal, index)
     reasons[index].push(...landmarkReasons)
     for (const reason of landmarkReasons) {
@@ -6320,11 +6353,16 @@ function buildPoseMappingAlignment(
   if (anchorIndices.length < ALIGNMENT_MIN_ANCHOR_COUNT) {
     return {
       alignedRenderedIdeal478: null,
-      meshSourceVertices: current478.map(cloneReferenceLandmark),
+      meshSourceVertices: currentLandmarksImage.map(cloneReferenceLandmark),
       meshTargetVertices: null,
       alignment: {
         ...createEmptyPoseMappingAlignmentState("insufficient_anchors"),
         videoAspectRatio,
+        renderAspectRatio,
+        currentBoundsImage,
+        renderedIdealBoundsImage,
+        currentBoundsAspectWork,
+        renderedIdealBoundsAspectWork,
         excludedReasonCounts: reasonCounts,
         anchorIndices,
         landmarkReasons: reasons,
@@ -6332,31 +6370,34 @@ function buildPoseMappingAlignment(
     }
   }
 
-  const currentCenter = calculateAspectCorrectedCenter(current478, anchorIndices, videoAspectRatio)
-  const idealCenter = calculateAspectCorrectedCenter(renderedIdeal478, anchorIndices, videoAspectRatio)
-  const currentScale = calculateAspectCorrectedScale(current478, anchorIndices, currentCenter, videoAspectRatio)
-  const idealScale = calculateAspectCorrectedScale(renderedIdeal478, anchorIndices, idealCenter, videoAspectRatio)
+  const currentCenter = calculateAspectWorkCenter(currentLandmarksAspectWork, anchorIndices)
+  const idealCenter = calculateAspectWorkCenter(renderedIdealLandmarksAspectWork, anchorIndices)
+  const currentScale = calculateAspectWorkScale(currentLandmarksAspectWork, anchorIndices, currentCenter)
+  const idealScale = calculateAspectWorkScale(renderedIdealLandmarksAspectWork, anchorIndices, idealCenter)
   const scale = idealScale > 1e-6 ? currentScale / idealScale : 1
 
-  const alignedRenderedIdeal478 = renderedIdeal478.map((landmark) => {
+  const alignedIdealLandmarksAspectWork = renderedIdealLandmarksAspectWork.map((landmark, index) => {
     if (!isFiniteLandmark(landmark)) {
-      return current478[landmark.index] ? cloneReferenceLandmark(current478[landmark.index]) : cloneReferenceLandmark(landmark)
+      const currentFallback = currentLandmarksAspectWork[index]
+      return currentFallback ? cloneReferenceLandmark(currentFallback) : cloneReferenceLandmark(landmark)
     }
-    const correctedX = landmark.x * videoAspectRatio
-    const alignedCorrectedX = (correctedX - idealCenter.x) * scale + currentCenter.x
+    const alignedCorrectedX = (landmark.x - idealCenter.x) * scale + currentCenter.x
     const alignedY = (landmark.y - idealCenter.y) * scale + currentCenter.y
     return {
       index: landmark.index,
-      x: alignedCorrectedX / videoAspectRatio,
+      x: alignedCorrectedX,
       y: alignedY,
       z: landmark.z,
     }
   })
+  const alignedRenderedIdealLandmarksImage = alignedIdealLandmarksAspectWork.map((landmark) =>
+    fromAspectWorkLandmark(landmark, videoAspectRatio),
+  )
 
   const displacementValues: number[] = []
   for (let index = 0; index < REQUIRED_LANDMARK_COUNT; index += 1) {
-    const current = current478[index]
-    const aligned = alignedRenderedIdeal478[index]
+    const current = currentLandmarksImage[index]
+    const aligned = alignedRenderedIdealLandmarksImage[index]
     if (!isFiniteLandmark(current) || !isFiniteLandmark(aligned)) {
       continue
     }
@@ -6371,16 +6412,16 @@ function buildPoseMappingAlignment(
     }
   }
 
-  const meshSourceVertices = current478.map(cloneReferenceLandmark)
-  const meshTargetVertices = current478.map((current, index) => {
-    const aligned = alignedRenderedIdeal478[index]
+  const meshSourceVertices = currentLandmarksImage.map(cloneReferenceLandmark)
+  const meshTargetVertices = currentLandmarksImage.map((current, index) => {
+    const aligned = alignedRenderedIdealLandmarksImage[index]
     return reasons[index].length > 0 || !isFiniteLandmark(aligned)
       ? cloneReferenceLandmark(current)
       : cloneReferenceLandmark(aligned)
   })
 
   return {
-    alignedRenderedIdeal478,
+    alignedRenderedIdeal478: alignedRenderedIdealLandmarksImage,
     meshSourceVertices,
     meshTargetVertices,
     alignment: {
@@ -6392,6 +6433,14 @@ function buildPoseMappingAlignment(
       idealCenter,
       scale,
       videoAspectRatio,
+      renderAspectRatio,
+      currentBoundsImage,
+      renderedIdealBoundsImage,
+      currentBoundsAspectWork,
+      renderedIdealBoundsAspectWork,
+      alignedIdealBoundsAspectWork: calculateLandmarkBounds(alignedIdealLandmarksAspectWork),
+      alignedRenderedIdealBoundsImage: calculateLandmarkBounds(alignedRenderedIdealLandmarksImage),
+      displayedContentRect: null,
       excludedReasonCounts: reasonCounts,
       displacementSummary: summarizeDisplacements(displacementValues),
       anchorIndices,
@@ -6438,6 +6487,49 @@ function cloneReferenceLandmark(landmark: ReferenceLandmark): ReferenceLandmark 
   }
 }
 
+function toAspectWorkLandmark(
+  landmark: ReferenceLandmark,
+  aspectRatio: number,
+): ReferenceLandmark {
+  return {
+    index: landmark.index,
+    x: landmark.x * aspectRatio,
+    y: landmark.y,
+    z: landmark.z,
+  }
+}
+
+function fromAspectWorkLandmark(
+  landmark: ReferenceLandmark,
+  aspectRatio: number,
+): ReferenceLandmark {
+  return {
+    index: landmark.index,
+    x: landmark.x / aspectRatio,
+    y: landmark.y,
+    z: landmark.z,
+  }
+}
+
+function calculateLandmarkBounds(landmarks: ReferenceLandmark[]): PoseMappingBounds | null {
+  const finiteLandmarks = landmarks.filter(isFiniteLandmark)
+  if (finiteLandmarks.length === 0) {
+    return null
+  }
+  const minX = Math.min(...finiteLandmarks.map((landmark) => landmark.x))
+  const maxX = Math.max(...finiteLandmarks.map((landmark) => landmark.x))
+  const minY = Math.min(...finiteLandmarks.map((landmark) => landmark.y))
+  const maxY = Math.max(...finiteLandmarks.map((landmark) => landmark.y))
+  return {
+    minX,
+    maxX,
+    minY,
+    maxY,
+    width: maxX - minX,
+    height: maxY - minY,
+  }
+}
+
 function isIrisLandmarkIndex(index: number) {
   return index >= IRIS_LANDMARK_START && index <= IRIS_LANDMARK_END
 }
@@ -6477,6 +6569,37 @@ function calculateAspectCorrectedCenter(
     x: sum.x / indices.length,
     y: sum.y / indices.length,
   }
+}
+
+function calculateAspectWorkCenter(
+  landmarks: ReferenceLandmark[],
+  indices: number[],
+) {
+  const sum = indices.reduce(
+    (acc, index) => {
+      acc.x += landmarks[index].x
+      acc.y += landmarks[index].y
+      return acc
+    },
+    { x: 0, y: 0 },
+  )
+  return {
+    x: sum.x / indices.length,
+    y: sum.y / indices.length,
+  }
+}
+
+function calculateAspectWorkScale(
+  landmarks: ReferenceLandmark[],
+  indices: number[],
+  center: { x: number; y: number },
+) {
+  const meanSquared = indices.reduce((sum, index) => {
+    const dx = landmarks[index].x - center.x
+    const dy = landmarks[index].y - center.y
+    return sum + dx * dx + dy * dy
+  }, 0) / indices.length
+  return Math.sqrt(meanSquared)
 }
 
 function calculateAspectCorrectedScale(
@@ -10229,16 +10352,25 @@ function renderPoseMappingDebugTab() {
     </section>
 
     <section class="debug-section">
-      <h3>Alignment（位置合わせ）</h3>
+      <h3>Alignment coordinate debug（位置合わせ座標デバッグ）</h3>
       <dl class="summary-list">
         <div><dt>status</dt><dd>${escapeHtml(runtime.alignment.status)}</dd></div>
         <div><dt>alignmentMode</dt><dd>${escapeHtml(runtime.alignment.mode)}</dd></div>
         <div><dt>rotationApplied</dt><dd>${String(runtime.alignment.rotationApplied)}</dd></div>
         <div><dt>anchorCount</dt><dd>${formatNullableCount(runtime.alignment.anchorCount)}</dd></div>
         <div><dt>videoAspectRatio</dt><dd>${formatRealtimeNullableNumber(runtime.alignment.videoAspectRatio)}</dd></div>
+        <div><dt>renderAspectRatio</dt><dd>${formatRealtimeNullableNumber(runtime.alignment.renderAspectRatio)}</dd></div>
         <div><dt>currentCenter</dt><dd>${escapeHtml(formatPoint2(runtime.alignment.currentCenter))}</dd></div>
         <div><dt>idealCenter</dt><dd>${escapeHtml(formatPoint2(runtime.alignment.idealCenter))}</dd></div>
         <div><dt>scale</dt><dd>${formatRealtimeNullableNumber(runtime.alignment.scale)}</dd></div>
+        <div><dt>current bounds image</dt><dd>${escapeHtml(formatPoseMappingBounds(runtime.alignment.currentBoundsImage))}</dd></div>
+        <div><dt>rendered ideal bounds image</dt><dd>${escapeHtml(formatPoseMappingBounds(runtime.alignment.renderedIdealBoundsImage))}</dd></div>
+        <div><dt>current bounds aspect work</dt><dd>${escapeHtml(formatPoseMappingBounds(runtime.alignment.currentBoundsAspectWork))}</dd></div>
+        <div><dt>rendered ideal bounds aspect work</dt><dd>${escapeHtml(formatPoseMappingBounds(runtime.alignment.renderedIdealBoundsAspectWork))}</dd></div>
+        <div><dt>aligned ideal bounds aspect work</dt><dd>${escapeHtml(formatPoseMappingBounds(runtime.alignment.alignedIdealBoundsAspectWork))}</dd></div>
+        <div><dt>aligned ideal bounds image</dt><dd>${escapeHtml(formatPoseMappingBounds(runtime.alignment.alignedRenderedIdealBoundsImage))}</dd></div>
+        <div><dt>aligned ideal image bounds width / height</dt><dd>${formatRealtimeNullableNumber(runtime.alignment.alignedRenderedIdealBoundsImage?.width ?? null)} / ${formatRealtimeNullableNumber(runtime.alignment.alignedRenderedIdealBoundsImage?.height ?? null)}</dd></div>
+        <div><dt>displayedContentRect</dt><dd>${escapeHtml(formatRect(runtime.alignment.displayedContentRect))}</dd></div>
         <div><dt>excludedReasonCounts</dt><dd>${escapeHtml(JSON.stringify(runtime.alignment.excludedReasonCounts))}</dd></div>
         <div><dt>displacementSummary</dt><dd>${escapeHtml(JSON.stringify(roundDisplacementSummary(runtime.alignment.displacementSummary)))}</dd></div>
         <div><dt>alignedRenderedIdeal478</dt><dd>${formatNullableCount(runtime.alignedRenderedIdeal478?.length ?? null)}</dd></div>
@@ -11514,6 +11646,10 @@ function drawLiveOverlay() {
     rect.width,
     rect.height,
   )
+  state.poseMappingRuntime.alignment = {
+    ...state.poseMappingRuntime.alignment,
+    displayedContentRect,
+  }
 
   const current478 = state.currentAnalysis.landmarks478.length === REQUIRED_LANDMARK_COUNT
     ? state.currentAnalysis.landmarks478
@@ -12602,6 +12738,14 @@ function createEmptyPoseMappingAlignmentState(
     idealCenter: null,
     scale: null,
     videoAspectRatio: null,
+    renderAspectRatio: null,
+    currentBoundsImage: null,
+    renderedIdealBoundsImage: null,
+    currentBoundsAspectWork: null,
+    renderedIdealBoundsAspectWork: null,
+    alignedIdealBoundsAspectWork: null,
+    alignedRenderedIdealBoundsImage: null,
+    displayedContentRect: null,
     excludedReasonCounts: createEmptyPoseMappingExcludedReasonCounts(),
     displacementSummary: createEmptyPoseMappingDisplacementSummary(),
     anchorIndices: [],
@@ -14514,6 +14658,20 @@ function formatPoint2(point: { x: number; y: number } | null) {
     : "-"
 }
 
+function formatPoseMappingBounds(bounds: PoseMappingBounds | null) {
+  if (!bounds) {
+    return "-"
+  }
+  return `minX ${formatNullableNumber(bounds.minX)} / maxX ${formatNullableNumber(bounds.maxX)} / minY ${formatNullableNumber(bounds.minY)} / maxY ${formatNullableNumber(bounds.maxY)} / width ${formatNullableNumber(bounds.width)} / height ${formatNullableNumber(bounds.height)}`
+}
+
+function formatRect(rect: Rect | null) {
+  if (!rect) {
+    return "-"
+  }
+  return `x ${formatNullableNumber(rect.x)} / y ${formatNullableNumber(rect.y)} / width ${formatNullableNumber(rect.width)} / height ${formatNullableNumber(rect.height)}`
+}
+
 function roundDisplacementSummary(summary: PoseMappingDisplacementSummary): PoseMappingDisplacementSummary {
   return {
     mean: roundForState(summary.mean),
@@ -15147,6 +15305,14 @@ function getPoseMappingAlignmentDebugSummary(alignment: PoseMappingAlignmentStat
     idealCenter: roundPoint2ForState(alignment.idealCenter),
     scale: roundForState(alignment.scale),
     videoAspectRatio: roundForState(alignment.videoAspectRatio),
+    renderAspectRatio: roundForState(alignment.renderAspectRatio),
+    currentBoundsImage: roundBoundsForState(alignment.currentBoundsImage),
+    renderedIdealBoundsImage: roundBoundsForState(alignment.renderedIdealBoundsImage),
+    currentBoundsAspectWork: roundBoundsForState(alignment.currentBoundsAspectWork),
+    renderedIdealBoundsAspectWork: roundBoundsForState(alignment.renderedIdealBoundsAspectWork),
+    alignedIdealBoundsAspectWork: roundBoundsForState(alignment.alignedIdealBoundsAspectWork),
+    alignedRenderedIdealBoundsImage: roundBoundsForState(alignment.alignedRenderedIdealBoundsImage),
+    displayedContentRect: roundRectForState(alignment.displayedContentRect),
     excludedReasonCounts: alignment.excludedReasonCounts,
     displacementSummary: roundDisplacementSummary(alignment.displacementSummary),
   }
@@ -15523,6 +15689,30 @@ function roundPoint2ForState(point: { x: number; y: number } | null) {
     ? {
         x: roundForState(point.x) ?? 0,
         y: roundForState(point.y) ?? 0,
+      }
+    : null
+}
+
+function roundBoundsForState(bounds: PoseMappingBounds | null): PoseMappingBounds | null {
+  return bounds
+    ? {
+        minX: roundForState(bounds.minX) ?? 0,
+        maxX: roundForState(bounds.maxX) ?? 0,
+        minY: roundForState(bounds.minY) ?? 0,
+        maxY: roundForState(bounds.maxY) ?? 0,
+        width: roundForState(bounds.width) ?? 0,
+        height: roundForState(bounds.height) ?? 0,
+      }
+    : null
+}
+
+function roundRectForState(rect: Rect | null): Rect | null {
+  return rect
+    ? {
+        x: roundForState(rect.x) ?? 0,
+        y: roundForState(rect.y) ?? 0,
+        width: roundForState(rect.width) ?? 0,
+        height: roundForState(rect.height) ?? 0,
       }
     : null
 }

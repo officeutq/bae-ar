@@ -266,7 +266,7 @@ OBJ を canvas にレンダーした静止画に対して `detect()` / IMAGE mod
 - Runtime input: `P_camera`、範囲制限後の `P_camera`、clampApplied、quality gate
 - Profile output: `p`、selectedLeaf、used expert、usedFallback、evaluator warnings
 - Render confirm: detectCanvasWidth / detectCanvasHeight、previewCanvasWidth / previewCanvasHeight、renderResolutionSource、detectCanvasMatchesProfile、profileCanvasWidth / profileCanvasHeight、適用 renderAppearance、notAppliedRenderAppearanceFields、`P_confirm`、`P_confirm - P_camera` の pose diff、renderedIdeal478 status、profileEvaluateMs、renderMs、detectMs、totalMs
-- Alignment: status、mode、rotationApplied、anchorCount、currentCenter、idealCenter、scale、videoAspectRatio、excludedReasonCounts、displacementSummary、alignedRenderedIdeal478 count、mesh source / target count
+- Alignment: status、mode、rotationApplied、anchorCount、currentCenter、idealCenter、scale、videoAspectRatio、renderAspectRatio、座標系別 bounds、displayedContentRect、excludedReasonCounts、displacementSummary、alignedRenderedIdeal478 count、mesh source / target count
 - Download: `pose_mapping_runtime_debug_v1` JSON download
 
 `Pose Mapping（姿勢対応）` タブには専用の
@@ -314,7 +314,29 @@ x' = x * videoAspectRatio
 y' = y
 ```
 
-bounds、center、uniform scale、distance、large displacement は aspect-corrected image coordinate で計算します。alignment 後の `alignedRenderedIdeal478` は image-normalized coordinate として live overlay / mesh target 入力へ戻します。
+`current478` と `renderedIdeal478` は元の画像が異なるため、alignment 計算用の aspect-corrected coordinate
+を別々に作ります。
+
+```text
+current478:
+  live video image-normalized coordinate
+  -> videoAspectRatio で aspect work coordinate へ変換
+
+renderedIdeal478:
+  render/detect canvas image-normalized coordinate
+  -> renderAspectRatio で aspect work coordinate へ変換
+
+alignedIdealWork:
+  currentWork の座標系へ center + uniform scale で alignment した一時座標
+
+alignedRenderedIdeal478:
+  alignedIdealWork を videoAspectRatio で割り戻した live video image-normalized coordinate
+```
+
+bounds、center、uniform scale、distance、large displacement は aspect-corrected image coordinate で計算します。
+ただし、alignment 計算用の aspect-corrected coordinate を overlay に直接使いません。
+alignment 後の `alignedRenderedIdeal478` は必ず live video image-normalized coordinate として保持し、
+live overlay / mesh target 入力へ戻します。
 
 overlay は以下の変換で行います。
 
