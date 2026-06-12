@@ -239,10 +239,11 @@ renderResolution の優先順は以下です。
 3. fallback default `1179 x 1179`
 
 `P_confirm` は、この detect 用 offscreen canvas に `p` で理想 OBJ をレンダーし、その画像を
-MediaPipe `detect()` / IMAGE mode に渡して取得します。UI の `現姿勢理想478プレビュー` は
-offscreen canvas の画像を fit 表示し、`renderedIdeal478` は detect canvas 基準の normalized landmark
-として保持したまま、preview canvas 座標へ変換して overlay 表示します。preview canvas に変換済みの
-座標だけを debug JSON に保存しません。
+MediaPipe `detect()` / IMAGE mode に渡して取得します。独立した `現姿勢理想478プレビュー` UI は
+廃止し、`renderedIdeal478` は `current478` へ alignment して `alignedRenderedIdeal478` として
+ライブ映像上の overlay に統合します。`renderedIdeal478` は detect canvas 基準の normalized landmark
+として保持し、alignment 後の `alignedRenderedIdeal478` は live video image-normalized coordinate
+として扱います。preview canvas に変換済みの座標だけを debug JSON に保存しません。
 
 runtime 側で適用する renderAppearance は、profile metadata に存在する範囲で
 `backgroundColor`、`skinColor`、`material.mode`、`material.diffuse`、`material.ambient`、
@@ -265,6 +266,7 @@ OBJ を canvas にレンダーした静止画に対して `detect()` / IMAGE mod
 - Runtime input: `P_camera`、範囲制限後の `P_camera`、clampApplied、quality gate
 - Profile output: `p`、selectedLeaf、used expert、usedFallback、evaluator warnings
 - Render confirm: detectCanvasWidth / detectCanvasHeight、previewCanvasWidth / previewCanvasHeight、renderResolutionSource、detectCanvasMatchesProfile、profileCanvasWidth / profileCanvasHeight、適用 renderAppearance、notAppliedRenderAppearanceFields、`P_confirm`、`P_confirm - P_camera` の pose diff、renderedIdeal478 status、profileEvaluateMs、renderMs、detectMs、totalMs
+- Alignment: status、mode、rotationApplied、anchorCount、currentCenter、idealCenter、scale、videoAspectRatio、renderAspectRatio、座標系別 bounds、displayedContentRect、excludedReasonCounts、displacementSummary、alignedRenderedIdeal478 count、mesh source / target count
 - Download: `pose_mapping_runtime_debug_v1` JSON download
 
 `Pose Mapping（姿勢対応）` タブには専用の
@@ -273,23 +275,29 @@ OBJ を canvas にレンダーした静止画に対して `detect()` / IMAGE mod
 `renderSettings` には detectCanvasWidth / detectCanvasHeight、previewCanvasWidth / previewCanvasHeight、
 renderResolutionSource、detectCanvasMatchesProfile、profileCanvasWidth / profileCanvasHeight を含めます。
 `renderAppearanceApplied` には runtime 側で適用したレンダー見た目条件と
-notAppliedRenderAppearanceFields を含めます。最新フレームの `current478` と `renderedIdeal478` は
-必要最小限の確認用として含めてよいですが、`renderedIdeal478` は detect canvas 基準の normalized
-landmark として保存し、preview canvas に変換済みの座標だけを保存しません。毎フレーム履歴として
-大量に保存しません。
+notAppliedRenderAppearanceFields を含めます。最新フレームの `current478`、`renderedIdeal478`、
+`alignedRenderedIdeal478` は必要最小限の確認用として含めてよいですが、毎フレーム履歴として大量に
+保存しません。
 
-Live タブの旧 `現姿勢OBJ` 欄は使わず、`現姿勢理想478プレビュー` に置き換えます。このプレビューは
+Live タブの旧 `現姿勢OBJ` 欄と独立した `現姿勢理想478プレビュー` は使いません。
 `poseMappingProfile` で得た `p` により理想OBJをレンダーし、そのレンダー画像から得た
-`renderedIdeal478` を同じレンダー画像上に overlay 表示します。preview 表示は Live タブに一本化し、
-右ペイン `Pose Mapping（姿勢対応）` タブには画像 preview を置きません。Pose Mapping タブには
-詳細 debug と download を残し、preview の代わりに Live タブへ移動済みである短い案内だけを表示します。
+`renderedIdeal478` を `current478` に alignment したうえで、ライブ映像上に以下を overlay 表示します。
 
-Live タブの preview は detect 用 offscreen canvas の画像を aspect-fit で表示します。source image の縦横比を
-維持して preview 領域に収め、余白が出る場合は中央寄せにします。`renderedIdeal478` overlay は
-detect canvas 基準の normalized landmark を preview の displayed content rect へ変換して描画します。
-preview canvas 全体へ単純に `x * previewWidth` / `y * previewHeight` で描画して縦横比を崩す実装にはしません。
-ライブ現在顔への重ね表示と warp（変形加工）は次段階の TODO とし、この段階では実装しません。
-preview PNG download は未実装 TODO です。
+- `current478`
+- `alignedRenderedIdeal478`
+- `current478 -> alignedRenderedIdeal478` の対応線
+- 除外 / 固定 landmark
+- mesh source / mesh target
+- alignment anchors
+
+Live overlay の描画は必ず `displayedContentRect` を使い、動画の letterbox / pillarbox でズレないようにします。
+未位置合わせの `renderedIdeal478` をライブ映像上に直接表示しません。`renderedIdeal478` が missing / invalid
+の場合は `alignedRenderedIdeal478`、対応線、mesh target を描画せず、fallback 正面顔も表示しません。
+この段階ではまだ WebGL mesh warp（変形加工）は行いません。
+
+overlay controls は `Live Overlay（ライブ重ね表示）` と `Mesh Debug（メッシュデバッグ）` に再分類します。
+実体がまだない no-op checkbox は残さず、未対応のものは disabled または非表示にします。現時点では
+triangle mesh は未生成なので disabled とし、grid / anchors は alignment anchors の表示に使います。
 
 初期 profile:
 
@@ -300,14 +308,45 @@ preview PNG download は未実装 TODO です。
 - `yaw_edge_friendly`: 横向き輪郭補助
 - `stable_crop_fov`: 安定した顔サイズ・視野角
 
-alignment では、aspect-corrected image coordinate を使います。
+alignment は landmark correspondence ではなく、MediaPipe placement ベースにします。理想顔の向きは
+`P_camera -> poseMappingProfile -> p -> WebGL render -> MediaPipe detect -> P_confirm` で合わせるため、
+alignment では回転を使いません。合わせるのは位置と大きさだけです。
+
+placement にはまず `facialTransformationMatrix` を debug-only で検証します。matrix translation が
+live video image-normalized coordinate の center として安全に扱えない場合は、alignment を
+`skipped_invalid_placement` として skip し、理想点 overlay を出しません。旧 `current478` /
+`renderedIdeal478` の対応点群から center / scale を推定する方式へ無言 fallback しません。
+
+alignment work の座標確認では、aspect-corrected image coordinate を使います。
 
 ```text
 x' = x * videoAspectRatio
 y' = y
 ```
 
-bounds、center、uniform scale、distance、large displacement は aspect-corrected image coordinate で計算します。alignment 後の `candidateAlignedIdealLandmarks` は image-normalized coordinate として mesh pair / overlay / WebGL mesh warp 入力へ戻します。
+`current478` と `renderedIdeal478` は元の画像が異なるため、alignment 計算用の aspect-corrected coordinate
+を別々に作ります。
+
+```text
+current478:
+  live video image-normalized coordinate
+  -> videoAspectRatio で aspect work coordinate へ変換
+
+renderedIdeal478:
+  render/detect canvas image-normalized coordinate
+  -> renderAspectRatio で aspect work coordinate へ変換
+
+alignedIdealWork:
+  currentWork の座標系へ center + uniform scale で alignment した一時座標
+
+alignedRenderedIdeal478:
+  alignedIdealWork を videoAspectRatio で割り戻した live video image-normalized coordinate
+```
+
+bounds、center、uniform scale、distance、large displacement は aspect-corrected image coordinate で計算します。
+ただし、alignment 計算用の aspect-corrected coordinate を overlay に直接使いません。
+alignment 後の `alignedRenderedIdeal478` は必ず live video image-normalized coordinate として保持し、
+live overlay / mesh target 入力へ戻します。
 
 overlay は以下の変換で行います。
 
@@ -316,7 +355,7 @@ image-normalized coordinate
   -> displayedContentRect pixel
 ```
 
-pixel coordinate、OBJ vertex coordinate、WebGL clip space は、MediaPipe returned landmarks 取得後の alignment / mesh pair 処理には混ぜません。render image の pixel coordinate は MediaPipe 入力用に閉じ込めます。MediaPipe から戻ってきた `renderedIdeal478` は image-normalized coordinate として扱います。
+pixel coordinate、OBJ vertex coordinate、WebGL clip space は、MediaPipe returned landmarks 取得後の alignment / mesh pair 処理には混ぜません。render image の pixel coordinate は MediaPipe 入力用に閉じ込めます。MediaPipe から戻ってきた `renderedIdeal478` は image-normalized coordinate として扱い、ライブ映像上には alignment 後の `alignedRenderedIdeal478` を表示します。
 
 ## 既存ラボから踏襲するもの
 
@@ -361,7 +400,7 @@ OBJ
   -> rendered ideal image
   -> MediaPipe analysis
   -> renderedIdeal478
-  -> candidateAlignedIdealLandmarks
+  -> alignedRenderedIdeal478
 ```
 
 top1 reference matching は使いません。current pose で render した OBJ を理想側の 1 フレームとして扱い、MediaPipe が返した `renderedIdeal478` を `rawIdealReferenceFrame` 相当の入力にします。
@@ -391,7 +430,7 @@ top1 reference matching は使いません。current pose で render した OBJ 
    -> renderedIdeal478
 
 7. renderedIdeal478 を current478 へ alignment する
-   -> candidateAlignedIdealLandmarks
+   -> alignedRenderedIdeal478
 
 8. current source mesh と同じ頂点構成で ideal target mesh を作る
 
@@ -449,10 +488,10 @@ target rule:
 
 ```text
 faceLandmark:
-  if expressionSensitive:
+  if excluded or expressionSensitive or iris:
     target = current
   else:
-    target = lerp(current, candidateAlignedIdealLandmarks[index], usageWeight)
+    target = alignedRenderedIdeal478[index]
 
 nearFaceGrid:
   target = source
@@ -465,7 +504,9 @@ screenEdgeAnchor:
   target = source
 ```
 
-初期版では nearFaceGrid / backgroundGrid / screenEdgeAnchor は source = target を基本にします。
+初期版では nearFaceGrid / backgroundGrid / screenEdgeAnchor は source = target を基本にします。現時点の
+Live overlay では landmark ベースの mesh source / target debug を先に表示し、triangle mesh と実 warp は
+まだ接続しません。
 
 ## 最初の成功判定
 
@@ -475,38 +516,20 @@ screenEdgeAnchor:
 
 - `renderDetectionSuccess`
 - `returnedLandmarkCount`
-- renderedIdeal478 overlay
+- `alignedRenderedIdeal478` live overlay
 - renderedIdeal pose
 - current pose と renderedIdeal pose の差
-- `candidateAlignedIdealLandmarks` の bounds / center / scale
-- meshPairPreview で current と target が破綻していないか
+- `alignedRenderedIdeal478` の bounds / center / scale
+- live overlay で current と target が破綻していないか
 - expressionSensitive landmarks が current 固定になっているか
 - 口・目が無表情 OBJ 側へ引っ張られていないか
 - WebGL mesh warp preview で顔全体が自然に少しだけ寄るか
 
-## 実装単位案
+## 後続の実装単位案
 
-今回は docs のみで、実装コードは変更しません。後続の実装単位案は以下です。
+次段階の実装単位案は以下です。
 
-PR1:
-
-```text
-tools/ideal-obj-render-warp-lab を追加
-ideal-reference-mesh-warp-lab をベースにする
-model video scan / reference library / top1 matching を削る
-OBJ input / OBJ render / renderedIdeal MediaPipe analysis を追加
-renderedIdeal478 overlay まで確認
-```
-
-PR2:
-
-```text
-renderedIdeal478 を current478 へ alignment
-candidateAlignedIdealLandmarks として扱う
-mesh pair preview を表示
-```
-
-PR3:
+PR:
 
 ```text
 expressionSensitive current固定 rule を入れる
@@ -541,16 +564,16 @@ WebGL mesh warp preview へ接続
 - `detect only / rendered ideal`: 現在の profile 条件で render した detect canvas に対して、MediaPipe `detect()` 呼び出しだけを測る
 - `render only`: 現在の `p` で detect 用 offscreen canvas に OBJ render する時間だけを測る
 - `render + detect`: OBJ render と `detect()` を連続実行し、`renderMs` / `detectMs` / `totalMs` を分けて測る
-- `preview generation / overlay`: Live タブ用の現姿勢理想478プレビュー生成、`renderedIdeal478` overlay、`toDataURL()` を測る
+- `preview generation / overlay`: detect 用 canvas から debug snapshot を生成し、`renderedIdeal478` overlay、`toDataURL()` を測る
 - `resolution sweep`: `1179 / 1024 / 768 / 640 / 512` の縮小 canvas に対する `detect()` を比較する
 - `control MP4 canvas detect`: 可能な場合、MP4 current frame を canvas に描画し、同じ IMAGE mode landmarker で `detect()` だけを測る
 
 計測範囲:
 
-- `detect only` には preview 生成、overlay、`toDataURL()`、DOM update、state update を混ぜない
-- `render only` には `detect()`、preview 生成、overlay、`toDataURL()`、DOM update、state update を混ぜない
-- `render + detect` は OBJ render と `detect()` を測るが、preview 生成と UI update は含めない
-- `preview generation / overlay` は、detect 用 canvas から Live preview 用画像を作る処理、overlay、`toDataURL()` を detectMs とは別に測る
+- `detect only` には debug snapshot 生成、overlay、`toDataURL()`、DOM update、state update を混ぜない
+- `render only` には `detect()`、debug snapshot 生成、overlay、`toDataURL()`、DOM update、state update を混ぜない
+- `render + detect` は OBJ render と `detect()` を測るが、debug snapshot 生成と UI update は含めない
+- `preview generation / overlay` は、detect 用 canvas から debug snapshot 用画像を作る処理、overlay、`toDataURL()` を detectMs とは別に測る
 - UI state update は原則として計測外とし、benchmark 完了後にまとめて state へ反映する
 
 FaceLandmarker は benchmark 中に毎回作り直さず、既存の IMAGE mode（静止画モード）用 `renderedIdealFaceLandmarker` を再利用します。debug summary / JSON には `runningMode`、requested delegate、instance reused、create count を出します。
@@ -645,3 +668,28 @@ WebGL renderer は通常 runtime と p,P dataset 生成の本線です。MediaPi
 - [Shape Warp production direction](shape-warp-production-direction.md)
 - [アーキテクチャ](architecture.md)
 - [リポジトリ構成](repository-structure.md)
+
+## Runtime lifecycle / token
+
+Live overlay では、古い rendered ideal や fallback frontal face を表示しないため、runtime に以下の lifecycle を持たせます。
+
+- `assetLifecycle`: OBJ / profile / renderer / render settings の generation と ready 状態を記録します。
+- `frameLifecycle`: current frame の `frameId` / `mediaTimeSec` と、その frame の runtime status を記録します。
+- `renderedIdealLifecycle`: OBJ render の成功 token、detect 実行有無、detect token 一致、stale canvas 検出を記録します。
+- `overlayLifecycle`: current478 / aligned rendered ideal / correspondence line / mesh target の表示可否と skipped reason を記録します。
+
+OBJ、poseMappingProfile、render appearance、renderer が変わった場合は generation を進めます。rendered ideal の render 成功後に `RenderedIdealFrameToken` を作り、同じ token が current generation と一致する場合だけ MediaPipe detect 結果と alignment 結果を採用します。WebGL canvas は detect 前に clear し、render 成功 token がない canvas に対して detect を進めません。
+
+Live overlay の aligned rendered ideal は、以下をすべて満たす場合だけ表示します。
+
+- `currentFaceStatus === "detected"`
+- OBJ と poseMappingProfile が ready
+- `profileRendererMatch === true`
+- `renderedIdealStatus === "detected"`
+- `alignmentStatus === "completed"`
+- `fallbackRenderedIdealUsed === false`
+- `alignedRenderedIdeal478` が存在する
+- `renderedIdealToken` と `alignedRenderedIdealToken` が current asset generation と一致する
+- `renderedIdealToken` と `alignedRenderedIdealToken` が同一 frame / pose を指す
+
+`lastGood` は debug 記録として保持できますが、overlay 表示には使いません。current face missing、generation mismatch、profile mismatch、OBJ / profile reload 中は `renderedIdeal478` / `alignedRenderedIdeal478` / token を runtime 表示対象から外し、`overlayLifecycle.skippedReason` に理由を残します。

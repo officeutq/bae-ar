@@ -249,6 +249,24 @@ h3 {
   justify-content: flex-end;
 }
 
+.overlay-toggle-group {
+  align-items: center;
+  border: 1px solid #d8e0e7;
+  border-radius: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 10px 9px;
+}
+
+.overlay-toggle-group legend {
+  color: #586574;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 0 4px;
+}
+
 .overlay-toggle {
   align-items: center;
   display: inline-flex;
@@ -305,7 +323,7 @@ h3 {
 .live-preview-grid {
   display: grid;
   gap: 12px;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
+  grid-template-columns: minmax(0, 1fr);
   min-height: 0;
   min-width: 0;
 }
