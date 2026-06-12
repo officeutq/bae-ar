@@ -168,8 +168,9 @@ specular、cast shadow、perspective projection、FOV は `implementation` notes
 
 p,P dataset 解析用 Python は
 `tools/ideal-obj-render-warp-lab/analysis/obj_pose_mapping_colab_analysis.py` に置きます。
-Colab では `# %%` 区切りをセルとして実行できます。入力は `obj_pose_mapping_dataset_v2`
-JSON を想定し、v1 も読み取り可能です。
+Colab では `# %%` 区切りをセルとして実行できます。入力は `obj_pose_mapping_dataset_v3`
+WebGL JSON を想定します。旧 v1 / v2 JSON は読み取り対象には残しますが、WebGL runtime 用
+`pose_mapping_profile_candidate` は出力しません。
 
 解析では raw dataset を `raw_df` として保持し、hard filter と residual outlier detection
 後の dataset を `filtered_df`、除外サンプルを `excluded_df` として理由付きで出力します。
@@ -189,7 +190,7 @@ continuityJumpMax、軸別破綻、端姿勢、TypeScript 移植性を見て選�
 
 ラボでは Colab / Python 側で作成した `pose_mapping_profile_candidate.json` を
 `poseMappingProfile（姿勢対応プロファイル）` として JSON 読み込みできます。
-現在対応する `schemaVersion` は `pose_mapping_profile_candidate_v1`、`modelType` は
+現在対応する `schemaVersion` は `pose_mapping_profile_candidate_v1` / `pose_mapping_profile_candidate_v2`、`modelType` は
 `decision_tree_gate_polynomial_degree2_ridge` のみです。未対応 `modelType` は UI 上の error として
 表示し、アプリ全体は落としません。
 
@@ -570,9 +571,26 @@ FaceLandmarker は benchmark 中に毎回作り直さず、既存の IMAGE mode�
 
 ## WebGL OBJ Render Benchmark
 
-Canvas2D render -> detect では、render 直後の canvas 同期、描画確定、readback コストが `detectMs` 側に乗る可能性があります。OBJ render 頻度を落とす案は `renderedIdeal478` の追従品質が下がりやすいため、次候補として WebGL OBJ Renderer を benchmark / debug 用に並列追加しました。
+## WebGL OBJ renderer 本線化
 
-通常の Canvas2D renderer は既存 runtime で維持します。WebGL renderer は、同じ `p` を WebGL で描画した場合に、OBJ render が速くなるか、render -> detect の同期コストが下がるか、MediaPipe が顔として検出できるか、`P_confirm` が `P_camera` に近いかを確認するための検証用です。
+通常 runtime の `P_camera -> p -> OBJ render -> MediaPipe detect() -> P_confirm / renderedIdeal478` 経路は、
+Canvas2D OBJ renderer ではなく WebGL OBJ renderer を使います。MediaPipe `detect()` には WebGL canvas を
+そのまま渡し、`renderedIdeal478` は従来通り detect canvas 基準の normalized landmark として保持します。
+preview 表示時だけ `displayedContentRect` に合わせて overlay 座標へ変換します。
+
+p,P dataset 生成も WebGL renderer に固定します。出力 dataset は `obj_pose_mapping_dataset_v3` とし、
+最低限 `renderBackend: "webgl"`、`renderer.version`、`renderer.rendererSignature`、
+`renderer.projectionMode`、`renderAppearance.applied.renderResolution` を保存します。Canvas2D renderer は
+legacy baseline / debug 比較としてのみ残し、新しい p,P dataset 生成には使いません。
+
+Colab / Python 解析は WebGL dataset だけから `pose_mapping_profile_candidate_v2` を出力します。
+candidate には `requiredRenderBackend: "webgl"`、`requiredRenderer.rendererSignature`、
+`requiredRenderer.projectionMode`、`requiredRenderer.renderResolution`、`datasetSchemaVersion` を含めます。
+runtime は profile 読み込み後、現在の WebGL renderer 条件と一致しない場合に warning ではなく error として停止します。
+
+Canvas2D render -> detect では、render 直後の canvas 同期、描画確定、readback コストが `detectMs` 側に乗る可能性があります。OBJ render 頻度を落とす案は `renderedIdeal478` の追従品質が下がりやすいため、通常 runtime と p,P dataset 生成の OBJ render 本線を WebGL OBJ Renderer に切り替えます。
+
+Canvas2D renderer は legacy baseline / debug 比較として維持します。WebGL renderer は、同じ `p` を WebGL で描画した場合に、OBJ render が速くなるか、render -> detect の同期コストが下がるか、MediaPipe が顔として検出できるか、`P_confirm` が `P_camera` に近いかを確認しつつ、通常 runtime と p,P dataset 生成で使う renderer です。
 
 比較する case:
 
@@ -588,7 +606,7 @@ WebGL renderer は既存 OBJ parser / OBJ mesh data を再利用します。見�
 
 WebGL context、shader、buffer は benchmark 用 renderer インスタンスで再利用し、毎 run ごとには作り直しません。FaceLandmarker も既存 IMAGE mode 用 `renderedIdealFaceLandmarker` を再利用し、GPU delegate 指定を維持します。各 sample には timing、detected、landmarkCount、`P_confirm`、poseDiff summary を保存し、478点配列は保存しません。
 
-WebGL renderer は速度検証用です。MediaPipe は OBJ 形状そのものではなくレンダリングされた 2D 画像を見ているため、WebGL に切り替える場合は見た目条件が変わります。最終的には WebGL 条件で p,P dataset と poseMappingProfile を作り直す可能性が高いです。今回の PR では通常 runtime を切り替えず、poseMappingProfile evaluator、p,P dataset 生成、mode comparison には影響させません。
+WebGL renderer は通常 runtime と p,P dataset 生成の本線です。MediaPipe は OBJ 形状そのものではなくレンダリングされた 2D 画像を見ているため、WebGL renderer の見た目条件が変わった場合は WebGL 条件で p,P dataset と poseMappingProfile を作り直します。mode comparison と既存 benchmark は比較 / debug 用として維持します。
 
 `Download WebGL Benchmark JSON（WebGLベンチマークJSONダウンロード）` は `pose_mapping_webgl_obj_render_benchmark_v1` として、source、profile、runtime pose、landmarker、render settings、WebGL support、benchmark options、case summaries、per-run timing samples、conclusion hints を出力します。
 

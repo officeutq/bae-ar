@@ -659,9 +659,28 @@ type ObjPoseMappingFailedSampleV2 = {
   failureReason: string
 }
 
+type WebglObjRendererMetadata = {
+  kind: "webgl"
+  version: "webgl_obj_renderer_v1"
+  rendererSignature: string
+  contextType: "webgl" | "experimental-webgl"
+  projectionMode: "orthographic"
+  rendererInfo: string | null
+  vendorInfo: string | null
+}
+
+type ObjPoseMappingSampleRendererMetadata = {
+  renderBackend: "webgl"
+  rendererSignature: string
+  rendererVersion: "webgl_obj_renderer_v1"
+  projectionMode: "orthographic"
+}
+
 type ObjPoseMappingDatasetV2 = {
-  schemaVersion: "obj_pose_mapping_dataset_v2"
+  schemaVersion: "obj_pose_mapping_dataset_v2" | "obj_pose_mapping_dataset_v3"
   createdAt: string
+  renderBackend?: "webgl"
+  renderer?: WebglObjRendererMetadata
   source: {
     objFileName: string | null
     vertexCount: number | null
@@ -677,6 +696,7 @@ type ObjPoseMappingDatasetV2 = {
     profileId: ObjRenderAppearanceProfileId
     profileLabel: string
     applied: AppliedObjRenderAppearanceProfile
+    notAppliedRenderAppearanceFields?: string[]
     notes: string
   }
   mediapipeSettings: {
@@ -691,8 +711,8 @@ type ObjPoseMappingDatasetV2 = {
     detectedCount: number
     failedCount: number
   }
-  samples: ObjPoseMappingDetectedSampleV2[]
-  failedSamples: ObjPoseMappingFailedSampleV2[]
+  samples: Array<ObjPoseMappingDetectedSampleV2 & { renderer?: ObjPoseMappingSampleRendererMetadata }>
+  failedSamples: Array<ObjPoseMappingFailedSampleV2 & { renderer?: ObjPoseMappingSampleRendererMetadata }>
 }
 
 type NumericSummary = {
@@ -824,13 +844,20 @@ type PoseMappingRenderAppearanceApplied = {
 type PoseMappingProfileMetadata = {
   renderAppearanceApplied: Record<string, unknown> | null
   renderSettings: Record<string, unknown> | null
+  renderBackend: string | null
+  renderer: Record<string, unknown> | null
+  datasetSchemaVersion: string | null
+  renderAppearance: Record<string, unknown> | null
 }
 
 type PoseMappingProfile = {
-  schemaVersion: "pose_mapping_profile_candidate_v1"
+  schemaVersion: "pose_mapping_profile_candidate_v1" | "pose_mapping_profile_candidate_v2"
   modelType: "decision_tree_gate_polynomial_degree2_ridge"
   modelName: string | null
   datasetKind: string | null
+  requiredRenderBackend: string | null
+  requiredRenderer: Record<string, unknown> | null
+  datasetSchemaVersion: string | null
   datasetMetadata: PoseMappingProfileMetadata
   inputFeatures: string[]
   target: string[]
@@ -905,6 +932,10 @@ type PoseMappingRuntimeState = {
   previewCanvasHeight: number
   renderSettings: PoseMappingRenderSettings | null
   renderAppearanceApplied: PoseMappingRenderAppearanceApplied | null
+  renderBackend: "webgl"
+  renderer: WebglObjRendererMetadata | null
+  profileRendererMatch: boolean
+  profileMismatchError: string | null
   profileEvaluateMs: number | null
   renderMs: number | null
   detectMs: number | null
@@ -1220,6 +1251,13 @@ type WebglObjRenderer = {
   colorLocation: number
   rendererInfo: string | null
   vendorInfo: string | null
+}
+
+type WebglObjRenderContext = {
+  renderSettings: Pick<PoseMappingRenderSettings, "detectCanvasWidth" | "detectCanvasHeight">
+  appearance: AppliedObjRenderAppearanceProfile
+  p: ObjPoseMappingPose
+  rotationCenter: ObjVertex
 }
 
 type ObjPoseCalibrationCandidatePoint = {
@@ -1896,6 +1934,8 @@ const OBJ_POSE_CALIBRATION_TOP_CANDIDATE_COUNT = 10
 const OBJ_POSE_MAPPING_TOP_SAMPLE_COUNT = 20
 const OBJ_POSE_MAPPING_INTERVAL_SAMPLE_TARGET_COUNT = 50
 const OBJ_POSE_MAPPING_MAX_REPRESENTATIVE_SAMPLE_COUNT = 100
+const WEBGL_OBJ_RENDERER_VERSION = "webgl_obj_renderer_v1" as const
+const WEBGL_OBJ_RENDERER_PROJECTION_MODE = "orthographic" as const
 const OBJ_POSE_SAMPLING_PRESETS: Record<ObjPoseSamplingPresetName, ObjPoseSamplingPreset> = {
   quick: {
     preset: "quick",
@@ -3064,7 +3104,7 @@ function parsePoseMappingProfile(json: unknown): PoseMappingProfile {
   const tree = requireRecord(source.tree, "tree")
   const expertsSource = requireRecord(source.experts, "experts")
 
-  if (schemaVersion !== "pose_mapping_profile_candidate_v1") {
+  if (schemaVersion !== "pose_mapping_profile_candidate_v1" && schemaVersion !== "pose_mapping_profile_candidate_v2") {
     throw new Error(`unsupported schemaVersion: ${schemaVersion}`)
   }
   if (modelType !== "decision_tree_gate_polynomial_degree2_ridge") {
@@ -3100,6 +3140,9 @@ function parsePoseMappingProfile(json: unknown): PoseMappingProfile {
     modelType,
     modelName: getOptionalString(source.modelName),
     datasetKind: getOptionalString(source.datasetKind),
+    requiredRenderBackend: getOptionalString(source.requiredRenderBackend),
+    requiredRenderer: isRecord(source.requiredRenderer) ? source.requiredRenderer : null,
+    datasetSchemaVersion: getOptionalString(source.datasetSchemaVersion),
     datasetMetadata: parsePoseMappingProfileMetadata(source),
     inputFeatures,
     target,
@@ -3189,10 +3232,19 @@ function parsePoseMappingProfileMetadata(source: Record<string, unknown>): PoseM
     : isRecord(source.renderSettings)
       ? source.renderSettings
       : null
+  const renderer = isRecord(source.requiredRenderer)
+    ? source.requiredRenderer
+    : datasetMetadata && isRecord(datasetMetadata.renderer)
+      ? datasetMetadata.renderer
+      : null
 
   return {
     renderAppearanceApplied,
     renderSettings,
+    renderBackend: getOptionalString(source.requiredRenderBackend) ?? (datasetMetadata ? getOptionalString(datasetMetadata.renderBackend) : null),
+    renderer,
+    datasetSchemaVersion: getOptionalString(source.datasetSchemaVersion) ?? (datasetMetadata ? getOptionalString(datasetMetadata.schemaVersion) : null),
+    renderAppearance: renderAppearance && isRecord(renderAppearance) ? renderAppearance : null,
   }
 }
 
@@ -3881,30 +3933,40 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
       profile,
       renderSettings,
     )
-    const detectCanvas = document.createElement("canvas")
-    const renderStartMs = performance.now()
-    const renderSummary = renderRenderedIdealCanvasTo(
-      detectCanvas,
-      getObjPoseSyncRotationCenter(),
-      evaluateResult.p,
-      {
-        directPose: true,
-        appearanceOverride: appearance,
-        forceRenderResolution: true,
-      },
-    )
-    const renderMs = performance.now() - renderStartMs
-    if (renderSummary.status !== "rendered") {
-      throw new Error(renderSummary.errorMessage ?? renderSummary.status)
+    const renderer = getOrCreateWebglObjBenchmarkRenderer()
+    const rendererMetadata = buildWebglObjRendererMetadata(renderer, appearance)
+    const profileRendererMatch = validatePoseMappingRendererMatch(profile, rendererMetadata, appearance)
+    if (!profileRendererMatch.match) {
+      state.poseMappingRuntime = {
+        ...state.poseMappingRuntime,
+        renderBackend: "webgl",
+        renderer: rendererMetadata,
+        renderSettings,
+        renderAppearanceApplied,
+        profileRendererMatch: false,
+        profileMismatchError: profileRendererMatch.errorMessage,
+        errorMessage: profileRendererMatch.errorMessage,
+      }
+      throw new Error(profileRendererMatch.errorMessage ?? "Profile renderer mismatch")
     }
+    resizeWebglObjBenchmarkRenderer(renderer, renderSettings.detectCanvasWidth, renderSettings.detectCanvasHeight)
+    const renderContext: WebglObjRenderContext = {
+      renderSettings,
+      appearance,
+      p: evaluateResult.p,
+      rotationCenter: getObjPoseSyncRotationCenter(),
+    }
+    const renderStartMs = performance.now()
+    renderWebglObjToCanvas(renderer, renderContext)
+    const renderMs = performance.now() - renderStartMs
 
     const detector = await getRenderedIdealFaceLandmarker()
     const detectStartMs = performance.now()
-    const result = detector.detect(detectCanvas)
+    const result = detector.detect(renderer.canvas)
     const detectMs = performance.now() - detectStartMs
     const detection = buildRenderedIdealDetectionState(result, -1, detectMs, null)
     const poseDiff = calculatePoseMappingPoseDiff(P_camera, detection.pose)
-    const previewSize = drawPoseMappingPreviewFromDetectCanvas(detectCanvas, detection.landmarks478)
+    const previewSize = drawPoseMappingPreviewFromDetectCanvas(renderer.canvas, detection.landmarks478)
     renderSettings.previewCanvasWidth = previewSize.width
     renderSettings.previewCanvasHeight = previewSize.height
 
@@ -3926,14 +3988,18 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
       renderedIdealLandmarkCount: detection.landmarkCount,
       renderedIdeal478: detection.landmarks478,
       current478: state.currentAnalysis.landmarks478,
-      canvasWidth: detectCanvas.width,
-      canvasHeight: detectCanvas.height,
-      detectCanvasWidth: detectCanvas.width,
-      detectCanvasHeight: detectCanvas.height,
+      canvasWidth: renderer.canvas.width,
+      canvasHeight: renderer.canvas.height,
+      detectCanvasWidth: renderer.canvas.width,
+      detectCanvasHeight: renderer.canvas.height,
       previewCanvasWidth: previewSize.width,
       previewCanvasHeight: previewSize.height,
       renderSettings,
       renderAppearanceApplied,
+      renderBackend: "webgl",
+      renderer: rendererMetadata,
+      profileRendererMatch: true,
+      profileMismatchError: null,
       profileEvaluateMs,
       renderMs,
       detectMs,
@@ -4157,6 +4223,7 @@ async function prepareDetectPerformanceBenchmarkContext() {
     appearance,
     P_camera: runtime.P_camera,
     p: runtime.p,
+    rotationCenter: getObjPoseSyncRotationCenter(),
     P_confirm: detection.pose,
     poseDiff,
     renderedIdeal478: detection.landmarks478,
@@ -4614,7 +4681,7 @@ async function startRenderDetectHandoffBenchmark() {
     notes: [
       "Render -> Detect Handoff は Canvas2D OBJ render 直後の MediaPipe detect() に描画同期 / GPU同期 / readback コストが乗るかを切り分ける",
       "各caseに preview生成、overlay、toDataURL、毎runごとのDOM更新は含めない",
-      "通常 runtime の render -> detect 経路は変更しない",
+      "Handoff benchmark は legacy Canvas2D baseline の比較用で、通常 runtime の WebGL render -> detect 経路には影響しない",
     ],
   }
   renderDebugContent()
@@ -5128,8 +5195,8 @@ async function startWebglObjBenchmark() {
     options,
     result: null,
     notes: [
-      "WebGL OBJ Renderer は benchmark / debug 用で、通常 runtime の Canvas2D render -> detect 経路は変更しない",
-      "WebGL renderer は速度検証用。WebGL に切り替える場合は WebGL 条件で p,P dataset と poseMappingProfile を作り直す可能性が高い",
+      "WebGL OBJ Renderer は通常 runtime と p,P dataset 生成の本線です。この benchmark は比較 / debug 用です。",
+      "WebGL renderer 条件が変わった場合は、WebGL 条件で p,P dataset と poseMappingProfile を作り直します。",
       "各caseに preview生成、overlay、toDataURL、毎runごとのDOM更新は含めない",
     ],
   }
@@ -5747,7 +5814,7 @@ function resizeWebglObjBenchmarkRenderer(renderer: WebglObjRenderer, width: numb
 
 function measureWebglObjRender(
   renderer: WebglObjRenderer,
-  context: Awaited<ReturnType<typeof prepareDetectPerformanceBenchmarkContext>>,
+  context: WebglObjRenderContext,
 ) {
   const renderStartMs = performance.now()
   renderWebglObjToCanvas(renderer, context)
@@ -5756,7 +5823,7 @@ function measureWebglObjRender(
 
 function renderWebglObjToCanvas(
   renderer: WebglObjRenderer,
-  context: Awaited<ReturnType<typeof prepareDetectPerformanceBenchmarkContext>>,
+  context: WebglObjRenderContext,
 ) {
   const { positions, colors } = buildWebglObjRenderBuffers(context)
   const gl = renderer.gl
@@ -5779,13 +5846,13 @@ function renderWebglObjToCanvas(
   gl.drawArrays(gl.TRIANGLES, 0, positions.length / 2)
 }
 
-function buildWebglObjRenderBuffers(context: Awaited<ReturnType<typeof prepareDetectPerformanceBenchmarkContext>>) {
+function buildWebglObjRenderBuffers(context: WebglObjRenderContext) {
   const summary = state.objSummary
   if (!summary.center || !summary.maxDimension || summary.maxDimension <= 0) {
     throw new Error("OBJ bounds が不足しています。")
   }
   const poseState = getDirectObjPosePreviewState(context.p)
-  const rotationCenter = getObjPoseSyncRotationCenter()
+  const rotationCenter = context.rotationCenter
   const width = context.renderSettings.detectCanvasWidth
   const height = context.renderSettings.detectCanvasHeight
   const viewport = {
@@ -5858,6 +5925,102 @@ function getWebglObjNotAppliedRenderAppearanceFields(appearance: AppliedObjRende
     fields.push("material.mode")
   }
   return fields
+}
+
+function buildWebglObjRendererMetadata(
+  renderer: WebglObjRenderer,
+  appearance: AppliedObjRenderAppearanceProfile,
+): WebglObjRendererMetadata {
+  return {
+    kind: "webgl",
+    version: WEBGL_OBJ_RENDERER_VERSION,
+    rendererSignature: createWebglObjRendererSignature(appearance),
+    contextType: renderer.contextType,
+    projectionMode: WEBGL_OBJ_RENDERER_PROJECTION_MODE,
+    rendererInfo: renderer.rendererInfo,
+    vendorInfo: renderer.vendorInfo,
+  }
+}
+
+function createWebglObjRendererSignature(appearance: AppliedObjRenderAppearanceProfile) {
+  const light = appearance.lighting.keyLightDirection ?? { x: 0, y: 0, z: 0 }
+  return [
+    WEBGL_OBJ_RENDERER_VERSION,
+    WEBGL_OBJ_RENDERER_PROJECTION_MODE,
+    `${appearance.renderResolution.width}x${appearance.renderResolution.height}`,
+    appearance.id,
+    appearance.backgroundColor,
+    appearance.skinColor,
+    `material=${appearance.material.mode}:${formatSignatureNumber(appearance.material.diffuse)}:${formatSignatureNumber(appearance.material.ambient)}`,
+    `lighting=${appearance.lighting.mode}:${formatSignatureNumber(appearance.lighting.ambientIntensity)}:${formatSignatureNumber(appearance.lighting.keyLightIntensity)}:${formatSignatureNumber(light.x)},${formatSignatureNumber(light.y)},${formatSignatureNumber(light.z)}`,
+    `scale=${formatSignatureNumber(appearance.camera.scale)}`,
+    `verticalOffset=${formatSignatureNumber(appearance.camera.verticalOffset)}`,
+  ].join("|")
+}
+
+function formatSignatureNumber(value: number) {
+  return Number.isFinite(value) ? Number(value.toFixed(6)).toString() : "null"
+}
+
+function createObjPoseMappingSampleRendererMetadata(renderer: WebglObjRendererMetadata): ObjPoseMappingSampleRendererMetadata {
+  return {
+    renderBackend: "webgl",
+    rendererSignature: renderer.rendererSignature,
+    rendererVersion: renderer.version,
+    projectionMode: renderer.projectionMode,
+  }
+}
+
+function validatePoseMappingRendererMatch(
+  profile: PoseMappingProfile,
+  currentRenderer: WebglObjRendererMetadata,
+  currentAppearance: AppliedObjRenderAppearanceProfile,
+) {
+  const errors: string[] = []
+  const requiredRenderBackend = profile.requiredRenderBackend ?? profile.datasetMetadata.renderBackend
+  const requiredRenderer = profile.requiredRenderer ?? profile.datasetMetadata.renderer
+  const requiredResolution = getRenderResolutionFromRecord(requiredRenderer?.renderResolution)
+  const profileAppearanceResolution = getRenderResolutionFromRecord(
+    profile.datasetMetadata.renderAppearanceApplied?.renderResolution,
+  )
+  const requiredProjectionMode = getOptionalString(requiredRenderer?.projectionMode)
+  const requiredSignature = getOptionalString(requiredRenderer?.rendererSignature)
+
+  if (requiredRenderBackend !== "webgl") {
+    errors.push(`profile requires renderBackend = ${requiredRenderBackend ?? "missing"}, current renderBackend = webgl`)
+  }
+  if (!requiredRenderer) {
+    errors.push("profile requiredRenderer is missing")
+  }
+  if (requiredSignature !== currentRenderer.rendererSignature) {
+    errors.push(`profile requires WebGL rendererSignature = ${requiredSignature ?? "missing"}, current rendererSignature = ${currentRenderer.rendererSignature}`)
+  }
+  if (requiredProjectionMode !== WEBGL_OBJ_RENDERER_PROJECTION_MODE) {
+    errors.push(`profile requires projectionMode = ${requiredProjectionMode ?? "missing"}, current projectionMode = ${WEBGL_OBJ_RENDERER_PROJECTION_MODE}`)
+  }
+  if (
+    !requiredResolution ||
+    requiredResolution.width !== currentAppearance.renderResolution.width ||
+    requiredResolution.height !== currentAppearance.renderResolution.height
+  ) {
+    errors.push(`profile requiredRenderer.renderResolution = ${formatRendererResolution(requiredResolution)}, current renderResolution = ${currentAppearance.renderResolution.width} x ${currentAppearance.renderResolution.height}`)
+  }
+  if (
+    !profileAppearanceResolution ||
+    profileAppearanceResolution.width !== currentAppearance.renderResolution.width ||
+    profileAppearanceResolution.height !== currentAppearance.renderResolution.height
+  ) {
+    errors.push(`profile renderAppearance.applied.renderResolution = ${formatRendererResolution(profileAppearanceResolution)}, current renderResolution = ${currentAppearance.renderResolution.width} x ${currentAppearance.renderResolution.height}`)
+  }
+
+  return {
+    match: errors.length === 0,
+    errorMessage: errors.length > 0 ? `Profile renderer mismatch:\n  ${errors.join("\n  ")}` : null,
+  }
+}
+
+function formatRendererResolution(resolution: { width: number; height: number } | null) {
+  return resolution ? `${resolution.width} x ${resolution.height}` : "missing"
 }
 
 function buildPoseMappingQualityGate(): PoseMappingQualityGate {
@@ -6504,8 +6667,11 @@ async function startObjPoseCalibration() {
     }
 
     const detector = await getRenderedIdealFaceLandmarker()
+    const renderer = getOrCreateWebglObjBenchmarkRenderer()
+    const appearance = getAppliedObjRenderAppearanceProfile()
+    resizeWebglObjBenchmarkRenderer(renderer, appearance.renderResolution.width, appearance.renderResolution.height)
     for (const [index, pose] of poses.entries()) {
-      const result = evaluateObjPoseCalibrationCandidateOnPose(detector, renderSettings, pose)
+      const result = evaluateObjPoseCalibrationCandidateOnPose(detector, renderSettings, pose, renderer, appearance)
       updateObjPoseMappingGenerationProgress(result, index + 1, poses.length, startedAtMs, renderSettings.rotationCenter)
       renderRenderedIdealSummaryCard()
       renderDebugContent()
@@ -6546,8 +6712,11 @@ function evaluateObjPoseCalibrationCandidate(
   detector: FaceLandmarker,
   candidatePoint: ObjPoseCalibrationCandidatePoint,
 ): ObjPoseCalibrationCandidate {
+  const renderer = getOrCreateWebglObjBenchmarkRenderer()
+  const appearance = getAppliedObjRenderAppearanceProfile()
+  resizeWebglObjBenchmarkRenderer(renderer, appearance.renderResolution.width, appearance.renderResolution.height)
   const poseResults = OBJ_POSE_CALIBRATION_POSES.map((pose) =>
-    evaluateObjPoseCalibrationCandidateOnPose(detector, candidatePoint, pose),
+    evaluateObjPoseCalibrationCandidateOnPose(detector, candidatePoint, pose, renderer, appearance),
   )
   return buildObjPoseCalibrationCandidate(candidatePoint, poseResults)
 }
@@ -6599,6 +6768,8 @@ function evaluateObjPoseCalibrationCandidateOnPose(
   detector: FaceLandmarker,
   candidatePoint: ObjPoseCalibrationCandidatePoint,
   pose: ObjPoseCalibrationPose,
+  renderer: WebglObjRenderer,
+  appearance: AppliedObjRenderAppearanceProfile,
 ): ObjPoseCalibrationPoseResult {
   const basePose = {
     yaw: pose.yawDeg,
@@ -6633,16 +6804,19 @@ function evaluateObjPoseCalibrationCandidateOnPose(
   }
 
   try {
-    const renderSummary = renderRenderedIdealCanvasTo(renderedIdealCanvas, candidatePoint.rotationCenter, renderPose)
-    if (renderSummary.status !== "rendered") {
-      return {
-        ...baseResult,
-        errorMessage: renderSummary.errorMessage ?? renderSummary.status,
-      }
-    }
+    resizeWebglObjBenchmarkRenderer(renderer, appearance.renderResolution.width, appearance.renderResolution.height)
+    renderWebglObjToCanvas(renderer, {
+      renderSettings: {
+        detectCanvasWidth: appearance.renderResolution.width,
+        detectCanvasHeight: appearance.renderResolution.height,
+      },
+      appearance,
+      p: renderPose,
+      rotationCenter: candidatePoint.rotationCenter,
+    })
 
     const detectStartMs = performance.now()
-    const result = detector.detect(renderedIdealCanvas)
+    const result = detector.detect(renderer.canvas)
     const detectMs = performance.now() - detectStartMs
     const detection = buildRenderedIdealDetectionState(result, -1, detectMs, null)
     const returnedPose = detection.pose
@@ -7034,22 +7208,25 @@ function buildObjPoseMappingDataset(samples: ObjPoseMappingSample[]): ObjPoseMap
   const detectedSamples = samples.filter((sample) => sample.detected && hasFullPose(sample.P))
   const failedSamples = samples.filter((sample) => !sample.detected || !hasFullPose(sample.P))
   const rotationCenter = getFixedObjPoseRenderSettings().rotationCenter
-  const appliedAppearance = getAppliedObjRenderAppearanceProfile({
-    width: renderedIdealCanvas.width,
-    height: renderedIdealCanvas.height,
-  })
+  const appliedAppearance = getAppliedWebglObjRenderAppearanceProfile()
+  const renderer = getOrCreateWebglObjBenchmarkRenderer()
+  resizeWebglObjBenchmarkRenderer(renderer, appliedAppearance.renderResolution.width, appliedAppearance.renderResolution.height)
+  const rendererMetadata = buildWebglObjRendererMetadata(renderer, appliedAppearance)
+  const sampleRenderer = createObjPoseMappingSampleRendererMetadata(rendererMetadata)
 
   return {
-    schemaVersion: "obj_pose_mapping_dataset_v2",
+    schemaVersion: "obj_pose_mapping_dataset_v3",
     createdAt: new Date().toISOString(),
+    renderBackend: "webgl",
+    renderer: rendererMetadata,
     source: {
       objFileName: state.objFile.fileName,
       vertexCount: state.objFile.loaded ? state.objSummary.vertexCount : null,
       faceCount: state.objFile.loaded ? state.objSummary.faceCount : null,
     },
     renderSettings: {
-      canvasWidth: renderedIdealCanvas.width,
-      canvasHeight: renderedIdealCanvas.height,
+      canvasWidth: appliedAppearance.renderResolution.width,
+      canvasHeight: appliedAppearance.renderResolution.height,
       rotationCenter: { ...rotationCenter },
       notes: "rotationCenter is fixed render setting, not an estimated value",
     },
@@ -7057,10 +7234,12 @@ function buildObjPoseMappingDataset(samples: ObjPoseMappingSample[]): ObjPoseMap
       profileId: appliedAppearance.id,
       profileLabel: appliedAppearance.label,
       applied: appliedAppearance,
+      notAppliedRenderAppearanceFields: getWebglObjNotAppliedRenderAppearanceFields(appliedAppearance),
       notes: [
         appliedAppearance.description,
         appliedAppearance.notes ?? "",
         ...appliedAppearance.implementation.notes,
+        "OBJ render backend is WebGL. Canvas2D is legacy baseline only for this dataset flow.",
       ].filter(Boolean).join(" "),
     },
     mediapipeSettings: {
@@ -7086,6 +7265,7 @@ function buildObjPoseMappingDataset(samples: ObjPoseMappingSample[]): ObjPoseMap
       },
       detected: true,
       detectMs: sample.detectMs,
+      renderer: sampleRenderer,
     })),
     failedSamples: failedSamples.map((sample) => ({
       sampleId: sample.sampleId,
@@ -7094,6 +7274,7 @@ function buildObjPoseMappingDataset(samples: ObjPoseMappingSample[]): ObjPoseMap
       detected: false,
       detectMs: sample.detectMs,
       failureReason: sample.errorMessage ?? "unknown",
+      renderer: sampleRenderer,
     })),
   }
 }
@@ -9354,6 +9535,9 @@ function renderPoseMappingLiveSummaryCard() {
       <div><dt>P_confirm</dt><dd>${escapeHtml(formatPose(runtime.P_confirm))}</dd></div>
       <div><dt>pose diff</dt><dd>${escapeHtml(formatPoseMappingDiff(runtime.poseDiff))}</dd></div>
       <div><dt>renderedIdeal478</dt><dd>${runtime.renderedIdealDetected ? "detected" : "not detected"} / ${formatNullableCount(runtime.renderedIdealLandmarkCount)}</dd></div>
+      <div><dt>Render backend</dt><dd>${escapeHtml(runtime.renderBackend)}</dd></div>
+      <div><dt>Renderer signature</dt><dd>${escapeHtml(runtime.renderer?.rendererSignature ?? "-")}</dd></div>
+      <div><dt>Profile renderer match</dt><dd>${String(runtime.profileRendererMatch)}</dd></div>
     </dl>
   `
 }
@@ -9403,6 +9587,9 @@ function renderPoseMappingDebugTab() {
         <div><dt>modelType</dt><dd>${escapeHtml(profile?.modelType ?? "-")}</dd></div>
         <div><dt>modelName</dt><dd>${escapeHtml(profile?.modelName ?? "-")}</dd></div>
         <div><dt>datasetKind</dt><dd>${escapeHtml(profile?.datasetKind ?? "-")}</dd></div>
+        <div><dt>requiredRenderBackend</dt><dd>${escapeHtml(profile?.requiredRenderBackend ?? "-")}</dd></div>
+        <div><dt>requiredRendererSignature</dt><dd>${escapeHtml(getOptionalString(profile?.requiredRenderer?.rendererSignature) ?? "-")}</dd></div>
+        <div><dt>datasetSchemaVersion</dt><dd>${escapeHtml(profile?.datasetSchemaVersion ?? "-")}</dd></div>
         <div><dt>inputFeatures</dt><dd>${escapeHtml(profile?.inputFeatures.join(", ") ?? "-")}</dd></div>
         <div><dt>target</dt><dd>${escapeHtml(profile?.target.join(", ") ?? "-")}</dd></div>
         <div><dt>errorSummary</dt><dd>${escapeHtml(formatPoseMappingSummary(profile?.errorSummary, ["poseMAE", "poseP95", "poseMAX", "continuityJumpMax"]))}</dd></div>
@@ -9437,6 +9624,12 @@ function renderPoseMappingDebugTab() {
     <section class="debug-section">
       <h3>Render confirm（レンダー確認）</h3>
       <dl class="summary-list">
+        <div><dt>Render backend</dt><dd>${escapeHtml(runtime.renderBackend)}</dd></div>
+        <div><dt>Renderer signature</dt><dd>${escapeHtml(runtime.renderer?.rendererSignature ?? "-")}</dd></div>
+        <div><dt>Projection mode</dt><dd>${escapeHtml(runtime.renderer?.projectionMode ?? "-")}</dd></div>
+        <div><dt>Render resolution</dt><dd>${formatNullableCount(runtime.renderSettings?.detectCanvasWidth ?? runtime.detectCanvasWidth)} x ${formatNullableCount(runtime.renderSettings?.detectCanvasHeight ?? runtime.detectCanvasHeight)}</dd></div>
+        <div><dt>Profile renderer match</dt><dd>${String(runtime.profileRendererMatch)}</dd></div>
+        <div><dt>Profile mismatch error</dt><dd>${escapeHtml(runtime.profileMismatchError ?? "-")}</dd></div>
         <div><dt>detectCanvasWidth</dt><dd>${formatNullableCount(runtime.renderSettings?.detectCanvasWidth ?? runtime.detectCanvasWidth)}</dd></div>
         <div><dt>detectCanvasHeight</dt><dd>${formatNullableCount(runtime.renderSettings?.detectCanvasHeight ?? runtime.detectCanvasHeight)}</dd></div>
         <div><dt>previewCanvasWidth</dt><dd>${formatNullableCount(runtime.renderSettings?.previewCanvasWidth ?? runtime.previewCanvasWidth)}</dd></div>
@@ -9736,7 +9929,7 @@ function renderWebglObjBenchmarkSummaryHtml() {
     </dl>
     ${renderWebglObjBenchmarkCaseSummariesHtml(result?.cases ?? [])}
     ${renderWebglObjBenchmarkInterpretationHtml(result?.conclusionHints ?? null)}
-    <p class="control-note">WebGL renderer は速度検証用です。WebGLに切り替える場合、最終的には WebGL renderer 条件で p,P dataset と poseMappingProfile を作り直す可能性が高いです。</p>
+    <p class="control-note">WebGL renderer は通常 runtime と p,P dataset 生成の本線です。renderer 条件が変わった場合は WebGL 条件で p,P dataset と poseMappingProfile を作り直します。</p>
   `
 }
 
@@ -11133,6 +11326,8 @@ function getRenderedIdealItems(): Array<[string, string]> {
 function getObjPoseCalibrationItems(): Array<[string, string]> {
   const calibration = state.objPoseCalibration
   const mapping = state.objPoseMapping
+  const rendererSignature = objPoseMappingDataset?.renderer?.rendererSignature
+    ?? createWebglObjRendererSignature(getAppliedObjRenderAppearanceProfile())
   return [
     ["状態", calibration.status],
     ["役割", "OBJを複数のrenderPose pでレンダーし、MediaPipe returnedPose Pを取得してp,P dataset JSONを生成します。"],
@@ -11151,6 +11346,9 @@ function getObjPoseCalibrationItems(): Array<[string, string]> {
     ["p,P dataset detectedCount", formatNullableCount(mapping.dataset.detectedCount)],
     ["p,P dataset failedCount", formatNullableCount(mapping.dataset.failedCount)],
     ["p,P dataset lastGeneratedAt", mapping.dataset.lastGeneratedAt ?? "未生成"],
+    ["p,P dataset render backend", "webgl"],
+    ["dataset schema", "obj_pose_mapping_dataset_v3"],
+    ["renderer signature", rendererSignature],
     ["dataset message", mapping.statusMessage ?? "null"],
     ["errorMessage", calibration.errorMessage ?? "null"],
   ]
@@ -11592,6 +11790,10 @@ function createDefaultPoseMappingRuntimeState(): PoseMappingRuntimeState {
     previewCanvasHeight: 0,
     renderSettings: null,
     renderAppearanceApplied: null,
+    renderBackend: "webgl",
+    renderer: null,
+    profileRendererMatch: false,
+    profileMismatchError: null,
     profileEvaluateMs: null,
     renderMs: null,
     detectMs: null,
@@ -14045,6 +14247,9 @@ function getPoseMappingProfileRawSummary() {
     modelType: profile?.modelType ?? null,
     modelName: profile?.modelName ?? null,
     datasetKind: profile?.datasetKind ?? null,
+    requiredRenderBackend: profile?.requiredRenderBackend ?? null,
+    requiredRenderer: profile?.requiredRenderer ?? null,
+    datasetSchemaVersion: profile?.datasetSchemaVersion ?? null,
     datasetMetadata: profile?.datasetMetadata ?? null,
     inputFeatures: profile?.inputFeatures ?? [],
     target: profile?.target ?? [],
@@ -14081,6 +14286,10 @@ function getPoseMappingRuntimeRawSummary() {
     previewCanvasHeight: runtime.previewCanvasHeight,
     renderSettings: runtime.renderSettings,
     renderAppearanceApplied: runtime.renderAppearanceApplied,
+    renderBackend: runtime.renderBackend,
+    renderer: runtime.renderer,
+    profileRendererMatch: runtime.profileRendererMatch,
+    profileMismatchError: runtime.profileMismatchError,
     profileEvaluateMs: roundForState(runtime.profileEvaluateMs),
     renderMs: roundForState(runtime.renderMs),
     detectMs: roundForState(runtime.detectMs),
@@ -14106,6 +14315,9 @@ function getPoseMappingRuntimeDebugExport() {
       modelType: profile.modelType,
       modelName: profile.modelName,
       datasetKind: profile.datasetKind,
+      requiredRenderBackend: profile.requiredRenderBackend,
+      requiredRenderer: profile.requiredRenderer,
+      datasetSchemaVersion: profile.datasetSchemaVersion,
       datasetMetadata: profile.datasetMetadata,
       inputFeatures: profile.inputFeatures,
       target: profile.target,
@@ -14136,6 +14348,10 @@ function getPoseMappingRuntimeDebugExport() {
     },
     renderSettings: runtime.renderSettings,
     renderAppearanceApplied: runtime.renderAppearanceApplied,
+    renderBackend: runtime.renderBackend,
+    renderer: runtime.renderer,
+    profileRendererMatch: runtime.profileRendererMatch,
+    profileMismatchError: runtime.profileMismatchError,
     renderedIdeal: {
       detected: runtime.renderedIdealDetected,
       landmarkCount: runtime.renderedIdealLandmarkCount,
@@ -14202,7 +14418,9 @@ function getObjPoseMappingDebugExport() {
     selectedRenderAppearanceProfileId: state.renderedIdeal.renderAppearanceProfileId,
     renderAppearance: getRenderAppearanceDebugSummary(),
     dataset: {
-      schemaVersion: "obj_pose_mapping_dataset_v2",
+      schemaVersion: "obj_pose_mapping_dataset_v3",
+      renderBackend: dataset?.renderBackend ?? "webgl",
+      renderer: dataset?.renderer ?? null,
       sampleCount: state.objPoseMapping.dataset.sampleCount,
       detectedCount: state.objPoseMapping.dataset.detectedCount,
       failedCount: state.objPoseMapping.dataset.failedCount,
@@ -14975,6 +15193,26 @@ function getAppliedObjRenderAppearanceProfile(
       notes: [
         "Canvas2D renderer applies backgroundColor, skinColor, material ambient/diffuse, lighting intensities/directions, scale, verticalOffset, and renderResolution.",
         "specular, castShadow, physical perspective projection, and fovDeg are recorded for comparison metadata but are not physically implemented yet.",
+      ],
+    },
+  }
+}
+
+function getAppliedWebglObjRenderAppearanceProfile(
+  renderResolutionOverride?: { width: number; height: number },
+): AppliedObjRenderAppearanceProfile {
+  const profile = getAppliedObjRenderAppearanceProfile(renderResolutionOverride)
+  return {
+    ...profile,
+    material: { ...profile.material },
+    lighting: { ...profile.lighting },
+    camera: { ...profile.camera },
+    renderResolution: { ...profile.renderResolution },
+    implementation: {
+      ...profile.implementation,
+      notes: [
+        "WebGL renderer applies backgroundColor, skinColor, material ambient/diffuse, lighting intensities/directions, scale, verticalOffset, and renderResolution.",
+        "specular, castShadow, physical perspective projection, and fovDeg are recorded for comparison metadata but are not physically implemented by this WebGL orthographic renderer.",
       ],
     },
   }
