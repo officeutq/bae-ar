@@ -504,6 +504,96 @@ WebGL mesh warp preview へ接続
 - render image pixel coordinate を alignment / mesh pair 処理へ持ち込むこと
 - Runtime / Studio / Authoring Tool 本線への接続
 
+## Pose Mapping detect performance debug
+
+`Pose Mapping（姿勢対応）` runtime 検証に `Detect Performance（検出速度）` セクションを追加しました。
+
+目的は、`MediaPipe mode comparison（モード比較）` では軽く見えていた `detect()` が、`Pose Mapping（姿勢対応）` 経路では重く見える理由を切り分けることです。方式を変える検証ではなく、計測範囲を分離して原因候補を確認します。
+
+計測ケース:
+
+- `detect only / rendered ideal`: 現在の profile 条件で render した detect canvas に対して、MediaPipe `detect()` 呼び出しだけを測る
+- `render only`: 現在の `p` で detect 用 offscreen canvas に OBJ render する時間だけを測る
+- `render + detect`: OBJ render と `detect()` を連続実行し、`renderMs` / `detectMs` / `totalMs` を分けて測る
+- `preview generation / overlay`: Live タブ用の現姿勢理想478プレビュー生成、`renderedIdeal478` overlay、`toDataURL()` を測る
+- `resolution sweep`: `1179 / 1024 / 768 / 640 / 512` の縮小 canvas に対する `detect()` を比較する
+- `control MP4 canvas detect`: 可能な場合、MP4 current frame を canvas に描画し、同じ IMAGE mode landmarker で `detect()` だけを測る
+
+計測範囲:
+
+- `detect only` には preview 生成、overlay、`toDataURL()`、DOM update、state update を混ぜない
+- `render only` には `detect()`、preview 生成、overlay、`toDataURL()`、DOM update、state update を混ぜない
+- `render + detect` は OBJ render と `detect()` を測るが、preview 生成と UI update は含めない
+- `preview generation / overlay` は、detect 用 canvas から Live preview 用画像を作る処理、overlay、`toDataURL()` を detectMs とは別に測る
+- UI state update は原則として計測外とし、benchmark 完了後にまとめて state へ反映する
+
+FaceLandmarker は benchmark 中に毎回作り直さず、既存の IMAGE mode（静止画モード）用 `renderedIdealFaceLandmarker` を再利用します。debug summary / JSON には `runningMode`、requested delegate、instance reused、create count を出します。
+
+`resolution sweep（解像度比較）` は速度確認用です。通常の `P_confirm` 検証は profile 条件の detect canvas、たとえば `1179 x 1179` を維持し、runtime 本線の detect canvas を低解像度へ変更しません。
+
+`Download Detect Performance JSON（検出速度JSONダウンロード）` は `pose_mapping_detect_performance_debug_v1` として、source、profile、runtime pose、landmarker、render settings、benchmark options、case summaries、per-run timing samples を出力します。各 sample には時間と検出結果だけを保存し、478点配列は保存しません。
+
+`Download Detect Performance CSV（検出速度CSVダウンロード）` は 1 行 1 sample で、`caseId`、`label`、`sourceKind`、canvas size、`runIndex`、`phase`、`renderMs`、`detectMs`、`previewMs`、`overlayMs`、`toDataUrlMs`、`totalMs`、`detected`、`landmarkCount`、`errorMessage` を出力します。
+
+## Render -> Detect Handoff debug
+
+`Detect Performance（検出速度）` の結果、`detect only / rendered ideal` は軽い一方、`render + detect` では render 直後の `detectMs` が大きくなる可能性が見えました。
+
+そのため、`Pose Mapping（姿勢対応）` Debug タブの `Detect Performance（検出速度）` セクション内に、`Render -> Detect Handoff（レンダーから検出への受け渡し）` benchmark を追加しました。
+
+目的は、Canvas2D OBJ render 直後に MediaPipe `detect()` を呼ぶことで、描画確定、GPU同期、ピクセル転送、readback 系の待ち時間がどこに乗っているかを切り分けることです。通常の poseMapping runtime は profile 条件の detect canvas を維持し、`render -> detect` 経路を勝手に非同期化しません。
+
+比較する handoff strategy:
+
+- `immediate`: OBJ render 後、同じ tick で即 `detect()`
+- `requestAnimationFrame_1`: OBJ render 後、`requestAnimationFrame` を1回待ってから `detect()`
+- `requestAnimationFrame_2`: OBJ render 後、`requestAnimationFrame` を2回待ってから `detect()`
+- `setTimeout_0`: OBJ render 後、`setTimeout(0)` を待ってから `detect()`
+- `createImageBitmap`: OBJ render 後、`createImageBitmap(detectCanvas)` を作成し、可能なら `detect(imageBitmap)`
+- `copy_to_second_canvas`: OBJ render 後、別 canvas へ `drawImage()` でコピーしてから `detect(secondCanvas)`
+- `double_buffer_previous_frame`: 2つの offscreen canvas を交互に使い、前回 render 済み canvas を `detect()` しながら次 buffer に render
+- `explicit_readback`: OBJ render 後、`getImageData(0, 0, 1, 1)` で小範囲 readback を測ってから `detect()`
+
+計測範囲:
+
+- 各 case は `renderMs`、`waitMs`、`bitmapCreateMs`、`copyMs`、`readbackMs`、`detectMs`、`totalMs` を分けて保存する
+- preview 生成、overlay、`toDataURL()`、毎 run ごとの DOM update は含めない
+- FaceLandmarker は既存の IMAGE mode 用 `renderedIdealFaceLandmarker` を再利用し、benchmark 中に毎回作り直さない
+- GPU delegate 指定は既存の `delegate: "GPU"` を維持する
+- raw 478 landmarks は sample ごとに保存せず、timing、detected、landmarkCount、errorMessage を保存する
+
+`Download Handoff JSON（受け渡しJSONダウンロード）` は `pose_mapping_render_detect_handoff_debug_v1` として、source、profile、runtime pose、landmarker、render settings、benchmark options、case summaries、per-run timing samples、簡易 conclusion hints を出力します。
+
+`Download Handoff CSV（受け渡しCSVダウンロード）` は 1 行 1 sample で、`caseId`、`label`、`handoffStrategy`、canvas size、`runIndex`、`phase`、`renderMs`、`waitMs`、`bitmapCreateMs`、`copyMs`、`readbackMs`、`detectMs`、`totalMs`、`detected`、`landmarkCount`、`errorMessage` を出力します。
+
+この検証は速度確認用であり、poseMappingProfile evaluator、p,P dataset 生成、mode comparison には影響させません。実運用への適用判断は handoff benchmark の結果を見てから行います。
+
+## WebGL OBJ Render Benchmark
+
+Canvas2D render -> detect では、render 直後の canvas 同期、描画確定、readback コストが `detectMs` 側に乗る可能性があります。OBJ render 頻度を落とす案は `renderedIdeal478` の追従品質が下がりやすいため、次候補として WebGL OBJ Renderer を benchmark / debug 用に並列追加しました。
+
+通常の Canvas2D renderer は既存 runtime で維持します。WebGL renderer は、同じ `p` を WebGL で描画した場合に、OBJ render が速くなるか、render -> detect の同期コストが下がるか、MediaPipe が顔として検出できるか、`P_confirm` が `P_camera` に近いかを確認するための検証用です。
+
+比較する case:
+
+- `WebGL render only`: WebGL で OBJ を描画するだけ
+- `WebGL render -> detect`: WebGL canvas をそのまま MediaPipe `detect()` に渡す
+- `WebGL render -> gl.finish() -> detect`: WebGL 描画完了を明示してから `detect()`
+- `WebGL render -> readPixels(1x1) -> detect`: WebGL 側で小範囲 readback を前倒ししてから `detect()`
+- `WebGL render -> createImageBitmap -> detect`: WebGL canvas から ImageBitmap を作成し、可能なら `detect(imageBitmap)`
+- `WebGL render -> copy to 2D canvas -> detect`: WebGL canvas を 2D canvas にコピーしてから `detect(2dCanvas)`
+- `Canvas2D baseline reference`: Canvas2D immediate render -> detect と explicit readback -> detect の簡易比較
+
+WebGL renderer は既存 OBJ parser / OBJ mesh data を再利用します。見た目を Canvas2D renderer に近づけるため、orthographic 相当の投影、profile renderAppearance の `backgroundColor`、`skinColor`、material diffuse / ambient、ambient + key light の簡易 Lambert、camera scale / verticalOffset / renderResolution を使います。`material.specular`、`lighting.castShadow`、`camera.fovDeg`、`camera.projection` は未対応の比較 metadata として記録します。
+
+WebGL context、shader、buffer は benchmark 用 renderer インスタンスで再利用し、毎 run ごとには作り直しません。FaceLandmarker も既存 IMAGE mode 用 `renderedIdealFaceLandmarker` を再利用し、GPU delegate 指定を維持します。各 sample には timing、detected、landmarkCount、`P_confirm`、poseDiff summary を保存し、478点配列は保存しません。
+
+WebGL renderer は速度検証用です。MediaPipe は OBJ 形状そのものではなくレンダリングされた 2D 画像を見ているため、WebGL に切り替える場合は見た目条件が変わります。最終的には WebGL 条件で p,P dataset と poseMappingProfile を作り直す可能性が高いです。今回の PR では通常 runtime を切り替えず、poseMappingProfile evaluator、p,P dataset 生成、mode comparison には影響させません。
+
+`Download WebGL Benchmark JSON（WebGLベンチマークJSONダウンロード）` は `pose_mapping_webgl_obj_render_benchmark_v1` として、source、profile、runtime pose、landmarker、render settings、WebGL support、benchmark options、case summaries、per-run timing samples、conclusion hints を出力します。
+
+`Download WebGL Benchmark CSV（WebGLベンチマークCSVダウンロード）` は 1 行 1 sample で、`caseId`、`label`、`rendererKind`、`handoffStrategy`、canvas size、`runIndex`、`phase`、`webglRenderMs`、`finishMs`、`readPixelsMs`、`bitmapCreateMs`、`copyTo2dMs`、`detectMs`、`totalMs`、`detected`、`landmarkCount`、`P_confirm`、poseDiff、`errorMessage` を出力します。
+
 ## 関連ドキュメント
 
 - [Ideal Reference Mesh Warp Lab](ideal-reference-mesh-warp-lab.md)
