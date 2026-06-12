@@ -6,7 +6,16 @@ import type { Matrix, NormalizedLandmark } from "@mediapipe/tasks-vision"
 import "./style.css"
 
 type PreviewTab = "obj" | "renderedIdeal" | "live"
-type DebugTab = "summary" | "current" | "obj" | "renderedIdeal" | "objPoseCalibration" | "realtime" | "warpMesh" | "raw"
+type DebugTab =
+  | "summary"
+  | "current"
+  | "obj"
+  | "renderedIdeal"
+  | "objPoseCalibration"
+  | "realtime"
+  | "modeComparison"
+  | "warpMesh"
+  | "raw"
 type PlaybackStatus = "stopped" | "playing" | "paused"
 type ObjParseStatus = "not_loaded" | "not_parsed" | "parsed" | "error"
 type ObjPreviewMode = "points" | "wireframe" | "points_wireframe"
@@ -952,6 +961,211 @@ type RealtimeFrameTick = {
   timestampFallbackUsed: boolean
 }
 
+type ModeComparisonStatus = "idle" | "running" | "completed" | "canceled" | "error"
+
+type TimingDistribution = {
+  average: number | null
+  p50: number | null
+  p95: number | null
+  max: number | null
+}
+
+type ModeComparisonImportantFrameRef = {
+  frameIndex: number
+  mediaTimeSec: number
+  timestampMs: number
+} | null
+
+type ModeComparisonImportantFrames = {
+  worstYawDiffFrame: ModeComparisonImportantFrameRef
+  worstPitchDiffFrame: ModeComparisonImportantFrameRef
+  worstRollDiffFrame: ModeComparisonImportantFrameRef
+  worstPoseMagnitudeDiffFrame: ModeComparisonImportantFrameRef
+  worstMean2dDistanceFrame: ModeComparisonImportantFrameRef
+  worstMax2dDistanceFrame: ModeComparisonImportantFrameRef
+  firstMismatchFrame: ModeComparisonImportantFrameRef
+  latestFrame: ModeComparisonImportantFrameRef
+}
+
+type ModeComparisonPreviewKind =
+  | "latest"
+  | "worst_pose_diff"
+  | "worst_landmark_diff"
+  | "first_mismatch"
+
+type ModeComparisonPreviewSnapshot = {
+  kind: ModeComparisonPreviewKind
+  frameIndex: number
+  mediaTimeSec: number
+  timestampMs: number
+  dataUrl: string
+  createdAt: string
+}
+
+type ModeComparisonDebugOptions = {
+  previewSnapshotEnabled: boolean
+  uiUpdateIntervalFrames: number
+  summaryUpdateIntervalFrames: number
+}
+
+type ModeComparisonDebugCounters = {
+  rvfcCallbackCount: number
+  processedFrameCount: number
+  intentionalSkipCount: number
+  timestampSkipCount: number
+  busySkipCount: number
+  missingMediaTimeSkipCount: number
+  presentedFramesDeltaSummary: TimingDistribution
+  callbackWallDeltaMs: TimingDistribution
+  mediaTimeDeltaMs: TimingDistribution
+  processingMeasuredMs: TimingDistribution
+  unmeasuredOverheadEstimateMs: TimingDistribution
+  latestCallbackWallDeltaMs: number | null
+  latestMediaTimeDeltaMs: number | null
+  latestProcessingMeasuredMs: number | null
+  latestUnmeasuredOverheadEstimateMs: number | null
+  nextCallbackRegistrationTiming: "beforeProcessing" | "afterProcessing"
+}
+
+type ModeComparisonPoseDiff = {
+  yaw: number | null
+  pitch: number | null
+  roll: number | null
+  absYaw: number | null
+  absPitch: number | null
+  absRoll: number | null
+}
+
+type ModeComparisonLandmarkDiff = {
+  mean2dDistance: number | null
+  max2dDistance: number | null
+  mean3dDistance: number | null
+  max3dDistance: number | null
+  mean2dDistanceNoIris: number | null
+  mean2dDistanceIris: number | null
+  landmarkDeltas: Array<{
+    index: number
+    dx: number
+    dy: number
+    dz: number
+  }>
+}
+
+type ModeComparisonFrameResult = {
+  frameIndex: number
+  mediaTimeSec: number
+  timestampMs: number
+  timestampSource: "metadata.mediaTime"
+  presentedFrames: number | null
+  presentedFramesDelta: number | null
+  callbackWallDeltaMs: number | null
+  mediaTimeDeltaMs: number | null
+  drawImageMs: number | null
+  imageDetectMs: number | null
+  videoDetectMs: number | null
+  totalFrameProcessingMs: number | null
+  processingMeasuredMs: number | null
+  unmeasuredOverheadEstimateMs: number | null
+  imageDetectSuccess: boolean
+  videoDetectSuccess: boolean
+  imageDetected: boolean
+  videoDetected: boolean
+  imageLandmarkCount: number
+  videoLandmarkCount: number
+  imagePose: ReferencePose
+  videoPose: ReferencePose
+  poseDiff: ModeComparisonPoseDiff
+  absPoseDiff: {
+    yaw: number | null
+    pitch: number | null
+    roll: number | null
+  }
+  mean2dDistance: number | null
+  max2dDistance: number | null
+  mean3dDistance: number | null
+  max3dDistance: number | null
+  landmarkDiff: ModeComparisonLandmarkDiff | null
+  errorMessage: string | null
+}
+
+type ModeComparisonSummary = {
+  processedFrameCount: number
+  skippedFrameCount: number
+  imageDetectSuccessCount: number
+  videoDetectSuccessCount: number
+  bothSuccessCount: number
+  imageOnlySuccessCount: number
+  videoOnlySuccessCount: number
+  bothFailedCount: number
+  mismatchCount: number
+  timing: {
+    drawImageMs: TimingDistribution
+    imageDetectMs: TimingDistribution
+    videoDetectMs: TimingDistribution
+    totalFrameProcessingMs: TimingDistribution
+  }
+  poseDiff: {
+    yaw: TimingDistribution
+    pitch: TimingDistribution
+    roll: TimingDistribution
+    absYaw: TimingDistribution
+    absPitch: TimingDistribution
+    absRoll: TimingDistribution
+    magnitude: TimingDistribution
+  }
+  landmarkDiff: {
+    mean2dDistance: TimingDistribution
+    max2dDistance: TimingDistribution
+    mean3dDistance: TimingDistribution
+    max3dDistance: TimingDistribution
+    mean2dDistanceNoIris: TimingDistribution
+    mean2dDistanceIris: TimingDistribution
+  }
+  presentedFramesDelta: TimingDistribution
+  importantFrames: ModeComparisonImportantFrames
+  debugCounters: ModeComparisonDebugCounters
+}
+
+type ModeComparisonExport = {
+  type: "mediapipe_mode_comparison_v1"
+  createdAt: string
+  source: {
+    filename: string | null
+    durationSec: number | null
+    videoWidth: number | null
+    videoHeight: number | null
+    readyState: number | null
+  }
+  runOptions: {
+    maxFrames: number
+    delegate: "GPU"
+    frameDriver: "requestVideoFrameCallback"
+    imageMode: "IMAGE"
+    videoMode: "VIDEO"
+    timestampSource: "metadata.mediaTime"
+    sameCanvasFrame: true
+  }
+  summary: ModeComparisonSummary
+  frames: ModeComparisonFrameResult[]
+}
+
+type ModeComparisonState = {
+  status: ModeComparisonStatus
+  startedAt: string | null
+  completedAt: string | null
+  progressFrameCount: number
+  maxFrames: number
+  skippedFrameCount: number
+  lastTimestampMs: number | null
+  lastMediaTimeSec: number | null
+  lastPresentedFrames: number | null
+  errorMessage: string | null
+  result: ModeComparisonExport | null
+  previewSnapshots: Record<ModeComparisonPreviewKind, ModeComparisonPreviewSnapshot | null>
+  debugOptions: ModeComparisonDebugOptions
+  debugCounters: ModeComparisonDebugCounters
+}
+
 type RenderUpdateTiming = {
   liveOverlayDrawMs: number | null
   debugUpdateMs: number | null
@@ -1000,6 +1214,7 @@ type LabState = {
   }
   currentAnalysis: CurrentFrameAnalysis
   realtimeDebug: RealtimeDebugState
+  modeComparison: ModeComparisonState
   logs: string[]
 }
 
@@ -1007,6 +1222,7 @@ type FaceLandmarkerResultLike = ReturnType<FaceLandmarker["detect"]>
 type FaceLandmarkerOptions = Parameters<typeof FaceLandmarker.createFromOptions>[1]
 type VideoFrameCallbackMetadataLike = {
   mediaTime?: number
+  presentedFrames?: number
 }
 type VideoElementWithFrameCallback = HTMLVideoElement & {
   requestVideoFrameCallback?: (
@@ -1025,6 +1241,8 @@ const MEDIAPIPE_TIMESTAMP_STEP_MS = 1000 / 30
 const LIVE_AUTO_ANALYSIS_INTERVAL_SEC = 0.35
 const REALTIME_TARGET_FPS_OPTIONS = [5, 10, 15, 30] as const
 const REALTIME_AVERAGE_SAMPLE_COUNT = 30
+const MODE_COMPARISON_MAX_FRAMES = 10000
+const MODE_COMPARISON_MAX_PREVIEW_SNAPSHOTS = 20
 const RAD_TO_DEG = 180 / Math.PI
 const STRONG_EXPRESSION_THRESHOLD = 0.35
 const MIXED_EXPRESSION_THRESHOLD = 0.28
@@ -1339,6 +1557,7 @@ const debugTabs: TabOption<DebugTab>[] = [
   { label: "レンダー理想", value: "renderedIdeal" },
   { label: "p,Pデータ", value: "objPoseCalibration" },
   { label: "リアルタイム", value: "realtime" },
+  { label: "モード比較", value: "modeComparison" },
   { label: "ワープメッシュ", value: "warpMesh" },
   { label: "Raw Debug", value: "raw" },
 ]
@@ -1401,6 +1620,7 @@ const state: LabState = {
   },
   currentAnalysis: createEmptyCurrentAnalysis(),
   realtimeDebug: createDefaultRealtimeDebugState(),
+  modeComparison: createDefaultModeComparisonState(),
   logs: ["ラボを初期化しました。レンダー理想2D preview は使用できます。renderedIdeal478 / WebGL warp は未実装です。"],
 }
 
@@ -1419,6 +1639,17 @@ app.innerHTML = `
       </div>
       <div class="control-group">
         <button class="primary-button" type="button" data-action="load-obj">OBJ読込</button>
+        <button class="secondary-button" type="button" data-action="load-live-video">MP4読込</button>
+        <div class="mode-comparison-panel" data-mode-comparison-panel>
+          <div class="mode-comparison-header">
+            <h3>モード比較</h3>
+            <p>IMAGE mode（静止画モード）と VIDEO mode（動画モード）を、同じ canvas frame（同一キャンバスフレーム）で比較します。</p>
+          </div>
+          <div class="button-row">
+            <button class="primary-button" type="button" data-action="mode-comparison-start">モード比較</button>
+            <button class="secondary-button" type="button" data-action="mode-comparison-cancel">停止 / cancel</button>
+          </div>
+        </div>
         <label class="select-field">
           <span>姿勢サンプリング</span>
           <select data-control="obj-pose-sampling-preset">
@@ -1488,6 +1719,12 @@ let liveFaceLandmarker: FaceLandmarker | null = null
 let liveFaceLandmarkerPromise: Promise<FaceLandmarker> | null = null
 let renderedIdealFaceLandmarker: FaceLandmarker | null = null
 let renderedIdealFaceLandmarkerPromise: Promise<FaceLandmarker> | null = null
+let modeComparisonImageLandmarker: FaceLandmarker | null = null
+let modeComparisonVideoLandmarker: FaceLandmarker | null = null
+let modeComparisonLandmarkerPromise: Promise<{
+  imageLandmarker: FaceLandmarker
+  videoLandmarker: FaceLandmarker
+}> | null = null
 let liveAnalysisInProgress = false
 let liveAnalysisRequestId = 0
 let renderedIdealDetectInProgress = false
@@ -1498,6 +1735,17 @@ let lastAutoLiveAnalysisAtSec = Number.NEGATIVE_INFINITY
 let realtimeTimerId: number | null = null
 let realtimeVideoFrameCallbackId: number | null = null
 let realtimeAnimationFrameId: number | null = null
+let modeComparisonVideoFrameCallbackId: number | null = null
+let modeComparisonRunId = 0
+let modeComparisonFrames: ModeComparisonFrameResult[] = []
+let modeComparisonProcessing = false
+let modeComparisonLastCallbackWallMs: number | null = null
+let modeComparisonLastCallbackMediaTimeSec: number | null = null
+let modeComparisonCallbackWallDeltaSamples: number[] = []
+let modeComparisonMediaTimeDeltaSamples: number[] = []
+let modeComparisonProcessingMeasuredSamples: number[] = []
+let modeComparisonUnmeasuredOverheadSamples: number[] = []
+const modeComparisonCanvas = document.createElement("canvas")
 let realtimeRunStartedAtMs: number | null = null
 let realtimeTickInProgress = false
 let realtimeTimingSamples: RealtimeTimingSample[] = []
@@ -1785,6 +2033,13 @@ function bindEvents() {
     objFileInput.click()
   })
 
+  getElement<HTMLButtonElement>('[data-action="load-live-video"]').addEventListener("click", () => {
+    if (isPoseCenterSearchRunning() || state.modeComparison.status === "running") {
+      return
+    }
+    liveFileInput.click()
+  })
+
   getElement<HTMLButtonElement>('[data-action="obj-pose-calibration-start"]').addEventListener("click", () => {
     void startObjPoseCalibration()
   })
@@ -1797,6 +2052,14 @@ function bindEvents() {
     void exportObjPoseMappingDataset()
   })
 
+  getElement<HTMLButtonElement>('[data-action="mode-comparison-start"]').addEventListener("click", () => {
+    void startModeComparison()
+  })
+
+  getElement<HTMLButtonElement>('[data-action="mode-comparison-cancel"]').addEventListener("click", () => {
+    cancelModeComparison()
+  })
+
   objFileInput.addEventListener("change", (event) => {
     const file = getSelectedFile(event)
     if (file && !isObjPoseCalibrationRunning()) {
@@ -1806,7 +2069,7 @@ function bindEvents() {
 
   liveFileInput.addEventListener("change", (event) => {
     const file = getSelectedFile(event)
-    if (file && !isPoseCenterSearchRunning()) {
+    if (file && !isPoseCenterSearchRunning() && state.modeComparison.status !== "running") {
       loadLiveVideo(file)
     }
   })
@@ -1820,7 +2083,9 @@ function bindEvents() {
   liveVideoElement.addEventListener("timeupdate", () => {
     syncLiveCurrentTime()
     drawLiveOverlay()
-    maybeAnalyzeLiveFrame()
+    if (state.modeComparison.status !== "running") {
+      maybeAnalyzeLiveFrame()
+    }
     renderAll()
   })
 
@@ -1850,7 +2115,12 @@ function bindEvents() {
   liveVideoElement.addEventListener("pause", () => {
     state.liveVideo.playbackStatus = state.liveVideo.loaded ? "paused" : "stopped"
     syncLiveInputState()
-    if (state.liveVideo.loaded && state.realtimeDebug.status !== "running" && !isPoseCenterSearchRunning()) {
+    if (
+      state.liveVideo.loaded &&
+      state.realtimeDebug.status !== "running" &&
+      state.modeComparison.status !== "running" &&
+      !isPoseCenterSearchRunning()
+    ) {
       void analyzeCurrentLiveFrame("pause")
     }
     renderAll()
@@ -1859,7 +2129,16 @@ function bindEvents() {
   liveVideoElement.addEventListener("ended", () => {
     state.liveVideo.playbackStatus = "stopped"
     syncLiveInputState()
-    if (state.liveVideo.loaded && state.realtimeDebug.status !== "running" && !isPoseCenterSearchRunning()) {
+    if (state.modeComparison.status === "running") {
+      finishModeComparison("completed")
+      return
+    }
+    if (
+      state.liveVideo.loaded &&
+      state.realtimeDebug.status !== "running" &&
+      state.modeComparison.status !== "running" &&
+      !isPoseCenterSearchRunning()
+    ) {
       void analyzeCurrentLiveFrame("ended")
     }
     renderAll()
@@ -2031,6 +2310,36 @@ function bindEvents() {
     }
   })
 
+  app.addEventListener("change", (event) => {
+    const target = event.target
+    if (!(target instanceof HTMLInputElement)) {
+      return
+    }
+    if (target.dataset.control === "mode-comparison-preview-snapshot-enabled") {
+      state.modeComparison = {
+        ...state.modeComparison,
+        debugOptions: {
+          ...state.modeComparison.debugOptions,
+          previewSnapshotEnabled: target.checked,
+        },
+      }
+      renderDebugContent()
+    }
+  })
+
+  app.addEventListener("input", (event) => {
+    const target = event.target
+    if (!(target instanceof HTMLInputElement)) {
+      return
+    }
+    if (target.dataset.control === "mode-comparison-ui-update-interval") {
+      updateModeComparisonDebugOptionNumber("uiUpdateIntervalFrames", target.value)
+    }
+    if (target.dataset.control === "mode-comparison-summary-update-interval") {
+      updateModeComparisonDebugOptionNumber("summaryUpdateIntervalFrames", target.value)
+    }
+  })
+
   bindObjPreviewPreset("obj-preview-front", { yawDeg: 0, pitchDeg: 0, rollDeg: 0 })
   bindObjPreviewPreset("obj-preview-left", { yawDeg: -90, pitchDeg: 0, rollDeg: 0 })
   bindObjPreviewPreset("obj-preview-right", { yawDeg: 90, pitchDeg: 0, rollDeg: 0 })
@@ -2121,6 +2430,23 @@ function bindEvents() {
     })
   })
 
+  app.addEventListener("click", (event) => {
+    const target = event.target
+    if (!(target instanceof HTMLElement)) {
+      return
+    }
+    const action = target.closest<HTMLElement>("[data-action]")?.dataset.action
+    if (action === "mode-comparison-download-json") {
+      exportModeComparisonJson()
+    }
+    if (action === "mode-comparison-download-csv") {
+      exportModeComparisonCsv()
+    }
+    if (isModeComparisonPreviewDownloadAction(action)) {
+      exportModeComparisonPreview(action.replace("mode-comparison-download-preview-", "") as ModeComparisonPreviewKind)
+    }
+  })
+
   bindOverlayToggle("toggle-landmarks", "showLandmarks478")
   bindOverlayToggle("toggle-mesh-source", "showMeshSource")
   bindOverlayToggle("toggle-mesh-target", "showMeshTarget")
@@ -2190,6 +2516,23 @@ function bindObjPoseRotationCenterInput(
   })
 }
 
+function updateModeComparisonDebugOptionNumber(
+  key: "uiUpdateIntervalFrames" | "summaryUpdateIntervalFrames",
+  valueText: string,
+) {
+  const value = Math.max(1, Math.round(Number(valueText) || 1))
+  state.modeComparison = {
+    ...state.modeComparison,
+    debugOptions: {
+      ...state.modeComparison.debugOptions,
+      [key]: value,
+    },
+  }
+  if (state.activeDebugTab === "modeComparison") {
+    renderDebugContent()
+  }
+}
+
 async function loadObjFile(file: File) {
   state.objFile = {
     loaded: true,
@@ -2235,6 +2578,7 @@ async function loadObjFile(file: File) {
 }
 
 function loadLiveVideo(file: File) {
+  cancelModeComparison()
   stopCameraInput()
   if (state.liveVideo.objectUrl) {
     URL.revokeObjectURL(state.liveVideo.objectUrl)
@@ -2278,6 +2622,7 @@ function loadLiveVideo(file: File) {
 }
 
 async function startCameraInput() {
+  cancelModeComparison()
   stopRealtimeValidation("stopped")
   resetLiveAnalysisResults()
   stopCameraInput({ preserveCameraState: false })
@@ -2444,6 +2789,29 @@ async function getRenderedIdealFaceLandmarker() {
   }
 }
 
+async function getModeComparisonLandmarkers() {
+  if (modeComparisonImageLandmarker && modeComparisonVideoLandmarker) {
+    return {
+      imageLandmarker: modeComparisonImageLandmarker,
+      videoLandmarker: modeComparisonVideoLandmarker,
+    }
+  }
+
+  if (modeComparisonLandmarkerPromise) {
+    return modeComparisonLandmarkerPromise
+  }
+
+  modeComparisonLandmarkerPromise = initializeModeComparisonLandmarkers()
+  try {
+    const landmarks = await modeComparisonLandmarkerPromise
+    modeComparisonImageLandmarker = landmarks.imageLandmarker
+    modeComparisonVideoLandmarker = landmarks.videoLandmarker
+    return landmarks
+  } finally {
+    modeComparisonLandmarkerPromise = null
+  }
+}
+
 async function initializeFaceLandmarker() {
   const vision = await FilesetResolver.forVisionTasks(MEDIAPIPE_WASM_PATH)
 
@@ -2454,6 +2822,19 @@ async function initializeRenderedIdealFaceLandmarker() {
   const vision = await FilesetResolver.forVisionTasks(MEDIAPIPE_WASM_PATH)
 
   return FaceLandmarker.createFromOptions(vision, createRenderedIdealFaceLandmarkerOptions())
+}
+
+async function initializeModeComparisonLandmarkers() {
+  const vision = await FilesetResolver.forVisionTasks(MEDIAPIPE_WASM_PATH)
+  const [imageLandmarker, videoLandmarker] = await Promise.all([
+    FaceLandmarker.createFromOptions(vision, createModeComparisonImageLandmarkerOptions()),
+    FaceLandmarker.createFromOptions(vision, createModeComparisonVideoLandmarkerOptions()),
+  ])
+
+  return {
+    imageLandmarker,
+    videoLandmarker,
+  }
 }
 
 async function analyzeCurrentLiveFrame(
@@ -4432,6 +4813,802 @@ function syncCameraSettings() {
   state.liveVideo.height = state.liveVideo.height ?? state.camera.height
 }
 
+async function startModeComparison() {
+  if (state.modeComparison.status === "running") {
+    return
+  }
+
+  if (!isVideoFileInput() || !state.liveVideo.loaded) {
+    state.modeComparison = {
+      ...createDefaultModeComparisonState(),
+      status: "error",
+      completedAt: new Date().toISOString(),
+      errorMessage: "MP4読込を完了してからモード比較を開始してください。",
+    }
+    addLog("モード比較を開始できません。先にMP4読込を実行してください。")
+    renderAll()
+    return
+  }
+
+  if (!liveVideoElement.requestVideoFrameCallback) {
+    state.modeComparison = {
+      ...createDefaultModeComparisonState(),
+      status: "error",
+      completedAt: new Date().toISOString(),
+      errorMessage: "このブラウザでは requestVideoFrameCallback（動画フレーム単位コールバック）が使えないため、比較実験は実行できません。",
+    }
+    addLog("requestVideoFrameCallback が使えないため、モード比較を実行できません。")
+    renderAll()
+    return
+  }
+
+  stopRealtimeValidation("stopped")
+  liveAnalysisRequestId += 1
+  liveAnalysisInProgress = false
+  modeComparisonRunId += 1
+  const runId = modeComparisonRunId
+  modeComparisonFrames = []
+  resetModeComparisonRuntimeDebugSamples()
+  state.modeComparison = {
+    ...createDefaultModeComparisonState(),
+    debugOptions: state.modeComparison.debugOptions,
+    status: "running",
+    startedAt: new Date().toISOString(),
+  }
+  state.activePreviewTab = "live"
+  addLog("モード比較を開始しました。IMAGE mode（静止画モード）と VIDEO mode（動画モード）を同じ canvas frame で比較します。")
+  renderAll()
+
+  try {
+    const { imageLandmarker, videoLandmarker } = await getModeComparisonLandmarkers()
+    if (state.modeComparison.status !== "running" || runId !== modeComparisonRunId) {
+      return
+    }
+
+    await prepareModeComparisonVideo()
+    if (state.modeComparison.status !== "running" || runId !== modeComparisonRunId) {
+      return
+    }
+
+    const width = liveVideoElement.videoWidth || state.liveVideo.width || 0
+    const height = liveVideoElement.videoHeight || state.liveVideo.height || 0
+    if (width <= 0 || height <= 0) {
+      throw new Error("videoWidth / videoHeight が取得できません。")
+    }
+    modeComparisonCanvas.width = width
+    modeComparisonCanvas.height = height
+    state.modeComparison = {
+      ...state.modeComparison,
+      lastTimestampMs: null,
+      lastMediaTimeSec: null,
+      lastPresentedFrames: null,
+      errorMessage: null,
+    }
+    syncLiveVideoMetadata()
+    renderAll()
+
+    registerModeComparisonFrameCallback(runId, imageLandmarker, videoLandmarker)
+    await liveVideoElement.play()
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    console.error("Mode comparison failed", error)
+    finishModeComparison("error", message)
+  }
+}
+
+async function prepareModeComparisonVideo() {
+  liveVideoElement.pause()
+  liveVideoElement.muted = true
+  liveVideoElement.playsInline = true
+  liveVideoElement.playbackRate = 1.0
+  await waitForLiveVideoMetadataReady()
+  liveVideoElement.currentTime = 0
+  await waitForLiveVideoSeekedOrReady()
+  syncLiveCurrentTime()
+}
+
+function waitForLiveVideoMetadataReady() {
+  if (liveVideoElement.readyState >= HTMLMediaElement.HAVE_METADATA) {
+    return Promise.resolve()
+  }
+
+  return new Promise<void>((resolve, reject) => {
+    const onLoadedMetadata = () => {
+      cleanupListeners()
+      resolve()
+    }
+    const onError = () => {
+      cleanupListeners()
+      reject(new Error(liveVideoElement.error?.message || "MP4 metadata の取得に失敗しました。"))
+    }
+    const cleanupListeners = () => {
+      liveVideoElement.removeEventListener("loadedmetadata", onLoadedMetadata)
+      liveVideoElement.removeEventListener("error", onError)
+    }
+    liveVideoElement.addEventListener("loadedmetadata", onLoadedMetadata, { once: true })
+    liveVideoElement.addEventListener("error", onError, { once: true })
+  })
+}
+
+function waitForLiveVideoSeekedOrReady() {
+  if (Math.abs(liveVideoElement.currentTime) < 0.001 && liveVideoElement.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+    return Promise.resolve()
+  }
+
+  return new Promise<void>((resolve) => {
+    const onSeeked = () => {
+      cleanupListeners()
+      resolve()
+    }
+    const onLoadedData = () => {
+      cleanupListeners()
+      resolve()
+    }
+    const cleanupListeners = () => {
+      liveVideoElement.removeEventListener("seeked", onSeeked)
+      liveVideoElement.removeEventListener("loadeddata", onLoadedData)
+    }
+    liveVideoElement.addEventListener("seeked", onSeeked, { once: true })
+    liveVideoElement.addEventListener("loadeddata", onLoadedData, { once: true })
+  })
+}
+
+function registerModeComparisonFrameCallback(
+  runId: number,
+  imageLandmarker: FaceLandmarker,
+  videoLandmarker: FaceLandmarker,
+) {
+  const requestVideoFrameCallback = liveVideoElement.requestVideoFrameCallback
+  if (!requestVideoFrameCallback) {
+    finishModeComparison("error", "requestVideoFrameCallback が利用できません。")
+    return
+  }
+
+  modeComparisonVideoFrameCallbackId = requestVideoFrameCallback.call(
+    liveVideoElement,
+    (_now, metadata) => {
+      processModeComparisonFrame(runId, metadata, imageLandmarker, videoLandmarker)
+    },
+  )
+}
+
+function resetModeComparisonRuntimeDebugSamples() {
+  modeComparisonProcessing = false
+  modeComparisonLastCallbackWallMs = null
+  modeComparisonLastCallbackMediaTimeSec = null
+  modeComparisonCallbackWallDeltaSamples = []
+  modeComparisonMediaTimeDeltaSamples = []
+  modeComparisonProcessingMeasuredSamples = []
+  modeComparisonUnmeasuredOverheadSamples = []
+}
+
+function processModeComparisonFrame(
+  runId: number,
+  metadata: VideoFrameCallbackMetadataLike,
+  imageLandmarker: FaceLandmarker,
+  videoLandmarker: FaceLandmarker,
+) {
+  const callbackWallMs = performance.now()
+  const mediaTimeSec = metadata.mediaTime
+  const callbackWallDeltaMs =
+    modeComparisonLastCallbackWallMs === null ? null : callbackWallMs - modeComparisonLastCallbackWallMs
+  const mediaTimeDeltaMs =
+    Number.isFinite(mediaTimeSec) && modeComparisonLastCallbackMediaTimeSec !== null
+      ? (mediaTimeSec - modeComparisonLastCallbackMediaTimeSec) * 1000
+      : null
+  modeComparisonLastCallbackWallMs = callbackWallMs
+  if (Number.isFinite(mediaTimeSec)) {
+    modeComparisonLastCallbackMediaTimeSec = mediaTimeSec
+  }
+  recordModeComparisonDebugCallback(callbackWallDeltaMs, mediaTimeDeltaMs)
+
+  if (runId !== modeComparisonRunId || state.modeComparison.status !== "running") {
+    return
+  }
+
+  if (modeComparisonProcessing) {
+    state.modeComparison = {
+      ...state.modeComparison,
+      debugCounters: {
+        ...state.modeComparison.debugCounters,
+        busySkipCount: state.modeComparison.debugCounters.busySkipCount + 1,
+      },
+    }
+    registerModeComparisonFrameCallback(runId, imageLandmarker, videoLandmarker)
+    return
+  }
+
+  if (modeComparisonFrames.length >= MODE_COMPARISON_MAX_FRAMES) {
+    finishModeComparison("completed")
+    return
+  }
+
+  if (!Number.isFinite(mediaTimeSec)) {
+    state.modeComparison = {
+      ...state.modeComparison,
+      skippedFrameCount: state.modeComparison.skippedFrameCount + 1,
+      debugCounters: {
+        ...state.modeComparison.debugCounters,
+        missingMediaTimeSkipCount: state.modeComparison.debugCounters.missingMediaTimeSkipCount + 1,
+      },
+      errorMessage: "metadata.mediaTime が取得できないフレームを skip しました。",
+    }
+    registerModeComparisonFrameCallback(runId, imageLandmarker, videoLandmarker)
+    return
+  }
+
+  const timestampMs = mediaTimeSec * 1000
+  if (
+    state.modeComparison.lastTimestampMs !== null &&
+    timestampMs <= state.modeComparison.lastTimestampMs
+  ) {
+    state.modeComparison = {
+      ...state.modeComparison,
+      skippedFrameCount: state.modeComparison.skippedFrameCount + 1,
+      debugCounters: {
+        ...state.modeComparison.debugCounters,
+        timestampSkipCount: state.modeComparison.debugCounters.timestampSkipCount + 1,
+      },
+      lastMediaTimeSec: mediaTimeSec,
+      errorMessage: "同一または巻き戻り timestamp のフレームを skip しました。",
+    }
+    renderModeComparisonControls()
+    registerModeComparisonFrameCallback(runId, imageLandmarker, videoLandmarker)
+    return
+  }
+
+  try {
+    modeComparisonProcessing = true
+    const frameStartMs = performance.now()
+    const context = modeComparisonCanvas.getContext("2d")
+    if (!context) {
+      throw new Error("mode comparison canvas context を取得できません。")
+    }
+
+    const drawStartMs = performance.now()
+    context.drawImage(liveVideoElement, 0, 0, modeComparisonCanvas.width, modeComparisonCanvas.height)
+    const drawImageMs = performance.now() - drawStartMs
+
+    const imageDetectStartMs = performance.now()
+    const imageResult = imageLandmarker.detect(modeComparisonCanvas)
+    const imageDetectMs = performance.now() - imageDetectStartMs
+
+    const videoDetectStartMs = performance.now()
+    const videoResult = videoLandmarker.detectForVideo(modeComparisonCanvas, timestampMs)
+    const videoDetectMs = performance.now() - videoDetectStartMs
+    const totalFrameProcessingMs = performance.now() - frameStartMs
+    const unmeasuredOverheadEstimateMs =
+      callbackWallDeltaMs === null ? null : callbackWallDeltaMs - totalFrameProcessingMs
+    recordModeComparisonProcessingDebugSample(totalFrameProcessingMs, unmeasuredOverheadEstimateMs)
+
+    const presentedFrames = Number.isFinite(metadata.presentedFrames)
+      ? metadata.presentedFrames ?? null
+      : null
+    const presentedFramesDelta =
+      presentedFrames !== null && state.modeComparison.lastPresentedFrames !== null
+        ? presentedFrames - state.modeComparison.lastPresentedFrames
+        : null
+
+    const frame = buildModeComparisonFrameResult({
+      frameIndex: modeComparisonFrames.length + 1,
+      mediaTimeSec,
+      timestampMs,
+      presentedFrames,
+      presentedFramesDelta,
+      callbackWallDeltaMs,
+      mediaTimeDeltaMs,
+      drawImageMs,
+      imageDetectMs,
+      videoDetectMs,
+      totalFrameProcessingMs,
+      unmeasuredOverheadEstimateMs,
+      imageResult,
+      videoResult,
+    })
+    modeComparisonFrames.push(frame)
+    updateModeComparisonPreviewSnapshots(frame)
+
+    const nextDebugCounters = buildModeComparisonDebugCounters()
+    state.modeComparison = {
+      ...state.modeComparison,
+      progressFrameCount: shouldUpdateModeComparisonState(frame.frameIndex)
+        ? modeComparisonFrames.length
+        : state.modeComparison.progressFrameCount,
+      lastTimestampMs: timestampMs,
+      lastMediaTimeSec: mediaTimeSec,
+      lastPresentedFrames: presentedFrames,
+      debugCounters: nextDebugCounters,
+      errorMessage: null,
+    }
+
+    if (shouldRenderModeComparisonControls(frame.frameIndex)) {
+      renderModeComparisonControls()
+    }
+    if (state.activeDebugTab === "modeComparison" && shouldRenderModeComparisonSummary(frame.frameIndex)) {
+      renderDebugContent()
+    }
+
+    if (modeComparisonFrames.length >= MODE_COMPARISON_MAX_FRAMES || liveVideoElement.ended) {
+      finishModeComparison("completed")
+      return
+    }
+
+    registerModeComparisonFrameCallback(runId, imageLandmarker, videoLandmarker)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    finishModeComparison("error", message)
+  } finally {
+    modeComparisonProcessing = false
+  }
+}
+
+function buildModeComparisonFrameResult(input: {
+  frameIndex: number
+  mediaTimeSec: number
+  timestampMs: number
+  presentedFrames: number | null
+  presentedFramesDelta: number | null
+  callbackWallDeltaMs: number | null
+  mediaTimeDeltaMs: number | null
+  drawImageMs: number
+  imageDetectMs: number
+  videoDetectMs: number
+  totalFrameProcessingMs: number
+  unmeasuredOverheadEstimateMs: number | null
+  imageResult: FaceLandmarkerResultLike
+  videoResult: FaceLandmarkerResultLike
+}): ModeComparisonFrameResult {
+  const imageLandmarks = input.imageResult.faceLandmarks[0] ?? []
+  const videoLandmarks = input.videoResult.faceLandmarks[0] ?? []
+  const imageDetected = input.imageResult.faceLandmarks.length > 0
+  const videoDetected = input.videoResult.faceLandmarks.length > 0
+  const imagePose = estimateNullablePose(input.imageResult.facialTransformationMatrixes[0])
+  const videoPose = estimateNullablePose(input.videoResult.facialTransformationMatrixes[0])
+  const poseDiff = calculateModeComparisonPoseDiff(imagePose, videoPose)
+  const landmarkDiff =
+    imageLandmarks.length === REQUIRED_LANDMARK_COUNT && videoLandmarks.length === REQUIRED_LANDMARK_COUNT
+      ? calculateModeComparisonLandmarkDiff(imageLandmarks, videoLandmarks)
+      : null
+
+  return {
+    frameIndex: input.frameIndex,
+    mediaTimeSec: input.mediaTimeSec,
+    timestampMs: input.timestampMs,
+    timestampSource: "metadata.mediaTime",
+    presentedFrames: input.presentedFrames,
+    presentedFramesDelta: input.presentedFramesDelta,
+    callbackWallDeltaMs: input.callbackWallDeltaMs,
+    mediaTimeDeltaMs: input.mediaTimeDeltaMs,
+    drawImageMs: input.drawImageMs,
+    imageDetectMs: input.imageDetectMs,
+    videoDetectMs: input.videoDetectMs,
+    totalFrameProcessingMs: input.totalFrameProcessingMs,
+    processingMeasuredMs: input.totalFrameProcessingMs,
+    unmeasuredOverheadEstimateMs: input.unmeasuredOverheadEstimateMs,
+    imageDetectSuccess: imageDetected,
+    videoDetectSuccess: videoDetected,
+    imageDetected,
+    videoDetected,
+    imageLandmarkCount: imageLandmarks.length,
+    videoLandmarkCount: videoLandmarks.length,
+    imagePose,
+    videoPose,
+    poseDiff,
+    absPoseDiff: {
+      yaw: poseDiff.absYaw,
+      pitch: poseDiff.absPitch,
+      roll: poseDiff.absRoll,
+    },
+    mean2dDistance: landmarkDiff?.mean2dDistance ?? null,
+    max2dDistance: landmarkDiff?.max2dDistance ?? null,
+    mean3dDistance: landmarkDiff?.mean3dDistance ?? null,
+    max3dDistance: landmarkDiff?.max3dDistance ?? null,
+    landmarkDiff,
+    errorMessage: null,
+  }
+}
+
+function recordModeComparisonDebugCallback(
+  callbackWallDeltaMs: number | null,
+  mediaTimeDeltaMs: number | null,
+) {
+  if (callbackWallDeltaMs !== null && Number.isFinite(callbackWallDeltaMs)) {
+    modeComparisonCallbackWallDeltaSamples.push(callbackWallDeltaMs)
+  }
+  if (mediaTimeDeltaMs !== null && Number.isFinite(mediaTimeDeltaMs)) {
+    modeComparisonMediaTimeDeltaSamples.push(mediaTimeDeltaMs)
+  }
+  state.modeComparison = {
+    ...state.modeComparison,
+    debugCounters: {
+      ...state.modeComparison.debugCounters,
+      rvfcCallbackCount: state.modeComparison.debugCounters.rvfcCallbackCount + 1,
+      latestCallbackWallDeltaMs: callbackWallDeltaMs,
+      latestMediaTimeDeltaMs: mediaTimeDeltaMs,
+      callbackWallDeltaMs: summarizeNullableNumbers(modeComparisonCallbackWallDeltaSamples),
+      mediaTimeDeltaMs: summarizeNullableNumbers(modeComparisonMediaTimeDeltaSamples),
+    },
+  }
+}
+
+function recordModeComparisonProcessingDebugSample(
+  processingMeasuredMs: number,
+  unmeasuredOverheadEstimateMs: number | null,
+) {
+  modeComparisonProcessingMeasuredSamples.push(processingMeasuredMs)
+  if (unmeasuredOverheadEstimateMs !== null && Number.isFinite(unmeasuredOverheadEstimateMs)) {
+    modeComparisonUnmeasuredOverheadSamples.push(unmeasuredOverheadEstimateMs)
+  }
+}
+
+function buildModeComparisonDebugCounters(): ModeComparisonDebugCounters {
+  return {
+    ...state.modeComparison.debugCounters,
+    processedFrameCount: modeComparisonFrames.length,
+    presentedFramesDeltaSummary: summarizeNullableNumbers(
+      modeComparisonFrames.map((frame) => frame.presentedFramesDelta),
+    ),
+    callbackWallDeltaMs: summarizeNullableNumbers(modeComparisonCallbackWallDeltaSamples),
+    mediaTimeDeltaMs: summarizeNullableNumbers(modeComparisonMediaTimeDeltaSamples),
+    processingMeasuredMs: summarizeNullableNumbers(modeComparisonProcessingMeasuredSamples),
+    unmeasuredOverheadEstimateMs: summarizeNullableNumbers(modeComparisonUnmeasuredOverheadSamples),
+    latestProcessingMeasuredMs: modeComparisonProcessingMeasuredSamples.at(-1) ?? null,
+    latestUnmeasuredOverheadEstimateMs: modeComparisonUnmeasuredOverheadSamples.at(-1) ?? null,
+    nextCallbackRegistrationTiming: "afterProcessing",
+  }
+}
+
+function shouldUpdateModeComparisonState(frameIndex: number) {
+  return frameIndex === 1 || frameIndex % state.modeComparison.debugOptions.uiUpdateIntervalFrames === 0
+}
+
+function shouldRenderModeComparisonControls(frameIndex: number) {
+  return frameIndex === 1 || frameIndex % state.modeComparison.debugOptions.uiUpdateIntervalFrames === 0
+}
+
+function shouldRenderModeComparisonSummary(frameIndex: number) {
+  return frameIndex === 1 || frameIndex % state.modeComparison.debugOptions.summaryUpdateIntervalFrames === 0
+}
+
+function updateModeComparisonPreviewSnapshots(frame: ModeComparisonFrameResult) {
+  if (!state.modeComparison.debugOptions.previewSnapshotEnabled) {
+    return
+  }
+  const nextSnapshots = {
+    ...state.modeComparison.previewSnapshots,
+  }
+  const currentWorstPoseFrame = findFrameBySnapshot(nextSnapshots.worst_pose_diff)
+  const framePoseMagnitude = getModeComparisonPoseMagnitude(frame)
+  if (
+    framePoseMagnitude !== null &&
+    (!currentWorstPoseFrame ||
+      framePoseMagnitude > (getModeComparisonPoseMagnitude(currentWorstPoseFrame) ?? Number.NEGATIVE_INFINITY))
+  ) {
+    nextSnapshots.worst_pose_diff = createModeComparisonPreviewSnapshot("worst_pose_diff", frame)
+  }
+
+  const currentWorstLandmarkFrame = findFrameBySnapshot(nextSnapshots.worst_landmark_diff)
+  if (
+    frame.max2dDistance !== null &&
+    (!currentWorstLandmarkFrame ||
+      frame.max2dDistance > (currentWorstLandmarkFrame.max2dDistance ?? Number.NEGATIVE_INFINITY))
+  ) {
+    nextSnapshots.worst_landmark_diff = createModeComparisonPreviewSnapshot("worst_landmark_diff", frame)
+  }
+
+  if (!nextSnapshots.first_mismatch && frame.imageDetected !== frame.videoDetected) {
+    nextSnapshots.first_mismatch = createModeComparisonPreviewSnapshot("first_mismatch", frame)
+  }
+
+  state.modeComparison = {
+    ...state.modeComparison,
+    previewSnapshots: enforceModeComparisonPreviewSnapshotLimit(nextSnapshots),
+  }
+}
+
+function createModeComparisonPreviewSnapshot(
+  kind: ModeComparisonPreviewKind,
+  frame: ModeComparisonFrameResult,
+): ModeComparisonPreviewSnapshot {
+  return {
+    kind,
+    frameIndex: frame.frameIndex,
+    mediaTimeSec: frame.mediaTimeSec,
+    timestampMs: frame.timestampMs,
+    dataUrl: modeComparisonCanvas.toDataURL("image/png"),
+    createdAt: new Date().toISOString(),
+  }
+}
+
+function enforceModeComparisonPreviewSnapshotLimit(
+  snapshots: Record<ModeComparisonPreviewKind, ModeComparisonPreviewSnapshot | null>,
+) {
+  const storedCount = Object.values(snapshots).filter(Boolean).length
+  if (storedCount <= MODE_COMPARISON_MAX_PREVIEW_SNAPSHOTS) {
+    return snapshots
+  }
+  return {
+    latest: snapshots.latest,
+    worst_pose_diff: snapshots.worst_pose_diff,
+    worst_landmark_diff: snapshots.worst_landmark_diff,
+    first_mismatch: snapshots.first_mismatch,
+  }
+}
+
+function findFrameBySnapshot(snapshot: ModeComparisonPreviewSnapshot | null) {
+  if (!snapshot) {
+    return null
+  }
+  return modeComparisonFrames.find((frame) => frame.frameIndex === snapshot.frameIndex) ?? null
+}
+
+function getModeComparisonPoseMagnitude(frame: ModeComparisonFrameResult) {
+  const values = [
+    frame.absPoseDiff.yaw,
+    frame.absPoseDiff.pitch,
+    frame.absPoseDiff.roll,
+  ]
+  if (values.every((value) => value === null)) {
+    return null
+  }
+  return Math.hypot(...values.map((value) => value ?? 0))
+}
+
+function calculateModeComparisonPoseDiff(
+  imagePose: ReferencePose,
+  videoPose: ReferencePose,
+): ModeComparisonPoseDiff {
+  const yaw = subtractNullable(videoPose.yaw, imagePose.yaw)
+  const pitch = subtractNullable(videoPose.pitch, imagePose.pitch)
+  const roll = subtractNullable(videoPose.roll, imagePose.roll)
+  return {
+    yaw,
+    pitch,
+    roll,
+    absYaw: yaw === null ? null : Math.abs(yaw),
+    absPitch: pitch === null ? null : Math.abs(pitch),
+    absRoll: roll === null ? null : Math.abs(roll),
+  }
+}
+
+function calculateModeComparisonLandmarkDiff(
+  imageLandmarks: NormalizedLandmark[],
+  videoLandmarks: NormalizedLandmark[],
+): ModeComparisonLandmarkDiff {
+  let sum2d = 0
+  let sum3d = 0
+  let max2d = 0
+  let max3d = 0
+  let noIrisSum2d = 0
+  let noIrisCount = 0
+  let irisSum2d = 0
+  let irisCount = 0
+  const landmarkDeltas: ModeComparisonLandmarkDiff["landmarkDeltas"] = []
+
+  for (let index = 0; index < REQUIRED_LANDMARK_COUNT; index += 1) {
+    const imageLandmark = imageLandmarks[index]
+    const videoLandmark = videoLandmarks[index]
+    const dx = videoLandmark.x - imageLandmark.x
+    const dy = videoLandmark.y - imageLandmark.y
+    const dz = videoLandmark.z - imageLandmark.z
+    const distance2d = Math.hypot(dx, dy)
+    const distance3d = Math.hypot(dx, dy, dz)
+    sum2d += distance2d
+    sum3d += distance3d
+    max2d = Math.max(max2d, distance2d)
+    max3d = Math.max(max3d, distance3d)
+    if (index >= 468 && index <= 477) {
+      irisSum2d += distance2d
+      irisCount += 1
+    } else {
+      noIrisSum2d += distance2d
+      noIrisCount += 1
+    }
+    landmarkDeltas.push({ index, dx, dy, dz })
+  }
+
+  return {
+    mean2dDistance: sum2d / REQUIRED_LANDMARK_COUNT,
+    max2dDistance: max2d,
+    mean3dDistance: sum3d / REQUIRED_LANDMARK_COUNT,
+    max3dDistance: max3d,
+    mean2dDistanceNoIris: noIrisCount > 0 ? noIrisSum2d / noIrisCount : null,
+    mean2dDistanceIris: irisCount > 0 ? irisSum2d / irisCount : null,
+    landmarkDeltas,
+  }
+}
+
+function cancelModeComparison() {
+  if (state.modeComparison.status !== "running") {
+    return
+  }
+  finishModeComparison("canceled", "ユーザー操作で cancel しました。")
+}
+
+function finishModeComparison(status: ModeComparisonStatus, errorMessage: string | null = null) {
+  if (modeComparisonVideoFrameCallbackId !== null && liveVideoElement.cancelVideoFrameCallback) {
+    liveVideoElement.cancelVideoFrameCallback(modeComparisonVideoFrameCallbackId)
+  }
+  modeComparisonVideoFrameCallbackId = null
+  liveVideoElement.pause()
+  syncLiveCurrentTime()
+  updateLatestModeComparisonPreviewSnapshot()
+  const result = buildModeComparisonExport(modeComparisonFrames, state.modeComparison.skippedFrameCount)
+  state.modeComparison = {
+    ...state.modeComparison,
+    status,
+    completedAt: new Date().toISOString(),
+    progressFrameCount: modeComparisonFrames.length,
+    debugCounters: buildModeComparisonDebugCounters(),
+    errorMessage,
+    result,
+  }
+  addLog(`モード比較を終了しました: ${formatModeComparisonStatus(status)} / processed ${modeComparisonFrames.length} / skipped ${state.modeComparison.skippedFrameCount}`)
+  renderAll()
+}
+
+function updateLatestModeComparisonPreviewSnapshot() {
+  if (!state.modeComparison.debugOptions.previewSnapshotEnabled) {
+    return
+  }
+  const latestFrame = modeComparisonFrames[modeComparisonFrames.length - 1]
+  if (!latestFrame) {
+    return
+  }
+  state.modeComparison = {
+    ...state.modeComparison,
+    previewSnapshots: {
+      ...state.modeComparison.previewSnapshots,
+      latest: createModeComparisonPreviewSnapshot("latest", latestFrame),
+    },
+  }
+}
+
+function buildModeComparisonExport(
+  frames: ModeComparisonFrameResult[],
+  skippedFrameCount: number,
+): ModeComparisonExport {
+  const createdAt = new Date().toISOString()
+  return {
+    type: "mediapipe_mode_comparison_v1",
+    createdAt,
+    source: {
+      filename: state.liveVideo.fileName,
+      durationSec: state.liveVideo.durationSec,
+      videoWidth: state.liveVideo.width,
+      videoHeight: state.liveVideo.height,
+      readyState: liveVideoElement.readyState,
+    },
+    runOptions: {
+      maxFrames: MODE_COMPARISON_MAX_FRAMES,
+      delegate: "GPU",
+      frameDriver: "requestVideoFrameCallback",
+      imageMode: "IMAGE",
+      videoMode: "VIDEO",
+      timestampSource: "metadata.mediaTime",
+      sameCanvasFrame: true,
+    },
+    summary: summarizeModeComparisonFrames(frames, skippedFrameCount),
+    frames,
+  }
+}
+
+function summarizeModeComparisonFrames(
+  frames: ModeComparisonFrameResult[],
+  skippedFrameCount: number,
+): ModeComparisonSummary {
+  const bothSuccessCount = frames.filter((frame) => frame.imageDetected && frame.videoDetected).length
+  const imageOnlySuccessCount = frames.filter((frame) => frame.imageDetected && !frame.videoDetected).length
+  const videoOnlySuccessCount = frames.filter((frame) => !frame.imageDetected && frame.videoDetected).length
+  const bothFailedCount = frames.filter((frame) => !frame.imageDetected && !frame.videoDetected).length
+  return {
+    processedFrameCount: frames.length,
+    skippedFrameCount,
+    imageDetectSuccessCount: frames.filter((frame) => frame.imageDetected).length,
+    videoDetectSuccessCount: frames.filter((frame) => frame.videoDetected).length,
+    bothSuccessCount,
+    imageOnlySuccessCount,
+    videoOnlySuccessCount,
+    bothFailedCount,
+    mismatchCount: frames.filter((frame) => frame.imageDetected !== frame.videoDetected).length,
+    timing: {
+      drawImageMs: summarizeNullableNumbers(frames.map((frame) => frame.drawImageMs)),
+      imageDetectMs: summarizeNullableNumbers(frames.map((frame) => frame.imageDetectMs)),
+      videoDetectMs: summarizeNullableNumbers(frames.map((frame) => frame.videoDetectMs)),
+      totalFrameProcessingMs: summarizeNullableNumbers(frames.map((frame) => frame.totalFrameProcessingMs)),
+    },
+    poseDiff: {
+      yaw: summarizeNullableNumbers(frames.map((frame) => frame.poseDiff.yaw)),
+      pitch: summarizeNullableNumbers(frames.map((frame) => frame.poseDiff.pitch)),
+      roll: summarizeNullableNumbers(frames.map((frame) => frame.poseDiff.roll)),
+      absYaw: summarizeNullableNumbers(frames.map((frame) => frame.poseDiff.absYaw)),
+      absPitch: summarizeNullableNumbers(frames.map((frame) => frame.poseDiff.absPitch)),
+      absRoll: summarizeNullableNumbers(frames.map((frame) => frame.poseDiff.absRoll)),
+      magnitude: summarizeNullableNumbers(frames.map(getModeComparisonPoseMagnitude)),
+    },
+    landmarkDiff: {
+      mean2dDistance: summarizeNullableNumbers(frames.map((frame) => frame.landmarkDiff?.mean2dDistance ?? null)),
+      max2dDistance: summarizeNullableNumbers(frames.map((frame) => frame.landmarkDiff?.max2dDistance ?? null)),
+      mean3dDistance: summarizeNullableNumbers(frames.map((frame) => frame.landmarkDiff?.mean3dDistance ?? null)),
+      max3dDistance: summarizeNullableNumbers(frames.map((frame) => frame.landmarkDiff?.max3dDistance ?? null)),
+      mean2dDistanceNoIris: summarizeNullableNumbers(frames.map((frame) => frame.landmarkDiff?.mean2dDistanceNoIris ?? null)),
+      mean2dDistanceIris: summarizeNullableNumbers(frames.map((frame) => frame.landmarkDiff?.mean2dDistanceIris ?? null)),
+    },
+    presentedFramesDelta: summarizeNullableNumbers(frames.map((frame) => frame.presentedFramesDelta)),
+    importantFrames: getModeComparisonImportantFrames(frames),
+    debugCounters: {
+      ...buildModeComparisonDebugCounters(),
+      processedFrameCount: frames.length,
+      presentedFramesDeltaSummary: summarizeNullableNumbers(frames.map((frame) => frame.presentedFramesDelta)),
+    },
+  }
+}
+
+function getModeComparisonImportantFrames(frames: ModeComparisonFrameResult[]): ModeComparisonImportantFrames {
+  return {
+    worstYawDiffFrame: createModeComparisonFrameRef(findMaxModeComparisonFrame(frames, (frame) => frame.poseDiff.absYaw)),
+    worstPitchDiffFrame: createModeComparisonFrameRef(findMaxModeComparisonFrame(frames, (frame) => frame.poseDiff.absPitch)),
+    worstRollDiffFrame: createModeComparisonFrameRef(findMaxModeComparisonFrame(frames, (frame) => frame.poseDiff.absRoll)),
+    worstPoseMagnitudeDiffFrame: createModeComparisonFrameRef(findMaxModeComparisonFrame(frames, getModeComparisonPoseMagnitude)),
+    worstMean2dDistanceFrame: createModeComparisonFrameRef(findMaxModeComparisonFrame(frames, (frame) => frame.mean2dDistance)),
+    worstMax2dDistanceFrame: createModeComparisonFrameRef(findMaxModeComparisonFrame(frames, (frame) => frame.max2dDistance)),
+    firstMismatchFrame: createModeComparisonFrameRef(frames.find((frame) => frame.imageDetected !== frame.videoDetected) ?? null),
+    latestFrame: createModeComparisonFrameRef(frames[frames.length - 1] ?? null),
+  }
+}
+
+function findMaxModeComparisonFrame(
+  frames: ModeComparisonFrameResult[],
+  getValue: (frame: ModeComparisonFrameResult) => number | null,
+) {
+  let bestFrame: ModeComparisonFrameResult | null = null
+  let bestValue = Number.NEGATIVE_INFINITY
+  frames.forEach((frame) => {
+    const value = getValue(frame)
+    if (value !== null && Number.isFinite(value) && value > bestValue) {
+      bestFrame = frame
+      bestValue = value
+    }
+  })
+  return bestFrame
+}
+
+function createModeComparisonFrameRef(
+  frame: ModeComparisonFrameResult | null,
+): ModeComparisonImportantFrameRef {
+  if (!frame) {
+    return null
+  }
+  return {
+    frameIndex: frame.frameIndex,
+    mediaTimeSec: frame.mediaTimeSec,
+    timestampMs: frame.timestampMs,
+  }
+}
+
+function summarizeNullableNumbers(values: Array<number | null>): TimingDistribution {
+  const finiteValues = values.filter((value): value is number => Number.isFinite(value))
+  if (finiteValues.length === 0) {
+    return createEmptyTimingDistribution()
+  }
+  const sortedValues = [...finiteValues].sort((a, b) => a - b)
+  const total = finiteValues.reduce((sum, value) => sum + value, 0)
+  return {
+    average: total / finiteValues.length,
+    p50: getPercentile(sortedValues, 0.5),
+    p95: getPercentile(sortedValues, 0.95),
+    max: sortedValues[sortedValues.length - 1],
+  }
+}
+
+function getPercentile(sortedValues: number[], percentile: number) {
+  if (sortedValues.length === 0) {
+    return null
+  }
+  const index = Math.min(sortedValues.length - 1, Math.max(0, Math.ceil(sortedValues.length * percentile) - 1))
+  return sortedValues[index]
+}
+
 function startRealtimeValidation() {
   if (isPoseCenterSearchRunning()) {
     return
@@ -4873,23 +6050,31 @@ function renderControls() {
 
   const duration = state.liveVideo.durationSec ?? 0
   const range = getElement<HTMLInputElement>("[data-range='live']")
-  const canUseMp4Debug = isVideoFileInput() && state.realtimeDebug.status !== "running" && !poseSearchRunning
+  const canUseMp4Debug =
+    isVideoFileInput() &&
+    state.realtimeDebug.status !== "running" &&
+    state.modeComparison.status !== "running" &&
+    !poseSearchRunning
   range.max = String(duration)
   range.value = String(clamp(state.liveVideo.currentTimeSec ?? 0, 0, duration))
   range.disabled = !canUseMp4Debug
 
   setDisabled('[data-action="load-obj"]', poseSearchRunning)
   setDisabled(
+    '[data-action="load-live-video"]',
+    poseSearchRunning || isObjPoseCalibrationRunning() || state.modeComparison.status === "running",
+  )
+  setDisabled(
     '[data-action="obj-pose-calibration-start"]',
-    poseSearchRunning || !canRenderRenderedIdealGeometry(),
+    poseSearchRunning || state.modeComparison.status === "running" || !canRenderRenderedIdealGeometry(),
   )
   getElement<HTMLSelectElement>('[data-control="obj-pose-sampling-preset"]').value = state.objPoseMapping.poseSamplingPreset
   setDisabled('[data-control="obj-pose-sampling-preset"]', poseSearchRunning || isObjPoseCalibrationRunning())
   objFileInput.disabled = poseSearchRunning
-  liveFileInput.disabled = poseSearchRunning
-  setDisabled('[data-action="live-play"]', poseSearchRunning || !isVideoFileInput() || state.liveVideo.playbackStatus === "playing")
-  setDisabled('[data-action="live-pause"]', poseSearchRunning || !isVideoFileInput() || state.liveVideo.playbackStatus !== "playing")
-  setDisabled('[data-action="live-analyze-current"]', !canUseMp4Debug || liveAnalysisInProgress)
+  liveFileInput.disabled = poseSearchRunning || state.modeComparison.status === "running"
+  setDisabled('[data-action="live-play"]', poseSearchRunning || state.modeComparison.status === "running" || !isVideoFileInput() || state.liveVideo.playbackStatus === "playing")
+  setDisabled('[data-action="live-pause"]', poseSearchRunning || state.modeComparison.status === "running" || !isVideoFileInput() || state.liveVideo.playbackStatus !== "playing")
+  setDisabled('[data-action="live-analyze-current"]', !canUseMp4Debug || liveAnalysisInProgress || state.modeComparison.status === "running")
 
   getElement<HTMLElement>("[data-status='live-time']").textContent = formatTimeStatus(
     state.liveVideo,
@@ -4913,6 +6098,7 @@ function renderControls() {
   setDisabled('[data-action="rendered-ideal-refresh"]', poseSearchRunning || !canRenderRenderedIdealGeometry())
 
   renderLiveAnalysisCard()
+  renderModeComparisonControls()
   getElement<HTMLSelectElement>('[data-control="obj-preview-mode"]').value = state.objPreview.mode
   setChecked("obj-pose-sync-enabled", state.objPoseSync.enabled)
   setChecked("obj-pose-yaw-invert", state.objPoseSync.yawSign === -1)
@@ -4942,6 +6128,271 @@ function renderRealtimeControls() {
   getElement<HTMLElement>("[data-realtime-inline-status]").textContent =
     `状態: ${formatRealtimeStatus(state.realtimeDebug.status)} / 駆動: ${realtimeDriveModeLabels[state.realtimeDebug.driveMode]} / 実効FPS: ${formatRealtimeNullableNumber(state.realtimeDebug.effectiveFps)} / 判定: ${getRealtimeJudgement()}`
   getElement<HTMLElement>("[data-realtime-playback-note]").textContent = getRealtimePlaybackNote()
+}
+
+function renderModeComparisonControls() {
+  const modeComparison = state.modeComparison
+  setDisabled(
+    '[data-action="mode-comparison-start"]',
+    isPoseCenterSearchRunning() ||
+      isObjPoseCalibrationRunning() ||
+      state.realtimeDebug.status === "running" ||
+      modeComparison.status === "running" ||
+      !isVideoFileInput(),
+  )
+  setDisabled('[data-action="mode-comparison-cancel"]', modeComparison.status !== "running")
+}
+
+function renderModeComparisonDebugTab() {
+  const container = document.createElement("div")
+  container.className = "mode-comparison-debug"
+  const comparison = state.modeComparison
+  const result = comparison.result
+  const summary =
+    result?.summary ?? summarizeModeComparisonFrames(modeComparisonFrames, comparison.skippedFrameCount)
+  const frames = result?.frames ?? modeComparisonFrames
+  const latestFrame = getModeComparisonFrameByRef(frames, summary.importantFrames.latestFrame)
+  const worstPoseFrame = getModeComparisonFrameByRef(frames, summary.importantFrames.worstPoseMagnitudeDiffFrame)
+  const worstLandmarkFrame = getModeComparisonFrameByRef(frames, summary.importantFrames.worstMax2dDistanceFrame)
+  const firstMismatchFrame = getModeComparisonFrameByRef(frames, summary.importantFrames.firstMismatchFrame)
+  const hasResult = result !== null
+
+  container.innerHTML = `
+    <section class="debug-section">
+      <h3>Source（入力情報）</h3>
+      <dl class="summary-list">
+        <div><dt>MP4 filename（MP4ファイル名）</dt><dd>${escapeHtml(state.liveInput.fileName ?? "未選択")}</dd></div>
+        <div><dt>duration（長さ）</dt><dd>${formatNullableNumber(state.liveInput.durationSec)}</dd></div>
+        <div><dt>videoWidth / videoHeight（動画幅 / 高さ）</dt><dd>${formatNullableCount(state.liveInput.width)} / ${formatNullableCount(state.liveInput.height)}</dd></div>
+        <div><dt>readyState（状態）</dt><dd>${formatNullableCount(state.liveInput.readyState)}</dd></div>
+        <div><dt>liveVideoStatus</dt><dd>${escapeHtml(state.liveVideo.status)}</dd></div>
+      </dl>
+    </section>
+
+    <section class="debug-section">
+      <h3>Run status（実行状態）</h3>
+      <dl class="summary-list">
+        <div><dt>modeComparisonStatus</dt><dd>${formatModeComparisonStatus(comparison.status)} (${comparison.status})</dd></div>
+        <div><dt>progress（進捗）</dt><dd>${comparison.progressFrameCount} / ${comparison.maxFrames}</dd></div>
+        <div><dt>processedFrameCount（比較済みフレーム数）</dt><dd>${summary.processedFrameCount}</dd></div>
+        <div><dt>skippedFrameCount（スキップ数）</dt><dd>${summary.skippedFrameCount}</dd></div>
+        <div><dt>maxFrames</dt><dd>${comparison.maxFrames}</dd></div>
+        <div><dt>startedAt</dt><dd>${escapeHtml(comparison.startedAt ?? "-")}</dd></div>
+        <div><dt>completedAt</dt><dd>${escapeHtml(comparison.completedAt ?? "-")}</dd></div>
+        <div><dt>errorMessage</dt><dd>${escapeHtml(comparison.errorMessage ?? "-")}</dd></div>
+      </dl>
+    </section>
+
+    <section class="debug-section">
+      <h3>デバッグカウンタ（Debug counters）</h3>
+      <dl class="summary-list">
+        <div><dt>rvfcCallbackCount</dt><dd>${summary.debugCounters.rvfcCallbackCount}</dd></div>
+        <div><dt>processedFrameCount</dt><dd>${summary.debugCounters.processedFrameCount}</dd></div>
+        <div><dt>intentionalSkipCount</dt><dd>${summary.debugCounters.intentionalSkipCount}</dd></div>
+        <div><dt>timestampSkipCount</dt><dd>${summary.debugCounters.timestampSkipCount}</dd></div>
+        <div><dt>busySkipCount</dt><dd>${summary.debugCounters.busySkipCount}</dd></div>
+        <div><dt>missingMediaTimeSkipCount</dt><dd>${summary.debugCounters.missingMediaTimeSkipCount}</dd></div>
+        <div><dt>presentedFramesDeltaSummary</dt><dd>${formatTimingDistribution(summary.debugCounters.presentedFramesDeltaSummary)}</dd></div>
+        <div><dt>callbackWallDeltaMs</dt><dd>${formatTimingDistribution(summary.debugCounters.callbackWallDeltaMs)}</dd></div>
+        <div><dt>mediaTimeDeltaMs</dt><dd>${formatTimingDistribution(summary.debugCounters.mediaTimeDeltaMs)}</dd></div>
+        <div><dt>processingMeasuredMs</dt><dd>${formatTimingDistribution(summary.debugCounters.processingMeasuredMs)}</dd></div>
+        <div><dt>unmeasuredOverheadEstimateMs</dt><dd>${formatTimingDistribution(summary.debugCounters.unmeasuredOverheadEstimateMs)}</dd></div>
+        <div><dt>latest callbackWallDeltaMs</dt><dd>${formatNullableNumber(summary.debugCounters.latestCallbackWallDeltaMs)}</dd></div>
+        <div><dt>latest mediaTimeDeltaMs</dt><dd>${formatNullableNumber(summary.debugCounters.latestMediaTimeDeltaMs)}</dd></div>
+        <div><dt>latest processingMeasuredMs</dt><dd>${formatNullableNumber(summary.debugCounters.latestProcessingMeasuredMs)}</dd></div>
+        <div><dt>latest unmeasuredOverheadEstimateMs</dt><dd>${formatNullableNumber(summary.debugCounters.latestUnmeasuredOverheadEstimateMs)}</dd></div>
+        <div><dt>nextCallbackRegistrationTiming</dt><dd>${summary.debugCounters.nextCallbackRegistrationTiming}</dd></div>
+      </dl>
+    </section>
+
+    <section class="debug-section">
+      <h3>デバッグオプション（Debug options）</h3>
+      <div class="mode-comparison-debug-options">
+        <label class="overlay-toggle">
+          <input type="checkbox" data-control="mode-comparison-preview-snapshot-enabled" ${comparison.debugOptions.previewSnapshotEnabled ? "checked" : ""} ${comparison.status === "running" ? "disabled" : ""} />
+          <span>preview snapshot（プレビュー画像保存）を有効化</span>
+        </label>
+        <label class="number-field">
+          <span>UI state update interval（UI状態更新間隔frames）</span>
+          <input type="number" min="1" step="1" data-control="mode-comparison-ui-update-interval" value="${comparison.debugOptions.uiUpdateIntervalFrames}" ${comparison.status === "running" ? "disabled" : ""} />
+        </label>
+        <label class="number-field">
+          <span>summary update interval（要約更新間隔frames）</span>
+          <input type="number" min="1" step="1" data-control="mode-comparison-summary-update-interval" value="${comparison.debugOptions.summaryUpdateIntervalFrames}" ${comparison.status === "running" ? "disabled" : ""} />
+        </label>
+      </div>
+      <p class="control-note">raw per-frame result（フレームごとの結果）は維持し、UI反映と summary 再描画だけを間引きます。</p>
+    </section>
+
+    <section class="debug-section">
+      <h3>Run options（実行条件）</h3>
+      <dl class="summary-list">
+        <div><dt>delegate GPU（GPU実行）</dt><dd>GPU</dd></div>
+        <div><dt>frameDriver</dt><dd>requestVideoFrameCallback（動画フレーム単位コールバック）</dd></div>
+        <div><dt>imageMode</dt><dd>IMAGE mode（静止画モード） / detect(canvas)</dd></div>
+        <div><dt>videoMode</dt><dd>VIDEO mode（動画モード） / detectForVideo(canvas, timestampMs)</dd></div>
+        <div><dt>timestampSource</dt><dd>metadata.mediaTime</dd></div>
+        <div><dt>sameCanvasFrame（同一キャンバスフレーム）</dt><dd>true</dd></div>
+        <div><dt>同一フレーム保証</dt><dd>MP4現在フレームを1回だけ固定 canvas に drawImage し、その同じ canvas を detect() と detectForVideo() に渡します。</dd></div>
+        <div><dt>totalFrameProcessingMs の範囲</dt><dd>drawImage、detect()、detectForVideo() を含みます。frame result構築、raw frames push、UI state update、summary再描画、preview snapshot toDataURL は含みません。</dd></div>
+      </dl>
+    </section>
+
+    <section class="debug-section">
+      <h3>Detection summary（検出結果要約）</h3>
+      <dl class="summary-list">
+        <div><dt>imageDetectSuccessCount</dt><dd>${summary.imageDetectSuccessCount}</dd></div>
+        <div><dt>videoDetectSuccessCount</dt><dd>${summary.videoDetectSuccessCount}</dd></div>
+        <div><dt>bothSuccessCount</dt><dd>${summary.bothSuccessCount}</dd></div>
+        <div><dt>imageOnlySuccessCount</dt><dd>${summary.imageOnlySuccessCount}</dd></div>
+        <div><dt>videoOnlySuccessCount</dt><dd>${summary.videoOnlySuccessCount}</dd></div>
+        <div><dt>bothFailedCount</dt><dd>${summary.bothFailedCount}</dd></div>
+        <div><dt>mismatchCount</dt><dd>${summary.mismatchCount}</dd></div>
+      </dl>
+    </section>
+
+    <section class="debug-section">
+      <h3>Timing summary（速度要約）</h3>
+      <dl class="summary-list">
+        <div><dt>detect() ms</dt><dd>${formatTimingDistribution(summary.timing.imageDetectMs)}</dd></div>
+        <div><dt>detectForVideo() ms</dt><dd>${formatTimingDistribution(summary.timing.videoDetectMs)}</dd></div>
+        <div><dt>drawImage ms</dt><dd>${formatTimingDistribution(summary.timing.drawImageMs)}</dd></div>
+        <div><dt>total frame processing ms</dt><dd>${formatTimingDistribution(summary.timing.totalFrameProcessingMs)}</dd></div>
+      </dl>
+    </section>
+
+    <section class="debug-section">
+      <h3>Pose diff（姿勢差分）</h3>
+      <p class="control-note">差分方向は VIDEO mode（動画モード） - IMAGE mode（静止画モード）です。</p>
+      <dl class="summary-list">
+        <div><dt>yaw diff（yaw差分）</dt><dd>${formatTimingDistribution(summary.poseDiff.yaw)}</dd></div>
+        <div><dt>pitch diff（pitch差分）</dt><dd>${formatTimingDistribution(summary.poseDiff.pitch)}</dd></div>
+        <div><dt>roll diff（roll差分）</dt><dd>${formatTimingDistribution(summary.poseDiff.roll)}</dd></div>
+        <div><dt>absolute yaw diff（絶対yaw差分）</dt><dd>${formatTimingDistribution(summary.poseDiff.absYaw)}</dd></div>
+        <div><dt>absolute pitch diff（絶対pitch差分）</dt><dd>${formatTimingDistribution(summary.poseDiff.absPitch)}</dd></div>
+        <div><dt>absolute roll diff（絶対roll差分）</dt><dd>${formatTimingDistribution(summary.poseDiff.absRoll)}</dd></div>
+        <div><dt>pose magnitude diff（姿勢差分量）</dt><dd>${formatTimingDistribution(summary.poseDiff.magnitude)}</dd></div>
+      </dl>
+    </section>
+
+    <section class="debug-section">
+      <h3>Landmark diff（ランドマーク差分）</h3>
+      <dl class="summary-list">
+        <div><dt>mean2dDistance</dt><dd>${formatTimingDistribution(summary.landmarkDiff.mean2dDistance)}</dd></div>
+        <div><dt>max2dDistance</dt><dd>${formatTimingDistribution(summary.landmarkDiff.max2dDistance)}</dd></div>
+        <div><dt>mean3dDistance</dt><dd>${formatTimingDistribution(summary.landmarkDiff.mean3dDistance)}</dd></div>
+        <div><dt>max3dDistance</dt><dd>${formatTimingDistribution(summary.landmarkDiff.max3dDistance)}</dd></div>
+      </dl>
+    </section>
+
+    <section class="debug-section">
+      <h3>Frame consistency（フレーム整合性）</h3>
+      <dl class="summary-list">
+        <div><dt>presentedFramesDelta summary</dt><dd>${formatTimingDistribution(summary.presentedFramesDelta)}</dd></div>
+        <div><dt>dropped / skipped らしきフレーム数</dt><dd>${formatNullableCount(countLikelyDroppedModeComparisonFrames(frames))}</dd></div>
+        <div><dt>timestamp monotonic skip count</dt><dd>${summary.skippedFrameCount}</dd></div>
+        <div><dt>0.41秒ズレ対策</dt><dd>別々に video を読ませず、same canvas frame（同一キャンバスフレーム）を両方の API に渡します。</dd></div>
+      </dl>
+    </section>
+
+    <section class="debug-section">
+      <h3>Download（ダウンロード）</h3>
+      <div class="button-row">
+        <button class="small-button" type="button" data-action="mode-comparison-download-json" ${hasResult ? "" : "disabled"}>JSON download（JSONダウンロード）</button>
+        <button class="small-button" type="button" data-action="mode-comparison-download-csv" ${hasResult ? "" : "disabled"}>CSV download（CSVダウンロード）</button>
+      </div>
+    </section>
+
+    <section class="debug-section">
+      <h3>Important frames（重要フレーム）</h3>
+      <div class="mode-comparison-card-grid">
+        ${renderModeComparisonFrameCard("latest frame result（最新フレーム結果）", latestFrame)}
+        ${renderModeComparisonFrameCard("worst pose diff frame（姿勢差分最大フレーム）", worstPoseFrame)}
+        ${renderModeComparisonFrameCard("worst landmark diff frame（ランドマーク差分最大フレーム）", worstLandmarkFrame)}
+        ${renderModeComparisonFrameCard("first mismatch frame（最初の検出不一致フレーム）", firstMismatchFrame)}
+      </div>
+    </section>
+
+    <section class="debug-section">
+      <h3>preview export（プレビュー書き出し）</h3>
+      <p class="control-note">全フレーム画像は保持せず、同じ canvas frame から作った重要フレーム preview snapshot のみ最大 ${MODE_COMPARISON_MAX_PREVIEW_SNAPSHOTS} 枚まで保持します。現在の実装では latest / worst pose diff / worst landmark diff / first mismatch の最大4枚です。</p>
+      <div class="button-row preview-export-buttons">
+        ${renderModeComparisonPreviewDownloadButton("latest", "Download latest preview（最新プレビューをダウンロード）")}
+        ${renderModeComparisonPreviewDownloadButton("worst_pose_diff", "Download worst pose diff preview（姿勢差分最大プレビューをダウンロード）")}
+        ${renderModeComparisonPreviewDownloadButton("worst_landmark_diff", "Download worst landmark diff preview（ランドマーク差分最大プレビューをダウンロード）")}
+        ${renderModeComparisonPreviewDownloadButton("first_mismatch", "Download first mismatch preview（最初の不一致プレビューをダウンロード）")}
+      </div>
+      <p class="control-note">overlay preview（重ね表示プレビュー）は未実装です。現時点では raw frame preview（元フレーム画像）を保存します。</p>
+    </section>
+  `
+
+  return container
+}
+
+function renderModeComparisonFrameCard(title: string, frame: ModeComparisonFrameResult | null) {
+  if (!frame) {
+    return `
+      <article class="mode-comparison-frame-card">
+        <h4>${escapeHtml(title)}</h4>
+        <p class="placeholder-text">該当フレームはまだありません。</p>
+      </article>
+    `
+  }
+
+  return `
+    <article class="mode-comparison-frame-card">
+      <h4>${escapeHtml(title)}</h4>
+      <dl class="summary-list">
+        <div><dt>frameIndex</dt><dd>${frame.frameIndex}</dd></div>
+        <div><dt>mediaTimeSec</dt><dd>${formatNumber(frame.mediaTimeSec)}</dd></div>
+        <div><dt>timestampMs</dt><dd>${formatNumber(frame.timestampMs)}</dd></div>
+        <div><dt>imagePose</dt><dd>${escapeHtml(formatPose(frame.imagePose))}</dd></div>
+        <div><dt>videoPose</dt><dd>${escapeHtml(formatPose(frame.videoPose))}</dd></div>
+        <div><dt>poseDiff</dt><dd>${escapeHtml(formatModeComparisonPoseDiff(frame.poseDiff))}</dd></div>
+        <div><dt>absPoseDiff</dt><dd>${escapeHtml(formatModeComparisonAbsPoseDiff(frame.absPoseDiff))}</dd></div>
+        <div><dt>mean2dDistance / max2dDistance</dt><dd>${formatNullableNumber(frame.mean2dDistance)} / ${formatNullableNumber(frame.max2dDistance)}</dd></div>
+        <div><dt>imageDetectMs / videoDetectMs</dt><dd>${formatNullableNumber(frame.imageDetectMs)} / ${formatNullableNumber(frame.videoDetectMs)}</dd></div>
+        <div><dt>imageDetectSuccess / videoDetectSuccess</dt><dd>${String(frame.imageDetectSuccess)} / ${String(frame.videoDetectSuccess)}</dd></div>
+      </dl>
+    </article>
+  `
+}
+
+function renderModeComparisonPreviewDownloadButton(
+  kind: ModeComparisonPreviewKind,
+  label: string,
+) {
+  const snapshot = state.modeComparison.previewSnapshots[kind]
+  return `
+    <button class="small-button" type="button" data-action="mode-comparison-download-preview-${kind}" ${snapshot ? "" : "disabled"}>
+      ${escapeHtml(label)}
+    </button>
+  `
+}
+
+function getModeComparisonFrameByRef(
+  frames: ModeComparisonFrameResult[],
+  ref: ModeComparisonImportantFrameRef,
+) {
+  if (!ref) {
+    return null
+  }
+  return frames.find((frame) => frame.frameIndex === ref.frameIndex) ?? null
+}
+
+function countLikelyDroppedModeComparisonFrames(frames: ModeComparisonFrameResult[]) {
+  const dropped = frames.filter((frame) =>
+    frame.presentedFramesDelta !== null && frame.presentedFramesDelta > 1
+  ).length
+  return dropped
+}
+
+function formatModeComparisonPoseDiff(diff: ModeComparisonPoseDiff) {
+  return `yaw ${formatNullableNumber(diff.yaw)} / pitch ${formatNullableNumber(diff.pitch)} / roll ${formatNullableNumber(diff.roll)}`
+}
+
+function formatModeComparisonAbsPoseDiff(diff: { yaw: number | null; pitch: number | null; roll: number | null }) {
+  return `yaw ${formatNullableNumber(diff.yaw)} / pitch ${formatNullableNumber(diff.pitch)} / roll ${formatNullableNumber(diff.roll)}`
 }
 
 function renderLiveInputSourceCard() {
@@ -5746,6 +7197,11 @@ function renderDebugContent() {
     return
   }
 
+  if (state.activeDebugTab === "modeComparison") {
+    content.appendChild(renderModeComparisonDebugTab())
+    return
+  }
+
   if (state.activeDebugTab === "current" && state.currentAnalysis.status === "not_ready") {
     const message = document.createElement("p")
     message.className = "placeholder-text"
@@ -5791,6 +7247,9 @@ function getSummaryItems(): Array<[string, string]> {
     ["labName", LAB_NAME],
     ["liveInputSourceType", state.liveInput.sourceType ?? "null"],
     ["liveVideoStatus", state.liveVideo.status],
+    ["modeComparisonStatus", state.modeComparison.status],
+    ["modeComparisonProcessedFrameCount", formatNullableCount(state.modeComparison.result?.summary.processedFrameCount ?? state.modeComparison.progressFrameCount)],
+    ["modeComparisonSkippedFrameCount", formatNullableCount(state.modeComparison.result?.summary.skippedFrameCount ?? state.modeComparison.skippedFrameCount)],
     ["realtimeMode", state.realtimeDebug.mode],
     ["realtimeDriveMode", state.realtimeDebug.driveMode],
     ["currentAnalysisOnlySupported", "true"],
@@ -6125,6 +7584,7 @@ function getRawState() {
     objErrorMessage: state.objErrorMessage,
     liveInputState: getLiveInputRawSummary(),
     cameraState: getCameraRawSummary(),
+    modeComparisonState: getModeComparisonRawSummary(),
     realtimeDebugState: getRoundedRealtimeDebugState(),
     currentAnalysisTimingBreakdown: roundCurrentAnalysisTimingBreakdown(
       state.realtimeDebug.currentAnalysisTimingBreakdown,
@@ -6720,6 +8180,125 @@ function createDefaultRealtimeDebugState(
   }
 }
 
+function createDefaultModeComparisonState(): ModeComparisonState {
+  return {
+    status: "idle",
+    startedAt: null,
+    completedAt: null,
+    progressFrameCount: 0,
+    maxFrames: MODE_COMPARISON_MAX_FRAMES,
+    skippedFrameCount: 0,
+    lastTimestampMs: null,
+    lastMediaTimeSec: null,
+    lastPresentedFrames: null,
+    errorMessage: null,
+    result: null,
+    previewSnapshots: createEmptyModeComparisonPreviewSnapshots(),
+    debugOptions: createDefaultModeComparisonDebugOptions(),
+    debugCounters: createEmptyModeComparisonDebugCounters(),
+  }
+}
+
+function createDefaultModeComparisonDebugOptions(): ModeComparisonDebugOptions {
+  return {
+    previewSnapshotEnabled: true,
+    uiUpdateIntervalFrames: 30,
+    summaryUpdateIntervalFrames: 30,
+  }
+}
+
+function createEmptyModeComparisonDebugCounters(): ModeComparisonDebugCounters {
+  return {
+    rvfcCallbackCount: 0,
+    processedFrameCount: 0,
+    intentionalSkipCount: 0,
+    timestampSkipCount: 0,
+    busySkipCount: 0,
+    missingMediaTimeSkipCount: 0,
+    presentedFramesDeltaSummary: createEmptyTimingDistribution(),
+    callbackWallDeltaMs: createEmptyTimingDistribution(),
+    mediaTimeDeltaMs: createEmptyTimingDistribution(),
+    processingMeasuredMs: createEmptyTimingDistribution(),
+    unmeasuredOverheadEstimateMs: createEmptyTimingDistribution(),
+    latestCallbackWallDeltaMs: null,
+    latestMediaTimeDeltaMs: null,
+    latestProcessingMeasuredMs: null,
+    latestUnmeasuredOverheadEstimateMs: null,
+    nextCallbackRegistrationTiming: "afterProcessing",
+  }
+}
+
+function createEmptyModeComparisonPreviewSnapshots(): Record<ModeComparisonPreviewKind, ModeComparisonPreviewSnapshot | null> {
+  return {
+    latest: null,
+    worst_pose_diff: null,
+    worst_landmark_diff: null,
+    first_mismatch: null,
+  }
+}
+
+function createEmptyTimingDistribution(): TimingDistribution {
+  return {
+    average: null,
+    p50: null,
+    p95: null,
+    max: null,
+  }
+}
+
+function createEmptyModeComparisonSummary(): ModeComparisonSummary {
+  return {
+    processedFrameCount: 0,
+    skippedFrameCount: 0,
+    imageDetectSuccessCount: 0,
+    videoDetectSuccessCount: 0,
+    bothSuccessCount: 0,
+    imageOnlySuccessCount: 0,
+    videoOnlySuccessCount: 0,
+    bothFailedCount: 0,
+    mismatchCount: 0,
+    timing: {
+      drawImageMs: createEmptyTimingDistribution(),
+      imageDetectMs: createEmptyTimingDistribution(),
+      videoDetectMs: createEmptyTimingDistribution(),
+      totalFrameProcessingMs: createEmptyTimingDistribution(),
+    },
+    poseDiff: {
+      yaw: createEmptyTimingDistribution(),
+      pitch: createEmptyTimingDistribution(),
+      roll: createEmptyTimingDistribution(),
+      absYaw: createEmptyTimingDistribution(),
+      absPitch: createEmptyTimingDistribution(),
+      absRoll: createEmptyTimingDistribution(),
+      magnitude: createEmptyTimingDistribution(),
+    },
+    landmarkDiff: {
+      mean2dDistance: createEmptyTimingDistribution(),
+      max2dDistance: createEmptyTimingDistribution(),
+      mean3dDistance: createEmptyTimingDistribution(),
+      max3dDistance: createEmptyTimingDistribution(),
+      mean2dDistanceNoIris: createEmptyTimingDistribution(),
+      mean2dDistanceIris: createEmptyTimingDistribution(),
+    },
+    presentedFramesDelta: createEmptyTimingDistribution(),
+    importantFrames: createEmptyModeComparisonImportantFrames(),
+    debugCounters: createEmptyModeComparisonDebugCounters(),
+  }
+}
+
+function createEmptyModeComparisonImportantFrames(): ModeComparisonImportantFrames {
+  return {
+    worstYawDiffFrame: null,
+    worstPitchDiffFrame: null,
+    worstRollDiffFrame: null,
+    worstPoseMagnitudeDiffFrame: null,
+    worstMean2dDistanceFrame: null,
+    worstMax2dDistanceFrame: null,
+    firstMismatchFrame: null,
+    latestFrame: null,
+  }
+}
+
 function createLiveFaceLandmarkerOptions(): FaceLandmarkerOptions {
   return {
     baseOptions: {
@@ -6742,6 +8321,32 @@ function createRenderedIdealFaceLandmarkerOptions(): FaceLandmarkerOptions {
     runningMode: "IMAGE",
     numFaces: 1,
     outputFaceBlendshapes: true,
+    outputFacialTransformationMatrixes: true,
+  }
+}
+
+function createModeComparisonImageLandmarkerOptions(): FaceLandmarkerOptions {
+  return {
+    baseOptions: {
+      modelAssetPath: MEDIAPIPE_FACE_LANDMARKER_MODEL_ASSET_PATH,
+      delegate: "GPU",
+    },
+    runningMode: "IMAGE",
+    numFaces: 1,
+    outputFaceBlendshapes: false,
+    outputFacialTransformationMatrixes: true,
+  }
+}
+
+function createModeComparisonVideoLandmarkerOptions(): FaceLandmarkerOptions {
+  return {
+    baseOptions: {
+      modelAssetPath: MEDIAPIPE_FACE_LANDMARKER_MODEL_ASSET_PATH,
+      delegate: "GPU",
+    },
+    runningMode: "VIDEO",
+    numFaces: 1,
+    outputFaceBlendshapes: false,
     outputFacialTransformationMatrixes: true,
   }
 }
@@ -7017,6 +8622,143 @@ async function exportObjPoseMappingDataset() {
   renderAll()
 }
 
+function exportModeComparisonJson() {
+  const result = state.modeComparison.result
+  const status = getElement<HTMLElement>("[data-debug-export-status]")
+  if (!result) {
+    status.textContent = "モード比較結果がありません。先にモード比較を実行してください。"
+    renderAll()
+    return
+  }
+
+  const json = JSON.stringify(result, null, 2)
+  downloadTextFile(
+    createModeComparisonFileName(result.createdAt, "json"),
+    json,
+    "application/json;charset=utf-8",
+  )
+  status.textContent = "モード比較JSONをダウンロードしました。"
+  addLog("モード比較JSONをダウンロードしました。")
+  renderAll()
+}
+
+function exportModeComparisonCsv() {
+  const result = state.modeComparison.result
+  const status = getElement<HTMLElement>("[data-debug-export-status]")
+  if (!result) {
+    status.textContent = "モード比較結果がありません。先にモード比較を実行してください。"
+    renderAll()
+    return
+  }
+
+  const csv = buildModeComparisonCsv(result.frames)
+  downloadTextFile(
+    createModeComparisonFileName(result.createdAt, "csv"),
+    csv,
+    "text/csv;charset=utf-8",
+  )
+  status.textContent = "モード比較CSVをダウンロードしました。"
+  addLog("モード比較CSVをダウンロードしました。")
+  renderAll()
+}
+
+function exportModeComparisonPreview(kind: ModeComparisonPreviewKind) {
+  const snapshot = state.modeComparison.previewSnapshots[kind]
+  const status = getElement<HTMLElement>("[data-debug-export-status]")
+  if (!snapshot) {
+    status.textContent = "preview snapshot（プレビュー画像）がありません。先にモード比較を実行してください。"
+    renderAll()
+    return
+  }
+
+  downloadDataUrlFile(createModeComparisonPreviewFileName(snapshot), snapshot.dataUrl)
+  status.textContent = "モード比較 preview image（プレビュー画像）をダウンロードしました。"
+  addLog(`モード比較 preview image をダウンロードしました: ${snapshot.kind} / frame ${snapshot.frameIndex}`)
+  renderAll()
+}
+
+function createModeComparisonPreviewFileName(snapshot: ModeComparisonPreviewSnapshot) {
+  const frameIndex = String(snapshot.frameIndex).padStart(5, "0")
+  const mediaTime = formatNumber(snapshot.mediaTimeSec).replaceAll(".", "_")
+  return `mode_comparison_${snapshot.kind}_frame_${frameIndex}_time_${mediaTime}_${formatTimestampForFileName(snapshot.createdAt)}.png`
+}
+
+function downloadDataUrlFile(fileName: string, dataUrl: string) {
+  const link = document.createElement("a")
+  link.href = dataUrl
+  link.download = fileName
+  link.click()
+}
+
+function createModeComparisonFileName(createdAt: string, extension: "json" | "csv") {
+  return `mode_comparison_gpu_request_video_frame_callback_${formatTimestampForFileName(createdAt)}.${extension}`
+}
+
+function buildModeComparisonCsv(frames: ModeComparisonFrameResult[]) {
+  const headers = [
+    "frameIndex",
+    "mediaTimeSec",
+    "timestampMs",
+    "presentedFrames",
+    "presentedFramesDelta",
+    "callbackWallDeltaMs",
+    "mediaTimeDeltaMs",
+    "drawImageMs",
+    "imageDetectMs",
+    "videoDetectMs",
+    "totalFrameProcessingMs",
+    "processingMeasuredMs",
+    "unmeasuredOverheadEstimateMs",
+    "imageDetected",
+    "videoDetected",
+    "imageLandmarkCount",
+    "videoLandmarkCount",
+    "yawDiffVideoMinusImage",
+    "pitchDiffVideoMinusImage",
+    "rollDiffVideoMinusImage",
+    "mean2dDistance",
+    "max2dDistance",
+    "mean3dDistance",
+    "max3dDistance",
+  ]
+  const rows = frames.map((frame) => [
+    frame.frameIndex,
+    frame.mediaTimeSec,
+    frame.timestampMs,
+    frame.presentedFrames ?? "",
+    frame.presentedFramesDelta ?? "",
+    frame.callbackWallDeltaMs ?? "",
+    frame.mediaTimeDeltaMs ?? "",
+    frame.drawImageMs ?? "",
+    frame.imageDetectMs ?? "",
+    frame.videoDetectMs ?? "",
+    frame.totalFrameProcessingMs ?? "",
+    frame.processingMeasuredMs ?? "",
+    frame.unmeasuredOverheadEstimateMs ?? "",
+    frame.imageDetected,
+    frame.videoDetected,
+    frame.imageLandmarkCount,
+    frame.videoLandmarkCount,
+    frame.poseDiff.yaw ?? "",
+    frame.poseDiff.pitch ?? "",
+    frame.poseDiff.roll ?? "",
+    frame.landmarkDiff?.mean2dDistance ?? "",
+    frame.landmarkDiff?.max2dDistance ?? "",
+    frame.landmarkDiff?.mean3dDistance ?? "",
+    frame.landmarkDiff?.max3dDistance ?? "",
+  ])
+
+  return [
+    headers.join(","),
+    ...rows.map((row) => row.map(formatCsvCell).join(",")),
+  ].join("\n")
+}
+
+function formatCsvCell(value: string | number | boolean) {
+  const text = String(value)
+  return /[",\n]/.test(text) ? `"${text.replaceAll("\"", "\"\"")}"` : text
+}
+
 async function exportObjPoseMappingCompactReport() {
   const status = getElement<HTMLElement>("[data-debug-export-status]")
   const message = "compact report は廃止しました。p,P Dataset JSONをColab側で解析してください。"
@@ -7160,12 +8902,15 @@ function buildDebugExport() {
       timingBreakdown: getRoundedRealtimeDebugState().currentAnalysisTimingBreakdown,
       bottleneck: getRealtimeBottleneck(),
     },
+    modeComparison: getModeComparisonRawSummary(),
     renderedIdealDetection: getRenderedIdealDetectionDebugExport(),
     objPoseDatasetGeneration: getObjPoseCalibrationDebugExport(),
     objPoseMapping: getObjPoseMappingDebugExport(),
     mediaPipeOptions: {
       currentLiveOptions: getCurrentLiveMediaPipeOptionsDebug(),
       renderedIdealOptions: getRenderedIdealMediaPipeOptionsDebug(),
+      modeComparisonImageOptions: getModeComparisonImageMediaPipeOptionsDebug(),
+      modeComparisonVideoOptions: getModeComparisonVideoMediaPipeOptionsDebug(),
     },
     notes: [
       "vertices/faces/current478/renderedIdeal478/MediaPipe result/canvas data URL/all pose result arrays/full objPoseMapping dataset samples are intentionally omitted.",
@@ -7202,6 +8947,14 @@ function disposeRenderedIdealFaceLandmarker() {
   renderedIdealFaceLandmarkerPromise = null
 }
 
+function disposeModeComparisonLandmarkers() {
+  modeComparisonImageLandmarker?.close()
+  modeComparisonVideoLandmarker?.close()
+  modeComparisonImageLandmarker = null
+  modeComparisonVideoLandmarker = null
+  modeComparisonLandmarkerPromise = null
+}
+
 function resetLiveTimestamp() {
   state.liveMediaPipe.liveTimestampMs = 0
 }
@@ -7229,6 +8982,7 @@ function clearLiveOverlay() {
 }
 
 function cleanup() {
+  cancelModeComparison()
   stopRealtimeValidation("stopped")
   stopCameraInput()
   if (state.liveVideo.objectUrl) {
@@ -7237,6 +8991,7 @@ function cleanup() {
   }
   disposeLiveFaceLandmarker("disposed")
   disposeRenderedIdealFaceLandmarker()
+  disposeModeComparisonLandmarkers()
 }
 
 function getLiveVideoRawSummary() {
@@ -7276,6 +9031,51 @@ function getCameraRawSummary() {
     height: state.camera.height,
     frameRate: roundForState(state.camera.frameRate),
     deviceLabel: state.camera.deviceLabel,
+  }
+}
+
+function getModeComparisonRawSummary() {
+  const comparison = state.modeComparison
+  const summary =
+    comparison.result?.summary ??
+    summarizeModeComparisonFrames(modeComparisonFrames, comparison.skippedFrameCount)
+  return {
+    status: comparison.status,
+    startedAt: comparison.startedAt,
+    completedAt: comparison.completedAt,
+    progressFrameCount: comparison.progressFrameCount,
+    maxFrames: comparison.maxFrames,
+    skippedFrameCount: comparison.skippedFrameCount,
+    lastTimestampMs: roundForState(comparison.lastTimestampMs),
+    lastMediaTimeSec: roundForState(comparison.lastMediaTimeSec),
+    lastPresentedFrames: comparison.lastPresentedFrames,
+    errorMessage: comparison.errorMessage,
+    runOptions: comparison.result?.runOptions ?? {
+      maxFrames: MODE_COMPARISON_MAX_FRAMES,
+      delegate: "GPU",
+      frameDriver: "requestVideoFrameCallback",
+      imageMode: "IMAGE",
+      videoMode: "VIDEO",
+      timestampSource: "metadata.mediaTime",
+      sameCanvasFrame: true,
+    },
+    summary,
+    frameCount: comparison.result?.frames.length ?? modeComparisonFrames.length,
+    previewSnapshots: Object.fromEntries(
+      Object.entries(comparison.previewSnapshots).map(([key, snapshot]) => [
+        key,
+        snapshot
+          ? {
+              kind: snapshot.kind,
+              frameIndex: snapshot.frameIndex,
+              mediaTimeSec: roundForState(snapshot.mediaTimeSec),
+              timestampMs: roundForState(snapshot.timestampMs),
+              createdAt: snapshot.createdAt,
+              hasDataUrl: true,
+            }
+          : null,
+      ]),
+    ),
   }
 }
 
@@ -7453,6 +9253,17 @@ function isRealtimeTargetFps(value: number): value is typeof REALTIME_TARGET_FPS
   return REALTIME_TARGET_FPS_OPTIONS.some((fps) => fps === value)
 }
 
+function isModeComparisonPreviewDownloadAction(
+  action: string | undefined,
+): action is `mode-comparison-download-preview-${ModeComparisonPreviewKind}` {
+  return (
+    action === "mode-comparison-download-preview-latest" ||
+    action === "mode-comparison-download-preview-worst_pose_diff" ||
+    action === "mode-comparison-download-preview-worst_landmark_diff" ||
+    action === "mode-comparison-download-preview-first_mismatch"
+  )
+}
+
 function isRenderedIdealBackgroundMode(value: string): value is RenderedIdealBackgroundMode {
   return value === "light" || value === "dark"
 }
@@ -7503,6 +9314,24 @@ function formatNullableCount(value: number | null) {
 
 function formatNullableNumber(value: number | null) {
   return value === null || !Number.isFinite(value) ? "null" : formatNumber(value)
+}
+
+function formatTimingDistribution(value: TimingDistribution) {
+  if (value.average === null) {
+    return "未計測"
+  }
+  return `avg ${formatNullableNumber(value.average)} / p50 ${formatNullableNumber(value.p50)} / p95 ${formatNullableNumber(value.p95)} / max ${formatNullableNumber(value.max)}`
+}
+
+function formatModeComparisonStatus(status: ModeComparisonStatus) {
+  const labels: Record<ModeComparisonStatus, string> = {
+    idle: "未実行",
+    running: "実行中",
+    completed: "完了",
+    canceled: "キャンセル済み",
+    error: "エラー",
+  }
+  return labels[status]
 }
 
 function formatBounds(bounds: ObjBounds | null) {
@@ -7982,6 +9811,32 @@ function getRenderedIdealMediaPipeOptionsDebug() {
     runningMode: "IMAGE",
     numFaces: 1,
     outputFaceBlendshapes: true,
+    outputFacialTransformationMatrixes: true,
+    delegate: "GPU",
+    modelAssetPath: MEDIAPIPE_FACE_LANDMARKER_MODEL_ASSET_PATH,
+    wasmPath: MEDIAPIPE_WASM_PATH,
+  }
+}
+
+function getModeComparisonImageMediaPipeOptionsDebug() {
+  return {
+    runningMode: "IMAGE",
+    api: "detect(canvas)",
+    numFaces: 1,
+    outputFaceBlendshapes: false,
+    outputFacialTransformationMatrixes: true,
+    delegate: "GPU",
+    modelAssetPath: MEDIAPIPE_FACE_LANDMARKER_MODEL_ASSET_PATH,
+    wasmPath: MEDIAPIPE_WASM_PATH,
+  }
+}
+
+function getModeComparisonVideoMediaPipeOptionsDebug() {
+  return {
+    runningMode: "VIDEO",
+    api: "detectForVideo(canvas, timestampMs)",
+    numFaces: 1,
+    outputFaceBlendshapes: false,
     outputFacialTransformationMatrixes: true,
     delegate: "GPU",
     modelAssetPath: MEDIAPIPE_FACE_LANDMARKER_MODEL_ASSET_PATH,

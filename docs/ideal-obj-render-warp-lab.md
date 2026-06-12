@@ -33,6 +33,95 @@
 
 `tools/ideal-obj-render-warp-lab` では、これらの座標系・メッシュ生成・WebGL mesh warp を踏襲し、理想側 landmarks の供給元だけを差し替えます。
 
+## MediaPipe mode comparison
+
+このラボには、同じ MP4 フレームを MediaPipe FaceLandmarker の `detect()` と
+`detectForVideo()` の両方に通し、pose / 478 landmarks / 実行時間の差を比較する
+`モード比較` 実験を追加します。
+
+実運用では current face（現在顔）は動画またはカメラ入力から取得するため
+`detectForVideo()` になりやすく、rendered ideal face（レンダー理想顔）は OBJ を
+canvas にレンダーした静止画像として扱うため `detect()` になりやすいです。
+そのため、両モードの pose / 478 landmarks に系統差があるかを確認します。
+
+比較では、以前の 0.41秒ズレ問題を避けるため、MP4 の現在フレームを一度だけ
+固定 canvas に `drawImage()` し、その同じ canvas frame を `detect(canvas)` と
+`detectForVideo(canvas, timestampMs)` の両方へ渡します。`detectForVideo(video, timestampMs)`
+のように video element を直接渡す比較は行いません。
+
+実験条件:
+
+- `imageLandmarker`: `runningMode: "IMAGE"` / `detect(canvas)` / `delegate: "GPU"`
+- `videoLandmarker`: `runningMode: "VIDEO"` / `detectForVideo(canvas, timestampMs)` / `delegate: "GPU"`
+- IMAGE mode と VIDEO mode は別インスタンスにし、runningMode の切り替えは行わない
+- frame driver は `requestVideoFrameCallback（動画フレーム単位コールバック）`
+- timestamp は `metadata.mediaTime * 1000`
+- timestamp が同一または巻き戻った frame は skip する
+- `requestVideoFrameCallback()` が使えないブラウザでは実験不可として表示し、fallback しない
+- 最大 10000 frames まで比較する
+- 現時点の `モード比較` では、`frameIndex % 3`、`sampleStep`、`frameStride`、
+  `targetFps`、`minFrameIntervalMs`、`presentedFramesDelta` による意図的な間引きは行わない
+- 次回 `requestVideoFrameCallback()` 登録は、`drawImage()`、`detect()`、
+  `detectForVideo()`、frame result 作成、debug counter 更新、必要な UI 反映の後に行う。
+  そのため、callback 内処理が重い場合は結果的に動画フレームを取り逃がす可能性がある
+
+出力:
+
+- UI summary: 右ペイン Debug（デバッグ）の `モード比較` タブに表示する。
+  左ペインは `MP4読込`、短い説明、`モード比較`、`停止 / cancel` の操作中心にする。
+- `モード比較` タブ: source、run status、run options、detection summary、timing summary、
+  pose diff（姿勢差分）、landmark diff（ランドマーク差分）、frame consistency、
+  debug counters、debug options、JSON / CSV download を表示する。
+- JSON download: raw per-frame result と summary を含める。summary には
+  `worstYawDiffFrame`、`worstPitchDiffFrame`、`worstRollDiffFrame`、
+  `worstPoseMagnitudeDiffFrame`、`worstMean2dDistanceFrame`、
+  `worstMax2dDistanceFrame`、`firstMismatchFrame`、`latestFrame` を含める。
+- CSV download: 主要列のみの per-frame summary。`callbackWallDeltaMs`、
+  `mediaTimeDeltaMs`、`processingMeasuredMs`、`unmeasuredOverheadEstimateMs` も含める。
+- preview export（プレビュー書き出し）: 全 frames の画像は保持しない。`detect()` と
+  `detectForVideo()` に渡した同一 canvas frame から、latest frame、worst pose diff frame、
+  worst landmark diff frame、first mismatch frame の preview snapshot だけを保持して
+  PNG download できるようにする。保持上限は最大20枚、現時点の実装では最大4枚。
+  `latest` は完了時に作成し、実行中の every-frame `toDataURL()` は行わない。
+
+計測範囲:
+
+- `totalFrameProcessingMs` / `processingMeasuredMs` は、canvas context 取得、
+  `drawImage()`、`detect()`、`detectForVideo()` を含む。
+- `totalFrameProcessingMs` / `processingMeasuredMs` は、frame result 構築、
+  raw frames 配列への追加、debug counter 集計、UI state 更新、summary 再描画、
+  preview snapshot の `toDataURL()` を含まない。
+- `unmeasuredOverheadEstimateMs` は `callbackWallDeltaMs - processingMeasuredMs` として、
+  callback 間隔に対して計測外処理や待ち時間がどれくらい見えているかを切り分ける参考値とする。
+
+デバッグカウンタ:
+
+- `rvfcCallbackCount`: `requestVideoFrameCallback()` callback が呼ばれた回数
+- `processedFrameCount`: 実際に比較処理した frame 数
+- `intentionalSkipCount`: 意図的な間引き skip 数。現時点では意図的間引きがないため 0 の想定
+- `timestampSkipCount`: timestamp が同一または巻き戻ったため skip した数
+- `busySkipCount`: 処理中だったため skip した数
+- `missingMediaTimeSkipCount`: `metadata.mediaTime` が取得できず skip した数
+- `presentedFramesDeltaSummary`: `presentedFramesDelta` の分布
+- `callbackWallDeltaMs`: 前回 callback から今回 callback までの wall-clock 時間分布
+- `mediaTimeDeltaMs`: 前回 `metadata.mediaTime` から今回までの動画時間差分布
+- `processingMeasuredMs`: 現在計測している処理時間分布
+- `unmeasuredOverheadEstimateMs`: 計測外 overhead の推定分布
+- `nextCallbackRegistrationTiming`: 次回 callback 登録タイミング。現時点では `afterProcessing`
+
+デバッグオプション:
+
+- preview snapshot（プレビュー画像保存）を無効化できる
+- UI 反映を N frames に1回へ間引ける
+- summary 再描画を N frames に1回へ間引ける
+- download 用 raw per-frame result は維持し、UI 反映だけを間引く
+
+TODO:
+
+- preview overlay（重ね表示プレビュー）は未実装。現時点では raw frame preview（元フレーム画像）
+  のみを保存する。将来、IMAGE mode / VIDEO mode の landmarks、pose diff、frameIndex /
+  mediaTimeSec を重ねる。
+
 ## 基本方針
 
 最重要方針は、座標系を新設しないことです。
