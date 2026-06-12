@@ -913,6 +913,108 @@ type PoseMappingRuntimeState = {
   errorMessage: string | null
 }
 
+type DetectPerformanceStatus = "idle" | "running" | "completed" | "cancelled" | "error"
+type DetectPerformancePhase = "warmup" | "measured"
+
+type DetectPerformanceOptions = {
+  warmupRuns: number
+  measuredRuns: number
+  resolutionList: number[]
+}
+
+type DetectPerformanceTimingSummary = {
+  avgMs: number | null
+  p50Ms: number | null
+  p95Ms: number | null
+  minMs: number | null
+  maxMs: number | null
+}
+
+type DetectPerformanceSample = {
+  runIndex: number
+  phase: DetectPerformancePhase
+  renderMs: number | null
+  detectMs: number | null
+  previewMs: number | null
+  overlayMs: number | null
+  toDataUrlMs: number | null
+  totalMs: number | null
+  detected: boolean | null
+  landmarkCount: number | null
+  errorMessage: string | null
+}
+
+type DetectPerformanceCaseResult = {
+  caseId: string
+  label: string
+  sourceKind: string
+  canvasWidth: number
+  canvasHeight: number
+  warmupRuns: number
+  measuredRuns: number
+  detectedCount: number
+  failedCount: number
+  summary: DetectPerformanceTimingSummary
+  renderMs?: DetectPerformanceTimingSummary
+  detectMs?: DetectPerformanceTimingSummary
+  previewMs?: DetectPerformanceTimingSummary
+  overlayMs?: DetectPerformanceTimingSummary
+  toDataUrlMs?: DetectPerformanceTimingSummary
+  totalMs?: DetectPerformanceTimingSummary
+  samples: DetectPerformanceSample[]
+}
+
+type DetectPerformanceLandmarkerSummary = {
+  runningMode: "IMAGE"
+  requestedDelegate: string
+  instanceReused: boolean
+  createCount: number
+}
+
+type DetectPerformanceRenderSettingsSummary = {
+  detectCanvasWidth: number
+  detectCanvasHeight: number
+  renderResolutionSource: PoseMappingRenderSettings["renderResolutionSource"] | null
+  detectCanvasMatchesProfile: boolean
+}
+
+type DetectPerformanceExport = {
+  type: "pose_mapping_detect_performance_debug_v1"
+  createdAt: string
+  source: {
+    objFileName: string | null
+    mp4FileName: string | null
+    profileFileName: string | null
+  }
+  profile: {
+    schemaVersion: string | null
+    modelType: string | null
+    modelName: string | null
+    datasetKind: string | null
+  }
+  runtime: {
+    P_camera: ObjPoseMappingPose | null
+    p: ObjPoseMappingPose | null
+    P_confirm: ReferencePose
+    poseDiff: PoseMappingPoseDiff
+  }
+  landmarker: DetectPerformanceLandmarkerSummary
+  renderSettings: DetectPerformanceRenderSettingsSummary
+  benchmarkOptions: DetectPerformanceOptions
+  cases: DetectPerformanceCaseResult[]
+  notes: string[]
+}
+
+type DetectPerformanceState = {
+  status: DetectPerformanceStatus
+  startedAt: string | null
+  completedAt: string | null
+  errorMessage: string | null
+  options: DetectPerformanceOptions
+  result: DetectPerformanceExport | null
+  notes: string[]
+}
+
 type ObjPoseCalibrationCandidatePoint = {
   rotationCenter: ObjVertex
   renderPoseOffset: {
@@ -1335,6 +1437,7 @@ type LabState = {
   objPoseMapping: ObjPoseMappingState
   poseMappingProfile: PoseMappingProfileState
   poseMappingRuntime: PoseMappingRuntimeState
+  detectPerformance: DetectPerformanceState
   poseSearchFrames: PoseCenterSearchFrame[]
   selectedPoseSearchFrameId: string | null
   poseCenterSearch: PoseCenterSearchState
@@ -1374,6 +1477,11 @@ const REQUIRED_LANDMARK_COUNT = 478
 const LANDMARK_PREVIEW_COUNT = 5
 const MEDIAPIPE_TIMESTAMP_STEP_MS = 1000 / 30
 const LIVE_AUTO_ANALYSIS_INTERVAL_SEC = 0.35
+const DETECT_PERFORMANCE_DEFAULT_OPTIONS: DetectPerformanceOptions = {
+  warmupRuns: 3,
+  measuredRuns: 20,
+  resolutionList: [1179, 1024, 768, 640, 512],
+}
 const REALTIME_TARGET_FPS_OPTIONS = [5, 10, 15, 30] as const
 const REALTIME_AVERAGE_SAMPLE_COUNT = 30
 const MODE_COMPARISON_MAX_FRAMES = 10000
@@ -1744,6 +1852,7 @@ const state: LabState = {
   objPoseMapping: createDefaultObjPoseMappingState(),
   poseMappingProfile: createDefaultPoseMappingProfileState(),
   poseMappingRuntime: createDefaultPoseMappingRuntimeState(),
+  detectPerformance: createDefaultDetectPerformanceState(),
   poseSearchFrames: [],
   selectedPoseSearchFrameId: null,
   poseCenterSearch: createDefaultPoseCenterSearchState(),
@@ -1869,6 +1978,8 @@ let liveAnalysisInProgress = false
 let liveAnalysisRequestId = 0
 let renderedIdealDetectInProgress = false
 let poseMappingRuntimeInProgress = false
+let detectPerformanceCancelRequested = false
+let renderedIdealFaceLandmarkerCreateCount = 0
 let renderedIdealTimestampMs = 0
 let renderedIdealRenderSeq = 0
 let renderedIdealDetectionTimingSamples: number[] = []
@@ -2509,6 +2620,18 @@ function bindEvents() {
     }
     if (action === "pose-mapping-download-debug") {
       exportPoseMappingDebug()
+    }
+    if (action === "detect-performance-run") {
+      void startDetectPerformanceBenchmark()
+    }
+    if (action === "detect-performance-stop") {
+      stopDetectPerformanceBenchmark()
+    }
+    if (action === "detect-performance-download-json") {
+      exportDetectPerformanceJson()
+    }
+    if (action === "detect-performance-download-csv") {
+      exportDetectPerformanceCsv()
     }
   })
 
@@ -3260,6 +3383,7 @@ async function initializeFaceLandmarker() {
 async function initializeRenderedIdealFaceLandmarker() {
   const vision = await FilesetResolver.forVisionTasks(MEDIAPIPE_WASM_PATH)
 
+  renderedIdealFaceLandmarkerCreateCount += 1
   return FaceLandmarker.createFromOptions(vision, createRenderedIdealFaceLandmarkerOptions())
 }
 
@@ -3593,6 +3717,635 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
   } finally {
     poseMappingRuntimeInProgress = false
   }
+}
+
+async function startDetectPerformanceBenchmark() {
+  if (state.detectPerformance.status === "running") {
+    return
+  }
+
+  detectPerformanceCancelRequested = false
+  const options = {
+    warmupRuns: state.detectPerformance.options.warmupRuns,
+    measuredRuns: state.detectPerformance.options.measuredRuns,
+    resolutionList: [...state.detectPerformance.options.resolutionList],
+  }
+  state.detectPerformance = {
+    status: "running",
+    startedAt: new Date().toISOString(),
+    completedAt: null,
+    errorMessage: null,
+    options,
+    result: null,
+    notes: [
+      "detect only: MediaPipe detect() 呼び出しだけを測る",
+      "render only: OBJ renderだけを測る",
+      "render + detect: OBJ render と detect() を測る",
+      "preview: Live preview用の画像生成 / overlay / toDataURL を測る",
+      "UI state update: 原則として計測外。完了後にまとめて state へ反映する",
+    ],
+  }
+  renderDebugContent()
+
+  const cases: DetectPerformanceCaseResult[] = []
+  const notes = [...state.detectPerformance.notes]
+  try {
+    const context = await prepareDetectPerformanceBenchmarkContext()
+    cases.push(await runDetectOnlyBenchmarkCase({
+      caseId: `detect_only_rendered_ideal_${context.detectCanvas.width}`,
+      label: `detect only / rendered ideal / ${context.detectCanvas.width}`,
+      sourceKind: "renderedIdealCanvas",
+      canvas: context.detectCanvas,
+      detector: context.detector,
+      options,
+    }))
+    await throwIfDetectPerformanceCancelled()
+
+    cases.push(await runRenderOnlyBenchmarkCase({
+      caseId: `render_only_rendered_ideal_${context.renderSettings.detectCanvasWidth}`,
+      label: `render only / rendered ideal / ${context.renderSettings.detectCanvasWidth}`,
+      sourceKind: "renderedIdealCanvas",
+      width: context.renderSettings.detectCanvasWidth,
+      height: context.renderSettings.detectCanvasHeight,
+      p: context.p,
+      appearance: context.appearance,
+      options,
+    }))
+    await throwIfDetectPerformanceCancelled()
+
+    cases.push(await runRenderDetectBenchmarkCase({
+      caseId: `render_detect_rendered_ideal_${context.renderSettings.detectCanvasWidth}`,
+      label: `render + detect / rendered ideal / ${context.renderSettings.detectCanvasWidth}`,
+      sourceKind: "renderedIdealCanvas",
+      width: context.renderSettings.detectCanvasWidth,
+      height: context.renderSettings.detectCanvasHeight,
+      p: context.p,
+      appearance: context.appearance,
+      detector: context.detector,
+      options,
+    }))
+    await throwIfDetectPerformanceCancelled()
+
+    cases.push(await runPreviewBenchmarkCase({
+      caseId: `preview_overlay_rendered_ideal_${context.detectCanvas.width}`,
+      label: `preview generation / overlay / ${context.detectCanvas.width}`,
+      sourceKind: "renderedIdealCanvas",
+      canvas: context.detectCanvas,
+      landmarks478: context.renderedIdeal478,
+      options,
+    }))
+    await throwIfDetectPerformanceCancelled()
+
+    for (const resolution of options.resolutionList) {
+      const scaledCanvas = createScaledDetectBenchmarkCanvas(context.detectCanvas, resolution, resolution)
+      cases.push(await runDetectOnlyBenchmarkCase({
+        caseId: `detect_only_scaled_rendered_ideal_${resolution}`,
+        label: `detect only / scaled rendered ideal / ${resolution}`,
+        sourceKind: "scaledRenderedIdealCanvas",
+        canvas: scaledCanvas,
+        detector: context.detector,
+        options,
+      }))
+      await throwIfDetectPerformanceCancelled()
+    }
+
+    const controlCanvas = createControlMp4DetectCanvas(context.renderSettings.detectCanvasWidth, context.renderSettings.detectCanvasHeight)
+    if (controlCanvas) {
+      cases.push(await runDetectOnlyBenchmarkCase({
+        caseId: `detect_only_control_mp4_${controlCanvas.width}x${controlCanvas.height}`,
+        label: `detect only / control MP4 canvas / ${controlCanvas.width}x${controlCanvas.height}`,
+        sourceKind: "controlMp4Canvas",
+        canvas: controlCanvas,
+        detector: context.detector,
+        options,
+      }))
+    } else {
+      notes.push("control MP4 canvas detect は、MP4 current frame が利用できないため未実行")
+    }
+
+    const result = buildDetectPerformanceExport(context, cases, notes, options)
+    state.detectPerformance = {
+      ...state.detectPerformance,
+      status: detectPerformanceCancelRequested ? "cancelled" : "completed",
+      completedAt: new Date().toISOString(),
+      result,
+      notes,
+    }
+    addLog(`Detect Performance benchmark が完了しました: ${cases.length} cases`)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    const status: DetectPerformanceStatus = message === "cancelled" ? "cancelled" : "error"
+    state.detectPerformance = {
+      ...state.detectPerformance,
+      status,
+      completedAt: new Date().toISOString(),
+      errorMessage: status === "error" ? message : null,
+      notes,
+    }
+    if (status === "error") {
+      addLog(`Detect Performance benchmark でエラーが発生しました: ${message}`)
+    } else {
+      addLog("Detect Performance benchmark を停止しました。")
+    }
+  } finally {
+    detectPerformanceCancelRequested = false
+    renderAll({ skipObjRender: true })
+  }
+}
+
+function stopDetectPerformanceBenchmark() {
+  if (state.detectPerformance.status === "running") {
+    detectPerformanceCancelRequested = true
+  }
+}
+
+async function throwIfDetectPerformanceCancelled() {
+  await waitForBenchmarkUiTick()
+  if (detectPerformanceCancelRequested) {
+    throw new Error("cancelled")
+  }
+}
+
+function waitForBenchmarkUiTick() {
+  return new Promise<void>((resolve) => {
+    window.setTimeout(resolve, 0)
+  })
+}
+
+async function prepareDetectPerformanceBenchmarkContext() {
+  const profile = state.poseMappingProfile.profile
+  const runtime = state.poseMappingRuntime
+  if (!profile || runtime.status !== "completed" || !runtime.P_camera || !runtime.p) {
+    throw new Error("先にOBJ、poseMappingProfile、MP4を読み込み、Liveタブで現姿勢理想478プレビューを生成してください。")
+  }
+
+  const renderSettings = resolvePoseMappingRenderSettings(profile, liveObjPosePreviewCanvas)
+  const { appearance } = createPoseMappingRenderAppearance(profile, renderSettings)
+  const detectCanvas = document.createElement("canvas")
+  const renderSummary = renderRenderedIdealCanvasTo(
+    detectCanvas,
+    getObjPoseSyncRotationCenter(),
+    runtime.p,
+    {
+      directPose: true,
+      appearanceOverride: appearance,
+      forceRenderResolution: true,
+    },
+  )
+  if (renderSummary.status !== "rendered") {
+    throw new Error(renderSummary.errorMessage ?? renderSummary.status)
+  }
+
+  const createCountBefore = renderedIdealFaceLandmarkerCreateCount
+  const detector = await getRenderedIdealFaceLandmarker()
+  const createCountAfter = renderedIdealFaceLandmarkerCreateCount
+  const result = detector.detect(detectCanvas)
+  const detection = buildRenderedIdealDetectionState(result, -1, null, null)
+  const poseDiff = calculatePoseMappingPoseDiff(runtime.P_camera, detection.pose)
+
+  return {
+    profile,
+    detector,
+    detectCanvas,
+    renderSettings,
+    appearance,
+    P_camera: runtime.P_camera,
+    p: runtime.p,
+    P_confirm: detection.pose,
+    poseDiff,
+    renderedIdeal478: detection.landmarks478,
+    landmarker: {
+      runningMode: "IMAGE" as const,
+      requestedDelegate: getRenderedIdealRequestedDelegate(),
+      instanceReused: createCountAfter - createCountBefore <= 1,
+      createCount: renderedIdealFaceLandmarkerCreateCount,
+    },
+  }
+}
+
+async function runDetectOnlyBenchmarkCase(input: {
+  caseId: string
+  label: string
+  sourceKind: string
+  canvas: HTMLCanvasElement
+  detector: FaceLandmarker
+  options: DetectPerformanceOptions
+}): Promise<DetectPerformanceCaseResult> {
+  const samples: DetectPerformanceSample[] = []
+  await runBenchmarkPhases(input.options, async (phase, runIndex) => {
+    const sample = createEmptyDetectPerformanceSample(phase, runIndex)
+    try {
+      const detectStartMs = performance.now()
+      const result = input.detector.detect(input.canvas)
+      sample.detectMs = performance.now() - detectStartMs
+      sample.totalMs = sample.detectMs
+      sample.detected = result.faceLandmarks.length > 0
+      sample.landmarkCount = result.faceLandmarks[0]?.length ?? 0
+    } catch (error) {
+      sample.detected = false
+      sample.landmarkCount = 0
+      sample.errorMessage = error instanceof Error ? error.message : String(error)
+    }
+    samples.push(sample)
+  })
+
+  return buildDetectPerformanceCaseResult({
+    caseId: input.caseId,
+    label: input.label,
+    sourceKind: input.sourceKind,
+    canvasWidth: input.canvas.width,
+    canvasHeight: input.canvas.height,
+    options: input.options,
+    samples,
+    summaryField: "detectMs",
+    detectSummary: true,
+  })
+}
+
+async function runRenderOnlyBenchmarkCase(input: {
+  caseId: string
+  label: string
+  sourceKind: string
+  width: number
+  height: number
+  p: ObjPoseMappingPose
+  appearance: AppliedObjRenderAppearanceProfile
+  options: DetectPerformanceOptions
+}): Promise<DetectPerformanceCaseResult> {
+  const canvas = document.createElement("canvas")
+  canvas.width = input.width
+  canvas.height = input.height
+  const samples: DetectPerformanceSample[] = []
+  await runBenchmarkPhases(input.options, async (phase, runIndex) => {
+    const sample = createEmptyDetectPerformanceSample(phase, runIndex)
+    try {
+      const renderStartMs = performance.now()
+      const renderSummary = renderRenderedIdealCanvasTo(
+        canvas,
+        getObjPoseSyncRotationCenter(),
+        input.p,
+        {
+          directPose: true,
+          appearanceOverride: input.appearance,
+          forceRenderResolution: true,
+        },
+      )
+      sample.renderMs = performance.now() - renderStartMs
+      sample.totalMs = sample.renderMs
+      if (renderSummary.status !== "rendered") {
+        sample.errorMessage = renderSummary.errorMessage ?? renderSummary.status
+      }
+    } catch (error) {
+      sample.errorMessage = error instanceof Error ? error.message : String(error)
+    }
+    samples.push(sample)
+  })
+
+  return buildDetectPerformanceCaseResult({
+    caseId: input.caseId,
+    label: input.label,
+    sourceKind: input.sourceKind,
+    canvasWidth: canvas.width,
+    canvasHeight: canvas.height,
+    options: input.options,
+    samples,
+    summaryField: "renderMs",
+    renderSummary: true,
+  })
+}
+
+async function runRenderDetectBenchmarkCase(input: {
+  caseId: string
+  label: string
+  sourceKind: string
+  width: number
+  height: number
+  p: ObjPoseMappingPose
+  appearance: AppliedObjRenderAppearanceProfile
+  detector: FaceLandmarker
+  options: DetectPerformanceOptions
+}): Promise<DetectPerformanceCaseResult> {
+  const canvas = document.createElement("canvas")
+  canvas.width = input.width
+  canvas.height = input.height
+  const samples: DetectPerformanceSample[] = []
+  await runBenchmarkPhases(input.options, async (phase, runIndex) => {
+    const sample = createEmptyDetectPerformanceSample(phase, runIndex)
+    const totalStartMs = performance.now()
+    try {
+      const renderStartMs = performance.now()
+      const renderSummary = renderRenderedIdealCanvasTo(
+        canvas,
+        getObjPoseSyncRotationCenter(),
+        input.p,
+        {
+          directPose: true,
+          appearanceOverride: input.appearance,
+          forceRenderResolution: true,
+        },
+      )
+      sample.renderMs = performance.now() - renderStartMs
+      if (renderSummary.status !== "rendered") {
+        throw new Error(renderSummary.errorMessage ?? renderSummary.status)
+      }
+
+      const detectStartMs = performance.now()
+      const result = input.detector.detect(canvas)
+      sample.detectMs = performance.now() - detectStartMs
+      sample.detected = result.faceLandmarks.length > 0
+      sample.landmarkCount = result.faceLandmarks[0]?.length ?? 0
+    } catch (error) {
+      sample.detected = false
+      sample.landmarkCount = 0
+      sample.errorMessage = error instanceof Error ? error.message : String(error)
+    } finally {
+      sample.totalMs = performance.now() - totalStartMs
+    }
+    samples.push(sample)
+  })
+
+  return buildDetectPerformanceCaseResult({
+    caseId: input.caseId,
+    label: input.label,
+    sourceKind: input.sourceKind,
+    canvasWidth: canvas.width,
+    canvasHeight: canvas.height,
+    options: input.options,
+    samples,
+    summaryField: "totalMs",
+    renderSummary: true,
+    detectSummary: true,
+    totalSummary: true,
+  })
+}
+
+async function runPreviewBenchmarkCase(input: {
+  caseId: string
+  label: string
+  sourceKind: string
+  canvas: HTMLCanvasElement
+  landmarks478: ReferenceLandmark[] | null
+  options: DetectPerformanceOptions
+}): Promise<DetectPerformanceCaseResult> {
+  const samples: DetectPerformanceSample[] = []
+  await runBenchmarkPhases(input.options, async (phase, runIndex) => {
+    const sample = createEmptyDetectPerformanceSample(phase, runIndex)
+    try {
+      const measured = measurePoseMappingPreviewGeneration(input.canvas, input.landmarks478)
+      sample.previewMs = measured.previewMs
+      sample.overlayMs = measured.overlayMs
+      sample.toDataUrlMs = measured.toDataUrlMs
+      sample.totalMs = measured.totalMs
+    } catch (error) {
+      sample.errorMessage = error instanceof Error ? error.message : String(error)
+    }
+    samples.push(sample)
+  })
+
+  return buildDetectPerformanceCaseResult({
+    caseId: input.caseId,
+    label: input.label,
+    sourceKind: input.sourceKind,
+    canvasWidth: input.canvas.width,
+    canvasHeight: input.canvas.height,
+    options: input.options,
+    samples,
+    summaryField: "totalMs",
+    previewSummary: true,
+    overlaySummary: true,
+    toDataUrlSummary: true,
+    totalSummary: true,
+  })
+}
+
+async function runBenchmarkPhases(
+  options: DetectPerformanceOptions,
+  runSample: (phase: DetectPerformancePhase, runIndex: number) => Promise<void> | void,
+) {
+  for (const phase of ["warmup", "measured"] as const) {
+    const runCount = phase === "warmup" ? options.warmupRuns : options.measuredRuns
+    for (let runIndex = 0; runIndex < runCount; runIndex += 1) {
+      if (detectPerformanceCancelRequested) {
+        throw new Error("cancelled")
+      }
+      await runSample(phase, runIndex)
+      await waitForBenchmarkUiTick()
+    }
+  }
+}
+
+function measurePoseMappingPreviewGeneration(
+  sourceCanvas: HTMLCanvasElement,
+  landmarks: ReferenceLandmark[] | null,
+) {
+  const totalStartMs = performance.now()
+  const context = liveObjPosePreviewCanvas.getContext("2d")
+  if (!context) {
+    throw new Error("preview canvas context を取得できません。")
+  }
+
+  const previewSize = getPoseMappingLivePreviewPixelSize()
+  if (liveObjPosePreviewCanvas.width !== previewSize.width || liveObjPosePreviewCanvas.height !== previewSize.height) {
+    liveObjPosePreviewCanvas.width = previewSize.width
+    liveObjPosePreviewCanvas.height = previewSize.height
+  }
+
+  const previewStartMs = performance.now()
+  context.setTransform(1, 0, 0, 1, 0, 0)
+  context.clearRect(0, 0, liveObjPosePreviewCanvas.width, liveObjPosePreviewCanvas.height)
+  const scale = Math.min(
+    liveObjPosePreviewCanvas.width / sourceCanvas.width,
+    liveObjPosePreviewCanvas.height / sourceCanvas.height,
+  )
+  const drawWidth = sourceCanvas.width * scale
+  const drawHeight = sourceCanvas.height * scale
+  const offsetX = (liveObjPosePreviewCanvas.width - drawWidth) / 2
+  const offsetY = (liveObjPosePreviewCanvas.height - drawHeight) / 2
+  context.drawImage(sourceCanvas, offsetX, offsetY, drawWidth, drawHeight)
+  const previewMs = performance.now() - previewStartMs
+
+  const overlayStartMs = performance.now()
+  drawPoseMappingPreviewOverlay(landmarks, { x: offsetX, y: offsetY, width: drawWidth, height: drawHeight })
+  const overlayMs = performance.now() - overlayStartMs
+
+  const dataUrlStartMs = performance.now()
+  liveObjPosePreviewCanvas.toDataURL("image/png")
+  const toDataUrlMs = performance.now() - dataUrlStartMs
+
+  return {
+    previewMs,
+    overlayMs,
+    toDataUrlMs,
+    totalMs: performance.now() - totalStartMs,
+  }
+}
+
+function createScaledDetectBenchmarkCanvas(
+  sourceCanvas: HTMLCanvasElement,
+  width: number,
+  height: number,
+) {
+  const canvas = document.createElement("canvas")
+  canvas.width = width
+  canvas.height = height
+  const context = canvas.getContext("2d")
+  if (!context) {
+    throw new Error("resolution sweep canvas context を取得できません。")
+  }
+  context.drawImage(sourceCanvas, 0, 0, width, height)
+  return canvas
+}
+
+function createControlMp4DetectCanvas(width: number, height: number) {
+  if (!isVideoFileInput() || liveVideoElement.videoWidth <= 0 || liveVideoElement.videoHeight <= 0) {
+    return null
+  }
+  const canvas = document.createElement("canvas")
+  canvas.width = width
+  canvas.height = height
+  const context = canvas.getContext("2d")
+  if (!context) {
+    return null
+  }
+  context.drawImage(liveVideoElement, 0, 0, width, height)
+  return canvas
+}
+
+function createEmptyDetectPerformanceSample(
+  phase: DetectPerformancePhase,
+  runIndex: number,
+): DetectPerformanceSample {
+  return {
+    runIndex,
+    phase,
+    renderMs: null,
+    detectMs: null,
+    previewMs: null,
+    overlayMs: null,
+    toDataUrlMs: null,
+    totalMs: null,
+    detected: null,
+    landmarkCount: null,
+    errorMessage: null,
+  }
+}
+
+function buildDetectPerformanceCaseResult(input: {
+  caseId: string
+  label: string
+  sourceKind: string
+  canvasWidth: number
+  canvasHeight: number
+  options: DetectPerformanceOptions
+  samples: DetectPerformanceSample[]
+  summaryField: keyof Pick<DetectPerformanceSample, "renderMs" | "detectMs" | "previewMs" | "overlayMs" | "toDataUrlMs" | "totalMs">
+  renderSummary?: boolean
+  detectSummary?: boolean
+  previewSummary?: boolean
+  overlaySummary?: boolean
+  toDataUrlSummary?: boolean
+  totalSummary?: boolean
+}): DetectPerformanceCaseResult {
+  const measuredSamples = input.samples.filter((sample) => sample.phase === "measured")
+  const detectedCount = measuredSamples.filter((sample) => sample.detected === true).length
+  const failedCount = measuredSamples.filter((sample) => sample.errorMessage || sample.detected === false).length
+  const result: DetectPerformanceCaseResult = {
+    caseId: input.caseId,
+    label: input.label,
+    sourceKind: input.sourceKind,
+    canvasWidth: input.canvasWidth,
+    canvasHeight: input.canvasHeight,
+    warmupRuns: input.options.warmupRuns,
+    measuredRuns: input.options.measuredRuns,
+    detectedCount,
+    failedCount,
+    summary: summarizeDetectPerformanceSamples(measuredSamples, input.summaryField),
+    samples: input.samples,
+  }
+  if (input.renderSummary) {
+    result.renderMs = summarizeDetectPerformanceSamples(measuredSamples, "renderMs")
+  }
+  if (input.detectSummary) {
+    result.detectMs = summarizeDetectPerformanceSamples(measuredSamples, "detectMs")
+  }
+  if (input.previewSummary) {
+    result.previewMs = summarizeDetectPerformanceSamples(measuredSamples, "previewMs")
+  }
+  if (input.overlaySummary) {
+    result.overlayMs = summarizeDetectPerformanceSamples(measuredSamples, "overlayMs")
+  }
+  if (input.toDataUrlSummary) {
+    result.toDataUrlMs = summarizeDetectPerformanceSamples(measuredSamples, "toDataUrlMs")
+  }
+  if (input.totalSummary) {
+    result.totalMs = summarizeDetectPerformanceSamples(measuredSamples, "totalMs")
+  }
+  return result
+}
+
+function summarizeDetectPerformanceSamples(
+  samples: DetectPerformanceSample[],
+  field: keyof Pick<DetectPerformanceSample, "renderMs" | "detectMs" | "previewMs" | "overlayMs" | "toDataUrlMs" | "totalMs">,
+): DetectPerformanceTimingSummary {
+  const values = samples
+    .map((sample) => sample[field])
+    .filter((value): value is number => value !== null && Number.isFinite(value))
+    .sort((a, b) => a - b)
+  if (values.length === 0) {
+    return { avgMs: null, p50Ms: null, p95Ms: null, minMs: null, maxMs: null }
+  }
+  return {
+    avgMs: roundForState(averageNumbers(values)) ?? null,
+    p50Ms: roundForState(getPercentile(values, 0.5)) ?? null,
+    p95Ms: roundForState(getPercentile(values, 0.95)) ?? null,
+    minMs: roundForState(values[0]) ?? null,
+    maxMs: roundForState(values[values.length - 1]) ?? null,
+  }
+}
+
+function buildDetectPerformanceExport(
+  context: Awaited<ReturnType<typeof prepareDetectPerformanceBenchmarkContext>>,
+  cases: DetectPerformanceCaseResult[],
+  notes: string[],
+  options: DetectPerformanceOptions,
+): DetectPerformanceExport {
+  const profile = getPoseMappingProfileRawSummary()
+  return {
+    type: "pose_mapping_detect_performance_debug_v1",
+    createdAt: new Date().toISOString(),
+    source: {
+      objFileName: state.objFile.fileName,
+      mp4FileName: state.liveVideo.fileName,
+      profileFileName: state.poseMappingProfile.fileName,
+    },
+    profile: {
+      schemaVersion: profile.schemaVersion,
+      modelType: profile.modelType,
+      modelName: profile.modelName,
+      datasetKind: profile.datasetKind,
+    },
+    runtime: {
+      P_camera: roundPoseMappingPose(context.P_camera),
+      p: roundPoseMappingPose(context.p),
+      P_confirm: roundPoseForState(context.P_confirm),
+      poseDiff: roundPoseMappingDiff(context.poseDiff),
+    },
+    landmarker: context.landmarker,
+    renderSettings: {
+      detectCanvasWidth: context.detectCanvas.width,
+      detectCanvasHeight: context.detectCanvas.height,
+      renderResolutionSource: context.renderSettings.renderResolutionSource,
+      detectCanvasMatchesProfile: context.renderSettings.detectCanvasMatchesProfile,
+    },
+    benchmarkOptions: options,
+    cases,
+    notes,
+  }
+}
+
+function getRenderedIdealRequestedDelegate() {
+  const delegate = createRenderedIdealFaceLandmarkerOptions().baseOptions?.delegate
+  return typeof delegate === "string" ? delegate : "-"
 }
 
 function buildPoseMappingQualityGate(): PoseMappingQualityGate {
@@ -7100,6 +7853,13 @@ function renderPoseMappingDebugTab() {
   const profile = profileState.profile
   const runtime = state.poseMappingRuntime
   const canDownload = profileState.loaded && runtime.status !== "idle"
+  const detectPerformance = state.detectPerformance
+  const canRunDetectPerformance =
+    detectPerformance.status !== "running" &&
+    profileState.loaded &&
+    runtime.status === "completed" &&
+    runtime.p !== null
+  const canDownloadDetectPerformance = detectPerformance.result !== null
 
   container.innerHTML = `
     <section class="debug-section">
@@ -7177,6 +7937,17 @@ function renderPoseMappingDebugTab() {
     </section>
 
     <section class="debug-section">
+      <h3>Detect Performance（検出速度）</h3>
+      <div class="button-row">
+        <button class="small-button" type="button" data-action="detect-performance-run" ${canRunDetectPerformance ? "" : "disabled"}>Run Detect Performance Benchmark（検出速度ベンチマーク実行）</button>
+        <button class="small-button" type="button" data-action="detect-performance-stop" ${detectPerformance.status === "running" ? "" : "disabled"}>Stop Benchmark（ベンチマーク停止）</button>
+        <button class="small-button" type="button" data-action="detect-performance-download-json" ${canDownloadDetectPerformance ? "" : "disabled"}>Download Detect Performance JSON（検出速度JSONダウンロード）</button>
+        <button class="small-button" type="button" data-action="detect-performance-download-csv" ${canDownloadDetectPerformance ? "" : "disabled"}>Download Detect Performance CSV（検出速度CSVダウンロード）</button>
+      </div>
+      ${renderDetectPerformanceSummaryHtml()}
+    </section>
+
+    <section class="debug-section">
       <h3>Download（ダウンロード）</h3>
       <div class="button-row">
         <button class="small-button" type="button" data-action="pose-mapping-download-debug" ${canDownload ? "" : "disabled"}>Download Pose Mapping Debug（姿勢対応デバッグをダウンロード）</button>
@@ -7184,6 +7955,84 @@ function renderPoseMappingDebugTab() {
     </section>
   `
   return container
+}
+
+function renderDetectPerformanceSummaryHtml() {
+  const perf = state.detectPerformance
+  const result = perf.result
+  const runtime = result?.runtime ?? {
+    P_camera: roundPoseMappingPose(state.poseMappingRuntime.P_camera),
+    p: roundPoseMappingPose(state.poseMappingRuntime.p),
+    P_confirm: roundPoseForState(state.poseMappingRuntime.P_confirm),
+    poseDiff: roundPoseMappingDiff(state.poseMappingRuntime.poseDiff),
+  }
+  const landmarker = result?.landmarker ?? {
+    runningMode: "IMAGE" as const,
+    requestedDelegate: getRenderedIdealRequestedDelegate(),
+    instanceReused: renderedIdealFaceLandmarker !== null,
+    createCount: renderedIdealFaceLandmarkerCreateCount,
+  }
+  const renderSettings = result?.renderSettings ?? {
+    detectCanvasWidth: state.poseMappingRuntime.detectCanvasWidth,
+    detectCanvasHeight: state.poseMappingRuntime.detectCanvasHeight,
+    renderResolutionSource: state.poseMappingRuntime.renderSettings?.renderResolutionSource ?? null,
+    detectCanvasMatchesProfile: state.poseMappingRuntime.renderSettings?.detectCanvasMatchesProfile ?? false,
+  }
+  const optionText =
+    `warmup ${perf.options.warmupRuns} / measured ${perf.options.measuredRuns} / resolutions ${perf.options.resolutionList.join(", ")}`
+
+  return `
+    <dl class="summary-list">
+      <div><dt>benchmark status</dt><dd>${escapeHtml(perf.status)}</dd></div>
+      <div><dt>benchmark options</dt><dd>${escapeHtml(optionText)}</dd></div>
+      <div><dt>error</dt><dd>${escapeHtml(perf.errorMessage ?? "-")}</dd></div>
+      <div><dt>landmarker runningMode</dt><dd>${escapeHtml(landmarker.runningMode)}</dd></div>
+      <div><dt>requested delegate</dt><dd>${escapeHtml(landmarker.requestedDelegate)}</dd></div>
+      <div><dt>instance reused</dt><dd>${String(landmarker.instanceReused)}</dd></div>
+      <div><dt>create count</dt><dd>${formatNullableCount(landmarker.createCount)}</dd></div>
+      <div><dt>detectCanvasWidth</dt><dd>${formatNullableCount(renderSettings.detectCanvasWidth)}</dd></div>
+      <div><dt>detectCanvasHeight</dt><dd>${formatNullableCount(renderSettings.detectCanvasHeight)}</dd></div>
+      <div><dt>renderResolutionSource</dt><dd>${escapeHtml(renderSettings.renderResolutionSource ?? "-")}</dd></div>
+      <div><dt>detectCanvasMatchesProfile</dt><dd>${String(renderSettings.detectCanvasMatchesProfile)}</dd></div>
+      <div><dt>P_camera</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.P_camera))}</dd></div>
+      <div><dt>p</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.p))}</dd></div>
+      <div><dt>P_confirm</dt><dd>${escapeHtml(formatPose(runtime.P_confirm))}</dd></div>
+      <div><dt>poseDiff magnitude</dt><dd>${formatRealtimeNullableNumber(runtime.poseDiff.magnitude)}</dd></div>
+    </dl>
+    ${renderDetectPerformanceCaseSummariesHtml(result?.cases ?? [])}
+    <p class="control-note">detect only は MediaPipe detect() 呼び出しのみ、render only は OBJ render のみ、preview は画像生成 / overlay / toDataURL を個別に測ります。UI state update は測定外です。</p>
+  `
+}
+
+function renderDetectPerformanceCaseSummariesHtml(cases: DetectPerformanceCaseResult[]) {
+  if (cases.length === 0) {
+    return `<p class="placeholder-text">検出速度ベンチマーク結果はまだありません。</p>`
+  }
+
+  return cases.map((caseResult) => `
+    <div class="debug-subsection">
+      <h4>${escapeHtml(caseResult.label)}</h4>
+      <dl class="summary-list">
+        <div><dt>caseName</dt><dd>${escapeHtml(caseResult.caseId)}</dd></div>
+        <div><dt>canvas</dt><dd>${formatNullableCount(caseResult.canvasWidth)} x ${formatNullableCount(caseResult.canvasHeight)}</dd></div>
+        <div><dt>warmupRuns</dt><dd>${formatNullableCount(caseResult.warmupRuns)}</dd></div>
+        <div><dt>measuredRuns</dt><dd>${formatNullableCount(caseResult.measuredRuns)}</dd></div>
+        <div><dt>detectedCount</dt><dd>${formatNullableCount(caseResult.detectedCount)}</dd></div>
+        <div><dt>failedCount</dt><dd>${formatNullableCount(caseResult.failedCount)}</dd></div>
+        <div><dt>summary</dt><dd>${escapeHtml(formatDetectPerformanceTimingSummary(caseResult.summary))}</dd></div>
+        ${caseResult.renderMs ? `<div><dt>renderMs</dt><dd>${escapeHtml(formatDetectPerformanceTimingSummary(caseResult.renderMs))}</dd></div>` : ""}
+        ${caseResult.detectMs ? `<div><dt>detectMs</dt><dd>${escapeHtml(formatDetectPerformanceTimingSummary(caseResult.detectMs))}</dd></div>` : ""}
+        ${caseResult.previewMs ? `<div><dt>previewMs</dt><dd>${escapeHtml(formatDetectPerformanceTimingSummary(caseResult.previewMs))}</dd></div>` : ""}
+        ${caseResult.overlayMs ? `<div><dt>overlayMs</dt><dd>${escapeHtml(formatDetectPerformanceTimingSummary(caseResult.overlayMs))}</dd></div>` : ""}
+        ${caseResult.toDataUrlMs ? `<div><dt>toDataURLMs</dt><dd>${escapeHtml(formatDetectPerformanceTimingSummary(caseResult.toDataUrlMs))}</dd></div>` : ""}
+        ${caseResult.totalMs ? `<div><dt>totalMs</dt><dd>${escapeHtml(formatDetectPerformanceTimingSummary(caseResult.totalMs))}</dd></div>` : ""}
+      </dl>
+    </div>
+  `).join("")
+}
+
+function formatDetectPerformanceTimingSummary(summary: DetectPerformanceTimingSummary) {
+  return `avg ${formatRealtimeNullableNumber(summary.avgMs)} / p50 ${formatRealtimeNullableNumber(summary.p50Ms)} / p95 ${formatRealtimeNullableNumber(summary.p95Ms)} / min ${formatRealtimeNullableNumber(summary.minMs)} / max ${formatRealtimeNullableNumber(summary.maxMs)}`
 }
 
 function renderModeComparisonDebugTab() {
@@ -8982,6 +9831,22 @@ function createDefaultPoseMappingRuntimeState(): PoseMappingRuntimeState {
   }
 }
 
+function createDefaultDetectPerformanceState(): DetectPerformanceState {
+  return {
+    status: "idle",
+    startedAt: null,
+    completedAt: null,
+    errorMessage: null,
+    options: {
+      warmupRuns: DETECT_PERFORMANCE_DEFAULT_OPTIONS.warmupRuns,
+      measuredRuns: DETECT_PERFORMANCE_DEFAULT_OPTIONS.measuredRuns,
+      resolutionList: [...DETECT_PERFORMANCE_DEFAULT_OPTIONS.resolutionList],
+    },
+    result: null,
+    notes: [],
+  }
+}
+
 function createObjPoseCalibrationSearchRange(): ObjPoseCalibrationSearchRange {
   return {
     rotationCenterX: { fixed: true, value: OBJ_POSE_CALIBRATION_RANGE.rotationCenterX.value },
@@ -9833,6 +10698,44 @@ function exportPoseMappingDebug() {
   renderDebugContent()
 }
 
+function exportDetectPerformanceJson() {
+  const result = state.detectPerformance.result
+  const status = getElement<HTMLElement>("[data-debug-export-status]")
+  if (!result) {
+    status.textContent = "検出速度ベンチマーク結果がありません。先に実行してください。"
+    renderAll()
+    return
+  }
+
+  downloadTextFile(
+    createDetectPerformanceFileName(result.createdAt, "json"),
+    JSON.stringify(result, null, 2),
+    "application/json;charset=utf-8",
+  )
+  status.textContent = "検出速度JSONをダウンロードしました。"
+  addLog("検出速度JSONをダウンロードしました。")
+  renderAll()
+}
+
+function exportDetectPerformanceCsv() {
+  const result = state.detectPerformance.result
+  const status = getElement<HTMLElement>("[data-debug-export-status]")
+  if (!result) {
+    status.textContent = "検出速度ベンチマーク結果がありません。先に実行してください。"
+    renderAll()
+    return
+  }
+
+  downloadTextFile(
+    createDetectPerformanceFileName(result.createdAt, "csv"),
+    buildDetectPerformanceCsv(result),
+    "text/csv;charset=utf-8",
+  )
+  status.textContent = "検出速度CSVをダウンロードしました。"
+  addLog("検出速度CSVをダウンロードしました。")
+  renderAll()
+}
+
 function createModeComparisonPreviewFileName(snapshot: ModeComparisonPreviewSnapshot) {
   const frameIndex = String(snapshot.frameIndex).padStart(5, "0")
   const mediaTime = formatNumber(snapshot.mediaTimeSec).replaceAll(".", "_")
@@ -9848,6 +10751,56 @@ function downloadDataUrlFile(fileName: string, dataUrl: string) {
 
 function createModeComparisonFileName(createdAt: string, extension: "json" | "csv") {
   return `mode_comparison_gpu_request_video_frame_callback_${formatTimestampForFileName(createdAt)}.${extension}`
+}
+
+function createDetectPerformanceFileName(createdAt: string, extension: "json" | "csv") {
+  return `pose_mapping_detect_performance_${formatTimestampForFileName(createdAt)}.${extension}`
+}
+
+function buildDetectPerformanceCsv(result: DetectPerformanceExport) {
+  const headers = [
+    "caseId",
+    "label",
+    "sourceKind",
+    "canvasWidth",
+    "canvasHeight",
+    "runIndex",
+    "phase",
+    "renderMs",
+    "detectMs",
+    "previewMs",
+    "overlayMs",
+    "toDataUrlMs",
+    "totalMs",
+    "detected",
+    "landmarkCount",
+    "errorMessage",
+  ]
+  const rows = result.cases.flatMap((caseResult) =>
+    caseResult.samples.map((sample) => [
+      caseResult.caseId,
+      caseResult.label,
+      caseResult.sourceKind,
+      caseResult.canvasWidth,
+      caseResult.canvasHeight,
+      sample.runIndex,
+      sample.phase,
+      sample.renderMs ?? "",
+      sample.detectMs ?? "",
+      sample.previewMs ?? "",
+      sample.overlayMs ?? "",
+      sample.toDataUrlMs ?? "",
+      sample.totalMs ?? "",
+      sample.detected ?? "",
+      sample.landmarkCount ?? "",
+      sample.errorMessage ?? "",
+    ]),
+  )
+
+  return [
+    headers.join(","),
+    ...rows.map((row) => row.map(formatCsvCell).join(",")),
+  ].join("\n")
 }
 
 function buildModeComparisonCsv(frames: ModeComparisonFrameResult[]) {

@@ -504,6 +504,37 @@ WebGL mesh warp preview へ接続
 - render image pixel coordinate を alignment / mesh pair 処理へ持ち込むこと
 - Runtime / Studio / Authoring Tool 本線への接続
 
+## Pose Mapping detect performance debug
+
+`Pose Mapping（姿勢対応）` runtime 検証に `Detect Performance（検出速度）` セクションを追加しました。
+
+目的は、`MediaPipe mode comparison（モード比較）` では軽く見えていた `detect()` が、`Pose Mapping（姿勢対応）` 経路では重く見える理由を切り分けることです。方式を変える検証ではなく、計測範囲を分離して原因候補を確認します。
+
+計測ケース:
+
+- `detect only / rendered ideal`: 現在の profile 条件で render した detect canvas に対して、MediaPipe `detect()` 呼び出しだけを測る
+- `render only`: 現在の `p` で detect 用 offscreen canvas に OBJ render する時間だけを測る
+- `render + detect`: OBJ render と `detect()` を連続実行し、`renderMs` / `detectMs` / `totalMs` を分けて測る
+- `preview generation / overlay`: Live タブ用の現姿勢理想478プレビュー生成、`renderedIdeal478` overlay、`toDataURL()` を測る
+- `resolution sweep`: `1179 / 1024 / 768 / 640 / 512` の縮小 canvas に対する `detect()` を比較する
+- `control MP4 canvas detect`: 可能な場合、MP4 current frame を canvas に描画し、同じ IMAGE mode landmarker で `detect()` だけを測る
+
+計測範囲:
+
+- `detect only` には preview 生成、overlay、`toDataURL()`、DOM update、state update を混ぜない
+- `render only` には `detect()`、preview 生成、overlay、`toDataURL()`、DOM update、state update を混ぜない
+- `render + detect` は OBJ render と `detect()` を測るが、preview 生成と UI update は含めない
+- `preview generation / overlay` は、detect 用 canvas から Live preview 用画像を作る処理、overlay、`toDataURL()` を detectMs とは別に測る
+- UI state update は原則として計測外とし、benchmark 完了後にまとめて state へ反映する
+
+FaceLandmarker は benchmark 中に毎回作り直さず、既存の IMAGE mode（静止画モード）用 `renderedIdealFaceLandmarker` を再利用します。debug summary / JSON には `runningMode`、requested delegate、instance reused、create count を出します。
+
+`resolution sweep（解像度比較）` は速度確認用です。通常の `P_confirm` 検証は profile 条件の detect canvas、たとえば `1179 x 1179` を維持し、runtime 本線の detect canvas を低解像度へ変更しません。
+
+`Download Detect Performance JSON（検出速度JSONダウンロード）` は `pose_mapping_detect_performance_debug_v1` として、source、profile、runtime pose、landmarker、render settings、benchmark options、case summaries、per-run timing samples を出力します。各 sample には時間と検出結果だけを保存し、478点配列は保存しません。
+
+`Download Detect Performance CSV（検出速度CSVダウンロード）` は 1 行 1 sample で、`caseId`、`label`、`sourceKind`、canvas size、`runIndex`、`phase`、`renderMs`、`detectMs`、`previewMs`、`overlayMs`、`toDataUrlMs`、`totalMs`、`detected`、`landmarkCount`、`errorMessage` を出力します。
+
 ## 関連ドキュメント
 
 - [Ideal Reference Mesh Warp Lab](ideal-reference-mesh-warp-lab.md)
