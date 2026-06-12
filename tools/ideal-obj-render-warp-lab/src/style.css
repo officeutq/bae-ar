@@ -913,7 +913,7 @@ input[type="range"] {
 .debug-table {
   border-collapse: collapse;
   font-size: 12px;
-  min-width: 920px;
+  min-width: 1180px;
   width: 100%;
 }
 

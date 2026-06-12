@@ -1020,11 +1020,48 @@ type RenderPoseSource =
   | "unknown"
 type RenderPoseLifecycleDebug = {
   requestedPoseP: { yaw: number; pitch: number; roll: number } | null
+  renderCallPoseP: { yaw: number; pitch: number; roll: number } | null
+  previewStatePoseP: { yaw: number; pitch: number; roll: number } | null
+  bufferBuildPoseP: { yaw: number; pitch: number; roll: number } | null
+  webglUniformPoseP: { yaw: number; pitch: number; roll: number } | null
   actualRenderPoseP: { yaw: number; pitch: number; roll: number } | null
   renderPoseSource: RenderPoseSource
+  buffer: RenderBufferPoseDebug
+  detectCanvas: DetectCanvasPoseState
+  recovery: PoseRecoveryDebug
   renderPoseAppliedToWebGL: boolean
   renderPoseMatchesToken: boolean
   renderPoseMismatchReason: string | null
+}
+type RenderBufferPoseDebug = {
+  bufferPoseMode: "baked_vertices" | "shader_uniform" | "unknown"
+  bufferPoseP: { yaw: number; pitch: number; roll: number } | null
+  bufferGenerationId: number | null
+  bufferReused: boolean
+  bufferReuseReason: string | null
+}
+type DetectCanvasPoseState = {
+  canvasGenerationId: number
+  canvasLastRenderedToken: RenderedIdealFrameToken | null
+  canvasLastRenderedPoseP: { yaw: number; pitch: number; roll: number } | null
+  canvasPoseMatchesRenderToken: boolean
+  canvasWasClearedBeforeRender: boolean
+  drawCompletedForToken: boolean
+}
+type PoseRecoveryDebug = {
+  previousFrameStatus: string | null
+  currentFrameStatus: string
+  recoveredFromNoCurrentFace: boolean
+  recoveredFromNoRenderedIdeal: boolean
+  recoveredFromAlignmentSkip: boolean
+  recoveryFrameId: number | null
+  recoveryMediaTimeSec: number | null
+  poseBeforeSkip: { yaw: number; pitch: number; roll: number } | null
+  poseAfterRecovery: { yaw: number; pitch: number; roll: number } | null
+  rendererWasReinitialized: boolean
+  webglContextWasRecreated: boolean
+  buffersWereRebuiltAfterRecovery: boolean
+  uniformsWereResetAfterRecovery: boolean
 }
 type RenderedIdealLifecycle = {
   renderAttempted: boolean
@@ -1047,6 +1084,7 @@ type OverlayLifecycle = {
   lastGoodUsedForOverlay: boolean
   generationMatch: boolean
   tokenMatch: boolean
+  renderPoseValid: boolean
   skippedReason: string
 }
 type AssetLifecycle = AssetGeneration & {
@@ -1573,6 +1611,9 @@ type RenderPoseProbeSample = {
   id: string
   label: string
   requestedPoseP: ObjPoseMappingPose
+  renderCallPoseP: ObjPoseMappingPose | null
+  bufferBuildPoseP: ObjPoseMappingPose | null
+  webglUniformPoseP: ObjPoseMappingPose | null
   actualRenderPoseP: ObjPoseMappingPose | null
   P_confirm: ReferencePose
   poseDiff: PoseMappingPoseDiff
@@ -1586,6 +1627,8 @@ type RenderPoseProbeSample = {
 }
 type RenderPoseProbeState = {
   status: RenderPoseProbeStatus
+  runAfterNextRecovery: boolean
+  lastRunTrigger: "manual" | "after_next_recovery" | null
   startedAt: string | null
   completedAt: string | null
   errorMessage: string | null
@@ -1615,6 +1658,15 @@ type WebglObjRenderer = {
   colorLocation: number
   rendererInfo: string | null
   vendorInfo: string | null
+}
+
+type WebglObjRenderResult = {
+  actualRenderPoseP: ObjPoseMappingPose
+  renderCallPoseP: ObjPoseMappingPose
+  previewStatePoseP: ObjPoseMappingPose
+  bufferBuildPoseP: ObjPoseMappingPose
+  webglUniformPoseP: ObjPoseMappingPose | null
+  buffer: RenderBufferPoseDebug
 }
 
 type WebglObjRenderContext = {
@@ -2053,6 +2105,7 @@ type LabState = {
     alignmentMode: PoseMappingAlignmentMode
     placementLandmarkSet: PlacementLandmarkSet
     boundsScaleBasis: BoundsScaleBasis
+    hideIdealOverlayWhenRenderPoseNotApplied: boolean
   }
   overlay: {
     showCurrentLandmarks478: boolean
@@ -2490,6 +2543,7 @@ const DEFAULT_POSE_MAPPING_SETTINGS: LabState["poseMappingSettings"] = {
   alignmentMode: "bounds_center_scale_v1",
   placementLandmarkSet: "all_non_iris",
   boundsScaleBasis: "diag",
+  hideIdealOverlayWhenRenderPoseNotApplied: true,
 }
 
 const state: LabState = {
@@ -2623,6 +2677,10 @@ app.innerHTML = `
                   <option value="diag">diag</option>
                 </select>
               </label>
+              <label class="overlay-toggle">
+                <input type="checkbox" data-control="pose-mapping-hide-overlay-on-render-pose-not-applied" />
+                <span>Hide ideal overlay when render pose not applied</span>
+              </label>
             </div>
           </section>
 
@@ -2697,6 +2755,8 @@ let detectPerformanceCancelRequested = false
 let renderDetectHandoffCancelRequested = false
 let webglObjBenchmarkCancelRequested = false
 let webglObjBenchmarkRenderer: WebglObjRenderer | null = null
+let webglRenderBufferGenerationId = 0
+let webglDetectCanvasGenerationId = 0
 let renderedIdealFaceLandmarkerCreateCount = 0
 let renderedIdealTimestampMs = 0
 let renderedIdealRenderSeq = 0
@@ -3192,6 +3252,11 @@ function bindEvents() {
     }
   })
 
+  getElement<HTMLInputElement>('[data-control="pose-mapping-hide-overlay-on-render-pose-not-applied"]').addEventListener("change", (event) => {
+    state.poseMappingSettings.hideIdealOverlayWhenRenderPoseNotApplied = event.currentTarget.checked
+    renderAll({ skipObjRender: true })
+  })
+
   getElement<HTMLButtonElement>('[data-action="realtime-start"]').addEventListener("click", () => {
     startRealtimeValidation()
   })
@@ -3370,6 +3435,9 @@ function bindEvents() {
     }
     if (action === "render-pose-probe-run") {
       void runRenderPoseProbe()
+    }
+    if (action === "render-pose-probe-after-recovery") {
+      armRenderPoseProbeAfterNextRecovery()
     }
     if (action === "detect-performance-run") {
       void startDetectPerformanceBenchmark()
@@ -4471,14 +4539,28 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
       profile,
       renderSettings,
     )
+    const rendererGenerationBefore = state.assetGeneration.rendererGenerationId
     const renderer = getOrCreateWebglObjBenchmarkRenderer()
+    const rendererWasReinitialized = state.assetGeneration.rendererGenerationId !== rendererGenerationBefore
     const rendererMetadata = buildWebglObjRendererMetadata(renderer, appearance)
     const renderToken = createRenderedIdealFrameToken(frameGeneration, evaluateResult.p)
+    let detectCanvasPoseState = createEmptyDetectCanvasPoseState()
+    let recoveryDebug = buildPoseRecoveryDebug({
+      previousRuntime,
+      frameGeneration,
+      poseAfterRecovery: evaluateResult.p,
+      rendererWasReinitialized,
+      webglContextWasRecreated: rendererWasReinitialized,
+      buffersWereRebuiltAfterRecovery: false,
+      uniformsWereResetAfterRecovery: false,
+    })
     let renderPoseLifecycle = createRenderPoseLifecycleDebug({
       requestedPoseP: evaluateResult.p,
-      actualRenderPoseP: null,
+      renderResult: null,
       renderPoseSource: "pose_mapping_profile",
       renderToken,
+      detectCanvas: detectCanvasPoseState,
+      recovery: recoveryDebug,
     })
     const profileRendererMatch = validatePoseMappingRendererMatch(profile, rendererMetadata, appearance)
     if (!profileRendererMatch.match) {
@@ -4526,13 +4608,25 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
       rotationCenter: getObjPoseSyncRotationCenter(),
     }
     const renderStartMs = performance.now()
-    const actualRenderPoseP = renderWebglObjToCanvas(renderer, renderContext)
+    const renderResult = renderWebglObjToCanvas(renderer, renderContext)
     const renderMs = performance.now() - renderStartMs
+    recoveryDebug = buildPoseRecoveryDebug({
+      previousRuntime,
+      frameGeneration,
+      poseAfterRecovery: evaluateResult.p,
+      rendererWasReinitialized,
+      webglContextWasRecreated: rendererWasReinitialized,
+      buffersWereRebuiltAfterRecovery: renderResult.buffer.bufferPoseMode === "baked_vertices",
+      uniformsWereResetAfterRecovery: renderResult.webglUniformPoseP !== null,
+    })
+    detectCanvasPoseState = createDetectCanvasPoseState(renderToken, renderResult, true, true)
     renderPoseLifecycle = createRenderPoseLifecycleDebug({
       requestedPoseP: evaluateResult.p,
-      actualRenderPoseP,
+      renderResult,
       renderPoseSource: "pose_mapping_profile",
       renderToken,
+      detectCanvas: detectCanvasPoseState,
+      recovery: recoveryDebug,
     })
     let renderedIdealLifecycle: RenderedIdealLifecycle = {
       ...createEmptyRenderedIdealLifecycle(),
@@ -4541,6 +4635,22 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
       renderToken,
       detectCanvasWasClearedBeforeRender: true,
       renderPose: renderPoseLifecycle,
+    }
+
+    if (!detectCanvasPoseState.canvasPoseMatchesRenderToken || !detectCanvasPoseState.drawCompletedForToken) {
+      renderedIdealLifecycle = {
+        ...renderedIdealLifecycle,
+        renderSucceeded: false,
+      }
+      state.poseMappingRuntime = {
+        ...state.poseMappingRuntime,
+        renderedIdealStatus: "stale",
+        alignmentStatus: "skipped_generation_mismatch",
+        alignmentSkippedReason: "generation_mismatch",
+        renderedIdealLifecycle,
+        overlayLifecycle: createOverlayLifecycle(false, "detect_canvas_pose_mismatch"),
+      }
+      throw new Error("detect_canvas_pose_mismatch")
     }
 
     const detector = await getRenderedIdealFaceLandmarker()
@@ -4699,6 +4809,9 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
     recordPlacementMappingSample(state.poseMappingRuntime)
     if (!options.skipFinalRender) {
       renderAll({ skipObjRender: true })
+    }
+    if (state.renderPoseProbe.runAfterNextRecovery && isPoseRecoveryFrame(recoveryDebug)) {
+      void runRenderPoseProbe("after_next_recovery")
     }
     return state.poseMappingRuntime
   } catch (error) {
@@ -6097,13 +6210,24 @@ async function throwIfWebglObjBenchmarkCancelled() {
   }
 }
 
-async function runRenderPoseProbe() {
+function armRenderPoseProbeAfterNextRecovery() {
+  state.renderPoseProbe = {
+    ...state.renderPoseProbe,
+    runAfterNextRecovery: true,
+    errorMessage: null,
+  }
+  renderDebugContent()
+}
+
+async function runRenderPoseProbe(trigger: RenderPoseProbeState["lastRunTrigger"] = "manual") {
   if (state.renderPoseProbe.status === "running") {
     return
   }
   const startedAt = new Date().toISOString()
   state.renderPoseProbe = {
     status: "running",
+    runAfterNextRecovery: trigger === "after_next_recovery" ? false : state.renderPoseProbe.runAfterNextRecovery,
+    lastRunTrigger: trigger,
     startedAt,
     completedAt: null,
     errorMessage: null,
@@ -6143,6 +6267,9 @@ async function runRenderPoseProbe() {
         id: probe.id,
         label: probe.label,
         requestedPoseP: roundPoseMappingPose(probe.p) ?? probe.p,
+        renderCallPoseP: null,
+        bufferBuildPoseP: null,
+        webglUniformPoseP: null,
         actualRenderPoseP: null,
         P_confirm: { yaw: null, pitch: null, roll: null },
         poseDiff: { yaw: null, pitch: null, roll: null, magnitude: null },
@@ -6158,7 +6285,7 @@ async function runRenderPoseProbe() {
       try {
         clearWebglRendererCanvas(renderer)
         const renderStartMs = performance.now()
-        const actualRenderPoseP = renderWebglObjToCanvas(renderer, {
+        const renderResult = renderWebglObjToCanvas(renderer, {
           renderSettings,
           appearance,
           p: probe.p,
@@ -6172,7 +6299,10 @@ async function runRenderPoseProbe() {
         const warning = getRenderPoseNotAppliedWarning(probe.p, detection.pose)
         sample = {
           ...sample,
-          actualRenderPoseP: roundPoseMappingPose(actualRenderPoseP),
+          renderCallPoseP: roundPoseMappingPose(renderResult.renderCallPoseP),
+          bufferBuildPoseP: roundPoseMappingPose(renderResult.bufferBuildPoseP),
+          webglUniformPoseP: roundPoseMappingPose(renderResult.webglUniformPoseP),
+          actualRenderPoseP: roundPoseMappingPose(renderResult.actualRenderPoseP),
           P_confirm: roundPoseForState(detection.pose),
           poseDiff: roundPoseMappingDiff(calculatePoseMappingPoseDiff(runtime.P_camera, detection.pose)),
           detected: detection.status === "detected",
@@ -6202,6 +6332,8 @@ async function runRenderPoseProbe() {
 
     state.renderPoseProbe = {
       status: "completed",
+      runAfterNextRecovery: false,
+      lastRunTrigger: trigger,
       startedAt,
       completedAt: new Date().toISOString(),
       errorMessage: null,
@@ -6213,6 +6345,8 @@ async function runRenderPoseProbe() {
     state.renderPoseProbe = {
       ...state.renderPoseProbe,
       status: "error",
+      runAfterNextRecovery: trigger === "after_next_recovery" ? false : state.renderPoseProbe.runAfterNextRecovery,
+      lastRunTrigger: trigger,
       completedAt: new Date().toISOString(),
       errorMessage: message,
     }
@@ -6658,9 +6792,10 @@ function measureWebglObjRender(
 function renderWebglObjToCanvas(
   renderer: WebglObjRenderer,
   context: WebglObjRenderContext,
-): ObjPoseMappingPose {
-  const actualRenderPoseP = getActualWebglRenderPoseP(context)
-  const { positions, colors } = buildWebglObjRenderBuffers(context)
+): WebglObjRenderResult {
+  const renderCallPoseP = cloneObjPoseMappingPose(context.p)
+  const { positions, colors, debug } = buildWebglObjRenderBuffers(context)
+  const actualRenderPoseP = cloneObjPoseMappingPose(debug.bufferPoseP ?? renderCallPoseP)
   const gl = renderer.gl
   const background = hexToRgb(context.appearance.backgroundColor) ?? { r: 245, g: 247, b: 249 }
   gl.viewport(0, 0, renderer.canvas.width, renderer.canvas.height)
@@ -6679,7 +6814,14 @@ function renderWebglObjToCanvas(
   gl.vertexAttribPointer(renderer.colorLocation, 3, gl.FLOAT, false, 0, 0)
 
   gl.drawArrays(gl.TRIANGLES, 0, positions.length / 2)
-  return actualRenderPoseP
+  return {
+    actualRenderPoseP,
+    renderCallPoseP,
+    previewStatePoseP: cloneObjPoseMappingPose(debug.bufferPoseP ?? actualRenderPoseP),
+    bufferBuildPoseP: cloneObjPoseMappingPose(debug.bufferPoseP ?? actualRenderPoseP),
+    webglUniformPoseP: null,
+    buffer: debug,
+  }
 }
 
 function buildWebglObjRenderBuffers(context: WebglObjRenderContext) {
@@ -6688,6 +6830,7 @@ function buildWebglObjRenderBuffers(context: WebglObjRenderContext) {
     throw new Error("OBJ bounds が不足しています。")
   }
   const poseState = getDirectObjPosePreviewState(context.p)
+  const bufferPoseP = poseFromObjPreviewState(poseState)
   const rotationCenter = context.rotationCenter
   const width = context.renderSettings.detectCanvasWidth
   const height = context.renderSettings.detectCanvasHeight
@@ -6717,9 +6860,17 @@ function buildWebglObjRenderBuffers(context: WebglObjRenderContext) {
       }
     }
   }
+  webglRenderBufferGenerationId += 1
   return {
     positions: new Float32Array(positionValues),
     colors: new Float32Array(colorValues),
+    debug: {
+      bufferPoseMode: "baked_vertices" as const,
+      bufferPoseP,
+      bufferGenerationId: webglRenderBufferGenerationId,
+      bufferReused: false,
+      bufferReuseReason: null,
+    },
   }
 }
 
@@ -7145,12 +7296,19 @@ function buildPoseMappingAlignment(
   }
 }
 
-function getActualWebglRenderPoseP(context: WebglObjRenderContext): ObjPoseMappingPose {
-  const poseState = getDirectObjPosePreviewState(context.p)
+function poseFromObjPreviewState(poseState: ObjPreviewState): ObjPoseMappingPose {
   return {
     yaw: poseState.yawDeg,
     pitch: poseState.pitchDeg,
     roll: poseState.rollDeg,
+  }
+}
+
+function cloneObjPoseMappingPose(pose: ObjPoseMappingPose): ObjPoseMappingPose {
+  return {
+    yaw: pose.yaw,
+    pitch: pose.pitch,
+    roll: pose.roll,
   }
 }
 
@@ -11565,6 +11723,8 @@ function renderControls() {
     state.poseMappingSettings.placementLandmarkSet
   getElement<HTMLSelectElement>('[data-control="pose-mapping-bounds-scale-basis"]').value =
     state.poseMappingSettings.boundsScaleBasis
+  getElement<HTMLInputElement>('[data-control="pose-mapping-hide-overlay-on-render-pose-not-applied"]').checked =
+    state.poseMappingSettings.hideIdealOverlayWhenRenderPoseNotApplied
   objFileInput.disabled = poseSearchRunning
   poseMappingProfileFileInput.disabled = poseSearchRunning || isObjPoseCalibrationRunning()
   liveFileInput.disabled = poseSearchRunning || state.modeComparison.status === "running"
@@ -11647,7 +11807,7 @@ function renderPoseMappingLiveSummaryCard() {
       <div><dt>generation</dt><dd>obj ${runtime.assetLifecycle.objGenerationId} / profile ${runtime.assetLifecycle.profileGenerationId} / render ${runtime.assetLifecycle.renderSettingsGenerationId} / renderer ${runtime.assetLifecycle.rendererGenerationId}</dd></div>
       <div><dt>render lifecycle</dt><dd>render ${String(runtime.renderedIdealLifecycle.renderSucceeded)} / detect ${String(runtime.renderedIdealLifecycle.detectSucceeded)} / stale ${String(runtime.renderedIdealLifecycle.staleCanvasDetected)}</dd></div>
       <div><dt>render pose</dt><dd>applied ${String(runtime.renderedIdealLifecycle.renderPose.renderPoseAppliedToWebGL)} / source ${escapeHtml(runtime.renderedIdealLifecycle.renderPose.renderPoseSource)} / ${escapeHtml(runtime.renderedIdealLifecycle.renderPose.renderPoseMismatchReason ?? "-")}</dd></div>
-      <div><dt>overlay lifecycle</dt><dd>visible ${String(runtime.overlayLifecycle.alignedRenderedIdealVisible)} / gen ${String(runtime.overlayLifecycle.generationMatch)} / token ${String(runtime.overlayLifecycle.tokenMatch)} / ${escapeHtml(runtime.overlayLifecycle.skippedReason)}</dd></div>
+      <div><dt>overlay lifecycle</dt><dd>visible ${String(runtime.overlayLifecycle.alignedRenderedIdealVisible)} / gen ${String(runtime.overlayLifecycle.generationMatch)} / token ${String(runtime.overlayLifecycle.tokenMatch)} / renderPose ${String(runtime.overlayLifecycle.renderPoseValid)} / ${escapeHtml(runtime.overlayLifecycle.skippedReason)}</dd></div>
       <div><dt>lastGood</dt><dd>${String(runtime.lastGood.hasLastGood)} / ageMs ${formatRealtimeNullableNumber(runtime.lastGood.ageMs)}</dd></div>
       <div><dt>stale</dt><dd>${String(runtime.stale.isStale)} / ${escapeHtml(runtime.stale.staleReason ?? "-")} / ${formatRealtimeNullableNumber(runtime.stale.staleMs)}ms</dd></div>
       <div><dt>loop busy</dt><dd>${String(poseMappingRuntimeInProgress)}</dd></div>
@@ -11720,6 +11880,13 @@ function renderPoseMappingDebugTab() {
     runtime.status === "completed" &&
     runtime.poseMappingStatus === "completed" &&
     runtime.p !== null
+  const canArmRenderPoseProbeAfterRecovery =
+    renderPoseProbe.status !== "running" &&
+    webglBenchmark.status !== "running" &&
+    detectPerformance.status !== "running" &&
+    handoff.status !== "running" &&
+    profileState.loaded &&
+    canRenderRenderedIdealGeometry()
   const requiredRendererResolution = getRenderResolutionFromRecord(profile?.requiredRenderer?.renderResolution)
 
   container.innerHTML = `
@@ -11799,7 +11966,14 @@ function renderPoseMappingDebugTab() {
         <div><dt>Profile renderer match</dt><dd>${String(runtime.profileRendererMatch)}</dd></div>
         <div><dt>Profile mismatch error</dt><dd>${escapeHtml(runtime.profileMismatchError ?? "-")}</dd></div>
         <div><dt>requestedPoseP</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.renderedIdealLifecycle.renderPose.requestedPoseP))}</dd></div>
+        <div><dt>renderCallPoseP</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.renderedIdealLifecycle.renderPose.renderCallPoseP))}</dd></div>
+        <div><dt>previewStatePoseP</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.renderedIdealLifecycle.renderPose.previewStatePoseP))}</dd></div>
+        <div><dt>bufferBuildPoseP</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.renderedIdealLifecycle.renderPose.bufferBuildPoseP))}</dd></div>
+        <div><dt>webglUniformPoseP</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.renderedIdealLifecycle.renderPose.webglUniformPoseP))}</dd></div>
         <div><dt>actualRenderPoseP</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.renderedIdealLifecycle.renderPose.actualRenderPoseP))}</dd></div>
+        <div><dt>bufferPoseDebug</dt><dd>${escapeHtml(JSON.stringify(runtime.renderedIdealLifecycle.renderPose.buffer))}</dd></div>
+        <div><dt>detectCanvasPoseState</dt><dd>${escapeHtml(JSON.stringify(runtime.renderedIdealLifecycle.renderPose.detectCanvas))}</dd></div>
+        <div><dt>poseRecoveryDebug</dt><dd>${escapeHtml(JSON.stringify(runtime.renderedIdealLifecycle.renderPose.recovery))}</dd></div>
         <div><dt>renderPoseSource</dt><dd>${escapeHtml(runtime.renderedIdealLifecycle.renderPose.renderPoseSource)}</dd></div>
         <div><dt>renderPoseAppliedToWebGL</dt><dd>${String(runtime.renderedIdealLifecycle.renderPose.renderPoseAppliedToWebGL)}</dd></div>
         <div><dt>renderPoseMatchesToken</dt><dd>${String(runtime.renderedIdealLifecycle.renderPose.renderPoseMatchesToken)}</dd></div>
@@ -11833,6 +12007,7 @@ function renderPoseMappingDebugTab() {
       <h3>Render pose probe（レンダー姿勢プローブ）</h3>
       <div class="button-row">
         <button class="small-button" type="button" data-action="render-pose-probe-run" ${canRunRenderPoseProbe ? "" : "disabled"}>Render pose probe（レンダー姿勢プローブ）</button>
+        <button class="small-button" type="button" data-action="render-pose-probe-after-recovery" ${canArmRenderPoseProbeAfterRecovery ? "" : "disabled"}>Run probe after next recovery</button>
       </div>
       ${renderRenderPoseProbeSummaryHtml()}
     </section>
@@ -11944,6 +12119,9 @@ function renderRenderPoseProbeSummaryHtml() {
           <tr>
             <td>${escapeHtml(sample.label)}</td>
             <td>${escapeHtml(formatPoseMappingPose(sample.requestedPoseP))}</td>
+            <td>${escapeHtml(formatPoseMappingPose(sample.renderCallPoseP))}</td>
+            <td>${escapeHtml(formatPoseMappingPose(sample.bufferBuildPoseP))}</td>
+            <td>${escapeHtml(formatPoseMappingPose(sample.webglUniformPoseP))}</td>
             <td>${escapeHtml(formatPoseMappingPose(sample.actualRenderPoseP))}</td>
             <td>${escapeHtml(formatPose(sample.P_confirm))}</td>
             <td>${escapeHtml(formatPoseMappingDiff(sample.poseDiff))}</td>
@@ -11954,13 +12132,15 @@ function renderRenderPoseProbeSummaryHtml() {
         `).join("")
       : `
           <tr>
-            <td colspan="8" class="placeholder-text">Render pose probe はまだ実行されていません。</td>
+            <td colspan="11" class="placeholder-text">Render pose probe はまだ実行されていません。</td>
           </tr>
         `
 
   return `
     <dl class="summary-list">
       <div><dt>probe status</dt><dd>${escapeHtml(probe.status)}</dd></div>
+      <div><dt>runAfterNextRecovery</dt><dd>${String(probe.runAfterNextRecovery)}</dd></div>
+      <div><dt>lastRunTrigger</dt><dd>${escapeHtml(probe.lastRunTrigger ?? "-")}</dd></div>
       <div><dt>startedAt</dt><dd>${escapeHtml(probe.startedAt ?? "-")}</dd></div>
       <div><dt>completedAt</dt><dd>${escapeHtml(probe.completedAt ?? "-")}</dd></div>
       <div><dt>error</dt><dd>${escapeHtml(probe.errorMessage ?? "-")}</dd></div>
@@ -11971,6 +12151,9 @@ function renderRenderPoseProbeSummaryHtml() {
           <tr>
             <th>sample</th>
             <th>requestedPoseP</th>
+            <th>renderCallPoseP</th>
+            <th>bufferBuildPoseP</th>
+            <th>webglUniformPoseP</th>
             <th>actualRenderPoseP</th>
             <th>P_confirm</th>
             <th>poseDiff</th>
@@ -14524,34 +14707,94 @@ function createEmptyRenderedIdealLifecycle(): RenderedIdealLifecycle {
 function createEmptyRenderPoseLifecycleDebug(): RenderPoseLifecycleDebug {
   return {
     requestedPoseP: null,
+    renderCallPoseP: null,
+    previewStatePoseP: null,
+    bufferBuildPoseP: null,
+    webglUniformPoseP: null,
     actualRenderPoseP: null,
     renderPoseSource: "unknown",
+    buffer: createEmptyRenderBufferPoseDebug(),
+    detectCanvas: createEmptyDetectCanvasPoseState(),
+    recovery: createEmptyPoseRecoveryDebug(),
     renderPoseAppliedToWebGL: false,
     renderPoseMatchesToken: false,
     renderPoseMismatchReason: null,
   }
 }
 
+function createEmptyRenderBufferPoseDebug(): RenderBufferPoseDebug {
+  return {
+    bufferPoseMode: "unknown",
+    bufferPoseP: null,
+    bufferGenerationId: null,
+    bufferReused: false,
+    bufferReuseReason: null,
+  }
+}
+
+function createEmptyDetectCanvasPoseState(): DetectCanvasPoseState {
+  return {
+    canvasGenerationId: 0,
+    canvasLastRenderedToken: null,
+    canvasLastRenderedPoseP: null,
+    canvasPoseMatchesRenderToken: false,
+    canvasWasClearedBeforeRender: false,
+    drawCompletedForToken: false,
+  }
+}
+
+function createEmptyPoseRecoveryDebug(): PoseRecoveryDebug {
+  return {
+    previousFrameStatus: null,
+    currentFrameStatus: "not_ready",
+    recoveredFromNoCurrentFace: false,
+    recoveredFromNoRenderedIdeal: false,
+    recoveredFromAlignmentSkip: false,
+    recoveryFrameId: null,
+    recoveryMediaTimeSec: null,
+    poseBeforeSkip: null,
+    poseAfterRecovery: null,
+    rendererWasReinitialized: false,
+    webglContextWasRecreated: false,
+    buffersWereRebuiltAfterRecovery: false,
+    uniformsWereResetAfterRecovery: false,
+  }
+}
+
 function createRenderPoseLifecycleDebug(input: {
   requestedPoseP: ObjPoseMappingPose | null
-  actualRenderPoseP: ObjPoseMappingPose | null
+  renderResult: WebglObjRenderResult | null
   renderPoseSource: RenderPoseSource
   renderToken: RenderedIdealFrameToken | null
+  detectCanvas: DetectCanvasPoseState | null
+  recovery: PoseRecoveryDebug | null
 }): RenderPoseLifecycleDebug {
   const requestedPoseP = roundPoseMappingPose(input.requestedPoseP)
-  const actualRenderPoseP = roundPoseMappingPose(input.actualRenderPoseP)
+  const renderCallPoseP = roundPoseMappingPose(input.renderResult?.renderCallPoseP ?? null)
+  const previewStatePoseP = roundPoseMappingPose(input.renderResult?.previewStatePoseP ?? null)
+  const bufferBuildPoseP = roundPoseMappingPose(input.renderResult?.bufferBuildPoseP ?? null)
+  const webglUniformPoseP = roundPoseMappingPose(input.renderResult?.webglUniformPoseP ?? null)
+  const actualRenderPoseP = roundPoseMappingPose(input.renderResult?.actualRenderPoseP ?? null)
   const renderPoseMatchesToken =
-    input.actualRenderPoseP !== null &&
+    input.renderResult?.actualRenderPoseP !== null &&
+    input.renderResult?.actualRenderPoseP !== undefined &&
     input.renderToken !== null &&
-    poseMappingPosesApproximatelyEqual(input.actualRenderPoseP, input.renderToken.p)
+    poseMappingPosesApproximatelyEqual(input.renderResult.actualRenderPoseP, input.renderToken.p)
   const renderPoseMismatchReason =
     actualRenderPoseP && input.renderToken && !renderPoseMatchesToken
       ? "render_pose_mismatch_token"
       : null
   return {
     requestedPoseP,
+    renderCallPoseP,
+    previewStatePoseP,
+    bufferBuildPoseP,
+    webglUniformPoseP,
     actualRenderPoseP,
     renderPoseSource: input.renderPoseSource,
+    buffer: roundRenderBufferPoseDebug(input.renderResult?.buffer ?? null),
+    detectCanvas: input.detectCanvas ?? createEmptyDetectCanvasPoseState(),
+    recovery: input.recovery ?? createEmptyPoseRecoveryDebug(),
     renderPoseAppliedToWebGL: actualRenderPoseP !== null && renderPoseMismatchReason === null,
     renderPoseMatchesToken,
     renderPoseMismatchReason,
@@ -14567,6 +14810,81 @@ function poseMappingPosesApproximatelyEqual(
     Math.abs(a.yaw - b.yaw) <= epsilon &&
     Math.abs(a.pitch - b.pitch) <= epsilon &&
     Math.abs(a.roll - b.roll) <= epsilon
+  )
+}
+
+function roundRenderBufferPoseDebug(debug: RenderBufferPoseDebug | null): RenderBufferPoseDebug {
+  return debug
+    ? {
+        ...debug,
+        bufferPoseP: roundPoseMappingPose(debug.bufferPoseP),
+      }
+    : createEmptyRenderBufferPoseDebug()
+}
+
+function createDetectCanvasPoseState(
+  renderToken: RenderedIdealFrameToken | null,
+  renderResult: WebglObjRenderResult | null,
+  canvasWasClearedBeforeRender: boolean,
+  drawCompletedForToken: boolean,
+): DetectCanvasPoseState {
+  if (drawCompletedForToken) {
+    webglDetectCanvasGenerationId += 1
+  }
+  const canvasLastRenderedPoseP = roundPoseMappingPose(renderResult?.actualRenderPoseP ?? null)
+  return {
+    canvasGenerationId: webglDetectCanvasGenerationId,
+    canvasLastRenderedToken: renderToken,
+    canvasLastRenderedPoseP,
+    canvasPoseMatchesRenderToken:
+      renderToken !== null &&
+      renderResult !== null &&
+      poseMappingPosesApproximatelyEqual(renderResult.actualRenderPoseP, renderToken.p),
+    canvasWasClearedBeforeRender,
+    drawCompletedForToken,
+  }
+}
+
+function buildPoseRecoveryDebug(input: {
+  previousRuntime: PoseMappingRuntimeState
+  frameGeneration: FrameGeneration | null
+  poseAfterRecovery: ObjPoseMappingPose | null
+  rendererWasReinitialized: boolean
+  webglContextWasRecreated: boolean
+  buffersWereRebuiltAfterRecovery: boolean
+  uniformsWereResetAfterRecovery: boolean
+}): PoseRecoveryDebug {
+  const previous = input.previousRuntime
+  const recoveredFromNoCurrentFace = previous.poseMappingSkippedReason === "no_current_face"
+  const recoveredFromNoRenderedIdeal =
+    previous.renderedIdealStatus !== "detected" &&
+    previous.renderedIdealStatus !== "missing"
+  const recoveredFromAlignmentSkip =
+    previous.alignmentStatus !== "completed" &&
+    previous.alignmentStatus !== "stale"
+  const recovered = recoveredFromNoCurrentFace || recoveredFromNoRenderedIdeal || recoveredFromAlignmentSkip
+  return {
+    previousFrameStatus: previous.poseMappingStatus,
+    currentFrameStatus: input.poseAfterRecovery ? "completed" : "running",
+    recoveredFromNoCurrentFace,
+    recoveredFromNoRenderedIdeal,
+    recoveredFromAlignmentSkip,
+    recoveryFrameId: recovered ? input.frameGeneration?.frameId ?? null : null,
+    recoveryMediaTimeSec: recovered ? input.frameGeneration?.mediaTimeSec ?? null : null,
+    poseBeforeSkip: roundPoseMappingPose(previous.p),
+    poseAfterRecovery: roundPoseMappingPose(input.poseAfterRecovery),
+    rendererWasReinitialized: input.rendererWasReinitialized,
+    webglContextWasRecreated: input.webglContextWasRecreated,
+    buffersWereRebuiltAfterRecovery: recovered && input.buffersWereRebuiltAfterRecovery,
+    uniformsWereResetAfterRecovery: recovered && input.uniformsWereResetAfterRecovery,
+  }
+}
+
+function isPoseRecoveryFrame(recovery: PoseRecoveryDebug) {
+  return (
+    recovery.recoveredFromNoCurrentFace ||
+    recovery.recoveredFromNoRenderedIdeal ||
+    recovery.recoveredFromAlignmentSkip
   )
 }
 
@@ -14610,6 +14928,7 @@ function createInitialOverlayLifecycle(): OverlayLifecycle {
     lastGoodUsedForOverlay: false,
     generationMatch: false,
     tokenMatch: false,
+    renderPoseValid: false,
     skippedReason: "not_ready",
   }
 }
@@ -14624,6 +14943,7 @@ function createOverlayLifecycle(visible: boolean, skippedReason: string): Overla
     lastGoodUsedForOverlay: false,
     generationMatch: visible,
     tokenMatch: visible,
+    renderPoseValid: visible,
     skippedReason,
   }
 }
@@ -14640,6 +14960,7 @@ function createOverlayLifecycleFromRuntime(
     | "alignedRenderedIdealToken"
     | "profileRendererMatch"
     | "frameLifecycle"
+    | "renderedIdealLifecycle"
   >,
 ): OverlayLifecycle {
   const generationMatch =
@@ -14650,6 +14971,9 @@ function createOverlayLifecycleFromRuntime(
     renderedIdealFrameTokenMatchesFrame(runtime.renderedIdealToken, runtime.frameLifecycle) &&
     renderedIdealFrameTokenMatchesFrame(runtime.alignedRenderedIdealToken, runtime.frameLifecycle)
   const assetsReady = getObjAssetStatus() === "ready" && getProfileAssetStatus() === "ready"
+  const renderPoseValid =
+    !state.poseMappingSettings.hideIdealOverlayWhenRenderPoseNotApplied ||
+    runtime.renderedIdealLifecycle.renderPose.renderPoseAppliedToWebGL
   const visible =
     runtime.currentFaceStatus === "detected" &&
     assetsReady &&
@@ -14659,7 +14983,8 @@ function createOverlayLifecycleFromRuntime(
     runtime.alignedRenderedIdeal478 !== null &&
     !runtime.fallbackRenderedIdealUsed &&
     generationMatch &&
-    tokenMatch
+    tokenMatch &&
+    renderPoseValid
   return {
     current478Visible: runtime.currentFaceStatus === "detected",
     alignedRenderedIdealVisible: visible,
@@ -14669,7 +14994,8 @@ function createOverlayLifecycleFromRuntime(
     lastGoodUsedForOverlay: false,
     generationMatch,
     tokenMatch,
-    skippedReason: visible ? "none" : getOverlayLifecycleSkippedReason(runtime, assetsReady, generationMatch, tokenMatch),
+    renderPoseValid,
+    skippedReason: visible ? "none" : getOverlayLifecycleSkippedReason(runtime, assetsReady, generationMatch, tokenMatch, renderPoseValid),
   }
 }
 
@@ -14686,6 +15012,7 @@ function getOverlayLifecycleSkippedReason(
   assetsReady: boolean,
   generationMatch: boolean,
   tokenMatch: boolean,
+  renderPoseValid: boolean,
 ) {
   if (runtime.currentFaceStatus !== "detected") {
     return "current_face_not_detected"
@@ -14719,6 +15046,9 @@ function getOverlayLifecycleSkippedReason(
   }
   if (!tokenMatch) {
     return "token_mismatch"
+  }
+  if (!renderPoseValid) {
+    return "render_pose_not_applied"
   }
   return "not_ready"
 }
@@ -14888,6 +15218,8 @@ function createDefaultWebglObjBenchmarkState(): WebglObjBenchmarkState {
 function createDefaultRenderPoseProbeState(): RenderPoseProbeState {
   return {
     status: "idle",
+    runAfterNextRecovery: false,
+    lastRunTrigger: null,
     startedAt: null,
     completedAt: null,
     errorMessage: null,

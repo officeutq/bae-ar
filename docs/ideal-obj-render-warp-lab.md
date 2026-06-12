@@ -732,6 +732,12 @@ Pose Mapping runtime の `renderedIdealLifecycle.renderPose` では、`renderTok
 
 `render_pose_not_applied` は、`abs(p.yaw) + abs(p.pitch) + abs(p.roll) > 15` かつ `abs(P_confirm.yaw) < 3`、`abs(P_confirm.roll) < 3` のときに出します。この状態では `alignmentStatus === "completed"` でも、`renderPoseAppliedToWebGL` は `false` として扱います。
 
+WebGL renderer の pose は shader uniform ではなく、CPU 側の `buildWebglObjRenderBuffers()` で pose-baked vertices として buffer に焼き込みます。そのため render pose lifecycle では、`renderCallPoseP`、`previewStatePoseP`、`bufferBuildPoseP`、`webglUniformPoseP`、`canvasLastRenderedPoseP` を分けて記録します。通常は `webglUniformPoseP` は `null`、`buffer.bufferPoseMode` は `baked_vertices` です。
+
+skip / recovery 後の切り分け用に、`recovery` debug では `recoveredFromNoCurrentFace`、`recoveredFromNoRenderedIdeal`、`recoveredFromAlignmentSkip`、`buffersWereRebuiltAfterRecovery`、`uniformsWereResetAfterRecovery` を記録します。`Run probe after next recovery` は、次に noFace / rendered ideal skip / alignment skip から復帰した直後に Render pose probe を自動実行します。
+
+`Hide ideal overlay when render pose not applied` は既定で有効です。`render_pose_not_applied` のときは `overlayLifecycle.renderPoseValid = false` とし、理想 overlay を正常表示として扱わず `overlayLifecycle.skippedReason = render_pose_not_applied` を残します。
+
 Live overlay では、古い rendered ideal や fallback frontal face を表示しないため、runtime に以下の lifecycle を持たせます。
 
 - `assetLifecycle`: OBJ / profile / renderer / render settings の generation と ready 状態を記録します。
