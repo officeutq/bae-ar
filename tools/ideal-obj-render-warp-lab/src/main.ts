@@ -1015,6 +1015,86 @@ type DetectPerformanceState = {
   notes: string[]
 }
 
+type RenderDetectHandoffStatus = DetectPerformanceStatus
+type RenderDetectHandoffPhase = DetectPerformancePhase
+type RenderDetectHandoffTimingField =
+  | "renderMs"
+  | "waitMs"
+  | "bitmapCreateMs"
+  | "copyMs"
+  | "readbackMs"
+  | "detectMs"
+  | "totalMs"
+
+type RenderDetectHandoffOptions = {
+  warmupRuns: number
+  measuredRuns: number
+}
+
+type RenderDetectHandoffSample = {
+  runIndex: number
+  phase: RenderDetectHandoffPhase
+  renderMs: number | null
+  waitMs: number | null
+  bitmapCreateMs: number | null
+  copyMs: number | null
+  readbackMs: number | null
+  detectMs: number | null
+  totalMs: number | null
+  detected: boolean | null
+  landmarkCount: number | null
+  errorMessage: string | null
+}
+
+type RenderDetectHandoffCaseSummary = Record<RenderDetectHandoffTimingField, DetectPerformanceTimingSummary>
+
+type RenderDetectHandoffCaseResult = {
+  caseId: string
+  label: string
+  handoffStrategy: string
+  canvasWidth: number
+  canvasHeight: number
+  warmupRuns: number
+  measuredRuns: number
+  detectedCount: number
+  failedCount: number
+  summary: RenderDetectHandoffCaseSummary
+  samples: RenderDetectHandoffSample[]
+  notes: string[]
+}
+
+type RenderDetectHandoffConclusionHints = {
+  detectOnlyAvgMs: number | null
+  immediateRenderDetectAvgMs: number | null
+  bestHandoffStrategy: string | null
+  bestHandoffTotalAvgMs: number | null
+  bestHandoffDetectAvgMs: number | null
+}
+
+type RenderDetectHandoffExport = {
+  type: "pose_mapping_render_detect_handoff_debug_v1"
+  createdAt: string
+  source: DetectPerformanceExport["source"]
+  profile: DetectPerformanceExport["profile"]
+  runtime: DetectPerformanceExport["runtime"]
+  landmarker: DetectPerformanceLandmarkerSummary
+  renderSettings: DetectPerformanceRenderSettingsSummary
+  benchmarkOptions: RenderDetectHandoffOptions
+  cases: RenderDetectHandoffCaseResult[]
+  conclusionHints: RenderDetectHandoffConclusionHints
+  notes: string[]
+}
+
+type RenderDetectHandoffState = {
+  status: RenderDetectHandoffStatus
+  startedAt: string | null
+  completedAt: string | null
+  errorMessage: string | null
+  options: RenderDetectHandoffOptions
+  result: RenderDetectHandoffExport | null
+  notes: string[]
+}
+
 type ObjPoseCalibrationCandidatePoint = {
   rotationCenter: ObjVertex
   renderPoseOffset: {
@@ -1438,6 +1518,7 @@ type LabState = {
   poseMappingProfile: PoseMappingProfileState
   poseMappingRuntime: PoseMappingRuntimeState
   detectPerformance: DetectPerformanceState
+  renderDetectHandoff: RenderDetectHandoffState
   poseSearchFrames: PoseCenterSearchFrame[]
   selectedPoseSearchFrameId: string | null
   poseCenterSearch: PoseCenterSearchState
@@ -1481,6 +1562,10 @@ const DETECT_PERFORMANCE_DEFAULT_OPTIONS: DetectPerformanceOptions = {
   warmupRuns: 3,
   measuredRuns: 20,
   resolutionList: [1179, 1024, 768, 640, 512],
+}
+const RENDER_DETECT_HANDOFF_DEFAULT_OPTIONS: RenderDetectHandoffOptions = {
+  warmupRuns: 3,
+  measuredRuns: 20,
 }
 const REALTIME_TARGET_FPS_OPTIONS = [5, 10, 15, 30] as const
 const REALTIME_AVERAGE_SAMPLE_COUNT = 30
@@ -1853,6 +1938,7 @@ const state: LabState = {
   poseMappingProfile: createDefaultPoseMappingProfileState(),
   poseMappingRuntime: createDefaultPoseMappingRuntimeState(),
   detectPerformance: createDefaultDetectPerformanceState(),
+  renderDetectHandoff: createDefaultRenderDetectHandoffState(),
   poseSearchFrames: [],
   selectedPoseSearchFrameId: null,
   poseCenterSearch: createDefaultPoseCenterSearchState(),
@@ -1979,6 +2065,7 @@ let liveAnalysisRequestId = 0
 let renderedIdealDetectInProgress = false
 let poseMappingRuntimeInProgress = false
 let detectPerformanceCancelRequested = false
+let renderDetectHandoffCancelRequested = false
 let renderedIdealFaceLandmarkerCreateCount = 0
 let renderedIdealTimestampMs = 0
 let renderedIdealRenderSeq = 0
@@ -2632,6 +2719,18 @@ function bindEvents() {
     }
     if (action === "detect-performance-download-csv") {
       exportDetectPerformanceCsv()
+    }
+    if (action === "handoff-benchmark-run") {
+      void startRenderDetectHandoffBenchmark()
+    }
+    if (action === "handoff-benchmark-stop") {
+      stopRenderDetectHandoffBenchmark()
+    }
+    if (action === "handoff-benchmark-download-json") {
+      exportRenderDetectHandoffJson()
+    }
+    if (action === "handoff-benchmark-download-csv") {
+      exportRenderDetectHandoffCsv()
     }
   })
 
@@ -4346,6 +4445,522 @@ function buildDetectPerformanceExport(
 function getRenderedIdealRequestedDelegate() {
   const delegate = createRenderedIdealFaceLandmarkerOptions().baseOptions?.delegate
   return typeof delegate === "string" ? delegate : "-"
+}
+
+async function startRenderDetectHandoffBenchmark() {
+  if (state.renderDetectHandoff.status === "running") {
+    return
+  }
+
+  renderDetectHandoffCancelRequested = false
+  const options = {
+    warmupRuns: state.renderDetectHandoff.options.warmupRuns,
+    measuredRuns: state.renderDetectHandoff.options.measuredRuns,
+  }
+  state.renderDetectHandoff = {
+    status: "running",
+    startedAt: new Date().toISOString(),
+    completedAt: null,
+    errorMessage: null,
+    options,
+    result: null,
+    notes: [
+      "Render -> Detect Handoff は Canvas2D OBJ render 直後の MediaPipe detect() に描画同期 / GPU同期 / readback コストが乗るかを切り分ける",
+      "各caseに preview生成、overlay、toDataURL、毎runごとのDOM更新は含めない",
+      "通常 runtime の render -> detect 経路は変更しない",
+    ],
+  }
+  renderDebugContent()
+
+  const cases: RenderDetectHandoffCaseResult[] = []
+  const notes = [...state.renderDetectHandoff.notes]
+  try {
+    const context = await prepareDetectPerformanceBenchmarkContext()
+    cases.push(await runRenderDetectHandoffCase({
+      caseId: `handoff_immediate_render_detect_${context.renderSettings.detectCanvasWidth}`,
+      label: `immediate render -> detect / ${context.renderSettings.detectCanvasWidth}`,
+      handoffStrategy: "immediate",
+      context,
+      options,
+      runMeasuredSample: async (sample, canvas) => {
+        const totalStartMs = performance.now()
+        measureHandoffRender(sample, canvas, context)
+        measureHandoffDetect(sample, canvas, context.detector)
+        sample.totalMs = performance.now() - totalStartMs
+      },
+    }))
+    await throwIfRenderDetectHandoffCancelled()
+
+    cases.push(await runRenderDetectHandoffCase({
+      caseId: `handoff_raf1_render_detect_${context.renderSettings.detectCanvasWidth}`,
+      label: `render -> requestAnimationFrame 1回 -> detect / ${context.renderSettings.detectCanvasWidth}`,
+      handoffStrategy: "requestAnimationFrame_1",
+      context,
+      options,
+      runMeasuredSample: async (sample, canvas) => {
+        const totalStartMs = performance.now()
+        measureHandoffRender(sample, canvas, context)
+        const waitStartMs = performance.now()
+        await waitForAnimationFrameOnce()
+        sample.waitMs = performance.now() - waitStartMs
+        measureHandoffDetect(sample, canvas, context.detector)
+        sample.totalMs = performance.now() - totalStartMs
+      },
+    }))
+    await throwIfRenderDetectHandoffCancelled()
+
+    cases.push(await runRenderDetectHandoffCase({
+      caseId: `handoff_raf2_render_detect_${context.renderSettings.detectCanvasWidth}`,
+      label: `render -> requestAnimationFrame 2回 -> detect / ${context.renderSettings.detectCanvasWidth}`,
+      handoffStrategy: "requestAnimationFrame_2",
+      context,
+      options,
+      runMeasuredSample: async (sample, canvas) => {
+        const totalStartMs = performance.now()
+        measureHandoffRender(sample, canvas, context)
+        const waitStartMs = performance.now()
+        await waitForAnimationFrameOnce()
+        await waitForAnimationFrameOnce()
+        sample.waitMs = performance.now() - waitStartMs
+        measureHandoffDetect(sample, canvas, context.detector)
+        sample.totalMs = performance.now() - totalStartMs
+      },
+    }))
+    await throwIfRenderDetectHandoffCancelled()
+
+    cases.push(await runRenderDetectHandoffCase({
+      caseId: `handoff_timeout0_render_detect_${context.renderSettings.detectCanvasWidth}`,
+      label: `render -> setTimeout(0) -> detect / ${context.renderSettings.detectCanvasWidth}`,
+      handoffStrategy: "setTimeout_0",
+      context,
+      options,
+      runMeasuredSample: async (sample, canvas) => {
+        const totalStartMs = performance.now()
+        measureHandoffRender(sample, canvas, context)
+        const waitStartMs = performance.now()
+        await waitForTimeoutZero()
+        sample.waitMs = performance.now() - waitStartMs
+        measureHandoffDetect(sample, canvas, context.detector)
+        sample.totalMs = performance.now() - totalStartMs
+      },
+    }))
+    await throwIfRenderDetectHandoffCancelled()
+
+    cases.push(await runRenderDetectHandoffCase({
+      caseId: `handoff_image_bitmap_render_detect_${context.renderSettings.detectCanvasWidth}`,
+      label: `render -> createImageBitmap -> detect(bitmap) / ${context.renderSettings.detectCanvasWidth}`,
+      handoffStrategy: "createImageBitmap",
+      context,
+      options,
+      runMeasuredSample: async (sample, canvas) => {
+        const totalStartMs = performance.now()
+        measureHandoffRender(sample, canvas, context)
+        if (typeof createImageBitmap !== "function") {
+          sample.errorMessage = "createImageBitmap unsupported"
+          sample.totalMs = performance.now() - totalStartMs
+          return
+        }
+        const bitmapStartMs = performance.now()
+        const bitmap = await createImageBitmap(canvas)
+        sample.bitmapCreateMs = performance.now() - bitmapStartMs
+        try {
+          measureHandoffDetect(sample, bitmap as Parameters<FaceLandmarker["detect"]>[0], context.detector)
+        } catch (error) {
+          sample.errorMessage = `ImageBitmap detect unsupported: ${error instanceof Error ? error.message : String(error)}`
+          sample.detected = false
+          sample.landmarkCount = 0
+        } finally {
+          bitmap.close()
+        }
+        sample.totalMs = performance.now() - totalStartMs
+      },
+    }))
+    await throwIfRenderDetectHandoffCancelled()
+
+    cases.push(await runRenderDetectHandoffCase({
+      caseId: `handoff_copy_canvas_render_detect_${context.renderSettings.detectCanvasWidth}`,
+      label: `render -> copy to second canvas -> detect / ${context.renderSettings.detectCanvasWidth}`,
+      handoffStrategy: "copy_to_second_canvas",
+      context,
+      options,
+      runMeasuredSample: async (sample, canvas) => {
+        const totalStartMs = performance.now()
+        measureHandoffRender(sample, canvas, context)
+        const copiedCanvas = createBenchmarkCanvas(context.renderSettings.detectCanvasWidth, context.renderSettings.detectCanvasHeight)
+        const copyStartMs = performance.now()
+        const copyContext = copiedCanvas.getContext("2d")
+        if (!copyContext) {
+          throw new Error("copy canvas context を取得できません。")
+        }
+        copyContext.drawImage(canvas, 0, 0)
+        sample.copyMs = performance.now() - copyStartMs
+        measureHandoffDetect(sample, copiedCanvas, context.detector)
+        sample.totalMs = performance.now() - totalStartMs
+      },
+    }))
+    await throwIfRenderDetectHandoffCancelled()
+
+    cases.push(await runDoubleBufferHandoffCase(context, options))
+    await throwIfRenderDetectHandoffCancelled()
+
+    cases.push(await runRenderDetectHandoffCase({
+      caseId: `handoff_readback_render_detect_${context.renderSettings.detectCanvasWidth}`,
+      label: `render -> getImageData(1x1) -> detect / ${context.renderSettings.detectCanvasWidth}`,
+      handoffStrategy: "explicit_readback",
+      context,
+      options,
+      runMeasuredSample: async (sample, canvas) => {
+        const totalStartMs = performance.now()
+        measureHandoffRender(sample, canvas, context)
+        const readbackStartMs = performance.now()
+        const canvasContext = canvas.getContext("2d")
+        if (!canvasContext) {
+          throw new Error("readback canvas context を取得できません。")
+        }
+        canvasContext.getImageData(0, 0, 1, 1)
+        sample.readbackMs = performance.now() - readbackStartMs
+        measureHandoffDetect(sample, canvas, context.detector)
+        sample.totalMs = performance.now() - totalStartMs
+      },
+    }))
+
+    const result = buildRenderDetectHandoffExport(context, cases, notes, options)
+    state.renderDetectHandoff = {
+      ...state.renderDetectHandoff,
+      status: renderDetectHandoffCancelRequested ? "cancelled" : "completed",
+      completedAt: new Date().toISOString(),
+      result,
+      notes,
+    }
+    addLog(`Render -> Detect Handoff benchmark が完了しました: ${cases.length} cases`)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    const status: RenderDetectHandoffStatus = message === "cancelled" ? "cancelled" : "error"
+    state.renderDetectHandoff = {
+      ...state.renderDetectHandoff,
+      status,
+      completedAt: new Date().toISOString(),
+      errorMessage: status === "error" ? message : null,
+      notes,
+    }
+    if (status === "error") {
+      addLog(`Render -> Detect Handoff benchmark でエラーが発生しました: ${message}`)
+    } else {
+      addLog("Render -> Detect Handoff benchmark を停止しました。")
+    }
+  } finally {
+    renderDetectHandoffCancelRequested = false
+    renderAll({ skipObjRender: true })
+  }
+}
+
+function stopRenderDetectHandoffBenchmark() {
+  if (state.renderDetectHandoff.status === "running") {
+    renderDetectHandoffCancelRequested = true
+  }
+}
+
+async function throwIfRenderDetectHandoffCancelled() {
+  await waitForBenchmarkUiTick()
+  if (renderDetectHandoffCancelRequested) {
+    throw new Error("cancelled")
+  }
+}
+
+async function runRenderDetectHandoffCase(input: {
+  caseId: string
+  label: string
+  handoffStrategy: string
+  context: Awaited<ReturnType<typeof prepareDetectPerformanceBenchmarkContext>>
+  options: RenderDetectHandoffOptions
+  runMeasuredSample: (sample: RenderDetectHandoffSample, canvas: HTMLCanvasElement) => Promise<void>
+}): Promise<RenderDetectHandoffCaseResult> {
+  const canvas = createBenchmarkCanvas(
+    input.context.renderSettings.detectCanvasWidth,
+    input.context.renderSettings.detectCanvasHeight,
+  )
+  const samples: RenderDetectHandoffSample[] = []
+  await runRenderDetectHandoffPhases(input.options, async (phase, runIndex) => {
+    const sample = createEmptyRenderDetectHandoffSample(phase, runIndex)
+    try {
+      await input.runMeasuredSample(sample, canvas)
+    } catch (error) {
+      sample.detected = false
+      sample.landmarkCount = 0
+      sample.errorMessage = error instanceof Error ? error.message : String(error)
+    }
+    samples.push(sample)
+  })
+
+  return buildRenderDetectHandoffCaseResult({
+    caseId: input.caseId,
+    label: input.label,
+    handoffStrategy: input.handoffStrategy,
+    canvasWidth: canvas.width,
+    canvasHeight: canvas.height,
+    options: input.options,
+    samples,
+    notes: [],
+  })
+}
+
+async function runDoubleBufferHandoffCase(
+  context: Awaited<ReturnType<typeof prepareDetectPerformanceBenchmarkContext>>,
+  options: RenderDetectHandoffOptions,
+): Promise<RenderDetectHandoffCaseResult> {
+  const canvasA = createBenchmarkCanvas(context.renderSettings.detectCanvasWidth, context.renderSettings.detectCanvasHeight)
+  const canvasB = createBenchmarkCanvas(context.renderSettings.detectCanvasWidth, context.renderSettings.detectCanvasHeight)
+  measureHandoffRender(createEmptyRenderDetectHandoffSample("warmup", -1), canvasA, context)
+  let detectCanvas = canvasA
+  let renderCanvas = canvasB
+  const samples: RenderDetectHandoffSample[] = []
+
+  await runRenderDetectHandoffPhases(options, async (phase, runIndex) => {
+    const sample = createEmptyRenderDetectHandoffSample(phase, runIndex)
+    const totalStartMs = performance.now()
+    try {
+      // Double buffer case intentionally detects the previously rendered canvas and renders the next buffer separately.
+      measureHandoffDetect(sample, detectCanvas, context.detector)
+      measureHandoffRender(sample, renderCanvas, context)
+      sample.totalMs = performance.now() - totalStartMs
+      const nextDetectCanvas = renderCanvas
+      renderCanvas = detectCanvas
+      detectCanvas = nextDetectCanvas
+    } catch (error) {
+      sample.detected = false
+      sample.landmarkCount = 0
+      sample.totalMs = performance.now() - totalStartMs
+      sample.errorMessage = error instanceof Error ? error.message : String(error)
+    }
+    samples.push(sample)
+  })
+
+  return buildRenderDetectHandoffCaseResult({
+    caseId: `handoff_double_buffer_previous_frame_${context.renderSettings.detectCanvasWidth}`,
+    label: `double buffer / previous frame detect / ${context.renderSettings.detectCanvasWidth}`,
+    handoffStrategy: "double_buffer_previous_frame",
+    canvasWidth: canvasA.width,
+    canvasHeight: canvasA.height,
+    options,
+    samples,
+    notes: ["detectMs は前回render済みcanvas、renderMs は次bufferへのOBJ renderを測る"],
+  })
+}
+
+async function runRenderDetectHandoffPhases(
+  options: RenderDetectHandoffOptions,
+  runSample: (phase: RenderDetectHandoffPhase, runIndex: number) => Promise<void> | void,
+) {
+  for (const phase of ["warmup", "measured"] as const) {
+    const runCount = phase === "warmup" ? options.warmupRuns : options.measuredRuns
+    for (let runIndex = 0; runIndex < runCount; runIndex += 1) {
+      if (renderDetectHandoffCancelRequested) {
+        throw new Error("cancelled")
+      }
+      await runSample(phase, runIndex)
+      await waitForBenchmarkUiTick()
+    }
+  }
+}
+
+function measureHandoffRender(
+  sample: RenderDetectHandoffSample,
+  canvas: HTMLCanvasElement,
+  context: Awaited<ReturnType<typeof prepareDetectPerformanceBenchmarkContext>>,
+) {
+  const renderStartMs = performance.now()
+  const renderSummary = renderRenderedIdealCanvasTo(
+    canvas,
+    getObjPoseSyncRotationCenter(),
+    context.p,
+    {
+      directPose: true,
+      appearanceOverride: context.appearance,
+      forceRenderResolution: true,
+    },
+  )
+  sample.renderMs = performance.now() - renderStartMs
+  if (renderSummary.status !== "rendered") {
+    throw new Error(renderSummary.errorMessage ?? renderSummary.status)
+  }
+}
+
+function measureHandoffDetect(
+  sample: RenderDetectHandoffSample,
+  imageSource: Parameters<FaceLandmarker["detect"]>[0],
+  detector: FaceLandmarker,
+) {
+  const detectStartMs = performance.now()
+  const result = detector.detect(imageSource)
+  sample.detectMs = performance.now() - detectStartMs
+  sample.detected = result.faceLandmarks.length > 0
+  sample.landmarkCount = result.faceLandmarks[0]?.length ?? 0
+}
+
+function createBenchmarkCanvas(width: number, height: number) {
+  const canvas = document.createElement("canvas")
+  canvas.width = width
+  canvas.height = height
+  return canvas
+}
+
+function createEmptyRenderDetectHandoffSample(
+  phase: RenderDetectHandoffPhase,
+  runIndex: number,
+): RenderDetectHandoffSample {
+  return {
+    runIndex,
+    phase,
+    renderMs: null,
+    waitMs: null,
+    bitmapCreateMs: null,
+    copyMs: null,
+    readbackMs: null,
+    detectMs: null,
+    totalMs: null,
+    detected: null,
+    landmarkCount: null,
+    errorMessage: null,
+  }
+}
+
+function buildRenderDetectHandoffCaseResult(input: {
+  caseId: string
+  label: string
+  handoffStrategy: string
+  canvasWidth: number
+  canvasHeight: number
+  options: RenderDetectHandoffOptions
+  samples: RenderDetectHandoffSample[]
+  notes: string[]
+}): RenderDetectHandoffCaseResult {
+  const measuredSamples = input.samples.filter((sample) => sample.phase === "measured")
+  return {
+    caseId: input.caseId,
+    label: input.label,
+    handoffStrategy: input.handoffStrategy,
+    canvasWidth: input.canvasWidth,
+    canvasHeight: input.canvasHeight,
+    warmupRuns: input.options.warmupRuns,
+    measuredRuns: input.options.measuredRuns,
+    detectedCount: measuredSamples.filter((sample) => sample.detected === true).length,
+    failedCount: measuredSamples.filter((sample) => sample.errorMessage || sample.detected === false).length,
+    summary: buildRenderDetectHandoffCaseSummary(measuredSamples),
+    samples: input.samples,
+    notes: input.notes,
+  }
+}
+
+function buildRenderDetectHandoffCaseSummary(
+  samples: RenderDetectHandoffSample[],
+): RenderDetectHandoffCaseSummary {
+  return {
+    renderMs: summarizeRenderDetectHandoffSamples(samples, "renderMs"),
+    waitMs: summarizeRenderDetectHandoffSamples(samples, "waitMs"),
+    bitmapCreateMs: summarizeRenderDetectHandoffSamples(samples, "bitmapCreateMs"),
+    copyMs: summarizeRenderDetectHandoffSamples(samples, "copyMs"),
+    readbackMs: summarizeRenderDetectHandoffSamples(samples, "readbackMs"),
+    detectMs: summarizeRenderDetectHandoffSamples(samples, "detectMs"),
+    totalMs: summarizeRenderDetectHandoffSamples(samples, "totalMs"),
+  }
+}
+
+function summarizeRenderDetectHandoffSamples(
+  samples: RenderDetectHandoffSample[],
+  field: RenderDetectHandoffTimingField,
+): DetectPerformanceTimingSummary {
+  const values = samples
+    .map((sample) => sample[field])
+    .filter((value): value is number => value !== null && Number.isFinite(value))
+    .sort((a, b) => a - b)
+  if (values.length === 0) {
+    return { avgMs: null, p50Ms: null, p95Ms: null, minMs: null, maxMs: null }
+  }
+  return {
+    avgMs: roundForState(averageNumbers(values)) ?? null,
+    p50Ms: roundForState(getPercentile(values, 0.5)) ?? null,
+    p95Ms: roundForState(getPercentile(values, 0.95)) ?? null,
+    minMs: roundForState(values[0]) ?? null,
+    maxMs: roundForState(values[values.length - 1]) ?? null,
+  }
+}
+
+function buildRenderDetectHandoffExport(
+  context: Awaited<ReturnType<typeof prepareDetectPerformanceBenchmarkContext>>,
+  cases: RenderDetectHandoffCaseResult[],
+  notes: string[],
+  options: RenderDetectHandoffOptions,
+): RenderDetectHandoffExport {
+  const profile = getPoseMappingProfileRawSummary()
+  return {
+    type: "pose_mapping_render_detect_handoff_debug_v1",
+    createdAt: new Date().toISOString(),
+    source: {
+      objFileName: state.objFile.fileName,
+      mp4FileName: state.liveVideo.fileName,
+      profileFileName: state.poseMappingProfile.fileName,
+    },
+    profile: {
+      schemaVersion: profile.schemaVersion,
+      modelType: profile.modelType,
+      modelName: profile.modelName,
+      datasetKind: profile.datasetKind,
+    },
+    runtime: {
+      P_camera: roundPoseMappingPose(context.P_camera),
+      p: roundPoseMappingPose(context.p),
+      P_confirm: roundPoseForState(context.P_confirm),
+      poseDiff: roundPoseMappingDiff(context.poseDiff),
+    },
+    landmarker: context.landmarker,
+    renderSettings: {
+      detectCanvasWidth: context.detectCanvas.width,
+      detectCanvasHeight: context.detectCanvas.height,
+      renderResolutionSource: context.renderSettings.renderResolutionSource,
+      detectCanvasMatchesProfile: context.renderSettings.detectCanvasMatchesProfile,
+    },
+    benchmarkOptions: options,
+    cases,
+    conclusionHints: buildRenderDetectHandoffConclusionHints(cases),
+    notes,
+  }
+}
+
+function buildRenderDetectHandoffConclusionHints(
+  cases: RenderDetectHandoffCaseResult[],
+): RenderDetectHandoffConclusionHints {
+  const detectOnlyAvgMs = findDetectOnlyRenderedIdealAvgMs()
+  const immediateCase = cases.find((caseResult) => caseResult.handoffStrategy === "immediate") ?? null
+  const bestCase = cases
+    .filter((caseResult) => caseResult.summary.totalMs.avgMs !== null)
+    .slice()
+    .sort((a, b) => (a.summary.totalMs.avgMs ?? Infinity) - (b.summary.totalMs.avgMs ?? Infinity))[0] ?? null
+  return {
+    detectOnlyAvgMs,
+    immediateRenderDetectAvgMs: immediateCase?.summary.detectMs.avgMs ?? null,
+    bestHandoffStrategy: bestCase?.handoffStrategy ?? null,
+    bestHandoffTotalAvgMs: bestCase?.summary.totalMs.avgMs ?? null,
+    bestHandoffDetectAvgMs: bestCase?.summary.detectMs.avgMs ?? null,
+  }
+}
+
+function findDetectOnlyRenderedIdealAvgMs() {
+  const caseResult = state.detectPerformance.result?.cases.find((item) =>
+    item.caseId.startsWith("detect_only_rendered_ideal_"),
+  )
+  return caseResult?.summary.avgMs ?? null
+}
+
+function waitForAnimationFrameOnce() {
+  return new Promise<void>((resolve) => {
+    window.requestAnimationFrame(() => resolve())
+  })
+}
+
+function waitForTimeoutZero() {
+  return new Promise<void>((resolve) => {
+    window.setTimeout(resolve, 0)
+  })
 }
 
 function buildPoseMappingQualityGate(): PoseMappingQualityGate {
@@ -7854,12 +8469,21 @@ function renderPoseMappingDebugTab() {
   const runtime = state.poseMappingRuntime
   const canDownload = profileState.loaded && runtime.status !== "idle"
   const detectPerformance = state.detectPerformance
+  const handoff = state.renderDetectHandoff
   const canRunDetectPerformance =
     detectPerformance.status !== "running" &&
+    handoff.status !== "running" &&
     profileState.loaded &&
     runtime.status === "completed" &&
     runtime.p !== null
   const canDownloadDetectPerformance = detectPerformance.result !== null
+  const canRunHandoff =
+    handoff.status !== "running" &&
+    detectPerformance.status !== "running" &&
+    profileState.loaded &&
+    runtime.status === "completed" &&
+    runtime.p !== null
+  const canDownloadHandoff = handoff.result !== null
 
   container.innerHTML = `
     <section class="debug-section">
@@ -7945,6 +8569,16 @@ function renderPoseMappingDebugTab() {
         <button class="small-button" type="button" data-action="detect-performance-download-csv" ${canDownloadDetectPerformance ? "" : "disabled"}>Download Detect Performance CSV（検出速度CSVダウンロード）</button>
       </div>
       ${renderDetectPerformanceSummaryHtml()}
+      <div class="debug-subsection">
+        <h4>Render -> Detect Handoff（レンダーから検出への受け渡し）</h4>
+        <div class="button-row">
+          <button class="small-button" type="button" data-action="handoff-benchmark-run" ${canRunHandoff ? "" : "disabled"}>Run Handoff Benchmark（受け渡しベンチマーク実行）</button>
+          <button class="small-button" type="button" data-action="handoff-benchmark-stop" ${handoff.status === "running" ? "" : "disabled"}>Stop Handoff Benchmark（受け渡しベンチマーク停止）</button>
+          <button class="small-button" type="button" data-action="handoff-benchmark-download-json" ${canDownloadHandoff ? "" : "disabled"}>Download Handoff JSON（受け渡しJSONダウンロード）</button>
+          <button class="small-button" type="button" data-action="handoff-benchmark-download-csv" ${canDownloadHandoff ? "" : "disabled"}>Download Handoff CSV（受け渡しCSVダウンロード）</button>
+        </div>
+        ${renderRenderDetectHandoffSummaryHtml()}
+      </div>
     </section>
 
     <section class="debug-section">
@@ -8033,6 +8667,98 @@ function renderDetectPerformanceCaseSummariesHtml(cases: DetectPerformanceCaseRe
 
 function formatDetectPerformanceTimingSummary(summary: DetectPerformanceTimingSummary) {
   return `avg ${formatRealtimeNullableNumber(summary.avgMs)} / p50 ${formatRealtimeNullableNumber(summary.p50Ms)} / p95 ${formatRealtimeNullableNumber(summary.p95Ms)} / min ${formatRealtimeNullableNumber(summary.minMs)} / max ${formatRealtimeNullableNumber(summary.maxMs)}`
+}
+
+function renderRenderDetectHandoffSummaryHtml() {
+  const handoff = state.renderDetectHandoff
+  const result = handoff.result
+  const runtime = result?.runtime ?? {
+    P_camera: roundPoseMappingPose(state.poseMappingRuntime.P_camera),
+    p: roundPoseMappingPose(state.poseMappingRuntime.p),
+    P_confirm: roundPoseForState(state.poseMappingRuntime.P_confirm),
+    poseDiff: roundPoseMappingDiff(state.poseMappingRuntime.poseDiff),
+  }
+  const landmarker = result?.landmarker ?? {
+    runningMode: "IMAGE" as const,
+    requestedDelegate: getRenderedIdealRequestedDelegate(),
+    instanceReused: renderedIdealFaceLandmarker !== null,
+    createCount: renderedIdealFaceLandmarkerCreateCount,
+  }
+  const renderSettings = result?.renderSettings ?? {
+    detectCanvasWidth: state.poseMappingRuntime.detectCanvasWidth,
+    detectCanvasHeight: state.poseMappingRuntime.detectCanvasHeight,
+    renderResolutionSource: state.poseMappingRuntime.renderSettings?.renderResolutionSource ?? null,
+    detectCanvasMatchesProfile: state.poseMappingRuntime.renderSettings?.detectCanvasMatchesProfile ?? false,
+  }
+
+  return `
+    <dl class="summary-list">
+      <div><dt>status</dt><dd>${escapeHtml(handoff.status)}</dd></div>
+      <div><dt>warmupRuns</dt><dd>${formatNullableCount(handoff.options.warmupRuns)}</dd></div>
+      <div><dt>measuredRuns</dt><dd>${formatNullableCount(handoff.options.measuredRuns)}</dd></div>
+      <div><dt>detectCanvasWidth</dt><dd>${formatNullableCount(renderSettings.detectCanvasWidth)}</dd></div>
+      <div><dt>detectCanvasHeight</dt><dd>${formatNullableCount(renderSettings.detectCanvasHeight)}</dd></div>
+      <div><dt>renderResolutionSource</dt><dd>${escapeHtml(renderSettings.renderResolutionSource ?? "-")}</dd></div>
+      <div><dt>detectCanvasMatchesProfile</dt><dd>${String(renderSettings.detectCanvasMatchesProfile)}</dd></div>
+      <div><dt>landmarker runningMode</dt><dd>${escapeHtml(landmarker.runningMode)}</dd></div>
+      <div><dt>requestedDelegate</dt><dd>${escapeHtml(landmarker.requestedDelegate)}</dd></div>
+      <div><dt>instanceReused</dt><dd>${String(landmarker.instanceReused)}</dd></div>
+      <div><dt>createCount</dt><dd>${formatNullableCount(landmarker.createCount)}</dd></div>
+      <div><dt>P_camera</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.P_camera))}</dd></div>
+      <div><dt>p</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.p))}</dd></div>
+      <div><dt>P_confirm</dt><dd>${escapeHtml(formatPose(runtime.P_confirm))}</dd></div>
+      <div><dt>poseDiff magnitude</dt><dd>${formatRealtimeNullableNumber(runtime.poseDiff.magnitude)}</dd></div>
+      <div><dt>error</dt><dd>${escapeHtml(handoff.errorMessage ?? "-")}</dd></div>
+    </dl>
+    ${renderRenderDetectHandoffCaseSummariesHtml(result?.cases ?? [])}
+    ${renderRenderDetectHandoffInterpretationHtml(result?.conclusionHints ?? null)}
+  `
+}
+
+function renderRenderDetectHandoffCaseSummariesHtml(cases: RenderDetectHandoffCaseResult[]) {
+  if (cases.length === 0) {
+    return `<p class="placeholder-text">受け渡しベンチマーク結果はまだありません。</p>`
+  }
+
+  return cases.map((caseResult) => `
+    <div class="debug-subsection">
+      <h4>${escapeHtml(caseResult.label)}</h4>
+      <dl class="summary-list">
+        <div><dt>caseId</dt><dd>${escapeHtml(caseResult.caseId)}</dd></div>
+        <div><dt>handoffStrategy</dt><dd>${escapeHtml(caseResult.handoffStrategy)}</dd></div>
+        <div><dt>canvas</dt><dd>${formatNullableCount(caseResult.canvasWidth)} x ${formatNullableCount(caseResult.canvasHeight)}</dd></div>
+        <div><dt>detectedCount</dt><dd>${formatNullableCount(caseResult.detectedCount)}</dd></div>
+        <div><dt>failedCount</dt><dd>${formatNullableCount(caseResult.failedCount)}</dd></div>
+        <div><dt>renderMs</dt><dd>${escapeHtml(formatDetectPerformanceTimingSummary(caseResult.summary.renderMs))}</dd></div>
+        <div><dt>waitMs</dt><dd>${escapeHtml(formatDetectPerformanceTimingSummary(caseResult.summary.waitMs))}</dd></div>
+        <div><dt>bitmapCreateMs</dt><dd>${escapeHtml(formatDetectPerformanceTimingSummary(caseResult.summary.bitmapCreateMs))}</dd></div>
+        <div><dt>copyMs</dt><dd>${escapeHtml(formatDetectPerformanceTimingSummary(caseResult.summary.copyMs))}</dd></div>
+        <div><dt>readbackMs</dt><dd>${escapeHtml(formatDetectPerformanceTimingSummary(caseResult.summary.readbackMs))}</dd></div>
+        <div><dt>detectMs</dt><dd>${escapeHtml(formatDetectPerformanceTimingSummary(caseResult.summary.detectMs))}</dd></div>
+        <div><dt>totalMs</dt><dd>${escapeHtml(formatDetectPerformanceTimingSummary(caseResult.summary.totalMs))}</dd></div>
+        <div><dt>notes</dt><dd>${escapeHtml(caseResult.notes.join(", ") || "-")}</dd></div>
+      </dl>
+    </div>
+  `).join("")
+}
+
+function renderRenderDetectHandoffInterpretationHtml(hints: RenderDetectHandoffConclusionHints | null) {
+  const best = hints?.bestHandoffStrategy
+    ? `現在の最速候補: ${hints.bestHandoffStrategy} / total avg ${formatRealtimeNullableNumber(hints.bestHandoffTotalAvgMs)} / detect avg ${formatRealtimeNullableNumber(hints.bestHandoffDetectAvgMs)}`
+    : "benchmark 実行後に最速候補を表示します。"
+  return `
+    <div class="debug-subsection">
+      <h4>Interpretation（解釈）</h4>
+      <p class="control-note">${escapeHtml(best)}</p>
+      <ul class="debug-note-list">
+        <li>detect only は軽いが immediate render -> detect が重い場合、render後の描画同期コストが detect 側に乗っている可能性が高いです。</li>
+        <li>requestAnimationFrame 後に軽くなる場合、1フレーム遅延または double buffer で本番可能性があります。</li>
+        <li>createImageBitmap で軽くなる場合、canvas から bitmap 化する受け渡しを検討できます。</li>
+        <li>double buffer で軽くなる場合、前フレームの renderedIdeal478 を使う構成を検討できます。</li>
+        <li>どの handoff でも重い場合、Canvas2D render + MediaPipe再検出の毎フレーム方式は厳しく、WebGL render または事前 profile 化を検討します。</li>
+      </ul>
+    </div>
+  `
 }
 
 function renderModeComparisonDebugTab() {
@@ -9847,6 +10573,21 @@ function createDefaultDetectPerformanceState(): DetectPerformanceState {
   }
 }
 
+function createDefaultRenderDetectHandoffState(): RenderDetectHandoffState {
+  return {
+    status: "idle",
+    startedAt: null,
+    completedAt: null,
+    errorMessage: null,
+    options: {
+      warmupRuns: RENDER_DETECT_HANDOFF_DEFAULT_OPTIONS.warmupRuns,
+      measuredRuns: RENDER_DETECT_HANDOFF_DEFAULT_OPTIONS.measuredRuns,
+    },
+    result: null,
+    notes: [],
+  }
+}
+
 function createObjPoseCalibrationSearchRange(): ObjPoseCalibrationSearchRange {
   return {
     rotationCenterX: { fixed: true, value: OBJ_POSE_CALIBRATION_RANGE.rotationCenterX.value },
@@ -10736,6 +11477,44 @@ function exportDetectPerformanceCsv() {
   renderAll()
 }
 
+function exportRenderDetectHandoffJson() {
+  const result = state.renderDetectHandoff.result
+  const status = getElement<HTMLElement>("[data-debug-export-status]")
+  if (!result) {
+    status.textContent = "受け渡しベンチマーク結果がありません。先に実行してください。"
+    renderAll()
+    return
+  }
+
+  downloadTextFile(
+    createRenderDetectHandoffFileName(result.createdAt, "json"),
+    JSON.stringify(result, null, 2),
+    "application/json;charset=utf-8",
+  )
+  status.textContent = "受け渡しJSONをダウンロードしました。"
+  addLog("受け渡しJSONをダウンロードしました。")
+  renderAll()
+}
+
+function exportRenderDetectHandoffCsv() {
+  const result = state.renderDetectHandoff.result
+  const status = getElement<HTMLElement>("[data-debug-export-status]")
+  if (!result) {
+    status.textContent = "受け渡しベンチマーク結果がありません。先に実行してください。"
+    renderAll()
+    return
+  }
+
+  downloadTextFile(
+    createRenderDetectHandoffFileName(result.createdAt, "csv"),
+    buildRenderDetectHandoffCsv(result),
+    "text/csv;charset=utf-8",
+  )
+  status.textContent = "受け渡しCSVをダウンロードしました。"
+  addLog("受け渡しCSVをダウンロードしました。")
+  renderAll()
+}
+
 function createModeComparisonPreviewFileName(snapshot: ModeComparisonPreviewSnapshot) {
   const frameIndex = String(snapshot.frameIndex).padStart(5, "0")
   const mediaTime = formatNumber(snapshot.mediaTimeSec).replaceAll(".", "_")
@@ -10755,6 +11534,58 @@ function createModeComparisonFileName(createdAt: string, extension: "json" | "cs
 
 function createDetectPerformanceFileName(createdAt: string, extension: "json" | "csv") {
   return `pose_mapping_detect_performance_${formatTimestampForFileName(createdAt)}.${extension}`
+}
+
+function createRenderDetectHandoffFileName(createdAt: string, extension: "json" | "csv") {
+  return `pose_mapping_render_detect_handoff_${formatTimestampForFileName(createdAt)}.${extension}`
+}
+
+function buildRenderDetectHandoffCsv(result: RenderDetectHandoffExport) {
+  const headers = [
+    "caseId",
+    "label",
+    "handoffStrategy",
+    "canvasWidth",
+    "canvasHeight",
+    "runIndex",
+    "phase",
+    "renderMs",
+    "waitMs",
+    "bitmapCreateMs",
+    "copyMs",
+    "readbackMs",
+    "detectMs",
+    "totalMs",
+    "detected",
+    "landmarkCount",
+    "errorMessage",
+  ]
+  const rows = result.cases.flatMap((caseResult) =>
+    caseResult.samples.map((sample) => [
+      caseResult.caseId,
+      caseResult.label,
+      caseResult.handoffStrategy,
+      caseResult.canvasWidth,
+      caseResult.canvasHeight,
+      sample.runIndex,
+      sample.phase,
+      sample.renderMs ?? "",
+      sample.waitMs ?? "",
+      sample.bitmapCreateMs ?? "",
+      sample.copyMs ?? "",
+      sample.readbackMs ?? "",
+      sample.detectMs ?? "",
+      sample.totalMs ?? "",
+      sample.detected ?? "",
+      sample.landmarkCount ?? "",
+      sample.errorMessage ?? "",
+    ]),
+  )
+
+  return [
+    headers.join(","),
+    ...rows.map((row) => row.map(formatCsvCell).join(",")),
+  ].join("\n")
 }
 
 function buildDetectPerformanceCsv(result: DetectPerformanceExport) {

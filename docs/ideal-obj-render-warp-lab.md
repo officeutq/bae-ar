@@ -535,6 +535,39 @@ FaceLandmarker は benchmark 中に毎回作り直さず、既存の IMAGE mode�
 
 `Download Detect Performance CSV（検出速度CSVダウンロード）` は 1 行 1 sample で、`caseId`、`label`、`sourceKind`、canvas size、`runIndex`、`phase`、`renderMs`、`detectMs`、`previewMs`、`overlayMs`、`toDataUrlMs`、`totalMs`、`detected`、`landmarkCount`、`errorMessage` を出力します。
 
+## Render -> Detect Handoff debug
+
+`Detect Performance（検出速度）` の結果、`detect only / rendered ideal` は軽い一方、`render + detect` では render 直後の `detectMs` が大きくなる可能性が見えました。
+
+そのため、`Pose Mapping（姿勢対応）` Debug タブの `Detect Performance（検出速度）` セクション内に、`Render -> Detect Handoff（レンダーから検出への受け渡し）` benchmark を追加しました。
+
+目的は、Canvas2D OBJ render 直後に MediaPipe `detect()` を呼ぶことで、描画確定、GPU同期、ピクセル転送、readback 系の待ち時間がどこに乗っているかを切り分けることです。通常の poseMapping runtime は profile 条件の detect canvas を維持し、`render -> detect` 経路を勝手に非同期化しません。
+
+比較する handoff strategy:
+
+- `immediate`: OBJ render 後、同じ tick で即 `detect()`
+- `requestAnimationFrame_1`: OBJ render 後、`requestAnimationFrame` を1回待ってから `detect()`
+- `requestAnimationFrame_2`: OBJ render 後、`requestAnimationFrame` を2回待ってから `detect()`
+- `setTimeout_0`: OBJ render 後、`setTimeout(0)` を待ってから `detect()`
+- `createImageBitmap`: OBJ render 後、`createImageBitmap(detectCanvas)` を作成し、可能なら `detect(imageBitmap)`
+- `copy_to_second_canvas`: OBJ render 後、別 canvas へ `drawImage()` でコピーしてから `detect(secondCanvas)`
+- `double_buffer_previous_frame`: 2つの offscreen canvas を交互に使い、前回 render 済み canvas を `detect()` しながら次 buffer に render
+- `explicit_readback`: OBJ render 後、`getImageData(0, 0, 1, 1)` で小範囲 readback を測ってから `detect()`
+
+計測範囲:
+
+- 各 case は `renderMs`、`waitMs`、`bitmapCreateMs`、`copyMs`、`readbackMs`、`detectMs`、`totalMs` を分けて保存する
+- preview 生成、overlay、`toDataURL()`、毎 run ごとの DOM update は含めない
+- FaceLandmarker は既存の IMAGE mode 用 `renderedIdealFaceLandmarker` を再利用し、benchmark 中に毎回作り直さない
+- GPU delegate 指定は既存の `delegate: "GPU"` を維持する
+- raw 478 landmarks は sample ごとに保存せず、timing、detected、landmarkCount、errorMessage を保存する
+
+`Download Handoff JSON（受け渡しJSONダウンロード）` は `pose_mapping_render_detect_handoff_debug_v1` として、source、profile、runtime pose、landmarker、render settings、benchmark options、case summaries、per-run timing samples、簡易 conclusion hints を出力します。
+
+`Download Handoff CSV（受け渡しCSVダウンロード）` は 1 行 1 sample で、`caseId`、`label`、`handoffStrategy`、canvas size、`runIndex`、`phase`、`renderMs`、`waitMs`、`bitmapCreateMs`、`copyMs`、`readbackMs`、`detectMs`、`totalMs`、`detected`、`landmarkCount`、`errorMessage` を出力します。
+
+この検証は速度確認用であり、poseMappingProfile evaluator、p,P dataset 生成、mode comparison には影響させません。実運用への適用判断は handoff benchmark の結果を見てから行います。
+
 ## 関連ドキュメント
 
 - [Ideal Reference Mesh Warp Lab](ideal-reference-mesh-warp-lab.md)
