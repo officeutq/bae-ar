@@ -185,6 +185,86 @@ continuityJumpMax、軸別破綻、端姿勢、TypeScript 移植性を見て選�
 `obj_pose_mapping_posewise_evaluation.csv`、`obj_pose_mapping_excluded_samples.csv`、
 `obj_pose_mapping_filtered_samples.csv`、`pose_mapping_profile_candidate.json` です。
 
+## poseMappingProfile runtime 検証
+
+ラボでは Colab / Python 側で作成した `pose_mapping_profile_candidate.json` を
+`poseMappingProfile（姿勢対応プロファイル）` として JSON 読み込みできます。
+現在対応する `schemaVersion` は `pose_mapping_profile_candidate_v1`、`modelType` は
+`decision_tree_gate_polynomial_degree2_ridge` のみです。未対応 `modelType` は UI 上の error として
+表示し、アプリ全体は落としません。
+
+検証フローは以下です。
+
+```text
+P_camera（現在顔の姿勢）
+  -> poseMappingProfile.evaluate()
+  -> p（OBJ に与える描画姿勢）
+  -> OBJ render
+  -> MediaPipe detect() / IMAGE mode（静止画モード）
+  -> P_confirm / renderedIdeal478
+```
+
+runtime 検証では、MediaPipe `detect()` に渡す canvas と UI preview canvas を分離します。
+`detect()` 用 canvas は画面表示サイズに追従させず、profile / dataset metadata のレンダー条件で固定します。
+renderResolution の優先順は以下です。
+
+1. `poseMappingProfile.datasetMetadata.renderAppearance.applied.renderResolution.width / height`
+2. `poseMappingProfile.datasetMetadata.renderSettings.canvasWidth / canvasHeight`
+3. fallback default `1179 x 1179`
+
+`P_confirm` は、この detect 用 offscreen canvas に `p` で理想 OBJ をレンダーし、その画像を
+MediaPipe `detect()` / IMAGE mode に渡して取得します。UI の `現姿勢理想478プレビュー` は
+offscreen canvas の画像を fit 表示し、`renderedIdeal478` は detect canvas 基準の normalized landmark
+として保持したまま、preview canvas 座標へ変換して overlay 表示します。preview canvas に変換済みの
+座標だけを debug JSON に保存しません。
+
+runtime 側で適用する renderAppearance は、profile metadata に存在する範囲で
+`backgroundColor`、`skinColor`、`material.mode`、`material.diffuse`、`material.ambient`、
+`lighting.mode`、`lighting.ambientIntensity`、`lighting.keyLightIntensity`、
+`lighting.keyLightDirection`、`camera.scale`、`camera.verticalOffset`、`renderResolution` です。
+Canvas2D renderer がまだ物理的に実装していない `material.specular`、`lighting.castShadow`、
+`camera.projection`、`camera.fovDeg` は `notAppliedRenderAppearanceFields` に記録します。
+
+現在顔の解析は `detectForVideo()` / VIDEO mode（動画モード）を使います。レンダー理想顔の再検出は、
+OBJ を canvas にレンダーした静止画に対して `detect()` / IMAGE mode（静止画モード）を使います。
+この使い分けは、現在顔入力とレンダー画像入力の実行条件を混同しないための固定ルールです。
+
+左ペインは操作中心です。置くものは `OBJ読込`、`poseMappingProfile読込（関数読込）`、`MP4読込`、
+必要な実行 / 停止 / cancel 操作、既存の `モード比較` 操作です。`poseMappingProfile` の詳細、
+`P_camera / p / P_confirm`、`pose diff`、`renderedIdeal478` 詳細、専用 debug download は左ペインに置きません。
+
+右ペイン Debug には `Pose Mapping（姿勢対応）` タブを置き、以下を集約します。
+
+- Profile info: loaded、filename、schemaVersion、modelType、modelName、datasetKind、inputFeatures、target、errorSummary、outlierFilterSummary、poseRangeAfter
+- Runtime input: `P_camera`、範囲制限後の `P_camera`、clampApplied、quality gate
+- Profile output: `p`、selectedLeaf、used expert、usedFallback、evaluator warnings
+- Render confirm: detectCanvasWidth / detectCanvasHeight、previewCanvasWidth / previewCanvasHeight、renderResolutionSource、detectCanvasMatchesProfile、profileCanvasWidth / profileCanvasHeight、適用 renderAppearance、notAppliedRenderAppearanceFields、`P_confirm`、`P_confirm - P_camera` の pose diff、renderedIdeal478 status、profileEvaluateMs、renderMs、detectMs、totalMs
+- Download: `pose_mapping_runtime_debug_v1` JSON download
+
+`Pose Mapping（姿勢対応）` タブには専用の
+`Download Pose Mapping Debug（姿勢対応デバッグをダウンロード）` を置きます。この export は既存の
+`モード比較` タブの JSON / CSV download とは別の `pose_mapping_runtime_debug_v1` JSON です。
+`renderSettings` には detectCanvasWidth / detectCanvasHeight、previewCanvasWidth / previewCanvasHeight、
+renderResolutionSource、detectCanvasMatchesProfile、profileCanvasWidth / profileCanvasHeight を含めます。
+`renderAppearanceApplied` には runtime 側で適用したレンダー見た目条件と
+notAppliedRenderAppearanceFields を含めます。最新フレームの `current478` と `renderedIdeal478` は
+必要最小限の確認用として含めてよいですが、`renderedIdeal478` は detect canvas 基準の normalized
+landmark として保存し、preview canvas に変換済みの座標だけを保存しません。毎フレーム履歴として
+大量に保存しません。
+
+Live タブの旧 `現姿勢OBJ` 欄は使わず、`現姿勢理想478プレビュー` に置き換えます。このプレビューは
+`poseMappingProfile` で得た `p` により理想OBJをレンダーし、そのレンダー画像から得た
+`renderedIdeal478` を同じレンダー画像上に overlay 表示します。preview 表示は Live タブに一本化し、
+右ペイン `Pose Mapping（姿勢対応）` タブには画像 preview を置きません。Pose Mapping タブには
+詳細 debug と download を残し、preview の代わりに Live タブへ移動済みである短い案内だけを表示します。
+
+Live タブの preview は detect 用 offscreen canvas の画像を aspect-fit で表示します。source image の縦横比を
+維持して preview 領域に収め、余白が出る場合は中央寄せにします。`renderedIdeal478` overlay は
+detect canvas 基準の normalized landmark を preview の displayed content rect へ変換して描画します。
+preview canvas 全体へ単純に `x * previewWidth` / `y * previewHeight` で描画して縦横比を崩す実装にはしません。
+ライブ現在顔への重ね表示と warp（変形加工）は次段階の TODO とし、この段階では実装しません。
+preview PNG download は未実装 TODO です。
+
 初期 profile:
 
 - `current`: 既存レンダー条件の baseline

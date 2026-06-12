@@ -177,6 +177,11 @@ h3 {
   gap: 14px;
 }
 
+.pose-mapping-debug {
+  display: grid;
+  gap: 14px;
+}
+
 .debug-section {
   display: grid;
   gap: 8px;
@@ -409,6 +414,22 @@ h3 {
   min-height: 300px;
 }
 
+.pose-mapping-live-image {
+  background: #f8fafc;
+  display: none;
+  grid-area: 1 / 1;
+  height: 100%;
+  max-height: 62vh;
+  max-width: 100%;
+  min-height: 300px;
+  object-fit: contain;
+  width: 100%;
+}
+
+.live-obj-preview-stage .obj-preview-canvas {
+  display: none !important;
+}
+
 .obj-preview-canvas:active {
   cursor: grabbing;
 }
@@ -436,6 +457,10 @@ h3 {
 }
 
 .obj-preview-stage[data-preview-status="ready"] .obj-preview-canvas {
+  display: block;
+}
+
+.live-obj-preview-stage[data-preview-status="ready"] .pose-mapping-live-image {
   display: block;
 }
 
