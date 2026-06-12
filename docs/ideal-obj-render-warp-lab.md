@@ -1,5 +1,16 @@
 # Ideal OBJ Render Warp Lab
 
+## placement source debug
+
+Pose Mapping の本格的な placement alignment に進む前に、`FaceLandmarkerResult.facialTransformationMatrixes[0]` の実体を debug JSON と UI で確認する。
+
+- JS 版 `Matrix` object の `constructorName`、`keys`、`rows`、`columns`、`data` / `values`、`rawObjectPreview` を出す。
+- 16 個の matrix values が取得できた場合は、column-major と row-major の両方で translation / scale 候補を算出する。
+- bounds-based placement は本線の alignment には使わず、`current478` / `renderedIdeal478` の外枠から作る debug-only の比較基準として扱う。
+- matrix translation と bounds center、matrix scale と bounds height の差分を比較して、matrix placement が実際の顔位置・大きさと連動しているか確認する。
+- matrix raw 16 値を取得できない場合、または matrix placement が identity のまま bounds center / size と明確に合わない場合は `alignmentStatus = skipped_invalid_placement` とし、`alignedRenderedIdealVisible`、correspondence lines、mesh target を表示しない。
+- overlay の lifecycle gate は従来どおり `generationMatch`、`tokenMatch`、`renderSucceeded`、`detectSucceeded`、`fallbackRenderedIdealUsed === false`、`staleCanvasDetected === false` を通す。
+
 ## 目的
 
 `tools/ideal-obj-render-warp-lab` は、FaceBuilder + Blender sculpt で作成した `テスト.obj` のような OBJ 3D 形状ファイルを、BAE AR の neutral ideal head（無表情基準の理想頭部）候補として使えるか検証する debug / research lab です。

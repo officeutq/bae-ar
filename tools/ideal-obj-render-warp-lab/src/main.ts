@@ -296,6 +296,26 @@ type MatrixDebugSummary = {
   translation: { x: number; y: number; z: number } | null
   scale: { x: number; y: number; z: number; uniform: number } | null
   rotationDeg: ReferencePose
+  raw: MatrixRawDebug
+  columnMajor: MatrixPlacementCandidate
+  rowMajor: MatrixPlacementCandidate
+}
+
+type MatrixRawDebug = {
+  exists: boolean
+  constructorName: string | null
+  isArray: boolean
+  keys: string[]
+  data: number[] | null
+  values: number[] | null
+  rows: number | null
+  columns: number | null
+  rawObjectPreview: string | null
+}
+
+type MatrixPlacementCandidate = {
+  translation: { x: number; y: number; z: number } | null
+  scale: { x: number; y: number; z: number; uniform: number } | null
 }
 
 type ReferenceBlendshape = {
@@ -1060,6 +1080,45 @@ type PoseMappingBounds = {
   width: number
   height: number
 }
+type BoundsPlacement = {
+  center: { x: number; y: number }
+  width: number
+  height: number
+  scaleByHeight: number
+  scaleByWidth: number
+  scaleByDiag: number
+}
+type PlacementDebugSide = {
+  matrixRaw: MatrixRawDebug
+  matrixColumnMajor: MatrixPlacementCandidate
+  matrixRowMajor: MatrixPlacementCandidate
+  boundsPlacement: BoundsPlacement | null
+}
+type PlacementDebugComparison = {
+  columnMajorTranslationVsBoundsCenter: {
+    currentDx: number | null
+    currentDy: number | null
+    idealDx: number | null
+    idealDy: number | null
+  }
+  rowMajorTranslationVsBoundsCenter: {
+    currentDx: number | null
+    currentDy: number | null
+    idealDx: number | null
+    idealDy: number | null
+  }
+  matrixScaleVsBoundsScale: {
+    currentColumnMajorScaleToBoundsHeight: number | null
+    idealColumnMajorScaleToBoundsHeight: number | null
+    currentRowMajorScaleToBoundsHeight: number | null
+    idealRowMajorScaleToBoundsHeight: number | null
+  }
+}
+type PlacementDebugState = {
+  current: PlacementDebugSide
+  ideal: PlacementDebugSide
+  comparison: PlacementDebugComparison
+}
 type MediaPipeFacePlacement = {
   status: "detected" | "missing" | "invalid"
   source: "facialTransformationMatrix" | "faceDetectorBoundingBox" | "unknown"
@@ -1096,6 +1155,7 @@ type PoseMappingAlignmentState = {
   alignedIdealBoundsAspectWork: PoseMappingBounds | null
   alignedRenderedIdealBoundsImage: PoseMappingBounds | null
   displayedContentRect: Rect | null
+  placementDebug: PlacementDebugState
   excludedReasonCounts: PoseMappingExcludedReasonCounts
   displacementSummary: PoseMappingDisplacementSummary
   anchorIndices: number[]
@@ -1955,6 +2015,8 @@ const ALIGNMENT_MIN_ANCHOR_COUNT = 24
 const ALIGNMENT_UNSAFE_MIN = -0.25
 const ALIGNMENT_UNSAFE_MAX = 1.25
 const ALIGNMENT_LARGE_DISPLACEMENT_THRESHOLD = 0.18
+const PLACEMENT_MATRIX_BOUNDS_CENTER_MISMATCH_THRESHOLD = 0.05
+const PLACEMENT_IDENTITY_EPSILON = 1e-6
 const MEDIAPIPE_TIMESTAMP_STEP_MS = 1000 / 30
 const LIVE_AUTO_ANALYSIS_INTERVAL_SEC = 0.35
 const DETECT_PERFORMANCE_DEFAULT_OPTIONS: DetectPerformanceOptions = {
@@ -6564,6 +6626,7 @@ function buildPoseMappingAlignment(
   alignment: PoseMappingAlignmentState
 } {
   const videoAspectRatio = getLiveVideoAspectRatio()
+  const emptyPlacementDebug = buildPlacementDebugState(currentMatrix, null, idealMatrix, null)
   if (!currentLandmarksImage || currentLandmarksImage.length !== REQUIRED_LANDMARK_COUNT) {
     return {
       alignedRenderedIdeal478: null,
@@ -6574,10 +6637,12 @@ function buildPoseMappingAlignment(
         videoAspectRatio,
         renderAspectRatio,
         renderedIdealStatus: getRenderedIdealStatusFromLandmarks(renderedIdealLandmarksImage),
+        placementDebug: emptyPlacementDebug,
       },
     }
   }
   const currentBoundsImage = calculateLandmarkBounds(currentLandmarksImage)
+  const currentOnlyPlacementDebug = buildPlacementDebugState(currentMatrix, currentBoundsImage, idealMatrix, null)
   if (!renderedIdealLandmarksImage || renderedIdealLandmarksImage.length !== REQUIRED_LANDMARK_COUNT) {
     return {
       alignedRenderedIdeal478: null,
@@ -6590,6 +6655,7 @@ function buildPoseMappingAlignment(
         currentBoundsImage,
         currentPlacement: buildMediaPipePlacementFromMatrix(currentMatrix, currentBoundsImage),
         renderedIdealStatus: getRenderedIdealStatusFromLandmarks(renderedIdealLandmarksImage),
+        placementDebug: currentOnlyPlacementDebug,
       },
     }
   }
@@ -6597,6 +6663,12 @@ function buildPoseMappingAlignment(
   const renderedIdealBoundsImage = calculateLandmarkBounds(renderedIdealLandmarksImage)
   const currentPlacement = buildMediaPipePlacementFromMatrix(currentMatrix, currentBoundsImage)
   const idealPlacement = buildMediaPipePlacementFromMatrix(idealMatrix, renderedIdealBoundsImage)
+  const placementDebug = buildPlacementDebugState(
+    currentMatrix,
+    currentBoundsImage,
+    idealMatrix,
+    renderedIdealBoundsImage,
+  )
   const reasons = Array.from({ length: REQUIRED_LANDMARK_COUNT }, () => [] as PoseMappingExcludedReason[])
   const reasonCounts = createEmptyPoseMappingExcludedReasonCounts()
 
@@ -6625,6 +6697,7 @@ function buildPoseMappingAlignment(
         renderAspectRatio,
         currentBoundsImage,
         renderedIdealBoundsImage,
+        placementDebug,
         excludedReasonCounts: reasonCounts,
         landmarkReasons: reasons,
         renderedIdealStatus: "detected",
@@ -6701,6 +6774,7 @@ function buildPoseMappingAlignment(
       alignedIdealBoundsAspectWork: null,
       alignedRenderedIdealBoundsImage: calculateLandmarkBounds(alignedRenderedIdealLandmarksImage),
       displayedContentRect: null,
+      placementDebug,
       excludedReasonCounts: reasonCounts,
       displacementSummary: summarizeDisplacements(displacementValues),
       anchorIndices: [],
@@ -6742,6 +6816,13 @@ function buildMediaPipePlacementFromMatrix(
     matrixRotationDeg: matrix.rotationDeg,
     boundsImage,
   }
+  if (!matrix.raw.values || matrix.raw.values.length < 16) {
+    return createInvalidMediaPipeFacePlacement(
+      "facialTransformationMatrix",
+      "matrix_raw_16_values_missing",
+      raw,
+    )
+  }
   if (!matrix.translation || !matrix.scale) {
     return createInvalidMediaPipeFacePlacement(
       "facialTransformationMatrix",
@@ -6762,6 +6843,9 @@ function buildMediaPipePlacementFromMatrix(
   if (!Number.isFinite(scale) || scale <= 0) {
     warnings.push("matrix_uniform_scale_invalid")
   }
+  if (isIdentityMatrixPlacement(matrix.rowMajor) && hasMatrixBoundsCenterMismatch(matrix.rowMajor, boundsImage)) {
+    warnings.push("matrix_identity_placement_mismatches_bounds")
+  }
   if (warnings.length > 0) {
     return {
       status: "invalid",
@@ -6781,6 +6865,150 @@ function buildMediaPipePlacementFromMatrix(
     raw,
     warnings: [],
   }
+}
+
+function isIdentityMatrixPlacement(candidate: MatrixPlacementCandidate) {
+  const translation = candidate.translation
+  const scale = candidate.scale
+  return Boolean(
+    translation &&
+      scale &&
+      Math.abs(translation.x) <= PLACEMENT_IDENTITY_EPSILON &&
+      Math.abs(translation.y) <= PLACEMENT_IDENTITY_EPSILON &&
+      Math.abs(translation.z) <= PLACEMENT_IDENTITY_EPSILON &&
+      Math.abs(scale.x - 1) <= PLACEMENT_IDENTITY_EPSILON &&
+      Math.abs(scale.y - 1) <= PLACEMENT_IDENTITY_EPSILON &&
+      Math.abs(scale.z - 1) <= PLACEMENT_IDENTITY_EPSILON,
+  )
+}
+
+function hasMatrixBoundsCenterMismatch(
+  candidate: MatrixPlacementCandidate,
+  boundsImage: PoseMappingBounds | null,
+) {
+  const boundsPlacement = buildBoundsPlacement(boundsImage)
+  if (!candidate.translation || !boundsPlacement) {
+    return false
+  }
+  const dx = candidate.translation.x - boundsPlacement.center.x
+  const dy = candidate.translation.y - boundsPlacement.center.y
+  return Math.hypot(dx, dy) > PLACEMENT_MATRIX_BOUNDS_CENTER_MISMATCH_THRESHOLD
+}
+
+function buildPlacementDebugState(
+  currentMatrix: MatrixDebugSummary | null,
+  currentBoundsImage: PoseMappingBounds | null,
+  idealMatrix: MatrixDebugSummary | null,
+  renderedIdealBoundsImage: PoseMappingBounds | null,
+): PlacementDebugState {
+  const current = buildPlacementDebugSide(currentMatrix, currentBoundsImage)
+  const ideal = buildPlacementDebugSide(idealMatrix, renderedIdealBoundsImage)
+  return {
+    current,
+    ideal,
+    comparison: {
+      columnMajorTranslationVsBoundsCenter: {
+        currentDx: calculatePlacementDebugDx(current.matrixColumnMajor, current.boundsPlacement),
+        currentDy: calculatePlacementDebugDy(current.matrixColumnMajor, current.boundsPlacement),
+        idealDx: calculatePlacementDebugDx(ideal.matrixColumnMajor, ideal.boundsPlacement),
+        idealDy: calculatePlacementDebugDy(ideal.matrixColumnMajor, ideal.boundsPlacement),
+      },
+      rowMajorTranslationVsBoundsCenter: {
+        currentDx: calculatePlacementDebugDx(current.matrixRowMajor, current.boundsPlacement),
+        currentDy: calculatePlacementDebugDy(current.matrixRowMajor, current.boundsPlacement),
+        idealDx: calculatePlacementDebugDx(ideal.matrixRowMajor, ideal.boundsPlacement),
+        idealDy: calculatePlacementDebugDy(ideal.matrixRowMajor, ideal.boundsPlacement),
+      },
+      matrixScaleVsBoundsScale: {
+        currentColumnMajorScaleToBoundsHeight: calculateMatrixScaleToBoundsHeight(
+          current.matrixColumnMajor,
+          current.boundsPlacement,
+        ),
+        idealColumnMajorScaleToBoundsHeight: calculateMatrixScaleToBoundsHeight(
+          ideal.matrixColumnMajor,
+          ideal.boundsPlacement,
+        ),
+        currentRowMajorScaleToBoundsHeight: calculateMatrixScaleToBoundsHeight(
+          current.matrixRowMajor,
+          current.boundsPlacement,
+        ),
+        idealRowMajorScaleToBoundsHeight: calculateMatrixScaleToBoundsHeight(
+          ideal.matrixRowMajor,
+          ideal.boundsPlacement,
+        ),
+      },
+    },
+  }
+}
+
+function buildPlacementDebugSide(
+  matrix: MatrixDebugSummary | null,
+  boundsImage: PoseMappingBounds | null,
+): PlacementDebugSide {
+  return {
+    matrixRaw: matrix?.raw ?? createEmptyMatrixRawDebug(),
+    matrixColumnMajor: matrix?.columnMajor ?? createEmptyMatrixPlacementCandidate(),
+    matrixRowMajor: matrix?.rowMajor ?? createEmptyMatrixPlacementCandidate(),
+    boundsPlacement: buildBoundsPlacement(boundsImage),
+  }
+}
+
+function buildBoundsPlacement(bounds: PoseMappingBounds | null): BoundsPlacement | null {
+  if (!bounds) {
+    return null
+  }
+  return {
+    center: {
+      x: bounds.minX + bounds.width / 2,
+      y: bounds.minY + bounds.height / 2,
+    },
+    width: bounds.width,
+    height: bounds.height,
+    scaleByHeight: bounds.height,
+    scaleByWidth: bounds.width,
+    scaleByDiag: Math.hypot(bounds.width, bounds.height),
+  }
+}
+
+function createEmptyMatrixRawDebug(): MatrixRawDebug {
+  return {
+    exists: false,
+    constructorName: null,
+    isArray: false,
+    keys: [],
+    data: null,
+    values: null,
+    rows: null,
+    columns: null,
+    rawObjectPreview: null,
+  }
+}
+
+function calculatePlacementDebugDx(
+  matrixPlacement: MatrixPlacementCandidate,
+  boundsPlacement: BoundsPlacement | null,
+) {
+  return matrixPlacement.translation && boundsPlacement
+    ? matrixPlacement.translation.x - boundsPlacement.center.x
+    : null
+}
+
+function calculatePlacementDebugDy(
+  matrixPlacement: MatrixPlacementCandidate,
+  boundsPlacement: BoundsPlacement | null,
+) {
+  return matrixPlacement.translation && boundsPlacement
+    ? matrixPlacement.translation.y - boundsPlacement.center.y
+    : null
+}
+
+function calculateMatrixScaleToBoundsHeight(
+  matrixPlacement: MatrixPlacementCandidate,
+  boundsPlacement: BoundsPlacement | null,
+) {
+  return matrixPlacement.scale && boundsPlacement && boundsPlacement.scaleByHeight > 0
+    ? matrixPlacement.scale.uniform / boundsPlacement.scaleByHeight
+    : null
 }
 
 function isImageNormalizedPoint(point: { x: number; y: number }) {
@@ -9099,43 +9327,139 @@ function estimateNullablePose(matrix: Matrix | undefined): ReferencePose {
 }
 
 function summarizeFaceMatrix(matrix: Matrix | undefined): MatrixDebugSummary | null {
-  if (
-    !matrix ||
-    matrix.rows < 3 ||
-    matrix.columns < 3 ||
-    matrix.data.length < matrix.rows * matrix.columns
-  ) {
+  if (!matrix) {
     return null
   }
 
-  const columns = matrix.columns
-  const get = (row: number, column: number) => matrix.data[row * columns + column]
-  const translation = matrix.columns >= 4
-    ? {
-        x: get(0, 3),
-        y: get(1, 3),
-        z: get(2, 3),
+  const raw = createMatrixRawDebug(matrix)
+  const values = raw.values
+  const candidates = values && values.length >= 16
+    ? extractMatrixPlacementCandidates(values)
+    : {
+        columnMajor: createEmptyMatrixPlacementCandidate(),
+        rowMajor: createEmptyMatrixPlacementCandidate(),
       }
-    : null
-  const scaleX = Math.hypot(get(0, 0), get(1, 0), get(2, 0))
-  const scaleY = Math.hypot(get(0, 1), get(1, 1), get(2, 1))
-  const scaleZ = Math.hypot(get(0, 2), get(1, 2), get(2, 2))
-  const scaleValues = [scaleX, scaleY, scaleZ]
-  const scale = scaleValues.every((value) => Number.isFinite(value) && value > 0)
-    ? {
-        x: scaleX,
-        y: scaleY,
-        z: scaleZ,
-        uniform: scaleValues.reduce((sum, value) => sum + value, 0) / scaleValues.length,
-      }
-    : null
 
   return {
-    translation: translation && [translation.x, translation.y, translation.z].every(Number.isFinite)
-      ? translation
-      : null,
-    scale,
+    translation: candidates.rowMajor.translation,
+    scale: candidates.rowMajor.scale,
     rotationDeg: estimateNullablePose(matrix),
+    raw,
+    columnMajor: candidates.columnMajor,
+    rowMajor: candidates.rowMajor,
+  }
+}
+
+function createMatrixRawDebug(matrix: Matrix | undefined): MatrixRawDebug {
+  const rawData = matrix ? (matrix as { data?: unknown }).data : null
+  const data = extractFiniteNumberArray(rawData)
+  return {
+    exists: Boolean(matrix),
+    constructorName: matrix?.constructor?.name ?? null,
+    isArray: Array.isArray(matrix),
+    keys: matrix ? Object.keys(matrix as Record<string, unknown>) : [],
+    data,
+    values: data,
+    rows: typeof matrix?.rows === "number" ? matrix.rows : null,
+    columns: typeof matrix?.columns === "number" ? matrix.columns : null,
+    rawObjectPreview: safePreview(matrix),
+  }
+}
+
+function extractFiniteNumberArray(value: unknown): number[] | null {
+  const rawValues = Array.isArray(value) || ArrayBuffer.isView(value)
+    ? Array.from(value as ArrayLike<unknown>)
+    : null
+  if (!rawValues) {
+    return null
+  }
+  const numbers = rawValues.map((item) => Number(item))
+  return numbers.every(Number.isFinite) ? numbers : null
+}
+
+function extractMatrixPlacementCandidates(values: number[]) {
+  const columnMajorScale = createMatrixScale(
+    Math.hypot(values[0], values[1], values[2]),
+    Math.hypot(values[4], values[5], values[6]),
+    Math.hypot(values[8], values[9], values[10]),
+  )
+  const rowMajorScale = createMatrixScale(
+    Math.hypot(values[0], values[4], values[8]),
+    Math.hypot(values[1], values[5], values[9]),
+    Math.hypot(values[2], values[6], values[10]),
+  )
+  return {
+    columnMajor: {
+      translation: createFinitePoint3(values[12], values[13], values[14]),
+      scale: columnMajorScale,
+    },
+    rowMajor: {
+      translation: createFinitePoint3(values[3], values[7], values[11]),
+      scale: rowMajorScale,
+    },
+  }
+}
+
+function createEmptyMatrixPlacementCandidate(): MatrixPlacementCandidate {
+  return {
+    translation: null,
+    scale: null,
+  }
+}
+
+function createFinitePoint3(
+  x: number | undefined,
+  y: number | undefined,
+  z: number | undefined,
+): { x: number; y: number; z: number } | null {
+  return [x, y, z].every((value) => Number.isFinite(value))
+    ? { x: x!, y: y!, z: z! }
+    : null
+}
+
+function createMatrixScale(
+  x: number,
+  y: number,
+  z: number,
+): { x: number; y: number; z: number; uniform: number } | null {
+  const values = [x, y, z]
+  return values.every((value) => Number.isFinite(value) && value > 0)
+    ? {
+        x,
+        y,
+        z,
+        uniform: values.reduce((sum, value) => sum + value, 0) / values.length,
+      }
+    : null
+}
+
+function safePreview(value: unknown, maxLength = 600): string | null {
+  if (value === null || value === undefined) {
+    return null
+  }
+  try {
+    const seen = new WeakSet<object>()
+    const json = JSON.stringify(value, (_key, item: unknown) => {
+      if (typeof item === "function") {
+        return `[Function ${(item as Function).name || "anonymous"}]`
+      }
+      if (ArrayBuffer.isView(item)) {
+        return Array.from(item as ArrayLike<unknown>).slice(0, 32)
+      }
+      if (item && typeof item === "object") {
+        if (seen.has(item)) {
+          return "[Circular]"
+        }
+        seen.add(item)
+      }
+      return item
+    })
+    if (!json) {
+      return String(value)
+    }
+    return json.length > maxLength ? `${json.slice(0, maxLength)}...` : json
+  } catch {
+    return Object.prototype.toString.call(value)
   }
 }
 
@@ -10658,6 +10982,10 @@ function renderPoseMappingLiveSummaryCard() {
       <div><dt>renderedIdeal478</dt><dd>${runtime.renderedIdealDetected ? "detected" : "not detected"} / ${formatNullableCount(runtime.renderedIdealLandmarkCount)}</dd></div>
       <div><dt>alignedRenderedIdeal478</dt><dd>${formatNullableCount(runtime.alignedRenderedIdeal478?.length ?? null)}</dd></div>
       <div><dt>alignment</dt><dd>${escapeHtml(runtime.alignment.status)} / ${escapeHtml(runtime.alignment.mode)} / scale ${formatRealtimeNullableNumber(runtime.alignment.placementScaleRatio)}</dd></div>
+      <div><dt>Placement source debug（位置・大きさ取得元デバッグ）</dt><dd>current raw ${String(runtime.alignment.placementDebug.current.matrixRaw.exists)} / ideal raw ${String(runtime.alignment.placementDebug.ideal.matrixRaw.exists)}</dd></div>
+      <div><dt>Current matrix column-major（現在顔の列優先候補）</dt><dd>${escapeHtml(formatMatrixPlacementCandidate(runtime.alignment.placementDebug.current.matrixColumnMajor))}</dd></div>
+      <div><dt>Current bounds center / size（現在顔の外枠）</dt><dd>${escapeHtml(formatBoundsPlacement(runtime.alignment.placementDebug.current.boundsPlacement))}</dd></div>
+      <div><dt>Matrix translation vs bounds center delta（行列と外枠中心の差）</dt><dd>${escapeHtml(formatPlacementDelta(runtime.alignment.placementDebug.comparison.columnMajorTranslationVsBoundsCenter))}</dd></div>
       <div><dt>Render backend</dt><dd>${escapeHtml(runtime.renderBackend)}</dd></div>
       <div><dt>Renderer signature</dt><dd>${escapeHtml(runtime.renderer?.rendererSignature ?? "-")}</dd></div>
       <div><dt>Profile renderer match</dt><dd>${String(runtime.profileRendererMatch)}</dd></div>
@@ -10836,6 +11164,22 @@ function renderPoseMappingDebugTab() {
         <div><dt>meshSourceVertices</dt><dd>${formatNullableCount(runtime.meshSourceVertices?.length ?? null)}</dd></div>
         <div><dt>meshTargetVertices</dt><dd>${formatNullableCount(runtime.meshTargetVertices?.length ?? null)}</dd></div>
       </dl>
+      <div class="debug-subsection">
+        <h4>Placement source debug（位置・大きさ取得元デバッグ）</h4>
+        <dl class="summary-list">
+          <div><dt>Current matrix raw available（現在顔 matrix raw 有無）</dt><dd>${escapeHtml(formatMatrixRawAvailable(runtime.alignment.placementDebug.current.matrixRaw))}</dd></div>
+          <div><dt>Ideal matrix raw available（理想顔 matrix raw 有無）</dt><dd>${escapeHtml(formatMatrixRawAvailable(runtime.alignment.placementDebug.ideal.matrixRaw))}</dd></div>
+          <div><dt>Current matrix column-major translation / scale（現在顔の列優先候補）</dt><dd>${escapeHtml(formatMatrixPlacementCandidate(runtime.alignment.placementDebug.current.matrixColumnMajor))}</dd></div>
+          <div><dt>Ideal matrix column-major translation / scale（理想顔の列優先候補）</dt><dd>${escapeHtml(formatMatrixPlacementCandidate(runtime.alignment.placementDebug.ideal.matrixColumnMajor))}</dd></div>
+          <div><dt>Current matrix row-major translation / scale（現在顔の行優先候補）</dt><dd>${escapeHtml(formatMatrixPlacementCandidate(runtime.alignment.placementDebug.current.matrixRowMajor))}</dd></div>
+          <div><dt>Ideal matrix row-major translation / scale（理想顔の行優先候補）</dt><dd>${escapeHtml(formatMatrixPlacementCandidate(runtime.alignment.placementDebug.ideal.matrixRowMajor))}</dd></div>
+          <div><dt>Current bounds center / size（現在顔の外枠）</dt><dd>${escapeHtml(formatBoundsPlacement(runtime.alignment.placementDebug.current.boundsPlacement))}</dd></div>
+          <div><dt>Ideal bounds center / size（理想顔の外枠）</dt><dd>${escapeHtml(formatBoundsPlacement(runtime.alignment.placementDebug.ideal.boundsPlacement))}</dd></div>
+          <div><dt>Column-major matrix translation vs bounds center delta（列優先候補と外枠中心の差）</dt><dd>${escapeHtml(formatPlacementDelta(runtime.alignment.placementDebug.comparison.columnMajorTranslationVsBoundsCenter))}</dd></div>
+          <div><dt>Row-major matrix translation vs bounds center delta（行優先候補と外枠中心の差）</dt><dd>${escapeHtml(formatPlacementDelta(runtime.alignment.placementDebug.comparison.rowMajorTranslationVsBoundsCenter))}</dd></div>
+          <div><dt>Matrix scale vs bounds scale（行列 scale と外枠 height の比）</dt><dd>${escapeHtml(formatPlacementScaleComparison(runtime.alignment.placementDebug.comparison.matrixScaleVsBoundsScale))}</dd></div>
+        </dl>
+      </div>
     </section>
 
     <section class="debug-section">
@@ -13588,6 +13932,7 @@ function createEmptyPoseMappingAlignmentState(
     alignedIdealBoundsAspectWork: null,
     alignedRenderedIdealBoundsImage: null,
     displayedContentRect: null,
+    placementDebug: buildPlacementDebugState(null, null, null, null),
     excludedReasonCounts: createEmptyPoseMappingExcludedReasonCounts(),
     displacementSummary: createEmptyPoseMappingDisplacementSummary(),
     anchorIndices: [],
@@ -15210,6 +15555,7 @@ function getCurrentAnalysisRawSummary() {
     analyzedTimeSec: roundForState(state.currentAnalysis.analyzedTimeSec),
     landmarkCount: state.currentAnalysis.landmarkCount,
     pose: roundPoseForState(state.currentAnalysis.pose),
+    matrix: roundMatrixDebugSummaryForState(state.currentAnalysis.matrix),
     blendshapeCount: state.currentAnalysis.blendshapes.length,
     expressionSummary: state.currentAnalysis.expressionSummary
       ? {
@@ -15234,6 +15580,7 @@ function getRenderedIdealDetectionRawSummary() {
     averageDetectMs: roundForState(detection.averageDetectMs),
     landmarkCount: detection.landmarkCount,
     pose: roundPoseForState(detection.pose),
+    matrix: roundMatrixDebugSummaryForState(detection.matrix),
     expressionSummary: detection.expressionSummary
       ? {
           group: detection.expressionSummary.group,
@@ -15520,6 +15867,43 @@ function formatPlacement(placement: MediaPipeFacePlacement) {
     ? `center x ${formatNullableNumber(placement.center.x)} / y ${formatNullableNumber(placement.center.y)}`
     : "center -"
   return `${placement.status} / ${placement.source} / ${center} / scale ${formatNullableNumber(placement.scale)} / warnings ${placement.warnings.join(", ") || "-"}`
+}
+
+function formatMatrixPlacementCandidate(candidate: MatrixPlacementCandidate) {
+  return `translation ${formatPoint3(candidate.translation)} / scale ${formatMatrixScale(candidate.scale)}`
+}
+
+function formatMatrixRawAvailable(raw: MatrixRawDebug) {
+  return `${String(raw.exists)} / constructor ${raw.constructorName ?? "-"} / rows ${formatNullableCount(raw.rows)} / columns ${formatNullableCount(raw.columns)} / values ${formatNullableCount(raw.values?.length ?? null)} / keys ${raw.keys.join(", ") || "-"}`
+}
+
+function formatBoundsPlacement(placement: BoundsPlacement | null) {
+  if (!placement) {
+    return "-"
+  }
+  return `center ${formatPoint2(placement.center)} / width ${formatNullableNumber(placement.width)} / height ${formatNullableNumber(placement.height)} / scaleHeight ${formatNullableNumber(placement.scaleByHeight)} / scaleWidth ${formatNullableNumber(placement.scaleByWidth)} / scaleDiag ${formatNullableNumber(placement.scaleByDiag)}`
+}
+
+function formatPlacementDelta(
+  delta: PlacementDebugComparison["columnMajorTranslationVsBoundsCenter"],
+) {
+  return `current dx ${formatNullableNumber(delta.currentDx)} / dy ${formatNullableNumber(delta.currentDy)} / ideal dx ${formatNullableNumber(delta.idealDx)} / dy ${formatNullableNumber(delta.idealDy)}`
+}
+
+function formatPlacementScaleComparison(comparison: PlacementDebugComparison["matrixScaleVsBoundsScale"]) {
+  return `current column ${formatNullableNumber(comparison.currentColumnMajorScaleToBoundsHeight)} / ideal column ${formatNullableNumber(comparison.idealColumnMajorScaleToBoundsHeight)} / current row ${formatNullableNumber(comparison.currentRowMajorScaleToBoundsHeight)} / ideal row ${formatNullableNumber(comparison.idealRowMajorScaleToBoundsHeight)}`
+}
+
+function formatPoint3(point: { x: number; y: number; z: number } | null) {
+  return point
+    ? `x ${formatNullableNumber(point.x)} / y ${formatNullableNumber(point.y)} / z ${formatNullableNumber(point.z)}`
+    : "-"
+}
+
+function formatMatrixScale(scale: { x: number; y: number; z: number; uniform: number } | null) {
+  return scale
+    ? `x ${formatNullableNumber(scale.x)} / y ${formatNullableNumber(scale.y)} / z ${formatNullableNumber(scale.z)} / uniform ${formatNullableNumber(scale.uniform)}`
+    : "-"
 }
 
 function roundDisplacementSummary(summary: PoseMappingDisplacementSummary): PoseMappingDisplacementSummary {
@@ -16169,6 +16553,7 @@ function getPoseMappingAlignmentDebugSummary(alignment: PoseMappingAlignmentStat
     alignedIdealBoundsAspectWork: roundBoundsForState(alignment.alignedIdealBoundsAspectWork),
     alignedRenderedIdealBoundsImage: roundBoundsForState(alignment.alignedRenderedIdealBoundsImage),
     displayedContentRect: roundRectForState(alignment.displayedContentRect),
+    placementDebug: roundPlacementDebugForState(alignment.placementDebug),
     excludedReasonCounts: alignment.excludedReasonCounts,
     displacementSummary: roundDisplacementSummary(alignment.displacementSummary),
   }
@@ -16299,8 +16684,10 @@ function getPoseMappingRuntimeDebugExport() {
       usedFallback: runtime.usedFallback,
       warnings: runtime.warnings,
       alignment: getPoseMappingAlignmentDebugSummary(runtime.alignment),
+      placementDebug: roundPlacementDebugForState(runtime.alignment.placementDebug),
     },
     alignment: getPoseMappingAlignmentDebugSummary(runtime.alignment),
+    placementDebug: roundPlacementDebugForState(runtime.alignment.placementDebug),
     timing: {
       profileEvaluateMs: roundForState(runtime.profileEvaluateMs),
       renderMs: roundForState(runtime.renderMs),
@@ -16611,6 +16998,98 @@ function roundPlacementForState(placement: MediaPipeFacePlacement): MediaPipeFac
       : undefined,
     warnings: placement.warnings,
   }
+}
+
+function roundMatrixDebugSummaryForState(summary: MatrixDebugSummary | null): MatrixDebugSummary | null {
+  return summary
+    ? {
+        translation: roundPoint3ForState(summary.translation),
+        scale: roundMatrixScaleForState(summary.scale),
+        rotationDeg: roundPoseForState(summary.rotationDeg),
+        raw: {
+          ...summary.raw,
+          data: summary.raw.data?.map((value) => roundForState(value) ?? 0) ?? null,
+          values: summary.raw.values?.map((value) => roundForState(value) ?? 0) ?? null,
+        },
+        columnMajor: roundMatrixPlacementCandidateForState(summary.columnMajor),
+        rowMajor: roundMatrixPlacementCandidateForState(summary.rowMajor),
+      }
+    : null
+}
+
+function roundPlacementDebugForState(debug: PlacementDebugState): PlacementDebugState {
+  return {
+    current: roundPlacementDebugSideForState(debug.current),
+    ideal: roundPlacementDebugSideForState(debug.ideal),
+    comparison: {
+      columnMajorTranslationVsBoundsCenter: roundPlacementTranslationDeltaForState(
+        debug.comparison.columnMajorTranslationVsBoundsCenter,
+      ),
+      rowMajorTranslationVsBoundsCenter: roundPlacementTranslationDeltaForState(
+        debug.comparison.rowMajorTranslationVsBoundsCenter,
+      ),
+      matrixScaleVsBoundsScale: {
+        currentColumnMajorScaleToBoundsHeight: roundForState(
+          debug.comparison.matrixScaleVsBoundsScale.currentColumnMajorScaleToBoundsHeight,
+        ),
+        idealColumnMajorScaleToBoundsHeight: roundForState(
+          debug.comparison.matrixScaleVsBoundsScale.idealColumnMajorScaleToBoundsHeight,
+        ),
+        currentRowMajorScaleToBoundsHeight: roundForState(
+          debug.comparison.matrixScaleVsBoundsScale.currentRowMajorScaleToBoundsHeight,
+        ),
+        idealRowMajorScaleToBoundsHeight: roundForState(
+          debug.comparison.matrixScaleVsBoundsScale.idealRowMajorScaleToBoundsHeight,
+        ),
+      },
+    },
+  }
+}
+
+function roundPlacementDebugSideForState(side: PlacementDebugSide): PlacementDebugSide {
+  return {
+    matrixRaw: {
+      ...side.matrixRaw,
+      data: side.matrixRaw.data?.map((value) => roundForState(value) ?? 0) ?? null,
+      values: side.matrixRaw.values?.map((value) => roundForState(value) ?? 0) ?? null,
+    },
+    matrixColumnMajor: roundMatrixPlacementCandidateForState(side.matrixColumnMajor),
+    matrixRowMajor: roundMatrixPlacementCandidateForState(side.matrixRowMajor),
+    boundsPlacement: roundBoundsPlacementForState(side.boundsPlacement),
+  }
+}
+
+function roundPlacementTranslationDeltaForState(
+  delta: PlacementDebugComparison["columnMajorTranslationVsBoundsCenter"],
+) {
+  return {
+    currentDx: roundForState(delta.currentDx),
+    currentDy: roundForState(delta.currentDy),
+    idealDx: roundForState(delta.idealDx),
+    idealDy: roundForState(delta.idealDy),
+  }
+}
+
+function roundMatrixPlacementCandidateForState(
+  candidate: MatrixPlacementCandidate,
+): MatrixPlacementCandidate {
+  return {
+    translation: roundPoint3ForState(candidate.translation),
+    scale: roundMatrixScaleForState(candidate.scale),
+  }
+}
+
+function roundBoundsPlacementForState(boundsPlacement: BoundsPlacement | null): BoundsPlacement | null {
+  return boundsPlacement
+    ? {
+        center: roundPoint2ForState(boundsPlacement.center) ?? { x: 0, y: 0 },
+        width: roundForState(boundsPlacement.width) ?? 0,
+        height: roundForState(boundsPlacement.height) ?? 0,
+        scaleByHeight: roundForState(boundsPlacement.scaleByHeight) ?? 0,
+        scaleByWidth: roundForState(boundsPlacement.scaleByWidth) ?? 0,
+        scaleByDiag: roundForState(boundsPlacement.scaleByDiag) ?? 0,
+      }
+    : null
 }
 
 function roundPoint3ForState(point: { x: number; y: number; z: number } | null) {
