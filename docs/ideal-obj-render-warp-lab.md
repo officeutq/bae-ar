@@ -166,6 +166,25 @@ dataset JSON には、選択した profile id だけでなく、実際に適用�
 specular、cast shadow、perspective projection、FOV は `implementation` notes に未実装として
 記録し、解析側で適用済み条件と誤解しないようにします。
 
+p,P dataset 解析用 Python は
+`tools/ideal-obj-render-warp-lab/analysis/obj_pose_mapping_colab_analysis.py` に置きます。
+Colab では `# %%` 区切りをセルとして実行できます。入力は `obj_pose_mapping_dataset_v2`
+JSON を想定し、v1 も読み取り可能です。
+
+解析では raw dataset を `raw_df` として保持し、hard filter と residual outlier detection
+後の dataset を `filtered_df`、除外サンプルを `excluded_df` として理由付きで出力します。
+hard filter は MediaPipe 検出失敗、p / P の NaN / Infinity、returnedPose の極端な範囲外、
+landmarks が含まれる場合の 478 点欠損、landmark bounds / x/y/z 分布異常を除外対象にします。
+端姿勢は実運用上の学習対象なので、yaw端 / pitch端 / roll端という理由だけでは除外しません。
+
+モデル比較は raw / filtered の両方で実行し、Linear Regression、Polynomial degree 2 + Ridge、
+KNN、Decision Tree + per-leaf Polynomial degree 2 + Ridge、高次 Polynomial degree 3-5 + RidgeCV、
+GMM soft gate + Polynomial degree 2 expert を比較します。採用 candidate は pose p95、pose MAX、
+continuityJumpMax、軸別破綻、端姿勢、TypeScript 移植性を見て選び、単純な MAE だけでは選びません。
+出力は `obj_pose_mapping_analysis_summary.md`、`obj_pose_mapping_model_comparison.csv`、
+`obj_pose_mapping_posewise_evaluation.csv`、`obj_pose_mapping_excluded_samples.csv`、
+`obj_pose_mapping_filtered_samples.csv`、`pose_mapping_profile_candidate.json` です。
+
 初期 profile:
 
 - `current`: 既存レンダー条件の baseline
