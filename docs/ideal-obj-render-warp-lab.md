@@ -568,6 +568,32 @@ FaceLandmarker は benchmark 中に毎回作り直さず、既存の IMAGE mode�
 
 この検証は速度確認用であり、poseMappingProfile evaluator、p,P dataset 生成、mode comparison には影響させません。実運用への適用判断は handoff benchmark の結果を見てから行います。
 
+## WebGL OBJ Render Benchmark
+
+Canvas2D render -> detect では、render 直後の canvas 同期、描画確定、readback コストが `detectMs` 側に乗る可能性があります。OBJ render 頻度を落とす案は `renderedIdeal478` の追従品質が下がりやすいため、次候補として WebGL OBJ Renderer を benchmark / debug 用に並列追加しました。
+
+通常の Canvas2D renderer は既存 runtime で維持します。WebGL renderer は、同じ `p` を WebGL で描画した場合に、OBJ render が速くなるか、render -> detect の同期コストが下がるか、MediaPipe が顔として検出できるか、`P_confirm` が `P_camera` に近いかを確認するための検証用です。
+
+比較する case:
+
+- `WebGL render only`: WebGL で OBJ を描画するだけ
+- `WebGL render -> detect`: WebGL canvas をそのまま MediaPipe `detect()` に渡す
+- `WebGL render -> gl.finish() -> detect`: WebGL 描画完了を明示してから `detect()`
+- `WebGL render -> readPixels(1x1) -> detect`: WebGL 側で小範囲 readback を前倒ししてから `detect()`
+- `WebGL render -> createImageBitmap -> detect`: WebGL canvas から ImageBitmap を作成し、可能なら `detect(imageBitmap)`
+- `WebGL render -> copy to 2D canvas -> detect`: WebGL canvas を 2D canvas にコピーしてから `detect(2dCanvas)`
+- `Canvas2D baseline reference`: Canvas2D immediate render -> detect と explicit readback -> detect の簡易比較
+
+WebGL renderer は既存 OBJ parser / OBJ mesh data を再利用します。見た目を Canvas2D renderer に近づけるため、orthographic 相当の投影、profile renderAppearance の `backgroundColor`、`skinColor`、material diffuse / ambient、ambient + key light の簡易 Lambert、camera scale / verticalOffset / renderResolution を使います。`material.specular`、`lighting.castShadow`、`camera.fovDeg`、`camera.projection` は未対応の比較 metadata として記録します。
+
+WebGL context、shader、buffer は benchmark 用 renderer インスタンスで再利用し、毎 run ごとには作り直しません。FaceLandmarker も既存 IMAGE mode 用 `renderedIdealFaceLandmarker` を再利用し、GPU delegate 指定を維持します。各 sample には timing、detected、landmarkCount、`P_confirm`、poseDiff summary を保存し、478点配列は保存しません。
+
+WebGL renderer は速度検証用です。MediaPipe は OBJ 形状そのものではなくレンダリングされた 2D 画像を見ているため、WebGL に切り替える場合は見た目条件が変わります。最終的には WebGL 条件で p,P dataset と poseMappingProfile を作り直す可能性が高いです。今回の PR では通常 runtime を切り替えず、poseMappingProfile evaluator、p,P dataset 生成、mode comparison には影響させません。
+
+`Download WebGL Benchmark JSON（WebGLベンチマークJSONダウンロード）` は `pose_mapping_webgl_obj_render_benchmark_v1` として、source、profile、runtime pose、landmarker、render settings、WebGL support、benchmark options、case summaries、per-run timing samples、conclusion hints を出力します。
+
+`Download WebGL Benchmark CSV（WebGLベンチマークCSVダウンロード）` は 1 行 1 sample で、`caseId`、`label`、`rendererKind`、`handoffStrategy`、canvas size、`runIndex`、`phase`、`webglRenderMs`、`finishMs`、`readPixelsMs`、`bitmapCreateMs`、`copyTo2dMs`、`detectMs`、`totalMs`、`detected`、`landmarkCount`、`P_confirm`、poseDiff、`errorMessage` を出力します。
+
 ## 関連ドキュメント
 
 - [Ideal Reference Mesh Warp Lab](ideal-reference-mesh-warp-lab.md)
