@@ -928,6 +928,10 @@ type PoseMappingAlignmentStatus =
   | "completed"
   | "skipped_no_current_face"
   | "skipped_no_rendered_ideal"
+  | "skipped_missing_obj"
+  | "skipped_missing_profile"
+  | "skipped_profile_mismatch"
+  | "skipped_generation_mismatch"
   | "skipped_missing_current_placement"
   | "skipped_missing_ideal_placement"
   | "skipped_invalid_placement"
@@ -937,6 +941,10 @@ type PoseMappingAlignmentSkippedReason =
   | "none"
   | "no_current_face"
   | "no_rendered_ideal"
+  | "missing_obj"
+  | "missing_profile"
+  | "profile_mismatch"
+  | "generation_mismatch"
   | "missing_current_placement"
   | "missing_ideal_placement"
   | "invalid_placement"
@@ -954,6 +962,59 @@ type PoseMappingSkippedReason =
   | "no_current_face"
   | "invalid_pose"
   | "profile_mismatch"
+type AssetStatus = "ready" | "missing" | "loading" | "invalid" | "error"
+type AssetGeneration = {
+  objGenerationId: number
+  profileGenerationId: number
+  renderSettingsGenerationId: number
+  rendererGenerationId: number
+}
+type FrameGeneration = {
+  frameId: number
+  mediaTimeSec: number | null
+  startedAtMs: number
+}
+type RenderedIdealFrameToken = AssetGeneration & {
+  frameId: number
+  mediaTimeSec: number | null
+  p: ObjPoseMappingPose
+}
+type RenderedIdealLifecycle = {
+  renderAttempted: boolean
+  renderSucceeded: boolean
+  detectAttempted: boolean
+  detectSucceeded: boolean
+  renderToken: RenderedIdealFrameToken | null
+  detectTokenMatchesRenderToken: boolean
+  detectCanvasWasClearedBeforeRender: boolean
+  staleCanvasDetected: boolean
+  fallbackRenderedIdealUsed: boolean
+}
+type OverlayLifecycle = {
+  current478Visible: boolean
+  alignedRenderedIdealVisible: boolean
+  correspondenceLinesVisible: boolean
+  meshTargetVisible: boolean
+  triangleTargetVisible: boolean
+  lastGoodUsedForOverlay: boolean
+  generationMatch: boolean
+  tokenMatch: boolean
+  skippedReason: string
+}
+type AssetLifecycle = AssetGeneration & {
+  objStatus: AssetStatus
+  profileStatus: AssetStatus
+  rendererStatus: AssetStatus
+  profileRendererMatch: boolean
+}
+type FrameLifecycle = FrameGeneration & {
+  currentFaceStatus: PoseMappingCurrentFaceStatus
+  poseMappingStatus: PoseMappingStatus
+  renderedIdealStatus: RenderedIdealStatus
+  alignmentStatus: PoseMappingAlignmentStatus
+  overlayIdealVisible: boolean
+  overlaySkippedReason: string
+}
 type PoseMappingLastGoodState = {
   hasLastGood: boolean
   P_camera: ObjPoseMappingPose | null
@@ -1068,7 +1129,9 @@ type PoseMappingRuntimeState = {
   renderedIdealDetected: boolean
   renderedIdealLandmarkCount: number | null
   renderedIdeal478: ReferenceLandmark[] | null
+  renderedIdealToken: RenderedIdealFrameToken | null
   alignedRenderedIdeal478: ReferenceLandmark[] | null
+  alignedRenderedIdealToken: RenderedIdealFrameToken | null
   current478: ReferenceLandmark[] | null
   meshSourceVertices: ReferenceLandmark[] | null
   meshTargetVertices: ReferenceLandmark[] | null
@@ -1085,6 +1148,10 @@ type PoseMappingRuntimeState = {
   renderer: WebglObjRendererMetadata | null
   profileRendererMatch: boolean
   profileMismatchError: string | null
+  assetLifecycle: AssetLifecycle
+  frameLifecycle: FrameLifecycle | null
+  renderedIdealLifecycle: RenderedIdealLifecycle
+  overlayLifecycle: OverlayLifecycle
   profileEvaluateMs: number | null
   renderMs: number | null
   detectMs: number | null
@@ -1833,6 +1900,8 @@ type LabState = {
   objPoseMapping: ObjPoseMappingState
   poseMappingProfile: PoseMappingProfileState
   poseMappingRuntime: PoseMappingRuntimeState
+  assetGeneration: AssetGeneration
+  nextFrameId: number
   detectPerformance: DetectPerformanceState
   renderDetectHandoff: RenderDetectHandoffState
   webglObjBenchmark: WebglObjBenchmarkState
@@ -2274,6 +2343,8 @@ const state: LabState = {
   objPoseMapping: createDefaultObjPoseMappingState(),
   poseMappingProfile: createDefaultPoseMappingProfileState(),
   poseMappingRuntime: createDefaultPoseMappingRuntimeState(),
+  assetGeneration: createDefaultAssetGeneration(),
+  nextFrameId: 1,
   detectPerformance: createDefaultDetectPerformanceState(),
   renderDetectHandoff: createDefaultRenderDetectHandoffState(),
   webglObjBenchmark: createDefaultWebglObjBenchmarkState(),
@@ -2820,6 +2891,8 @@ function bindEvents() {
     const value = event.currentTarget.value
     if (isRenderedIdealBackgroundMode(value)) {
       state.renderedIdeal.backgroundMode = value
+      incrementRenderSettingsGeneration()
+      clearRuntimeRenderArtifacts("render_settings_changed")
       renderAll()
     }
   })
@@ -2828,6 +2901,8 @@ function bindEvents() {
     const value = event.currentTarget.value
     if (isRenderedIdealColorMode(value)) {
       state.renderedIdeal.colorMode = value
+      incrementRenderSettingsGeneration()
+      clearRuntimeRenderArtifacts("render_settings_changed")
       renderAll()
     }
   })
@@ -2836,6 +2911,8 @@ function bindEvents() {
     const value = event.currentTarget.value
     if (isObjRenderAppearanceProfileId(value)) {
       state.renderedIdeal.renderAppearanceProfileId = value
+      incrementRenderSettingsGeneration()
+      clearRuntimeRenderArtifacts("render_settings_changed")
       renderAll()
     }
   })
@@ -3168,6 +3245,8 @@ function updateModeComparisonDebugOptionNumber(
 }
 
 async function loadObjFile(file: File) {
+  incrementObjGeneration()
+  clearRuntimeRenderArtifacts("obj_loading")
   state.objFile = {
     loaded: true,
     fileName: file.name,
@@ -3194,6 +3273,8 @@ async function loadObjFile(file: File) {
       faces: parseResult.faces,
       edges: createUniqueEdges(parseResult.faces),
     }
+    incrementObjGeneration()
+    clearRuntimeRenderArtifacts("obj_ready")
     addLog(`OBJ解析が完了しました: 頂点 ${state.objSummary.vertexCount} / 面 ${state.objSummary.faceCount} / 警告 ${state.objSummary.warningCount}`)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
@@ -3205,6 +3286,8 @@ async function loadObjFile(file: File) {
       sampledEdgeCount: 0,
     }
     state.objErrorMessage = message
+    incrementObjGeneration()
+    clearRuntimeRenderArtifacts("obj_error")
     addLog(`OBJ解析に失敗しました: ${message}`)
   }
 
@@ -3212,6 +3295,8 @@ async function loadObjFile(file: File) {
 }
 
 async function loadPoseMappingProfileFile(file: File) {
+  incrementProfileGeneration()
+  clearRuntimeRenderArtifacts("profile_loading")
   state.poseMappingProfile = {
     ...createDefaultPoseMappingProfileState(),
     fileName: file.name,
@@ -3232,6 +3317,7 @@ async function loadPoseMappingProfileFile(file: File) {
       errorMessage: null,
       warnings: [],
     }
+    incrementProfileGeneration()
     addLog(`poseMappingProfileを読み込みました: ${file.name}`)
     await updatePoseMappingRuntimeFromCurrentAnalysis()
   } catch (error) {
@@ -3250,6 +3336,8 @@ async function loadPoseMappingProfileFile(file: File) {
       errorMessage: message,
       lastUpdatedAt: formatUpdatedAt(),
     }
+    incrementProfileGeneration()
+    clearRuntimeRenderArtifacts("profile_error")
     addLog(`poseMappingProfileの読み込みに失敗しました: ${message}`)
     renderAll()
   }
@@ -4047,6 +4135,7 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
   const currentFaceStatus = getPoseMappingCurrentFaceStatus()
   const skippedReason = getPoseMappingSkippedReasonForCurrentFace()
   const previousRuntime = state.poseMappingRuntime
+  const assetLifecycle = createAssetLifecycle(previousRuntime.profileRendererMatch)
   if (profile && canRenderRenderedIdealGeometry() && skippedReason !== "none") {
     state.poseMappingRuntime = createSkippedPoseMappingRuntimeState({
       previousRuntime,
@@ -4065,11 +4154,19 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
       ...createDefaultPoseMappingRuntimeState(),
       status: "idle",
       currentFaceStatus,
+      renderedIdealStatus: "missing",
+      alignmentStatus: skippedReason === "none" ? "skipped_missing_profile" : "skipped_no_current_face",
+      alignmentSkippedReason: skippedReason === "none" ? "missing_profile" : "no_current_face",
       poseMappingStatus: skippedReason === "none" ? "ready" : getPoseMappingSkippedStatus(skippedReason),
       poseMappingSkippedReason: skippedReason,
       fallbackPoseUsed: false,
+      fallbackRenderedIdealUsed: false,
       lastUpdatedAt: formatUpdatedAt(),
       qualityGate,
+      assetLifecycle,
+      frameLifecycle: null,
+      renderedIdealLifecycle: createEmptyRenderedIdealLifecycle(),
+      overlayLifecycle: createOverlayLifecycle(false, qualityGate.reasons.join("; ") || "not_ready"),
       P_camera: getCurrentPoseForPoseMapping(),
       current478: state.currentAnalysis.landmarks478.length === REQUIRED_LANDMARK_COUNT
         ? state.currentAnalysis.landmarks478
@@ -4086,13 +4183,16 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
 
   poseMappingRuntimeInProgress = true
   const totalStartMs = performance.now()
+  const frameGeneration = createFrameGeneration()
   state.poseMappingRuntime = {
     ...state.poseMappingRuntime,
     status: "running",
     currentFaceStatus: "detected",
+    frameLifecycle: createFrameLifecycle(frameGeneration, "detected", "running", "missing", "stale", false, "running"),
     poseMappingStatus: "running",
     poseMappingSkippedReason: "none",
     fallbackPoseUsed: false,
+    fallbackRenderedIdealUsed: false,
     lastGood: updatePoseMappingLastGoodAge(state.poseMappingRuntime.lastGood),
     stale: createEmptyPoseMappingStaleState(),
     qualityGate,
@@ -4121,8 +4221,10 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
     )
     const renderer = getOrCreateWebglObjBenchmarkRenderer()
     const rendererMetadata = buildWebglObjRendererMetadata(renderer, appearance)
+    const renderToken = createRenderedIdealFrameToken(frameGeneration, evaluateResult.p)
     const profileRendererMatch = validatePoseMappingRendererMatch(profile, rendererMetadata, appearance)
     if (!profileRendererMatch.match) {
+      clearWebglRendererCanvas(renderer)
       state.poseMappingRuntime = {
         ...state.poseMappingRuntime,
         renderBackend: "webgl",
@@ -4131,6 +4233,24 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
         renderAppearanceApplied,
         profileRendererMatch: false,
         profileMismatchError: profileRendererMatch.errorMessage,
+        assetLifecycle: createAssetLifecycle(false),
+        renderedIdealLifecycle: {
+          ...createEmptyRenderedIdealLifecycle(),
+          renderToken,
+          detectCanvasWasClearedBeforeRender: true,
+        },
+        overlayLifecycle: createOverlayLifecycle(false, "profile_mismatch"),
+        frameLifecycle: createFrameLifecycle(
+          frameGeneration,
+          "detected",
+          "error",
+          "missing",
+          "skipped_profile_mismatch",
+          false,
+          "profile_mismatch",
+        ),
+        alignmentStatus: "skipped_profile_mismatch",
+        alignmentSkippedReason: "profile_mismatch",
         poseMappingStatus: "error",
         poseMappingSkippedReason: "profile_mismatch",
         fallbackPoseUsed: false,
@@ -4139,6 +4259,7 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
       throw new Error(profileRendererMatch.errorMessage ?? "Profile renderer mismatch")
     }
     resizeWebglObjBenchmarkRenderer(renderer, renderSettings.detectCanvasWidth, renderSettings.detectCanvasHeight)
+    clearWebglRendererCanvas(renderer)
     const renderContext: WebglObjRenderContext = {
       renderSettings,
       appearance,
@@ -4148,12 +4269,56 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
     const renderStartMs = performance.now()
     renderWebglObjToCanvas(renderer, renderContext)
     const renderMs = performance.now() - renderStartMs
+    let renderedIdealLifecycle: RenderedIdealLifecycle = {
+      ...createEmptyRenderedIdealLifecycle(),
+      renderAttempted: true,
+      renderSucceeded: true,
+      renderToken,
+      detectCanvasWasClearedBeforeRender: true,
+    }
 
     const detector = await getRenderedIdealFaceLandmarker()
+    if (!isRenderedIdealFrameTokenCurrent(renderToken)) {
+      state.poseMappingRuntime = {
+        ...state.poseMappingRuntime,
+        renderedIdealStatus: "stale",
+        alignmentStatus: "skipped_generation_mismatch",
+        alignmentSkippedReason: "generation_mismatch",
+        renderedIdealLifecycle: {
+          ...renderedIdealLifecycle,
+          staleCanvasDetected: true,
+        },
+        overlayLifecycle: createOverlayLifecycle(false, "generation_mismatch"),
+      }
+      return null
+    }
     const detectStartMs = performance.now()
     const result = detector.detect(renderer.canvas)
     const detectMs = performance.now() - detectStartMs
+    renderedIdealLifecycle = {
+      ...renderedIdealLifecycle,
+      detectAttempted: true,
+      detectTokenMatchesRenderToken: true,
+    }
+    if (!isRenderedIdealFrameTokenCurrent(renderToken)) {
+      state.poseMappingRuntime = {
+        ...state.poseMappingRuntime,
+        renderedIdealStatus: "stale",
+        alignmentStatus: "skipped_generation_mismatch",
+        alignmentSkippedReason: "generation_mismatch",
+        renderedIdealLifecycle: {
+          ...renderedIdealLifecycle,
+          staleCanvasDetected: true,
+        },
+        overlayLifecycle: createOverlayLifecycle(false, "generation_mismatch"),
+      }
+      return null
+    }
     const detection = buildRenderedIdealDetectionState(result, -1, detectMs, null)
+    renderedIdealLifecycle = {
+      ...renderedIdealLifecycle,
+      detectSucceeded: detection.status === "detected",
+    }
     const poseDiff = calculatePoseMappingPoseDiff(P_camera, detection.pose)
     const alignmentResult = buildPoseMappingAlignment(
       state.currentAnalysis.landmarks478,
@@ -4168,6 +4333,20 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
 
     const totalMs = performance.now() - totalStartMs
     const renderedIdealStatus = getRenderedIdealStatusFromDetection(detection.status)
+    const renderedIdealToken = renderedIdealStatus === "detected" ? renderToken : null
+    const alignedRenderedIdealToken =
+      alignmentResult.alignedRenderedIdeal478 && renderedIdealStatus === "detected"
+        ? renderToken
+        : null
+    const completedFrameLifecycle = createFrameLifecycle(
+      frameGeneration,
+      "detected",
+      "completed",
+      renderedIdealStatus,
+      alignmentResult.alignment.status,
+      false,
+      "pending",
+    )
     const completedRuntime: PoseMappingRuntimeState = {
       status: "completed",
       currentFaceStatus: "detected",
@@ -4200,7 +4379,9 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
       renderedIdealDetected: detection.status === "detected",
       renderedIdealLandmarkCount: detection.landmarkCount,
       renderedIdeal478: detection.landmarks478,
+      renderedIdealToken,
       alignedRenderedIdeal478: alignmentResult.alignedRenderedIdeal478,
+      alignedRenderedIdealToken,
       current478: state.currentAnalysis.landmarks478,
       meshSourceVertices: alignmentResult.meshSourceVertices,
       meshTargetVertices: alignmentResult.meshTargetVertices,
@@ -4217,6 +4398,10 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
       renderer: rendererMetadata,
       profileRendererMatch: true,
       profileMismatchError: null,
+      assetLifecycle: createAssetLifecycle(true),
+      frameLifecycle: completedFrameLifecycle,
+      renderedIdealLifecycle,
+      overlayLifecycle: createInitialOverlayLifecycle(),
       profileEvaluateMs,
       renderMs,
       detectMs,
@@ -4224,8 +4409,19 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
       previewDataUrl: liveObjPosePreviewCanvas.toDataURL("image/png"),
       errorMessage: detection.status === "detected" ? null : detection.errorMessage ?? detection.status,
     }
+    const overlayLifecycle = createOverlayLifecycleFromRuntime(completedRuntime)
     state.poseMappingRuntime = {
       ...completedRuntime,
+      overlayLifecycle,
+      frameLifecycle: createFrameLifecycle(
+        frameGeneration,
+        completedRuntime.currentFaceStatus,
+        completedRuntime.poseMappingStatus,
+        completedRuntime.renderedIdealStatus,
+        completedRuntime.alignmentStatus,
+        overlayLifecycle.alignedRenderedIdealVisible,
+        overlayLifecycle.skippedReason,
+      ),
       lastGood: detection.status === "detected"
         ? createPoseMappingLastGoodState(completedRuntime, state.currentAnalysis.analyzedTimeSec)
         : updatePoseMappingLastGoodAge(previousRuntime.lastGood),
@@ -4244,8 +4440,21 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
         ? "profile_mismatch"
         : state.poseMappingRuntime.poseMappingSkippedReason,
       fallbackPoseUsed: false,
+      fallbackRenderedIdealUsed: false,
       lastUpdatedAt: formatUpdatedAt(),
       qualityGate,
+      renderedIdealStatus: "stale",
+      alignmentStatus: "error",
+      alignmentSkippedReason: "error",
+      renderedIdealToken: null,
+      alignedRenderedIdeal478: null,
+      alignedRenderedIdealToken: null,
+      renderedIdealLifecycle: {
+        ...state.poseMappingRuntime.renderedIdealLifecycle,
+        staleCanvasDetected: true,
+      },
+      overlayLifecycle: createOverlayLifecycle(false, message),
+      assetLifecycle: createAssetLifecycle(false),
       totalMs: performance.now() - totalStartMs,
       errorMessage: message,
     }
@@ -5948,6 +6157,7 @@ function getOrCreateWebglObjBenchmarkRenderer() {
     return webglObjBenchmarkRenderer
   }
   webglObjBenchmarkRenderer = createWebglObjBenchmarkRenderer()
+  incrementRendererGeneration()
   return webglObjBenchmarkRenderer
 }
 
@@ -6855,7 +7065,7 @@ function createSkippedPoseMappingRuntimeState(params: {
     ...previousRuntime,
     status: previousRuntime.previewDataUrl ? "completed" : "idle",
     currentFaceStatus: params.currentFaceStatus,
-    renderedIdealStatus: previousRuntime.renderedIdealStatus,
+    renderedIdealStatus: "stale",
     alignmentStatus: "stale",
     alignmentSkippedReason: "stale",
     poseMappingStatus: getPoseMappingSkippedStatus(params.skippedReason),
@@ -6879,8 +7089,22 @@ function createSkippedPoseMappingRuntimeState(params: {
     },
     lastUpdatedAt: formatUpdatedAt(),
     qualityGate: params.qualityGate,
+    renderedIdealDetected: false,
+    renderedIdealLandmarkCount: null,
+    renderedIdeal478: null,
+    renderedIdealToken: null,
+    alignedRenderedIdeal478: null,
+    alignedRenderedIdealToken: null,
     current478: null,
     meshSourceVertices: null,
+    meshTargetVertices: null,
+    assetLifecycle: createAssetLifecycle(previousRuntime.profileRendererMatch),
+    frameLifecycle: null,
+    renderedIdealLifecycle: {
+      ...createEmptyRenderedIdealLifecycle(),
+      staleCanvasDetected: lastGood.hasLastGood,
+    },
+    overlayLifecycle: createOverlayLifecycle(false, params.skippedReason),
     profileEvaluateMs: null,
     renderMs: null,
     detectMs: null,
@@ -10420,6 +10644,10 @@ function renderPoseMappingLiveSummaryCard() {
       <div><dt>poseMappingSkippedReason</dt><dd>${escapeHtml(runtime.poseMappingSkippedReason)}</dd></div>
       <div><dt>fallbackPoseUsed</dt><dd>${String(runtime.fallbackPoseUsed)}</dd></div>
       <div><dt>fallbackRenderedIdealUsed</dt><dd>${String(runtime.fallbackRenderedIdealUsed)}</dd></div>
+      <div><dt>assetLifecycle</dt><dd>OBJ ${escapeHtml(runtime.assetLifecycle.objStatus)} / profile ${escapeHtml(runtime.assetLifecycle.profileStatus)} / renderer ${escapeHtml(runtime.assetLifecycle.rendererStatus)}</dd></div>
+      <div><dt>generation</dt><dd>obj ${runtime.assetLifecycle.objGenerationId} / profile ${runtime.assetLifecycle.profileGenerationId} / render ${runtime.assetLifecycle.renderSettingsGenerationId} / renderer ${runtime.assetLifecycle.rendererGenerationId}</dd></div>
+      <div><dt>render lifecycle</dt><dd>render ${String(runtime.renderedIdealLifecycle.renderSucceeded)} / detect ${String(runtime.renderedIdealLifecycle.detectSucceeded)} / stale ${String(runtime.renderedIdealLifecycle.staleCanvasDetected)}</dd></div>
+      <div><dt>overlay lifecycle</dt><dd>visible ${String(runtime.overlayLifecycle.alignedRenderedIdealVisible)} / gen ${String(runtime.overlayLifecycle.generationMatch)} / token ${String(runtime.overlayLifecycle.tokenMatch)} / ${escapeHtml(runtime.overlayLifecycle.skippedReason)}</dd></div>
       <div><dt>lastGood</dt><dd>${String(runtime.lastGood.hasLastGood)} / ageMs ${formatRealtimeNullableNumber(runtime.lastGood.ageMs)}</dd></div>
       <div><dt>stale</dt><dd>${String(runtime.stale.isStale)} / ${escapeHtml(runtime.stale.staleReason ?? "-")} / ${formatRealtimeNullableNumber(runtime.stale.staleMs)}ms</dd></div>
       <div><dt>loop busy</dt><dd>${String(poseMappingRuntimeInProgress)}</dd></div>
@@ -10511,6 +10739,10 @@ function renderPoseMappingDebugTab() {
         <div><dt>poseMappingSkippedReason</dt><dd>${escapeHtml(runtime.poseMappingSkippedReason)}</dd></div>
         <div><dt>fallbackPoseUsed</dt><dd>${String(runtime.fallbackPoseUsed)}</dd></div>
         <div><dt>Fallback rendered ideal used（レンダー理想のフォールバック使用有無）</dt><dd>${String(runtime.fallbackRenderedIdealUsed)}</dd></div>
+        <div><dt>assetLifecycle</dt><dd>${escapeHtml(JSON.stringify(runtime.assetLifecycle))}</dd></div>
+        <div><dt>frameLifecycle</dt><dd>${escapeHtml(JSON.stringify(runtime.frameLifecycle ?? null))}</dd></div>
+        <div><dt>renderedIdealLifecycle</dt><dd>${escapeHtml(JSON.stringify(runtime.renderedIdealLifecycle))}</dd></div>
+        <div><dt>overlayLifecycle</dt><dd>${escapeHtml(JSON.stringify(runtime.overlayLifecycle))}</dd></div>
         <div><dt>loop running</dt><dd>${String(state.realtimeDebug.status === "running")}</dd></div>
         <div><dt>loop busy</dt><dd>${String(poseMappingRuntimeInProgress)}</dd></div>
         <div><dt>loop lastFrameIndex</dt><dd>${formatNullableCount(state.realtimeDebug.processedVideoFrameCount)}</dd></div>
@@ -11990,12 +12222,13 @@ function drawRenderedIdealOverlay() {
 }
 
 function canDrawPoseMappingAlignedIdealOverlay() {
+  const runtime = state.poseMappingRuntime
+  const overlayLifecycle = createOverlayLifecycleFromRuntime(runtime)
   return (
-    state.poseMappingRuntime.currentFaceStatus === "detected" &&
-    state.poseMappingRuntime.renderedIdealStatus === "detected" &&
-    state.poseMappingRuntime.alignmentStatus === "completed" &&
-    state.poseMappingRuntime.alignedRenderedIdeal478 !== null &&
-    !state.poseMappingRuntime.fallbackRenderedIdealUsed
+    overlayLifecycle.alignedRenderedIdealVisible &&
+    runtime.overlayLifecycle.alignedRenderedIdealVisible &&
+    runtime.overlayLifecycle.generationMatch &&
+    runtime.overlayLifecycle.tokenMatch
   )
 }
 
@@ -12850,6 +13083,41 @@ function createDefaultPoseMappingProfileState(): PoseMappingProfileState {
   }
 }
 
+function createDefaultAssetGeneration(): AssetGeneration {
+  return {
+    objGenerationId: 1,
+    profileGenerationId: 1,
+    renderSettingsGenerationId: 1,
+    rendererGenerationId: 1,
+  }
+}
+
+function createInitialAssetLifecycle(): AssetLifecycle {
+  return {
+    objStatus: "missing",
+    profileStatus: "missing",
+    rendererStatus: "missing",
+    profileRendererMatch: false,
+    ...createDefaultAssetGeneration(),
+  }
+}
+
+function incrementObjGeneration() {
+  state.assetGeneration.objGenerationId += 1
+}
+
+function incrementProfileGeneration() {
+  state.assetGeneration.profileGenerationId += 1
+}
+
+function incrementRenderSettingsGeneration() {
+  state.assetGeneration.renderSettingsGenerationId += 1
+}
+
+function incrementRendererGeneration() {
+  state.assetGeneration.rendererGenerationId += 1
+}
+
 function createDefaultPoseMappingRuntimeState(): PoseMappingRuntimeState {
   return {
     status: "idle",
@@ -12890,7 +13158,9 @@ function createDefaultPoseMappingRuntimeState(): PoseMappingRuntimeState {
     renderedIdealDetected: false,
     renderedIdealLandmarkCount: null,
     renderedIdeal478: null,
+    renderedIdealToken: null,
     alignedRenderedIdeal478: null,
+    alignedRenderedIdealToken: null,
     current478: null,
     meshSourceVertices: null,
     meshTargetVertices: null,
@@ -12907,6 +13177,10 @@ function createDefaultPoseMappingRuntimeState(): PoseMappingRuntimeState {
     renderer: null,
     profileRendererMatch: false,
     profileMismatchError: null,
+    assetLifecycle: createInitialAssetLifecycle(),
+    frameLifecycle: null,
+    renderedIdealLifecycle: createEmptyRenderedIdealLifecycle(),
+    overlayLifecycle: createInitialOverlayLifecycle(),
     profileEvaluateMs: null,
     renderMs: null,
     detectMs: null,
@@ -12949,6 +13223,293 @@ function createEmptyPoseMappingNoFaceCounters(): PoseMappingNoFaceCounters {
     poseMappingSkippedNoCurrentFaceCount: 0,
     recoveredFromNoCurrentFaceCount: 0,
   }
+}
+
+function createAssetLifecycle(profileRendererMatch: boolean): AssetLifecycle {
+  return {
+    objStatus: getObjAssetStatus(),
+    profileStatus: getProfileAssetStatus(),
+    rendererStatus: webglObjBenchmarkRenderer ? "ready" : "missing",
+    profileRendererMatch,
+    ...state.assetGeneration,
+  }
+}
+
+function createFrameGeneration(): FrameGeneration {
+  const mediaTimeSec =
+    state.currentAnalysis.analyzedTimeSec ??
+    state.liveVideo.currentTimeSec ??
+    state.realtimeDebug.lastVideoFrameMediaTimeSec ??
+    null
+  const frame = {
+    frameId: state.nextFrameId,
+    mediaTimeSec,
+    startedAtMs: performance.now(),
+  }
+  state.nextFrameId += 1
+  return frame
+}
+
+function createRenderedIdealFrameToken(
+  frame: FrameGeneration,
+  p: ObjPoseMappingPose,
+): RenderedIdealFrameToken {
+  return {
+    ...state.assetGeneration,
+    frameId: frame.frameId,
+    mediaTimeSec: frame.mediaTimeSec,
+    p: { ...p },
+  }
+}
+
+function renderedIdealFrameTokensEqual(
+  first: RenderedIdealFrameToken | null,
+  second: RenderedIdealFrameToken | null,
+) {
+  if (!first || !second) {
+    return false
+  }
+  return (
+    first.objGenerationId === second.objGenerationId &&
+    first.profileGenerationId === second.profileGenerationId &&
+    first.renderSettingsGenerationId === second.renderSettingsGenerationId &&
+    first.rendererGenerationId === second.rendererGenerationId &&
+    first.frameId === second.frameId &&
+    first.mediaTimeSec === second.mediaTimeSec &&
+    posesEqual(first.p, second.p)
+  )
+}
+
+function renderedIdealFrameTokenMatchesFrame(
+  token: RenderedIdealFrameToken | null,
+  frame: FrameLifecycle | null,
+) {
+  return (
+    token !== null &&
+    frame !== null &&
+    token.frameId === frame.frameId &&
+    token.mediaTimeSec === frame.mediaTimeSec
+  )
+}
+
+function isRenderedIdealFrameTokenCurrent(token: RenderedIdealFrameToken | null) {
+  if (!token) {
+    return false
+  }
+  return (
+    token.objGenerationId === state.assetGeneration.objGenerationId &&
+    token.profileGenerationId === state.assetGeneration.profileGenerationId &&
+    token.renderSettingsGenerationId === state.assetGeneration.renderSettingsGenerationId &&
+    token.rendererGenerationId === state.assetGeneration.rendererGenerationId
+  )
+}
+
+function getObjAssetStatus(): AssetStatus {
+  if (!state.objFile.loaded) {
+    return "missing"
+  }
+  if (state.objSummary.parseStatus === "parsed") {
+    return "ready"
+  }
+  if (state.objSummary.parseStatus === "error") {
+    return "error"
+  }
+  return "loading"
+}
+
+function getProfileAssetStatus(): AssetStatus {
+  if (state.poseMappingProfile.loaded && state.poseMappingProfile.profile) {
+    return "ready"
+  }
+  return state.poseMappingProfile.errorMessage ? "error" : "missing"
+}
+
+function createFrameLifecycle(
+  frame: FrameGeneration | null,
+  currentFaceStatus: PoseMappingCurrentFaceStatus,
+  poseMappingStatus: PoseMappingStatus,
+  renderedIdealStatus: RenderedIdealStatus,
+  alignmentStatus: PoseMappingAlignmentStatus,
+  overlayIdealVisible: boolean,
+  overlaySkippedReason: string,
+): FrameLifecycle | null {
+  return frame
+    ? {
+        ...frame,
+        currentFaceStatus,
+        poseMappingStatus,
+        renderedIdealStatus,
+        alignmentStatus,
+        overlayIdealVisible,
+        overlaySkippedReason,
+      }
+    : null
+}
+
+function createEmptyRenderedIdealLifecycle(): RenderedIdealLifecycle {
+  return {
+    renderAttempted: false,
+    renderSucceeded: false,
+    detectAttempted: false,
+    detectSucceeded: false,
+    renderToken: null,
+    detectTokenMatchesRenderToken: false,
+    detectCanvasWasClearedBeforeRender: false,
+    staleCanvasDetected: false,
+    fallbackRenderedIdealUsed: false,
+  }
+}
+
+function createInitialOverlayLifecycle(): OverlayLifecycle {
+  return {
+    current478Visible: false,
+    alignedRenderedIdealVisible: false,
+    correspondenceLinesVisible: false,
+    meshTargetVisible: false,
+    triangleTargetVisible: false,
+    lastGoodUsedForOverlay: false,
+    generationMatch: false,
+    tokenMatch: false,
+    skippedReason: "not_ready",
+  }
+}
+
+function createOverlayLifecycle(visible: boolean, skippedReason: string): OverlayLifecycle {
+  return {
+    current478Visible: state.currentAnalysis.status === "detected",
+    alignedRenderedIdealVisible: visible,
+    correspondenceLinesVisible: visible && state.overlay.showMeshPairs,
+    meshTargetVisible: visible && state.overlay.showMeshTarget,
+    triangleTargetVisible: false,
+    lastGoodUsedForOverlay: false,
+    generationMatch: visible,
+    tokenMatch: visible,
+    skippedReason,
+  }
+}
+
+function createOverlayLifecycleFromRuntime(
+  runtime: Pick<
+    PoseMappingRuntimeState,
+    | "currentFaceStatus"
+    | "renderedIdealStatus"
+    | "alignmentStatus"
+    | "fallbackRenderedIdealUsed"
+    | "alignedRenderedIdeal478"
+    | "renderedIdealToken"
+    | "alignedRenderedIdealToken"
+    | "profileRendererMatch"
+    | "frameLifecycle"
+  >,
+): OverlayLifecycle {
+  const generationMatch =
+    isRenderedIdealFrameTokenCurrent(runtime.renderedIdealToken) &&
+    isRenderedIdealFrameTokenCurrent(runtime.alignedRenderedIdealToken)
+  const tokenMatch =
+    renderedIdealFrameTokensEqual(runtime.renderedIdealToken, runtime.alignedRenderedIdealToken) &&
+    renderedIdealFrameTokenMatchesFrame(runtime.renderedIdealToken, runtime.frameLifecycle) &&
+    renderedIdealFrameTokenMatchesFrame(runtime.alignedRenderedIdealToken, runtime.frameLifecycle)
+  const assetsReady = getObjAssetStatus() === "ready" && getProfileAssetStatus() === "ready"
+  const visible =
+    runtime.currentFaceStatus === "detected" &&
+    assetsReady &&
+    runtime.profileRendererMatch &&
+    runtime.renderedIdealStatus === "detected" &&
+    runtime.alignmentStatus === "completed" &&
+    runtime.alignedRenderedIdeal478 !== null &&
+    !runtime.fallbackRenderedIdealUsed &&
+    generationMatch &&
+    tokenMatch
+  return {
+    current478Visible: runtime.currentFaceStatus === "detected",
+    alignedRenderedIdealVisible: visible,
+    correspondenceLinesVisible: visible && state.overlay.showMeshPairs,
+    meshTargetVisible: visible && state.overlay.showMeshTarget,
+    triangleTargetVisible: false,
+    lastGoodUsedForOverlay: false,
+    generationMatch,
+    tokenMatch,
+    skippedReason: visible ? "none" : getOverlayLifecycleSkippedReason(runtime, assetsReady, generationMatch, tokenMatch),
+  }
+}
+
+function getOverlayLifecycleSkippedReason(
+  runtime: Pick<
+    PoseMappingRuntimeState,
+    | "currentFaceStatus"
+    | "renderedIdealStatus"
+    | "alignmentStatus"
+    | "fallbackRenderedIdealUsed"
+    | "alignedRenderedIdeal478"
+    | "profileRendererMatch"
+  >,
+  assetsReady: boolean,
+  generationMatch: boolean,
+  tokenMatch: boolean,
+) {
+  if (runtime.currentFaceStatus !== "detected") {
+    return "current_face_not_detected"
+  }
+  if (getObjAssetStatus() !== "ready") {
+    return "obj_not_ready"
+  }
+  if (getProfileAssetStatus() !== "ready") {
+    return "profile_not_ready"
+  }
+  if (!assetsReady) {
+    return "asset_not_ready"
+  }
+  if (!runtime.profileRendererMatch) {
+    return "profile_mismatch"
+  }
+  if (runtime.renderedIdealStatus !== "detected") {
+    return "rendered_ideal_not_detected"
+  }
+  if (runtime.alignmentStatus !== "completed") {
+    return runtime.alignmentStatus
+  }
+  if (runtime.fallbackRenderedIdealUsed) {
+    return "fallback_rendered_ideal"
+  }
+  if (!runtime.alignedRenderedIdeal478) {
+    return "aligned_ideal_missing"
+  }
+  if (!generationMatch) {
+    return "generation_mismatch"
+  }
+  if (!tokenMatch) {
+    return "token_mismatch"
+  }
+  return "not_ready"
+}
+
+function clearWebglRendererCanvas(renderer: WebglObjRenderer) {
+  const gl = renderer.gl
+  gl.viewport(0, 0, Math.max(1, renderer.canvas.width), Math.max(1, renderer.canvas.height))
+  gl.clearColor(0, 0, 0, 0)
+  gl.clear(gl.COLOR_BUFFER_BIT)
+}
+
+function clearRuntimeRenderArtifacts(reason: string) {
+  state.poseMappingRuntime = {
+    ...state.poseMappingRuntime,
+    renderedIdealStatus: "missing",
+    alignmentStatus: reason === "profile_mismatch" ? "skipped_profile_mismatch" : "stale",
+    alignmentSkippedReason: reason === "profile_mismatch" ? "profile_mismatch" : "stale",
+    renderedIdealDetected: false,
+    renderedIdealLandmarkCount: null,
+    renderedIdeal478: null,
+    renderedIdealToken: null,
+    alignedRenderedIdeal478: null,
+    alignedRenderedIdealToken: null,
+    meshTargetVertices: null,
+    renderedIdealLifecycle: createEmptyRenderedIdealLifecycle(),
+    overlayLifecycle: createOverlayLifecycle(false, reason),
+    assetLifecycle: createAssetLifecycle(false),
+    fallbackRenderedIdealUsed: false,
+    errorMessage: reason,
+  }
+  clearPoseMappingPreviewCanvas()
 }
 
 function createEmptyPoseMappingExcludedReasonCounts(): PoseMappingExcludedReasonCounts {
@@ -15646,6 +16207,8 @@ function getPoseMappingRuntimeRawSummary() {
     poseDiff: roundPoseMappingDiff(runtime.poseDiff),
     renderedIdealDetected: runtime.renderedIdealDetected,
     renderedIdealLandmarkCount: runtime.renderedIdealLandmarkCount,
+    renderedIdealToken: runtime.renderedIdealToken,
+    alignedRenderedIdealToken: runtime.alignedRenderedIdealToken,
     alignedRenderedIdealLandmarkCount: runtime.alignedRenderedIdeal478?.length ?? null,
     meshSourceVertexCount: runtime.meshSourceVertices?.length ?? null,
     meshTargetVertexCount: runtime.meshTargetVertices?.length ?? null,
@@ -15662,6 +16225,10 @@ function getPoseMappingRuntimeRawSummary() {
     renderer: runtime.renderer,
     profileRendererMatch: runtime.profileRendererMatch,
     profileMismatchError: runtime.profileMismatchError,
+    assetLifecycle: runtime.assetLifecycle,
+    frameLifecycle: runtime.frameLifecycle,
+    renderedIdealLifecycle: runtime.renderedIdealLifecycle,
+    overlayLifecycle: runtime.overlayLifecycle,
     profileEvaluateMs: roundForState(runtime.profileEvaluateMs),
     renderMs: roundForState(runtime.renderMs),
     detectMs: roundForState(runtime.detectMs),
@@ -15706,6 +16273,10 @@ function getPoseMappingRuntimeDebugExport() {
       poseMappingSkippedReason: runtime.poseMappingSkippedReason,
       fallbackPoseUsed: runtime.fallbackPoseUsed,
       fallbackRenderedIdealUsed: runtime.fallbackRenderedIdealUsed,
+      assetLifecycle: runtime.assetLifecycle,
+      frameLifecycle: runtime.frameLifecycle,
+      renderedIdealLifecycle: runtime.renderedIdealLifecycle,
+      overlayLifecycle: runtime.overlayLifecycle,
       lastGood: getPoseMappingLastGoodDebugSummary(runtime.lastGood),
       stale: {
         isStale: runtime.stale.isStale,
@@ -15745,6 +16316,8 @@ function getPoseMappingRuntimeDebugExport() {
     renderedIdeal: {
       detected: runtime.renderedIdealDetected,
       landmarkCount: runtime.renderedIdealLandmarkCount,
+      token: runtime.renderedIdealToken,
+      alignedToken: runtime.alignedRenderedIdealToken,
       canvasWidth: runtime.canvasWidth,
       canvasHeight: runtime.canvasHeight,
       detectCanvasWidth: runtime.detectCanvasWidth,

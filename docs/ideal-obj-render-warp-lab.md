@@ -668,3 +668,28 @@ WebGL renderer は通常 runtime と p,P dataset 生成の本線です。MediaPi
 - [Shape Warp production direction](shape-warp-production-direction.md)
 - [アーキテクチャ](architecture.md)
 - [リポジトリ構成](repository-structure.md)
+
+## Runtime lifecycle / token
+
+Live overlay では、古い rendered ideal や fallback frontal face を表示しないため、runtime に以下の lifecycle を持たせます。
+
+- `assetLifecycle`: OBJ / profile / renderer / render settings の generation と ready 状態を記録します。
+- `frameLifecycle`: current frame の `frameId` / `mediaTimeSec` と、その frame の runtime status を記録します。
+- `renderedIdealLifecycle`: OBJ render の成功 token、detect 実行有無、detect token 一致、stale canvas 検出を記録します。
+- `overlayLifecycle`: current478 / aligned rendered ideal / correspondence line / mesh target の表示可否と skipped reason を記録します。
+
+OBJ、poseMappingProfile、render appearance、renderer が変わった場合は generation を進めます。rendered ideal の render 成功後に `RenderedIdealFrameToken` を作り、同じ token が current generation と一致する場合だけ MediaPipe detect 結果と alignment 結果を採用します。WebGL canvas は detect 前に clear し、render 成功 token がない canvas に対して detect を進めません。
+
+Live overlay の aligned rendered ideal は、以下をすべて満たす場合だけ表示します。
+
+- `currentFaceStatus === "detected"`
+- OBJ と poseMappingProfile が ready
+- `profileRendererMatch === true`
+- `renderedIdealStatus === "detected"`
+- `alignmentStatus === "completed"`
+- `fallbackRenderedIdealUsed === false`
+- `alignedRenderedIdeal478` が存在する
+- `renderedIdealToken` と `alignedRenderedIdealToken` が current asset generation と一致する
+- `renderedIdealToken` と `alignedRenderedIdealToken` が同一 frame / pose を指す
+
+`lastGood` は debug 記録として保持できますが、overlay 表示には使いません。current face missing、generation mismatch、profile mismatch、OBJ / profile reload 中は `renderedIdeal478` / `alignedRenderedIdeal478` / token を runtime 表示対象から外し、`overlayLifecycle.skippedReason` に理由を残します。
