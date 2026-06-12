@@ -800,11 +800,38 @@ type PoseMappingProfileModel = {
   }
 }
 
+type PoseMappingRenderSettings = {
+  detectCanvasWidth: number
+  detectCanvasHeight: number
+  previewCanvasWidth: number
+  previewCanvasHeight: number
+  renderResolutionSource: "profile.renderAppearance.applied.renderResolution" | "profile.renderSettings.canvasWidthHeight" | "fallbackDefault"
+  detectCanvasMatchesProfile: boolean
+  profileCanvasWidth: number | null
+  profileCanvasHeight: number | null
+}
+
+type PoseMappingRenderAppearanceApplied = {
+  backgroundColor: string
+  skinColor: string
+  material: AppliedObjRenderAppearanceProfile["material"]
+  lighting: AppliedObjRenderAppearanceProfile["lighting"]
+  camera: AppliedObjRenderAppearanceProfile["camera"]
+  renderResolution: AppliedObjRenderAppearanceProfile["renderResolution"]
+  notAppliedRenderAppearanceFields: string[]
+}
+
+type PoseMappingProfileMetadata = {
+  renderAppearanceApplied: Record<string, unknown> | null
+  renderSettings: Record<string, unknown> | null
+}
+
 type PoseMappingProfile = {
   schemaVersion: "pose_mapping_profile_candidate_v1"
   modelType: "decision_tree_gate_polynomial_degree2_ridge"
   modelName: string | null
   datasetKind: string | null
+  datasetMetadata: PoseMappingProfileMetadata
   inputFeatures: string[]
   target: string[]
   tree: {
@@ -872,6 +899,12 @@ type PoseMappingRuntimeState = {
   current478: ReferenceLandmark[] | null
   canvasWidth: number
   canvasHeight: number
+  detectCanvasWidth: number
+  detectCanvasHeight: number
+  previewCanvasWidth: number
+  previewCanvasHeight: number
+  renderSettings: PoseMappingRenderSettings | null
+  renderAppearanceApplied: PoseMappingRenderAppearanceApplied | null
   profileEvaluateMs: number | null
   renderMs: number | null
   detectMs: number | null
@@ -2697,6 +2730,7 @@ function parsePoseMappingProfile(json: unknown): PoseMappingProfile {
     modelType,
     modelName: getOptionalString(source.modelName),
     datasetKind: getOptionalString(source.datasetKind),
+    datasetMetadata: parsePoseMappingProfileMetadata(source),
     inputFeatures,
     target,
     tree: {
@@ -2766,6 +2800,30 @@ function parsePoseRangeAfter(value: unknown): Record<string, PoseMappingScalarRa
     }
   }
   return Object.keys(range).length > 0 ? range : null
+}
+
+function parsePoseMappingProfileMetadata(source: Record<string, unknown>): PoseMappingProfileMetadata {
+  const datasetMetadata = isRecord(source.datasetMetadata) ? source.datasetMetadata : null
+  const renderAppearance = datasetMetadata && isRecord(datasetMetadata.renderAppearance)
+    ? datasetMetadata.renderAppearance
+    : isRecord(source.renderAppearance)
+      ? source.renderAppearance
+      : null
+  const renderAppearanceApplied = renderAppearance && isRecord(renderAppearance.applied)
+    ? renderAppearance.applied
+    : isRecord(source.renderAppearanceApplied)
+      ? source.renderAppearanceApplied
+      : null
+  const renderSettings = datasetMetadata && isRecord(datasetMetadata.renderSettings)
+    ? datasetMetadata.renderSettings
+    : isRecord(source.renderSettings)
+      ? source.renderSettings
+      : null
+
+  return {
+    renderAppearanceApplied,
+    renderSettings,
+  }
 }
 
 function evaluatePoseMappingProfile(
@@ -3447,12 +3505,22 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
     const evaluateResult = evaluatePoseMappingProfile(profile, P_camera)
     const profileEvaluateMs = performance.now() - evaluateStartMs
 
+    const renderSettings = resolvePoseMappingRenderSettings(profile, liveObjPosePreviewCanvas)
+    const { appearance, debug: renderAppearanceApplied } = createPoseMappingRenderAppearance(
+      profile,
+      renderSettings,
+    )
+    const detectCanvas = document.createElement("canvas")
     const renderStartMs = performance.now()
     const renderSummary = renderRenderedIdealCanvasTo(
-      liveObjPosePreviewCanvas,
+      detectCanvas,
       getObjPoseSyncRotationCenter(),
       evaluateResult.p,
-      { directPose: true },
+      {
+        directPose: true,
+        appearanceOverride: appearance,
+        forceRenderResolution: true,
+      },
     )
     const renderMs = performance.now() - renderStartMs
     if (renderSummary.status !== "rendered") {
@@ -3461,11 +3529,13 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
 
     const detector = await getRenderedIdealFaceLandmarker()
     const detectStartMs = performance.now()
-    const result = detector.detect(liveObjPosePreviewCanvas)
+    const result = detector.detect(detectCanvas)
     const detectMs = performance.now() - detectStartMs
     const detection = buildRenderedIdealDetectionState(result, -1, detectMs, null)
     const poseDiff = calculatePoseMappingPoseDiff(P_camera, detection.pose)
-    drawPoseMappingPreviewOverlay(detection.landmarks478)
+    const previewSize = drawPoseMappingPreviewFromDetectCanvas(detectCanvas, detection.landmarks478)
+    renderSettings.previewCanvasWidth = previewSize.width
+    renderSettings.previewCanvasHeight = previewSize.height
 
     const totalMs = performance.now() - totalStartMs
     state.poseMappingRuntime = {
@@ -3485,8 +3555,14 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
       renderedIdealLandmarkCount: detection.landmarkCount,
       renderedIdeal478: detection.landmarks478,
       current478: state.currentAnalysis.landmarks478,
-      canvasWidth: liveObjPosePreviewCanvas.width,
-      canvasHeight: liveObjPosePreviewCanvas.height,
+      canvasWidth: detectCanvas.width,
+      canvasHeight: detectCanvas.height,
+      detectCanvasWidth: detectCanvas.width,
+      detectCanvasHeight: detectCanvas.height,
+      previewCanvasWidth: previewSize.width,
+      previewCanvasHeight: previewSize.height,
+      renderSettings,
+      renderAppearanceApplied,
       profileEvaluateMs,
       renderMs,
       detectMs,
@@ -3590,7 +3666,230 @@ function calculatePoseMappingPoseDiff(
   }
 }
 
-function drawPoseMappingPreviewOverlay(landmarks: ReferenceLandmark[] | null) {
+function resolvePoseMappingRenderSettings(
+  profile: PoseMappingProfile,
+  previewCanvas: HTMLCanvasElement,
+): PoseMappingRenderSettings {
+  const appearanceResolution = getRenderResolutionFromRecord(
+    profile.datasetMetadata.renderAppearanceApplied?.renderResolution,
+  )
+  const renderSettingsResolution = getCanvasResolutionFromRenderSettings(profile.datasetMetadata.renderSettings)
+  const selected = appearanceResolution ?? renderSettingsResolution ?? {
+    width: 1179,
+    height: 1179,
+    source: "fallbackDefault" as const,
+  }
+  const profileResolution = appearanceResolution ?? renderSettingsResolution
+
+  return {
+    detectCanvasWidth: selected.width,
+    detectCanvasHeight: selected.height,
+    previewCanvasWidth: previewCanvas.width,
+    previewCanvasHeight: previewCanvas.height,
+    renderResolutionSource: selected.source,
+    detectCanvasMatchesProfile:
+      profileResolution !== null &&
+      selected.width === profileResolution.width &&
+      selected.height === profileResolution.height,
+    profileCanvasWidth: profileResolution?.width ?? null,
+    profileCanvasHeight: profileResolution?.height ?? null,
+  }
+}
+
+function getRenderResolutionFromRecord(value: unknown) {
+  if (!isRecord(value)) {
+    return null
+  }
+  const width = getPositiveInteger(value.width)
+  const height = getPositiveInteger(value.height)
+  if (width === null || height === null) {
+    return null
+  }
+  return {
+    width,
+    height,
+    source: "profile.renderAppearance.applied.renderResolution" as const,
+  }
+}
+
+function getCanvasResolutionFromRenderSettings(value: Record<string, unknown> | null) {
+  if (!value) {
+    return null
+  }
+  const width = getPositiveInteger(value.canvasWidth)
+  const height = getPositiveInteger(value.canvasHeight)
+  if (width === null || height === null) {
+    return null
+  }
+  return {
+    width,
+    height,
+    source: "profile.renderSettings.canvasWidthHeight" as const,
+  }
+}
+
+function getPositiveInteger(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.round(value)
+    : null
+}
+
+function createPoseMappingRenderAppearance(
+  profile: PoseMappingProfile,
+  renderSettings: PoseMappingRenderSettings,
+): {
+  appearance: AppliedObjRenderAppearanceProfile
+  debug: PoseMappingRenderAppearanceApplied
+} {
+  const base = getAppliedObjRenderAppearanceProfile({
+    width: renderSettings.detectCanvasWidth,
+    height: renderSettings.detectCanvasHeight,
+  })
+  const source = profile.datasetMetadata.renderAppearanceApplied
+  const notAppliedRenderAppearanceFields: string[] = []
+  const material = { ...base.material }
+  const lighting = { ...base.lighting }
+  const camera = { ...base.camera }
+
+  if (source) {
+    const materialSource = isRecord(source.material) ? source.material : null
+    const lightingSource = isRecord(source.lighting) ? source.lighting : null
+    const cameraSource = isRecord(source.camera) ? source.camera : null
+
+    material.mode = getRenderAppearanceEnum(materialSource?.mode, ["matte", "flat", "lambert"], material.mode)
+    material.diffuse = getRenderAppearanceNumber(materialSource?.diffuse, material.diffuse)
+    material.ambient = getRenderAppearanceNumber(materialSource?.ambient, material.ambient)
+    if (materialSource && "specular" in materialSource) {
+      notAppliedRenderAppearanceFields.push("material.specular")
+    }
+
+    lighting.mode = getRenderAppearanceEnum(
+      lightingSource?.mode,
+      ["none", "camera_front", "fixed_directional", "dual_soft"],
+      lighting.mode,
+    )
+    lighting.ambientIntensity = getRenderAppearanceNumber(
+      lightingSource?.ambientIntensity,
+      lighting.ambientIntensity,
+    )
+    lighting.keyLightIntensity = getRenderAppearanceNumber(
+      lightingSource?.keyLightIntensity,
+      lighting.keyLightIntensity,
+    )
+    const keyLightDirection = getRenderAppearanceVector(lightingSource?.keyLightDirection)
+    if (keyLightDirection) {
+      lighting.keyLightDirection = normalizeVector(keyLightDirection)
+    }
+    if (lightingSource && "castShadow" in lightingSource) {
+      notAppliedRenderAppearanceFields.push("lighting.castShadow")
+    }
+
+    camera.scale = getRenderAppearanceNumber(cameraSource?.scale, camera.scale)
+    camera.verticalOffset = getRenderAppearanceNumber(cameraSource?.verticalOffset, camera.verticalOffset)
+    if (cameraSource && "projection" in cameraSource) {
+      notAppliedRenderAppearanceFields.push("camera.projection")
+    }
+    if (cameraSource && "fovDeg" in cameraSource) {
+      notAppliedRenderAppearanceFields.push("camera.fovDeg")
+    }
+  }
+
+  const backgroundColor = getRenderAppearanceColor(source?.backgroundColor, base.backgroundColor)
+  const skinColor = getRenderAppearanceColor(source?.skinColor, base.skinColor)
+  const appearance: AppliedObjRenderAppearanceProfile = {
+    ...base,
+    label: "poseMappingProfile renderAppearance",
+    backgroundColor,
+    skinColor,
+    material,
+    lighting,
+    camera,
+    renderResolution: {
+      width: renderSettings.detectCanvasWidth,
+      height: renderSettings.detectCanvasHeight,
+    },
+  }
+  const debug: PoseMappingRenderAppearanceApplied = {
+    backgroundColor,
+    skinColor,
+    material: { ...material },
+    lighting: { ...lighting },
+    camera: { ...camera },
+    renderResolution: { ...appearance.renderResolution },
+    notAppliedRenderAppearanceFields,
+  }
+
+  return { appearance, debug }
+}
+
+function getRenderAppearanceColor(value: unknown, fallback: string) {
+  return typeof value === "string" && hexToRgb(value) ? value : fallback
+}
+
+function getRenderAppearanceNumber(value: unknown, fallback: number) {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback
+}
+
+function getRenderAppearanceEnum<T extends string>(
+  value: unknown,
+  allowed: readonly T[],
+  fallback: T,
+) {
+  return typeof value === "string" && allowed.includes(value as T) ? value as T : fallback
+}
+
+function getRenderAppearanceVector(value: unknown): ObjVertex | null {
+  if (!isRecord(value)) {
+    return null
+  }
+  const x = getOptionalFiniteNumber(value.x)
+  const y = getOptionalFiniteNumber(value.y)
+  const z = getOptionalFiniteNumber(value.z)
+  return x === null || y === null || z === null ? null : { x, y, z }
+}
+
+function drawPoseMappingPreviewFromDetectCanvas(
+  sourceCanvas: HTMLCanvasElement,
+  landmarks: ReferenceLandmark[] | null,
+) {
+  const context = liveObjPosePreviewCanvas.getContext("2d")
+  if (!context) {
+    return { width: liveObjPosePreviewCanvas.width, height: liveObjPosePreviewCanvas.height }
+  }
+  const rect = liveObjPosePreviewCanvas.getBoundingClientRect()
+  const dpr = window.devicePixelRatio || 1
+  const targetWidth = Math.max(1, Math.round((rect.width > 0 ? rect.width : 640) * dpr))
+  const targetHeight = Math.max(1, Math.round((rect.height > 0 ? rect.height : 640) * dpr))
+  if (liveObjPosePreviewCanvas.width !== targetWidth || liveObjPosePreviewCanvas.height !== targetHeight) {
+    liveObjPosePreviewCanvas.width = targetWidth
+    liveObjPosePreviewCanvas.height = targetHeight
+  }
+
+  context.setTransform(1, 0, 0, 1, 0, 0)
+  context.clearRect(0, 0, liveObjPosePreviewCanvas.width, liveObjPosePreviewCanvas.height)
+  const scale = Math.min(
+    liveObjPosePreviewCanvas.width / sourceCanvas.width,
+    liveObjPosePreviewCanvas.height / sourceCanvas.height,
+  )
+  const drawWidth = sourceCanvas.width * scale
+  const drawHeight = sourceCanvas.height * scale
+  const offsetX = (liveObjPosePreviewCanvas.width - drawWidth) / 2
+  const offsetY = (liveObjPosePreviewCanvas.height - drawHeight) / 2
+  context.drawImage(sourceCanvas, offsetX, offsetY, drawWidth, drawHeight)
+  drawPoseMappingPreviewOverlay(landmarks, { x: offsetX, y: offsetY, width: drawWidth, height: drawHeight })
+
+  return { width: liveObjPosePreviewCanvas.width, height: liveObjPosePreviewCanvas.height }
+}
+
+function drawPoseMappingPreviewOverlay(
+  landmarks: ReferenceLandmark[] | null,
+  viewport: { x: number; y: number; width: number; height: number } = {
+    x: 0,
+    y: 0,
+    width: liveObjPosePreviewCanvas.width,
+    height: liveObjPosePreviewCanvas.height,
+  },
+) {
   if (!landmarks || landmarks.length !== REQUIRED_LANDMARK_COUNT) {
     return
   }
@@ -3602,12 +3901,7 @@ function drawPoseMappingPreviewOverlay(landmarks: ReferenceLandmark[] | null) {
   context.setTransform(1, 0, 0, 1, 0, 0)
   drawLandmarkPoints(
     context,
-    {
-      x: 0,
-      y: 0,
-      width: liveObjPosePreviewCanvas.width,
-      height: liveObjPosePreviewCanvas.height,
-    },
+    viewport,
     landmarks,
     "rgba(219, 68, 85, 0.9)",
     1.45,
@@ -6838,6 +7132,20 @@ function renderPoseMappingDebugTab() {
     <section class="debug-section">
       <h3>Render confirm（レンダー確認）</h3>
       <dl class="summary-list">
+        <div><dt>detectCanvasWidth</dt><dd>${formatNullableCount(runtime.renderSettings?.detectCanvasWidth ?? runtime.detectCanvasWidth)}</dd></div>
+        <div><dt>detectCanvasHeight</dt><dd>${formatNullableCount(runtime.renderSettings?.detectCanvasHeight ?? runtime.detectCanvasHeight)}</dd></div>
+        <div><dt>previewCanvasWidth</dt><dd>${formatNullableCount(runtime.renderSettings?.previewCanvasWidth ?? runtime.previewCanvasWidth)}</dd></div>
+        <div><dt>previewCanvasHeight</dt><dd>${formatNullableCount(runtime.renderSettings?.previewCanvasHeight ?? runtime.previewCanvasHeight)}</dd></div>
+        <div><dt>renderResolutionSource</dt><dd>${escapeHtml(runtime.renderSettings?.renderResolutionSource ?? "-")}</dd></div>
+        <div><dt>detectCanvasMatchesProfile</dt><dd>${String(runtime.renderSettings?.detectCanvasMatchesProfile ?? false)}</dd></div>
+        <div><dt>profileCanvasWidth</dt><dd>${formatNullableCount(runtime.renderSettings?.profileCanvasWidth ?? null)}</dd></div>
+        <div><dt>profileCanvasHeight</dt><dd>${formatNullableCount(runtime.renderSettings?.profileCanvasHeight ?? null)}</dd></div>
+        <div><dt>backgroundColor</dt><dd>${escapeHtml(runtime.renderAppearanceApplied?.backgroundColor ?? "-")}</dd></div>
+        <div><dt>skinColor</dt><dd>${escapeHtml(runtime.renderAppearanceApplied?.skinColor ?? "-")}</dd></div>
+        <div><dt>material</dt><dd>${escapeHtml(runtime.renderAppearanceApplied ? JSON.stringify(runtime.renderAppearanceApplied.material) : "-")}</dd></div>
+        <div><dt>lighting</dt><dd>${escapeHtml(runtime.renderAppearanceApplied ? JSON.stringify(runtime.renderAppearanceApplied.lighting) : "-")}</dd></div>
+        <div><dt>camera</dt><dd>${escapeHtml(runtime.renderAppearanceApplied ? JSON.stringify(runtime.renderAppearanceApplied.camera) : "-")}</dd></div>
+        <div><dt>notAppliedRenderAppearanceFields</dt><dd>${escapeHtml(runtime.renderAppearanceApplied?.notAppliedRenderAppearanceFields.join(", ") || "-")}</dd></div>
         <div><dt>P_confirm</dt><dd>${escapeHtml(formatPose(runtime.P_confirm))}</dd></div>
         <div><dt>pose diff</dt><dd>${escapeHtml(formatPoseMappingDiff(runtime.poseDiff))}</dd></div>
         <div><dt>renderedIdeal478 status</dt><dd>${runtime.renderedIdealDetected ? "detected" : "not detected"} / landmarkCount ${formatNullableCount(runtime.renderedIdealLandmarkCount)}</dd></div>
@@ -7326,7 +7634,11 @@ function renderRenderedIdealCanvasTo(
   canvas: HTMLCanvasElement,
   rotationCenterOverride: ObjVertex | null = null,
   poseOverride: ReferencePose | null = null,
-  options: { directPose?: boolean } = {},
+  options: {
+    directPose?: boolean
+    appearanceOverride?: AppliedObjRenderAppearanceProfile
+    forceRenderResolution?: boolean
+  } = {},
 ): RenderedIdealRenderSummary {
   const context = canvas.getContext("2d")
   if (!context) {
@@ -7335,12 +7647,12 @@ function renderRenderedIdealCanvasTo(
     })
   }
 
-  const appearance = getAppliedObjRenderAppearanceProfile()
+  const appearance = options.appearanceOverride ?? getAppliedObjRenderAppearanceProfile()
   const rect = canvas.getBoundingClientRect()
   const fallbackCssWidth = rect.width > 0 ? rect.width : RENDERED_IDEAL_FALLBACK_CANVAS_SIZE
   const fallbackCssHeight = rect.height > 0 ? rect.height : RENDERED_IDEAL_FALLBACK_CANVAS_SIZE
   const dpr = window.devicePixelRatio || 1
-  const useProfileResolution = appearance.id !== "current"
+  const useProfileResolution = options.forceRenderResolution ?? appearance.id !== "current"
   const cssWidth = useProfileResolution ? appearance.renderResolution.width : fallbackCssWidth
   const cssHeight = useProfileResolution ? appearance.renderResolution.height : fallbackCssHeight
   const targetWidth = Math.max(1, Math.round(useProfileResolution ? appearance.renderResolution.width : cssWidth * dpr))
@@ -8642,6 +8954,12 @@ function createDefaultPoseMappingRuntimeState(): PoseMappingRuntimeState {
     current478: null,
     canvasWidth: 0,
     canvasHeight: 0,
+    detectCanvasWidth: 0,
+    detectCanvasHeight: 0,
+    previewCanvasWidth: 0,
+    previewCanvasHeight: 0,
+    renderSettings: null,
+    renderAppearanceApplied: null,
     profileEvaluateMs: null,
     renderMs: null,
     detectMs: null,
@@ -10220,6 +10538,10 @@ function formatPoseMappingRange(range: Record<string, PoseMappingScalarRange> | 
 
 function formatPoseMappingPreviewNote() {
   return [
+    `detect canvas: ${formatNullableCount(state.poseMappingRuntime.detectCanvasWidth)} x ${formatNullableCount(state.poseMappingRuntime.detectCanvasHeight)}`,
+    `preview canvas: ${formatNullableCount(state.poseMappingRuntime.previewCanvasWidth)} x ${formatNullableCount(state.poseMappingRuntime.previewCanvasHeight)}`,
+    `detect result: ${state.poseMappingRuntime.renderedIdealDetected ? "detected" : "not detected"}`,
+    `errorMessage: ${state.poseMappingRuntime.errorMessage ?? "-"}`,
     `P_camera: ${formatPoseMappingPose(state.poseMappingRuntime.P_camera)}`,
     `p: ${formatPoseMappingPose(state.poseMappingRuntime.p)}`,
     `P_confirm: ${formatPose(state.poseMappingRuntime.P_confirm)}`,
@@ -10761,6 +11083,7 @@ function getPoseMappingProfileRawSummary() {
     modelType: profile?.modelType ?? null,
     modelName: profile?.modelName ?? null,
     datasetKind: profile?.datasetKind ?? null,
+    datasetMetadata: profile?.datasetMetadata ?? null,
     inputFeatures: profile?.inputFeatures ?? [],
     target: profile?.target ?? [],
     errorSummary: profile?.errorSummary ?? null,
@@ -10790,6 +11113,12 @@ function getPoseMappingRuntimeRawSummary() {
     renderedIdealLandmarkCount: runtime.renderedIdealLandmarkCount,
     canvasWidth: runtime.canvasWidth,
     canvasHeight: runtime.canvasHeight,
+    detectCanvasWidth: runtime.detectCanvasWidth,
+    detectCanvasHeight: runtime.detectCanvasHeight,
+    previewCanvasWidth: runtime.previewCanvasWidth,
+    previewCanvasHeight: runtime.previewCanvasHeight,
+    renderSettings: runtime.renderSettings,
+    renderAppearanceApplied: runtime.renderAppearanceApplied,
     profileEvaluateMs: roundForState(runtime.profileEvaluateMs),
     renderMs: roundForState(runtime.renderMs),
     detectMs: roundForState(runtime.detectMs),
@@ -10815,6 +11144,7 @@ function getPoseMappingRuntimeDebugExport() {
       modelType: profile.modelType,
       modelName: profile.modelName,
       datasetKind: profile.datasetKind,
+      datasetMetadata: profile.datasetMetadata,
       inputFeatures: profile.inputFeatures,
       target: profile.target,
       errorSummary: profile.errorSummary,
@@ -10842,11 +11172,18 @@ function getPoseMappingRuntimeDebugExport() {
       detectMs: roundForState(runtime.detectMs),
       totalMs: roundForState(runtime.totalMs),
     },
+    renderSettings: runtime.renderSettings,
+    renderAppearanceApplied: runtime.renderAppearanceApplied,
     renderedIdeal: {
       detected: runtime.renderedIdealDetected,
       landmarkCount: runtime.renderedIdealLandmarkCount,
       canvasWidth: runtime.canvasWidth,
       canvasHeight: runtime.canvasHeight,
+      detectCanvasWidth: runtime.detectCanvasWidth,
+      detectCanvasHeight: runtime.detectCanvasHeight,
+      previewCanvasWidth: runtime.previewCanvasWidth,
+      previewCanvasHeight: runtime.previewCanvasHeight,
+      errorMessage: runtime.errorMessage,
     },
     current478: runtime.current478?.map(roundLandmarkForState) ?? null,
     renderedIdeal478: runtime.renderedIdeal478?.map(roundLandmarkForState) ?? null,
