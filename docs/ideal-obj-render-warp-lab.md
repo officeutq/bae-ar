@@ -205,6 +205,31 @@ P_camera（現在顔の姿勢）
   -> P_confirm / renderedIdeal478
 ```
 
+### current face missing 時の runtime state
+
+current face / current478 / `P_camera` が取得できないフレームでは、pose mapping runtime は
+`poseMappingProfile.evaluate()`、WebGL OBJ render、rendered ideal の `detect()` を実行しません。
+この場合は `poseMappingStatus` を `skipped_no_current_face` または `skipped_invalid_pose` にし、
+`poseMappingSkippedReason` に `no_current_face` / `invalid_pose` を記録します。
+`fallbackPoseUsed` は常に `false` とし、`yaw: 0, pitch: 0, roll: 0` の fallback pose で
+frontal face をレンダーしません。
+
+skip 中は、最後に成功した `p` / `P_confirm` / `renderedIdeal478` / preview を `lastGood` として保持します。
+新しい `p`、`P_confirm`、`renderedIdeal478` へ更新せず、UI では stale / no current face として表示します。
+current face が復帰したフレームでは最新の `P_camera` から通常の
+`P_camera -> p -> OBJ render -> detect -> P_confirm` 経路を再開し、
+`poseMappingStatus` を `completed` に戻します。
+
+debug JSON には以下を含めます。
+
+- `currentFaceStatus`: `detected` / `missing` / `invalid`
+- `poseMappingStatus`: `ready` / `skipped_no_current_face` / `skipped_invalid_pose` / `running` / `completed` / `error`
+- `poseMappingSkippedReason`: `none` / `no_current_face` / `invalid_pose` / `profile_mismatch`
+- `fallbackPoseUsed`
+- `lastGood`: `hasLastGood`、`updatedAtMs`、`mediaTimeSec`、`ageMs`、`frameIndex`
+- `loop`: `running`、`busy`、`lastFrameIndex`、`lastMediaTimeSec`
+- `noFaceCounters`: `currentFaceMissingCount`、`poseMappingSkippedNoCurrentFaceCount`、`recoveredFromNoCurrentFaceCount`
+
 runtime 検証では、MediaPipe `detect()` に渡す canvas と UI preview canvas を分離します。
 `detect()` 用 canvas は画面表示サイズに追従させず、profile / dataset metadata のレンダー条件で固定します。
 renderResolution の優先順は以下です。

@@ -915,8 +915,50 @@ type PoseMappingPoseDiff = {
   magnitude: number | null
 }
 
+type PoseMappingCurrentFaceStatus = "detected" | "missing" | "invalid"
+type PoseMappingStatus =
+  | "ready"
+  | "skipped_no_current_face"
+  | "skipped_invalid_pose"
+  | "running"
+  | "completed"
+  | "error"
+type PoseMappingSkippedReason =
+  | "none"
+  | "no_current_face"
+  | "invalid_pose"
+  | "profile_mismatch"
+type PoseMappingLastGoodState = {
+  hasLastGood: boolean
+  P_camera: ObjPoseMappingPose | null
+  p: ObjPoseMappingPose | null
+  P_confirm: ReferencePose
+  renderedIdeal478: ReferenceLandmark[] | null
+  updatedAtMs: number | null
+  mediaTimeSec: number | null
+  frameIndex: number | null
+  ageMs: number | null
+}
+type PoseMappingStaleState = {
+  isStale: boolean
+  staleReason: string | null
+  staleMs: number | null
+}
+type PoseMappingNoFaceCounters = {
+  currentFaceMissingCount: number
+  poseMappingSkippedNoCurrentFaceCount: number
+  recoveredFromNoCurrentFaceCount: number
+}
+
 type PoseMappingRuntimeState = {
   status: "idle" | "running" | "completed" | "error"
+  currentFaceStatus: PoseMappingCurrentFaceStatus
+  poseMappingStatus: PoseMappingStatus
+  poseMappingSkippedReason: PoseMappingSkippedReason
+  fallbackPoseUsed: boolean
+  lastGood: PoseMappingLastGoodState
+  stale: PoseMappingStaleState
+  noFaceCounters: PoseMappingNoFaceCounters
   lastUpdatedAt: string | null
   P_camera: ObjPoseMappingPose | null
   P_cameraClamped: ObjPoseMappingPose | null
@@ -3892,10 +3934,30 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
 
   const profile = state.poseMappingProfile.profile
   const qualityGate = buildPoseMappingQualityGate()
+  const currentFaceStatus = getPoseMappingCurrentFaceStatus()
+  const skippedReason = getPoseMappingSkippedReasonForCurrentFace()
+  const previousRuntime = state.poseMappingRuntime
+  if (profile && canRenderRenderedIdealGeometry() && skippedReason !== "none") {
+    state.poseMappingRuntime = createSkippedPoseMappingRuntimeState({
+      previousRuntime,
+      qualityGate,
+      currentFaceStatus,
+      skippedReason,
+    })
+    renderPoseMappingLiveSummaryCard()
+    if (!options.skipFinalRender) {
+      renderDebugContent()
+    }
+    return null
+  }
   if (!profile || !qualityGate.usable) {
     state.poseMappingRuntime = {
       ...createDefaultPoseMappingRuntimeState(),
       status: "idle",
+      currentFaceStatus,
+      poseMappingStatus: skippedReason === "none" ? "ready" : getPoseMappingSkippedStatus(skippedReason),
+      poseMappingSkippedReason: skippedReason,
+      fallbackPoseUsed: false,
       lastUpdatedAt: formatUpdatedAt(),
       qualityGate,
       P_camera: getCurrentPoseForPoseMapping(),
@@ -3917,6 +3979,12 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
   state.poseMappingRuntime = {
     ...state.poseMappingRuntime,
     status: "running",
+    currentFaceStatus: "detected",
+    poseMappingStatus: "running",
+    poseMappingSkippedReason: "none",
+    fallbackPoseUsed: false,
+    lastGood: updatePoseMappingLastGoodAge(state.poseMappingRuntime.lastGood),
+    stale: createEmptyPoseMappingStaleState(),
     qualityGate,
     errorMessage: null,
     lastUpdatedAt: formatUpdatedAt(),
@@ -3953,6 +4021,9 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
         renderAppearanceApplied,
         profileRendererMatch: false,
         profileMismatchError: profileRendererMatch.errorMessage,
+        poseMappingStatus: "error",
+        poseMappingSkippedReason: "profile_mismatch",
+        fallbackPoseUsed: false,
         errorMessage: profileRendererMatch.errorMessage,
       }
       throw new Error(profileRendererMatch.errorMessage ?? "Profile renderer mismatch")
@@ -3979,8 +4050,20 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
     renderSettings.previewCanvasHeight = previewSize.height
 
     const totalMs = performance.now() - totalStartMs
-    state.poseMappingRuntime = {
+    const completedRuntime: PoseMappingRuntimeState = {
       status: "completed",
+      currentFaceStatus: "detected",
+      poseMappingStatus: "completed",
+      poseMappingSkippedReason: "none",
+      fallbackPoseUsed: false,
+      lastGood: updatePoseMappingLastGoodAge(previousRuntime.lastGood),
+      stale: createEmptyPoseMappingStaleState(),
+      noFaceCounters: {
+        ...previousRuntime.noFaceCounters,
+        recoveredFromNoCurrentFaceCount:
+          previousRuntime.noFaceCounters.recoveredFromNoCurrentFaceCount +
+          (previousRuntime.poseMappingSkippedReason === "no_current_face" ? 1 : 0),
+      },
       lastUpdatedAt: formatUpdatedAt(),
       P_camera: evaluateResult.P_camera,
       P_cameraClamped: evaluateResult.P_cameraClamped,
@@ -4015,6 +4098,12 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
       previewDataUrl: liveObjPosePreviewCanvas.toDataURL("image/png"),
       errorMessage: detection.status === "detected" ? null : detection.errorMessage ?? detection.status,
     }
+    state.poseMappingRuntime = {
+      ...completedRuntime,
+      lastGood: detection.status === "detected"
+        ? createPoseMappingLastGoodState(completedRuntime, state.currentAnalysis.analyzedTimeSec)
+        : updatePoseMappingLastGoodAge(previousRuntime.lastGood),
+    }
     if (!options.skipFinalRender) {
       renderAll({ skipObjRender: true })
     }
@@ -4024,6 +4113,11 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
     state.poseMappingRuntime = {
       ...state.poseMappingRuntime,
       status: "error",
+      poseMappingStatus: "error",
+      poseMappingSkippedReason: message.startsWith("Profile renderer mismatch")
+        ? "profile_mismatch"
+        : state.poseMappingRuntime.poseMappingSkippedReason,
+      fallbackPoseUsed: false,
       lastUpdatedAt: formatUpdatedAt(),
       qualityGate,
       totalMs: performance.now() - totalStartMs,
@@ -6067,6 +6161,9 @@ function buildPoseMappingQualityGate(): PoseMappingQualityGate {
 }
 
 function getCurrentPoseForPoseMapping(): ObjPoseMappingPose | null {
+  if (state.currentAnalysis.status !== "detected") {
+    return null
+  }
   const pose = state.currentAnalysis.pose
   if (!hasFullPose(pose)) {
     return null
@@ -6075,6 +6172,113 @@ function getCurrentPoseForPoseMapping(): ObjPoseMappingPose | null {
     yaw: pose.yaw!,
     pitch: pose.pitch!,
     roll: pose.roll!,
+  }
+}
+
+function getPoseMappingCurrentFaceStatus(): PoseMappingCurrentFaceStatus {
+  if (
+    state.currentAnalysis.status === "detected" &&
+    state.currentAnalysis.landmarks478.length === REQUIRED_LANDMARK_COUNT &&
+    hasFullPose(state.currentAnalysis.pose)
+  ) {
+    return "detected"
+  }
+  if (
+    state.currentAnalysis.status === "no_face" ||
+    state.currentAnalysis.status === "not_ready" ||
+    state.currentAnalysis.status === "ready" ||
+    state.currentAnalysis.status === "analyzing"
+  ) {
+    return "missing"
+  }
+  return "invalid"
+}
+
+function getPoseMappingSkippedReasonForCurrentFace(): PoseMappingSkippedReason {
+  const currentFaceStatus = getPoseMappingCurrentFaceStatus()
+  if (currentFaceStatus === "missing") {
+    return "no_current_face"
+  }
+  if (currentFaceStatus === "invalid") {
+    return "invalid_pose"
+  }
+  return "none"
+}
+
+function getPoseMappingSkippedStatus(reason: PoseMappingSkippedReason): PoseMappingStatus {
+  if (reason === "no_current_face") {
+    return "skipped_no_current_face"
+  }
+  if (reason === "invalid_pose") {
+    return "skipped_invalid_pose"
+  }
+  return "ready"
+}
+
+function updatePoseMappingLastGoodAge(lastGood: PoseMappingLastGoodState): PoseMappingLastGoodState {
+  return {
+    ...lastGood,
+    ageMs: lastGood.updatedAtMs === null ? null : Math.max(0, performance.now() - lastGood.updatedAtMs),
+  }
+}
+
+function createPoseMappingLastGoodState(
+  runtime: PoseMappingRuntimeState,
+  mediaTimeSec: number | null,
+): PoseMappingLastGoodState {
+  return {
+    hasLastGood: true,
+    P_camera: runtime.P_camera ? { ...runtime.P_camera } : null,
+    p: runtime.p ? { ...runtime.p } : null,
+    P_confirm: { ...runtime.P_confirm },
+    renderedIdeal478: runtime.renderedIdeal478 ? runtime.renderedIdeal478.map((landmark) => ({ ...landmark })) : null,
+    updatedAtMs: performance.now(),
+    mediaTimeSec,
+    frameIndex: state.realtimeDebug.processedVideoFrameCount,
+    ageMs: 0,
+  }
+}
+
+function createSkippedPoseMappingRuntimeState(params: {
+  previousRuntime: PoseMappingRuntimeState
+  qualityGate: PoseMappingQualityGate
+  currentFaceStatus: PoseMappingCurrentFaceStatus
+  skippedReason: PoseMappingSkippedReason
+}): PoseMappingRuntimeState {
+  const previousRuntime = params.previousRuntime
+  const lastGood = updatePoseMappingLastGoodAge(previousRuntime.lastGood)
+  const staleMs = lastGood.updatedAtMs === null ? null : Math.max(0, performance.now() - lastGood.updatedAtMs)
+  const noFaceSkipped = params.skippedReason === "no_current_face"
+  return {
+    ...previousRuntime,
+    status: previousRuntime.previewDataUrl ? "completed" : "idle",
+    currentFaceStatus: params.currentFaceStatus,
+    poseMappingStatus: getPoseMappingSkippedStatus(params.skippedReason),
+    poseMappingSkippedReason: params.skippedReason,
+    fallbackPoseUsed: false,
+    lastGood,
+    stale: {
+      isStale: lastGood.hasLastGood,
+      staleReason: lastGood.hasLastGood ? params.skippedReason : null,
+      staleMs: lastGood.hasLastGood ? staleMs : null,
+    },
+    noFaceCounters: {
+      ...previousRuntime.noFaceCounters,
+      currentFaceMissingCount:
+        previousRuntime.noFaceCounters.currentFaceMissingCount +
+        (params.currentFaceStatus === "missing" ? 1 : 0),
+      poseMappingSkippedNoCurrentFaceCount:
+        previousRuntime.noFaceCounters.poseMappingSkippedNoCurrentFaceCount +
+        (noFaceSkipped ? 1 : 0),
+    },
+    lastUpdatedAt: formatUpdatedAt(),
+    qualityGate: params.qualityGate,
+    current478: null,
+    profileEvaluateMs: null,
+    renderMs: null,
+    detectMs: null,
+    totalMs: null,
+    errorMessage: params.skippedReason,
   }
 }
 
@@ -9548,6 +9752,13 @@ function renderPoseMappingLiveSummaryCard() {
     <p>${escapeHtml(getPoseMappingPreviewMessage())}</p>
     <dl class="review-grid">
       <div><dt>profile</dt><dd>${state.poseMappingProfile.loaded ? "loaded" : "not loaded"}</dd></div>
+      <div><dt>currentFaceStatus</dt><dd>${escapeHtml(runtime.currentFaceStatus)}</dd></div>
+      <div><dt>poseMappingStatus</dt><dd>${escapeHtml(runtime.poseMappingStatus)}</dd></div>
+      <div><dt>poseMappingSkippedReason</dt><dd>${escapeHtml(runtime.poseMappingSkippedReason)}</dd></div>
+      <div><dt>fallbackPoseUsed</dt><dd>${String(runtime.fallbackPoseUsed)}</dd></div>
+      <div><dt>lastGood</dt><dd>${String(runtime.lastGood.hasLastGood)} / ageMs ${formatRealtimeNullableNumber(runtime.lastGood.ageMs)}</dd></div>
+      <div><dt>stale</dt><dd>${String(runtime.stale.isStale)} / ${escapeHtml(runtime.stale.staleReason ?? "-")} / ${formatRealtimeNullableNumber(runtime.stale.staleMs)}ms</dd></div>
+      <div><dt>loop busy</dt><dd>${String(poseMappingRuntimeInProgress)}</dd></div>
       <div><dt>P_camera</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.P_camera))}</dd></div>
       <div><dt>p</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.p))}</dd></div>
       <div><dt>P_confirm</dt><dd>${escapeHtml(formatPose(runtime.P_confirm))}</dd></div>
@@ -9576,6 +9787,7 @@ function renderPoseMappingDebugTab() {
     webglBenchmark.status !== "running" &&
     profileState.loaded &&
     runtime.status === "completed" &&
+    runtime.poseMappingStatus === "completed" &&
     runtime.p !== null
   const canDownloadDetectPerformance = detectPerformance.result !== null
   const canRunHandoff =
@@ -9584,6 +9796,7 @@ function renderPoseMappingDebugTab() {
     webglBenchmark.status !== "running" &&
     profileState.loaded &&
     runtime.status === "completed" &&
+    runtime.poseMappingStatus === "completed" &&
     runtime.p !== null
   const canDownloadHandoff = handoff.result !== null
   const canRunWebglBenchmark =
@@ -9592,6 +9805,7 @@ function renderPoseMappingDebugTab() {
     handoff.status !== "running" &&
     profileState.loaded &&
     runtime.status === "completed" &&
+    runtime.poseMappingStatus === "completed" &&
     runtime.p !== null
   const canDownloadWebglBenchmark = webglBenchmark.result !== null
   const requiredRendererResolution = getRenderResolutionFromRecord(profile?.requiredRenderer?.renderResolution)
@@ -9624,6 +9838,17 @@ function renderPoseMappingDebugTab() {
     <section class="debug-section">
       <h3>Runtime input（実行時入力）</h3>
       <dl class="summary-list">
+        <div><dt>currentFaceStatus</dt><dd>${escapeHtml(runtime.currentFaceStatus)}</dd></div>
+        <div><dt>poseMappingStatus</dt><dd>${escapeHtml(runtime.poseMappingStatus)}</dd></div>
+        <div><dt>poseMappingSkippedReason</dt><dd>${escapeHtml(runtime.poseMappingSkippedReason)}</dd></div>
+        <div><dt>fallbackPoseUsed</dt><dd>${String(runtime.fallbackPoseUsed)}</dd></div>
+        <div><dt>loop running</dt><dd>${String(state.realtimeDebug.status === "running")}</dd></div>
+        <div><dt>loop busy</dt><dd>${String(poseMappingRuntimeInProgress)}</dd></div>
+        <div><dt>loop lastFrameIndex</dt><dd>${formatNullableCount(state.realtimeDebug.processedVideoFrameCount)}</dd></div>
+        <div><dt>loop lastMediaTimeSec</dt><dd>${formatRealtimeNullableNumber(state.realtimeDebug.lastVideoFrameMediaTimeSec)}</dd></div>
+        <div><dt>lastGood</dt><dd>${String(runtime.lastGood.hasLastGood)} / ageMs ${formatRealtimeNullableNumber(runtime.lastGood.ageMs)} / mediaTimeSec ${formatRealtimeNullableNumber(runtime.lastGood.mediaTimeSec)} / frameIndex ${formatNullableCount(runtime.lastGood.frameIndex)}</dd></div>
+        <div><dt>stale</dt><dd>${String(runtime.stale.isStale)} / ${escapeHtml(runtime.stale.staleReason ?? "-")} / staleMs ${formatRealtimeNullableNumber(runtime.stale.staleMs)}</dd></div>
+        <div><dt>noFaceCounters</dt><dd>${escapeHtml(JSON.stringify(runtime.noFaceCounters))}</dd></div>
         <div><dt>P_camera</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.P_camera))}</dd></div>
         <div><dt>P_camera clamped</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.P_cameraClamped))}</dd></div>
         <div><dt>clampApplied</dt><dd>${String(runtime.P_camera !== null && runtime.P_cameraClamped !== null && !posesEqual(runtime.P_camera, runtime.P_cameraClamped))}</dd></div>
@@ -11779,6 +12004,13 @@ function createDefaultPoseMappingProfileState(): PoseMappingProfileState {
 function createDefaultPoseMappingRuntimeState(): PoseMappingRuntimeState {
   return {
     status: "idle",
+    currentFaceStatus: "missing",
+    poseMappingStatus: "ready",
+    poseMappingSkippedReason: "none",
+    fallbackPoseUsed: false,
+    lastGood: createEmptyPoseMappingLastGoodState(),
+    stale: createEmptyPoseMappingStaleState(),
+    noFaceCounters: createEmptyPoseMappingNoFaceCounters(),
     lastUpdatedAt: null,
     P_camera: null,
     P_cameraClamped: null,
@@ -11824,6 +12056,40 @@ function createDefaultPoseMappingRuntimeState(): PoseMappingRuntimeState {
     totalMs: null,
     previewDataUrl: null,
     errorMessage: null,
+  }
+}
+
+function createEmptyPoseMappingLastGoodState(): PoseMappingLastGoodState {
+  return {
+    hasLastGood: false,
+    P_camera: null,
+    p: null,
+    P_confirm: {
+      yaw: null,
+      pitch: null,
+      roll: null,
+    },
+    renderedIdeal478: null,
+    updatedAtMs: null,
+    mediaTimeSec: null,
+    frameIndex: null,
+    ageMs: null,
+  }
+}
+
+function createEmptyPoseMappingStaleState(): PoseMappingStaleState {
+  return {
+    isStale: false,
+    staleReason: null,
+    staleMs: null,
+  }
+}
+
+function createEmptyPoseMappingNoFaceCounters(): PoseMappingNoFaceCounters {
+  return {
+    currentFaceMissingCount: 0,
+    poseMappingSkippedNoCurrentFaceCount: 0,
+    recoveredFromNoCurrentFaceCount: 0,
   }
 }
 
@@ -12483,7 +12749,10 @@ function getObjPoseSyncStatus() {
 }
 
 function getPoseMappingPreviewStatus(): ObjPreviewStatus {
-  if (state.poseMappingRuntime.status === "completed" && state.poseMappingRuntime.previewDataUrl) {
+  if (
+    state.poseMappingRuntime.previewDataUrl &&
+    (state.poseMappingRuntime.status === "completed" || state.poseMappingRuntime.stale.isStale)
+  ) {
     return "ready"
   }
   if (state.poseMappingRuntime.status === "error") {
@@ -12493,6 +12762,27 @@ function getPoseMappingPreviewStatus(): ObjPreviewStatus {
 }
 
 function getPoseMappingPreviewMessage() {
+  const runtime = state.poseMappingRuntime
+  if (
+    state.poseMappingProfile.loaded &&
+    state.objFile.loaded &&
+    getObjPreviewStatus() === "ready" &&
+    runtime.poseMappingStatus === "skipped_no_current_face"
+  ) {
+    return runtime.stale.isStale
+      ? "現在顔が未検出のため姿勢対応をスキップし、最後に成功した理想478プレビューを保持しています。"
+      : "現在顔が未検出のため姿勢対応をスキップしています。現在顔が戻ると再開します。"
+  }
+  if (
+    state.poseMappingProfile.loaded &&
+    state.objFile.loaded &&
+    getObjPreviewStatus() === "ready" &&
+    runtime.poseMappingStatus === "skipped_invalid_pose"
+  ) {
+    return runtime.stale.isStale
+      ? "現在姿勢が不正なため姿勢対応をスキップし、最後に成功した理想478プレビューを保持しています。"
+      : "現在姿勢が不正なため姿勢対応をスキップしています。"
+  }
   if (!state.poseMappingProfile.loaded) {
     return "poseMappingProfileを読み込むと、現在姿勢理想478プレビューを表示できます。"
   }
@@ -13726,6 +14016,12 @@ function formatPoseMappingRange(range: Record<string, PoseMappingScalarRange> | 
 
 function formatPoseMappingPreviewNote() {
   return [
+    `currentFaceStatus: ${state.poseMappingRuntime.currentFaceStatus}`,
+    `poseMappingStatus: ${state.poseMappingRuntime.poseMappingStatus}`,
+    `poseMappingSkippedReason: ${state.poseMappingRuntime.poseMappingSkippedReason}`,
+    `fallbackPoseUsed: ${String(state.poseMappingRuntime.fallbackPoseUsed)}`,
+    `lastGood: ${String(state.poseMappingRuntime.lastGood.hasLastGood)} / ageMs ${formatRealtimeNullableNumber(state.poseMappingRuntime.lastGood.ageMs)}`,
+    `stale: ${String(state.poseMappingRuntime.stale.isStale)} / ${state.poseMappingRuntime.stale.staleReason ?? "-"}`,
     `detect canvas: ${formatNullableCount(state.poseMappingRuntime.detectCanvasWidth)} x ${formatNullableCount(state.poseMappingRuntime.detectCanvasHeight)}`,
     `preview canvas: ${formatNullableCount(state.poseMappingRuntime.previewCanvasWidth)} x ${formatNullableCount(state.poseMappingRuntime.previewCanvasHeight)}`,
     `detect result: ${state.poseMappingRuntime.renderedIdealDetected ? "detected" : "not detected"}`,
@@ -14285,10 +14581,46 @@ function getPoseMappingProfileRawSummary() {
   }
 }
 
+function getPoseMappingLastGoodDebugSummary(lastGood: PoseMappingLastGoodState) {
+  return {
+    hasLastGood: lastGood.hasLastGood,
+    updatedAtMs: roundForState(lastGood.updatedAtMs),
+    mediaTimeSec: roundForState(lastGood.mediaTimeSec),
+    ageMs: roundForState(lastGood.ageMs),
+    frameIndex: lastGood.frameIndex,
+    P_camera: roundPoseMappingPose(lastGood.P_camera),
+    p: roundPoseMappingPose(lastGood.p),
+    P_confirm: roundPoseForState(lastGood.P_confirm),
+    renderedIdealLandmarkCount: lastGood.renderedIdeal478?.length ?? null,
+  }
+}
+
+function getPoseMappingLoopDebugSummary() {
+  return {
+    running: state.realtimeDebug.status === "running",
+    busy: poseMappingRuntimeInProgress,
+    lastFrameIndex: state.realtimeDebug.processedVideoFrameCount,
+    lastMediaTimeSec:
+      state.realtimeDebug.lastVideoFrameMediaTimeSec ?? state.realtimeDebug.videoFrameMetadataMediaTime,
+  }
+}
+
 function getPoseMappingRuntimeRawSummary() {
   const runtime = state.poseMappingRuntime
   return {
     status: runtime.status,
+    currentFaceStatus: runtime.currentFaceStatus,
+    poseMappingStatus: runtime.poseMappingStatus,
+    poseMappingSkippedReason: runtime.poseMappingSkippedReason,
+    fallbackPoseUsed: runtime.fallbackPoseUsed,
+    lastGood: getPoseMappingLastGoodDebugSummary(runtime.lastGood),
+    stale: {
+      isStale: runtime.stale.isStale,
+      staleReason: runtime.stale.staleReason,
+      staleMs: roundForState(runtime.stale.staleMs),
+    },
+    loop: getPoseMappingLoopDebugSummary(),
+    noFaceCounters: runtime.noFaceCounters,
     lastUpdatedAt: runtime.lastUpdatedAt,
     P_camera: roundPoseMappingPose(runtime.P_camera),
     P_cameraClamped: roundPoseMappingPose(runtime.P_cameraClamped),
@@ -14350,6 +14682,18 @@ function getPoseMappingRuntimeDebugExport() {
       poseRangeAfter: profile.poseRangeAfter,
     },
     runtime: {
+      currentFaceStatus: runtime.currentFaceStatus,
+      poseMappingStatus: runtime.poseMappingStatus,
+      poseMappingSkippedReason: runtime.poseMappingSkippedReason,
+      fallbackPoseUsed: runtime.fallbackPoseUsed,
+      lastGood: getPoseMappingLastGoodDebugSummary(runtime.lastGood),
+      stale: {
+        isStale: runtime.stale.isStale,
+        staleReason: runtime.stale.staleReason,
+        staleMs: roundForState(runtime.stale.staleMs),
+      },
+      loop: getPoseMappingLoopDebugSummary(),
+      noFaceCounters: runtime.noFaceCounters,
       P_camera: roundPoseMappingPose(runtime.P_camera),
       P_cameraClamped: roundPoseMappingPose(runtime.P_cameraClamped),
       clampApplied:
