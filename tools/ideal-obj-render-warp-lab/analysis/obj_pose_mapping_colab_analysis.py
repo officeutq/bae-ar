@@ -27,6 +27,7 @@ import argparse
 import json
 import math
 import os
+import sys
 import textwrap
 import warnings
 from collections import Counter, defaultdict
@@ -1435,11 +1436,24 @@ def run_analysis(dataset_path: str | Path | None = None, output_dir: str | Path 
     return result
 
 
-def main() -> None:
+def is_notebook_runtime() -> bool:
+    return "ipykernel" in sys.modules or "google.colab" in sys.modules
+
+
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Analyze Ideal OBJ Render Warp Lab p,P dataset JSON.")
-    parser.add_argument("--input", required=True, help="Path to obj_pose_mapping_dataset_v2 JSON.")
+    parser.add_argument("--input", help="Path to obj_pose_mapping_dataset_v2 JSON.")
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, help="Output directory.")
-    args = parser.parse_args()
+    args, _unknown = parser.parse_known_args(argv)
+    if not args.input:
+        if is_notebook_runtime():
+            print(
+                "Notebook runtime detected. Run one of these cells instead:\n"
+                "  result = run_analysis('/content/obj-pose-mapping-dataset.json')\n"
+                "  result = run_analysis()  # opens a Colab upload dialog"
+            )
+            return
+        parser.error("the following arguments are required: --input")
     run_analysis(args.input, args.output_dir)
 
 

@@ -6,6 +6,19 @@
 
 Colab では `# %%` 区切りをセルとして実行できます。
 
+Notebook にコード全体を貼り付けた場合、末尾の CLI entrypoint は自動実行せず、次のどちらかを
+別セルで実行してください。
+
+```python
+result = run_analysis("/content/obj-pose-mapping-dataset-current-YYYYMMDD-HHMMSS.json")
+```
+
+または、Colab の upload dialog を使う場合:
+
+```python
+result = run_analysis()
+```
+
 ```bash
 pip install -r tools/ideal-obj-render-warp-lab/analysis/requirements.txt
 python tools/ideal-obj-render-warp-lab/analysis/obj_pose_mapping_colab_analysis.py \
