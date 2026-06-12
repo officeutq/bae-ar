@@ -23,6 +23,7 @@ type ObjPreviewMode = "points" | "wireframe" | "points_wireframe"
 type ObjPreviewStatus = "not_ready" | "ready" | "error"
 type RenderedIdealRenderStatus = "not_ready" | "ready" | "rendered" | "error"
 type RenderedIdealDetectionStatus = "idle" | "detecting" | "detected" | "not_detected" | "error"
+type RenderedIdealStatus = "detected" | "missing" | "invalid"
 type RenderedIdealRenderMode = "shaded_faces"
 type RenderedIdealBackgroundMode = "light" | "dark"
 type RenderedIdealColorMode = "clay" | "grayscale"
@@ -291,6 +292,12 @@ type ReferencePose = {
   roll: number | null
 }
 
+type MatrixDebugSummary = {
+  translation: { x: number; y: number; z: number } | null
+  scale: { x: number; y: number; z: number; uniform: number } | null
+  rotationDeg: ReferencePose
+}
+
 type ReferenceBlendshape = {
   categoryName: string
   score: number
@@ -312,6 +319,7 @@ type QualitySummary = {
 type RenderedIdealDetectionState = {
   status: RenderedIdealDetectionStatus
   landmarks478: ReferenceLandmark[] | null
+  matrix: MatrixDebugSummary | null
   detectMs: number | null
   averageDetectMs: number | null
   landmarkCount: number | null
@@ -916,6 +924,24 @@ type PoseMappingPoseDiff = {
 }
 
 type PoseMappingCurrentFaceStatus = "detected" | "missing" | "invalid"
+type PoseMappingAlignmentStatus =
+  | "completed"
+  | "skipped_no_current_face"
+  | "skipped_no_rendered_ideal"
+  | "skipped_missing_current_placement"
+  | "skipped_missing_ideal_placement"
+  | "skipped_invalid_placement"
+  | "stale"
+  | "error"
+type PoseMappingAlignmentSkippedReason =
+  | "none"
+  | "no_current_face"
+  | "no_rendered_ideal"
+  | "missing_current_placement"
+  | "missing_ideal_placement"
+  | "invalid_placement"
+  | "stale"
+  | "error"
 type PoseMappingStatus =
   | "ready"
   | "skipped_no_current_face"
@@ -950,12 +976,6 @@ type PoseMappingNoFaceCounters = {
   poseMappingSkippedNoCurrentFaceCount: number
   recoveredFromNoCurrentFaceCount: number
 }
-type PoseMappingAlignmentStatus =
-  | "not_ready"
-  | "missing_current"
-  | "missing_rendered_ideal"
-  | "insufficient_anchors"
-  | "completed"
 type PoseMappingExcludedReason =
   | "iris"
   | "expressionSensitive"
@@ -979,10 +999,29 @@ type PoseMappingBounds = {
   width: number
   height: number
 }
+type MediaPipeFacePlacement = {
+  status: "detected" | "missing" | "invalid"
+  source: "facialTransformationMatrix" | "faceDetectorBoundingBox" | "unknown"
+  center: { x: number; y: number } | null
+  scale: number | null
+  raw?: {
+    matrixTranslation?: { x: number; y: number; z: number } | null
+    matrixScale?: { x: number; y: number; z: number; uniform: number } | null
+    matrixRotationDeg?: ReferencePose
+    boundsImage?: PoseMappingBounds | null
+  }
+  warnings: string[]
+}
 type PoseMappingAlignmentState = {
   status: PoseMappingAlignmentStatus
-  mode: "center_uniform_scale"
+  mode: "mediapipe_placement_center_scale" | "legacy_landmark_center_scale"
   rotationApplied: false
+  placementSource: MediaPipeFacePlacement["source"]
+  alignmentSkippedReason: PoseMappingAlignmentSkippedReason
+  currentPlacement: MediaPipeFacePlacement
+  idealPlacement: MediaPipeFacePlacement
+  placementScaleRatio: number | null
+  renderedIdealStatus: RenderedIdealStatus
   anchorCount: number
   currentCenter: { x: number; y: number } | null
   idealCenter: { x: number; y: number } | null
@@ -1005,9 +1044,13 @@ type PoseMappingAlignmentState = {
 type PoseMappingRuntimeState = {
   status: "idle" | "running" | "completed" | "error"
   currentFaceStatus: PoseMappingCurrentFaceStatus
+  renderedIdealStatus: RenderedIdealStatus
+  alignmentStatus: PoseMappingAlignmentStatus
+  alignmentSkippedReason: PoseMappingAlignmentSkippedReason
   poseMappingStatus: PoseMappingStatus
   poseMappingSkippedReason: PoseMappingSkippedReason
   fallbackPoseUsed: boolean
+  fallbackRenderedIdealUsed: boolean
   lastGood: PoseMappingLastGoodState
   stale: PoseMappingStaleState
   noFaceCounters: PoseMappingNoFaceCounters
@@ -1481,6 +1524,7 @@ type CurrentFrameAnalysis = {
   landmarks478: ReferenceLandmark[]
   landmarkCount: number
   pose: ReferencePose
+  matrix: MatrixDebugSummary | null
   blendshapes: ReferenceBlendshape[]
   expressionSummary: ExpressionSummary | null
   qualityScore: number | null
@@ -4113,7 +4157,9 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
     const poseDiff = calculatePoseMappingPoseDiff(P_camera, detection.pose)
     const alignmentResult = buildPoseMappingAlignment(
       state.currentAnalysis.landmarks478,
+      state.currentAnalysis.matrix,
       detection.landmarks478,
+      detection.matrix,
       renderer.canvas.width / Math.max(1, renderer.canvas.height),
     )
     const previewSize = drawPoseMappingPreviewFromDetectCanvas(renderer.canvas, detection.landmarks478)
@@ -4121,12 +4167,17 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
     renderSettings.previewCanvasHeight = previewSize.height
 
     const totalMs = performance.now() - totalStartMs
+    const renderedIdealStatus = getRenderedIdealStatusFromDetection(detection.status)
     const completedRuntime: PoseMappingRuntimeState = {
       status: "completed",
       currentFaceStatus: "detected",
+      renderedIdealStatus,
+      alignmentStatus: alignmentResult.alignment.status,
+      alignmentSkippedReason: alignmentResult.alignment.alignmentSkippedReason,
       poseMappingStatus: "completed",
       poseMappingSkippedReason: "none",
       fallbackPoseUsed: false,
+      fallbackRenderedIdealUsed: false,
       lastGood: updatePoseMappingLastGoodAge(previousRuntime.lastGood),
       stale: createEmptyPoseMappingStaleState(),
       noFaceCounters: {
@@ -4144,8 +4195,8 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
       usedExpert: evaluateResult.usedExpert,
       usedFallback: evaluateResult.usedFallback,
       warnings: evaluateResult.warnings,
-      P_confirm: detection.pose,
-      poseDiff,
+      P_confirm: renderedIdealStatus === "detected" ? detection.pose : previousRuntime.P_confirm,
+      poseDiff: renderedIdealStatus === "detected" ? poseDiff : previousRuntime.poseDiff,
       renderedIdealDetected: detection.status === "detected",
       renderedIdealLandmarkCount: detection.landmarkCount,
       renderedIdeal478: detection.landmarks478,
@@ -6292,7 +6343,9 @@ function getPoseMappingSkippedStatus(reason: PoseMappingSkippedReason): PoseMapp
 
 function buildPoseMappingAlignment(
   currentLandmarksImage: ReferenceLandmark[] | null,
+  currentMatrix: MatrixDebugSummary | null,
   renderedIdealLandmarksImage: ReferenceLandmark[] | null,
+  idealMatrix: MatrixDebugSummary | null,
   renderAspectRatio: number,
 ): {
   alignedRenderedIdeal478: ReferenceLandmark[] | null
@@ -6300,42 +6353,42 @@ function buildPoseMappingAlignment(
   meshTargetVertices: ReferenceLandmark[] | null
   alignment: PoseMappingAlignmentState
 } {
+  const videoAspectRatio = getLiveVideoAspectRatio()
   if (!currentLandmarksImage || currentLandmarksImage.length !== REQUIRED_LANDMARK_COUNT) {
     return {
       alignedRenderedIdeal478: null,
       meshSourceVertices: null,
       meshTargetVertices: null,
-      alignment: createEmptyPoseMappingAlignmentState("missing_current"),
+      alignment: {
+        ...createEmptyPoseMappingAlignmentState("skipped_no_current_face", "no_current_face"),
+        videoAspectRatio,
+        renderAspectRatio,
+        renderedIdealStatus: getRenderedIdealStatusFromLandmarks(renderedIdealLandmarksImage),
+      },
     }
   }
+  const currentBoundsImage = calculateLandmarkBounds(currentLandmarksImage)
   if (!renderedIdealLandmarksImage || renderedIdealLandmarksImage.length !== REQUIRED_LANDMARK_COUNT) {
     return {
       alignedRenderedIdeal478: null,
       meshSourceVertices: currentLandmarksImage.map(cloneReferenceLandmark),
       meshTargetVertices: null,
       alignment: {
-        ...createEmptyPoseMappingAlignmentState("missing_rendered_ideal"),
-        videoAspectRatio: getLiveVideoAspectRatio(),
+        ...createEmptyPoseMappingAlignmentState("skipped_no_rendered_ideal", "no_rendered_ideal"),
+        videoAspectRatio,
         renderAspectRatio,
-        currentBoundsImage: calculateLandmarkBounds(currentLandmarksImage),
+        currentBoundsImage,
+        currentPlacement: buildMediaPipePlacementFromMatrix(currentMatrix, currentBoundsImage),
+        renderedIdealStatus: getRenderedIdealStatusFromLandmarks(renderedIdealLandmarksImage),
       },
     }
   }
 
-  const videoAspectRatio = getLiveVideoAspectRatio()
-  const currentLandmarksAspectWork = currentLandmarksImage.map((landmark) =>
-    toAspectWorkLandmark(landmark, videoAspectRatio),
-  )
-  const renderedIdealLandmarksAspectWork = renderedIdealLandmarksImage.map((landmark) =>
-    toAspectWorkLandmark(landmark, renderAspectRatio),
-  )
-  const currentBoundsImage = calculateLandmarkBounds(currentLandmarksImage)
   const renderedIdealBoundsImage = calculateLandmarkBounds(renderedIdealLandmarksImage)
-  const currentBoundsAspectWork = calculateLandmarkBounds(currentLandmarksAspectWork)
-  const renderedIdealBoundsAspectWork = calculateLandmarkBounds(renderedIdealLandmarksAspectWork)
+  const currentPlacement = buildMediaPipePlacementFromMatrix(currentMatrix, currentBoundsImage)
+  const idealPlacement = buildMediaPipePlacementFromMatrix(idealMatrix, renderedIdealBoundsImage)
   const reasons = Array.from({ length: REQUIRED_LANDMARK_COUNT }, () => [] as PoseMappingExcludedReason[])
   const reasonCounts = createEmptyPoseMappingExcludedReasonCounts()
-  const anchorIndices: number[] = []
 
   for (let index = 0; index < REQUIRED_LANDMARK_COUNT; index += 1) {
     const current = currentLandmarksImage[index]
@@ -6345,54 +6398,45 @@ function buildPoseMappingAlignment(
     for (const reason of landmarkReasons) {
       reasonCounts[reason] += 1
     }
-    if (landmarkReasons.length === 0) {
-      anchorIndices.push(index)
-    }
   }
 
-  if (anchorIndices.length < ALIGNMENT_MIN_ANCHOR_COUNT) {
+  const skipPlacementResult = getPlacementAlignmentSkip(currentPlacement, idealPlacement)
+  if (skipPlacementResult) {
     return {
       alignedRenderedIdeal478: null,
       meshSourceVertices: currentLandmarksImage.map(cloneReferenceLandmark),
       meshTargetVertices: null,
       alignment: {
-        ...createEmptyPoseMappingAlignmentState("insufficient_anchors"),
+        ...createEmptyPoseMappingAlignmentState(skipPlacementResult.status, skipPlacementResult.reason),
+        placementSource: currentPlacement.source !== "unknown" ? currentPlacement.source : idealPlacement.source,
+        currentPlacement,
+        idealPlacement,
         videoAspectRatio,
         renderAspectRatio,
         currentBoundsImage,
         renderedIdealBoundsImage,
-        currentBoundsAspectWork,
-        renderedIdealBoundsAspectWork,
         excludedReasonCounts: reasonCounts,
-        anchorIndices,
         landmarkReasons: reasons,
+        renderedIdealStatus: "detected",
       },
     }
   }
 
-  const currentCenter = calculateAspectWorkCenter(currentLandmarksAspectWork, anchorIndices)
-  const idealCenter = calculateAspectWorkCenter(renderedIdealLandmarksAspectWork, anchorIndices)
-  const currentScale = calculateAspectWorkScale(currentLandmarksAspectWork, anchorIndices, currentCenter)
-  const idealScale = calculateAspectWorkScale(renderedIdealLandmarksAspectWork, anchorIndices, idealCenter)
-  const scale = idealScale > 1e-6 ? currentScale / idealScale : 1
-
-  const alignedIdealLandmarksAspectWork = renderedIdealLandmarksAspectWork.map((landmark, index) => {
-    if (!isFiniteLandmark(landmark)) {
-      const currentFallback = currentLandmarksAspectWork[index]
-      return currentFallback ? cloneReferenceLandmark(currentFallback) : cloneReferenceLandmark(landmark)
-    }
-    const alignedCorrectedX = (landmark.x - idealCenter.x) * scale + currentCenter.x
-    const alignedY = (landmark.y - idealCenter.y) * scale + currentCenter.y
+  const placementScaleRatio = currentPlacement.scale! / idealPlacement.scale!
+  const alignedRenderedIdealLandmarksImage = renderedIdealLandmarksImage.map((landmark) => {
+    const alignedX =
+      (landmark.x - idealPlacement.center!.x) * placementScaleRatio +
+      currentPlacement.center!.x
+    const alignedY =
+      (landmark.y - idealPlacement.center!.y) * placementScaleRatio +
+      currentPlacement.center!.y
     return {
       index: landmark.index,
-      x: alignedCorrectedX,
+      x: alignedX,
       y: alignedY,
       z: landmark.z,
     }
   })
-  const alignedRenderedIdealLandmarksImage = alignedIdealLandmarksAspectWork.map((landmark) =>
-    fromAspectWorkLandmark(landmark, videoAspectRatio),
-  )
 
   const displacementValues: number[] = []
   for (let index = 0; index < REQUIRED_LANDMARK_COUNT; index += 1) {
@@ -6426,27 +6470,143 @@ function buildPoseMappingAlignment(
     meshTargetVertices,
     alignment: {
       status: "completed",
-      mode: "center_uniform_scale",
+      mode: "mediapipe_placement_center_scale",
       rotationApplied: false,
-      anchorCount: anchorIndices.length,
-      currentCenter,
-      idealCenter,
-      scale,
+      placementSource: currentPlacement.source,
+      alignmentSkippedReason: "none",
+      currentPlacement,
+      idealPlacement,
+      placementScaleRatio,
+      renderedIdealStatus: "detected",
+      anchorCount: 0,
+      currentCenter: currentPlacement.center,
+      idealCenter: idealPlacement.center,
+      scale: placementScaleRatio,
       videoAspectRatio,
       renderAspectRatio,
       currentBoundsImage,
       renderedIdealBoundsImage,
-      currentBoundsAspectWork,
-      renderedIdealBoundsAspectWork,
-      alignedIdealBoundsAspectWork: calculateLandmarkBounds(alignedIdealLandmarksAspectWork),
+      currentBoundsAspectWork: null,
+      renderedIdealBoundsAspectWork: null,
+      alignedIdealBoundsAspectWork: null,
       alignedRenderedIdealBoundsImage: calculateLandmarkBounds(alignedRenderedIdealLandmarksImage),
       displayedContentRect: null,
       excludedReasonCounts: reasonCounts,
       displacementSummary: summarizeDisplacements(displacementValues),
-      anchorIndices,
+      anchorIndices: [],
       landmarkReasons: reasons,
     },
   }
+}
+
+function getRenderedIdealStatusFromLandmarks(
+  landmarks: ReferenceLandmark[] | null,
+): RenderedIdealStatus {
+  if (!landmarks) {
+    return "missing"
+  }
+  return landmarks.length === REQUIRED_LANDMARK_COUNT ? "detected" : "invalid"
+}
+
+function getRenderedIdealStatusFromDetection(status: RenderedIdealDetectionStatus): RenderedIdealStatus {
+  if (status === "detected") {
+    return "detected"
+  }
+  if (status === "error") {
+    return "invalid"
+  }
+  return "missing"
+}
+
+function buildMediaPipePlacementFromMatrix(
+  matrix: MatrixDebugSummary | null,
+  boundsImage: PoseMappingBounds | null,
+): MediaPipeFacePlacement {
+  if (!matrix) {
+    return createMissingMediaPipeFacePlacement("facialTransformationMatrix", "matrix_missing")
+  }
+
+  const raw = {
+    matrixTranslation: matrix.translation,
+    matrixScale: matrix.scale,
+    matrixRotationDeg: matrix.rotationDeg,
+    boundsImage,
+  }
+  if (!matrix.translation || !matrix.scale) {
+    return createInvalidMediaPipeFacePlacement(
+      "facialTransformationMatrix",
+      "matrix_translation_or_scale_missing",
+      raw,
+    )
+  }
+
+  const center = {
+    x: matrix.translation.x,
+    y: matrix.translation.y,
+  }
+  const scale = matrix.scale.uniform
+  const warnings: string[] = []
+  if (!isImageNormalizedPoint(center)) {
+    warnings.push("matrix_translation_is_not_image_normalized")
+  }
+  if (!Number.isFinite(scale) || scale <= 0) {
+    warnings.push("matrix_uniform_scale_invalid")
+  }
+  if (warnings.length > 0) {
+    return {
+      status: "invalid",
+      source: "facialTransformationMatrix",
+      center,
+      scale,
+      raw,
+      warnings,
+    }
+  }
+
+  return {
+    status: "detected",
+    source: "facialTransformationMatrix",
+    center,
+    scale,
+    raw,
+    warnings: [],
+  }
+}
+
+function isImageNormalizedPoint(point: { x: number; y: number }) {
+  return (
+    Number.isFinite(point.x) &&
+    Number.isFinite(point.y) &&
+    point.x >= 0 &&
+    point.x <= 1 &&
+    point.y >= 0 &&
+    point.y <= 1
+  )
+}
+
+function getPlacementAlignmentSkip(
+  currentPlacement: MediaPipeFacePlacement,
+  idealPlacement: MediaPipeFacePlacement,
+): { status: PoseMappingAlignmentStatus; reason: PoseMappingAlignmentSkippedReason } | null {
+  if (currentPlacement.status === "missing") {
+    return {
+      status: "skipped_missing_current_placement",
+      reason: "missing_current_placement",
+    }
+  }
+  if (idealPlacement.status === "missing") {
+    return {
+      status: "skipped_missing_ideal_placement",
+      reason: "missing_ideal_placement",
+    }
+  }
+  if (currentPlacement.status === "invalid" || idealPlacement.status === "invalid") {
+    return {
+      status: "skipped_invalid_placement",
+      reason: "invalid_placement",
+    }
+  }
+  return null
 }
 
 function getInitialAlignmentExcludedReasons(
@@ -6695,9 +6855,13 @@ function createSkippedPoseMappingRuntimeState(params: {
     ...previousRuntime,
     status: previousRuntime.previewDataUrl ? "completed" : "idle",
     currentFaceStatus: params.currentFaceStatus,
+    renderedIdealStatus: previousRuntime.renderedIdealStatus,
+    alignmentStatus: "stale",
+    alignmentSkippedReason: "stale",
     poseMappingStatus: getPoseMappingSkippedStatus(params.skippedReason),
     poseMappingSkippedReason: params.skippedReason,
     fallbackPoseUsed: false,
+    fallbackRenderedIdealUsed: false,
     lastGood,
     stale: {
       isStale: lastGood.hasLastGood,
@@ -7039,7 +7203,8 @@ function buildCurrentFrameAnalysis(
     categoryName: category.categoryName,
     score: category.score,
   }))
-  const pose = estimateNullablePose(result.facialTransformationMatrixes[0])
+  const matrix = summarizeFaceMatrix(result.facialTransformationMatrixes[0])
+  const pose = matrix?.rotationDeg ?? estimateNullablePose(result.facialTransformationMatrixes[0])
   const hasFace = result.faceLandmarks.length > 0
   const validLandmarks = landmarks.length === REQUIRED_LANDMARK_COUNT
 
@@ -7050,6 +7215,7 @@ function buildCurrentFrameAnalysis(
       analyzedTimeSec: timeSec,
       landmarkCount: 0,
       pose,
+      matrix,
       blendshapes,
       expressionSummary: createExpressionSummary(blendshapes, "unknown"),
       qualityScore: 0,
@@ -7070,6 +7236,7 @@ function buildCurrentFrameAnalysis(
       analyzedTimeSec: timeSec,
       landmarkCount: landmarks.length,
       pose,
+      matrix,
       blendshapes,
       expressionSummary: createExpressionSummary(blendshapes, "unknown"),
       qualityScore: 0,
@@ -7090,6 +7257,7 @@ function buildCurrentFrameAnalysis(
     landmarks478: mapLandmarks(landmarks),
     landmarkCount: landmarks.length,
     pose,
+    matrix,
     blendshapes,
     expressionSummary: createExpressionSummary(blendshapes, expressionGroup),
     qualityScore: 1,
@@ -7135,6 +7303,7 @@ async function detectRenderedIdealCanvas(renderSeq: number) {
     ...state.renderedIdeal.detection,
     status: "detecting",
     landmarks478: null,
+    matrix: null,
     landmarkCount: null,
     pose: {
       yaw: null,
@@ -7166,6 +7335,7 @@ async function detectRenderedIdealCanvas(renderSeq: number) {
         ...currentDetection,
         status: "not_detected",
         landmarks478: null,
+        matrix: nextDetection.matrix,
         detectMs,
         averageDetectMs,
         landmarkCount: null,
@@ -7191,6 +7361,7 @@ async function detectRenderedIdealCanvas(renderSeq: number) {
       ...state.renderedIdeal.detection,
       status: "error",
       landmarks478: null,
+      matrix: null,
       landmarkCount: null,
       qualityScore: null,
       errorMessage: `MediaPipe error: ${message}`,
@@ -7220,7 +7391,8 @@ function buildRenderedIdealDetectionState(
     categoryName: category.categoryName,
     score: category.score,
   }))
-  const pose = estimateNullablePose(result.facialTransformationMatrixes[0])
+  const matrix = summarizeFaceMatrix(result.facialTransformationMatrixes[0])
+  const pose = matrix?.rotationDeg ?? estimateNullablePose(result.facialTransformationMatrixes[0])
   const hasFace = result.faceLandmarks.length > 0
   const validLandmarks = landmarks.length === REQUIRED_LANDMARK_COUNT
 
@@ -7228,6 +7400,7 @@ function buildRenderedIdealDetectionState(
     return {
       status: "not_detected",
       landmarks478: null,
+      matrix,
       detectMs,
       averageDetectMs,
       landmarkCount: 0,
@@ -7244,6 +7417,7 @@ function buildRenderedIdealDetectionState(
     return {
       status: "error",
       landmarks478: null,
+      matrix,
       detectMs,
       averageDetectMs,
       landmarkCount: landmarks.length,
@@ -7259,6 +7433,7 @@ function buildRenderedIdealDetectionState(
   return {
     status: "detected",
     landmarks478: mapLandmarks(landmarks),
+    matrix,
     detectMs,
     averageDetectMs,
     landmarkCount: landmarks.length,
@@ -8696,6 +8871,47 @@ function estimateNullablePose(matrix: Matrix | undefined): ReferencePose {
     yaw: null,
     pitch: null,
     roll: null,
+  }
+}
+
+function summarizeFaceMatrix(matrix: Matrix | undefined): MatrixDebugSummary | null {
+  if (
+    !matrix ||
+    matrix.rows < 3 ||
+    matrix.columns < 3 ||
+    matrix.data.length < matrix.rows * matrix.columns
+  ) {
+    return null
+  }
+
+  const columns = matrix.columns
+  const get = (row: number, column: number) => matrix.data[row * columns + column]
+  const translation = matrix.columns >= 4
+    ? {
+        x: get(0, 3),
+        y: get(1, 3),
+        z: get(2, 3),
+      }
+    : null
+  const scaleX = Math.hypot(get(0, 0), get(1, 0), get(2, 0))
+  const scaleY = Math.hypot(get(0, 1), get(1, 1), get(2, 1))
+  const scaleZ = Math.hypot(get(0, 2), get(1, 2), get(2, 2))
+  const scaleValues = [scaleX, scaleY, scaleZ]
+  const scale = scaleValues.every((value) => Number.isFinite(value) && value > 0)
+    ? {
+        x: scaleX,
+        y: scaleY,
+        z: scaleZ,
+        uniform: scaleValues.reduce((sum, value) => sum + value, 0) / scaleValues.length,
+      }
+    : null
+
+  return {
+    translation: translation && [translation.x, translation.y, translation.z].every(Number.isFinite)
+      ? translation
+      : null,
+    scale,
+    rotationDeg: estimateNullablePose(matrix),
   }
 }
 
@@ -10198,9 +10414,12 @@ function renderPoseMappingLiveSummaryCard() {
     <dl class="review-grid">
       <div><dt>profile</dt><dd>${state.poseMappingProfile.loaded ? "loaded" : "not loaded"}</dd></div>
       <div><dt>currentFaceStatus</dt><dd>${escapeHtml(runtime.currentFaceStatus)}</dd></div>
+      <div><dt>renderedIdealStatus</dt><dd>${escapeHtml(runtime.renderedIdealStatus)}</dd></div>
+      <div><dt>alignmentStatus</dt><dd>${escapeHtml(runtime.alignmentStatus)}</dd></div>
       <div><dt>poseMappingStatus</dt><dd>${escapeHtml(runtime.poseMappingStatus)}</dd></div>
       <div><dt>poseMappingSkippedReason</dt><dd>${escapeHtml(runtime.poseMappingSkippedReason)}</dd></div>
       <div><dt>fallbackPoseUsed</dt><dd>${String(runtime.fallbackPoseUsed)}</dd></div>
+      <div><dt>fallbackRenderedIdealUsed</dt><dd>${String(runtime.fallbackRenderedIdealUsed)}</dd></div>
       <div><dt>lastGood</dt><dd>${String(runtime.lastGood.hasLastGood)} / ageMs ${formatRealtimeNullableNumber(runtime.lastGood.ageMs)}</dd></div>
       <div><dt>stale</dt><dd>${String(runtime.stale.isStale)} / ${escapeHtml(runtime.stale.staleReason ?? "-")} / ${formatRealtimeNullableNumber(runtime.stale.staleMs)}ms</dd></div>
       <div><dt>loop busy</dt><dd>${String(poseMappingRuntimeInProgress)}</dd></div>
@@ -10210,7 +10429,7 @@ function renderPoseMappingLiveSummaryCard() {
       <div><dt>pose diff</dt><dd>${escapeHtml(formatPoseMappingDiff(runtime.poseDiff))}</dd></div>
       <div><dt>renderedIdeal478</dt><dd>${runtime.renderedIdealDetected ? "detected" : "not detected"} / ${formatNullableCount(runtime.renderedIdealLandmarkCount)}</dd></div>
       <div><dt>alignedRenderedIdeal478</dt><dd>${formatNullableCount(runtime.alignedRenderedIdeal478?.length ?? null)}</dd></div>
-      <div><dt>alignment</dt><dd>${escapeHtml(runtime.alignment.status)} / anchors ${formatNullableCount(runtime.alignment.anchorCount)} / scale ${formatRealtimeNullableNumber(runtime.alignment.scale)}</dd></div>
+      <div><dt>alignment</dt><dd>${escapeHtml(runtime.alignment.status)} / ${escapeHtml(runtime.alignment.mode)} / scale ${formatRealtimeNullableNumber(runtime.alignment.placementScaleRatio)}</dd></div>
       <div><dt>Render backend</dt><dd>${escapeHtml(runtime.renderBackend)}</dd></div>
       <div><dt>Renderer signature</dt><dd>${escapeHtml(runtime.renderer?.rendererSignature ?? "-")}</dd></div>
       <div><dt>Profile renderer match</dt><dd>${String(runtime.profileRendererMatch)}</dd></div>
@@ -10286,9 +10505,12 @@ function renderPoseMappingDebugTab() {
       <h3>Runtime input（実行時入力）</h3>
       <dl class="summary-list">
         <div><dt>currentFaceStatus</dt><dd>${escapeHtml(runtime.currentFaceStatus)}</dd></div>
+        <div><dt>Rendered ideal status（レンダー理想検出状態）</dt><dd>${escapeHtml(runtime.renderedIdealStatus)}</dd></div>
+        <div><dt>Alignment status（位置合わせ状態）</dt><dd>${escapeHtml(runtime.alignmentStatus)}</dd></div>
         <div><dt>poseMappingStatus</dt><dd>${escapeHtml(runtime.poseMappingStatus)}</dd></div>
         <div><dt>poseMappingSkippedReason</dt><dd>${escapeHtml(runtime.poseMappingSkippedReason)}</dd></div>
         <div><dt>fallbackPoseUsed</dt><dd>${String(runtime.fallbackPoseUsed)}</dd></div>
+        <div><dt>Fallback rendered ideal used（レンダー理想のフォールバック使用有無）</dt><dd>${String(runtime.fallbackRenderedIdealUsed)}</dd></div>
         <div><dt>loop running</dt><dd>${String(state.realtimeDebug.status === "running")}</dd></div>
         <div><dt>loop busy</dt><dd>${String(poseMappingRuntimeInProgress)}</dd></div>
         <div><dt>loop lastFrameIndex</dt><dd>${formatNullableCount(state.realtimeDebug.processedVideoFrameCount)}</dd></div>
@@ -10355,8 +10577,13 @@ function renderPoseMappingDebugTab() {
       <h3>Alignment coordinate debug（位置合わせ座標デバッグ）</h3>
       <dl class="summary-list">
         <div><dt>status</dt><dd>${escapeHtml(runtime.alignment.status)}</dd></div>
-        <div><dt>alignmentMode</dt><dd>${escapeHtml(runtime.alignment.mode)}</dd></div>
-        <div><dt>rotationApplied</dt><dd>${String(runtime.alignment.rotationApplied)}</dd></div>
+        <div><dt>Alignment mode（位置合わせ方式）</dt><dd>${escapeHtml(runtime.alignment.mode)}</dd></div>
+        <div><dt>Placement source（位置・大きさ取得元）</dt><dd>${escapeHtml(runtime.alignment.placementSource)}</dd></div>
+        <div><dt>Rotation applied（回転適用有無）</dt><dd>${String(runtime.alignment.rotationApplied)}</dd></div>
+        <div><dt>alignmentSkippedReason</dt><dd>${escapeHtml(runtime.alignment.alignmentSkippedReason)}</dd></div>
+        <div><dt>Current placement center / scale（現在顔の位置・大きさ）</dt><dd>${escapeHtml(formatPlacement(runtime.alignment.currentPlacement))}</dd></div>
+        <div><dt>Ideal placement center / scale（理想顔の位置・大きさ）</dt><dd>${escapeHtml(formatPlacement(runtime.alignment.idealPlacement))}</dd></div>
+        <div><dt>Placement scale ratio（大きさ比率）</dt><dd>${formatRealtimeNullableNumber(runtime.alignment.placementScaleRatio)}</dd></div>
         <div><dt>anchorCount</dt><dd>${formatNullableCount(runtime.alignment.anchorCount)}</dd></div>
         <div><dt>videoAspectRatio</dt><dd>${formatRealtimeNullableNumber(runtime.alignment.videoAspectRatio)}</dd></div>
         <div><dt>renderAspectRatio</dt><dd>${formatRealtimeNullableNumber(runtime.alignment.renderAspectRatio)}</dd></div>
@@ -11657,8 +11884,10 @@ function drawLiveOverlay() {
   const alignedRenderedIdeal478 = state.poseMappingRuntime.alignedRenderedIdeal478
   const meshSourceVertices = state.poseMappingRuntime.meshSourceVertices
   const meshTargetVertices = state.poseMappingRuntime.meshTargetVertices
+  const canDrawAlignedIdeal = canDrawPoseMappingAlignedIdealOverlay()
 
   if (
+    canDrawAlignedIdeal &&
     state.overlay.showMeshPairs &&
     current478 &&
     alignedRenderedIdeal478 &&
@@ -11688,6 +11917,7 @@ function drawLiveOverlay() {
   }
 
   if (
+    canDrawAlignedIdeal &&
     state.overlay.showMeshTarget &&
     meshTargetVertices &&
     meshTargetVertices.length === REQUIRED_LANDMARK_COUNT
@@ -11702,6 +11932,7 @@ function drawLiveOverlay() {
   }
 
   if (
+    canDrawAlignedIdeal &&
     state.overlay.showAlignedIdealLandmarks478 &&
     alignedRenderedIdeal478 &&
     alignedRenderedIdeal478.length === REQUIRED_LANDMARK_COUNT
@@ -11756,6 +11987,16 @@ function drawRenderedIdealOverlay() {
   renderedIdealOverlayCanvas.height = Math.max(1, Math.round(rect.height * dpr))
   context.setTransform(dpr, 0, 0, dpr, 0, 0)
   context.clearRect(0, 0, rect.width, rect.height)
+}
+
+function canDrawPoseMappingAlignedIdealOverlay() {
+  return (
+    state.poseMappingRuntime.currentFaceStatus === "detected" &&
+    state.poseMappingRuntime.renderedIdealStatus === "detected" &&
+    state.poseMappingRuntime.alignmentStatus === "completed" &&
+    state.poseMappingRuntime.alignedRenderedIdeal478 !== null &&
+    !state.poseMappingRuntime.fallbackRenderedIdealUsed
+  )
 }
 
 function drawLandmarkPoints(
@@ -12535,6 +12776,7 @@ function createEmptyRenderedIdealDetectionState(): RenderedIdealDetectionState {
   return {
     status: "idle",
     landmarks478: null,
+    matrix: null,
     detectMs: null,
     averageDetectMs: null,
     landmarkCount: null,
@@ -12612,9 +12854,13 @@ function createDefaultPoseMappingRuntimeState(): PoseMappingRuntimeState {
   return {
     status: "idle",
     currentFaceStatus: "missing",
+    renderedIdealStatus: "missing",
+    alignmentStatus: "skipped_no_current_face",
+    alignmentSkippedReason: "no_current_face",
     poseMappingStatus: "ready",
     poseMappingSkippedReason: "none",
     fallbackPoseUsed: false,
+    fallbackRenderedIdealUsed: false,
     lastGood: createEmptyPoseMappingLastGoodState(),
     stale: createEmptyPoseMappingStaleState(),
     noFaceCounters: createEmptyPoseMappingNoFaceCounters(),
@@ -12726,13 +12972,48 @@ function createEmptyPoseMappingDisplacementSummary(): PoseMappingDisplacementSum
   }
 }
 
+function createMissingMediaPipeFacePlacement(
+  source: MediaPipeFacePlacement["source"],
+  reason: string,
+): MediaPipeFacePlacement {
+  return {
+    status: "missing",
+    source,
+    center: null,
+    scale: null,
+    warnings: [reason],
+  }
+}
+
+function createInvalidMediaPipeFacePlacement(
+  source: MediaPipeFacePlacement["source"],
+  reason: string,
+  raw?: MediaPipeFacePlacement["raw"],
+): MediaPipeFacePlacement {
+  return {
+    status: "invalid",
+    source,
+    center: null,
+    scale: null,
+    raw,
+    warnings: [reason],
+  }
+}
+
 function createEmptyPoseMappingAlignmentState(
-  status: PoseMappingAlignmentStatus = "not_ready",
+  status: PoseMappingAlignmentStatus = "skipped_no_current_face",
+  alignmentSkippedReason: PoseMappingAlignmentSkippedReason = "no_current_face",
 ): PoseMappingAlignmentState {
   return {
     status,
-    mode: "center_uniform_scale",
+    mode: "mediapipe_placement_center_scale",
     rotationApplied: false,
+    placementSource: "unknown",
+    alignmentSkippedReason,
+    currentPlacement: createMissingMediaPipeFacePlacement("unknown", "not_ready"),
+    idealPlacement: createMissingMediaPipeFacePlacement("unknown", "not_ready"),
+    placementScaleRatio: null,
+    renderedIdealStatus: "missing",
     anchorCount: 0,
     currentCenter: null,
     idealCenter: null,
@@ -13052,6 +13333,7 @@ function createEmptyCurrentAnalysis(): CurrentFrameAnalysis {
       pitch: null,
       roll: null,
     },
+    matrix: null,
     blendshapes: [],
     expressionSummary: null,
     qualityScore: null,
@@ -14672,6 +14954,13 @@ function formatRect(rect: Rect | null) {
   return `x ${formatNullableNumber(rect.x)} / y ${formatNullableNumber(rect.y)} / width ${formatNullableNumber(rect.width)} / height ${formatNullableNumber(rect.height)}`
 }
 
+function formatPlacement(placement: MediaPipeFacePlacement) {
+  const center = placement.center
+    ? `center x ${formatNullableNumber(placement.center.x)} / y ${formatNullableNumber(placement.center.y)}`
+    : "center -"
+  return `${placement.status} / ${placement.source} / ${center} / scale ${formatNullableNumber(placement.scale)} / warnings ${placement.warnings.join(", ") || "-"}`
+}
+
 function roundDisplacementSummary(summary: PoseMappingDisplacementSummary): PoseMappingDisplacementSummary {
   return {
     mean: roundForState(summary.mean),
@@ -15300,6 +15589,12 @@ function getPoseMappingAlignmentDebugSummary(alignment: PoseMappingAlignmentStat
     status: alignment.status,
     mode: alignment.mode,
     rotationApplied: alignment.rotationApplied,
+    placementSource: alignment.placementSource,
+    alignmentSkippedReason: alignment.alignmentSkippedReason,
+    currentPlacement: roundPlacementForState(alignment.currentPlacement),
+    idealPlacement: roundPlacementForState(alignment.idealPlacement),
+    placementScaleRatio: roundForState(alignment.placementScaleRatio),
+    renderedIdealStatus: alignment.renderedIdealStatus,
     anchorCount: alignment.anchorCount,
     currentCenter: roundPoint2ForState(alignment.currentCenter),
     idealCenter: roundPoint2ForState(alignment.idealCenter),
@@ -15323,9 +15618,13 @@ function getPoseMappingRuntimeRawSummary() {
   return {
     status: runtime.status,
     currentFaceStatus: runtime.currentFaceStatus,
+    renderedIdealStatus: runtime.renderedIdealStatus,
+    alignmentStatus: runtime.alignmentStatus,
+    alignmentSkippedReason: runtime.alignmentSkippedReason,
     poseMappingStatus: runtime.poseMappingStatus,
     poseMappingSkippedReason: runtime.poseMappingSkippedReason,
     fallbackPoseUsed: runtime.fallbackPoseUsed,
+    fallbackRenderedIdealUsed: runtime.fallbackRenderedIdealUsed,
     lastGood: getPoseMappingLastGoodDebugSummary(runtime.lastGood),
     stale: {
       isStale: runtime.stale.isStale,
@@ -15400,9 +15699,13 @@ function getPoseMappingRuntimeDebugExport() {
     },
     runtime: {
       currentFaceStatus: runtime.currentFaceStatus,
+      renderedIdealStatus: runtime.renderedIdealStatus,
+      alignmentStatus: runtime.alignmentStatus,
+      alignmentSkippedReason: runtime.alignmentSkippedReason,
       poseMappingStatus: runtime.poseMappingStatus,
       poseMappingSkippedReason: runtime.poseMappingSkippedReason,
       fallbackPoseUsed: runtime.fallbackPoseUsed,
+      fallbackRenderedIdealUsed: runtime.fallbackRenderedIdealUsed,
       lastGood: getPoseMappingLastGoodDebugSummary(runtime.lastGood),
       stale: {
         isStale: runtime.stale.isStale,
@@ -15713,6 +16016,49 @@ function roundRectForState(rect: Rect | null): Rect | null {
         y: roundForState(rect.y) ?? 0,
         width: roundForState(rect.width) ?? 0,
         height: roundForState(rect.height) ?? 0,
+      }
+    : null
+}
+
+function roundPlacementForState(placement: MediaPipeFacePlacement): MediaPipeFacePlacement {
+  return {
+    status: placement.status,
+    source: placement.source,
+    center: roundPoint2ForState(placement.center),
+    scale: roundForState(placement.scale),
+    raw: placement.raw
+      ? {
+          matrixTranslation: roundPoint3ForState(placement.raw.matrixTranslation ?? null),
+          matrixScale: roundMatrixScaleForState(placement.raw.matrixScale ?? null),
+          matrixRotationDeg: placement.raw.matrixRotationDeg
+            ? roundPoseForState(placement.raw.matrixRotationDeg)
+            : undefined,
+          boundsImage: roundBoundsForState(placement.raw.boundsImage ?? null),
+        }
+      : undefined,
+    warnings: placement.warnings,
+  }
+}
+
+function roundPoint3ForState(point: { x: number; y: number; z: number } | null) {
+  return point
+    ? {
+        x: roundForState(point.x) ?? 0,
+        y: roundForState(point.y) ?? 0,
+        z: roundForState(point.z) ?? 0,
+      }
+    : null
+}
+
+function roundMatrixScaleForState(
+  scale: { x: number; y: number; z: number; uniform: number } | null,
+) {
+  return scale
+    ? {
+        x: roundForState(scale.x) ?? 0,
+        y: roundForState(scale.y) ?? 0,
+        z: roundForState(scale.z) ?? 0,
+        uniform: roundForState(scale.uniform) ?? 0,
       }
     : null
 }

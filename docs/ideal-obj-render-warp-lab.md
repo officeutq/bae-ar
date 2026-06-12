@@ -291,8 +291,9 @@ Live タブの旧 `現姿勢OBJ` 欄と独立した `現姿勢理想478プレビ
 - alignment anchors
 
 Live overlay の描画は必ず `displayedContentRect` を使い、動画の letterbox / pillarbox でズレないようにします。
-未位置合わせの `renderedIdeal478` をライブ映像上に直接表示しません。この段階ではまだ WebGL mesh warp
-（変形加工）は行いません。
+未位置合わせの `renderedIdeal478` をライブ映像上に直接表示しません。`renderedIdeal478` が missing / invalid
+の場合は `alignedRenderedIdeal478`、対応線、mesh target を描画せず、fallback 正面顔も表示しません。
+この段階ではまだ WebGL mesh warp（変形加工）は行いません。
 
 overlay controls は `Live Overlay（ライブ重ね表示）` と `Mesh Debug（メッシュデバッグ）` に再分類します。
 実体がまだない no-op checkbox は残さず、未対応のものは disabled または非表示にします。現時点では
@@ -307,7 +308,16 @@ triangle mesh は未生成なので disabled とし、grid / anchors は alignme
 - `yaw_edge_friendly`: 横向き輪郭補助
 - `stable_crop_fov`: 安定した顔サイズ・視野角
 
-alignment では、aspect-corrected image coordinate を使います。
+alignment は landmark correspondence ではなく、MediaPipe placement ベースにします。理想顔の向きは
+`P_camera -> poseMappingProfile -> p -> WebGL render -> MediaPipe detect -> P_confirm` で合わせるため、
+alignment では回転を使いません。合わせるのは位置と大きさだけです。
+
+placement にはまず `facialTransformationMatrix` を debug-only で検証します。matrix translation が
+live video image-normalized coordinate の center として安全に扱えない場合は、alignment を
+`skipped_invalid_placement` として skip し、理想点 overlay を出しません。旧 `current478` /
+`renderedIdeal478` の対応点群から center / scale を推定する方式へ無言 fallback しません。
+
+alignment work の座標確認では、aspect-corrected image coordinate を使います。
 
 ```text
 x' = x * videoAspectRatio
