@@ -5,7 +5,7 @@ This file is intentionally written as Colab-friendly cells. Open it in Colab
 or paste each "# %%" block into a notebook cell.
 
 Input:
-  obj_pose_mapping_dataset_v2 JSON from tools/ideal-obj-render-warp-lab
+  obj_pose_mapping_dataset_v3 JSON from tools/ideal-obj-render-warp-lab
 
 Outputs:
   obj_pose_mapping_analysis_summary.md
@@ -91,6 +91,14 @@ EXCLUDED_RATIO_WARNING = 0.10
 EXCLUDED_RATIO_STRONG_WARNING = 0.20
 
 DEFAULT_OUTPUT_DIR = "obj_pose_mapping_analysis_outputs"
+SUPPORTED_DATASET_SCHEMA_VERSIONS = {
+    "obj_pose_mapping_dataset_v1",
+    "obj_pose_mapping_dataset_v2",
+    "obj_pose_mapping_dataset_v3",
+}
+WEBGL_DATASET_SCHEMA_VERSION = "obj_pose_mapping_dataset_v3"
+WEBGL_RENDER_BACKEND = "webgl"
+PROFILE_SCHEMA_VERSION = "pose_mapping_profile_candidate_v2"
 
 
 # %% [markdown]
@@ -112,10 +120,71 @@ def load_dataset_json(dataset_path: str | Path | None = None) -> dict[str, Any]:
     path = Path(dataset_path) if dataset_path else upload_dataset_in_colab()
     with path.open("r", encoding="utf-8") as file:
         data = json.load(file)
-    if data.get("schemaVersion") not in {"obj_pose_mapping_dataset_v1", "obj_pose_mapping_dataset_v2"}:
+    if data.get("schemaVersion") not in SUPPORTED_DATASET_SCHEMA_VERSIONS:
         raise ValueError(f"Unsupported schemaVersion: {data.get('schemaVersion')}")
     data["_loadedPath"] = str(path)
     return data
+
+
+def dataset_render_resolution(dataset: dict[str, Any]) -> dict[str, int] | None:
+    candidates = [
+        get_nested(dataset, "renderAppearance", "applied", "renderResolution"),
+        dataset.get("renderer", {}).get("renderResolution") if isinstance(dataset.get("renderer"), dict) else None,
+        {
+            "width": get_nested(dataset, "renderSettings", "canvasWidth"),
+            "height": get_nested(dataset, "renderSettings", "canvasHeight"),
+        },
+    ]
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        width = candidate.get("width")
+        height = candidate.get("height")
+        if isinstance(width, (int, float)) and isinstance(height, (int, float)) and width > 0 and height > 0:
+            return {"width": int(round(width)), "height": int(round(height))}
+    return None
+
+
+def profile_required_renderer_metadata(dataset: dict[str, Any]) -> dict[str, Any]:
+    renderer = dataset.get("renderer")
+    if not isinstance(renderer, dict):
+        renderer = {}
+    resolution = dataset_render_resolution(dataset)
+    return {
+        "kind": renderer.get("kind"),
+        "version": renderer.get("version"),
+        "rendererSignature": renderer.get("rendererSignature"),
+        "projectionMode": renderer.get("projectionMode"),
+        "renderResolution": resolution,
+    }
+
+
+def validate_webgl_dataset_for_profile_export(dataset: dict[str, Any]) -> dict[str, Any]:
+    errors: list[str] = []
+    schema_version = dataset.get("schemaVersion")
+    render_backend = dataset.get("renderBackend")
+    renderer = dataset.get("renderer")
+    required_renderer = profile_required_renderer_metadata(dataset)
+
+    if schema_version != WEBGL_DATASET_SCHEMA_VERSION:
+        errors.append(f"schemaVersion must be {WEBGL_DATASET_SCHEMA_VERSION}, got {schema_version!r}")
+    if render_backend != WEBGL_RENDER_BACKEND:
+        errors.append(f"renderBackend must be {WEBGL_RENDER_BACKEND!r}, got {render_backend!r}")
+    if not isinstance(renderer, dict):
+        errors.append("renderer metadata is missing")
+    for key in ["kind", "version", "rendererSignature", "projectionMode"]:
+        if not required_renderer.get(key):
+            errors.append(f"requiredRenderer.{key} is missing")
+    if not required_renderer.get("renderResolution"):
+        errors.append("requiredRenderer.renderResolution is missing")
+
+    if errors:
+        message = (
+            "Input dataset is not a WebGL p,P dataset, so this script will not export "
+            "pose_mapping_profile_candidate_v2.\n- " + "\n- ".join(errors)
+        )
+        raise ValueError(message)
+    return required_renderer
 
 
 # %% [markdown]
@@ -223,7 +292,7 @@ def landmark_stats(landmarks: list[dict[str, float]] | None) -> dict[str, Any]:
 def flatten_dataset(dataset: dict[str, Any]) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     schema = dataset.get("schemaVersion")
-    if schema == "obj_pose_mapping_dataset_v2":
+    if schema in {"obj_pose_mapping_dataset_v2", "obj_pose_mapping_dataset_v3"}:
         for index, sample in enumerate(dataset.get("samples", [])):
             row = {
                 "sampleIndex": index,
@@ -279,6 +348,8 @@ def dataset_metadata(dataset: dict[str, Any]) -> dict[str, Any]:
         "schemaVersion": dataset.get("schemaVersion"),
         "createdAt": dataset.get("createdAt"),
         "loadedPath": dataset.get("_loadedPath"),
+        "renderBackend": dataset.get("renderBackend"),
+        "renderer": dataset.get("renderer"),
         "source": dataset.get("source") or dataset.get("objSummary"),
         "renderSettings": dataset.get("renderSettings"),
         "renderAppearance": dataset.get("renderAppearance"),
@@ -1281,6 +1352,14 @@ def write_summary_markdown(
 {json.dumps(metadata, ensure_ascii=False, indent=2, default=str)}
 ```
 
+## WebGL renderer metadata
+
+- renderBackend: {metadata.get("renderBackend")}
+- rendererSignature: {get_nested(metadata, "renderer", "rendererSignature", default=None)}
+- rendererVersion: {get_nested(metadata, "renderer", "version", default=None)}
+- projectionMode: {get_nested(metadata, "renderer", "projectionMode", default=None)}
+- renderResolution: {dataset_render_resolution({"renderAppearance": metadata.get("renderAppearance"), "renderSettings": metadata.get("renderSettings"), "renderer": metadata.get("renderer")})}
+
 ## filter summary
 
 - raw sample count: {filter_summary["rawSampleCount"]}
@@ -1364,6 +1443,7 @@ def export_outputs(
     best_key = f"{best_row['datasetKind']}::{best_row['modelName']}"
     best_model = fitted[best_key]
     metadata = dataset_metadata(dataset)
+    required_renderer = validate_webgl_dataset_for_profile_export(dataset)
 
     comparison_df.to_csv(output_path / "obj_pose_mapping_model_comparison.csv", index=False, encoding="utf-8")
     posewise_df.to_csv(output_path / "obj_pose_mapping_posewise_evaluation.csv", index=False, encoding="utf-8")
@@ -1373,7 +1453,10 @@ def export_outputs(
 
     candidate = serialize_model(best_model)
     candidate.update({
-        "schemaVersion": "pose_mapping_profile_candidate_v1",
+        "schemaVersion": PROFILE_SCHEMA_VERSION,
+        "requiredRenderBackend": WEBGL_RENDER_BACKEND,
+        "requiredRenderer": required_renderer,
+        "datasetSchemaVersion": dataset.get("schemaVersion"),
         "datasetKind": best_row["datasetKind"],
         "modelName": best_row["modelName"],
         "errorSummary": best_row.to_dict(),
@@ -1412,6 +1495,7 @@ def export_outputs(
 def run_analysis(dataset_path: str | Path | None = None, output_dir: str | Path = DEFAULT_OUTPUT_DIR) -> dict[str, Any]:
     np.random.seed(SEED)
     dataset = load_dataset_json(dataset_path)
+    validate_webgl_dataset_for_profile_export(dataset)
     raw_df = flatten_dataset(dataset)
     hard_kept_df, hard_excluded_df = hard_filter(raw_df, dataset)
     filtered_df, residual_excluded_df, residual_summary = detect_residual_outliers(hard_kept_df)
@@ -1442,7 +1526,7 @@ def is_notebook_runtime() -> bool:
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Analyze Ideal OBJ Render Warp Lab p,P dataset JSON.")
-    parser.add_argument("--input", help="Path to obj_pose_mapping_dataset_v2 JSON.")
+    parser.add_argument("--input", help="Path to obj_pose_mapping_dataset_v3 WebGL JSON.")
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, help="Output directory.")
     args, _unknown = parser.parse_known_args(argv)
     if not args.input:
