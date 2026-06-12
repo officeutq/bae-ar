@@ -11,6 +11,46 @@ Pose Mapping の本格的な placement alignment に進む前に、`FaceLandmark
 - matrix raw 16 値を取得できない場合、または matrix placement が identity のまま bounds center / size と明確に合わない場合は `alignmentStatus = skipped_invalid_placement` とし、`alignedRenderedIdealVisible`、correspondence lines、mesh target を表示しない。
 - overlay の lifecycle gate は従来どおり `generationMatch`、`tokenMatch`、`renderSucceeded`、`detectSucceeded`、`fallbackRenderedIdealUsed === false`、`staleCanvasDetected === false` を通す。
 
+## center + scale only alignment
+
+`Pose Mapping` の alignment mode に `bounds_center_scale_v1` を追加した。これは debug / prototype 用の位置合わせであり、`facialTransformationMatrix` の translation を live video の image-normalized center として使わない。既存の `mediapipe_placement_center_scale` と matrix placement debug は、後で `matrix -> center / scale` 関数を作るための比較情報として残す。
+
+`bounds_center_scale_v1` は、current 478 と renderedIdeal478 から外枠を作り、以下の変換だけで renderedIdeal478 全体を live video image-normalized coordinate へ戻す。
+
+```text
+alignedIdeal = (renderedIdeal - idealCenter) * scaleRatio + currentCenter
+```
+
+点ごとの 478 点一致は目的にしない。顔形状差は残してよく、合わせるのは顔全体の center と uniform scale のみとする。rotation は `P_camera -> p -> render -> P_confirm` 側で扱うため、alignment では使わない。
+
+計算は aspect-corrected work coordinate で行う。
+
+```text
+currentWork.x = current.x * videoAspectRatio
+currentWork.y = current.y
+
+idealWork.x = renderedIdeal.x * renderAspectRatio
+idealWork.y = renderedIdeal.y
+
+aligned.x = alignedWork.x / videoAspectRatio
+aligned.y = alignedWork.y
+aligned.z = renderedIdeal.z
+```
+
+外枠計算の landmark set は `all_non_iris` と `stable_non_expression` を選べる。初期値は `all_non_iris`。`all_non_iris` は iris landmarks `468..477` を除外し、`stable_non_expression` はさらに `expressionSensitive` landmarks を除外する。これは center / scale 計算だけに使い、点ごとの対応位置合わせには使わない。
+
+scale basis は `height`、`width`、`diag` を選べる。初期値は `diag`。`diag` は以下で計算する。
+
+```text
+diag = sqrt(width * width + height * height)
+```
+
+debug には `BoundsCenterScaleAlignmentDebug` を出す。主な内容は `placementLandmarkSet`、`scaleBasis`、`currentBoundsWork`、`idealBoundsWork`、`currentScale`、`idealScale`、`scaleRatio`、`translationWork`、image coordinate の current / rendered ideal / aligned rendered ideal bounds、`alignedLandmarkCount` である。
+
+live overlay には `bounds_center_scale_v1` で変換済みの `alignedRenderedIdeal478` だけを表示する。raw `renderedIdeal478`、stale / fallback / generation mismatch の rendered ideal、old preview の結果は表示しない。`grid / anchors` overlay が有効な場合は、current bounds、raw ideal bounds、aligned ideal bounds と center point も debug 表示できる。
+
+`placement mapping samples` は session memory に frame ごとの small summary として保存し、JSON / CSV で export できる。sample には `frameId`、`mediaTimeSec`、`P_camera`、`p`、`P_confirm`、`poseDiffMagnitude`、matrix column-major translation / scale、image / work bounds、`boundsScaleBasis`、`boundsScaleRatio`、aspect ratio、`qualityUsable`、`skippedReason` を含める。
+
 ## 目的
 
 `tools/ideal-obj-render-warp-lab` は、FaceBuilder + Blender sculpt で作成した `テスト.obj` のような OBJ 3D 形状ファイルを、BAE AR の neutral ideal head（無表情基準の理想頭部）候補として使えるか検証する debug / research lab です。
@@ -681,6 +721,22 @@ WebGL renderer は通常 runtime と p,P dataset 生成の本線です。MediaPi
 - [リポジトリ構成](repository-structure.md)
 
 ## Runtime lifecycle / token
+
+## Render pose lifecycle debug
+
+`bounds_center_scale_v1` は position / scale の alignment だけを行います。rendered ideal の向きは alignment では補正せず、`P_camera -> poseMappingProfile -> p -> WebGL render -> MediaPipe detect -> P_confirm` の render generation 側で `p` が反映されている必要があります。
+
+Pose Mapping runtime の `renderedIdealLifecycle.renderPose` では、`renderToken.p` 由来の `requestedPoseP` と、WebGL renderer が実際に使った `actualRenderPoseP` を別々に記録します。`renderPoseMatchesToken` は token と WebGL 適用値の一致確認、`renderPoseAppliedToWebGL` は token 一致に加えて `P_confirm` が requested pose に対して front 固定に見えないことを確認する debug flag です。
+
+`Render pose probe（レンダー姿勢プローブ）` は、同じ OBJ / poseMappingProfile / render settings で fixed pose A-E を WebGL render -> detect し、それぞれの `P_confirm` を表示します。yaw / pitch / roll を変えても `P_confirm` がほぼ同じ front pose に固定される場合、runtime warning として `render_pose_not_applied` を記録します。
+
+`render_pose_not_applied` は、`abs(p.yaw) + abs(p.pitch) + abs(p.roll) > 15` かつ `abs(P_confirm.yaw) < 3`、`abs(P_confirm.roll) < 3` のときに出します。この状態では `alignmentStatus === "completed"` でも、`renderPoseAppliedToWebGL` は `false` として扱います。
+
+WebGL renderer の pose は shader uniform ではなく、CPU 側の `buildWebglObjRenderBuffers()` で pose-baked vertices として buffer に焼き込みます。そのため render pose lifecycle では、`renderCallPoseP`、`previewStatePoseP`、`bufferBuildPoseP`、`webglUniformPoseP`、`canvasLastRenderedPoseP` を分けて記録します。通常は `webglUniformPoseP` は `null`、`buffer.bufferPoseMode` は `baked_vertices` です。
+
+skip / recovery 後の切り分け用に、`recovery` debug では `recoveredFromNoCurrentFace`、`recoveredFromNoRenderedIdeal`、`recoveredFromAlignmentSkip`、`buffersWereRebuiltAfterRecovery`、`uniformsWereResetAfterRecovery` を記録します。`Run probe after next recovery` は、次に noFace / rendered ideal skip / alignment skip から復帰した直後に Render pose probe を自動実行します。
+
+`Hide ideal overlay when render pose not applied` は既定で有効です。`render_pose_not_applied` のときは `overlayLifecycle.renderPoseValid = false` とし、理想 overlay を正常表示として扱わず `overlayLifecycle.skippedReason = render_pose_not_applied` を残します。
 
 Live overlay では、古い rendered ideal や fallback frontal face を表示しないため、runtime に以下の lifecycle を持たせます。
 

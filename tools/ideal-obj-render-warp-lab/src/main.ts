@@ -944,6 +944,16 @@ type PoseMappingPoseDiff = {
 }
 
 type PoseMappingCurrentFaceStatus = "detected" | "missing" | "invalid"
+type PoseMappingAlignmentMode =
+  | "mediapipe_placement_center_scale"
+  | "bounds_center_scale_v1"
+type PlacementLandmarkSet =
+  | "all_non_iris"
+  | "stable_non_expression"
+type BoundsScaleBasis =
+  | "height"
+  | "width"
+  | "diag"
 type PoseMappingAlignmentStatus =
   | "completed"
   | "skipped_no_current_face"
@@ -955,6 +965,8 @@ type PoseMappingAlignmentStatus =
   | "skipped_missing_current_placement"
   | "skipped_missing_ideal_placement"
   | "skipped_invalid_placement"
+  | "skipped_invalid_bounds"
+  | "skipped_invalid_scale"
   | "stale"
   | "error"
 type PoseMappingAlignmentSkippedReason =
@@ -968,6 +980,8 @@ type PoseMappingAlignmentSkippedReason =
   | "missing_current_placement"
   | "missing_ideal_placement"
   | "invalid_placement"
+  | "invalid_bounds"
+  | "invalid_scale"
   | "stale"
   | "error"
 type PoseMappingStatus =
@@ -999,6 +1013,56 @@ type RenderedIdealFrameToken = AssetGeneration & {
   mediaTimeSec: number | null
   p: ObjPoseMappingPose
 }
+type RenderPoseSource =
+  | "pose_mapping_profile"
+  | "fallback_zero_pose"
+  | "preview_state"
+  | "unknown"
+type RenderPoseLifecycleDebug = {
+  requestedPoseP: { yaw: number; pitch: number; roll: number } | null
+  renderCallPoseP: { yaw: number; pitch: number; roll: number } | null
+  previewStatePoseP: { yaw: number; pitch: number; roll: number } | null
+  bufferBuildPoseP: { yaw: number; pitch: number; roll: number } | null
+  webglUniformPoseP: { yaw: number; pitch: number; roll: number } | null
+  actualRenderPoseP: { yaw: number; pitch: number; roll: number } | null
+  renderPoseSource: RenderPoseSource
+  buffer: RenderBufferPoseDebug
+  detectCanvas: DetectCanvasPoseState
+  recovery: PoseRecoveryDebug
+  renderPoseAppliedToWebGL: boolean
+  renderPoseMatchesToken: boolean
+  renderPoseMismatchReason: string | null
+}
+type RenderBufferPoseDebug = {
+  bufferPoseMode: "baked_vertices" | "shader_uniform" | "unknown"
+  bufferPoseP: { yaw: number; pitch: number; roll: number } | null
+  bufferGenerationId: number | null
+  bufferReused: boolean
+  bufferReuseReason: string | null
+}
+type DetectCanvasPoseState = {
+  canvasGenerationId: number
+  canvasLastRenderedToken: RenderedIdealFrameToken | null
+  canvasLastRenderedPoseP: { yaw: number; pitch: number; roll: number } | null
+  canvasPoseMatchesRenderToken: boolean
+  canvasWasClearedBeforeRender: boolean
+  drawCompletedForToken: boolean
+}
+type PoseRecoveryDebug = {
+  previousFrameStatus: string | null
+  currentFrameStatus: string
+  recoveredFromNoCurrentFace: boolean
+  recoveredFromNoRenderedIdeal: boolean
+  recoveredFromAlignmentSkip: boolean
+  recoveryFrameId: number | null
+  recoveryMediaTimeSec: number | null
+  poseBeforeSkip: { yaw: number; pitch: number; roll: number } | null
+  poseAfterRecovery: { yaw: number; pitch: number; roll: number } | null
+  rendererWasReinitialized: boolean
+  webglContextWasRecreated: boolean
+  buffersWereRebuiltAfterRecovery: boolean
+  uniformsWereResetAfterRecovery: boolean
+}
 type RenderedIdealLifecycle = {
   renderAttempted: boolean
   renderSucceeded: boolean
@@ -1009,6 +1073,7 @@ type RenderedIdealLifecycle = {
   detectCanvasWasClearedBeforeRender: boolean
   staleCanvasDetected: boolean
   fallbackRenderedIdealUsed: boolean
+  renderPose: RenderPoseLifecycleDebug
 }
 type OverlayLifecycle = {
   current478Visible: boolean
@@ -1019,6 +1084,7 @@ type OverlayLifecycle = {
   lastGoodUsedForOverlay: boolean
   generationMatch: boolean
   tokenMatch: boolean
+  renderPoseValid: boolean
   skippedReason: string
 }
 type AssetLifecycle = AssetGeneration & {
@@ -1088,6 +1154,27 @@ type BoundsPlacement = {
   scaleByWidth: number
   scaleByDiag: number
 }
+type BoundsCenterScaleAlignmentDebug = {
+  mode: "bounds_center_scale_v1"
+  placementLandmarkSet: PlacementLandmarkSet
+  scaleBasis: BoundsScaleBasis
+  rotationApplied: false
+  currentBoundsWork: BoundsPlacement
+  idealBoundsWork: BoundsPlacement
+  currentCenterWork: { x: number; y: number }
+  idealCenterWork: { x: number; y: number }
+  currentScale: number
+  idealScale: number
+  scaleRatio: number
+  translationWork: {
+    x: number
+    y: number
+  }
+  currentBoundsImage: BoundsPlacement
+  renderedIdealBoundsImage: BoundsPlacement
+  alignedRenderedIdealBoundsImage: BoundsPlacement
+  alignedLandmarkCount: number
+}
 type PlacementDebugSide = {
   matrixRaw: MatrixRawDebug
   matrixColumnMajor: MatrixPlacementCandidate
@@ -1121,7 +1208,7 @@ type PlacementDebugState = {
 }
 type MediaPipeFacePlacement = {
   status: "detected" | "missing" | "invalid"
-  source: "facialTransformationMatrix" | "faceDetectorBoundingBox" | "unknown"
+  source: "facialTransformationMatrix" | "faceDetectorBoundingBox" | "landmarkBounds" | "unknown"
   center: { x: number; y: number } | null
   scale: number | null
   raw?: {
@@ -1134,8 +1221,10 @@ type MediaPipeFacePlacement = {
 }
 type PoseMappingAlignmentState = {
   status: PoseMappingAlignmentStatus
-  mode: "mediapipe_placement_center_scale" | "legacy_landmark_center_scale"
+  mode: PoseMappingAlignmentMode
   rotationApplied: false
+  placementLandmarkSet: PlacementLandmarkSet
+  scaleBasis: BoundsScaleBasis
   placementSource: MediaPipeFacePlacement["source"]
   alignmentSkippedReason: PoseMappingAlignmentSkippedReason
   currentPlacement: MediaPipeFacePlacement
@@ -1156,6 +1245,7 @@ type PoseMappingAlignmentState = {
   alignedRenderedIdealBoundsImage: PoseMappingBounds | null
   displayedContentRect: Rect | null
   placementDebug: PlacementDebugState
+  boundsCenterScaleDebug: BoundsCenterScaleAlignmentDebug | null
   excludedReasonCounts: PoseMappingExcludedReasonCounts
   displacementSummary: PoseMappingDisplacementSummary
   anchorIndices: number[]
@@ -1516,6 +1606,47 @@ type WebglObjBenchmarkState = {
   notes: string[]
 }
 
+type RenderPoseProbeStatus = "idle" | "running" | "completed" | "error"
+type RenderPoseProbeSample = {
+  id: string
+  label: string
+  requestedPoseP: ObjPoseMappingPose
+  renderCallPoseP: ObjPoseMappingPose | null
+  bufferBuildPoseP: ObjPoseMappingPose | null
+  webglUniformPoseP: ObjPoseMappingPose | null
+  actualRenderPoseP: ObjPoseMappingPose | null
+  P_confirm: ReferencePose
+  poseDiff: PoseMappingPoseDiff
+  detected: boolean
+  landmarkCount: number | null
+  renderMs: number | null
+  detectMs: number | null
+  totalMs: number | null
+  warning: string | null
+  errorMessage: string | null
+}
+type RenderPoseProbeState = {
+  status: RenderPoseProbeStatus
+  runAfterNextRecovery: boolean
+  lastRunTrigger: "manual" | "after_next_recovery" | null
+  startedAt: string | null
+  completedAt: string | null
+  errorMessage: string | null
+  samples: RenderPoseProbeSample[]
+}
+
+const RENDER_POSE_PROBE_POSES: Array<{
+  id: string
+  label: string
+  p: ObjPoseMappingPose
+}> = [
+  { id: "front", label: "A: yaw 0 / pitch 0 / roll 0", p: { yaw: 0, pitch: 0, roll: 0 } },
+  { id: "yaw_plus_25", label: "B: yaw 25 / pitch 0 / roll 0", p: { yaw: 25, pitch: 0, roll: 0 } },
+  { id: "yaw_minus_25", label: "C: yaw -25 / pitch 0 / roll 0", p: { yaw: -25, pitch: 0, roll: 0 } },
+  { id: "pitch_plus_20", label: "D: yaw 0 / pitch 20 / roll 0", p: { yaw: 0, pitch: 20, roll: 0 } },
+  { id: "roll_plus_15", label: "E: yaw 0 / pitch 0 / roll 15", p: { yaw: 0, pitch: 0, roll: 15 } },
+]
+
 type WebglObjRenderer = {
   canvas: HTMLCanvasElement
   gl: WebGLRenderingContext
@@ -1527,6 +1658,15 @@ type WebglObjRenderer = {
   colorLocation: number
   rendererInfo: string | null
   vendorInfo: string | null
+}
+
+type WebglObjRenderResult = {
+  actualRenderPoseP: ObjPoseMappingPose
+  renderCallPoseP: ObjPoseMappingPose
+  previewStatePoseP: ObjPoseMappingPose
+  bufferBuildPoseP: ObjPoseMappingPose
+  webglUniformPoseP: ObjPoseMappingPose | null
+  buffer: RenderBufferPoseDebug
 }
 
 type WebglObjRenderContext = {
@@ -1906,6 +2046,29 @@ type ModeComparisonExport = {
   frames: ModeComparisonFrameResult[]
 }
 
+type PlacementMappingSample = {
+  frameId: number
+  mediaTimeSec: number | null
+  P_camera: { yaw: number; pitch: number; roll: number } | null
+  p: { yaw: number; pitch: number; roll: number } | null
+  P_confirm: { yaw: number | null; pitch: number | null; roll: number | null } | null
+  poseDiffMagnitude: number | null
+  currentMatrixColumnMajorTranslation: { x: number; y: number; z: number } | null
+  currentMatrixColumnMajorScale: { x: number; y: number; z: number; uniform: number } | null
+  idealMatrixColumnMajorTranslation: { x: number; y: number; z: number } | null
+  idealMatrixColumnMajorScale: { x: number; y: number; z: number; uniform: number } | null
+  currentBoundsImage: BoundsPlacement | null
+  idealBoundsImage: BoundsPlacement | null
+  currentBoundsWork: BoundsPlacement | null
+  idealBoundsWork: BoundsPlacement | null
+  boundsScaleBasis: BoundsScaleBasis
+  boundsScaleRatio: number | null
+  videoAspectRatio: number | null
+  renderAspectRatio: number | null
+  qualityUsable: boolean
+  skippedReason: string | null
+}
+
 type ModeComparisonState = {
   status: ModeComparisonStatus
   startedAt: string | null
@@ -1938,6 +2101,12 @@ type Rect = {
 type LabState = {
   activePreviewTab: PreviewTab
   activeDebugTab: DebugTab
+  poseMappingSettings: {
+    alignmentMode: PoseMappingAlignmentMode
+    placementLandmarkSet: PlacementLandmarkSet
+    boundsScaleBasis: BoundsScaleBasis
+    hideIdealOverlayWhenRenderPoseNotApplied: boolean
+  }
   overlay: {
     showCurrentLandmarks478: boolean
     showAlignedIdealLandmarks478: boolean
@@ -1965,6 +2134,7 @@ type LabState = {
   detectPerformance: DetectPerformanceState
   renderDetectHandoff: RenderDetectHandoffState
   webglObjBenchmark: WebglObjBenchmarkState
+  renderPoseProbe: RenderPoseProbeState
   poseSearchFrames: PoseCenterSearchFrame[]
   selectedPoseSearchFrameId: string | null
   poseCenterSearch: PoseCenterSearchState
@@ -2369,9 +2539,17 @@ const realtimeDriveModeLabels: Record<RealtimeDriveMode, string> = {
   interval_legacy: "旧setInterval 一定間隔タイマー",
 }
 
+const DEFAULT_POSE_MAPPING_SETTINGS: LabState["poseMappingSettings"] = {
+  alignmentMode: "bounds_center_scale_v1",
+  placementLandmarkSet: "all_non_iris",
+  boundsScaleBasis: "diag",
+  hideIdealOverlayWhenRenderPoseNotApplied: true,
+}
+
 const state: LabState = {
   activePreviewTab: "obj",
   activeDebugTab: "summary",
+  poseMappingSettings: { ...DEFAULT_POSE_MAPPING_SETTINGS },
   overlay: {
     showCurrentLandmarks478: true,
     showAlignedIdealLandmarks478: true,
@@ -2410,6 +2588,7 @@ const state: LabState = {
   detectPerformance: createDefaultDetectPerformanceState(),
   renderDetectHandoff: createDefaultRenderDetectHandoffState(),
   webglObjBenchmark: createDefaultWebglObjBenchmarkState(),
+  renderPoseProbe: createDefaultRenderPoseProbeState(),
   poseSearchFrames: [],
   selectedPoseSearchFrameId: null,
   poseCenterSearch: createDefaultPoseCenterSearchState(),
@@ -2465,6 +2644,8 @@ app.innerHTML = `
         </label>
         <button class="primary-button" type="button" data-action="obj-pose-calibration-start">p,Pデータ生成</button>
         <button class="secondary-button" type="button" data-action="export-obj-pose-mapping-dataset">p,P Dataset JSONをダウンロード</button>
+        <button class="secondary-button" type="button" data-action="export-placement-mapping-samples-json">Placement samples JSON</button>
+        <button class="secondary-button" type="button" data-action="export-placement-mapping-samples-csv">Placement samples CSV</button>
       </div>
       <input class="visually-hidden" type="file" accept=".obj,text/plain,model/obj" data-input="obj-file" />
       <input class="visually-hidden" type="file" accept=".json,application/json" data-input="pose-mapping-profile-file" />
@@ -2473,7 +2654,35 @@ app.innerHTML = `
         OBJ Pose Dataset（OBJ姿勢データ）を生成します。OBJに与えた renderPose を p、MediaPipe の returnedPose を P としてJSONに保存します。
       </div>
       <p class="export-status" data-debug-export-status></p>
-    </section>
+            <div class="review-card pose-mapping-controls" aria-label="Pose Mapping alignment controls">
+              <label class="select-field">
+                <span>Alignment mode（位置合わせ）</span>
+                <select data-control="pose-mapping-alignment-mode">
+                  <option value="mediapipe_placement_center_scale">Matrix placement（行列配置）</option>
+                  <option value="bounds_center_scale_v1">Bounds center + scale（外枠中心と拡大率）</option>
+                </select>
+              </label>
+              <label class="select-field">
+                <span>Bounds landmarks（外枠計算点）</span>
+                <select data-control="pose-mapping-placement-landmark-set">
+                  <option value="all_non_iris">all_non_iris</option>
+                  <option value="stable_non_expression">stable_non_expression</option>
+                </select>
+              </label>
+              <label class="select-field">
+                <span>Scale basis（拡大率基準）</span>
+                <select data-control="pose-mapping-bounds-scale-basis">
+                  <option value="height">height</option>
+                  <option value="width">width</option>
+                  <option value="diag">diag</option>
+                </select>
+              </label>
+              <label class="overlay-toggle">
+                <input type="checkbox" data-control="pose-mapping-hide-overlay-on-render-pose-not-applied" />
+                <span>Hide ideal overlay when render pose not applied</span>
+              </label>
+            </div>
+          </section>
 
     <section class="panel center-panel" aria-label="プレビュー">
       <div class="panel-header">
@@ -2546,6 +2755,8 @@ let detectPerformanceCancelRequested = false
 let renderDetectHandoffCancelRequested = false
 let webglObjBenchmarkCancelRequested = false
 let webglObjBenchmarkRenderer: WebglObjRenderer | null = null
+let webglRenderBufferGenerationId = 0
+let webglDetectCanvasGenerationId = 0
 let renderedIdealFaceLandmarkerCreateCount = 0
 let renderedIdealTimestampMs = 0
 let renderedIdealRenderSeq = 0
@@ -2572,6 +2783,7 @@ let lastRealtimeAnimationFrameCurrentTimeSec: number | null = null
 let cameraStream: MediaStream | null = null
 let objPoseMappingDatasetSamples: ObjPoseMappingSample[] = []
 let objPoseMappingDataset: ObjPoseMappingDatasetV2 | null = null
+let placementMappingSamples: PlacementMappingSample[] = []
 let objPreviewDrag:
   | {
       pointerId: number
@@ -2810,6 +3022,14 @@ function bindEvents() {
     void exportObjPoseMappingDataset()
   })
 
+  getElement<HTMLButtonElement>('[data-action="export-placement-mapping-samples-json"]').addEventListener("click", () => {
+    exportPlacementMappingSamplesJson()
+  })
+
+  getElement<HTMLButtonElement>('[data-action="export-placement-mapping-samples-csv"]').addEventListener("click", () => {
+    exportPlacementMappingSamplesCsv()
+  })
+
   getElement<HTMLButtonElement>('[data-action="mode-comparison-start"]').addEventListener("click", () => {
     void startModeComparison()
   })
@@ -3005,6 +3225,38 @@ function bindEvents() {
     }
   })
 
+  getElement<HTMLSelectElement>('[data-control="pose-mapping-alignment-mode"]').addEventListener("change", (event) => {
+    const value = event.currentTarget.value
+    if (isPoseMappingAlignmentMode(value)) {
+      state.poseMappingSettings.alignmentMode = value
+      clearRuntimeRenderArtifacts("alignment_settings_changed")
+      renderAll()
+    }
+  })
+
+  getElement<HTMLSelectElement>('[data-control="pose-mapping-placement-landmark-set"]').addEventListener("change", (event) => {
+    const value = event.currentTarget.value
+    if (isPlacementLandmarkSet(value)) {
+      state.poseMappingSettings.placementLandmarkSet = value
+      clearRuntimeRenderArtifacts("alignment_settings_changed")
+      renderAll()
+    }
+  })
+
+  getElement<HTMLSelectElement>('[data-control="pose-mapping-bounds-scale-basis"]').addEventListener("change", (event) => {
+    const value = event.currentTarget.value
+    if (isBoundsScaleBasis(value)) {
+      state.poseMappingSettings.boundsScaleBasis = value
+      clearRuntimeRenderArtifacts("alignment_settings_changed")
+      renderAll()
+    }
+  })
+
+  getElement<HTMLInputElement>('[data-control="pose-mapping-hide-overlay-on-render-pose-not-applied"]').addEventListener("change", (event) => {
+    state.poseMappingSettings.hideIdealOverlayWhenRenderPoseNotApplied = event.currentTarget.checked
+    renderAll({ skipObjRender: true })
+  })
+
   getElement<HTMLButtonElement>('[data-action="realtime-start"]').addEventListener("click", () => {
     startRealtimeValidation()
   })
@@ -3180,6 +3432,12 @@ function bindEvents() {
     }
     if (action === "pose-mapping-download-debug") {
       exportPoseMappingDebug()
+    }
+    if (action === "render-pose-probe-run") {
+      void runRenderPoseProbe()
+    }
+    if (action === "render-pose-probe-after-recovery") {
+      armRenderPoseProbeAfterNextRecovery()
     }
     if (action === "detect-performance-run") {
       void startDetectPerformanceBenchmark()
@@ -4281,9 +4539,29 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
       profile,
       renderSettings,
     )
+    const rendererGenerationBefore = state.assetGeneration.rendererGenerationId
     const renderer = getOrCreateWebglObjBenchmarkRenderer()
+    const rendererWasReinitialized = state.assetGeneration.rendererGenerationId !== rendererGenerationBefore
     const rendererMetadata = buildWebglObjRendererMetadata(renderer, appearance)
     const renderToken = createRenderedIdealFrameToken(frameGeneration, evaluateResult.p)
+    let detectCanvasPoseState = createEmptyDetectCanvasPoseState()
+    let recoveryDebug = buildPoseRecoveryDebug({
+      previousRuntime,
+      frameGeneration,
+      poseAfterRecovery: evaluateResult.p,
+      rendererWasReinitialized,
+      webglContextWasRecreated: rendererWasReinitialized,
+      buffersWereRebuiltAfterRecovery: false,
+      uniformsWereResetAfterRecovery: false,
+    })
+    let renderPoseLifecycle = createRenderPoseLifecycleDebug({
+      requestedPoseP: evaluateResult.p,
+      renderResult: null,
+      renderPoseSource: "pose_mapping_profile",
+      renderToken,
+      detectCanvas: detectCanvasPoseState,
+      recovery: recoveryDebug,
+    })
     const profileRendererMatch = validatePoseMappingRendererMatch(profile, rendererMetadata, appearance)
     if (!profileRendererMatch.match) {
       clearWebglRendererCanvas(renderer)
@@ -4300,6 +4578,7 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
           ...createEmptyRenderedIdealLifecycle(),
           renderToken,
           detectCanvasWasClearedBeforeRender: true,
+          renderPose: renderPoseLifecycle,
         },
         overlayLifecycle: createOverlayLifecycle(false, "profile_mismatch"),
         frameLifecycle: createFrameLifecycle(
@@ -4329,14 +4608,49 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
       rotationCenter: getObjPoseSyncRotationCenter(),
     }
     const renderStartMs = performance.now()
-    renderWebglObjToCanvas(renderer, renderContext)
+    const renderResult = renderWebglObjToCanvas(renderer, renderContext)
     const renderMs = performance.now() - renderStartMs
+    recoveryDebug = buildPoseRecoveryDebug({
+      previousRuntime,
+      frameGeneration,
+      poseAfterRecovery: evaluateResult.p,
+      rendererWasReinitialized,
+      webglContextWasRecreated: rendererWasReinitialized,
+      buffersWereRebuiltAfterRecovery: renderResult.buffer.bufferPoseMode === "baked_vertices",
+      uniformsWereResetAfterRecovery: renderResult.webglUniformPoseP !== null,
+    })
+    detectCanvasPoseState = createDetectCanvasPoseState(renderToken, renderResult, true, true)
+    renderPoseLifecycle = createRenderPoseLifecycleDebug({
+      requestedPoseP: evaluateResult.p,
+      renderResult,
+      renderPoseSource: "pose_mapping_profile",
+      renderToken,
+      detectCanvas: detectCanvasPoseState,
+      recovery: recoveryDebug,
+    })
     let renderedIdealLifecycle: RenderedIdealLifecycle = {
       ...createEmptyRenderedIdealLifecycle(),
       renderAttempted: true,
       renderSucceeded: true,
       renderToken,
       detectCanvasWasClearedBeforeRender: true,
+      renderPose: renderPoseLifecycle,
+    }
+
+    if (!detectCanvasPoseState.canvasPoseMatchesRenderToken || !detectCanvasPoseState.drawCompletedForToken) {
+      renderedIdealLifecycle = {
+        ...renderedIdealLifecycle,
+        renderSucceeded: false,
+      }
+      state.poseMappingRuntime = {
+        ...state.poseMappingRuntime,
+        renderedIdealStatus: "stale",
+        alignmentStatus: "skipped_generation_mismatch",
+        alignmentSkippedReason: "generation_mismatch",
+        renderedIdealLifecycle,
+        overlayLifecycle: createOverlayLifecycle(false, "detect_canvas_pose_mismatch"),
+      }
+      throw new Error("detect_canvas_pose_mismatch")
     }
 
     const detector = await getRenderedIdealFaceLandmarker()
@@ -4380,7 +4694,9 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
     renderedIdealLifecycle = {
       ...renderedIdealLifecycle,
       detectSucceeded: detection.status === "detected",
+      renderPose: finalizeRenderPoseLifecycleDebug(renderPoseLifecycle, detection.pose),
     }
+    const renderPoseWarning = renderedIdealLifecycle.renderPose.renderPoseMismatchReason
     const poseDiff = calculatePoseMappingPoseDiff(P_camera, detection.pose)
     const alignmentResult = buildPoseMappingAlignment(
       state.currentAnalysis.landmarks478,
@@ -4435,7 +4751,9 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
       selectedLeaf: evaluateResult.selectedLeaf,
       usedExpert: evaluateResult.usedExpert,
       usedFallback: evaluateResult.usedFallback,
-      warnings: evaluateResult.warnings,
+      warnings: renderPoseWarning
+        ? [...evaluateResult.warnings, renderPoseWarning]
+        : evaluateResult.warnings,
       P_confirm: renderedIdealStatus === "detected" ? detection.pose : previousRuntime.P_confirm,
       poseDiff: renderedIdealStatus === "detected" ? poseDiff : previousRuntime.poseDiff,
       renderedIdealDetected: detection.status === "detected",
@@ -4488,8 +4806,12 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
         ? createPoseMappingLastGoodState(completedRuntime, state.currentAnalysis.analyzedTimeSec)
         : updatePoseMappingLastGoodAge(previousRuntime.lastGood),
     }
+    recordPlacementMappingSample(state.poseMappingRuntime)
     if (!options.skipFinalRender) {
       renderAll({ skipObjRender: true })
+    }
+    if (state.renderPoseProbe.runAfterNextRecovery && isPoseRecoveryFrame(recoveryDebug)) {
+      void runRenderPoseProbe("after_next_recovery")
     }
     return state.poseMappingRuntime
   } catch (error) {
@@ -5888,6 +6210,152 @@ async function throwIfWebglObjBenchmarkCancelled() {
   }
 }
 
+function armRenderPoseProbeAfterNextRecovery() {
+  state.renderPoseProbe = {
+    ...state.renderPoseProbe,
+    runAfterNextRecovery: true,
+    errorMessage: null,
+  }
+  renderDebugContent()
+}
+
+async function runRenderPoseProbe(trigger: RenderPoseProbeState["lastRunTrigger"] = "manual") {
+  if (state.renderPoseProbe.status === "running") {
+    return
+  }
+  const startedAt = new Date().toISOString()
+  state.renderPoseProbe = {
+    status: "running",
+    runAfterNextRecovery: trigger === "after_next_recovery" ? false : state.renderPoseProbe.runAfterNextRecovery,
+    lastRunTrigger: trigger,
+    startedAt,
+    completedAt: null,
+    errorMessage: null,
+    samples: [],
+  }
+  renderDebugContent()
+
+  try {
+    const profile = state.poseMappingProfile.profile
+    const runtime = state.poseMappingRuntime
+    if (
+      !profile ||
+      runtime.status !== "completed" ||
+      runtime.poseMappingStatus !== "completed" ||
+      !runtime.P_camera ||
+      !canRenderRenderedIdealGeometry()
+    ) {
+      throw new Error("Render pose probe requires loaded OBJ, PoseMappingProfile, and completed runtime.")
+    }
+
+    const renderSettings = resolvePoseMappingRenderSettings(profile, liveObjPosePreviewCanvas)
+    const { appearance } = createPoseMappingRenderAppearance(profile, renderSettings)
+    const renderer = getOrCreateWebglObjBenchmarkRenderer()
+    const rendererMetadata = buildWebglObjRendererMetadata(renderer, appearance)
+    const profileRendererMatch = validatePoseMappingRendererMatch(profile, rendererMetadata, appearance)
+    if (!profileRendererMatch.match) {
+      throw new Error(profileRendererMatch.errorMessage ?? "Profile renderer mismatch")
+    }
+
+    resizeWebglObjBenchmarkRenderer(renderer, renderSettings.detectCanvasWidth, renderSettings.detectCanvasHeight)
+    const detector = await getRenderedIdealFaceLandmarker()
+    const samples: RenderPoseProbeSample[] = []
+
+    for (const probe of RENDER_POSE_PROBE_POSES) {
+      const totalStartMs = performance.now()
+      let sample: RenderPoseProbeSample = {
+        id: probe.id,
+        label: probe.label,
+        requestedPoseP: roundPoseMappingPose(probe.p) ?? probe.p,
+        renderCallPoseP: null,
+        bufferBuildPoseP: null,
+        webglUniformPoseP: null,
+        actualRenderPoseP: null,
+        P_confirm: { yaw: null, pitch: null, roll: null },
+        poseDiff: { yaw: null, pitch: null, roll: null, magnitude: null },
+        detected: false,
+        landmarkCount: null,
+        renderMs: null,
+        detectMs: null,
+        totalMs: null,
+        warning: null,
+        errorMessage: null,
+      }
+
+      try {
+        clearWebglRendererCanvas(renderer)
+        const renderStartMs = performance.now()
+        const renderResult = renderWebglObjToCanvas(renderer, {
+          renderSettings,
+          appearance,
+          p: probe.p,
+          rotationCenter: getObjPoseSyncRotationCenter(),
+        })
+        const renderMs = performance.now() - renderStartMs
+        const detectStartMs = performance.now()
+        const result = detector.detect(renderer.canvas)
+        const detectMs = performance.now() - detectStartMs
+        const detection = buildRenderedIdealDetectionState(result, -1, detectMs, null)
+        const warning = getRenderPoseNotAppliedWarning(probe.p, detection.pose)
+        sample = {
+          ...sample,
+          renderCallPoseP: roundPoseMappingPose(renderResult.renderCallPoseP),
+          bufferBuildPoseP: roundPoseMappingPose(renderResult.bufferBuildPoseP),
+          webglUniformPoseP: roundPoseMappingPose(renderResult.webglUniformPoseP),
+          actualRenderPoseP: roundPoseMappingPose(renderResult.actualRenderPoseP),
+          P_confirm: roundPoseForState(detection.pose),
+          poseDiff: roundPoseMappingDiff(calculatePoseMappingPoseDiff(runtime.P_camera, detection.pose)),
+          detected: detection.status === "detected",
+          landmarkCount: detection.landmarkCount,
+          renderMs: roundForState(renderMs),
+          detectMs: roundForState(detectMs),
+          totalMs: roundForState(performance.now() - totalStartMs),
+          warning,
+          errorMessage: detection.status === "detected" ? null : detection.errorMessage ?? detection.status,
+        }
+      } catch (error) {
+        sample = {
+          ...sample,
+          totalMs: roundForState(performance.now() - totalStartMs),
+          errorMessage: error instanceof Error ? error.message : String(error),
+        }
+      }
+
+      samples.push(sample)
+      state.renderPoseProbe = {
+        ...state.renderPoseProbe,
+        samples,
+      }
+      renderDebugContent()
+      await waitForBenchmarkUiTick()
+    }
+
+    state.renderPoseProbe = {
+      status: "completed",
+      runAfterNextRecovery: false,
+      lastRunTrigger: trigger,
+      startedAt,
+      completedAt: new Date().toISOString(),
+      errorMessage: null,
+      samples,
+    }
+    addLog("Render pose probe completed.")
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    state.renderPoseProbe = {
+      ...state.renderPoseProbe,
+      status: "error",
+      runAfterNextRecovery: trigger === "after_next_recovery" ? false : state.renderPoseProbe.runAfterNextRecovery,
+      lastRunTrigger: trigger,
+      completedAt: new Date().toISOString(),
+      errorMessage: message,
+    }
+    addLog(`Render pose probe failed: ${message}`)
+  } finally {
+    renderAll({ skipObjRender: true })
+  }
+}
+
 async function runWebglObjBenchmarkCase(input: {
   caseId: string
   label: string
@@ -6324,8 +6792,10 @@ function measureWebglObjRender(
 function renderWebglObjToCanvas(
   renderer: WebglObjRenderer,
   context: WebglObjRenderContext,
-) {
-  const { positions, colors } = buildWebglObjRenderBuffers(context)
+): WebglObjRenderResult {
+  const renderCallPoseP = cloneObjPoseMappingPose(context.p)
+  const { positions, colors, debug } = buildWebglObjRenderBuffers(context)
+  const actualRenderPoseP = cloneObjPoseMappingPose(debug.bufferPoseP ?? renderCallPoseP)
   const gl = renderer.gl
   const background = hexToRgb(context.appearance.backgroundColor) ?? { r: 245, g: 247, b: 249 }
   gl.viewport(0, 0, renderer.canvas.width, renderer.canvas.height)
@@ -6344,6 +6814,14 @@ function renderWebglObjToCanvas(
   gl.vertexAttribPointer(renderer.colorLocation, 3, gl.FLOAT, false, 0, 0)
 
   gl.drawArrays(gl.TRIANGLES, 0, positions.length / 2)
+  return {
+    actualRenderPoseP,
+    renderCallPoseP,
+    previewStatePoseP: cloneObjPoseMappingPose(debug.bufferPoseP ?? actualRenderPoseP),
+    bufferBuildPoseP: cloneObjPoseMappingPose(debug.bufferPoseP ?? actualRenderPoseP),
+    webglUniformPoseP: null,
+    buffer: debug,
+  }
 }
 
 function buildWebglObjRenderBuffers(context: WebglObjRenderContext) {
@@ -6352,6 +6830,7 @@ function buildWebglObjRenderBuffers(context: WebglObjRenderContext) {
     throw new Error("OBJ bounds が不足しています。")
   }
   const poseState = getDirectObjPosePreviewState(context.p)
+  const bufferPoseP = poseFromObjPreviewState(poseState)
   const rotationCenter = context.rotationCenter
   const width = context.renderSettings.detectCanvasWidth
   const height = context.renderSettings.detectCanvasHeight
@@ -6381,9 +6860,17 @@ function buildWebglObjRenderBuffers(context: WebglObjRenderContext) {
       }
     }
   }
+  webglRenderBufferGenerationId += 1
   return {
     positions: new Float32Array(positionValues),
     colors: new Float32Array(colorValues),
+    debug: {
+      bufferPoseMode: "baked_vertices" as const,
+      bufferPoseP,
+      bufferGenerationId: webglRenderBufferGenerationId,
+      bufferReused: false,
+      bufferReuseReason: null,
+    },
   }
 }
 
@@ -6634,6 +7121,9 @@ function buildPoseMappingAlignment(
       meshTargetVertices: null,
       alignment: {
         ...createEmptyPoseMappingAlignmentState("skipped_no_current_face", "no_current_face"),
+        mode: state.poseMappingSettings.alignmentMode,
+        placementLandmarkSet: state.poseMappingSettings.placementLandmarkSet,
+        scaleBasis: state.poseMappingSettings.boundsScaleBasis,
         videoAspectRatio,
         renderAspectRatio,
         renderedIdealStatus: getRenderedIdealStatusFromLandmarks(renderedIdealLandmarksImage),
@@ -6650,6 +7140,9 @@ function buildPoseMappingAlignment(
       meshTargetVertices: null,
       alignment: {
         ...createEmptyPoseMappingAlignmentState("skipped_no_rendered_ideal", "no_rendered_ideal"),
+        mode: state.poseMappingSettings.alignmentMode,
+        placementLandmarkSet: state.poseMappingSettings.placementLandmarkSet,
+        scaleBasis: state.poseMappingSettings.boundsScaleBasis,
         videoAspectRatio,
         renderAspectRatio,
         currentBoundsImage,
@@ -6682,6 +7175,20 @@ function buildPoseMappingAlignment(
     }
   }
 
+  if (state.poseMappingSettings.alignmentMode === "bounds_center_scale_v1") {
+    return buildBoundsCenterScalePoseMappingAlignment({
+      currentLandmarksImage,
+      renderedIdealLandmarksImage,
+      currentMatrix,
+      idealMatrix,
+      videoAspectRatio,
+      renderAspectRatio,
+      placementDebug,
+      reasons,
+      reasonCounts,
+    })
+  }
+
   const skipPlacementResult = getPlacementAlignmentSkip(currentPlacement, idealPlacement)
   if (skipPlacementResult) {
     return {
@@ -6690,6 +7197,9 @@ function buildPoseMappingAlignment(
       meshTargetVertices: null,
       alignment: {
         ...createEmptyPoseMappingAlignmentState(skipPlacementResult.status, skipPlacementResult.reason),
+        mode: "mediapipe_placement_center_scale",
+        placementLandmarkSet: state.poseMappingSettings.placementLandmarkSet,
+        scaleBasis: state.poseMappingSettings.boundsScaleBasis,
         placementSource: currentPlacement.source !== "unknown" ? currentPlacement.source : idealPlacement.source,
         currentPlacement,
         idealPlacement,
@@ -6755,6 +7265,8 @@ function buildPoseMappingAlignment(
       status: "completed",
       mode: "mediapipe_placement_center_scale",
       rotationApplied: false,
+      placementLandmarkSet: state.poseMappingSettings.placementLandmarkSet,
+      scaleBasis: state.poseMappingSettings.boundsScaleBasis,
       placementSource: currentPlacement.source,
       alignmentSkippedReason: "none",
       currentPlacement,
@@ -6775,10 +7287,263 @@ function buildPoseMappingAlignment(
       alignedRenderedIdealBoundsImage: calculateLandmarkBounds(alignedRenderedIdealLandmarksImage),
       displayedContentRect: null,
       placementDebug,
+      boundsCenterScaleDebug: null,
       excludedReasonCounts: reasonCounts,
       displacementSummary: summarizeDisplacements(displacementValues),
       anchorIndices: [],
       landmarkReasons: reasons,
+    },
+  }
+}
+
+function poseFromObjPreviewState(poseState: ObjPreviewState): ObjPoseMappingPose {
+  return {
+    yaw: poseState.yawDeg,
+    pitch: poseState.pitchDeg,
+    roll: poseState.rollDeg,
+  }
+}
+
+function cloneObjPoseMappingPose(pose: ObjPoseMappingPose): ObjPoseMappingPose {
+  return {
+    yaw: pose.yaw,
+    pitch: pose.pitch,
+    roll: pose.roll,
+  }
+}
+
+function buildBoundsCenterScalePoseMappingAlignment(params: {
+  currentLandmarksImage: ReferenceLandmark[]
+  renderedIdealLandmarksImage: ReferenceLandmark[]
+  currentMatrix: MatrixDebugSummary | null
+  idealMatrix: MatrixDebugSummary | null
+  videoAspectRatio: number
+  renderAspectRatio: number
+  placementDebug: PlacementDebugState
+  reasons: Array<PoseMappingExcludedReason[]>
+  reasonCounts: PoseMappingExcludedReasonCounts
+}): {
+  alignedRenderedIdeal478: ReferenceLandmark[] | null
+  meshSourceVertices: ReferenceLandmark[] | null
+  meshTargetVertices: ReferenceLandmark[] | null
+  alignment: PoseMappingAlignmentState
+} {
+  const placementLandmarkSet = state.poseMappingSettings.placementLandmarkSet
+  const scaleBasis = state.poseMappingSettings.boundsScaleBasis
+  const placementIndices = getPlacementLandmarkIndices(placementLandmarkSet)
+  const currentPlacementLandmarksImage = getLandmarksByIndices(params.currentLandmarksImage, placementIndices)
+  const idealPlacementLandmarksImage = getLandmarksByIndices(params.renderedIdealLandmarksImage, placementIndices)
+  const currentBoundsImage = calculateLandmarkBounds(currentPlacementLandmarksImage)
+  const renderedIdealBoundsImage = calculateLandmarkBounds(idealPlacementLandmarksImage)
+  const currentBoundsImagePlacement = buildBoundsPlacement(currentBoundsImage)
+  const renderedIdealBoundsImagePlacement = buildBoundsPlacement(renderedIdealBoundsImage)
+  const currentLandmarksWork = currentPlacementLandmarksImage.map((landmark) =>
+    toAspectWorkLandmark(landmark, params.videoAspectRatio),
+  )
+  const idealLandmarksWork = idealPlacementLandmarksImage.map((landmark) =>
+    toAspectWorkLandmark(landmark, params.renderAspectRatio),
+  )
+  const currentBoundsWork = calculateLandmarkBounds(currentLandmarksWork)
+  const idealBoundsWork = calculateLandmarkBounds(idealLandmarksWork)
+  const currentBoundsWorkPlacement = buildBoundsPlacement(currentBoundsWork)
+  const idealBoundsWorkPlacement = buildBoundsPlacement(idealBoundsWork)
+  const currentPlacement = buildBoundsMediaPipePlacement(currentBoundsImage, "current")
+  const idealPlacement = buildBoundsMediaPipePlacement(renderedIdealBoundsImage, "ideal")
+
+  if (
+    !currentBoundsImage ||
+    !renderedIdealBoundsImage ||
+    !currentBoundsImagePlacement ||
+    !renderedIdealBoundsImagePlacement ||
+    !currentBoundsWork ||
+    !idealBoundsWork ||
+    !currentBoundsWorkPlacement ||
+    !idealBoundsWorkPlacement
+  ) {
+    return {
+      alignedRenderedIdeal478: null,
+      meshSourceVertices: params.currentLandmarksImage.map(cloneReferenceLandmark),
+      meshTargetVertices: null,
+      alignment: {
+        ...createEmptyPoseMappingAlignmentState("skipped_invalid_bounds", "invalid_bounds"),
+        mode: "bounds_center_scale_v1",
+        placementLandmarkSet,
+        scaleBasis,
+        placementSource: "landmarkBounds",
+        currentPlacement,
+        idealPlacement,
+        videoAspectRatio: params.videoAspectRatio,
+        renderAspectRatio: params.renderAspectRatio,
+        currentBoundsImage,
+        renderedIdealBoundsImage,
+        currentBoundsAspectWork: currentBoundsWork,
+        renderedIdealBoundsAspectWork: idealBoundsWork,
+        placementDebug: params.placementDebug,
+        excludedReasonCounts: params.reasonCounts,
+        landmarkReasons: params.reasons,
+        renderedIdealStatus: "detected",
+      },
+    }
+  }
+
+  const currentScale = getBoundsPlacementScale(currentBoundsWorkPlacement, scaleBasis)
+  const idealScale = getBoundsPlacementScale(idealBoundsWorkPlacement, scaleBasis)
+  const scaleRatio = currentScale / idealScale
+  if (!Number.isFinite(currentScale) || !Number.isFinite(idealScale) || !Number.isFinite(scaleRatio) || scaleRatio <= 0) {
+    return {
+      alignedRenderedIdeal478: null,
+      meshSourceVertices: params.currentLandmarksImage.map(cloneReferenceLandmark),
+      meshTargetVertices: null,
+      alignment: {
+        ...createEmptyPoseMappingAlignmentState("skipped_invalid_scale", "invalid_scale"),
+        mode: "bounds_center_scale_v1",
+        placementLandmarkSet,
+        scaleBasis,
+        placementSource: "landmarkBounds",
+        currentPlacement,
+        idealPlacement,
+        videoAspectRatio: params.videoAspectRatio,
+        renderAspectRatio: params.renderAspectRatio,
+        currentBoundsImage,
+        renderedIdealBoundsImage,
+        currentBoundsAspectWork: currentBoundsWork,
+        renderedIdealBoundsAspectWork: idealBoundsWork,
+        placementDebug: params.placementDebug,
+        excludedReasonCounts: params.reasonCounts,
+        landmarkReasons: params.reasons,
+        renderedIdealStatus: "detected",
+      },
+    }
+  }
+
+  const alignedRenderedIdealLandmarksImage = params.renderedIdealLandmarksImage.map((landmark) => {
+    const idealWork = toAspectWorkLandmark(landmark, params.renderAspectRatio)
+    const alignedWork = {
+      index: landmark.index,
+      x: (idealWork.x - idealBoundsWorkPlacement.center.x) * scaleRatio + currentBoundsWorkPlacement.center.x,
+      y: (idealWork.y - idealBoundsWorkPlacement.center.y) * scaleRatio + currentBoundsWorkPlacement.center.y,
+      z: landmark.z,
+    }
+    return fromAspectWorkLandmark(alignedWork, params.videoAspectRatio)
+  })
+  const alignedPlacementLandmarksImage = getLandmarksByIndices(alignedRenderedIdealLandmarksImage, placementIndices)
+  const alignedRenderedIdealBoundsImage = calculateLandmarkBounds(alignedPlacementLandmarksImage)
+  const alignedRenderedIdealBoundsImagePlacement = buildBoundsPlacement(alignedRenderedIdealBoundsImage)
+  const alignedIdealBoundsAspectWork = calculateLandmarkBounds(
+    alignedPlacementLandmarksImage.map((landmark) => toAspectWorkLandmark(landmark, params.videoAspectRatio)),
+  )
+  const alignedIdealBoundsAspectWorkPlacement = buildBoundsPlacement(alignedIdealBoundsAspectWork)
+
+  if (!alignedRenderedIdealBoundsImage || !alignedRenderedIdealBoundsImagePlacement || !alignedIdealBoundsAspectWork || !alignedIdealBoundsAspectWorkPlacement) {
+    return {
+      alignedRenderedIdeal478: null,
+      meshSourceVertices: params.currentLandmarksImage.map(cloneReferenceLandmark),
+      meshTargetVertices: null,
+      alignment: {
+        ...createEmptyPoseMappingAlignmentState("skipped_invalid_bounds", "invalid_bounds"),
+        mode: "bounds_center_scale_v1",
+        placementLandmarkSet,
+        scaleBasis,
+        placementSource: "landmarkBounds",
+        currentPlacement,
+        idealPlacement,
+        videoAspectRatio: params.videoAspectRatio,
+        renderAspectRatio: params.renderAspectRatio,
+        currentBoundsImage,
+        renderedIdealBoundsImage,
+        currentBoundsAspectWork: currentBoundsWork,
+        renderedIdealBoundsAspectWork: idealBoundsWork,
+        placementDebug: params.placementDebug,
+        excludedReasonCounts: params.reasonCounts,
+        landmarkReasons: params.reasons,
+        renderedIdealStatus: "detected",
+      },
+    }
+  }
+
+  const displacementValues: number[] = []
+  for (let index = 0; index < REQUIRED_LANDMARK_COUNT; index += 1) {
+    const current = params.currentLandmarksImage[index]
+    const aligned = alignedRenderedIdealLandmarksImage[index]
+    if (!isFiniteLandmark(current) || !isFiniteLandmark(aligned)) {
+      continue
+    }
+    const distance = calculateAspectCorrectedDistance(current, aligned, params.videoAspectRatio)
+    displacementValues.push(distance)
+    if (
+      distance > ALIGNMENT_LARGE_DISPLACEMENT_THRESHOLD &&
+      !params.reasons[index].includes("largeDisplacement")
+    ) {
+      params.reasons[index].push("largeDisplacement")
+      params.reasonCounts.largeDisplacement += 1
+    }
+  }
+
+  const meshSourceVertices = params.currentLandmarksImage.map(cloneReferenceLandmark)
+  const meshTargetVertices = params.currentLandmarksImage.map((current, index) => {
+    const aligned = alignedRenderedIdealLandmarksImage[index]
+    return params.reasons[index].length > 0 || !isFiniteLandmark(aligned)
+      ? cloneReferenceLandmark(current)
+      : cloneReferenceLandmark(aligned)
+  })
+
+  const translationWork = {
+    x: currentBoundsWorkPlacement.center.x - idealBoundsWorkPlacement.center.x * scaleRatio,
+    y: currentBoundsWorkPlacement.center.y - idealBoundsWorkPlacement.center.y * scaleRatio,
+  }
+
+  return {
+    alignedRenderedIdeal478: alignedRenderedIdealLandmarksImage,
+    meshSourceVertices,
+    meshTargetVertices,
+    alignment: {
+      status: "completed",
+      mode: "bounds_center_scale_v1",
+      rotationApplied: false,
+      placementLandmarkSet,
+      scaleBasis,
+      placementSource: "landmarkBounds",
+      alignmentSkippedReason: "none",
+      currentPlacement,
+      idealPlacement,
+      placementScaleRatio: scaleRatio,
+      renderedIdealStatus: "detected",
+      anchorCount: placementIndices.length,
+      currentCenter: currentBoundsWorkPlacement.center,
+      idealCenter: idealBoundsWorkPlacement.center,
+      scale: scaleRatio,
+      videoAspectRatio: params.videoAspectRatio,
+      renderAspectRatio: params.renderAspectRatio,
+      currentBoundsImage,
+      renderedIdealBoundsImage,
+      currentBoundsAspectWork: currentBoundsWork,
+      renderedIdealBoundsAspectWork: idealBoundsWork,
+      alignedIdealBoundsAspectWork,
+      alignedRenderedIdealBoundsImage,
+      displayedContentRect: null,
+      placementDebug: params.placementDebug,
+      boundsCenterScaleDebug: {
+        mode: "bounds_center_scale_v1",
+        placementLandmarkSet,
+        scaleBasis,
+        rotationApplied: false,
+        currentBoundsWork: currentBoundsWorkPlacement,
+        idealBoundsWork: idealBoundsWorkPlacement,
+        currentCenterWork: currentBoundsWorkPlacement.center,
+        idealCenterWork: idealBoundsWorkPlacement.center,
+        currentScale,
+        idealScale,
+        scaleRatio,
+        translationWork,
+        currentBoundsImage: currentBoundsImagePlacement,
+        renderedIdealBoundsImage: renderedIdealBoundsImagePlacement,
+        alignedRenderedIdealBoundsImage: alignedRenderedIdealBoundsImagePlacement,
+        alignedLandmarkCount: alignedRenderedIdealLandmarksImage.length,
+      },
+      excludedReasonCounts: params.reasonCounts,
+      displacementSummary: summarizeDisplacements(displacementValues),
+      anchorIndices: placementIndices,
+      landmarkReasons: params.reasons,
     },
   }
 }
@@ -6968,6 +7733,68 @@ function buildBoundsPlacement(bounds: PoseMappingBounds | null): BoundsPlacement
     scaleByWidth: bounds.width,
     scaleByDiag: Math.hypot(bounds.width, bounds.height),
   }
+}
+
+function getBoundsPlacementScale(placement: BoundsPlacement, scaleBasis: BoundsScaleBasis) {
+  if (scaleBasis === "height") {
+    return placement.scaleByHeight
+  }
+  if (scaleBasis === "width") {
+    return placement.scaleByWidth
+  }
+  return placement.scaleByDiag
+}
+
+function buildBoundsMediaPipePlacement(
+  boundsImage: PoseMappingBounds | null,
+  label: "current" | "ideal",
+): MediaPipeFacePlacement {
+  const boundsPlacement = buildBoundsPlacement(boundsImage)
+  if (!boundsPlacement) {
+    return createInvalidMediaPipeFacePlacement("landmarkBounds", `${label}_bounds_invalid`, {
+      matrixTranslation: null,
+      matrixScale: null,
+      boundsImage,
+    })
+  }
+  const scale = getBoundsPlacementScale(boundsPlacement, state.poseMappingSettings.boundsScaleBasis)
+  const warnings: string[] = []
+  if (!isImageNormalizedPoint(boundsPlacement.center)) {
+    warnings.push(`${label}_bounds_center_is_not_image_normalized`)
+  }
+  if (!Number.isFinite(scale) || scale <= 0) {
+    warnings.push(`${label}_bounds_scale_invalid`)
+  }
+  return {
+    status: warnings.length === 0 ? "detected" : "invalid",
+    source: "landmarkBounds",
+    center: boundsPlacement.center,
+    scale,
+    raw: {
+      matrixTranslation: null,
+      matrixScale: null,
+      boundsImage,
+    },
+    warnings,
+  }
+}
+
+function getPlacementLandmarkIndices(placementLandmarkSet: PlacementLandmarkSet) {
+  return Array.from({ length: REQUIRED_LANDMARK_COUNT }, (_, index) => index).filter((index) => {
+    if (isIrisLandmarkIndex(index)) {
+      return false
+    }
+    if (placementLandmarkSet === "stable_non_expression" && EXPRESSION_SENSITIVE_LANDMARK_INDICES.has(index)) {
+      return false
+    }
+    return true
+  })
+}
+
+function getLandmarksByIndices(landmarks: ReferenceLandmark[], indices: number[]) {
+  return indices
+    .map((index) => landmarks[index])
+    .filter(isFiniteLandmark)
 }
 
 function createEmptyMatrixRawDebug(): MatrixRawDebug {
@@ -10890,6 +11717,14 @@ function renderControls() {
   )
   getElement<HTMLSelectElement>('[data-control="obj-pose-sampling-preset"]').value = state.objPoseMapping.poseSamplingPreset
   setDisabled('[data-control="obj-pose-sampling-preset"]', poseSearchRunning || isObjPoseCalibrationRunning())
+  getElement<HTMLSelectElement>('[data-control="pose-mapping-alignment-mode"]').value =
+    state.poseMappingSettings.alignmentMode
+  getElement<HTMLSelectElement>('[data-control="pose-mapping-placement-landmark-set"]').value =
+    state.poseMappingSettings.placementLandmarkSet
+  getElement<HTMLSelectElement>('[data-control="pose-mapping-bounds-scale-basis"]').value =
+    state.poseMappingSettings.boundsScaleBasis
+  getElement<HTMLInputElement>('[data-control="pose-mapping-hide-overlay-on-render-pose-not-applied"]').checked =
+    state.poseMappingSettings.hideIdealOverlayWhenRenderPoseNotApplied
   objFileInput.disabled = poseSearchRunning
   poseMappingProfileFileInput.disabled = poseSearchRunning || isObjPoseCalibrationRunning()
   liveFileInput.disabled = poseSearchRunning || state.modeComparison.status === "running"
@@ -10971,7 +11806,8 @@ function renderPoseMappingLiveSummaryCard() {
       <div><dt>assetLifecycle</dt><dd>OBJ ${escapeHtml(runtime.assetLifecycle.objStatus)} / profile ${escapeHtml(runtime.assetLifecycle.profileStatus)} / renderer ${escapeHtml(runtime.assetLifecycle.rendererStatus)}</dd></div>
       <div><dt>generation</dt><dd>obj ${runtime.assetLifecycle.objGenerationId} / profile ${runtime.assetLifecycle.profileGenerationId} / render ${runtime.assetLifecycle.renderSettingsGenerationId} / renderer ${runtime.assetLifecycle.rendererGenerationId}</dd></div>
       <div><dt>render lifecycle</dt><dd>render ${String(runtime.renderedIdealLifecycle.renderSucceeded)} / detect ${String(runtime.renderedIdealLifecycle.detectSucceeded)} / stale ${String(runtime.renderedIdealLifecycle.staleCanvasDetected)}</dd></div>
-      <div><dt>overlay lifecycle</dt><dd>visible ${String(runtime.overlayLifecycle.alignedRenderedIdealVisible)} / gen ${String(runtime.overlayLifecycle.generationMatch)} / token ${String(runtime.overlayLifecycle.tokenMatch)} / ${escapeHtml(runtime.overlayLifecycle.skippedReason)}</dd></div>
+      <div><dt>render pose</dt><dd>applied ${String(runtime.renderedIdealLifecycle.renderPose.renderPoseAppliedToWebGL)} / source ${escapeHtml(runtime.renderedIdealLifecycle.renderPose.renderPoseSource)} / ${escapeHtml(runtime.renderedIdealLifecycle.renderPose.renderPoseMismatchReason ?? "-")}</dd></div>
+      <div><dt>overlay lifecycle</dt><dd>visible ${String(runtime.overlayLifecycle.alignedRenderedIdealVisible)} / gen ${String(runtime.overlayLifecycle.generationMatch)} / token ${String(runtime.overlayLifecycle.tokenMatch)} / renderPose ${String(runtime.overlayLifecycle.renderPoseValid)} / ${escapeHtml(runtime.overlayLifecycle.skippedReason)}</dd></div>
       <div><dt>lastGood</dt><dd>${String(runtime.lastGood.hasLastGood)} / ageMs ${formatRealtimeNullableNumber(runtime.lastGood.ageMs)}</dd></div>
       <div><dt>stale</dt><dd>${String(runtime.stale.isStale)} / ${escapeHtml(runtime.stale.staleReason ?? "-")} / ${formatRealtimeNullableNumber(runtime.stale.staleMs)}ms</dd></div>
       <div><dt>loop busy</dt><dd>${String(poseMappingRuntimeInProgress)}</dd></div>
@@ -10982,6 +11818,7 @@ function renderPoseMappingLiveSummaryCard() {
       <div><dt>renderedIdeal478</dt><dd>${runtime.renderedIdealDetected ? "detected" : "not detected"} / ${formatNullableCount(runtime.renderedIdealLandmarkCount)}</dd></div>
       <div><dt>alignedRenderedIdeal478</dt><dd>${formatNullableCount(runtime.alignedRenderedIdeal478?.length ?? null)}</dd></div>
       <div><dt>alignment</dt><dd>${escapeHtml(runtime.alignment.status)} / ${escapeHtml(runtime.alignment.mode)} / scale ${formatRealtimeNullableNumber(runtime.alignment.placementScaleRatio)}</dd></div>
+      <div><dt>bounds settings</dt><dd>${escapeHtml(runtime.alignment.placementLandmarkSet)} / ${escapeHtml(runtime.alignment.scaleBasis)}</dd></div>
       <div><dt>Placement source debug（位置・大きさ取得元デバッグ）</dt><dd>current raw ${String(runtime.alignment.placementDebug.current.matrixRaw.exists)} / ideal raw ${String(runtime.alignment.placementDebug.ideal.matrixRaw.exists)}</dd></div>
       <div><dt>Current matrix column-major（現在顔の列優先候補）</dt><dd>${escapeHtml(formatMatrixPlacementCandidate(runtime.alignment.placementDebug.current.matrixColumnMajor))}</dd></div>
       <div><dt>Current bounds center / size（現在顔の外枠）</dt><dd>${escapeHtml(formatBoundsPlacement(runtime.alignment.placementDebug.current.boundsPlacement))}</dd></div>
@@ -11003,10 +11840,12 @@ function renderPoseMappingDebugTab() {
   const detectPerformance = state.detectPerformance
   const handoff = state.renderDetectHandoff
   const webglBenchmark = state.webglObjBenchmark
+  const renderPoseProbe = state.renderPoseProbe
   const canRunDetectPerformance =
     detectPerformance.status !== "running" &&
     handoff.status !== "running" &&
     webglBenchmark.status !== "running" &&
+    renderPoseProbe.status !== "running" &&
     profileState.loaded &&
     runtime.status === "completed" &&
     runtime.poseMappingStatus === "completed" &&
@@ -11016,6 +11855,7 @@ function renderPoseMappingDebugTab() {
     handoff.status !== "running" &&
     detectPerformance.status !== "running" &&
     webglBenchmark.status !== "running" &&
+    renderPoseProbe.status !== "running" &&
     profileState.loaded &&
     runtime.status === "completed" &&
     runtime.poseMappingStatus === "completed" &&
@@ -11025,11 +11865,28 @@ function renderPoseMappingDebugTab() {
     webglBenchmark.status !== "running" &&
     detectPerformance.status !== "running" &&
     handoff.status !== "running" &&
+    renderPoseProbe.status !== "running" &&
     profileState.loaded &&
     runtime.status === "completed" &&
     runtime.poseMappingStatus === "completed" &&
     runtime.p !== null
   const canDownloadWebglBenchmark = webglBenchmark.result !== null
+  const canRunRenderPoseProbe =
+    renderPoseProbe.status !== "running" &&
+    webglBenchmark.status !== "running" &&
+    detectPerformance.status !== "running" &&
+    handoff.status !== "running" &&
+    profileState.loaded &&
+    runtime.status === "completed" &&
+    runtime.poseMappingStatus === "completed" &&
+    runtime.p !== null
+  const canArmRenderPoseProbeAfterRecovery =
+    renderPoseProbe.status !== "running" &&
+    webglBenchmark.status !== "running" &&
+    detectPerformance.status !== "running" &&
+    handoff.status !== "running" &&
+    profileState.loaded &&
+    canRenderRenderedIdealGeometry()
   const requiredRendererResolution = getRenderResolutionFromRecord(profile?.requiredRenderer?.renderResolution)
 
   container.innerHTML = `
@@ -11108,6 +11965,19 @@ function renderPoseMappingDebugTab() {
         <div><dt>Render resolution</dt><dd>${formatNullableCount(runtime.renderSettings?.detectCanvasWidth ?? runtime.detectCanvasWidth)} x ${formatNullableCount(runtime.renderSettings?.detectCanvasHeight ?? runtime.detectCanvasHeight)}</dd></div>
         <div><dt>Profile renderer match</dt><dd>${String(runtime.profileRendererMatch)}</dd></div>
         <div><dt>Profile mismatch error</dt><dd>${escapeHtml(runtime.profileMismatchError ?? "-")}</dd></div>
+        <div><dt>requestedPoseP</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.renderedIdealLifecycle.renderPose.requestedPoseP))}</dd></div>
+        <div><dt>renderCallPoseP</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.renderedIdealLifecycle.renderPose.renderCallPoseP))}</dd></div>
+        <div><dt>previewStatePoseP</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.renderedIdealLifecycle.renderPose.previewStatePoseP))}</dd></div>
+        <div><dt>bufferBuildPoseP</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.renderedIdealLifecycle.renderPose.bufferBuildPoseP))}</dd></div>
+        <div><dt>webglUniformPoseP</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.renderedIdealLifecycle.renderPose.webglUniformPoseP))}</dd></div>
+        <div><dt>actualRenderPoseP</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.renderedIdealLifecycle.renderPose.actualRenderPoseP))}</dd></div>
+        <div><dt>bufferPoseDebug</dt><dd>${escapeHtml(JSON.stringify(runtime.renderedIdealLifecycle.renderPose.buffer))}</dd></div>
+        <div><dt>detectCanvasPoseState</dt><dd>${escapeHtml(JSON.stringify(runtime.renderedIdealLifecycle.renderPose.detectCanvas))}</dd></div>
+        <div><dt>poseRecoveryDebug</dt><dd>${escapeHtml(JSON.stringify(runtime.renderedIdealLifecycle.renderPose.recovery))}</dd></div>
+        <div><dt>renderPoseSource</dt><dd>${escapeHtml(runtime.renderedIdealLifecycle.renderPose.renderPoseSource)}</dd></div>
+        <div><dt>renderPoseAppliedToWebGL</dt><dd>${String(runtime.renderedIdealLifecycle.renderPose.renderPoseAppliedToWebGL)}</dd></div>
+        <div><dt>renderPoseMatchesToken</dt><dd>${String(runtime.renderedIdealLifecycle.renderPose.renderPoseMatchesToken)}</dd></div>
+        <div><dt>renderPoseMismatchReason</dt><dd>${escapeHtml(runtime.renderedIdealLifecycle.renderPose.renderPoseMismatchReason ?? "-")}</dd></div>
         <div><dt>detectCanvasWidth</dt><dd>${formatNullableCount(runtime.renderSettings?.detectCanvasWidth ?? runtime.detectCanvasWidth)}</dd></div>
         <div><dt>detectCanvasHeight</dt><dd>${formatNullableCount(runtime.renderSettings?.detectCanvasHeight ?? runtime.detectCanvasHeight)}</dd></div>
         <div><dt>previewCanvasWidth</dt><dd>${formatNullableCount(runtime.renderSettings?.previewCanvasWidth ?? runtime.previewCanvasWidth)}</dd></div>
@@ -11134,10 +12004,21 @@ function renderPoseMappingDebugTab() {
     </section>
 
     <section class="debug-section">
+      <h3>Render pose probe（レンダー姿勢プローブ）</h3>
+      <div class="button-row">
+        <button class="small-button" type="button" data-action="render-pose-probe-run" ${canRunRenderPoseProbe ? "" : "disabled"}>Render pose probe（レンダー姿勢プローブ）</button>
+        <button class="small-button" type="button" data-action="render-pose-probe-after-recovery" ${canArmRenderPoseProbeAfterRecovery ? "" : "disabled"}>Run probe after next recovery</button>
+      </div>
+      ${renderRenderPoseProbeSummaryHtml()}
+    </section>
+
+    <section class="debug-section">
       <h3>Alignment coordinate debug（位置合わせ座標デバッグ）</h3>
       <dl class="summary-list">
         <div><dt>status</dt><dd>${escapeHtml(runtime.alignment.status)}</dd></div>
         <div><dt>Alignment mode（位置合わせ方式）</dt><dd>${escapeHtml(runtime.alignment.mode)}</dd></div>
+        <div><dt>Placement landmark set</dt><dd>${escapeHtml(runtime.alignment.placementLandmarkSet)}</dd></div>
+        <div><dt>Scale basis</dt><dd>${escapeHtml(runtime.alignment.scaleBasis)}</dd></div>
         <div><dt>Placement source（位置・大きさ取得元）</dt><dd>${escapeHtml(runtime.alignment.placementSource)}</dd></div>
         <div><dt>Rotation applied（回転適用有無）</dt><dd>${String(runtime.alignment.rotationApplied)}</dd></div>
         <div><dt>alignmentSkippedReason</dt><dd>${escapeHtml(runtime.alignment.alignmentSkippedReason)}</dd></div>
@@ -11160,6 +12041,7 @@ function renderPoseMappingDebugTab() {
         <div><dt>displayedContentRect</dt><dd>${escapeHtml(formatRect(runtime.alignment.displayedContentRect))}</dd></div>
         <div><dt>excludedReasonCounts</dt><dd>${escapeHtml(JSON.stringify(runtime.alignment.excludedReasonCounts))}</dd></div>
         <div><dt>displacementSummary</dt><dd>${escapeHtml(JSON.stringify(roundDisplacementSummary(runtime.alignment.displacementSummary)))}</dd></div>
+        <div><dt>boundsCenterScaleDebug</dt><dd>${escapeHtml(JSON.stringify(roundBoundsCenterScaleDebugForState(runtime.alignment.boundsCenterScaleDebug)))}</dd></div>
         <div><dt>alignedRenderedIdeal478</dt><dd>${formatNullableCount(runtime.alignedRenderedIdeal478?.length ?? null)}</dd></div>
         <div><dt>meshSourceVertices</dt><dd>${formatNullableCount(runtime.meshSourceVertices?.length ?? null)}</dd></div>
         <div><dt>meshTargetVertices</dt><dd>${formatNullableCount(runtime.meshTargetVertices?.length ?? null)}</dd></div>
@@ -11227,6 +12109,63 @@ function renderPoseMappingDebugTab() {
     </section>
   `
   return container
+}
+
+function renderRenderPoseProbeSummaryHtml() {
+  const probe = state.renderPoseProbe
+  const sampleRows =
+    probe.samples.length > 0
+      ? probe.samples.map((sample) => `
+          <tr>
+            <td>${escapeHtml(sample.label)}</td>
+            <td>${escapeHtml(formatPoseMappingPose(sample.requestedPoseP))}</td>
+            <td>${escapeHtml(formatPoseMappingPose(sample.renderCallPoseP))}</td>
+            <td>${escapeHtml(formatPoseMappingPose(sample.bufferBuildPoseP))}</td>
+            <td>${escapeHtml(formatPoseMappingPose(sample.webglUniformPoseP))}</td>
+            <td>${escapeHtml(formatPoseMappingPose(sample.actualRenderPoseP))}</td>
+            <td>${escapeHtml(formatPose(sample.P_confirm))}</td>
+            <td>${escapeHtml(formatPoseMappingDiff(sample.poseDiff))}</td>
+            <td>${sample.detected ? "detected" : "not detected"} / ${formatNullableCount(sample.landmarkCount)}</td>
+            <td>${escapeHtml(sample.warning ?? "-")}</td>
+            <td>${escapeHtml(sample.errorMessage ?? "-")}</td>
+          </tr>
+        `).join("")
+      : `
+          <tr>
+            <td colspan="11" class="placeholder-text">Render pose probe はまだ実行されていません。</td>
+          </tr>
+        `
+
+  return `
+    <dl class="summary-list">
+      <div><dt>probe status</dt><dd>${escapeHtml(probe.status)}</dd></div>
+      <div><dt>runAfterNextRecovery</dt><dd>${String(probe.runAfterNextRecovery)}</dd></div>
+      <div><dt>lastRunTrigger</dt><dd>${escapeHtml(probe.lastRunTrigger ?? "-")}</dd></div>
+      <div><dt>startedAt</dt><dd>${escapeHtml(probe.startedAt ?? "-")}</dd></div>
+      <div><dt>completedAt</dt><dd>${escapeHtml(probe.completedAt ?? "-")}</dd></div>
+      <div><dt>error</dt><dd>${escapeHtml(probe.errorMessage ?? "-")}</dd></div>
+    </dl>
+    <div class="table-scroll">
+      <table class="debug-table">
+        <thead>
+          <tr>
+            <th>sample</th>
+            <th>requestedPoseP</th>
+            <th>renderCallPoseP</th>
+            <th>bufferBuildPoseP</th>
+            <th>webglUniformPoseP</th>
+            <th>actualRenderPoseP</th>
+            <th>P_confirm</th>
+            <th>poseDiff</th>
+            <th>detected</th>
+            <th>warning</th>
+            <th>error</th>
+          </tr>
+        </thead>
+        <tbody>${sampleRows}</tbody>
+      </table>
+    </div>
+  `
 }
 
 function renderDetectPerformanceSummaryHtml() {
@@ -12533,6 +13472,9 @@ function drawLiveOverlay() {
   }
 
   if (state.overlay.showGridAnchors && current478) {
+    if (canDrawAlignedIdeal) {
+      drawPoseMappingBoundsDebug(context, displayedContentRect, state.poseMappingRuntime.alignment)
+    }
     drawAlignmentAnchors(
       context,
       displayedContentRect,
@@ -12549,6 +13491,63 @@ function drawLiveOverlay() {
       state.poseMappingRuntime.alignment.landmarkReasons,
     )
   }
+}
+
+function drawPoseMappingBoundsDebug(
+  context: CanvasRenderingContext2D,
+  displayedContentRect: Rect,
+  alignment: PoseMappingAlignmentState,
+) {
+  if (alignment.mode !== "bounds_center_scale_v1") {
+    return
+  }
+  drawNormalizedBounds(context, displayedContentRect, alignment.currentBoundsImage, "rgba(79, 128, 255, 0.72)")
+  drawNormalizedBounds(context, displayedContentRect, alignment.renderedIdealBoundsImage, "rgba(220, 71, 94, 0.62)")
+  drawNormalizedBounds(context, displayedContentRect, alignment.alignedRenderedIdealBoundsImage, "rgba(238, 142, 52, 0.72)")
+  drawNormalizedCenter(context, displayedContentRect, alignment.currentBoundsImage, "rgba(79, 128, 255, 0.9)")
+  drawNormalizedCenter(context, displayedContentRect, alignment.alignedRenderedIdealBoundsImage, "rgba(238, 142, 52, 0.9)")
+}
+
+function drawNormalizedBounds(
+  context: CanvasRenderingContext2D,
+  displayedContentRect: Rect,
+  bounds: PoseMappingBounds | null,
+  color: string,
+) {
+  if (!bounds) {
+    return
+  }
+  const min = normalizedLandmarkToPreviewPixel({ x: bounds.minX, y: bounds.minY }, displayedContentRect)
+  const max = normalizedLandmarkToPreviewPixel({ x: bounds.maxX, y: bounds.maxY }, displayedContentRect)
+  context.save()
+  context.strokeStyle = color
+  context.lineWidth = 1.1
+  context.strokeRect(min.x, min.y, max.x - min.x, max.y - min.y)
+  context.restore()
+}
+
+function drawNormalizedCenter(
+  context: CanvasRenderingContext2D,
+  displayedContentRect: Rect,
+  bounds: PoseMappingBounds | null,
+  color: string,
+) {
+  if (!bounds) {
+    return
+  }
+  const point = normalizedLandmarkToPreviewPixel(
+    {
+      x: bounds.minX + bounds.width / 2,
+      y: bounds.minY + bounds.height / 2,
+    },
+    displayedContentRect,
+  )
+  context.save()
+  context.fillStyle = color
+  context.beginPath()
+  context.arc(point.x, point.y, 3, 0, Math.PI * 2)
+  context.fill()
+  context.restore()
 }
 
 function drawRenderedIdealOverlay() {
@@ -13701,7 +14700,222 @@ function createEmptyRenderedIdealLifecycle(): RenderedIdealLifecycle {
     detectCanvasWasClearedBeforeRender: false,
     staleCanvasDetected: false,
     fallbackRenderedIdealUsed: false,
+    renderPose: createEmptyRenderPoseLifecycleDebug(),
   }
+}
+
+function createEmptyRenderPoseLifecycleDebug(): RenderPoseLifecycleDebug {
+  return {
+    requestedPoseP: null,
+    renderCallPoseP: null,
+    previewStatePoseP: null,
+    bufferBuildPoseP: null,
+    webglUniformPoseP: null,
+    actualRenderPoseP: null,
+    renderPoseSource: "unknown",
+    buffer: createEmptyRenderBufferPoseDebug(),
+    detectCanvas: createEmptyDetectCanvasPoseState(),
+    recovery: createEmptyPoseRecoveryDebug(),
+    renderPoseAppliedToWebGL: false,
+    renderPoseMatchesToken: false,
+    renderPoseMismatchReason: null,
+  }
+}
+
+function createEmptyRenderBufferPoseDebug(): RenderBufferPoseDebug {
+  return {
+    bufferPoseMode: "unknown",
+    bufferPoseP: null,
+    bufferGenerationId: null,
+    bufferReused: false,
+    bufferReuseReason: null,
+  }
+}
+
+function createEmptyDetectCanvasPoseState(): DetectCanvasPoseState {
+  return {
+    canvasGenerationId: 0,
+    canvasLastRenderedToken: null,
+    canvasLastRenderedPoseP: null,
+    canvasPoseMatchesRenderToken: false,
+    canvasWasClearedBeforeRender: false,
+    drawCompletedForToken: false,
+  }
+}
+
+function createEmptyPoseRecoveryDebug(): PoseRecoveryDebug {
+  return {
+    previousFrameStatus: null,
+    currentFrameStatus: "not_ready",
+    recoveredFromNoCurrentFace: false,
+    recoveredFromNoRenderedIdeal: false,
+    recoveredFromAlignmentSkip: false,
+    recoveryFrameId: null,
+    recoveryMediaTimeSec: null,
+    poseBeforeSkip: null,
+    poseAfterRecovery: null,
+    rendererWasReinitialized: false,
+    webglContextWasRecreated: false,
+    buffersWereRebuiltAfterRecovery: false,
+    uniformsWereResetAfterRecovery: false,
+  }
+}
+
+function createRenderPoseLifecycleDebug(input: {
+  requestedPoseP: ObjPoseMappingPose | null
+  renderResult: WebglObjRenderResult | null
+  renderPoseSource: RenderPoseSource
+  renderToken: RenderedIdealFrameToken | null
+  detectCanvas: DetectCanvasPoseState | null
+  recovery: PoseRecoveryDebug | null
+}): RenderPoseLifecycleDebug {
+  const requestedPoseP = roundPoseMappingPose(input.requestedPoseP)
+  const renderCallPoseP = roundPoseMappingPose(input.renderResult?.renderCallPoseP ?? null)
+  const previewStatePoseP = roundPoseMappingPose(input.renderResult?.previewStatePoseP ?? null)
+  const bufferBuildPoseP = roundPoseMappingPose(input.renderResult?.bufferBuildPoseP ?? null)
+  const webglUniformPoseP = roundPoseMappingPose(input.renderResult?.webglUniformPoseP ?? null)
+  const actualRenderPoseP = roundPoseMappingPose(input.renderResult?.actualRenderPoseP ?? null)
+  const renderPoseMatchesToken =
+    input.renderResult?.actualRenderPoseP !== null &&
+    input.renderResult?.actualRenderPoseP !== undefined &&
+    input.renderToken !== null &&
+    poseMappingPosesApproximatelyEqual(input.renderResult.actualRenderPoseP, input.renderToken.p)
+  const renderPoseMismatchReason =
+    actualRenderPoseP && input.renderToken && !renderPoseMatchesToken
+      ? "render_pose_mismatch_token"
+      : null
+  return {
+    requestedPoseP,
+    renderCallPoseP,
+    previewStatePoseP,
+    bufferBuildPoseP,
+    webglUniformPoseP,
+    actualRenderPoseP,
+    renderPoseSource: input.renderPoseSource,
+    buffer: roundRenderBufferPoseDebug(input.renderResult?.buffer ?? null),
+    detectCanvas: input.detectCanvas ?? createEmptyDetectCanvasPoseState(),
+    recovery: input.recovery ?? createEmptyPoseRecoveryDebug(),
+    renderPoseAppliedToWebGL: actualRenderPoseP !== null && renderPoseMismatchReason === null,
+    renderPoseMatchesToken,
+    renderPoseMismatchReason,
+  }
+}
+
+function poseMappingPosesApproximatelyEqual(
+  a: ObjPoseMappingPose,
+  b: ObjPoseMappingPose,
+  epsilon = 0.000001,
+) {
+  return (
+    Math.abs(a.yaw - b.yaw) <= epsilon &&
+    Math.abs(a.pitch - b.pitch) <= epsilon &&
+    Math.abs(a.roll - b.roll) <= epsilon
+  )
+}
+
+function roundRenderBufferPoseDebug(debug: RenderBufferPoseDebug | null): RenderBufferPoseDebug {
+  return debug
+    ? {
+        ...debug,
+        bufferPoseP: roundPoseMappingPose(debug.bufferPoseP),
+      }
+    : createEmptyRenderBufferPoseDebug()
+}
+
+function createDetectCanvasPoseState(
+  renderToken: RenderedIdealFrameToken | null,
+  renderResult: WebglObjRenderResult | null,
+  canvasWasClearedBeforeRender: boolean,
+  drawCompletedForToken: boolean,
+): DetectCanvasPoseState {
+  if (drawCompletedForToken) {
+    webglDetectCanvasGenerationId += 1
+  }
+  const canvasLastRenderedPoseP = roundPoseMappingPose(renderResult?.actualRenderPoseP ?? null)
+  return {
+    canvasGenerationId: webglDetectCanvasGenerationId,
+    canvasLastRenderedToken: renderToken,
+    canvasLastRenderedPoseP,
+    canvasPoseMatchesRenderToken:
+      renderToken !== null &&
+      renderResult !== null &&
+      poseMappingPosesApproximatelyEqual(renderResult.actualRenderPoseP, renderToken.p),
+    canvasWasClearedBeforeRender,
+    drawCompletedForToken,
+  }
+}
+
+function buildPoseRecoveryDebug(input: {
+  previousRuntime: PoseMappingRuntimeState
+  frameGeneration: FrameGeneration | null
+  poseAfterRecovery: ObjPoseMappingPose | null
+  rendererWasReinitialized: boolean
+  webglContextWasRecreated: boolean
+  buffersWereRebuiltAfterRecovery: boolean
+  uniformsWereResetAfterRecovery: boolean
+}): PoseRecoveryDebug {
+  const previous = input.previousRuntime
+  const recoveredFromNoCurrentFace = previous.poseMappingSkippedReason === "no_current_face"
+  const recoveredFromNoRenderedIdeal =
+    previous.renderedIdealStatus !== "detected" &&
+    previous.renderedIdealStatus !== "missing"
+  const recoveredFromAlignmentSkip =
+    previous.alignmentStatus !== "completed" &&
+    previous.alignmentStatus !== "stale"
+  const recovered = recoveredFromNoCurrentFace || recoveredFromNoRenderedIdeal || recoveredFromAlignmentSkip
+  return {
+    previousFrameStatus: previous.poseMappingStatus,
+    currentFrameStatus: input.poseAfterRecovery ? "completed" : "running",
+    recoveredFromNoCurrentFace,
+    recoveredFromNoRenderedIdeal,
+    recoveredFromAlignmentSkip,
+    recoveryFrameId: recovered ? input.frameGeneration?.frameId ?? null : null,
+    recoveryMediaTimeSec: recovered ? input.frameGeneration?.mediaTimeSec ?? null : null,
+    poseBeforeSkip: roundPoseMappingPose(previous.p),
+    poseAfterRecovery: roundPoseMappingPose(input.poseAfterRecovery),
+    rendererWasReinitialized: input.rendererWasReinitialized,
+    webglContextWasRecreated: input.webglContextWasRecreated,
+    buffersWereRebuiltAfterRecovery: recovered && input.buffersWereRebuiltAfterRecovery,
+    uniformsWereResetAfterRecovery: recovered && input.uniformsWereResetAfterRecovery,
+  }
+}
+
+function isPoseRecoveryFrame(recovery: PoseRecoveryDebug) {
+  return (
+    recovery.recoveredFromNoCurrentFace ||
+    recovery.recoveredFromNoRenderedIdeal ||
+    recovery.recoveredFromAlignmentSkip
+  )
+}
+
+function finalizeRenderPoseLifecycleDebug(
+  lifecycle: RenderPoseLifecycleDebug,
+  P_confirm: ReferencePose,
+): RenderPoseLifecycleDebug {
+  const renderPoseNotAppliedWarning = getRenderPoseNotAppliedWarning(lifecycle.requestedPoseP, P_confirm)
+  return {
+    ...lifecycle,
+    renderPoseAppliedToWebGL:
+      lifecycle.renderPoseAppliedToWebGL &&
+      lifecycle.renderPoseMatchesToken &&
+      renderPoseNotAppliedWarning === null,
+    renderPoseMismatchReason: renderPoseNotAppliedWarning ?? lifecycle.renderPoseMismatchReason,
+  }
+}
+
+function getRenderPoseNotAppliedWarning(
+  requestedPoseP: ObjPoseMappingPose | null,
+  P_confirm: ReferencePose,
+) {
+  if (!requestedPoseP || P_confirm.yaw === null || P_confirm.roll === null) {
+    return null
+  }
+  const requestedMagnitude =
+    Math.abs(requestedPoseP.yaw) +
+    Math.abs(requestedPoseP.pitch) +
+    Math.abs(requestedPoseP.roll)
+  const confirmLooksNearFront = Math.abs(P_confirm.yaw) < 3 && Math.abs(P_confirm.roll) < 3
+  return requestedMagnitude > 15 && confirmLooksNearFront ? "render_pose_not_applied" : null
 }
 
 function createInitialOverlayLifecycle(): OverlayLifecycle {
@@ -13714,6 +14928,7 @@ function createInitialOverlayLifecycle(): OverlayLifecycle {
     lastGoodUsedForOverlay: false,
     generationMatch: false,
     tokenMatch: false,
+    renderPoseValid: false,
     skippedReason: "not_ready",
   }
 }
@@ -13728,6 +14943,7 @@ function createOverlayLifecycle(visible: boolean, skippedReason: string): Overla
     lastGoodUsedForOverlay: false,
     generationMatch: visible,
     tokenMatch: visible,
+    renderPoseValid: visible,
     skippedReason,
   }
 }
@@ -13744,6 +14960,7 @@ function createOverlayLifecycleFromRuntime(
     | "alignedRenderedIdealToken"
     | "profileRendererMatch"
     | "frameLifecycle"
+    | "renderedIdealLifecycle"
   >,
 ): OverlayLifecycle {
   const generationMatch =
@@ -13754,6 +14971,9 @@ function createOverlayLifecycleFromRuntime(
     renderedIdealFrameTokenMatchesFrame(runtime.renderedIdealToken, runtime.frameLifecycle) &&
     renderedIdealFrameTokenMatchesFrame(runtime.alignedRenderedIdealToken, runtime.frameLifecycle)
   const assetsReady = getObjAssetStatus() === "ready" && getProfileAssetStatus() === "ready"
+  const renderPoseValid =
+    !state.poseMappingSettings.hideIdealOverlayWhenRenderPoseNotApplied ||
+    runtime.renderedIdealLifecycle.renderPose.renderPoseAppliedToWebGL
   const visible =
     runtime.currentFaceStatus === "detected" &&
     assetsReady &&
@@ -13763,7 +14983,8 @@ function createOverlayLifecycleFromRuntime(
     runtime.alignedRenderedIdeal478 !== null &&
     !runtime.fallbackRenderedIdealUsed &&
     generationMatch &&
-    tokenMatch
+    tokenMatch &&
+    renderPoseValid
   return {
     current478Visible: runtime.currentFaceStatus === "detected",
     alignedRenderedIdealVisible: visible,
@@ -13773,7 +14994,8 @@ function createOverlayLifecycleFromRuntime(
     lastGoodUsedForOverlay: false,
     generationMatch,
     tokenMatch,
-    skippedReason: visible ? "none" : getOverlayLifecycleSkippedReason(runtime, assetsReady, generationMatch, tokenMatch),
+    renderPoseValid,
+    skippedReason: visible ? "none" : getOverlayLifecycleSkippedReason(runtime, assetsReady, generationMatch, tokenMatch, renderPoseValid),
   }
 }
 
@@ -13790,6 +15012,7 @@ function getOverlayLifecycleSkippedReason(
   assetsReady: boolean,
   generationMatch: boolean,
   tokenMatch: boolean,
+  renderPoseValid: boolean,
 ) {
   if (runtime.currentFaceStatus !== "detected") {
     return "current_face_not_detected"
@@ -13823,6 +15046,9 @@ function getOverlayLifecycleSkippedReason(
   }
   if (!tokenMatch) {
     return "token_mismatch"
+  }
+  if (!renderPoseValid) {
+    return "render_pose_not_applied"
   }
   return "not_ready"
 }
@@ -13911,8 +15137,10 @@ function createEmptyPoseMappingAlignmentState(
 ): PoseMappingAlignmentState {
   return {
     status,
-    mode: "mediapipe_placement_center_scale",
+    mode: DEFAULT_POSE_MAPPING_SETTINGS.alignmentMode,
     rotationApplied: false,
+    placementLandmarkSet: DEFAULT_POSE_MAPPING_SETTINGS.placementLandmarkSet,
+    scaleBasis: DEFAULT_POSE_MAPPING_SETTINGS.boundsScaleBasis,
     placementSource: "unknown",
     alignmentSkippedReason,
     currentPlacement: createMissingMediaPipeFacePlacement("unknown", "not_ready"),
@@ -13933,6 +15161,7 @@ function createEmptyPoseMappingAlignmentState(
     alignedRenderedIdealBoundsImage: null,
     displayedContentRect: null,
     placementDebug: buildPlacementDebugState(null, null, null, null),
+    boundsCenterScaleDebug: null,
     excludedReasonCounts: createEmptyPoseMappingExcludedReasonCounts(),
     displacementSummary: createEmptyPoseMappingDisplacementSummary(),
     anchorIndices: [],
@@ -13983,6 +15212,18 @@ function createDefaultWebglObjBenchmarkState(): WebglObjBenchmarkState {
     },
     result: null,
     notes: [],
+  }
+}
+
+function createDefaultRenderPoseProbeState(): RenderPoseProbeState {
+  return {
+    status: "idle",
+    runAfterNextRecovery: false,
+    lastRunTrigger: null,
+    startedAt: null,
+    completedAt: null,
+    errorMessage: null,
+    samples: [],
   }
 }
 
@@ -14795,6 +16036,44 @@ async function exportObjPoseMappingDataset() {
   renderAll()
 }
 
+function exportPlacementMappingSamplesJson() {
+  const status = getElement<HTMLElement>("[data-debug-export-status]")
+  const createdAt = new Date().toISOString()
+  const payload = {
+    type: "placement_mapping_samples_v1",
+    createdAt,
+    source: {
+      objFileName: state.objFile.fileName,
+      mp4FileName: state.liveVideo.fileName,
+      profileFileName: state.poseMappingProfile.fileName,
+    },
+    settings: state.poseMappingSettings,
+    sampleCount: placementMappingSamples.length,
+    samples: placementMappingSamples,
+  }
+  downloadTextFile(
+    `placement-mapping-samples-${formatTimestampForFileName(createdAt)}.json`,
+    JSON.stringify(payload, null, 2),
+    "application/json;charset=utf-8",
+  )
+  status.textContent = "placement mapping samples JSONをダウンロードしました。"
+  addLog(status.textContent)
+  renderAll()
+}
+
+function exportPlacementMappingSamplesCsv() {
+  const status = getElement<HTMLElement>("[data-debug-export-status]")
+  const createdAt = new Date().toISOString()
+  downloadTextFile(
+    `placement-mapping-samples-${formatTimestampForFileName(createdAt)}.csv`,
+    buildPlacementMappingSamplesCsv(placementMappingSamples),
+    "text/csv;charset=utf-8",
+  )
+  status.textContent = "placement mapping samples CSVをダウンロードしました。"
+  addLog(status.textContent)
+  renderAll()
+}
+
 function exportModeComparisonJson() {
   const result = state.modeComparison.result
   const status = getElement<HTMLElement>("[data-debug-export-status]")
@@ -14813,6 +16092,139 @@ function exportModeComparisonJson() {
   status.textContent = "モード比較JSONをダウンロードしました。"
   addLog("モード比較JSONをダウンロードしました。")
   renderAll()
+}
+
+function recordPlacementMappingSample(runtime: PoseMappingRuntimeState) {
+  const sample = buildPlacementMappingSample(runtime)
+  if (!sample) {
+    return
+  }
+  const existingIndex = placementMappingSamples.findIndex((item) => item.frameId === sample.frameId)
+  if (existingIndex >= 0) {
+    placementMappingSamples[existingIndex] = sample
+  } else {
+    placementMappingSamples.push(sample)
+  }
+  placementMappingSamples = placementMappingSamples.slice(-10000)
+}
+
+function buildPlacementMappingSample(runtime: PoseMappingRuntimeState): PlacementMappingSample | null {
+  const frameLifecycle = runtime.frameLifecycle
+  if (!frameLifecycle) {
+    return null
+  }
+  const alignment = runtime.alignment
+  const boundsDebug = alignment.boundsCenterScaleDebug
+  return {
+    frameId: frameLifecycle.frameId,
+    mediaTimeSec: roundForState(frameLifecycle.mediaTimeSec),
+    P_camera: roundPoseMappingPose(runtime.P_camera),
+    p: roundPoseMappingPose(runtime.p),
+    P_confirm: runtime.P_confirm ? roundPoseForState(runtime.P_confirm) : null,
+    poseDiffMagnitude: roundForState(runtime.poseDiff.magnitude),
+    currentMatrixColumnMajorTranslation: roundPoint3ForState(
+      alignment.placementDebug.current.matrixColumnMajor.translation,
+    ),
+    currentMatrixColumnMajorScale: roundMatrixScaleForState(
+      alignment.placementDebug.current.matrixColumnMajor.scale,
+    ),
+    idealMatrixColumnMajorTranslation: roundPoint3ForState(
+      alignment.placementDebug.ideal.matrixColumnMajor.translation,
+    ),
+    idealMatrixColumnMajorScale: roundMatrixScaleForState(
+      alignment.placementDebug.ideal.matrixColumnMajor.scale,
+    ),
+    currentBoundsImage: boundsDebug?.currentBoundsImage
+      ? roundBoundsPlacementForState(boundsDebug.currentBoundsImage)
+      : roundBoundsPlacementForState(alignment.placementDebug.current.boundsPlacement),
+    idealBoundsImage: boundsDebug?.renderedIdealBoundsImage
+      ? roundBoundsPlacementForState(boundsDebug.renderedIdealBoundsImage)
+      : roundBoundsPlacementForState(alignment.placementDebug.ideal.boundsPlacement),
+    currentBoundsWork: boundsDebug?.currentBoundsWork
+      ? roundBoundsPlacementForState(boundsDebug.currentBoundsWork)
+      : null,
+    idealBoundsWork: boundsDebug?.idealBoundsWork
+      ? roundBoundsPlacementForState(boundsDebug.idealBoundsWork)
+      : null,
+    boundsScaleBasis: alignment.scaleBasis,
+    boundsScaleRatio: roundForState(alignment.placementScaleRatio),
+    videoAspectRatio: roundForState(alignment.videoAspectRatio),
+    renderAspectRatio: roundForState(alignment.renderAspectRatio),
+    qualityUsable: runtime.qualityGate.usable,
+    skippedReason:
+      alignment.alignmentSkippedReason !== "none"
+        ? alignment.alignmentSkippedReason
+        : runtime.overlayLifecycle.alignedRenderedIdealVisible
+          ? null
+          : runtime.overlayLifecycle.skippedReason,
+  }
+}
+
+function buildPlacementMappingSamplesCsv(samples: PlacementMappingSample[]) {
+  const headers = [
+    "frameId",
+    "mediaTimeSec",
+    "P_cameraYaw",
+    "P_cameraPitch",
+    "P_cameraRoll",
+    "pYaw",
+    "pPitch",
+    "pRoll",
+    "P_confirmYaw",
+    "P_confirmPitch",
+    "P_confirmRoll",
+    "poseDiffMagnitude",
+    "currentMatrixColumnMajorTranslation",
+    "currentMatrixColumnMajorScale",
+    "idealMatrixColumnMajorTranslation",
+    "idealMatrixColumnMajorScale",
+    "currentBoundsImage",
+    "idealBoundsImage",
+    "currentBoundsWork",
+    "idealBoundsWork",
+    "boundsScaleBasis",
+    "boundsScaleRatio",
+    "videoAspectRatio",
+    "renderAspectRatio",
+    "qualityUsable",
+    "skippedReason",
+  ]
+  const rows = samples.map((sample) => [
+    sample.frameId,
+    sample.mediaTimeSec ?? "",
+    sample.P_camera?.yaw ?? "",
+    sample.P_camera?.pitch ?? "",
+    sample.P_camera?.roll ?? "",
+    sample.p?.yaw ?? "",
+    sample.p?.pitch ?? "",
+    sample.p?.roll ?? "",
+    sample.P_confirm?.yaw ?? "",
+    sample.P_confirm?.pitch ?? "",
+    sample.P_confirm?.roll ?? "",
+    sample.poseDiffMagnitude ?? "",
+    formatCsvJson(sample.currentMatrixColumnMajorTranslation),
+    formatCsvJson(sample.currentMatrixColumnMajorScale),
+    formatCsvJson(sample.idealMatrixColumnMajorTranslation),
+    formatCsvJson(sample.idealMatrixColumnMajorScale),
+    formatCsvJson(sample.currentBoundsImage),
+    formatCsvJson(sample.idealBoundsImage),
+    formatCsvJson(sample.currentBoundsWork),
+    formatCsvJson(sample.idealBoundsWork),
+    sample.boundsScaleBasis,
+    sample.boundsScaleRatio ?? "",
+    sample.videoAspectRatio ?? "",
+    sample.renderAspectRatio ?? "",
+    sample.qualityUsable,
+    sample.skippedReason ?? "",
+  ])
+  return [
+    headers.join(","),
+    ...rows.map((row) => row.map((value) => formatCsvCell(value)).join(",")),
+  ].join("\n")
+}
+
+function formatCsvJson(value: unknown) {
+  return value === null || value === undefined ? "" : JSON.stringify(value)
 }
 
 function exportModeComparisonCsv() {
@@ -15705,6 +17117,18 @@ function isObjPoseSamplingPresetName(value: string): value is ObjPoseSamplingPre
   return value === "quick" || value === "standard" || value === "dense"
 }
 
+function isPoseMappingAlignmentMode(value: string): value is PoseMappingAlignmentMode {
+  return value === "mediapipe_placement_center_scale" || value === "bounds_center_scale_v1"
+}
+
+function isPlacementLandmarkSet(value: string): value is PlacementLandmarkSet {
+  return value === "all_non_iris" || value === "stable_non_expression"
+}
+
+function isBoundsScaleBasis(value: string): value is BoundsScaleBasis {
+  return value === "height" || value === "width" || value === "diag"
+}
+
 function isObjRenderAppearanceProfileId(value: string): value is ObjRenderAppearanceProfileId {
   return value in OBJ_RENDER_APPEARANCE_PROFILES
 }
@@ -16534,6 +17958,8 @@ function getPoseMappingAlignmentDebugSummary(alignment: PoseMappingAlignmentStat
     status: alignment.status,
     mode: alignment.mode,
     rotationApplied: alignment.rotationApplied,
+    placementLandmarkSet: alignment.placementLandmarkSet,
+    scaleBasis: alignment.scaleBasis,
     placementSource: alignment.placementSource,
     alignmentSkippedReason: alignment.alignmentSkippedReason,
     currentPlacement: roundPlacementForState(alignment.currentPlacement),
@@ -16554,6 +17980,7 @@ function getPoseMappingAlignmentDebugSummary(alignment: PoseMappingAlignmentStat
     alignedRenderedIdealBoundsImage: roundBoundsForState(alignment.alignedRenderedIdealBoundsImage),
     displayedContentRect: roundRectForState(alignment.displayedContentRect),
     placementDebug: roundPlacementDebugForState(alignment.placementDebug),
+    boundsCenterScaleDebug: roundBoundsCenterScaleDebugForState(alignment.boundsCenterScaleDebug),
     excludedReasonCounts: alignment.excludedReasonCounts,
     displacementSummary: roundDisplacementSummary(alignment.displacementSummary),
   }
@@ -16613,6 +18040,7 @@ function getPoseMappingRuntimeRawSummary() {
     assetLifecycle: runtime.assetLifecycle,
     frameLifecycle: runtime.frameLifecycle,
     renderedIdealLifecycle: runtime.renderedIdealLifecycle,
+    renderPoseProbe: state.renderPoseProbe,
     overlayLifecycle: runtime.overlayLifecycle,
     profileEvaluateMs: roundForState(runtime.profileEvaluateMs),
     renderMs: roundForState(runtime.renderMs),
@@ -16713,6 +18141,7 @@ function getPoseMappingRuntimeDebugExport() {
       previewCanvasHeight: runtime.previewCanvasHeight,
       errorMessage: runtime.errorMessage,
     },
+    renderPoseProbe: state.renderPoseProbe,
     current478: runtime.current478?.map(roundLandmarkForState) ?? null,
     renderedIdeal478: runtime.renderedIdeal478?.map(roundLandmarkForState) ?? null,
     alignedRenderedIdeal478: runtime.alignedRenderedIdeal478?.map(roundLandmarkForState) ?? null,
@@ -17088,6 +18517,37 @@ function roundBoundsPlacementForState(boundsPlacement: BoundsPlacement | null): 
         scaleByHeight: roundForState(boundsPlacement.scaleByHeight) ?? 0,
         scaleByWidth: roundForState(boundsPlacement.scaleByWidth) ?? 0,
         scaleByDiag: roundForState(boundsPlacement.scaleByDiag) ?? 0,
+      }
+    : null
+}
+
+function roundBoundsCenterScaleDebugForState(
+  debug: BoundsCenterScaleAlignmentDebug | null,
+): BoundsCenterScaleAlignmentDebug | null {
+  return debug
+    ? {
+        mode: debug.mode,
+        placementLandmarkSet: debug.placementLandmarkSet,
+        scaleBasis: debug.scaleBasis,
+        rotationApplied: false,
+        currentBoundsWork: roundBoundsPlacementForState(debug.currentBoundsWork) ?? debug.currentBoundsWork,
+        idealBoundsWork: roundBoundsPlacementForState(debug.idealBoundsWork) ?? debug.idealBoundsWork,
+        currentCenterWork: roundPoint2ForState(debug.currentCenterWork) ?? debug.currentCenterWork,
+        idealCenterWork: roundPoint2ForState(debug.idealCenterWork) ?? debug.idealCenterWork,
+        currentScale: roundForState(debug.currentScale) ?? 0,
+        idealScale: roundForState(debug.idealScale) ?? 0,
+        scaleRatio: roundForState(debug.scaleRatio) ?? 0,
+        translationWork: {
+          x: roundForState(debug.translationWork.x) ?? 0,
+          y: roundForState(debug.translationWork.y) ?? 0,
+        },
+        currentBoundsImage: roundBoundsPlacementForState(debug.currentBoundsImage) ?? debug.currentBoundsImage,
+        renderedIdealBoundsImage:
+          roundBoundsPlacementForState(debug.renderedIdealBoundsImage) ?? debug.renderedIdealBoundsImage,
+        alignedRenderedIdealBoundsImage:
+          roundBoundsPlacementForState(debug.alignedRenderedIdealBoundsImage) ??
+          debug.alignedRenderedIdealBoundsImage,
+        alignedLandmarkCount: debug.alignedLandmarkCount,
       }
     : null
 }
