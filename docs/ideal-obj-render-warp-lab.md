@@ -722,6 +722,16 @@ WebGL renderer は通常 runtime と p,P dataset 生成の本線です。MediaPi
 
 ## Runtime lifecycle / token
 
+## Render pose lifecycle debug
+
+`bounds_center_scale_v1` は position / scale の alignment だけを行います。rendered ideal の向きは alignment では補正せず、`P_camera -> poseMappingProfile -> p -> WebGL render -> MediaPipe detect -> P_confirm` の render generation 側で `p` が反映されている必要があります。
+
+Pose Mapping runtime の `renderedIdealLifecycle.renderPose` では、`renderToken.p` 由来の `requestedPoseP` と、WebGL renderer が実際に使った `actualRenderPoseP` を別々に記録します。`renderPoseMatchesToken` は token と WebGL 適用値の一致確認、`renderPoseAppliedToWebGL` は token 一致に加えて `P_confirm` が requested pose に対して front 固定に見えないことを確認する debug flag です。
+
+`Render pose probe（レンダー姿勢プローブ）` は、同じ OBJ / poseMappingProfile / render settings で fixed pose A-E を WebGL render -> detect し、それぞれの `P_confirm` を表示します。yaw / pitch / roll を変えても `P_confirm` がほぼ同じ front pose に固定される場合、runtime warning として `render_pose_not_applied` を記録します。
+
+`render_pose_not_applied` は、`abs(p.yaw) + abs(p.pitch) + abs(p.roll) > 15` かつ `abs(P_confirm.yaw) < 3`、`abs(P_confirm.roll) < 3` のときに出します。この状態では `alignmentStatus === "completed"` でも、`renderPoseAppliedToWebGL` は `false` として扱います。
+
 Live overlay では、古い rendered ideal や fallback frontal face を表示しないため、runtime に以下の lifecycle を持たせます。
 
 - `assetLifecycle`: OBJ / profile / renderer / render settings の generation と ready 状態を記録します。

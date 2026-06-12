@@ -1013,6 +1013,19 @@ type RenderedIdealFrameToken = AssetGeneration & {
   mediaTimeSec: number | null
   p: ObjPoseMappingPose
 }
+type RenderPoseSource =
+  | "pose_mapping_profile"
+  | "fallback_zero_pose"
+  | "preview_state"
+  | "unknown"
+type RenderPoseLifecycleDebug = {
+  requestedPoseP: { yaw: number; pitch: number; roll: number } | null
+  actualRenderPoseP: { yaw: number; pitch: number; roll: number } | null
+  renderPoseSource: RenderPoseSource
+  renderPoseAppliedToWebGL: boolean
+  renderPoseMatchesToken: boolean
+  renderPoseMismatchReason: string | null
+}
 type RenderedIdealLifecycle = {
   renderAttempted: boolean
   renderSucceeded: boolean
@@ -1023,6 +1036,7 @@ type RenderedIdealLifecycle = {
   detectCanvasWasClearedBeforeRender: boolean
   staleCanvasDetected: boolean
   fallbackRenderedIdealUsed: boolean
+  renderPose: RenderPoseLifecycleDebug
 }
 type OverlayLifecycle = {
   current478Visible: boolean
@@ -1554,6 +1568,42 @@ type WebglObjBenchmarkState = {
   notes: string[]
 }
 
+type RenderPoseProbeStatus = "idle" | "running" | "completed" | "error"
+type RenderPoseProbeSample = {
+  id: string
+  label: string
+  requestedPoseP: ObjPoseMappingPose
+  actualRenderPoseP: ObjPoseMappingPose | null
+  P_confirm: ReferencePose
+  poseDiff: PoseMappingPoseDiff
+  detected: boolean
+  landmarkCount: number | null
+  renderMs: number | null
+  detectMs: number | null
+  totalMs: number | null
+  warning: string | null
+  errorMessage: string | null
+}
+type RenderPoseProbeState = {
+  status: RenderPoseProbeStatus
+  startedAt: string | null
+  completedAt: string | null
+  errorMessage: string | null
+  samples: RenderPoseProbeSample[]
+}
+
+const RENDER_POSE_PROBE_POSES: Array<{
+  id: string
+  label: string
+  p: ObjPoseMappingPose
+}> = [
+  { id: "front", label: "A: yaw 0 / pitch 0 / roll 0", p: { yaw: 0, pitch: 0, roll: 0 } },
+  { id: "yaw_plus_25", label: "B: yaw 25 / pitch 0 / roll 0", p: { yaw: 25, pitch: 0, roll: 0 } },
+  { id: "yaw_minus_25", label: "C: yaw -25 / pitch 0 / roll 0", p: { yaw: -25, pitch: 0, roll: 0 } },
+  { id: "pitch_plus_20", label: "D: yaw 0 / pitch 20 / roll 0", p: { yaw: 0, pitch: 20, roll: 0 } },
+  { id: "roll_plus_15", label: "E: yaw 0 / pitch 0 / roll 15", p: { yaw: 0, pitch: 0, roll: 15 } },
+]
+
 type WebglObjRenderer = {
   canvas: HTMLCanvasElement
   gl: WebGLRenderingContext
@@ -2031,6 +2081,7 @@ type LabState = {
   detectPerformance: DetectPerformanceState
   renderDetectHandoff: RenderDetectHandoffState
   webglObjBenchmark: WebglObjBenchmarkState
+  renderPoseProbe: RenderPoseProbeState
   poseSearchFrames: PoseCenterSearchFrame[]
   selectedPoseSearchFrameId: string | null
   poseCenterSearch: PoseCenterSearchState
@@ -2483,6 +2534,7 @@ const state: LabState = {
   detectPerformance: createDefaultDetectPerformanceState(),
   renderDetectHandoff: createDefaultRenderDetectHandoffState(),
   webglObjBenchmark: createDefaultWebglObjBenchmarkState(),
+  renderPoseProbe: createDefaultRenderPoseProbeState(),
   poseSearchFrames: [],
   selectedPoseSearchFrameId: null,
   poseCenterSearch: createDefaultPoseCenterSearchState(),
@@ -3315,6 +3367,9 @@ function bindEvents() {
     }
     if (action === "pose-mapping-download-debug") {
       exportPoseMappingDebug()
+    }
+    if (action === "render-pose-probe-run") {
+      void runRenderPoseProbe()
     }
     if (action === "detect-performance-run") {
       void startDetectPerformanceBenchmark()
@@ -4419,6 +4474,12 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
     const renderer = getOrCreateWebglObjBenchmarkRenderer()
     const rendererMetadata = buildWebglObjRendererMetadata(renderer, appearance)
     const renderToken = createRenderedIdealFrameToken(frameGeneration, evaluateResult.p)
+    let renderPoseLifecycle = createRenderPoseLifecycleDebug({
+      requestedPoseP: evaluateResult.p,
+      actualRenderPoseP: null,
+      renderPoseSource: "pose_mapping_profile",
+      renderToken,
+    })
     const profileRendererMatch = validatePoseMappingRendererMatch(profile, rendererMetadata, appearance)
     if (!profileRendererMatch.match) {
       clearWebglRendererCanvas(renderer)
@@ -4435,6 +4496,7 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
           ...createEmptyRenderedIdealLifecycle(),
           renderToken,
           detectCanvasWasClearedBeforeRender: true,
+          renderPose: renderPoseLifecycle,
         },
         overlayLifecycle: createOverlayLifecycle(false, "profile_mismatch"),
         frameLifecycle: createFrameLifecycle(
@@ -4464,14 +4526,21 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
       rotationCenter: getObjPoseSyncRotationCenter(),
     }
     const renderStartMs = performance.now()
-    renderWebglObjToCanvas(renderer, renderContext)
+    const actualRenderPoseP = renderWebglObjToCanvas(renderer, renderContext)
     const renderMs = performance.now() - renderStartMs
+    renderPoseLifecycle = createRenderPoseLifecycleDebug({
+      requestedPoseP: evaluateResult.p,
+      actualRenderPoseP,
+      renderPoseSource: "pose_mapping_profile",
+      renderToken,
+    })
     let renderedIdealLifecycle: RenderedIdealLifecycle = {
       ...createEmptyRenderedIdealLifecycle(),
       renderAttempted: true,
       renderSucceeded: true,
       renderToken,
       detectCanvasWasClearedBeforeRender: true,
+      renderPose: renderPoseLifecycle,
     }
 
     const detector = await getRenderedIdealFaceLandmarker()
@@ -4515,7 +4584,9 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
     renderedIdealLifecycle = {
       ...renderedIdealLifecycle,
       detectSucceeded: detection.status === "detected",
+      renderPose: finalizeRenderPoseLifecycleDebug(renderPoseLifecycle, detection.pose),
     }
+    const renderPoseWarning = renderedIdealLifecycle.renderPose.renderPoseMismatchReason
     const poseDiff = calculatePoseMappingPoseDiff(P_camera, detection.pose)
     const alignmentResult = buildPoseMappingAlignment(
       state.currentAnalysis.landmarks478,
@@ -4570,7 +4641,9 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
       selectedLeaf: evaluateResult.selectedLeaf,
       usedExpert: evaluateResult.usedExpert,
       usedFallback: evaluateResult.usedFallback,
-      warnings: evaluateResult.warnings,
+      warnings: renderPoseWarning
+        ? [...evaluateResult.warnings, renderPoseWarning]
+        : evaluateResult.warnings,
       P_confirm: renderedIdealStatus === "detected" ? detection.pose : previousRuntime.P_confirm,
       poseDiff: renderedIdealStatus === "detected" ? poseDiff : previousRuntime.poseDiff,
       renderedIdealDetected: detection.status === "detected",
@@ -6024,6 +6097,131 @@ async function throwIfWebglObjBenchmarkCancelled() {
   }
 }
 
+async function runRenderPoseProbe() {
+  if (state.renderPoseProbe.status === "running") {
+    return
+  }
+  const startedAt = new Date().toISOString()
+  state.renderPoseProbe = {
+    status: "running",
+    startedAt,
+    completedAt: null,
+    errorMessage: null,
+    samples: [],
+  }
+  renderDebugContent()
+
+  try {
+    const profile = state.poseMappingProfile.profile
+    const runtime = state.poseMappingRuntime
+    if (
+      !profile ||
+      runtime.status !== "completed" ||
+      runtime.poseMappingStatus !== "completed" ||
+      !runtime.P_camera ||
+      !canRenderRenderedIdealGeometry()
+    ) {
+      throw new Error("Render pose probe requires loaded OBJ, PoseMappingProfile, and completed runtime.")
+    }
+
+    const renderSettings = resolvePoseMappingRenderSettings(profile, liveObjPosePreviewCanvas)
+    const { appearance } = createPoseMappingRenderAppearance(profile, renderSettings)
+    const renderer = getOrCreateWebglObjBenchmarkRenderer()
+    const rendererMetadata = buildWebglObjRendererMetadata(renderer, appearance)
+    const profileRendererMatch = validatePoseMappingRendererMatch(profile, rendererMetadata, appearance)
+    if (!profileRendererMatch.match) {
+      throw new Error(profileRendererMatch.errorMessage ?? "Profile renderer mismatch")
+    }
+
+    resizeWebglObjBenchmarkRenderer(renderer, renderSettings.detectCanvasWidth, renderSettings.detectCanvasHeight)
+    const detector = await getRenderedIdealFaceLandmarker()
+    const samples: RenderPoseProbeSample[] = []
+
+    for (const probe of RENDER_POSE_PROBE_POSES) {
+      const totalStartMs = performance.now()
+      let sample: RenderPoseProbeSample = {
+        id: probe.id,
+        label: probe.label,
+        requestedPoseP: roundPoseMappingPose(probe.p) ?? probe.p,
+        actualRenderPoseP: null,
+        P_confirm: { yaw: null, pitch: null, roll: null },
+        poseDiff: { yaw: null, pitch: null, roll: null, magnitude: null },
+        detected: false,
+        landmarkCount: null,
+        renderMs: null,
+        detectMs: null,
+        totalMs: null,
+        warning: null,
+        errorMessage: null,
+      }
+
+      try {
+        clearWebglRendererCanvas(renderer)
+        const renderStartMs = performance.now()
+        const actualRenderPoseP = renderWebglObjToCanvas(renderer, {
+          renderSettings,
+          appearance,
+          p: probe.p,
+          rotationCenter: getObjPoseSyncRotationCenter(),
+        })
+        const renderMs = performance.now() - renderStartMs
+        const detectStartMs = performance.now()
+        const result = detector.detect(renderer.canvas)
+        const detectMs = performance.now() - detectStartMs
+        const detection = buildRenderedIdealDetectionState(result, -1, detectMs, null)
+        const warning = getRenderPoseNotAppliedWarning(probe.p, detection.pose)
+        sample = {
+          ...sample,
+          actualRenderPoseP: roundPoseMappingPose(actualRenderPoseP),
+          P_confirm: roundPoseForState(detection.pose),
+          poseDiff: roundPoseMappingDiff(calculatePoseMappingPoseDiff(runtime.P_camera, detection.pose)),
+          detected: detection.status === "detected",
+          landmarkCount: detection.landmarkCount,
+          renderMs: roundForState(renderMs),
+          detectMs: roundForState(detectMs),
+          totalMs: roundForState(performance.now() - totalStartMs),
+          warning,
+          errorMessage: detection.status === "detected" ? null : detection.errorMessage ?? detection.status,
+        }
+      } catch (error) {
+        sample = {
+          ...sample,
+          totalMs: roundForState(performance.now() - totalStartMs),
+          errorMessage: error instanceof Error ? error.message : String(error),
+        }
+      }
+
+      samples.push(sample)
+      state.renderPoseProbe = {
+        ...state.renderPoseProbe,
+        samples,
+      }
+      renderDebugContent()
+      await waitForBenchmarkUiTick()
+    }
+
+    state.renderPoseProbe = {
+      status: "completed",
+      startedAt,
+      completedAt: new Date().toISOString(),
+      errorMessage: null,
+      samples,
+    }
+    addLog("Render pose probe completed.")
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    state.renderPoseProbe = {
+      ...state.renderPoseProbe,
+      status: "error",
+      completedAt: new Date().toISOString(),
+      errorMessage: message,
+    }
+    addLog(`Render pose probe failed: ${message}`)
+  } finally {
+    renderAll({ skipObjRender: true })
+  }
+}
+
 async function runWebglObjBenchmarkCase(input: {
   caseId: string
   label: string
@@ -6460,7 +6658,8 @@ function measureWebglObjRender(
 function renderWebglObjToCanvas(
   renderer: WebglObjRenderer,
   context: WebglObjRenderContext,
-) {
+): ObjPoseMappingPose {
+  const actualRenderPoseP = getActualWebglRenderPoseP(context)
   const { positions, colors } = buildWebglObjRenderBuffers(context)
   const gl = renderer.gl
   const background = hexToRgb(context.appearance.backgroundColor) ?? { r: 245, g: 247, b: 249 }
@@ -6480,6 +6679,7 @@ function renderWebglObjToCanvas(
   gl.vertexAttribPointer(renderer.colorLocation, 3, gl.FLOAT, false, 0, 0)
 
   gl.drawArrays(gl.TRIANGLES, 0, positions.length / 2)
+  return actualRenderPoseP
 }
 
 function buildWebglObjRenderBuffers(context: WebglObjRenderContext) {
@@ -6942,6 +7142,15 @@ function buildPoseMappingAlignment(
       anchorIndices: [],
       landmarkReasons: reasons,
     },
+  }
+}
+
+function getActualWebglRenderPoseP(context: WebglObjRenderContext): ObjPoseMappingPose {
+  const poseState = getDirectObjPosePreviewState(context.p)
+  return {
+    yaw: poseState.yawDeg,
+    pitch: poseState.pitchDeg,
+    roll: poseState.rollDeg,
   }
 }
 
@@ -11437,6 +11646,7 @@ function renderPoseMappingLiveSummaryCard() {
       <div><dt>assetLifecycle</dt><dd>OBJ ${escapeHtml(runtime.assetLifecycle.objStatus)} / profile ${escapeHtml(runtime.assetLifecycle.profileStatus)} / renderer ${escapeHtml(runtime.assetLifecycle.rendererStatus)}</dd></div>
       <div><dt>generation</dt><dd>obj ${runtime.assetLifecycle.objGenerationId} / profile ${runtime.assetLifecycle.profileGenerationId} / render ${runtime.assetLifecycle.renderSettingsGenerationId} / renderer ${runtime.assetLifecycle.rendererGenerationId}</dd></div>
       <div><dt>render lifecycle</dt><dd>render ${String(runtime.renderedIdealLifecycle.renderSucceeded)} / detect ${String(runtime.renderedIdealLifecycle.detectSucceeded)} / stale ${String(runtime.renderedIdealLifecycle.staleCanvasDetected)}</dd></div>
+      <div><dt>render pose</dt><dd>applied ${String(runtime.renderedIdealLifecycle.renderPose.renderPoseAppliedToWebGL)} / source ${escapeHtml(runtime.renderedIdealLifecycle.renderPose.renderPoseSource)} / ${escapeHtml(runtime.renderedIdealLifecycle.renderPose.renderPoseMismatchReason ?? "-")}</dd></div>
       <div><dt>overlay lifecycle</dt><dd>visible ${String(runtime.overlayLifecycle.alignedRenderedIdealVisible)} / gen ${String(runtime.overlayLifecycle.generationMatch)} / token ${String(runtime.overlayLifecycle.tokenMatch)} / ${escapeHtml(runtime.overlayLifecycle.skippedReason)}</dd></div>
       <div><dt>lastGood</dt><dd>${String(runtime.lastGood.hasLastGood)} / ageMs ${formatRealtimeNullableNumber(runtime.lastGood.ageMs)}</dd></div>
       <div><dt>stale</dt><dd>${String(runtime.stale.isStale)} / ${escapeHtml(runtime.stale.staleReason ?? "-")} / ${formatRealtimeNullableNumber(runtime.stale.staleMs)}ms</dd></div>
@@ -11470,10 +11680,12 @@ function renderPoseMappingDebugTab() {
   const detectPerformance = state.detectPerformance
   const handoff = state.renderDetectHandoff
   const webglBenchmark = state.webglObjBenchmark
+  const renderPoseProbe = state.renderPoseProbe
   const canRunDetectPerformance =
     detectPerformance.status !== "running" &&
     handoff.status !== "running" &&
     webglBenchmark.status !== "running" &&
+    renderPoseProbe.status !== "running" &&
     profileState.loaded &&
     runtime.status === "completed" &&
     runtime.poseMappingStatus === "completed" &&
@@ -11483,6 +11695,7 @@ function renderPoseMappingDebugTab() {
     handoff.status !== "running" &&
     detectPerformance.status !== "running" &&
     webglBenchmark.status !== "running" &&
+    renderPoseProbe.status !== "running" &&
     profileState.loaded &&
     runtime.status === "completed" &&
     runtime.poseMappingStatus === "completed" &&
@@ -11492,11 +11705,21 @@ function renderPoseMappingDebugTab() {
     webglBenchmark.status !== "running" &&
     detectPerformance.status !== "running" &&
     handoff.status !== "running" &&
+    renderPoseProbe.status !== "running" &&
     profileState.loaded &&
     runtime.status === "completed" &&
     runtime.poseMappingStatus === "completed" &&
     runtime.p !== null
   const canDownloadWebglBenchmark = webglBenchmark.result !== null
+  const canRunRenderPoseProbe =
+    renderPoseProbe.status !== "running" &&
+    webglBenchmark.status !== "running" &&
+    detectPerformance.status !== "running" &&
+    handoff.status !== "running" &&
+    profileState.loaded &&
+    runtime.status === "completed" &&
+    runtime.poseMappingStatus === "completed" &&
+    runtime.p !== null
   const requiredRendererResolution = getRenderResolutionFromRecord(profile?.requiredRenderer?.renderResolution)
 
   container.innerHTML = `
@@ -11575,6 +11798,12 @@ function renderPoseMappingDebugTab() {
         <div><dt>Render resolution</dt><dd>${formatNullableCount(runtime.renderSettings?.detectCanvasWidth ?? runtime.detectCanvasWidth)} x ${formatNullableCount(runtime.renderSettings?.detectCanvasHeight ?? runtime.detectCanvasHeight)}</dd></div>
         <div><dt>Profile renderer match</dt><dd>${String(runtime.profileRendererMatch)}</dd></div>
         <div><dt>Profile mismatch error</dt><dd>${escapeHtml(runtime.profileMismatchError ?? "-")}</dd></div>
+        <div><dt>requestedPoseP</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.renderedIdealLifecycle.renderPose.requestedPoseP))}</dd></div>
+        <div><dt>actualRenderPoseP</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.renderedIdealLifecycle.renderPose.actualRenderPoseP))}</dd></div>
+        <div><dt>renderPoseSource</dt><dd>${escapeHtml(runtime.renderedIdealLifecycle.renderPose.renderPoseSource)}</dd></div>
+        <div><dt>renderPoseAppliedToWebGL</dt><dd>${String(runtime.renderedIdealLifecycle.renderPose.renderPoseAppliedToWebGL)}</dd></div>
+        <div><dt>renderPoseMatchesToken</dt><dd>${String(runtime.renderedIdealLifecycle.renderPose.renderPoseMatchesToken)}</dd></div>
+        <div><dt>renderPoseMismatchReason</dt><dd>${escapeHtml(runtime.renderedIdealLifecycle.renderPose.renderPoseMismatchReason ?? "-")}</dd></div>
         <div><dt>detectCanvasWidth</dt><dd>${formatNullableCount(runtime.renderSettings?.detectCanvasWidth ?? runtime.detectCanvasWidth)}</dd></div>
         <div><dt>detectCanvasHeight</dt><dd>${formatNullableCount(runtime.renderSettings?.detectCanvasHeight ?? runtime.detectCanvasHeight)}</dd></div>
         <div><dt>previewCanvasWidth</dt><dd>${formatNullableCount(runtime.renderSettings?.previewCanvasWidth ?? runtime.previewCanvasWidth)}</dd></div>
@@ -11598,6 +11827,14 @@ function renderPoseMappingDebugTab() {
         <div><dt>totalMs</dt><dd>${formatRealtimeNullableNumber(runtime.totalMs)}</dd></div>
         <div><dt>errorMessage</dt><dd>${escapeHtml(runtime.errorMessage ?? "-")}</dd></div>
       </dl>
+    </section>
+
+    <section class="debug-section">
+      <h3>Render pose probe（レンダー姿勢プローブ）</h3>
+      <div class="button-row">
+        <button class="small-button" type="button" data-action="render-pose-probe-run" ${canRunRenderPoseProbe ? "" : "disabled"}>Render pose probe（レンダー姿勢プローブ）</button>
+      </div>
+      ${renderRenderPoseProbeSummaryHtml()}
     </section>
 
     <section class="debug-section">
@@ -11697,6 +11934,55 @@ function renderPoseMappingDebugTab() {
     </section>
   `
   return container
+}
+
+function renderRenderPoseProbeSummaryHtml() {
+  const probe = state.renderPoseProbe
+  const sampleRows =
+    probe.samples.length > 0
+      ? probe.samples.map((sample) => `
+          <tr>
+            <td>${escapeHtml(sample.label)}</td>
+            <td>${escapeHtml(formatPoseMappingPose(sample.requestedPoseP))}</td>
+            <td>${escapeHtml(formatPoseMappingPose(sample.actualRenderPoseP))}</td>
+            <td>${escapeHtml(formatPose(sample.P_confirm))}</td>
+            <td>${escapeHtml(formatPoseMappingDiff(sample.poseDiff))}</td>
+            <td>${sample.detected ? "detected" : "not detected"} / ${formatNullableCount(sample.landmarkCount)}</td>
+            <td>${escapeHtml(sample.warning ?? "-")}</td>
+            <td>${escapeHtml(sample.errorMessage ?? "-")}</td>
+          </tr>
+        `).join("")
+      : `
+          <tr>
+            <td colspan="8" class="placeholder-text">Render pose probe はまだ実行されていません。</td>
+          </tr>
+        `
+
+  return `
+    <dl class="summary-list">
+      <div><dt>probe status</dt><dd>${escapeHtml(probe.status)}</dd></div>
+      <div><dt>startedAt</dt><dd>${escapeHtml(probe.startedAt ?? "-")}</dd></div>
+      <div><dt>completedAt</dt><dd>${escapeHtml(probe.completedAt ?? "-")}</dd></div>
+      <div><dt>error</dt><dd>${escapeHtml(probe.errorMessage ?? "-")}</dd></div>
+    </dl>
+    <div class="table-scroll">
+      <table class="debug-table">
+        <thead>
+          <tr>
+            <th>sample</th>
+            <th>requestedPoseP</th>
+            <th>actualRenderPoseP</th>
+            <th>P_confirm</th>
+            <th>poseDiff</th>
+            <th>detected</th>
+            <th>warning</th>
+            <th>error</th>
+          </tr>
+        </thead>
+        <tbody>${sampleRows}</tbody>
+      </table>
+    </div>
+  `
 }
 
 function renderDetectPerformanceSummaryHtml() {
@@ -14231,7 +14517,87 @@ function createEmptyRenderedIdealLifecycle(): RenderedIdealLifecycle {
     detectCanvasWasClearedBeforeRender: false,
     staleCanvasDetected: false,
     fallbackRenderedIdealUsed: false,
+    renderPose: createEmptyRenderPoseLifecycleDebug(),
   }
+}
+
+function createEmptyRenderPoseLifecycleDebug(): RenderPoseLifecycleDebug {
+  return {
+    requestedPoseP: null,
+    actualRenderPoseP: null,
+    renderPoseSource: "unknown",
+    renderPoseAppliedToWebGL: false,
+    renderPoseMatchesToken: false,
+    renderPoseMismatchReason: null,
+  }
+}
+
+function createRenderPoseLifecycleDebug(input: {
+  requestedPoseP: ObjPoseMappingPose | null
+  actualRenderPoseP: ObjPoseMappingPose | null
+  renderPoseSource: RenderPoseSource
+  renderToken: RenderedIdealFrameToken | null
+}): RenderPoseLifecycleDebug {
+  const requestedPoseP = roundPoseMappingPose(input.requestedPoseP)
+  const actualRenderPoseP = roundPoseMappingPose(input.actualRenderPoseP)
+  const renderPoseMatchesToken =
+    input.actualRenderPoseP !== null &&
+    input.renderToken !== null &&
+    poseMappingPosesApproximatelyEqual(input.actualRenderPoseP, input.renderToken.p)
+  const renderPoseMismatchReason =
+    actualRenderPoseP && input.renderToken && !renderPoseMatchesToken
+      ? "render_pose_mismatch_token"
+      : null
+  return {
+    requestedPoseP,
+    actualRenderPoseP,
+    renderPoseSource: input.renderPoseSource,
+    renderPoseAppliedToWebGL: actualRenderPoseP !== null && renderPoseMismatchReason === null,
+    renderPoseMatchesToken,
+    renderPoseMismatchReason,
+  }
+}
+
+function poseMappingPosesApproximatelyEqual(
+  a: ObjPoseMappingPose,
+  b: ObjPoseMappingPose,
+  epsilon = 0.000001,
+) {
+  return (
+    Math.abs(a.yaw - b.yaw) <= epsilon &&
+    Math.abs(a.pitch - b.pitch) <= epsilon &&
+    Math.abs(a.roll - b.roll) <= epsilon
+  )
+}
+
+function finalizeRenderPoseLifecycleDebug(
+  lifecycle: RenderPoseLifecycleDebug,
+  P_confirm: ReferencePose,
+): RenderPoseLifecycleDebug {
+  const renderPoseNotAppliedWarning = getRenderPoseNotAppliedWarning(lifecycle.requestedPoseP, P_confirm)
+  return {
+    ...lifecycle,
+    renderPoseAppliedToWebGL:
+      lifecycle.renderPoseAppliedToWebGL &&
+      lifecycle.renderPoseMatchesToken &&
+      renderPoseNotAppliedWarning === null,
+    renderPoseMismatchReason: renderPoseNotAppliedWarning ?? lifecycle.renderPoseMismatchReason,
+  }
+}
+
+function getRenderPoseNotAppliedWarning(
+  requestedPoseP: ObjPoseMappingPose | null,
+  P_confirm: ReferencePose,
+) {
+  if (!requestedPoseP || P_confirm.yaw === null || P_confirm.roll === null) {
+    return null
+  }
+  const requestedMagnitude =
+    Math.abs(requestedPoseP.yaw) +
+    Math.abs(requestedPoseP.pitch) +
+    Math.abs(requestedPoseP.roll)
+  const confirmLooksNearFront = Math.abs(P_confirm.yaw) < 3 && Math.abs(P_confirm.roll) < 3
+  return requestedMagnitude > 15 && confirmLooksNearFront ? "render_pose_not_applied" : null
 }
 
 function createInitialOverlayLifecycle(): OverlayLifecycle {
@@ -14516,6 +14882,16 @@ function createDefaultWebglObjBenchmarkState(): WebglObjBenchmarkState {
     },
     result: null,
     notes: [],
+  }
+}
+
+function createDefaultRenderPoseProbeState(): RenderPoseProbeState {
+  return {
+    status: "idle",
+    startedAt: null,
+    completedAt: null,
+    errorMessage: null,
+    samples: [],
   }
 }
 
@@ -17332,6 +17708,7 @@ function getPoseMappingRuntimeRawSummary() {
     assetLifecycle: runtime.assetLifecycle,
     frameLifecycle: runtime.frameLifecycle,
     renderedIdealLifecycle: runtime.renderedIdealLifecycle,
+    renderPoseProbe: state.renderPoseProbe,
     overlayLifecycle: runtime.overlayLifecycle,
     profileEvaluateMs: roundForState(runtime.profileEvaluateMs),
     renderMs: roundForState(runtime.renderMs),
@@ -17432,6 +17809,7 @@ function getPoseMappingRuntimeDebugExport() {
       previewCanvasHeight: runtime.previewCanvasHeight,
       errorMessage: runtime.errorMessage,
     },
+    renderPoseProbe: state.renderPoseProbe,
     current478: runtime.current478?.map(roundLandmarkForState) ?? null,
     renderedIdeal478: runtime.renderedIdeal478?.map(roundLandmarkForState) ?? null,
     alignedRenderedIdeal478: runtime.alignedRenderedIdeal478?.map(roundLandmarkForState) ?? null,

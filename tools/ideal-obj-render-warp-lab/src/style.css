@@ -906,6 +906,37 @@ input[type="range"] {
   white-space: pre-wrap;
 }
 
+.table-scroll {
+  overflow-x: auto;
+}
+
+.debug-table {
+  border-collapse: collapse;
+  font-size: 12px;
+  min-width: 920px;
+  width: 100%;
+}
+
+.debug-table th,
+.debug-table td {
+  border-bottom: 1px solid #edf1f4;
+  padding: 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.debug-table th {
+  color: #66727e;
+  font-weight: 700;
+}
+
+.debug-table td {
+  font-family:
+    "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
 .placeholder-text {
   color: #4f5c69;
   line-height: 1.6;
