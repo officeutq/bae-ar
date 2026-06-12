@@ -239,7 +239,7 @@ OBJ を canvas にレンダーした静止画に対して `detect()` / IMAGE mod
 - Runtime input: `P_camera`、範囲制限後の `P_camera`、clampApplied、quality gate
 - Profile output: `p`、selectedLeaf、used expert、usedFallback、evaluator warnings
 - Render confirm: detectCanvasWidth / detectCanvasHeight、previewCanvasWidth / previewCanvasHeight、renderResolutionSource、detectCanvasMatchesProfile、profileCanvasWidth / profileCanvasHeight、適用 renderAppearance、notAppliedRenderAppearanceFields、`P_confirm`、`P_confirm - P_camera` の pose diff、renderedIdeal478 status、profileEvaluateMs、renderMs、detectMs、totalMs
-- Preview: 現姿勢理想478プレビューと簡易姿勢表示
+- Download: `pose_mapping_runtime_debug_v1` JSON download
 
 `Pose Mapping（姿勢対応）` タブには専用の
 `Download Pose Mapping Debug（姿勢対応デバッグをダウンロード）` を置きます。この export は既存の
@@ -254,8 +254,16 @@ landmark として保存し、preview canvas に変換済みの座標だけを�
 
 Live タブの旧 `現姿勢OBJ` 欄は使わず、`現姿勢理想478プレビュー` に置き換えます。このプレビューは
 `poseMappingProfile` で得た `p` により理想OBJをレンダーし、そのレンダー画像から得た
-`renderedIdeal478` を同じレンダー画像上に overlay 表示します。ライブ現在顔への重ね表示と
-warp（変形加工）は次段階の TODO とし、この段階では実装しません。preview PNG download は未実装 TODO です。
+`renderedIdeal478` を同じレンダー画像上に overlay 表示します。preview 表示は Live タブに一本化し、
+右ペイン `Pose Mapping（姿勢対応）` タブには画像 preview を置きません。Pose Mapping タブには
+詳細 debug と download を残し、preview の代わりに Live タブへ移動済みである短い案内だけを表示します。
+
+Live タブの preview は detect 用 offscreen canvas の画像を aspect-fit で表示します。source image の縦横比を
+維持して preview 領域に収め、余白が出る場合は中央寄せにします。`renderedIdeal478` overlay は
+detect canvas 基準の normalized landmark を preview の displayed content rect へ変換して描画します。
+preview canvas 全体へ単純に `x * previewWidth` / `y * previewHeight` で描画して縦横比を崩す実装にはしません。
+ライブ現在顔への重ね表示と warp（変形加工）は次段階の TODO とし、この段階では実装しません。
+preview PNG download は未実装 TODO です。
 
 初期 profile:
 

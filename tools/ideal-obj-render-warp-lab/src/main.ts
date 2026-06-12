@@ -2065,6 +2065,7 @@ function renderLivePreview() {
           <h3>現姿勢理想478プレビュー</h3>
           <div class="preview-stage obj-preview-stage live-obj-preview-stage" data-live-obj-stage data-preview-status="not_ready">
             <canvas class="obj-preview-canvas" data-canvas="live-obj-pose-preview" aria-label="現姿勢理想478プレビュー"></canvas>
+            <img class="pose-mapping-live-image" data-image="pose-mapping-live-preview" alt="現姿勢理想478プレビュー" />
             <div class="preview-placeholder obj-preview-placeholder">
               <h3>現姿勢理想478プレビュー</h3>
               <p data-live-obj-preview-message>OBJ、poseMappingProfile、MP4を読み込むと、現在顔の姿勢に対応した理想OBJレンダーと478点 overlay を表示します。</p>
@@ -2467,7 +2468,7 @@ function bindEvents() {
   window.addEventListener("resize", () => {
     renderObjPreviewCanvas()
     renderRenderedIdealCanvas()
-    drawPoseMappingPreviewFromSnapshot()
+    renderPoseMappingLivePreviewImage()
     drawLiveOverlay()
     drawRenderedIdealOverlay()
   })
@@ -3856,10 +3857,9 @@ function drawPoseMappingPreviewFromDetectCanvas(
   if (!context) {
     return { width: liveObjPosePreviewCanvas.width, height: liveObjPosePreviewCanvas.height }
   }
-  const rect = liveObjPosePreviewCanvas.getBoundingClientRect()
-  const dpr = window.devicePixelRatio || 1
-  const targetWidth = Math.max(1, Math.round((rect.width > 0 ? rect.width : 640) * dpr))
-  const targetHeight = Math.max(1, Math.round((rect.height > 0 ? rect.height : 640) * dpr))
+  const previewSize = getPoseMappingLivePreviewPixelSize()
+  const targetWidth = previewSize.width
+  const targetHeight = previewSize.height
   if (liveObjPosePreviewCanvas.width !== targetWidth || liveObjPosePreviewCanvas.height !== targetHeight) {
     liveObjPosePreviewCanvas.width = targetWidth
     liveObjPosePreviewCanvas.height = targetHeight
@@ -3917,22 +3917,34 @@ function clearPoseMappingPreviewCanvas() {
   context.clearRect(0, 0, liveObjPosePreviewCanvas.width, liveObjPosePreviewCanvas.height)
 }
 
-function drawPoseMappingPreviewFromSnapshot() {
+function renderPoseMappingLivePreviewImage() {
+  const image = getElement<HTMLImageElement>('[data-image="pose-mapping-live-preview"]')
   const dataUrl = state.poseMappingRuntime.previewDataUrl
   if (!dataUrl) {
+    image.removeAttribute("src")
     clearPoseMappingPreviewCanvas()
     return
   }
-  const image = new Image()
-  image.onload = () => {
-    const context = liveObjPosePreviewCanvas.getContext("2d")
-    if (!context) {
-      return
-    }
-    context.clearRect(0, 0, liveObjPosePreviewCanvas.width, liveObjPosePreviewCanvas.height)
-    context.drawImage(image, 0, 0, liveObjPosePreviewCanvas.width, liveObjPosePreviewCanvas.height)
+  if (image.src !== dataUrl) {
+    image.src = dataUrl
   }
-  image.src = dataUrl
+  const previewSize = getPoseMappingLivePreviewPixelSize()
+  state.poseMappingRuntime.previewCanvasWidth = previewSize.width
+  state.poseMappingRuntime.previewCanvasHeight = previewSize.height
+  if (state.poseMappingRuntime.renderSettings) {
+    state.poseMappingRuntime.renderSettings.previewCanvasWidth = previewSize.width
+    state.poseMappingRuntime.renderSettings.previewCanvasHeight = previewSize.height
+  }
+}
+
+function getPoseMappingLivePreviewPixelSize() {
+  const stage = getElement<HTMLElement>("[data-live-obj-stage]")
+  const rect = stage.getBoundingClientRect()
+  const dpr = window.devicePixelRatio || 1
+  return {
+    width: Math.max(1, Math.round((rect.width > 0 ? rect.width : liveObjPosePreviewCanvas.width || 640) * dpr)),
+    height: Math.max(1, Math.round((rect.height > 0 ? rect.height : liveObjPosePreviewCanvas.height || 640) * dpr)),
+  }
 }
 
 function buildCurrentFrameAnalysis(
@@ -6961,6 +6973,7 @@ function renderPreviewPanels(options: { skipObjRender?: boolean } = {}) {
   const poseMappingStatus = getPoseMappingPreviewStatus()
   liveObjStage.dataset.previewStatus = poseMappingStatus
   getElement<HTMLElement>("[data-live-obj-preview-message]").textContent = getPoseMappingPreviewMessage()
+  renderPoseMappingLivePreviewImage()
   if (poseMappingStatus !== "ready" && !options.skipObjRender) {
     clearPoseMappingPreviewCanvas()
   }
@@ -7159,7 +7172,7 @@ function renderPoseMappingDebugTab() {
 
     <section class="debug-section">
       <h3>Preview（プレビュー）</h3>
-      ${runtime.previewDataUrl ? `<img class="pose-mapping-preview-image" src="${runtime.previewDataUrl}" alt="現姿勢理想478プレビュー" />` : `<p class="placeholder-text">現姿勢理想478プレビューはまだありません。</p>`}
+      <p class="placeholder-text">現姿勢理想478プレビューは Live（ライブ）タブへ移動しました。</p>
       <p class="control-note">${escapeHtml(formatPoseMappingPreviewNote())}</p>
     </section>
 
