@@ -665,6 +665,10 @@ type WebglObjRendererMetadata = {
   rendererSignature: string
   contextType: "webgl" | "experimental-webgl"
   projectionMode: "orthographic"
+  renderResolution: {
+    width: number
+    height: number
+  }
   rendererInfo: string | null
   vendorInfo: string | null
 }
@@ -674,6 +678,10 @@ type ObjPoseMappingSampleRendererMetadata = {
   rendererSignature: string
   rendererVersion: "webgl_obj_renderer_v1"
   projectionMode: "orthographic"
+  renderResolution: {
+    width: number
+    height: number
+  }
 }
 
 type ObjPoseMappingDatasetV2 = {
@@ -5937,6 +5945,7 @@ function buildWebglObjRendererMetadata(
     rendererSignature: createWebglObjRendererSignature(appearance),
     contextType: renderer.contextType,
     projectionMode: WEBGL_OBJ_RENDERER_PROJECTION_MODE,
+    renderResolution: { ...appearance.renderResolution },
     rendererInfo: renderer.rendererInfo,
     vendorInfo: renderer.vendorInfo,
   }
@@ -5968,6 +5977,7 @@ function createObjPoseMappingSampleRendererMetadata(renderer: WebglObjRendererMe
     rendererSignature: renderer.rendererSignature,
     rendererVersion: renderer.version,
     projectionMode: renderer.projectionMode,
+    renderResolution: { ...renderer.renderResolution },
   }
 }
 
@@ -5984,6 +5994,8 @@ function validatePoseMappingRendererMatch(
     profile.datasetMetadata.renderAppearanceApplied?.renderResolution,
   )
   const requiredProjectionMode = getOptionalString(requiredRenderer?.projectionMode)
+  const requiredKind = getOptionalString(requiredRenderer?.kind)
+  const requiredVersion = getOptionalString(requiredRenderer?.version)
   const requiredSignature = getOptionalString(requiredRenderer?.rendererSignature)
 
   if (requiredRenderBackend !== "webgl") {
@@ -5991,6 +6003,12 @@ function validatePoseMappingRendererMatch(
   }
   if (!requiredRenderer) {
     errors.push("profile requiredRenderer is missing")
+  }
+  if (requiredKind !== currentRenderer.kind) {
+    errors.push(`profile requires renderer.kind = ${requiredKind ?? "missing"}, current renderer.kind = ${currentRenderer.kind}`)
+  }
+  if (requiredVersion !== currentRenderer.version) {
+    errors.push(`profile requires renderer.version = ${requiredVersion ?? "missing"}, current renderer.version = ${currentRenderer.version}`)
   }
   if (requiredSignature !== currentRenderer.rendererSignature) {
     errors.push(`profile requires WebGL rendererSignature = ${requiredSignature ?? "missing"}, current rendererSignature = ${currentRenderer.rendererSignature}`)
@@ -9576,6 +9594,7 @@ function renderPoseMappingDebugTab() {
     runtime.status === "completed" &&
     runtime.p !== null
   const canDownloadWebglBenchmark = webglBenchmark.result !== null
+  const requiredRendererResolution = getRenderResolutionFromRecord(profile?.requiredRenderer?.renderResolution)
 
   container.innerHTML = `
     <section class="debug-section">
@@ -9588,7 +9607,10 @@ function renderPoseMappingDebugTab() {
         <div><dt>modelName</dt><dd>${escapeHtml(profile?.modelName ?? "-")}</dd></div>
         <div><dt>datasetKind</dt><dd>${escapeHtml(profile?.datasetKind ?? "-")}</dd></div>
         <div><dt>requiredRenderBackend</dt><dd>${escapeHtml(profile?.requiredRenderBackend ?? "-")}</dd></div>
+        <div><dt>requiredRendererKind</dt><dd>${escapeHtml(getOptionalString(profile?.requiredRenderer?.kind) ?? "-")}</dd></div>
+        <div><dt>requiredRendererVersion</dt><dd>${escapeHtml(getOptionalString(profile?.requiredRenderer?.version) ?? "-")}</dd></div>
         <div><dt>requiredRendererSignature</dt><dd>${escapeHtml(getOptionalString(profile?.requiredRenderer?.rendererSignature) ?? "-")}</dd></div>
+        <div><dt>requiredRendererResolution</dt><dd>${escapeHtml(formatRendererResolution(requiredRendererResolution))}</dd></div>
         <div><dt>datasetSchemaVersion</dt><dd>${escapeHtml(profile?.datasetSchemaVersion ?? "-")}</dd></div>
         <div><dt>inputFeatures</dt><dd>${escapeHtml(profile?.inputFeatures.join(", ") ?? "-")}</dd></div>
         <div><dt>target</dt><dd>${escapeHtml(profile?.target.join(", ") ?? "-")}</dd></div>
@@ -9625,6 +9647,8 @@ function renderPoseMappingDebugTab() {
       <h3>Render confirm（レンダー確認）</h3>
       <dl class="summary-list">
         <div><dt>Render backend</dt><dd>${escapeHtml(runtime.renderBackend)}</dd></div>
+        <div><dt>Renderer kind</dt><dd>${escapeHtml(runtime.renderer?.kind ?? "-")}</dd></div>
+        <div><dt>Renderer version</dt><dd>${escapeHtml(runtime.renderer?.version ?? "-")}</dd></div>
         <div><dt>Renderer signature</dt><dd>${escapeHtml(runtime.renderer?.rendererSignature ?? "-")}</dd></div>
         <div><dt>Projection mode</dt><dd>${escapeHtml(runtime.renderer?.projectionMode ?? "-")}</dd></div>
         <div><dt>Render resolution</dt><dd>${formatNullableCount(runtime.renderSettings?.detectCanvasWidth ?? runtime.detectCanvasWidth)} x ${formatNullableCount(runtime.renderSettings?.detectCanvasHeight ?? runtime.detectCanvasHeight)}</dd></div>

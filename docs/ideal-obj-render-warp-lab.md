@@ -580,13 +580,14 @@ preview 表示時だけ `displayedContentRect` に合わせて overlay 座標へ
 
 p,P dataset 生成も WebGL renderer に固定します。出力 dataset は `obj_pose_mapping_dataset_v3` とし、
 最低限 `renderBackend: "webgl"`、`renderer.version`、`renderer.rendererSignature`、
-`renderer.projectionMode`、`renderAppearance.applied.renderResolution` を保存します。Canvas2D renderer は
+`renderer.projectionMode`、`renderer.renderResolution`、`renderAppearance.applied.renderResolution` を保存します。Canvas2D renderer は
 legacy baseline / debug 比較としてのみ残し、新しい p,P dataset 生成には使いません。
 
 Colab / Python 解析は WebGL dataset だけから `pose_mapping_profile_candidate_v2` を出力します。
 candidate には `requiredRenderBackend: "webgl"`、`requiredRenderer.rendererSignature`、
-`requiredRenderer.projectionMode`、`requiredRenderer.renderResolution`、`datasetSchemaVersion` を含めます。
-runtime は profile 読み込み後、現在の WebGL renderer 条件と一致しない場合に warning ではなく error として停止します。
+`requiredRenderer.kind`、`requiredRenderer.version`、`requiredRenderer.projectionMode`、
+`requiredRenderer.renderResolution`、`datasetSchemaVersion` を含めます。runtime は profile 読み込み後、
+現在の WebGL renderer 条件と一致しない場合に warning ではなく error として停止します。
 
 Canvas2D render -> detect では、render 直後の canvas 同期、描画確定、readback コストが `detectMs` 側に乗る可能性があります。OBJ render 頻度を落とす案は `renderedIdeal478` の追従品質が下がりやすいため、通常 runtime と p,P dataset 生成の OBJ render 本線を WebGL OBJ Renderer に切り替えます。
 
