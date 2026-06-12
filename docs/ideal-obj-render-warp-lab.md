@@ -185,6 +185,52 @@ continuityJumpMax、軸別破綻、端姿勢、TypeScript 移植性を見て選�
 `obj_pose_mapping_posewise_evaluation.csv`、`obj_pose_mapping_excluded_samples.csv`、
 `obj_pose_mapping_filtered_samples.csv`、`pose_mapping_profile_candidate.json` です。
 
+## poseMappingProfile runtime 検証
+
+ラボでは Colab / Python 側で作成した `pose_mapping_profile_candidate.json` を
+`poseMappingProfile（姿勢対応プロファイル）` として JSON 読み込みできます。
+現在対応する `schemaVersion` は `pose_mapping_profile_candidate_v1`、`modelType` は
+`decision_tree_gate_polynomial_degree2_ridge` のみです。未対応 `modelType` は UI 上の error として
+表示し、アプリ全体は落としません。
+
+検証フローは以下です。
+
+```text
+P_camera（現在顔の姿勢）
+  -> poseMappingProfile.evaluate()
+  -> p（OBJ に与える描画姿勢）
+  -> OBJ render
+  -> MediaPipe detect() / IMAGE mode（静止画モード）
+  -> P_confirm / renderedIdeal478
+```
+
+現在顔の解析は `detectForVideo()` / VIDEO mode（動画モード）を使います。レンダー理想顔の再検出は、
+OBJ を canvas にレンダーした静止画に対して `detect()` / IMAGE mode（静止画モード）を使います。
+この使い分けは、現在顔入力とレンダー画像入力の実行条件を混同しないための固定ルールです。
+
+左ペインは操作中心です。置くものは `OBJ読込`、`poseMappingProfile読込（関数読込）`、`MP4読込`、
+必要な実行 / 停止 / cancel 操作、既存の `モード比較` 操作です。`poseMappingProfile` の詳細、
+`P_camera / p / P_confirm`、`pose diff`、`renderedIdeal478` 詳細、専用 debug download は左ペインに置きません。
+
+右ペイン Debug には `Pose Mapping（姿勢対応）` タブを置き、以下を集約します。
+
+- Profile info: loaded、filename、schemaVersion、modelType、modelName、datasetKind、inputFeatures、target、errorSummary、outlierFilterSummary、poseRangeAfter
+- Runtime input: `P_camera`、範囲制限後の `P_camera`、clampApplied、quality gate
+- Profile output: `p`、selectedLeaf、used expert、usedFallback、evaluator warnings
+- Render confirm: `P_confirm`、`P_confirm - P_camera` の pose diff、renderedIdeal478 status、profileEvaluateMs、renderMs、detectMs、totalMs
+- Preview: 現姿勢理想478プレビューと簡易姿勢表示
+
+`Pose Mapping（姿勢対応）` タブには専用の
+`Download Pose Mapping Debug（姿勢対応デバッグをダウンロード）` を置きます。この export は既存の
+`モード比較` タブの JSON / CSV download とは別の `pose_mapping_runtime_debug_v1` JSON です。
+最新フレームの `current478` と `renderedIdeal478` は必要最小限の確認用として含めてよいですが、
+毎フレーム履歴として大量に保存しません。
+
+Live タブの旧 `現姿勢OBJ` 欄は使わず、`現姿勢理想478プレビュー` に置き換えます。このプレビューは
+`poseMappingProfile` で得た `p` により理想OBJをレンダーし、そのレンダー画像から得た
+`renderedIdeal478` を同じレンダー画像上に overlay 表示します。ライブ現在顔への重ね表示と
+warp（変形加工）は次段階の TODO とし、この段階では実装しません。preview PNG download は未実装 TODO です。
+
 初期 profile:
 
 - `current`: 既存レンダー条件の baseline

@@ -177,6 +177,20 @@ h3 {
   gap: 14px;
 }
 
+.pose-mapping-debug {
+  display: grid;
+  gap: 14px;
+}
+
+.pose-mapping-preview-image {
+  background: #f6f8fa;
+  border: 1px solid #d8e0e7;
+  border-radius: 8px;
+  display: block;
+  max-width: 100%;
+  width: 100%;
+}
+
 .debug-section {
   display: grid;
   gap: 8px;

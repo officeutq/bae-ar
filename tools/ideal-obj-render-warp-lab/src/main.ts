@@ -11,6 +11,7 @@ type DebugTab =
   | "current"
   | "obj"
   | "renderedIdeal"
+  | "poseMapping"
   | "objPoseCalibration"
   | "realtime"
   | "modeComparison"
@@ -780,6 +781,105 @@ type ObjPoseMappingState = {
   statusMessage: string | null
 }
 
+type PoseMappingScalarRange = {
+  min: number | null
+  max: number | null
+}
+
+type PoseMappingProfileModel = {
+  degree: number
+  featureNames: string[]
+  scaler: {
+    mean: number[]
+    scale: number[]
+  }
+  ridge: {
+    alpha: number | null
+    coef: number[][]
+    intercept: number[]
+  }
+}
+
+type PoseMappingProfile = {
+  schemaVersion: "pose_mapping_profile_candidate_v1"
+  modelType: "decision_tree_gate_polynomial_degree2_ridge"
+  modelName: string | null
+  datasetKind: string | null
+  inputFeatures: string[]
+  target: string[]
+  tree: {
+    childrenLeft: number[]
+    childrenRight: number[]
+    feature: number[]
+    threshold: number[]
+  }
+  experts: Record<string, PoseMappingProfileModel>
+  fallbackModel: PoseMappingProfileModel
+  errorSummary: Record<string, unknown>
+  outlierFilterSummary: Record<string, unknown>
+  poseRangeAfter: Record<string, PoseMappingScalarRange> | null
+  raw: Record<string, unknown>
+}
+
+type PoseMappingProfileState = {
+  loaded: boolean
+  fileName: string | null
+  fileSize: number | null
+  profile: PoseMappingProfile | null
+  errorMessage: string | null
+  warnings: string[]
+}
+
+type PoseMappingEvaluateResult = {
+  p: ObjPoseMappingPose
+  P_camera: ObjPoseMappingPose
+  P_cameraClamped: ObjPoseMappingPose
+  clampApplied: boolean
+  selectedLeaf: number | null
+  usedExpert: string | null
+  usedFallback: boolean
+  warnings: string[]
+}
+
+type PoseMappingQualityGate = {
+  usable: boolean
+  reasons: string[]
+}
+
+type PoseMappingPoseDiff = {
+  yaw: number | null
+  pitch: number | null
+  roll: number | null
+  magnitude: number | null
+}
+
+type PoseMappingRuntimeState = {
+  status: "idle" | "running" | "completed" | "error"
+  lastUpdatedAt: string | null
+  P_camera: ObjPoseMappingPose | null
+  P_cameraClamped: ObjPoseMappingPose | null
+  qualityGate: PoseMappingQualityGate
+  p: ObjPoseMappingPose | null
+  selectedLeaf: number | null
+  usedExpert: string | null
+  usedFallback: boolean
+  warnings: string[]
+  P_confirm: ReferencePose
+  poseDiff: PoseMappingPoseDiff
+  renderedIdealDetected: boolean
+  renderedIdealLandmarkCount: number | null
+  renderedIdeal478: ReferenceLandmark[] | null
+  current478: ReferenceLandmark[] | null
+  canvasWidth: number
+  canvasHeight: number
+  profileEvaluateMs: number | null
+  renderMs: number | null
+  detectMs: number | null
+  totalMs: number | null
+  previewDataUrl: string | null
+  errorMessage: string | null
+}
+
 type ObjPoseCalibrationCandidatePoint = {
   rotationCenter: ObjVertex
   renderPoseOffset: {
@@ -1200,6 +1300,8 @@ type LabState = {
   renderedIdeal: RenderedIdealState
   objPoseCalibration: ObjPoseCalibrationState
   objPoseMapping: ObjPoseMappingState
+  poseMappingProfile: PoseMappingProfileState
+  poseMappingRuntime: PoseMappingRuntimeState
   poseSearchFrames: PoseCenterSearchFrame[]
   selectedPoseSearchFrameId: string | null
   poseCenterSearch: PoseCenterSearchState
@@ -1555,6 +1657,7 @@ const debugTabs: TabOption<DebugTab>[] = [
   { label: "現在顔", value: "current" },
   { label: "OBJ", value: "obj" },
   { label: "レンダー理想", value: "renderedIdeal" },
+  { label: "Pose Mapping（姿勢対応）", value: "poseMapping" },
   { label: "p,Pデータ", value: "objPoseCalibration" },
   { label: "リアルタイム", value: "realtime" },
   { label: "モード比較", value: "modeComparison" },
@@ -1606,6 +1709,8 @@ const state: LabState = {
   renderedIdeal: createDefaultRenderedIdealState(),
   objPoseCalibration: createDefaultObjPoseCalibrationState(),
   objPoseMapping: createDefaultObjPoseMappingState(),
+  poseMappingProfile: createDefaultPoseMappingProfileState(),
+  poseMappingRuntime: createDefaultPoseMappingRuntimeState(),
   poseSearchFrames: [],
   selectedPoseSearchFrameId: null,
   poseCenterSearch: createDefaultPoseCenterSearchState(),
@@ -1639,6 +1744,7 @@ app.innerHTML = `
       </div>
       <div class="control-group">
         <button class="primary-button" type="button" data-action="load-obj">OBJ読込</button>
+        <button class="secondary-button" type="button" data-action="load-pose-mapping-profile">poseMappingProfile読込（関数読込）</button>
         <button class="secondary-button" type="button" data-action="load-live-video">MP4読込</button>
         <div class="mode-comparison-panel" data-mode-comparison-panel>
           <div class="mode-comparison-header">
@@ -1660,9 +1766,9 @@ app.innerHTML = `
         </label>
         <button class="primary-button" type="button" data-action="obj-pose-calibration-start">p,Pデータ生成</button>
         <button class="secondary-button" type="button" data-action="export-obj-pose-mapping-dataset">p,P Dataset JSONをダウンロード</button>
-        <button class="secondary-button" type="button" data-action="export-debug">デバッグ出力</button>
       </div>
       <input class="visually-hidden" type="file" accept=".obj,text/plain,model/obj" data-input="obj-file" />
+      <input class="visually-hidden" type="file" accept=".json,application/json" data-input="pose-mapping-profile-file" />
       <input class="visually-hidden" type="file" accept="video/*" data-input="live-video" />
       <div class="status-note">
         OBJ Pose Dataset（OBJ姿勢データ）を生成します。OBJに与えた renderPose を p、MediaPipe の returnedPose を P としてJSONに保存します。
@@ -1708,6 +1814,7 @@ app.innerHTML = `
 `
 
 const objFileInput = getElement<HTMLInputElement>("[data-input='obj-file']")
+const poseMappingProfileFileInput = getElement<HTMLInputElement>("[data-input='pose-mapping-profile-file']")
 const liveFileInput = getElement<HTMLInputElement>("[data-input='live-video']")
 const liveVideoElement = getElement<HTMLVideoElement>("[data-video='live']")
 const liveOverlayCanvas = getElement<HTMLCanvasElement>("[data-overlay='live']")
@@ -1728,6 +1835,7 @@ let modeComparisonLandmarkerPromise: Promise<{
 let liveAnalysisInProgress = false
 let liveAnalysisRequestId = 0
 let renderedIdealDetectInProgress = false
+let poseMappingRuntimeInProgress = false
 let renderedIdealTimestampMs = 0
 let renderedIdealRenderSeq = 0
 let renderedIdealDetectionTimingSamples: number[] = []
@@ -1920,67 +2028,17 @@ function renderLivePreview() {
           </div>
         </section>
 
-        <section class="live-column-panel" aria-label="現在姿勢OBJ">
-          <h3>現在姿勢OBJ</h3>
+        <section class="live-column-panel" aria-label="現姿勢理想478プレビュー">
+          <h3>現姿勢理想478プレビュー</h3>
           <div class="preview-stage obj-preview-stage live-obj-preview-stage" data-live-obj-stage data-preview-status="not_ready">
-            <canvas class="obj-preview-canvas" data-canvas="live-obj-pose-preview" aria-label="現在姿勢 OBJ preview"></canvas>
+            <canvas class="obj-preview-canvas" data-canvas="live-obj-pose-preview" aria-label="現姿勢理想478プレビュー"></canvas>
             <div class="preview-placeholder obj-preview-placeholder">
-              <h3>現在姿勢OBJ</h3>
-              <p data-live-obj-preview-message>OBJを読み込むと、現在姿勢を反映したOBJ previewを表示します。</p>
+              <h3>現姿勢理想478プレビュー</h3>
+              <p data-live-obj-preview-message>OBJ、poseMappingProfile、MP4を読み込むと、現在顔の姿勢に対応した理想OBJレンダーと478点 overlay を表示します。</p>
             </div>
           </div>
-          <div class="obj-preview-controls live-obj-controls" aria-label="現在姿勢 OBJ preview 操作">
-            <p class="control-note">現在姿勢OBJは、姿勢同期確認用のワイヤー表示です。</p>
-            <div class="button-row">
-              <button class="small-button" type="button" data-action="live-obj-current-pose">現在姿勢</button>
-              <button class="small-button" type="button" data-action="live-obj-reset-view">表示リセット</button>
-            </div>
-          </div>
-          <div class="pose-sync-controls" aria-label="現在姿勢 OBJ 同期設定">
-            <label class="overlay-toggle">
-              <input type="checkbox" data-action="obj-pose-sync-enabled" />
-              <span>姿勢同期</span>
-            </label>
-            <label class="overlay-toggle">
-              <input type="checkbox" data-action="obj-pose-yaw-invert" />
-              <span>yaw反転</span>
-            </label>
-            <label class="overlay-toggle">
-              <input type="checkbox" data-action="obj-pose-pitch-invert" />
-              <span>pitch反転</span>
-            </label>
-            <label class="overlay-toggle">
-              <input type="checkbox" data-action="obj-pose-roll-invert" />
-              <span>roll反転</span>
-            </label>
-            <label class="number-field">
-              <span>yaw補正角度</span>
-              <input type="number" step="0.1" data-control="obj-pose-yaw-offset" />
-            </label>
-            <label class="number-field">
-              <span>pitch補正角度</span>
-              <input type="number" step="0.1" data-control="obj-pose-pitch-offset" />
-            </label>
-            <label class="number-field">
-              <span>roll補正角度</span>
-              <input type="number" step="0.1" data-control="obj-pose-roll-offset" />
-            </label>
-            <label class="number-field">
-              <span>回転中心X</span>
-              <input type="number" min="-0.5" max="0.5" step="0.01" data-control="obj-pose-rotation-center-x" />
-            </label>
-            <label class="number-field">
-              <span>回転中心Y</span>
-              <input type="number" min="-0.5" max="0.5" step="0.01" data-control="obj-pose-rotation-center-y" />
-            </label>
-            <label class="number-field">
-              <span>回転中心Z</span>
-              <input type="number" min="-0.5" max="0.5" step="0.01" data-control="obj-pose-rotation-center-z" />
-            </label>
-            <button class="small-button pose-sync-button" type="button" data-action="obj-pose-rotation-center-reset">回転中心リセット</button>
-          </div>
-          <div class="review-card" data-live-obj-pose-summary>
-            <p>OBJを読み込むと、現在姿勢を反映したOBJ previewを表示します。</p>
+          <div class="review-card" data-pose-mapping-live-summary>
+            <p>poseMappingProfile を読み込むと、P_camera -> p -> render -> detect -> P_confirm の確認結果を表示します。</p>
           </div>
         </section>
       </div>
@@ -2033,6 +2091,10 @@ function bindEvents() {
     objFileInput.click()
   })
 
+  getElement<HTMLButtonElement>('[data-action="load-pose-mapping-profile"]').addEventListener("click", () => {
+    poseMappingProfileFileInput.click()
+  })
+
   getElement<HTMLButtonElement>('[data-action="load-live-video"]').addEventListener("click", () => {
     if (isPoseCenterSearchRunning() || state.modeComparison.status === "running") {
       return
@@ -2042,10 +2104,6 @@ function bindEvents() {
 
   getElement<HTMLButtonElement>('[data-action="obj-pose-calibration-start"]').addEventListener("click", () => {
     void startObjPoseCalibration()
-  })
-
-  getElement<HTMLButtonElement>('[data-action="export-debug"]').addEventListener("click", () => {
-    void exportDebug()
   })
 
   getElement<HTMLButtonElement>('[data-action="export-obj-pose-mapping-dataset"]').addEventListener("click", () => {
@@ -2064,6 +2122,13 @@ function bindEvents() {
     const file = getSelectedFile(event)
     if (file && !isObjPoseCalibrationRunning()) {
       void loadObjFile(file)
+    }
+  })
+
+  poseMappingProfileFileInput.addEventListener("change", (event) => {
+    const file = getSelectedFile(event)
+    if (file) {
+      void loadPoseMappingProfileFile(file)
     }
   })
 
@@ -2234,43 +2299,6 @@ function bindEvents() {
     }
   })
 
-  getElement<HTMLInputElement>('[data-action="obj-pose-sync-enabled"]').addEventListener("change", (event) => {
-    state.objPoseSync.enabled = event.currentTarget.checked
-    updateObjPoseSyncFromCurrentAnalysis()
-    renderAll()
-  })
-
-  bindObjPoseSignToggle("obj-pose-yaw-invert", "yawSign")
-  bindObjPoseSignToggle("obj-pose-pitch-invert", "pitchSign")
-  bindObjPoseSignToggle("obj-pose-roll-invert", "rollSign")
-  bindObjPoseOffsetInput("obj-pose-yaw-offset", "yawOffsetDeg")
-  bindObjPoseOffsetInput("obj-pose-pitch-offset", "pitchOffsetDeg")
-  bindObjPoseOffsetInput("obj-pose-roll-offset", "rollOffsetDeg")
-  bindObjPoseRotationCenterInput("obj-pose-rotation-center-x", "rotationCenterX")
-  bindObjPoseRotationCenterInput("obj-pose-rotation-center-y", "rotationCenterY")
-  bindObjPoseRotationCenterInput("obj-pose-rotation-center-z", "rotationCenterZ")
-
-  getElement<HTMLButtonElement>('[data-action="live-obj-current-pose"]').addEventListener("click", () => {
-    updateObjPoseSyncFromCurrentAnalysis()
-    renderAll()
-  })
-
-  getElement<HTMLButtonElement>('[data-action="live-obj-reset-view"]').addEventListener("click", () => {
-    state.objPoseSync = createDefaultObjPoseSyncState()
-    updateObjPoseSyncFromCurrentAnalysis()
-    renderAll()
-  })
-
-  getElement<HTMLButtonElement>('[data-action="obj-pose-rotation-center-reset"]').addEventListener("click", () => {
-    state.objPoseSync = {
-      ...state.objPoseSync,
-      rotationCenterX: 0,
-      rotationCenterY: 0,
-      rotationCenterZ: 0,
-    }
-    renderAll()
-  })
-
   getElement<HTMLButtonElement>('[data-action="realtime-start"]').addEventListener("click", () => {
     startRealtimeValidation()
   })
@@ -2406,7 +2434,7 @@ function bindEvents() {
   window.addEventListener("resize", () => {
     renderObjPreviewCanvas()
     renderRenderedIdealCanvas()
-    renderObjPoseSyncCanvas()
+    drawPoseMappingPreviewFromSnapshot()
     drawLiveOverlay()
     drawRenderedIdealOverlay()
   })
@@ -2444,6 +2472,9 @@ function bindEvents() {
     }
     if (isModeComparisonPreviewDownloadAction(action)) {
       exportModeComparisonPreview(action.replace("mode-comparison-download-preview-", "") as ModeComparisonPreviewKind)
+    }
+    if (action === "pose-mapping-download-debug") {
+      exportPoseMappingDebug()
     }
   })
 
@@ -2575,6 +2606,355 @@ async function loadObjFile(file: File) {
   }
 
   renderAll()
+}
+
+async function loadPoseMappingProfileFile(file: File) {
+  state.poseMappingProfile = {
+    ...createDefaultPoseMappingProfileState(),
+    fileName: file.name,
+    fileSize: file.size,
+  }
+  state.activeDebugTab = "poseMapping"
+  renderAll()
+
+  try {
+    const text = await file.text()
+    const json = JSON.parse(text) as unknown
+    const profile = parsePoseMappingProfile(json)
+    state.poseMappingProfile = {
+      loaded: true,
+      fileName: file.name,
+      fileSize: file.size,
+      profile,
+      errorMessage: null,
+      warnings: [],
+    }
+    addLog(`poseMappingProfileを読み込みました: ${file.name}`)
+    await updatePoseMappingRuntimeFromCurrentAnalysis()
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    state.poseMappingProfile = {
+      loaded: false,
+      fileName: file.name,
+      fileSize: file.size,
+      profile: null,
+      errorMessage: message,
+      warnings: [],
+    }
+    state.poseMappingRuntime = {
+      ...createDefaultPoseMappingRuntimeState(),
+      status: "error",
+      errorMessage: message,
+      lastUpdatedAt: formatUpdatedAt(),
+    }
+    addLog(`poseMappingProfileの読み込みに失敗しました: ${message}`)
+    renderAll()
+  }
+}
+
+function parsePoseMappingProfile(json: unknown): PoseMappingProfile {
+  const source = requireRecord(json, "poseMappingProfile")
+  const schemaVersion = requireString(source, "schemaVersion")
+  const modelType = requireString(source, "modelType")
+  const inputFeatures = requireStringArray(source, "inputFeatures")
+  const target = requireStringArray(source, "target")
+  const tree = requireRecord(source.tree, "tree")
+  const expertsSource = requireRecord(source.experts, "experts")
+
+  if (schemaVersion !== "pose_mapping_profile_candidate_v1") {
+    throw new Error(`unsupported schemaVersion: ${schemaVersion}`)
+  }
+  if (modelType !== "decision_tree_gate_polynomial_degree2_ridge") {
+    throw new Error(`unsupported modelType: ${modelType}`)
+  }
+  for (const feature of ["P_yaw", "P_pitch", "P_roll"]) {
+    if (!inputFeatures.includes(feature)) {
+      throw new Error(`inputFeatures must include ${feature}`)
+    }
+  }
+  for (const output of ["p_yaw", "p_pitch", "p_roll"]) {
+    if (!target.includes(output)) {
+      throw new Error(`target must include ${output}`)
+    }
+  }
+  if (!isRecord(source.fallbackModel)) {
+    throw new Error("fallbackModel is required")
+  }
+  if (!isRecord(source.errorSummary)) {
+    throw new Error("errorSummary is required")
+  }
+  if (!isRecord(source.outlierFilterSummary)) {
+    throw new Error("outlierFilterSummary is required")
+  }
+
+  const experts: Record<string, PoseMappingProfileModel> = {}
+  Object.entries(expertsSource).forEach(([leaf, model]) => {
+    experts[leaf] = parsePoseMappingProfileModel(model, `experts.${leaf}`)
+  })
+
+  return {
+    schemaVersion,
+    modelType,
+    modelName: getOptionalString(source.modelName),
+    datasetKind: getOptionalString(source.datasetKind),
+    inputFeatures,
+    target,
+    tree: {
+      childrenLeft: requireNumberArray(tree, "childrenLeft"),
+      childrenRight: requireNumberArray(tree, "childrenRight"),
+      feature: requireNumberArray(tree, "feature"),
+      threshold: requireNumberArray(tree, "threshold"),
+    },
+    experts,
+    fallbackModel: parsePoseMappingProfileModel(source.fallbackModel, "fallbackModel"),
+    errorSummary: source.errorSummary,
+    outlierFilterSummary: source.outlierFilterSummary,
+    poseRangeAfter: parsePoseRangeAfter(source.poseRangeAfter ?? source.outlierFilterSummary.poseRangeAfter),
+    raw: source,
+  }
+}
+
+function parsePoseMappingProfileModel(value: unknown, label: string): PoseMappingProfileModel {
+  const source = requireRecord(value, label)
+  const scaler = requireRecord(source.scaler, `${label}.scaler`)
+  const ridge = requireRecord(source.ridge, `${label}.ridge`)
+  const coef = source.ridge && isRecord(source.ridge)
+    ? parseCoefficientMatrix(source.ridge.coef, `${label}.ridge.coef`)
+    : []
+  return {
+    degree: requireFiniteNumber(source, "degree"),
+    featureNames: requireStringArray(source, "featureNames"),
+    scaler: {
+      mean: requireNumberArray(scaler, "mean"),
+      scale: requireNumberArray(scaler, "scale"),
+    },
+    ridge: {
+      alpha: getOptionalFiniteNumber(ridge.alpha),
+      coef,
+      intercept: requireNumberArray(ridge, "intercept"),
+    },
+  }
+}
+
+function parseCoefficientMatrix(value: unknown, label: string): number[][] {
+  if (!Array.isArray(value)) {
+    throw new Error(`${label} must be an array`)
+  }
+  if (value.every((item) => typeof item === "number")) {
+    return [value.map((item) => requireFiniteNumberValue(item, label))]
+  }
+  return value.map((row, index) => {
+    if (!Array.isArray(row)) {
+      throw new Error(`${label}[${index}] must be an array`)
+    }
+    return row.map((item) => requireFiniteNumberValue(item, `${label}[${index}]`))
+  })
+}
+
+function parsePoseRangeAfter(value: unknown): Record<string, PoseMappingScalarRange> | null {
+  if (!isRecord(value)) {
+    return null
+  }
+  const range: Record<string, PoseMappingScalarRange> = {}
+  for (const [key, rawRange] of Object.entries(value)) {
+    if (!isRecord(rawRange)) {
+      continue
+    }
+    range[key] = {
+      min: getOptionalFiniteNumber(rawRange.min),
+      max: getOptionalFiniteNumber(rawRange.max),
+    }
+  }
+  return Object.keys(range).length > 0 ? range : null
+}
+
+function evaluatePoseMappingProfile(
+  profile: PoseMappingProfile,
+  P_camera: ObjPoseMappingPose,
+): PoseMappingEvaluateResult {
+  const warnings: string[] = []
+  if (!isFinitePose(P_camera)) {
+    throw new Error("P_camera yaw / pitch / roll must be finite numbers")
+  }
+
+  const P_cameraClamped = clampPoseByProfileRange(profile, P_camera, warnings)
+  const clampApplied =
+    P_cameraClamped.yaw !== P_camera.yaw ||
+    P_cameraClamped.pitch !== P_camera.pitch ||
+    P_cameraClamped.roll !== P_camera.roll
+  const selectedLeaf = selectPoseMappingLeaf(profile, P_cameraClamped, warnings)
+  const expert = selectedLeaf === null ? null : profile.experts[String(selectedLeaf)] ?? null
+  const model = expert ?? profile.fallbackModel
+  const usedFallback = !expert
+  if (usedFallback) {
+    warnings.push("selected leaf expert was not found; fallbackModel was used")
+  }
+
+  const featureValues = buildPoseMappingFeatureValues(model.featureNames, P_cameraClamped, warnings)
+  const scaledFeatures = featureValues.map((value, index) => {
+    const mean = model.scaler.mean[index]
+    const scale = model.scaler.scale[index]
+    if (!Number.isFinite(mean) || !Number.isFinite(scale) || scale === 0) {
+      warnings.push(`invalid scaler at feature ${model.featureNames[index] ?? index}; scaled value was set to 0`)
+      return 0
+    }
+    return (value - mean) / scale
+  })
+  const output = multiplyRidge(model, scaledFeatures, warnings)
+
+  return {
+    p: {
+      yaw: getTargetOutput(profile, output, "p_yaw"),
+      pitch: getTargetOutput(profile, output, "p_pitch"),
+      roll: getTargetOutput(profile, output, "p_roll"),
+    },
+    P_camera: { ...P_camera },
+    P_cameraClamped,
+    clampApplied,
+    selectedLeaf,
+    usedExpert: expert ? String(selectedLeaf) : "fallbackModel",
+    usedFallback,
+    warnings,
+  }
+}
+
+function clampPoseByProfileRange(
+  profile: PoseMappingProfile,
+  pose: ObjPoseMappingPose,
+  warnings: string[],
+): ObjPoseMappingPose {
+  const clamped = { ...pose }
+  const mapping: Array<[keyof ObjPoseMappingPose, string]> = [
+    ["yaw", "P_yaw"],
+    ["pitch", "P_pitch"],
+    ["roll", "P_roll"],
+  ]
+  for (const [axis, key] of mapping) {
+    const range = profile.poseRangeAfter?.[key]
+    if (!range) {
+      continue
+    }
+    const before = clamped[axis]
+    const min = range.min
+    const max = range.max
+    if (min !== null && clamped[axis] < min) {
+      clamped[axis] = min
+    }
+    if (max !== null && clamped[axis] > max) {
+      clamped[axis] = max
+    }
+    if (clamped[axis] !== before) {
+      warnings.push(`${key} was clamped from ${formatNumber(before)} to ${formatNumber(clamped[axis])}`)
+    }
+  }
+  return clamped
+}
+
+function selectPoseMappingLeaf(
+  profile: PoseMappingProfile,
+  pose: ObjPoseMappingPose,
+  warnings: string[],
+): number | null {
+  const tree = profile.tree
+  const inputValues = profile.inputFeatures.map((feature) => getPoseMappingBaseFeature(feature, pose))
+  let node = 0
+  let guard = 0
+  while (guard < tree.childrenLeft.length) {
+    const left = tree.childrenLeft[node]
+    const right = tree.childrenRight[node]
+    if (left === undefined || right === undefined) {
+      warnings.push(`tree node ${node} is missing; fallbackModel was used`)
+      return null
+    }
+    if (left < 0 && right < 0) {
+      return node
+    }
+    const featureIndex = tree.feature[node]
+    const threshold = tree.threshold[node]
+    const featureValue = inputValues[featureIndex]
+    if (!Number.isFinite(featureValue) || !Number.isFinite(threshold)) {
+      warnings.push(`tree node ${node} has invalid feature or threshold; fallbackModel was used`)
+      return null
+    }
+    node = featureValue <= threshold ? left : right
+    guard += 1
+  }
+  warnings.push("tree traversal exceeded node count; fallbackModel was used")
+  return null
+}
+
+function buildPoseMappingFeatureValues(
+  featureNames: string[],
+  pose: ObjPoseMappingPose,
+  warnings: string[],
+): number[] {
+  return featureNames.map((name) => {
+    const trimmed = name.trim()
+    if (trimmed.includes(" ")) {
+      return trimmed
+        .split(/\s+/)
+        .map((part) => getPoseMappingFeaturePart(part, pose, warnings))
+        .reduce((product, value) => product * value, 1)
+    }
+    return getPoseMappingFeaturePart(trimmed, pose, warnings)
+  })
+}
+
+function getPoseMappingFeaturePart(
+  featureName: string,
+  pose: ObjPoseMappingPose,
+  warnings: string[],
+): number {
+  const squaredSuffix = "^2"
+  if (featureName.endsWith(squaredSuffix)) {
+    const base = getPoseMappingBaseFeature(featureName.slice(0, -squaredSuffix.length), pose)
+    return base * base
+  }
+  const value = getPoseMappingBaseFeature(featureName, pose)
+  if (!Number.isFinite(value)) {
+    warnings.push(`unsupported featureName ${featureName}; value was set to 0`)
+    return 0
+  }
+  return value
+}
+
+function getPoseMappingBaseFeature(featureName: string, pose: ObjPoseMappingPose) {
+  if (featureName === "P_yaw") {
+    return pose.yaw
+  }
+  if (featureName === "P_pitch") {
+    return pose.pitch
+  }
+  if (featureName === "P_roll") {
+    return pose.roll
+  }
+  return Number.NaN
+}
+
+function multiplyRidge(
+  model: PoseMappingProfileModel,
+  scaledFeatures: number[],
+  warnings: string[],
+) {
+  return model.ridge.intercept.map((intercept, outputIndex) => {
+    const coef = model.ridge.coef[outputIndex] ?? model.ridge.coef[0] ?? []
+    if (coef.length !== scaledFeatures.length) {
+      warnings.push(`ridge coef length mismatch at output ${outputIndex}`)
+    }
+    return scaledFeatures.reduce((sum, value, featureIndex) => {
+      const weight = coef[featureIndex] ?? 0
+      return sum + value * weight
+    }, intercept)
+  })
+}
+
+function getTargetOutput(profile: PoseMappingProfile, output: number[], targetName: string) {
+  const index = profile.target.indexOf(targetName)
+  const value = output[index]
+  if (!Number.isFinite(value)) {
+    throw new Error(`profile output ${targetName} is not finite`)
+  }
+  return value
 }
 
 function loadLiveVideo(file: File) {
@@ -2904,6 +3284,9 @@ async function analyzeCurrentLiveFrame(
     state.currentAnalysis = buildCurrentFrameAnalysis(result, timeSec)
     analysisTiming.buildCurrentAnalysisMs = performance.now() - buildStartMs
     updateObjPoseSyncFromCurrentAnalysis()
+    if (!options.skipFinalRender) {
+      void updatePoseMappingRuntimeFromCurrentAnalysis()
+    }
     lastAutoLiveAnalysisAtSec = timeSec
 
     if (reason === "manual") {
@@ -3009,6 +3392,253 @@ function updateObjPoseSyncFromCurrentAnalysis() {
     appliedRollDeg: (pose.roll ?? 0) * state.objPoseSync.rollSign + state.objPoseSync.rollOffsetDeg,
     source: "current_frame",
   }
+}
+
+async function updatePoseMappingRuntimeFromCurrentAnalysis(
+  options: { skipFinalRender?: boolean } = {},
+) {
+  if (poseMappingRuntimeInProgress) {
+    return null
+  }
+
+  const profile = state.poseMappingProfile.profile
+  const qualityGate = buildPoseMappingQualityGate()
+  if (!profile || !qualityGate.usable) {
+    state.poseMappingRuntime = {
+      ...createDefaultPoseMappingRuntimeState(),
+      status: "idle",
+      lastUpdatedAt: formatUpdatedAt(),
+      qualityGate,
+      P_camera: getCurrentPoseForPoseMapping(),
+      current478: state.currentAnalysis.landmarks478.length === REQUIRED_LANDMARK_COUNT
+        ? state.currentAnalysis.landmarks478
+        : null,
+      errorMessage: qualityGate.reasons.join("; ") || null,
+    }
+    clearPoseMappingPreviewCanvas()
+    renderPoseMappingLiveSummaryCard()
+    if (!options.skipFinalRender) {
+      renderDebugContent()
+    }
+    return null
+  }
+
+  poseMappingRuntimeInProgress = true
+  const totalStartMs = performance.now()
+  state.poseMappingRuntime = {
+    ...state.poseMappingRuntime,
+    status: "running",
+    qualityGate,
+    errorMessage: null,
+    lastUpdatedAt: formatUpdatedAt(),
+  }
+  if (!options.skipFinalRender) {
+    renderPoseMappingLiveSummaryCard()
+    renderDebugContent()
+  }
+
+  try {
+    const P_camera = getCurrentPoseForPoseMapping()
+    if (!P_camera) {
+      throw new Error("P_camera is not available")
+    }
+
+    const evaluateStartMs = performance.now()
+    const evaluateResult = evaluatePoseMappingProfile(profile, P_camera)
+    const profileEvaluateMs = performance.now() - evaluateStartMs
+
+    const renderStartMs = performance.now()
+    const renderSummary = renderRenderedIdealCanvasTo(
+      liveObjPosePreviewCanvas,
+      getObjPoseSyncRotationCenter(),
+      evaluateResult.p,
+      { directPose: true },
+    )
+    const renderMs = performance.now() - renderStartMs
+    if (renderSummary.status !== "rendered") {
+      throw new Error(renderSummary.errorMessage ?? renderSummary.status)
+    }
+
+    const detector = await getRenderedIdealFaceLandmarker()
+    const detectStartMs = performance.now()
+    const result = detector.detect(liveObjPosePreviewCanvas)
+    const detectMs = performance.now() - detectStartMs
+    const detection = buildRenderedIdealDetectionState(result, -1, detectMs, null)
+    const poseDiff = calculatePoseMappingPoseDiff(P_camera, detection.pose)
+    drawPoseMappingPreviewOverlay(detection.landmarks478)
+
+    const totalMs = performance.now() - totalStartMs
+    state.poseMappingRuntime = {
+      status: "completed",
+      lastUpdatedAt: formatUpdatedAt(),
+      P_camera: evaluateResult.P_camera,
+      P_cameraClamped: evaluateResult.P_cameraClamped,
+      qualityGate,
+      p: evaluateResult.p,
+      selectedLeaf: evaluateResult.selectedLeaf,
+      usedExpert: evaluateResult.usedExpert,
+      usedFallback: evaluateResult.usedFallback,
+      warnings: evaluateResult.warnings,
+      P_confirm: detection.pose,
+      poseDiff,
+      renderedIdealDetected: detection.status === "detected",
+      renderedIdealLandmarkCount: detection.landmarkCount,
+      renderedIdeal478: detection.landmarks478,
+      current478: state.currentAnalysis.landmarks478,
+      canvasWidth: liveObjPosePreviewCanvas.width,
+      canvasHeight: liveObjPosePreviewCanvas.height,
+      profileEvaluateMs,
+      renderMs,
+      detectMs,
+      totalMs,
+      previewDataUrl: liveObjPosePreviewCanvas.toDataURL("image/png"),
+      errorMessage: detection.status === "detected" ? null : detection.errorMessage ?? detection.status,
+    }
+    if (!options.skipFinalRender) {
+      renderAll({ skipObjRender: true })
+    }
+    return state.poseMappingRuntime
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    state.poseMappingRuntime = {
+      ...state.poseMappingRuntime,
+      status: "error",
+      lastUpdatedAt: formatUpdatedAt(),
+      qualityGate,
+      totalMs: performance.now() - totalStartMs,
+      errorMessage: message,
+    }
+    addLog(`Pose Mapping確認でエラーが発生しました: ${message}`)
+    if (!options.skipFinalRender) {
+      renderAll({ skipObjRender: true })
+    }
+    return null
+  } finally {
+    poseMappingRuntimeInProgress = false
+  }
+}
+
+function buildPoseMappingQualityGate(): PoseMappingQualityGate {
+  const reasons: string[] = []
+  const profile = state.poseMappingProfile.profile
+  const currentPose = getCurrentPoseForPoseMapping()
+  if (!profile) {
+    reasons.push("poseMappingProfile が読み込まれていません")
+  }
+  if (!canRenderRenderedIdealGeometry()) {
+    reasons.push("OBJ が読み込まれていません")
+  }
+  if (state.currentAnalysis.status !== "detected") {
+    reasons.push("current face が検出されていません")
+  }
+  if (!currentPose || !isFinitePose(currentPose)) {
+    reasons.push("P_camera が finite number ではありません")
+  }
+  if (profile && currentPose && isPoseFarOutsideProfileRange(profile, currentPose)) {
+    reasons.push("P_camera が poseRangeAfter から大きく外れています")
+  }
+  return {
+    usable: reasons.length === 0,
+    reasons,
+  }
+}
+
+function getCurrentPoseForPoseMapping(): ObjPoseMappingPose | null {
+  const pose = state.currentAnalysis.pose
+  if (!hasFullPose(pose)) {
+    return null
+  }
+  return {
+    yaw: pose.yaw!,
+    pitch: pose.pitch!,
+    roll: pose.roll!,
+  }
+}
+
+function isPoseFarOutsideProfileRange(profile: PoseMappingProfile, pose: ObjPoseMappingPose) {
+  const mapping: Array<[keyof ObjPoseMappingPose, string]> = [
+    ["yaw", "P_yaw"],
+    ["pitch", "P_pitch"],
+    ["roll", "P_roll"],
+  ]
+  return mapping.some(([axis, key]) => {
+    const range = profile.poseRangeAfter?.[key]
+    if (!range || range.min === null || range.max === null) {
+      return false
+    }
+    const span = Math.max(1, range.max - range.min)
+    const margin = Math.max(5, span * 0.25)
+    return pose[axis] < range.min - margin || pose[axis] > range.max + margin
+  })
+}
+
+function calculatePoseMappingPoseDiff(
+  P_camera: ObjPoseMappingPose,
+  P_confirm: ReferencePose,
+): PoseMappingPoseDiff {
+  const yaw = subtractNullable(P_confirm.yaw, P_camera.yaw)
+  const pitch = subtractNullable(P_confirm.pitch, P_camera.pitch)
+  const roll = subtractNullable(P_confirm.roll, P_camera.roll)
+  const values = [yaw, pitch, roll]
+  return {
+    yaw,
+    pitch,
+    roll,
+    magnitude: values.every((value) => value === null)
+      ? null
+      : roundForState(Math.hypot(...values.map((value) => value ?? 0))),
+  }
+}
+
+function drawPoseMappingPreviewOverlay(landmarks: ReferenceLandmark[] | null) {
+  if (!landmarks || landmarks.length !== REQUIRED_LANDMARK_COUNT) {
+    return
+  }
+  const context = liveObjPosePreviewCanvas.getContext("2d")
+  if (!context) {
+    return
+  }
+  context.save()
+  context.setTransform(1, 0, 0, 1, 0, 0)
+  drawLandmarkPoints(
+    context,
+    {
+      x: 0,
+      y: 0,
+      width: liveObjPosePreviewCanvas.width,
+      height: liveObjPosePreviewCanvas.height,
+    },
+    landmarks,
+    "rgba(219, 68, 85, 0.9)",
+    1.45,
+  )
+  context.restore()
+}
+
+function clearPoseMappingPreviewCanvas() {
+  const context = liveObjPosePreviewCanvas.getContext("2d")
+  if (!context) {
+    return
+  }
+  context.clearRect(0, 0, liveObjPosePreviewCanvas.width, liveObjPosePreviewCanvas.height)
+}
+
+function drawPoseMappingPreviewFromSnapshot() {
+  const dataUrl = state.poseMappingRuntime.previewDataUrl
+  if (!dataUrl) {
+    clearPoseMappingPreviewCanvas()
+    return
+  }
+  const image = new Image()
+  image.onload = () => {
+    const context = liveObjPosePreviewCanvas.getContext("2d")
+    if (!context) {
+      return
+    }
+    context.clearRect(0, 0, liveObjPosePreviewCanvas.width, liveObjPosePreviewCanvas.height)
+    context.drawImage(image, 0, 0, liveObjPosePreviewCanvas.width, liveObjPosePreviewCanvas.height)
+  }
+  image.src = dataUrl
 }
 
 function buildCurrentFrameAnalysis(
@@ -5893,9 +6523,8 @@ async function runRealtimeTick(frameTick: RealtimeFrameTick) {
       createEmptyCurrentAnalysisTimingBreakdown()
 
     if (state.realtimeDebug.mode === "current_analysis_obj_render") {
-      const renderStartMs = performance.now()
-      renderRenderedIdealCanvas()
-      objRenderMs = performance.now() - renderStartMs
+      await updatePoseMappingRuntimeFromCurrentAnalysis({ skipFinalRender: true })
+      objRenderMs = state.poseMappingRuntime.renderMs
     }
 
     const frameCount = state.realtimeDebug.frameCount + 1
@@ -5911,7 +6540,7 @@ async function runRealtimeTick(frameTick: RealtimeFrameTick) {
       processedVideoFrameCount,
       currentAnalysisMs: currentAnalysisTimingBreakdown.currentAnalysisTotalMs,
       objRenderMs,
-      mediaPipeRedetectMs: null,
+      mediaPipeRedetectMs: state.poseMappingRuntime.detectMs,
       totalMs: sumNullableTimings(currentAnalysisTimingBreakdown.currentAnalysisTotalMs, objRenderMs),
       currentAnalysisTimingBreakdown,
       effectiveFps: elapsedSec && elapsedSec > 0 ? frameCount / elapsedSec : null,
@@ -5934,7 +6563,12 @@ async function runRealtimeTick(frameTick: RealtimeFrameTick) {
       currentAnalysisTimingBreakdown.debugUpdateMs,
     )
     currentAnalysisMs = currentAnalysisTimingBreakdown.currentAnalysisTotalMs
-    const totalMs = sumNullableTimings(currentAnalysisMs, objRenderMs)
+    const totalMs = sumNullableTimings(
+      currentAnalysisMs,
+      state.realtimeDebug.mode === "current_analysis_obj_render"
+        ? state.poseMappingRuntime.totalMs
+        : objRenderMs,
+    )
     addRealtimeTimingSample({
       currentAnalysisTimingBreakdown,
       objRenderMs,
@@ -6030,10 +6664,11 @@ function renderPreviewPanels(options: { skipObjRender?: boolean } = {}) {
   renderRenderedIdealSummaryCard()
 
   const liveObjStage = getElement<HTMLElement>("[data-live-obj-stage]")
-  liveObjStage.dataset.previewStatus = objPreviewStatus
-  getElement<HTMLElement>("[data-live-obj-preview-message]").textContent = getObjPoseSyncMessage()
-  if (!options.skipObjRender) {
-    renderObjPoseSyncCanvas()
+  const poseMappingStatus = getPoseMappingPreviewStatus()
+  liveObjStage.dataset.previewStatus = poseMappingStatus
+  getElement<HTMLElement>("[data-live-obj-preview-message]").textContent = getPoseMappingPreviewMessage()
+  if (poseMappingStatus !== "ready" && !options.skipObjRender) {
+    clearPoseMappingPreviewCanvas()
   }
 }
 
@@ -6060,6 +6695,7 @@ function renderControls() {
   range.disabled = !canUseMp4Debug
 
   setDisabled('[data-action="load-obj"]', poseSearchRunning)
+  setDisabled('[data-action="load-pose-mapping-profile"]', poseSearchRunning || isObjPoseCalibrationRunning())
   setDisabled(
     '[data-action="load-live-video"]',
     poseSearchRunning || isObjPoseCalibrationRunning() || state.modeComparison.status === "running",
@@ -6071,6 +6707,7 @@ function renderControls() {
   getElement<HTMLSelectElement>('[data-control="obj-pose-sampling-preset"]').value = state.objPoseMapping.poseSamplingPreset
   setDisabled('[data-control="obj-pose-sampling-preset"]', poseSearchRunning || isObjPoseCalibrationRunning())
   objFileInput.disabled = poseSearchRunning
+  poseMappingProfileFileInput.disabled = poseSearchRunning || isObjPoseCalibrationRunning()
   liveFileInput.disabled = poseSearchRunning || state.modeComparison.status === "running"
   setDisabled('[data-action="live-play"]', poseSearchRunning || state.modeComparison.status === "running" || !isVideoFileInput() || state.liveVideo.playbackStatus === "playing")
   setDisabled('[data-action="live-pause"]', poseSearchRunning || state.modeComparison.status === "running" || !isVideoFileInput() || state.liveVideo.playbackStatus !== "playing")
@@ -6090,6 +6727,7 @@ function renderControls() {
     state.liveInput.sourceType !== "video_file",
   )
   renderLiveInputSourceCard()
+  renderPoseMappingLiveSummaryCard()
 
   getElement<HTMLSelectElement>('[data-control="rendered-ideal-background"]').value = state.renderedIdeal.backgroundMode
   getElement<HTMLSelectElement>('[data-control="rendered-ideal-color"]').value = state.renderedIdeal.colorMode
@@ -6100,17 +6738,6 @@ function renderControls() {
   renderLiveAnalysisCard()
   renderModeComparisonControls()
   getElement<HTMLSelectElement>('[data-control="obj-preview-mode"]').value = state.objPreview.mode
-  setChecked("obj-pose-sync-enabled", state.objPoseSync.enabled)
-  setChecked("obj-pose-yaw-invert", state.objPoseSync.yawSign === -1)
-  setChecked("obj-pose-pitch-invert", state.objPoseSync.pitchSign === -1)
-  setChecked("obj-pose-roll-invert", state.objPoseSync.rollSign === -1)
-  setNumberValue("obj-pose-yaw-offset", state.objPoseSync.yawOffsetDeg)
-  setNumberValue("obj-pose-pitch-offset", state.objPoseSync.pitchOffsetDeg)
-  setNumberValue("obj-pose-roll-offset", state.objPoseSync.rollOffsetDeg)
-  setNumberValue("obj-pose-rotation-center-x", state.objPoseSync.rotationCenterX)
-  setNumberValue("obj-pose-rotation-center-y", state.objPoseSync.rotationCenterY)
-  setNumberValue("obj-pose-rotation-center-z", state.objPoseSync.rotationCenterZ)
-  renderLiveObjPoseSummaryCard()
   renderRealtimeControls()
 }
 
@@ -6141,6 +6768,101 @@ function renderModeComparisonControls() {
       !isVideoFileInput(),
   )
   setDisabled('[data-action="mode-comparison-cancel"]', modeComparison.status !== "running")
+}
+
+function renderPoseMappingLiveSummaryCard() {
+  const card = getElement<HTMLElement>("[data-pose-mapping-live-summary]")
+  const runtime = state.poseMappingRuntime
+  card.innerHTML = `
+    <p>${escapeHtml(getPoseMappingPreviewMessage())}</p>
+    <dl class="review-grid">
+      <div><dt>profile</dt><dd>${state.poseMappingProfile.loaded ? "loaded" : "not loaded"}</dd></div>
+      <div><dt>P_camera</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.P_camera))}</dd></div>
+      <div><dt>p</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.p))}</dd></div>
+      <div><dt>P_confirm</dt><dd>${escapeHtml(formatPose(runtime.P_confirm))}</dd></div>
+      <div><dt>pose diff</dt><dd>${escapeHtml(formatPoseMappingDiff(runtime.poseDiff))}</dd></div>
+      <div><dt>renderedIdeal478</dt><dd>${runtime.renderedIdealDetected ? "detected" : "not detected"} / ${formatNullableCount(runtime.renderedIdealLandmarkCount)}</dd></div>
+    </dl>
+  `
+}
+
+function renderPoseMappingDebugTab() {
+  const container = document.createElement("div")
+  container.className = "pose-mapping-debug"
+  const profileState = state.poseMappingProfile
+  const profile = profileState.profile
+  const runtime = state.poseMappingRuntime
+  const canDownload = profileState.loaded && runtime.status !== "idle"
+
+  container.innerHTML = `
+    <section class="debug-section">
+      <h3>Profile info（プロファイル情報）</h3>
+      <dl class="summary-list">
+        <div><dt>loaded</dt><dd>${profileState.loaded ? "loaded" : "not loaded"}</dd></div>
+        <div><dt>filename</dt><dd>${escapeHtml(profileState.fileName ?? "-")}</dd></div>
+        <div><dt>schemaVersion</dt><dd>${escapeHtml(profile?.schemaVersion ?? "-")}</dd></div>
+        <div><dt>modelType</dt><dd>${escapeHtml(profile?.modelType ?? "-")}</dd></div>
+        <div><dt>modelName</dt><dd>${escapeHtml(profile?.modelName ?? "-")}</dd></div>
+        <div><dt>datasetKind</dt><dd>${escapeHtml(profile?.datasetKind ?? "-")}</dd></div>
+        <div><dt>inputFeatures</dt><dd>${escapeHtml(profile?.inputFeatures.join(", ") ?? "-")}</dd></div>
+        <div><dt>target</dt><dd>${escapeHtml(profile?.target.join(", ") ?? "-")}</dd></div>
+        <div><dt>errorSummary</dt><dd>${escapeHtml(formatPoseMappingSummary(profile?.errorSummary, ["poseMAE", "poseP95", "poseMAX", "continuityJumpMax"]))}</dd></div>
+        <div><dt>outlierFilterSummary</dt><dd>${escapeHtml(formatPoseMappingSummary(profile?.outlierFilterSummary, ["rawSampleCount", "filteredSampleCount", "excludedSampleCount", "excludedRatio"]))}</dd></div>
+        <div><dt>poseRangeAfter</dt><dd>${escapeHtml(formatPoseMappingRange(profile?.poseRangeAfter))}</dd></div>
+        <div><dt>error</dt><dd>${escapeHtml(profileState.errorMessage ?? "-")}</dd></div>
+      </dl>
+    </section>
+
+    <section class="debug-section">
+      <h3>Runtime input（実行時入力）</h3>
+      <dl class="summary-list">
+        <div><dt>P_camera</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.P_camera))}</dd></div>
+        <div><dt>P_camera clamped</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.P_cameraClamped))}</dd></div>
+        <div><dt>clampApplied</dt><dd>${String(runtime.P_camera !== null && runtime.P_cameraClamped !== null && !posesEqual(runtime.P_camera, runtime.P_cameraClamped))}</dd></div>
+        <div><dt>quality gate</dt><dd>${runtime.qualityGate.usable ? "usable" : "not usable"}</dd></div>
+        <div><dt>quality reasons</dt><dd>${escapeHtml(runtime.qualityGate.reasons.join(", ") || "-")}</dd></div>
+      </dl>
+    </section>
+
+    <section class="debug-section">
+      <h3>Profile output（関数出力）</h3>
+      <dl class="summary-list">
+        <div><dt>p</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.p))}</dd></div>
+        <div><dt>selectedLeaf</dt><dd>${formatNullableCount(runtime.selectedLeaf)}</dd></div>
+        <div><dt>used expert</dt><dd>${escapeHtml(runtime.usedExpert ?? "-")}</dd></div>
+        <div><dt>usedFallback</dt><dd>${String(runtime.usedFallback)}</dd></div>
+        <div><dt>evaluator warnings</dt><dd>${escapeHtml(runtime.warnings.join(", ") || "-")}</dd></div>
+      </dl>
+    </section>
+
+    <section class="debug-section">
+      <h3>Render confirm（レンダー確認）</h3>
+      <dl class="summary-list">
+        <div><dt>P_confirm</dt><dd>${escapeHtml(formatPose(runtime.P_confirm))}</dd></div>
+        <div><dt>pose diff</dt><dd>${escapeHtml(formatPoseMappingDiff(runtime.poseDiff))}</dd></div>
+        <div><dt>renderedIdeal478 status</dt><dd>${runtime.renderedIdealDetected ? "detected" : "not detected"} / landmarkCount ${formatNullableCount(runtime.renderedIdealLandmarkCount)}</dd></div>
+        <div><dt>profileEvaluateMs</dt><dd>${formatRealtimeNullableNumber(runtime.profileEvaluateMs)}</dd></div>
+        <div><dt>renderMs</dt><dd>${formatRealtimeNullableNumber(runtime.renderMs)}</dd></div>
+        <div><dt>detectMs</dt><dd>${formatRealtimeNullableNumber(runtime.detectMs)}</dd></div>
+        <div><dt>totalMs</dt><dd>${formatRealtimeNullableNumber(runtime.totalMs)}</dd></div>
+        <div><dt>errorMessage</dt><dd>${escapeHtml(runtime.errorMessage ?? "-")}</dd></div>
+      </dl>
+    </section>
+
+    <section class="debug-section">
+      <h3>Preview（プレビュー）</h3>
+      ${runtime.previewDataUrl ? `<img class="pose-mapping-preview-image" src="${runtime.previewDataUrl}" alt="現姿勢理想478プレビュー" />` : `<p class="placeholder-text">現姿勢理想478プレビューはまだありません。</p>`}
+      <p class="control-note">${escapeHtml(formatPoseMappingPreviewNote())}</p>
+    </section>
+
+    <section class="debug-section">
+      <h3>Download（ダウンロード）</h3>
+      <div class="button-row">
+        <button class="small-button" type="button" data-action="pose-mapping-download-debug" ${canDownload ? "" : "disabled"}>Download Pose Mapping Debug（姿勢対応デバッグをダウンロード）</button>
+      </div>
+    </section>
+  `
+  return container
 }
 
 function renderModeComparisonDebugTab() {
@@ -6604,6 +7326,7 @@ function renderRenderedIdealCanvasTo(
   canvas: HTMLCanvasElement,
   rotationCenterOverride: ObjVertex | null = null,
   poseOverride: ReferencePose | null = null,
+  options: { directPose?: boolean } = {},
 ): RenderedIdealRenderSummary {
   const context = canvas.getContext("2d")
   if (!context) {
@@ -6656,7 +7379,9 @@ function renderRenderedIdealCanvasTo(
     })
   }
 
-  const previewState = getObjPoseSyncPreviewState(renderPose)
+  const previewState = options.directPose
+    ? getDirectObjPosePreviewState(renderPose)
+    : getObjPoseSyncPreviewState(renderPose)
   const rotationCenter = rotationCenterOverride ?? getObjPoseSyncRotationCenter()
   const viewport = {
     centerX: cssWidth / 2,
@@ -7202,6 +7927,11 @@ function renderDebugContent() {
     return
   }
 
+  if (state.activeDebugTab === "poseMapping") {
+    content.appendChild(renderPoseMappingDebugTab())
+    return
+  }
+
   if (state.activeDebugTab === "current" && state.currentAnalysis.status === "not_ready") {
     const message = document.createElement("p")
     message.className = "placeholder-text"
@@ -7602,6 +8332,8 @@ function getRawState() {
     renderedIdealRenderSummary: state.renderedIdeal.summary,
     renderedIdealDetectionState: getRenderedIdealDetectionRawSummary(),
     renderedIdealLandmarkPreview: getRenderedIdealLandmarkPreview(),
+    poseMappingProfile: getPoseMappingProfileRawSummary(),
+    poseMappingRuntime: getPoseMappingRuntimeRawSummary(),
     renderedIdeal: {
       renderStatus: state.renderedIdeal.summary.status,
       renderMode: state.renderedIdeal.summary.renderMode,
@@ -7864,6 +8596,58 @@ function createDefaultObjPoseMappingState(): ObjPoseMappingState {
     poseSamplingPreset: "standard",
     statistics: null,
     statusMessage: null,
+  }
+}
+
+function createDefaultPoseMappingProfileState(): PoseMappingProfileState {
+  return {
+    loaded: false,
+    fileName: null,
+    fileSize: null,
+    profile: null,
+    errorMessage: null,
+    warnings: [],
+  }
+}
+
+function createDefaultPoseMappingRuntimeState(): PoseMappingRuntimeState {
+  return {
+    status: "idle",
+    lastUpdatedAt: null,
+    P_camera: null,
+    P_cameraClamped: null,
+    qualityGate: {
+      usable: false,
+      reasons: [],
+    },
+    p: null,
+    selectedLeaf: null,
+    usedExpert: null,
+    usedFallback: false,
+    warnings: [],
+    P_confirm: {
+      yaw: null,
+      pitch: null,
+      roll: null,
+    },
+    poseDiff: {
+      yaw: null,
+      pitch: null,
+      roll: null,
+      magnitude: null,
+    },
+    renderedIdealDetected: false,
+    renderedIdealLandmarkCount: null,
+    renderedIdeal478: null,
+    current478: null,
+    canvasWidth: 0,
+    canvasHeight: 0,
+    profileEvaluateMs: null,
+    renderMs: null,
+    detectMs: null,
+    totalMs: null,
+    previewDataUrl: null,
+    errorMessage: null,
   }
 }
 
@@ -8476,6 +9260,35 @@ function getObjPoseSyncStatus() {
   return state.objPoseSync.source === "current_frame" ? "synced" : "waiting_current_frame"
 }
 
+function getPoseMappingPreviewStatus(): ObjPreviewStatus {
+  if (state.poseMappingRuntime.status === "completed" && state.poseMappingRuntime.previewDataUrl) {
+    return "ready"
+  }
+  if (state.poseMappingRuntime.status === "error") {
+    return "error"
+  }
+  return "not_ready"
+}
+
+function getPoseMappingPreviewMessage() {
+  if (!state.poseMappingProfile.loaded) {
+    return "poseMappingProfileを読み込むと、現在姿勢理想478プレビューを表示できます。"
+  }
+  if (!state.objFile.loaded || getObjPreviewStatus() !== "ready") {
+    return "OBJを読み込むと、現在姿勢理想478プレビューを表示できます。"
+  }
+  if (state.currentAnalysis.status !== "detected" || !hasFullPose(state.currentAnalysis.pose)) {
+    return "現在顔を検出すると、P_camera から p を計算して理想OBJをレンダーします。"
+  }
+  if (state.poseMappingRuntime.status === "error") {
+    return `Pose Mapping確認でエラーが発生しました: ${state.poseMappingRuntime.errorMessage ?? "unknown"}`
+  }
+  if (state.poseMappingRuntime.status === "completed") {
+    return "P_camera -> p -> render -> detect -> P_confirm の確認結果を表示しています。"
+  }
+  return "現在姿勢理想478プレビューを準備しています。"
+}
+
 function canRenderRenderedIdeal() {
   return canRenderRenderedIdealGeometry()
 }
@@ -8675,6 +9488,18 @@ function exportModeComparisonPreview(kind: ModeComparisonPreviewKind) {
   status.textContent = "モード比較 preview image（プレビュー画像）をダウンロードしました。"
   addLog(`モード比較 preview image をダウンロードしました: ${snapshot.kind} / frame ${snapshot.frameIndex}`)
   renderAll()
+}
+
+function exportPoseMappingDebug() {
+  const debugExport = getPoseMappingRuntimeDebugExport()
+  const fileName = `pose_mapping_runtime_debug_${formatTimestampForFileName(debugExport.createdAt)}.json`
+  downloadTextFile(
+    fileName,
+    JSON.stringify(debugExport, null, 2),
+    "application/json;charset=utf-8",
+  )
+  addLog("Pose Mapping debug JSONをダウンロードしました。")
+  renderDebugContent()
 }
 
 function createModeComparisonPreviewFileName(snapshot: ModeComparisonPreviewSnapshot) {
@@ -8904,6 +9729,7 @@ function buildDebugExport() {
     },
     modeComparison: getModeComparisonRawSummary(),
     renderedIdealDetection: getRenderedIdealDetectionDebugExport(),
+    poseMapping: getPoseMappingRuntimeDebugExport(),
     objPoseDatasetGeneration: getObjPoseCalibrationDebugExport(),
     objPoseMapping: getObjPoseMappingDebugExport(),
     mediaPipeOptions: {
@@ -9357,6 +10183,68 @@ function formatStringList(values: string[]) {
 
 function formatPose(pose: ReferencePose) {
   return `yaw ${formatNullableNumber(pose.yaw)} / pitch ${formatNullableNumber(pose.pitch)} / roll ${formatNullableNumber(pose.roll)}`
+}
+
+function formatPoseMappingPose(pose: ObjPoseMappingPose | null) {
+  if (!pose) {
+    return "null"
+  }
+  return `yaw ${formatNumber(pose.yaw)} / pitch ${formatNumber(pose.pitch)} / roll ${formatNumber(pose.roll)}`
+}
+
+function formatPoseMappingDiff(diff: PoseMappingPoseDiff) {
+  return `yaw ${formatNullableNumber(diff.yaw)} / pitch ${formatNullableNumber(diff.pitch)} / roll ${formatNullableNumber(diff.roll)} / magnitude ${formatNullableNumber(diff.magnitude)}`
+}
+
+function formatPoseMappingSummary(
+  value: Record<string, unknown> | undefined,
+  keys: string[],
+) {
+  if (!value) {
+    return "-"
+  }
+  return keys.map((key) => `${key}: ${formatUnknownDebugValue(value[key])}`).join(" / ")
+}
+
+function formatPoseMappingRange(range: Record<string, PoseMappingScalarRange> | null | undefined) {
+  if (!range) {
+    return "-"
+  }
+  return ["P_yaw", "P_pitch", "P_roll"]
+    .map((key) => {
+      const item = range[key]
+      return `${key}: ${formatNullableNumber(item?.min ?? null)}..${formatNullableNumber(item?.max ?? null)}`
+    })
+    .join(" / ")
+}
+
+function formatPoseMappingPreviewNote() {
+  return [
+    `P_camera: ${formatPoseMappingPose(state.poseMappingRuntime.P_camera)}`,
+    `p: ${formatPoseMappingPose(state.poseMappingRuntime.p)}`,
+    `P_confirm: ${formatPose(state.poseMappingRuntime.P_confirm)}`,
+    `pose diff: ${formatPoseMappingDiff(state.poseMappingRuntime.poseDiff)}`,
+  ].join(" / ")
+}
+
+function formatUnknownDebugValue(value: unknown) {
+  if (typeof value === "number") {
+    return formatNumber(value)
+  }
+  if (typeof value === "string") {
+    return value
+  }
+  if (typeof value === "boolean") {
+    return String(value)
+  }
+  if (value === null || value === undefined) {
+    return "-"
+  }
+  return JSON.stringify(value)
+}
+
+function posesEqual(a: ObjPoseMappingPose, b: ObjPoseMappingPose) {
+  return a.yaw === b.yaw && a.pitch === b.pitch && a.roll === b.roll
 }
 
 function formatPoseCenterSearchMode(mode: PoseCenterSearchMode) {
@@ -9863,6 +10751,108 @@ function getRenderedIdealDetectionDebugExport() {
   }
 }
 
+function getPoseMappingProfileRawSummary() {
+  const profile = state.poseMappingProfile.profile
+  return {
+    loaded: state.poseMappingProfile.loaded,
+    fileName: state.poseMappingProfile.fileName,
+    fileSize: state.poseMappingProfile.fileSize,
+    schemaVersion: profile?.schemaVersion ?? null,
+    modelType: profile?.modelType ?? null,
+    modelName: profile?.modelName ?? null,
+    datasetKind: profile?.datasetKind ?? null,
+    inputFeatures: profile?.inputFeatures ?? [],
+    target: profile?.target ?? [],
+    errorSummary: profile?.errorSummary ?? null,
+    outlierFilterSummary: profile?.outlierFilterSummary ?? null,
+    poseRangeAfter: profile?.poseRangeAfter ?? null,
+    errorMessage: state.poseMappingProfile.errorMessage,
+    warnings: state.poseMappingProfile.warnings,
+  }
+}
+
+function getPoseMappingRuntimeRawSummary() {
+  const runtime = state.poseMappingRuntime
+  return {
+    status: runtime.status,
+    lastUpdatedAt: runtime.lastUpdatedAt,
+    P_camera: roundPoseMappingPose(runtime.P_camera),
+    P_cameraClamped: roundPoseMappingPose(runtime.P_cameraClamped),
+    qualityGate: runtime.qualityGate,
+    p: roundPoseMappingPose(runtime.p),
+    selectedLeaf: runtime.selectedLeaf,
+    usedExpert: runtime.usedExpert,
+    usedFallback: runtime.usedFallback,
+    warnings: runtime.warnings,
+    P_confirm: roundPoseForState(runtime.P_confirm),
+    poseDiff: roundPoseMappingDiff(runtime.poseDiff),
+    renderedIdealDetected: runtime.renderedIdealDetected,
+    renderedIdealLandmarkCount: runtime.renderedIdealLandmarkCount,
+    canvasWidth: runtime.canvasWidth,
+    canvasHeight: runtime.canvasHeight,
+    profileEvaluateMs: roundForState(runtime.profileEvaluateMs),
+    renderMs: roundForState(runtime.renderMs),
+    detectMs: roundForState(runtime.detectMs),
+    totalMs: roundForState(runtime.totalMs),
+    errorMessage: runtime.errorMessage,
+  }
+}
+
+function getPoseMappingRuntimeDebugExport() {
+  const createdAt = new Date().toISOString()
+  const profile = getPoseMappingProfileRawSummary()
+  const runtime = state.poseMappingRuntime
+  return {
+    type: "pose_mapping_runtime_debug_v1",
+    createdAt,
+    source: {
+      objFileName: state.objFile.fileName,
+      mp4FileName: state.liveVideo.fileName,
+      profileFileName: state.poseMappingProfile.fileName,
+    },
+    profile: {
+      schemaVersion: profile.schemaVersion,
+      modelType: profile.modelType,
+      modelName: profile.modelName,
+      datasetKind: profile.datasetKind,
+      inputFeatures: profile.inputFeatures,
+      target: profile.target,
+      errorSummary: profile.errorSummary,
+      outlierFilterSummary: profile.outlierFilterSummary,
+      poseRangeAfter: profile.poseRangeAfter,
+    },
+    runtime: {
+      P_camera: roundPoseMappingPose(runtime.P_camera),
+      P_cameraClamped: roundPoseMappingPose(runtime.P_cameraClamped),
+      clampApplied:
+        runtime.P_camera !== null &&
+        runtime.P_cameraClamped !== null &&
+        !posesEqual(runtime.P_camera, runtime.P_cameraClamped),
+      qualityGate: runtime.qualityGate,
+      p: roundPoseMappingPose(runtime.p),
+      P_confirm: roundPoseForState(runtime.P_confirm),
+      poseDiff: roundPoseMappingDiff(runtime.poseDiff),
+      selectedLeaf: runtime.selectedLeaf,
+      usedFallback: runtime.usedFallback,
+      warnings: runtime.warnings,
+    },
+    timing: {
+      profileEvaluateMs: roundForState(runtime.profileEvaluateMs),
+      renderMs: roundForState(runtime.renderMs),
+      detectMs: roundForState(runtime.detectMs),
+      totalMs: roundForState(runtime.totalMs),
+    },
+    renderedIdeal: {
+      detected: runtime.renderedIdealDetected,
+      landmarkCount: runtime.renderedIdealLandmarkCount,
+      canvasWidth: runtime.canvasWidth,
+      canvasHeight: runtime.canvasHeight,
+    },
+    current478: runtime.current478?.map(roundLandmarkForState) ?? null,
+    renderedIdeal478: runtime.renderedIdeal478?.map(roundLandmarkForState) ?? null,
+  }
+}
+
 function getObjPoseComparisonSignDebug() {
   return {
     yaw: OBJ_POSE_COMPARISON_SIGN.yaw,
@@ -10103,6 +11093,26 @@ function roundPoseForState(pose: ReferencePose): ReferencePose {
     yaw: roundForState(pose.yaw),
     pitch: roundForState(pose.pitch),
     roll: roundForState(pose.roll),
+  }
+}
+
+function roundPoseMappingPose(pose: ObjPoseMappingPose | null): ObjPoseMappingPose | null {
+  if (!pose) {
+    return null
+  }
+  return {
+    yaw: roundForState(pose.yaw) ?? 0,
+    pitch: roundForState(pose.pitch) ?? 0,
+    roll: roundForState(pose.roll) ?? 0,
+  }
+}
+
+function roundPoseMappingDiff(diff: PoseMappingPoseDiff): PoseMappingPoseDiff {
+  return {
+    yaw: roundForState(diff.yaw),
+    pitch: roundForState(diff.pitch),
+    roll: roundForState(diff.roll),
+    magnitude: roundForState(diff.magnitude),
   }
 }
 
@@ -10451,6 +11461,19 @@ function getObjPoseSyncPreviewState(poseOverride: ReferencePose | null = null): 
   }
 }
 
+function getDirectObjPosePreviewState(pose: ReferencePose): ObjPreviewState {
+  return {
+    ...state.objPreview,
+    yawDeg: pose.yaw ?? 0,
+    pitchDeg: pose.pitch ?? 0,
+    rollDeg: pose.roll ?? 0,
+    zoom: 1,
+    panX: 0,
+    panY: 0,
+    mode: "wireframe",
+  }
+}
+
 function calculateObjPreviewStats(previewState: ObjPreviewState): ObjPreviewStats {
   return {
     sampledPointCount:
@@ -10553,6 +11576,64 @@ function normalizeVector(vector: ObjVertex): ObjVertex {
     y: vector.y / length,
     z: vector.z / length,
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function requireRecord(value: unknown, label: string): Record<string, unknown> {
+  if (!isRecord(value)) {
+    throw new Error(`${label} must be an object`)
+  }
+  return value
+}
+
+function requireString(source: Record<string, unknown>, key: string) {
+  const value = source[key]
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`${key} is required`)
+  }
+  return value
+}
+
+function getOptionalString(value: unknown) {
+  return typeof value === "string" && value.length > 0 ? value : null
+}
+
+function requireStringArray(source: Record<string, unknown>, key: string) {
+  const value = source[key]
+  if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) {
+    throw new Error(`${key} must be a string array`)
+  }
+  return [...value]
+}
+
+function requireNumberArray(source: Record<string, unknown>, key: string) {
+  const value = source[key]
+  if (!Array.isArray(value)) {
+    throw new Error(`${key} must be a number array`)
+  }
+  return value.map((item) => requireFiniteNumberValue(item, key))
+}
+
+function requireFiniteNumber(source: Record<string, unknown>, key: string) {
+  return requireFiniteNumberValue(source[key], key)
+}
+
+function requireFiniteNumberValue(value: unknown, label: string) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`${label} must be a finite number`)
+  }
+  return value
+}
+
+function getOptionalFiniteNumber(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null
+}
+
+function isFinitePose(pose: ObjPoseMappingPose) {
+  return Number.isFinite(pose.yaw) && Number.isFinite(pose.pitch) && Number.isFinite(pose.roll)
 }
 
 function getAppliedObjRenderAppearanceProfile(
