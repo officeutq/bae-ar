@@ -5,7 +5,7 @@ import {
 import type { Matrix, NormalizedLandmark } from "@mediapipe/tasks-vision"
 import "./style.css"
 
-type PreviewTab = "obj" | "renderedIdeal" | "live"
+type PreviewTab = "obj" | "renderedIdeal" | "live" | "placementAnalysis"
 type DebugTab =
   | "summary"
   | "current"
@@ -15,6 +15,7 @@ type DebugTab =
   | "objPoseCalibration"
   | "realtime"
   | "modeComparison"
+  | "placementAnalysis"
   | "warpMesh"
   | "raw"
 type PlaybackStatus = "stopped" | "playing" | "paused"
@@ -1656,8 +1657,17 @@ type WebglObjRenderer = {
   colorBuffer: WebGLBuffer
   positionLocation: number
   colorLocation: number
+  clipScaleLocation: WebGLUniformLocation | null
+  clipTranslateLocation: WebGLUniformLocation | null
   rendererInfo: string | null
   vendorInfo: string | null
+}
+
+type WebglClipPlacementTransform = {
+  scaleX: number
+  scaleY: number
+  translateX: number
+  translateY: number
 }
 
 type WebglObjRenderResult = {
@@ -1674,6 +1684,7 @@ type WebglObjRenderContext = {
   appearance: AppliedObjRenderAppearanceProfile
   p: ObjPoseMappingPose
   rotationCenter: ObjVertex
+  clipPlacementTransform?: WebglClipPlacementTransform
 }
 
 type ObjPoseCalibrationCandidatePoint = {
@@ -2069,6 +2080,223 @@ type PlacementMappingSample = {
   skippedReason: string | null
 }
 
+type PlacementFunctionAnalysisRunStatus = "idle" | "running" | "stopped" | "completed" | "failed"
+type PlacementFunctionAnalysisSkippedReason =
+  | "no_face"
+  | "invalid_landmarks"
+  | "missing_matrix"
+  | "invalid_matrix_values"
+  | "render_pose_not_applied"
+  | "render_pose_invalid"
+  | "detect_error"
+
+type KnownPlacement = {
+  centerImageX: number
+  centerImageY: number
+  centerWorkX: number
+  centerWorkY: number
+  visualScaleInput: number
+  renderAspectRatio: number
+  canvasWidth: number
+  canvasHeight: number
+}
+
+type PlacementFunctionMatrixMajorSummary = {
+  tx: number
+  ty: number
+  tz: number
+  scaleX: number
+  scaleY: number
+  scaleZ: number
+  uniformScale: number
+}
+
+type PlacementFunctionMatrixFeatures = {
+  tx: number | null
+  ty: number | null
+  tz: number | null
+  negTz: number | null
+  invNegTz: number | null
+  txOverNegTz: number | null
+  tyOverNegTz: number | null
+  matrixUniformScale: number | null
+}
+
+type PlacementFunctionObservedBounds = {
+  centerImageX: number
+  centerImageY: number
+  centerWorkX: number
+  centerWorkY: number
+  scaleDiag: number
+  scaleHeight: number
+  scaleWidth: number
+}
+
+type PlacementFunctionAnalysisSample = {
+  schemaVersion: "ideal_obj_render_warp_placement_function_sample_v1"
+  sampleId: string
+  sampleIndex: number
+  capturedAtMs: number
+  knownPlacement: KnownPlacement
+  requestedPoseP: {
+    yaw: number
+    pitch: number
+    roll: number
+  }
+  renderPoseDebug?: {
+    renderPoseAppliedToWebGL?: boolean
+    renderPoseValid?: boolean
+    actualRenderPoseP?: {
+      yaw: number
+      pitch: number
+      roll: number
+    } | null
+  }
+  mediaPipeResult: {
+    detected: boolean
+    returnedLandmarkCount: number
+    returnedPose?: {
+      yaw: number
+      pitch: number
+      roll: number
+    } | null
+    poseDiffMagnitude?: number | null
+  }
+  facialTransformationMatrix: {
+    available: boolean
+    rows?: number
+    columns?: number
+    raw16?: number[]
+    columnMajor?: PlacementFunctionMatrixMajorSummary
+    rowMajor?: PlacementFunctionMatrixMajorSummary
+  }
+  matrixFeatures: PlacementFunctionMatrixFeatures
+  observedRenderedBounds?: PlacementFunctionObservedBounds | null
+  preview?: {
+    hasSnapshot: boolean
+  }
+  quality: {
+    usable: boolean
+    skippedReason?: PlacementFunctionAnalysisSkippedReason
+  }
+}
+
+type PlacementFunctionAnalysisSampleState = PlacementFunctionAnalysisSample & {
+  previewLandmarks478: ReferenceLandmark[] | null
+}
+
+type PlacementFunctionAnalysisRunOptions = {
+  centerImageXValues: number[]
+  centerImageYValues: number[]
+  visualScaleInputValues: number[]
+  poseSet: "front"
+  renderAspectRatio: number
+  canvasWidth: number
+  canvasHeight: number
+}
+
+type PlacementFunctionAnalysisExport = {
+  schemaVersion: "ideal_obj_render_warp_placement_function_analysis_v1"
+  exportedAt: string
+  source: {
+    tool: "ideal-obj-render-warp-lab"
+    purpose: "matrix_to_known_placement_function_analysis"
+  }
+  renderAppearance: unknown
+  runOptions: PlacementFunctionAnalysisRunOptions
+  summary: {
+    sampleCount: number
+    usableSampleCount: number
+    detectedCount: number
+    matrixAvailableCount: number
+    failedCount: number
+  }
+  samples: PlacementFunctionAnalysisSample[]
+}
+
+type PlacementFunctionCandidate = {
+  schemaVersion: "matrix_to_known_placement_function_candidate_v1"
+  createdAt: string
+  source: {
+    tool: "ideal-obj-render-warp-lab"
+    sampleCount: number
+    usableSampleCount: number
+  }
+  targetCoordinateSpace: "aspect_corrected_work_coordinate"
+  modelType: "linear_v1"
+  features: {
+    centerWorkX: ["intercept", "txOverNegTz"]
+    centerWorkY: ["intercept", "tyOverNegTz"]
+    visualScaleInput: ["intercept", "invNegTz"]
+  }
+  models: {
+    centerWorkX: {
+      intercept: number
+      coefficients: {
+        txOverNegTz: number
+      }
+    }
+    centerWorkY: {
+      intercept: number
+      coefficients: {
+        tyOverNegTz: number
+      }
+    }
+    visualScaleInput: {
+      intercept: number
+      coefficients: {
+        invNegTz: number
+      }
+    }
+  }
+  metrics: {
+    maeCenterWork: number
+    maxCenterWork: number
+    maeVisualScaleInput: number
+    maxVisualScaleInput: number
+  }
+}
+
+type PlacementFunctionAnalysisRange = {
+  min: number
+  max: number
+}
+
+type PlacementFunctionAnalysisSummary = {
+  sampleCount: number
+  usableSampleCount: number
+  detectedCount: number
+  matrixAvailableCount: number
+  failedCount: number
+  featureRanges: {
+    tx: PlacementFunctionAnalysisRange | null
+    ty: PlacementFunctionAnalysisRange | null
+    tz: PlacementFunctionAnalysisRange | null
+    txOverNegTz: PlacementFunctionAnalysisRange | null
+    tyOverNegTz: PlacementFunctionAnalysisRange | null
+    invNegTz: PlacementFunctionAnalysisRange | null
+  }
+  knownPlacementRanges: {
+    centerWorkX: PlacementFunctionAnalysisRange | null
+    centerWorkY: PlacementFunctionAnalysisRange | null
+    visualScaleInput: PlacementFunctionAnalysisRange | null
+  }
+}
+
+type PlacementFunctionAnalysisState = {
+  status: PlacementFunctionAnalysisRunStatus
+  startedAt: string | null
+  completedAt: string | null
+  latestError: string | null
+  runOptions: PlacementFunctionAnalysisRunOptions
+  samples: PlacementFunctionAnalysisSampleState[]
+  selectedSampleIndex: number | null
+  showOverlay: boolean
+  summary: PlacementFunctionAnalysisSummary
+  candidate: PlacementFunctionCandidate | null
+  candidateUnavailableReason: string | null
+}
+
 type ModeComparisonState = {
   status: ModeComparisonStatus
   startedAt: string | null
@@ -2135,6 +2363,7 @@ type LabState = {
   renderDetectHandoff: RenderDetectHandoffState
   webglObjBenchmark: WebglObjBenchmarkState
   renderPoseProbe: RenderPoseProbeState
+  placementAnalysis: PlacementFunctionAnalysisState
   poseSearchFrames: PoseCenterSearchFrame[]
   selectedPoseSearchFrameId: string | null
   poseCenterSearch: PoseCenterSearchState
@@ -2202,6 +2431,10 @@ const WEBGL_OBJ_BENCHMARK_DEFAULT_OPTIONS: WebglObjBenchmarkOptions = {
   warmupRuns: 3,
   measuredRuns: 20,
 }
+const PLACEMENT_ANALYSIS_DEFAULT_CANVAS_SIZE = { width: 960, height: 540 } as const
+const PLACEMENT_ANALYSIS_CENTER_VALUES = [0.42, 0.46, 0.5, 0.54, 0.58] as const
+const PLACEMENT_ANALYSIS_SCALE_VALUES = [0.8, 0.9, 1, 1.1, 1.2] as const
+const PLACEMENT_ANALYSIS_FRONT_POSE: ObjPoseMappingPose = { yaw: 0, pitch: 0, roll: 0 }
 const REALTIME_TARGET_FPS_OPTIONS = [5, 10, 15, 30] as const
 const REALTIME_AVERAGE_SAMPLE_COUNT = 30
 const MODE_COMPARISON_MAX_FRAMES = 10000
@@ -2513,6 +2746,7 @@ const previewTabs: TabOption<PreviewTab>[] = [
   { label: "OBJ", value: "obj" },
   { label: "レンダー理想", value: "renderedIdeal" },
   { label: "ライブ", value: "live" },
+  { label: "配置関数解析プレビュー", value: "placementAnalysis" },
 ]
 
 const debugTabs: TabOption<DebugTab>[] = [
@@ -2524,6 +2758,7 @@ const debugTabs: TabOption<DebugTab>[] = [
   { label: "p,Pデータ", value: "objPoseCalibration" },
   { label: "リアルタイム", value: "realtime" },
   { label: "モード比較", value: "modeComparison" },
+  { label: "配置関数解析", value: "placementAnalysis" },
   { label: "ワープメッシュ", value: "warpMesh" },
   { label: "Raw Debug", value: "raw" },
 ]
@@ -2589,6 +2824,7 @@ const state: LabState = {
   renderDetectHandoff: createDefaultRenderDetectHandoffState(),
   webglObjBenchmark: createDefaultWebglObjBenchmarkState(),
   renderPoseProbe: createDefaultRenderPoseProbeState(),
+  placementAnalysis: createDefaultPlacementFunctionAnalysisState(),
   poseSearchFrames: [],
   selectedPoseSearchFrameId: null,
   poseCenterSearch: createDefaultPoseCenterSearchState(),
@@ -2712,6 +2948,7 @@ app.innerHTML = `
         ${renderObjPreview()}
         ${renderRenderedIdealPreview()}
         ${renderLivePreview()}
+        ${renderPlacementAnalysisPreview()}
       </div>
     </section>
 
@@ -2736,6 +2973,8 @@ const liveOverlayCanvas = getElement<HTMLCanvasElement>("[data-overlay='live']")
 const objPreviewCanvas = getElement<HTMLCanvasElement>('[data-canvas="obj-preview"]')
 const renderedIdealCanvas = getElement<HTMLCanvasElement>('[data-canvas="rendered-ideal"]')
 const renderedIdealOverlayCanvas = getElement<HTMLCanvasElement>('[data-overlay="rendered-ideal"]')
+const placementAnalysisRenderCanvas = getElement<HTMLCanvasElement>('[data-canvas="placement-analysis-render"]')
+const placementAnalysisOverlayCanvas = getElement<HTMLCanvasElement>('[data-overlay="placement-analysis"]')
 const liveObjPosePreviewCanvas = document.createElement("canvas")
 let liveFaceLandmarker: FaceLandmarker | null = null
 let liveFaceLandmarkerPromise: Promise<FaceLandmarker> | null = null
@@ -2755,6 +2994,8 @@ let detectPerformanceCancelRequested = false
 let renderDetectHandoffCancelRequested = false
 let webglObjBenchmarkCancelRequested = false
 let webglObjBenchmarkRenderer: WebglObjRenderer | null = null
+let placementAnalysisCancelRequested = false
+let placementAnalysisRenderer: WebglObjRenderer | null = null
 let webglRenderBufferGenerationId = 0
 let webglDetectCanvasGenerationId = 0
 let renderedIdealFaceLandmarkerCreateCount = 0
@@ -2991,6 +3232,38 @@ function renderLivePreview() {
           </div>
         </div>
       </section>
+    </div>
+  `
+}
+
+function renderPlacementAnalysisPreview() {
+  return `
+    <div class="preview-card placement-analysis-preview-card" data-preview-panel="placementAnalysis">
+      <div class="preview-stage placement-analysis-stage" data-placement-analysis-stage data-analysis-status="empty">
+        <canvas class="placement-analysis-render-canvas" data-canvas="placement-analysis-render" aria-label="配置関数解析 WebGL render image"></canvas>
+        <canvas class="placement-analysis-overlay-canvas" data-overlay="placement-analysis" aria-label="配置関数解析 MediaPipe returned 478 overlay"></canvas>
+        <div class="preview-placeholder" data-placement-analysis-placeholder>
+          <h3>配置関数解析プレビュー</h3>
+          <p>右ペインの配置関数解析タブで解析を実行すると、専用 canvas の WebGL レンダー画像と MediaPipe 返却478点 overlay を表示します。</p>
+        </div>
+      </div>
+      <div class="obj-preview-controls placement-analysis-preview-controls" aria-label="配置関数解析プレビュー操作">
+        <div class="button-row">
+          <button class="small-button" type="button" data-action="placement-analysis-prev-sample">前のサンプル</button>
+          <button class="small-button" type="button" data-action="placement-analysis-next-sample">次のサンプル</button>
+        </div>
+        <label class="select-field">
+          <span>サンプル番号</span>
+          <input type="number" min="0" step="1" value="0" data-control="placement-analysis-sample-index" />
+        </label>
+        <label class="overlay-toggle">
+          <input type="checkbox" data-control="placement-analysis-show-overlay" checked />
+          <span>478点表示</span>
+        </label>
+      </div>
+      <div class="review-card" data-placement-analysis-preview-summary>
+        <p>解析結果はまだありません。</p>
+      </div>
     </div>
   `
 }
@@ -3475,6 +3748,27 @@ function bindEvents() {
     if (action === "webgl-obj-benchmark-download-csv") {
       exportWebglObjBenchmarkCsv()
     }
+    if (action === "placement-analysis-run") {
+      void startPlacementFunctionAnalysis()
+    }
+    if (action === "placement-analysis-stop") {
+      stopPlacementFunctionAnalysis()
+    }
+    if (action === "placement-analysis-download-json") {
+      exportPlacementFunctionAnalysisJson()
+    }
+    if (action === "placement-analysis-download-csv") {
+      exportPlacementFunctionAnalysisCsv()
+    }
+    if (action === "placement-analysis-download-candidate-json") {
+      exportPlacementFunctionCandidateJson()
+    }
+    if (action === "placement-analysis-prev-sample") {
+      selectPlacementAnalysisSample((state.placementAnalysis.selectedSampleIndex ?? 0) - 1)
+    }
+    if (action === "placement-analysis-next-sample") {
+      selectPlacementAnalysisSample((state.placementAnalysis.selectedSampleIndex ?? -1) + 1)
+    }
   })
 
   bindOverlayToggle("toggle-current-landmarks", "showCurrentLandmarks478")
@@ -3485,6 +3779,15 @@ function bindEvents() {
   bindOverlayToggle("toggle-excluded-landmarks", "showExcludedLandmarks")
   bindOverlayToggle("toggle-grid-anchors", "showGridAnchors")
   bindOverlayToggle("toggle-triangle-mesh", "showTriangleMesh")
+
+  getElement<HTMLInputElement>('[data-control="placement-analysis-show-overlay"]').addEventListener("change", (event) => {
+    state.placementAnalysis.showOverlay = event.currentTarget.checked
+    renderPlacementAnalysisPreviewPanel()
+  })
+
+  getElement<HTMLInputElement>('[data-control="placement-analysis-sample-index"]').addEventListener("input", (event) => {
+    selectPlacementAnalysisSample(Math.round(Number(event.currentTarget.value)))
+  })
 }
 
 function bindObjPreviewPreset(
@@ -6691,22 +6994,33 @@ function getOrCreateWebglObjBenchmarkRenderer() {
   return webglObjBenchmarkRenderer
 }
 
-function createWebglObjBenchmarkRenderer(): WebglObjRenderer {
-  const canvas = document.createElement("canvas")
-  const context =
-    canvas.getContext("webgl", { preserveDrawingBuffer: true }) ??
-    canvas.getContext("experimental-webgl", { preserveDrawingBuffer: true })
+function getOrCreatePlacementAnalysisRenderer() {
+  if (placementAnalysisRenderer) {
+    return placementAnalysisRenderer
+  }
+  placementAnalysisRenderer = createWebglObjBenchmarkRenderer(placementAnalysisRenderCanvas)
+  return placementAnalysisRenderer
+}
+
+function createWebglObjBenchmarkRenderer(canvas: HTMLCanvasElement = document.createElement("canvas")): WebglObjRenderer {
+  let context = canvas.getContext("webgl", { preserveDrawingBuffer: true }) as WebGLRenderingContext | null
+  let contextType: "webgl" | "experimental-webgl" = "webgl"
+  if (!context) {
+    context = canvas.getContext("experimental-webgl", { preserveDrawingBuffer: true }) as WebGLRenderingContext | null
+    contextType = "experimental-webgl"
+  }
   if (!context) {
     throw new Error("WebGL context を取得できません。")
   }
   const gl = context as WebGLRenderingContext
-  const contextType = canvas.getContext("webgl") ? "webgl" : "experimental-webgl"
   const vertexShader = compileWebglShader(gl, gl.VERTEX_SHADER, `
     attribute vec2 a_position;
     attribute vec3 a_color;
+    uniform vec2 u_clipScale;
+    uniform vec2 u_clipTranslate;
     varying vec3 v_color;
     void main() {
-      gl_Position = vec4(a_position, 0.0, 1.0);
+      gl_Position = vec4(a_position * u_clipScale + u_clipTranslate, 0.0, 1.0);
       v_color = a_color;
     }
   `)
@@ -6733,6 +7047,8 @@ function createWebglObjBenchmarkRenderer(): WebglObjRenderer {
     colorBuffer,
     positionLocation: gl.getAttribLocation(program, "a_position"),
     colorLocation: gl.getAttribLocation(program, "a_color"),
+    clipScaleLocation: gl.getUniformLocation(program, "u_clipScale"),
+    clipTranslateLocation: gl.getUniformLocation(program, "u_clipTranslate"),
     rendererInfo: debugInfo
       ? String(gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL))
       : String(gl.getParameter(gl.RENDERER)),
@@ -6802,6 +7118,18 @@ function renderWebglObjToCanvas(
   gl.clearColor(background.r / 255, background.g / 255, background.b / 255, 1)
   gl.clear(gl.COLOR_BUFFER_BIT)
   gl.useProgram(renderer.program)
+  const clipTransform = context.clipPlacementTransform ?? {
+    scaleX: 1,
+    scaleY: 1,
+    translateX: 0,
+    translateY: 0,
+  }
+  if (renderer.clipScaleLocation) {
+    gl.uniform2f(renderer.clipScaleLocation, clipTransform.scaleX, clipTransform.scaleY)
+  }
+  if (renderer.clipTranslateLocation) {
+    gl.uniform2f(renderer.clipTranslateLocation, clipTransform.translateX, clipTransform.translateY)
+  }
 
   gl.bindBuffer(gl.ARRAY_BUFFER, renderer.positionBuffer)
   gl.bufferData(gl.ARRAY_BUFFER, positions, gl.DYNAMIC_DRAW)
@@ -8730,6 +9058,675 @@ function addRenderedIdealDetectionTimingSample(detectMs: number) {
     detectMs,
     ...renderedIdealDetectionTimingSamples,
   ].slice(0, REALTIME_AVERAGE_SAMPLE_COUNT)
+}
+
+async function startPlacementFunctionAnalysis() {
+  if (state.placementAnalysis.status === "running") {
+    return
+  }
+
+  if (!canRenderRenderedIdealGeometry()) {
+    state.placementAnalysis = {
+      ...state.placementAnalysis,
+      status: "failed",
+      latestError: "OBJ読込を完了してから解析を実行してください。",
+      completedAt: new Date().toISOString(),
+    }
+    renderAll()
+    return
+  }
+
+  placementAnalysisCancelRequested = false
+  const runOptions = createDefaultPlacementFunctionAnalysisRunOptions()
+  ensurePlacementAnalysisCanvasSize(runOptions)
+  state.placementAnalysis = {
+    ...createDefaultPlacementFunctionAnalysisState(),
+    status: "running",
+    startedAt: new Date().toISOString(),
+    runOptions,
+  }
+  state.activePreviewTab = "placementAnalysis"
+  state.activeDebugTab = "placementAnalysis"
+  addLog("配置関数解析を開始しました。")
+  renderAll()
+
+  try {
+    const detector = await getRenderedIdealFaceLandmarker()
+    const renderer = getOrCreatePlacementAnalysisRenderer()
+    resizeWebglObjBenchmarkRenderer(renderer, runOptions.canvasWidth, runOptions.canvasHeight)
+    const appearance = getAppliedWebglObjRenderAppearanceProfile({
+      width: runOptions.canvasWidth,
+      height: runOptions.canvasHeight,
+    })
+    const plans = createPlacementFunctionAnalysisPlans(runOptions)
+
+    for (const plan of plans) {
+      if (placementAnalysisCancelRequested) {
+        state.placementAnalysis = {
+          ...state.placementAnalysis,
+          status: "stopped",
+          completedAt: new Date().toISOString(),
+        }
+        break
+      }
+
+      const sample = runPlacementFunctionAnalysisSample({
+        detector,
+        renderer,
+        appearance,
+        sampleIndex: plan.sampleIndex,
+        knownPlacement: plan.knownPlacement,
+        requestedPoseP: PLACEMENT_ANALYSIS_FRONT_POSE,
+      })
+      appendPlacementFunctionAnalysisSample(sample)
+      renderPlacementAnalysisPreviewPanel()
+      renderDebugContent()
+      await waitForNextFrame()
+    }
+
+    if (state.placementAnalysis.status === "running") {
+      state.placementAnalysis = {
+        ...state.placementAnalysis,
+        status: "completed",
+        completedAt: new Date().toISOString(),
+      }
+      addLog("配置関数解析が完了しました。")
+    } else if (state.placementAnalysis.status === "stopped") {
+      addLog("配置関数解析を停止しました。")
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    console.error("Placement function analysis failed", error)
+    state.placementAnalysis = {
+      ...state.placementAnalysis,
+      status: "failed",
+      latestError: message,
+      completedAt: new Date().toISOString(),
+    }
+    addLog(`配置関数解析でエラーが発生しました: ${message}`)
+  } finally {
+    placementAnalysisCancelRequested = false
+    renderAll()
+  }
+}
+
+function stopPlacementFunctionAnalysis() {
+  if (state.placementAnalysis.status !== "running") {
+    return
+  }
+  placementAnalysisCancelRequested = true
+}
+
+function createPlacementFunctionAnalysisPlans(options: PlacementFunctionAnalysisRunOptions) {
+  const plans: Array<{ sampleIndex: number; knownPlacement: KnownPlacement }> = []
+  for (const centerImageY of options.centerImageYValues) {
+    for (const centerImageX of options.centerImageXValues) {
+      for (const visualScaleInput of options.visualScaleInputValues) {
+        plans.push({
+          sampleIndex: plans.length,
+          knownPlacement: createKnownPlacement({
+            centerImageX,
+            centerImageY,
+            visualScaleInput,
+            options,
+          }),
+        })
+      }
+    }
+  }
+  return plans
+}
+
+function createKnownPlacement(input: {
+  centerImageX: number
+  centerImageY: number
+  visualScaleInput: number
+  options: PlacementFunctionAnalysisRunOptions
+}): KnownPlacement {
+  return {
+    centerImageX: input.centerImageX,
+    centerImageY: input.centerImageY,
+    centerWorkX: input.centerImageX * input.options.renderAspectRatio,
+    centerWorkY: input.centerImageY,
+    visualScaleInput: input.visualScaleInput,
+    renderAspectRatio: input.options.renderAspectRatio,
+    canvasWidth: input.options.canvasWidth,
+    canvasHeight: input.options.canvasHeight,
+  }
+}
+
+function createPlacementAnalysisClipTransform(knownPlacement: KnownPlacement): WebglClipPlacementTransform {
+  return {
+    scaleX: knownPlacement.visualScaleInput,
+    scaleY: knownPlacement.visualScaleInput,
+    translateX: knownPlacement.centerImageX * 2 - 1,
+    translateY: 1 - knownPlacement.centerImageY * 2,
+  }
+}
+
+function runPlacementFunctionAnalysisSample(input: {
+  detector: FaceLandmarker
+  renderer: WebglObjRenderer
+  appearance: AppliedObjRenderAppearanceProfile
+  sampleIndex: number
+  knownPlacement: KnownPlacement
+  requestedPoseP: ObjPoseMappingPose
+}): PlacementFunctionAnalysisSampleState {
+  const capturedAtMs = Date.now()
+  const sampleId = `placement_analysis_${capturedAtMs}_${input.sampleIndex}`
+  try {
+    const renderResult = renderWebglObjToCanvas(input.renderer, {
+      renderSettings: {
+        detectCanvasWidth: input.knownPlacement.canvasWidth,
+        detectCanvasHeight: input.knownPlacement.canvasHeight,
+      },
+      appearance: input.appearance,
+      p: input.requestedPoseP,
+      rotationCenter: getObjPoseSyncRotationCenter(),
+      clipPlacementTransform: createPlacementAnalysisClipTransform(input.knownPlacement),
+    })
+    const result = input.detector.detect(input.renderer.canvas)
+    return buildPlacementFunctionAnalysisSample({
+      sampleId,
+      sampleIndex: input.sampleIndex,
+      capturedAtMs,
+      knownPlacement: input.knownPlacement,
+      requestedPoseP: input.requestedPoseP,
+      renderResult,
+      result,
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    state.placementAnalysis.latestError = message
+    return createPlacementFunctionAnalysisFailureSample({
+      sampleId,
+      sampleIndex: input.sampleIndex,
+      capturedAtMs,
+      knownPlacement: input.knownPlacement,
+      requestedPoseP: input.requestedPoseP,
+      skippedReason: "detect_error",
+    })
+  }
+}
+
+function buildPlacementFunctionAnalysisSample(input: {
+  sampleId: string
+  sampleIndex: number
+  capturedAtMs: number
+  knownPlacement: KnownPlacement
+  requestedPoseP: ObjPoseMappingPose
+  renderResult: WebglObjRenderResult
+  result: FaceLandmarkerResultLike
+}): PlacementFunctionAnalysisSampleState {
+  const landmarks = input.result.faceLandmarks[0] ?? []
+  const returnedLandmarks = mapLandmarks(landmarks)
+  const matrix = summarizeFaceMatrix(input.result.facialTransformationMatrixes[0])
+  const returnedPose = matrix?.rotationDeg ?? estimateNullablePose(input.result.facialTransformationMatrixes[0])
+  const poseDiff = calculatePoseMappingPoseDiff(input.requestedPoseP, returnedPose)
+  const renderPoseValid = isFinitePose(input.renderResult.actualRenderPoseP)
+  const renderPoseAppliedToWebGL =
+    renderPoseValid &&
+    poseMappingPosesApproximatelyEqual(input.renderResult.actualRenderPoseP, input.requestedPoseP)
+  const facialTransformationMatrix = buildPlacementFunctionMatrixSummary(matrix)
+  const matrixFeatures = buildPlacementFunctionMatrixFeatures(matrix)
+  const detected = input.result.faceLandmarks.length > 0
+  const observedRenderedBounds = calculatePlacementFunctionObservedBounds(
+    returnedLandmarks,
+    input.knownPlacement.renderAspectRatio,
+  )
+  const skippedReason = getPlacementFunctionAnalysisSkippedReason({
+    detected,
+    returnedLandmarkCount: landmarks.length,
+    matrixAvailable: facialTransformationMatrix.available,
+    matrixFeatures,
+    knownPlacement: input.knownPlacement,
+    renderPoseAppliedToWebGL,
+    renderPoseValid,
+  })
+
+  return {
+    schemaVersion: "ideal_obj_render_warp_placement_function_sample_v1",
+    sampleId: input.sampleId,
+    sampleIndex: input.sampleIndex,
+    capturedAtMs: input.capturedAtMs,
+    knownPlacement: roundKnownPlacement(input.knownPlacement),
+    requestedPoseP: cloneObjPoseMappingPose(input.requestedPoseP),
+    renderPoseDebug: {
+      renderPoseAppliedToWebGL,
+      renderPoseValid,
+      actualRenderPoseP: roundPoseMappingPose(input.renderResult.actualRenderPoseP),
+    },
+    mediaPipeResult: {
+      detected,
+      returnedLandmarkCount: landmarks.length,
+      returnedPose: hasFullPose(returnedPose)
+        ? {
+            yaw: returnedPose.yaw!,
+            pitch: returnedPose.pitch!,
+            roll: returnedPose.roll!,
+          }
+        : null,
+      poseDiffMagnitude: poseDiff.magnitude,
+    },
+    facialTransformationMatrix,
+    matrixFeatures: roundPlacementFunctionMatrixFeatures(matrixFeatures),
+    observedRenderedBounds,
+    preview: {
+      hasSnapshot: true,
+    },
+    quality: skippedReason
+      ? {
+          usable: false,
+          skippedReason,
+        }
+      : {
+          usable: true,
+        },
+    previewLandmarks478: returnedLandmarks.length > 0 ? returnedLandmarks : null,
+  }
+}
+
+function createPlacementFunctionAnalysisFailureSample(input: {
+  sampleId: string
+  sampleIndex: number
+  capturedAtMs: number
+  knownPlacement: KnownPlacement
+  requestedPoseP: ObjPoseMappingPose
+  skippedReason: PlacementFunctionAnalysisSkippedReason
+}): PlacementFunctionAnalysisSampleState {
+  return {
+    schemaVersion: "ideal_obj_render_warp_placement_function_sample_v1",
+    sampleId: input.sampleId,
+    sampleIndex: input.sampleIndex,
+    capturedAtMs: input.capturedAtMs,
+    knownPlacement: roundKnownPlacement(input.knownPlacement),
+    requestedPoseP: cloneObjPoseMappingPose(input.requestedPoseP),
+    renderPoseDebug: {
+      renderPoseAppliedToWebGL: false,
+      renderPoseValid: false,
+      actualRenderPoseP: null,
+    },
+    mediaPipeResult: {
+      detected: false,
+      returnedLandmarkCount: 0,
+      returnedPose: null,
+      poseDiffMagnitude: null,
+    },
+    facialTransformationMatrix: {
+      available: false,
+    },
+    matrixFeatures: createEmptyPlacementFunctionMatrixFeatures(),
+    observedRenderedBounds: null,
+    preview: {
+      hasSnapshot: false,
+    },
+    quality: {
+      usable: false,
+      skippedReason: input.skippedReason,
+    },
+    previewLandmarks478: null,
+  }
+}
+
+function appendPlacementFunctionAnalysisSample(sample: PlacementFunctionAnalysisSampleState) {
+  const samples = [...state.placementAnalysis.samples, sample]
+  const candidateResult = buildPlacementFunctionCandidate(samples)
+  state.placementAnalysis = {
+    ...state.placementAnalysis,
+    samples,
+    selectedSampleIndex: sample.sampleIndex,
+    summary: createPlacementFunctionAnalysisSummary(samples),
+    candidate: candidateResult.candidate,
+    candidateUnavailableReason: candidateResult.reason,
+  }
+}
+
+function buildPlacementFunctionMatrixSummary(
+  matrix: MatrixDebugSummary | null,
+): PlacementFunctionAnalysisSample["facialTransformationMatrix"] {
+  const raw16 = matrix?.raw.values?.slice(0, 16)
+  return {
+    available: Boolean(matrix?.raw.exists && raw16?.length === 16),
+    rows: matrix?.raw.rows ?? undefined,
+    columns: matrix?.raw.columns ?? undefined,
+    raw16: raw16?.length === 16 ? raw16.map((value) => roundForState(value) ?? 0) : undefined,
+    columnMajor: matrix?.columnMajor.translation && matrix.columnMajor.scale
+      ? matrixPlacementCandidateToAnalysisSummary(matrix.columnMajor)
+      : undefined,
+    rowMajor: matrix?.rowMajor.translation && matrix.rowMajor.scale
+      ? matrixPlacementCandidateToAnalysisSummary(matrix.rowMajor)
+      : undefined,
+  }
+}
+
+function matrixPlacementCandidateToAnalysisSummary(
+  candidate: MatrixPlacementCandidate,
+): PlacementFunctionMatrixMajorSummary {
+  return {
+    tx: roundForState(candidate.translation?.x ?? null) ?? 0,
+    ty: roundForState(candidate.translation?.y ?? null) ?? 0,
+    tz: roundForState(candidate.translation?.z ?? null) ?? 0,
+    scaleX: roundForState(candidate.scale?.x ?? null) ?? 0,
+    scaleY: roundForState(candidate.scale?.y ?? null) ?? 0,
+    scaleZ: roundForState(candidate.scale?.z ?? null) ?? 0,
+    uniformScale: roundForState(candidate.scale?.uniform ?? null) ?? 0,
+  }
+}
+
+function buildPlacementFunctionMatrixFeatures(matrix: MatrixDebugSummary | null): PlacementFunctionMatrixFeatures {
+  const translation = matrix?.columnMajor.translation ?? null
+  const scale = matrix?.columnMajor.scale ?? null
+  const tx = translation?.x ?? null
+  const ty = translation?.y ?? null
+  const tz = translation?.z ?? null
+  const negTz = tz !== null && Number.isFinite(tz) ? -tz : null
+  const invNegTz = negTz !== null && Math.abs(negTz) > 1e-12 ? 1 / negTz : null
+  return {
+    tx,
+    ty,
+    tz,
+    negTz,
+    invNegTz,
+    txOverNegTz: tx !== null && negTz !== null && Math.abs(negTz) > 1e-12 ? tx / negTz : null,
+    tyOverNegTz: ty !== null && negTz !== null && Math.abs(negTz) > 1e-12 ? ty / negTz : null,
+    matrixUniformScale: scale?.uniform ?? null,
+  }
+}
+
+function createEmptyPlacementFunctionMatrixFeatures(): PlacementFunctionMatrixFeatures {
+  return {
+    tx: null,
+    ty: null,
+    tz: null,
+    negTz: null,
+    invNegTz: null,
+    txOverNegTz: null,
+    tyOverNegTz: null,
+    matrixUniformScale: null,
+  }
+}
+
+function roundKnownPlacement(knownPlacement: KnownPlacement): KnownPlacement {
+  return {
+    centerImageX: roundForState(knownPlacement.centerImageX) ?? 0,
+    centerImageY: roundForState(knownPlacement.centerImageY) ?? 0,
+    centerWorkX: roundForState(knownPlacement.centerWorkX) ?? 0,
+    centerWorkY: roundForState(knownPlacement.centerWorkY) ?? 0,
+    visualScaleInput: roundForState(knownPlacement.visualScaleInput) ?? 0,
+    renderAspectRatio: roundForState(knownPlacement.renderAspectRatio) ?? 0,
+    canvasWidth: knownPlacement.canvasWidth,
+    canvasHeight: knownPlacement.canvasHeight,
+  }
+}
+
+function roundPlacementFunctionMatrixFeatures(
+  features: PlacementFunctionMatrixFeatures,
+): PlacementFunctionMatrixFeatures {
+  return {
+    tx: roundForState(features.tx),
+    ty: roundForState(features.ty),
+    tz: roundForState(features.tz),
+    negTz: roundForState(features.negTz),
+    invNegTz: roundForState(features.invNegTz),
+    txOverNegTz: roundForState(features.txOverNegTz),
+    tyOverNegTz: roundForState(features.tyOverNegTz),
+    matrixUniformScale: roundForState(features.matrixUniformScale),
+  }
+}
+
+function isFiniteKnownPlacement(knownPlacement: KnownPlacement) {
+  return [
+    knownPlacement.centerImageX,
+    knownPlacement.centerImageY,
+    knownPlacement.centerWorkX,
+    knownPlacement.centerWorkY,
+    knownPlacement.visualScaleInput,
+    knownPlacement.renderAspectRatio,
+    knownPlacement.canvasWidth,
+    knownPlacement.canvasHeight,
+  ].every((value) => Number.isFinite(value))
+}
+
+function getPlacementFunctionAnalysisSkippedReason(input: {
+  detected: boolean
+  returnedLandmarkCount: number
+  matrixAvailable: boolean
+  matrixFeatures: PlacementFunctionMatrixFeatures
+  knownPlacement: KnownPlacement
+  renderPoseAppliedToWebGL: boolean
+  renderPoseValid: boolean
+}): PlacementFunctionAnalysisSkippedReason | null {
+  if (!input.detected) {
+    return "no_face"
+  }
+  if (input.returnedLandmarkCount < 468) {
+    return "invalid_landmarks"
+  }
+  if (!input.matrixAvailable) {
+    return "missing_matrix"
+  }
+  if (
+    input.matrixFeatures.tx === null ||
+    input.matrixFeatures.ty === null ||
+    input.matrixFeatures.tz === null ||
+    !Number.isFinite(input.matrixFeatures.tx) ||
+    !Number.isFinite(input.matrixFeatures.ty) ||
+    !Number.isFinite(input.matrixFeatures.tz)
+  ) {
+    return "invalid_matrix_values"
+  }
+  if (!isFiniteKnownPlacement(input.knownPlacement)) {
+    return "invalid_matrix_values"
+  }
+  if (!input.renderPoseAppliedToWebGL) {
+    return "render_pose_not_applied"
+  }
+  if (!input.renderPoseValid) {
+    return "render_pose_invalid"
+  }
+  return null
+}
+
+function calculatePlacementFunctionObservedBounds(
+  landmarks: ReferenceLandmark[],
+  renderAspectRatio: number,
+): PlacementFunctionObservedBounds | null {
+  const bounds = calculateLandmarkBounds(landmarks)
+  if (!bounds) {
+    return null
+  }
+  const centerImageX = bounds.minX + bounds.width / 2
+  const centerImageY = bounds.minY + bounds.height / 2
+  return {
+    centerImageX: roundForState(centerImageX) ?? 0,
+    centerImageY: roundForState(centerImageY) ?? 0,
+    centerWorkX: roundForState(centerImageX * renderAspectRatio) ?? 0,
+    centerWorkY: roundForState(centerImageY) ?? 0,
+    scaleDiag: roundForState(Math.hypot(bounds.width * renderAspectRatio, bounds.height)) ?? 0,
+    scaleHeight: roundForState(bounds.height) ?? 0,
+    scaleWidth: roundForState(bounds.width * renderAspectRatio) ?? 0,
+  }
+}
+
+function createPlacementFunctionAnalysisSummary(
+  samples: PlacementFunctionAnalysisSampleState[],
+): PlacementFunctionAnalysisSummary {
+  return {
+    sampleCount: samples.length,
+    usableSampleCount: samples.filter((sample) => sample.quality.usable).length,
+    detectedCount: samples.filter((sample) => sample.mediaPipeResult.detected).length,
+    matrixAvailableCount: samples.filter((sample) => sample.facialTransformationMatrix.available).length,
+    failedCount: samples.filter((sample) => !sample.quality.usable).length,
+    featureRanges: {
+      tx: calculatePlacementAnalysisRange(samples.map((sample) => sample.matrixFeatures.tx)),
+      ty: calculatePlacementAnalysisRange(samples.map((sample) => sample.matrixFeatures.ty)),
+      tz: calculatePlacementAnalysisRange(samples.map((sample) => sample.matrixFeatures.tz)),
+      txOverNegTz: calculatePlacementAnalysisRange(samples.map((sample) => sample.matrixFeatures.txOverNegTz)),
+      tyOverNegTz: calculatePlacementAnalysisRange(samples.map((sample) => sample.matrixFeatures.tyOverNegTz)),
+      invNegTz: calculatePlacementAnalysisRange(samples.map((sample) => sample.matrixFeatures.invNegTz)),
+    },
+    knownPlacementRanges: {
+      centerWorkX: calculatePlacementAnalysisRange(samples.map((sample) => sample.knownPlacement.centerWorkX)),
+      centerWorkY: calculatePlacementAnalysisRange(samples.map((sample) => sample.knownPlacement.centerWorkY)),
+      visualScaleInput: calculatePlacementAnalysisRange(samples.map((sample) => sample.knownPlacement.visualScaleInput)),
+    },
+  }
+}
+
+function calculatePlacementAnalysisRange(values: Array<number | null | undefined>): PlacementFunctionAnalysisRange | null {
+  const finiteValues = values.filter((value): value is number => typeof value === "number" && Number.isFinite(value))
+  if (finiteValues.length === 0) {
+    return null
+  }
+  return {
+    min: roundForState(Math.min(...finiteValues)) ?? 0,
+    max: roundForState(Math.max(...finiteValues)) ?? 0,
+  }
+}
+
+function buildPlacementFunctionCandidate(samples: PlacementFunctionAnalysisSampleState[]): {
+  candidate: PlacementFunctionCandidate | null
+  reason: string | null
+} {
+  const usableSamples = samples.filter((sample) => sample.quality.usable)
+  if (usableSamples.length < 2) {
+    return { candidate: null, reason: "usable sample count too small" }
+  }
+  const centerWorkXModel = fitSimpleLinearModel(
+    usableSamples.map((sample) => ({
+      x: sample.matrixFeatures.txOverNegTz,
+      y: sample.knownPlacement.centerWorkX,
+    })),
+  )
+  const centerWorkYModel = fitSimpleLinearModel(
+    usableSamples.map((sample) => ({
+      x: sample.matrixFeatures.tyOverNegTz,
+      y: sample.knownPlacement.centerWorkY,
+    })),
+  )
+  const visualScaleInputModel = fitSimpleLinearModel(
+    usableSamples.map((sample) => ({
+      x: sample.matrixFeatures.invNegTz,
+      y: sample.knownPlacement.visualScaleInput,
+    })),
+  )
+  if (!centerWorkXModel || !centerWorkYModel || !visualScaleInputModel) {
+    return { candidate: null, reason: "singular matrix" }
+  }
+  const metrics = calculatePlacementFunctionCandidateMetrics(
+    usableSamples,
+    centerWorkXModel,
+    centerWorkYModel,
+    visualScaleInputModel,
+  )
+  return {
+    reason: null,
+    candidate: {
+      schemaVersion: "matrix_to_known_placement_function_candidate_v1",
+      createdAt: new Date().toISOString(),
+      source: {
+        tool: "ideal-obj-render-warp-lab",
+        sampleCount: samples.length,
+        usableSampleCount: usableSamples.length,
+      },
+      targetCoordinateSpace: "aspect_corrected_work_coordinate",
+      modelType: "linear_v1",
+      features: {
+        centerWorkX: ["intercept", "txOverNegTz"],
+        centerWorkY: ["intercept", "tyOverNegTz"],
+        visualScaleInput: ["intercept", "invNegTz"],
+      },
+      models: {
+        centerWorkX: {
+          intercept: roundForState(centerWorkXModel.intercept) ?? 0,
+          coefficients: {
+            txOverNegTz: roundForState(centerWorkXModel.slope) ?? 0,
+          },
+        },
+        centerWorkY: {
+          intercept: roundForState(centerWorkYModel.intercept) ?? 0,
+          coefficients: {
+            tyOverNegTz: roundForState(centerWorkYModel.slope) ?? 0,
+          },
+        },
+        visualScaleInput: {
+          intercept: roundForState(visualScaleInputModel.intercept) ?? 0,
+          coefficients: {
+            invNegTz: roundForState(visualScaleInputModel.slope) ?? 0,
+          },
+        },
+      },
+      metrics,
+    },
+  }
+}
+
+function fitSimpleLinearModel(points: Array<{ x: number | null; y: number | null }>) {
+  const validPoints = points.filter(
+    (point): point is { x: number; y: number } =>
+      point.x !== null &&
+      point.y !== null &&
+      Number.isFinite(point.x) &&
+      Number.isFinite(point.y),
+  )
+  if (validPoints.length < 2) {
+    return null
+  }
+  const meanX = validPoints.reduce((sum, point) => sum + point.x, 0) / validPoints.length
+  const meanY = validPoints.reduce((sum, point) => sum + point.y, 0) / validPoints.length
+  const denominator = validPoints.reduce((sum, point) => sum + (point.x - meanX) ** 2, 0)
+  if (!Number.isFinite(denominator) || denominator <= 1e-12) {
+    return null
+  }
+  const numerator = validPoints.reduce((sum, point) => sum + (point.x - meanX) * (point.y - meanY), 0)
+  const slope = numerator / denominator
+  const intercept = meanY - slope * meanX
+  return Number.isFinite(intercept) && Number.isFinite(slope) ? { intercept, slope } : null
+}
+
+function calculatePlacementFunctionCandidateMetrics(
+  samples: PlacementFunctionAnalysisSampleState[],
+  centerWorkXModel: { intercept: number; slope: number },
+  centerWorkYModel: { intercept: number; slope: number },
+  visualScaleInputModel: { intercept: number; slope: number },
+): PlacementFunctionCandidate["metrics"] {
+  const centerErrors: number[] = []
+  const scaleErrors: number[] = []
+  for (const sample of samples) {
+    const predictedCenterWorkX = predictSimpleLinearModel(centerWorkXModel, sample.matrixFeatures.txOverNegTz)
+    const predictedCenterWorkY = predictSimpleLinearModel(centerWorkYModel, sample.matrixFeatures.tyOverNegTz)
+    const predictedVisualScale = predictSimpleLinearModel(visualScaleInputModel, sample.matrixFeatures.invNegTz)
+    if (predictedCenterWorkX !== null && predictedCenterWorkY !== null) {
+      centerErrors.push(Math.hypot(
+        predictedCenterWorkX - sample.knownPlacement.centerWorkX,
+        predictedCenterWorkY - sample.knownPlacement.centerWorkY,
+      ))
+    }
+    if (predictedVisualScale !== null) {
+      scaleErrors.push(Math.abs(predictedVisualScale - sample.knownPlacement.visualScaleInput))
+    }
+  }
+  return {
+    maeCenterWork: roundForState(averageFiniteNumbers(centerErrors) ?? 0) ?? 0,
+    maxCenterWork: roundForState(maxNumbers(centerErrors) ?? 0) ?? 0,
+    maeVisualScaleInput: roundForState(averageFiniteNumbers(scaleErrors) ?? 0) ?? 0,
+    maxVisualScaleInput: roundForState(maxNumbers(scaleErrors) ?? 0) ?? 0,
+  }
+}
+
+function predictSimpleLinearModel(model: { intercept: number; slope: number }, value: number | null) {
+  if (value === null || !Number.isFinite(value)) {
+    return null
+  }
+  return model.intercept + model.slope * value
+}
+
+function averageFiniteNumbers(values: number[]) {
+  const finiteValues = values.filter((value) => Number.isFinite(value))
+  if (finiteValues.length === 0) {
+    return null
+  }
+  return finiteValues.reduce((sum, value) => sum + value, 0) / finiteValues.length
 }
 
 async function startObjPoseCalibration() {
@@ -11666,6 +12663,8 @@ function renderPreviewPanels(options: { skipObjRender?: boolean } = {}) {
   if (poseMappingStatus !== "ready" && !options.skipObjRender) {
     clearPoseMappingPreviewCanvas()
   }
+
+  renderPlacementAnalysisPreviewPanel()
 }
 
 function renderControls() {
@@ -13742,6 +14741,11 @@ function renderDebugContent() {
     return
   }
 
+  if (state.activeDebugTab === "placementAnalysis") {
+    content.appendChild(renderPlacementFunctionAnalysisDebugTab())
+    return
+  }
+
   if (state.activeDebugTab === "current" && state.currentAnalysis.status === "not_ready") {
     const message = document.createElement("p")
     message.className = "placeholder-text"
@@ -14092,6 +15096,24 @@ function getWarpMeshItems(): Array<[string, string]> {
   ]
 }
 
+function getPlacementFunctionAnalysisRawSummary() {
+  return {
+    status: state.placementAnalysis.status,
+    startedAt: state.placementAnalysis.startedAt,
+    completedAt: state.placementAnalysis.completedAt,
+    latestError: state.placementAnalysis.latestError,
+    runOptions: state.placementAnalysis.runOptions,
+    summary: state.placementAnalysis.summary,
+    selectedSampleIndex: state.placementAnalysis.selectedSampleIndex,
+    latestSample: state.placementAnalysis.samples.length > 0
+      ? stripPlacementFunctionAnalysisSampleState(state.placementAnalysis.samples[state.placementAnalysis.samples.length - 1])
+      : null,
+    candidateAvailable: Boolean(state.placementAnalysis.candidate),
+    candidateMetrics: state.placementAnalysis.candidate?.metrics ?? null,
+    candidateUnavailableReason: state.placementAnalysis.candidateUnavailableReason,
+  }
+}
+
 function getRawState() {
   return {
     labName: LAB_NAME,
@@ -14158,6 +15180,7 @@ function getRawState() {
     },
     objPoseDatasetGenerationState: getObjPoseCalibrationRawSummary(),
     objPoseMapping: getObjPoseMappingDebugExport(),
+    placementAnalysis: getPlacementFunctionAnalysisRawSummary(),
     warpMesh: {
       sourceVerticesStatus: "not_ready",
       targetVerticesStatus: "not_ready",
@@ -15227,6 +16250,37 @@ function createDefaultRenderPoseProbeState(): RenderPoseProbeState {
   }
 }
 
+function createDefaultPlacementFunctionAnalysisState(): PlacementFunctionAnalysisState {
+  const runOptions = createDefaultPlacementFunctionAnalysisRunOptions()
+  return {
+    status: "idle",
+    startedAt: null,
+    completedAt: null,
+    latestError: null,
+    runOptions,
+    samples: [],
+    selectedSampleIndex: null,
+    showOverlay: true,
+    summary: createPlacementFunctionAnalysisSummary([]),
+    candidate: null,
+    candidateUnavailableReason: "usable sample count too small",
+  }
+}
+
+function createDefaultPlacementFunctionAnalysisRunOptions(): PlacementFunctionAnalysisRunOptions {
+  const canvasWidth = PLACEMENT_ANALYSIS_DEFAULT_CANVAS_SIZE.width
+  const canvasHeight = PLACEMENT_ANALYSIS_DEFAULT_CANVAS_SIZE.height
+  return {
+    centerImageXValues: [...PLACEMENT_ANALYSIS_CENTER_VALUES],
+    centerImageYValues: [...PLACEMENT_ANALYSIS_CENTER_VALUES],
+    visualScaleInputValues: [...PLACEMENT_ANALYSIS_SCALE_VALUES],
+    poseSet: "front",
+    renderAspectRatio: canvasWidth / canvasHeight,
+    canvasWidth,
+    canvasHeight,
+  }
+}
+
 function createObjPoseCalibrationSearchRange(): ObjPoseCalibrationSearchRange {
   return {
     rotationCenterX: { fixed: true, value: OBJ_POSE_CALIBRATION_RANGE.rotationCenterX.value },
@@ -15919,6 +16973,249 @@ function getRenderedIdealMessage() {
   return "現在姿勢を反映したOBJの2Dレンダーを表示しています。"
 }
 
+function renderPlacementAnalysisPreviewPanel() {
+  const stage = getElement<HTMLElement>("[data-placement-analysis-stage]")
+  const summary = getElement<HTMLElement>("[data-placement-analysis-preview-summary]")
+  const sampleIndexInput = getElement<HTMLInputElement>('[data-control="placement-analysis-sample-index"]')
+  const showOverlayInput = getElement<HTMLInputElement>('[data-control="placement-analysis-show-overlay"]')
+  const selectedSample = getSelectedPlacementAnalysisSample()
+  const hasSamples = state.placementAnalysis.samples.length > 0
+
+  stage.dataset.analysisStatus = selectedSample ? "ready" : "empty"
+  showOverlayInput.checked = state.placementAnalysis.showOverlay
+  sampleIndexInput.max = String(Math.max(0, state.placementAnalysis.samples.length - 1))
+  sampleIndexInput.value = String(state.placementAnalysis.selectedSampleIndex ?? 0)
+  setDisabled('[data-action="placement-analysis-prev-sample"]', !hasSamples || (state.placementAnalysis.selectedSampleIndex ?? 0) <= 0)
+  setDisabled(
+    '[data-action="placement-analysis-next-sample"]',
+    !hasSamples ||
+      (state.placementAnalysis.selectedSampleIndex ?? -1) >= state.placementAnalysis.samples.length - 1,
+  )
+  sampleIndexInput.disabled = !hasSamples
+  showOverlayInput.disabled = !hasSamples
+
+  if (!selectedSample) {
+    clearPlacementAnalysisPreviewCanvas()
+    summary.innerHTML = `<p>解析結果はまだありません。</p>`
+    return
+  }
+
+  try {
+    renderPlacementAnalysisSamplePreview(selectedSample)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    summary.innerHTML = `<p>配置関数解析プレビューを描画できません: ${escapeHtml(message)}</p>`
+    return
+  }
+
+  const known = selectedSample.knownPlacement
+  summary.innerHTML = `
+    <dl class="obj-preview-list placement-analysis-preview-list">
+      <div><dt>sampleIndex</dt><dd>${selectedSample.sampleIndex}</dd></div>
+      <div><dt>knownPlacement</dt><dd>${escapeHtml(formatKnownPlacementShort(known))}</dd></div>
+      <div><dt>detected</dt><dd>${String(selectedSample.mediaPipeResult.detected)}</dd></div>
+      <div><dt>matrixAvailable</dt><dd>${String(selectedSample.facialTransformationMatrix.available)}</dd></div>
+      <div><dt>quality</dt><dd>${selectedSample.quality.usable ? "usable" : `skipped: ${escapeHtml(selectedSample.quality.skippedReason ?? "-")}`}</dd></div>
+    </dl>
+  `
+}
+
+function getSelectedPlacementAnalysisSample() {
+  const selectedIndex = state.placementAnalysis.selectedSampleIndex
+  if (selectedIndex === null) {
+    return null
+  }
+  return state.placementAnalysis.samples[selectedIndex] ?? null
+}
+
+function selectPlacementAnalysisSample(index: number) {
+  if (state.placementAnalysis.samples.length === 0) {
+    state.placementAnalysis.selectedSampleIndex = null
+    renderPlacementAnalysisPreviewPanel()
+    renderDebugContent()
+    return
+  }
+  const selectedSampleIndex = clamp(
+    Number.isFinite(index) ? index : 0,
+    0,
+    state.placementAnalysis.samples.length - 1,
+  )
+  state.placementAnalysis.selectedSampleIndex = Math.round(selectedSampleIndex)
+  renderPlacementAnalysisPreviewPanel()
+  renderDebugContent()
+}
+
+function renderPlacementAnalysisSamplePreview(sample: PlacementFunctionAnalysisSampleState) {
+  renderPlacementAnalysisKnownPlacementToCanvas(sample.knownPlacement, sample.requestedPoseP)
+  drawPlacementAnalysisOverlay(sample.previewLandmarks478)
+}
+
+function renderPlacementAnalysisKnownPlacementToCanvas(
+  knownPlacement: KnownPlacement,
+  requestedPoseP: ObjPoseMappingPose,
+) {
+  const renderer = getOrCreatePlacementAnalysisRenderer()
+  resizeWebglObjBenchmarkRenderer(renderer, knownPlacement.canvasWidth, knownPlacement.canvasHeight)
+  const appearance = getAppliedWebglObjRenderAppearanceProfile({
+    width: knownPlacement.canvasWidth,
+    height: knownPlacement.canvasHeight,
+  })
+  renderWebglObjToCanvas(renderer, {
+    renderSettings: {
+      detectCanvasWidth: knownPlacement.canvasWidth,
+      detectCanvasHeight: knownPlacement.canvasHeight,
+    },
+    appearance,
+    p: requestedPoseP,
+    rotationCenter: getObjPoseSyncRotationCenter(),
+    clipPlacementTransform: createPlacementAnalysisClipTransform(knownPlacement),
+  })
+}
+
+function clearPlacementAnalysisPreviewCanvas() {
+  ensurePlacementAnalysisCanvasSize(state.placementAnalysis.runOptions)
+  const renderer = placementAnalysisRenderer
+  if (renderer) {
+    clearWebglRendererCanvas(renderer)
+  } else {
+    placementAnalysisRenderCanvas.width = state.placementAnalysis.runOptions.canvasWidth
+    placementAnalysisRenderCanvas.height = state.placementAnalysis.runOptions.canvasHeight
+  }
+  clearPlacementAnalysisOverlay()
+}
+
+function ensurePlacementAnalysisCanvasSize(options: PlacementFunctionAnalysisRunOptions) {
+  if (placementAnalysisRenderCanvas.width !== options.canvasWidth) {
+    placementAnalysisRenderCanvas.width = options.canvasWidth
+  }
+  if (placementAnalysisRenderCanvas.height !== options.canvasHeight) {
+    placementAnalysisRenderCanvas.height = options.canvasHeight
+  }
+  if (placementAnalysisOverlayCanvas.width !== options.canvasWidth) {
+    placementAnalysisOverlayCanvas.width = options.canvasWidth
+  }
+  if (placementAnalysisOverlayCanvas.height !== options.canvasHeight) {
+    placementAnalysisOverlayCanvas.height = options.canvasHeight
+  }
+}
+
+function drawPlacementAnalysisOverlay(landmarks: ReferenceLandmark[] | null) {
+  ensurePlacementAnalysisCanvasSize(state.placementAnalysis.runOptions)
+  clearPlacementAnalysisOverlay()
+  if (!state.placementAnalysis.showOverlay || !landmarks || landmarks.length === 0) {
+    return
+  }
+  const context = placementAnalysisOverlayCanvas.getContext("2d")
+  if (!context) {
+    return
+  }
+  context.save()
+  drawLandmarkPoints(
+    context,
+    { x: 0, y: 0, width: placementAnalysisOverlayCanvas.width, height: placementAnalysisOverlayCanvas.height },
+    landmarks,
+    "rgba(14, 116, 144, 0.9)",
+    1.6,
+  )
+  context.restore()
+}
+
+function clearPlacementAnalysisOverlay() {
+  const context = placementAnalysisOverlayCanvas.getContext("2d")
+  if (!context) {
+    return
+  }
+  context.clearRect(0, 0, placementAnalysisOverlayCanvas.width, placementAnalysisOverlayCanvas.height)
+}
+
+function renderPlacementFunctionAnalysisDebugTab() {
+  const analysis = state.placementAnalysis
+  const summary = analysis.summary
+  const canDownloadSamples = analysis.samples.length > 0
+  const canDownloadCandidate = analysis.candidate !== null
+  const container = document.createElement("div")
+  container.className = "placement-analysis-debug-tab"
+  container.innerHTML = `
+    <section class="review-card">
+      <h3>配置関数解析</h3>
+      <div class="button-row placement-analysis-buttons">
+        <button class="primary-button" type="button" data-action="placement-analysis-run" ${analysis.status === "running" || !canRenderRenderedIdealGeometry() ? "disabled" : ""}>解析実行</button>
+        <button class="secondary-button" type="button" data-action="placement-analysis-stop" ${analysis.status === "running" ? "" : "disabled"}>解析停止</button>
+        <button class="small-button" type="button" data-action="placement-analysis-download-json" ${canDownloadSamples ? "" : "disabled"}>サンプルJSONをダウンロード</button>
+        <button class="small-button" type="button" data-action="placement-analysis-download-csv" ${canDownloadSamples ? "" : "disabled"}>サンプルCSVをダウンロード</button>
+        <button class="small-button" type="button" data-action="placement-analysis-download-candidate-json" ${canDownloadCandidate ? "" : "disabled"}>配置関数候補JSONをダウンロード</button>
+      </div>
+      ${!canRenderRenderedIdealGeometry() ? `<p class="control-note">OBJ読込を完了してから解析を実行してください。</p>` : ""}
+    </section>
+    <section class="review-card">
+      <dl class="review-grid">
+        <div><dt>runStatus</dt><dd>${analysis.status}</dd></div>
+        <div><dt>sampleCount</dt><dd>${formatNullableCount(summary.sampleCount)}</dd></div>
+        <div><dt>usableSampleCount</dt><dd>${formatNullableCount(summary.usableSampleCount)}</dd></div>
+        <div><dt>detectedCount</dt><dd>${formatNullableCount(summary.detectedCount)}</dd></div>
+        <div><dt>matrixAvailableCount</dt><dd>${formatNullableCount(summary.matrixAvailableCount)}</dd></div>
+        <div><dt>failedCount</dt><dd>${formatNullableCount(summary.failedCount)}</dd></div>
+        <div><dt>selectedSampleIndex</dt><dd>${analysis.selectedSampleIndex ?? "-"}</dd></div>
+        <div><dt>latestSamplePreview</dt><dd>${escapeHtml(formatLatestPlacementAnalysisSamplePreview())}</dd></div>
+        <div><dt>latestError</dt><dd>${escapeHtml(analysis.latestError ?? "-")}</dd></div>
+      </dl>
+    </section>
+    <section class="review-card">
+      <h3>feature range</h3>
+      <dl class="review-grid">
+        <div><dt>tx range</dt><dd>${formatPlacementAnalysisRange(summary.featureRanges.tx)}</dd></div>
+        <div><dt>ty range</dt><dd>${formatPlacementAnalysisRange(summary.featureRanges.ty)}</dd></div>
+        <div><dt>tz range</dt><dd>${formatPlacementAnalysisRange(summary.featureRanges.tz)}</dd></div>
+        <div><dt>txOverNegTz range</dt><dd>${formatPlacementAnalysisRange(summary.featureRanges.txOverNegTz)}</dd></div>
+        <div><dt>tyOverNegTz range</dt><dd>${formatPlacementAnalysisRange(summary.featureRanges.tyOverNegTz)}</dd></div>
+        <div><dt>invNegTz range</dt><dd>${formatPlacementAnalysisRange(summary.featureRanges.invNegTz)}</dd></div>
+      </dl>
+    </section>
+    <section class="review-card">
+      <h3>known placement range</h3>
+      <dl class="review-grid">
+        <div><dt>centerWorkX range</dt><dd>${formatPlacementAnalysisRange(summary.knownPlacementRanges.centerWorkX)}</dd></div>
+        <div><dt>centerWorkY range</dt><dd>${formatPlacementAnalysisRange(summary.knownPlacementRanges.centerWorkY)}</dd></div>
+        <div><dt>visualScaleInput range</dt><dd>${formatPlacementAnalysisRange(summary.knownPlacementRanges.visualScaleInput)}</dd></div>
+      </dl>
+    </section>
+    <section class="review-card">
+      <h3>candidate</h3>
+      <dl class="review-grid">
+        <div><dt>available</dt><dd>${String(Boolean(analysis.candidate))}</dd></div>
+        <div><dt>modelType</dt><dd>${analysis.candidate?.modelType ?? "-"}</dd></div>
+        <div><dt>metrics</dt><dd>${escapeHtml(formatPlacementFunctionCandidateMetrics(analysis.candidate))}</dd></div>
+        <div><dt>reason</dt><dd>${escapeHtml(analysis.candidate ? "-" : analysis.candidateUnavailableReason ?? "-")}</dd></div>
+      </dl>
+    </section>
+  `
+  return container
+}
+
+function formatKnownPlacementShort(known: KnownPlacement) {
+  return `centerImage=(${formatNullableNumber(known.centerImageX)}, ${formatNullableNumber(known.centerImageY)}) / centerWork=(${formatNullableNumber(known.centerWorkX)}, ${formatNullableNumber(known.centerWorkY)}) / visualScaleInput=${formatNullableNumber(known.visualScaleInput)} / canvas=${known.canvasWidth}x${known.canvasHeight}`
+}
+
+function formatLatestPlacementAnalysisSamplePreview() {
+  const sample = state.placementAnalysis.samples[state.placementAnalysis.samples.length - 1]
+  if (!sample) {
+    return "-"
+  }
+  return `#${sample.sampleIndex} ${formatKnownPlacementShort(sample.knownPlacement)} / detected=${String(sample.mediaPipeResult.detected)} / matrix=${String(sample.facialTransformationMatrix.available)}`
+}
+
+function formatPlacementAnalysisRange(range: PlacementFunctionAnalysisRange | null) {
+  return range ? `${formatNullableNumber(range.min)} .. ${formatNullableNumber(range.max)}` : "-"
+}
+
+function formatPlacementFunctionCandidateMetrics(candidate: PlacementFunctionCandidate | null) {
+  if (!candidate) {
+    return "-"
+  }
+  const metrics = candidate.metrics
+  return `maeCenterWork=${formatNullableNumber(metrics.maeCenterWork)}, maxCenterWork=${formatNullableNumber(metrics.maxCenterWork)}, maeVisualScaleInput=${formatNullableNumber(metrics.maeVisualScaleInput)}, maxVisualScaleInput=${formatNullableNumber(metrics.maxVisualScaleInput)}`
+}
+
 function getRenderedIdealPreviewPose(): ReferencePose {
   if (state.currentAnalysis.status === "detected" && hasFullPose(state.currentAnalysis.pose)) {
     return state.currentAnalysis.pose
@@ -16072,6 +17369,192 @@ function exportPlacementMappingSamplesCsv() {
   status.textContent = "placement mapping samples CSVをダウンロードしました。"
   addLog(status.textContent)
   renderAll()
+}
+
+function exportPlacementFunctionAnalysisJson() {
+  const status = getElement<HTMLElement>("[data-debug-export-status]")
+  if (state.placementAnalysis.samples.length === 0) {
+    status.textContent = "配置関数解析サンプルがありません。先に解析を実行してください。"
+    renderAll()
+    return
+  }
+  const payload = buildPlacementFunctionAnalysisExport()
+  downloadTextFile(
+    `placement-function-analysis-samples-${formatTimestampForFileName(payload.exportedAt)}.json`,
+    JSON.stringify(payload, null, 2),
+    "application/json;charset=utf-8",
+  )
+  status.textContent = "配置関数解析サンプルJSONをダウンロードしました。"
+  addLog(status.textContent)
+  renderAll()
+}
+
+function exportPlacementFunctionAnalysisCsv() {
+  const status = getElement<HTMLElement>("[data-debug-export-status]")
+  if (state.placementAnalysis.samples.length === 0) {
+    status.textContent = "配置関数解析サンプルがありません。先に解析を実行してください。"
+    renderAll()
+    return
+  }
+  const createdAt = new Date().toISOString()
+  downloadTextFile(
+    `placement-function-analysis-samples-${formatTimestampForFileName(createdAt)}.csv`,
+    buildPlacementFunctionAnalysisCsv(state.placementAnalysis.samples),
+    "text/csv;charset=utf-8",
+  )
+  status.textContent = "配置関数解析サンプルCSVをダウンロードしました。"
+  addLog(status.textContent)
+  renderAll()
+}
+
+function exportPlacementFunctionCandidateJson() {
+  const status = getElement<HTMLElement>("[data-debug-export-status]")
+  const candidate = state.placementAnalysis.candidate
+  if (!candidate) {
+    status.textContent = `配置関数候補がありません: ${state.placementAnalysis.candidateUnavailableReason ?? "unknown"}`
+    renderAll()
+    return
+  }
+  downloadTextFile(
+    `placement-function-candidate-${formatTimestampForFileName(candidate.createdAt)}.json`,
+    JSON.stringify(candidate, null, 2),
+    "application/json;charset=utf-8",
+  )
+  status.textContent = "配置関数候補JSONをダウンロードしました。"
+  addLog(status.textContent)
+  renderAll()
+}
+
+function buildPlacementFunctionAnalysisExport(): PlacementFunctionAnalysisExport {
+  const exportedAt = new Date().toISOString()
+  const options = state.placementAnalysis.runOptions
+  return {
+    schemaVersion: "ideal_obj_render_warp_placement_function_analysis_v1",
+    exportedAt,
+    source: {
+      tool: "ideal-obj-render-warp-lab",
+      purpose: "matrix_to_known_placement_function_analysis",
+    },
+    renderAppearance: getPlacementFunctionAnalysisRenderAppearanceSummary(options),
+    runOptions: {
+      centerImageXValues: [...options.centerImageXValues],
+      centerImageYValues: [...options.centerImageYValues],
+      visualScaleInputValues: [...options.visualScaleInputValues],
+      poseSet: options.poseSet,
+      renderAspectRatio: options.renderAspectRatio,
+      canvasWidth: options.canvasWidth,
+      canvasHeight: options.canvasHeight,
+    },
+    summary: {
+      sampleCount: state.placementAnalysis.summary.sampleCount,
+      usableSampleCount: state.placementAnalysis.summary.usableSampleCount,
+      detectedCount: state.placementAnalysis.summary.detectedCount,
+      matrixAvailableCount: state.placementAnalysis.summary.matrixAvailableCount,
+      failedCount: state.placementAnalysis.summary.failedCount,
+    },
+    samples: state.placementAnalysis.samples.map(stripPlacementFunctionAnalysisSampleState),
+  }
+}
+
+function stripPlacementFunctionAnalysisSampleState(
+  sample: PlacementFunctionAnalysisSampleState,
+): PlacementFunctionAnalysisSample {
+  const { previewLandmarks478: _previewLandmarks478, ...exportSample } = sample
+  return exportSample
+}
+
+function getPlacementFunctionAnalysisRenderAppearanceSummary(options: PlacementFunctionAnalysisRunOptions) {
+  const appearance = getAppliedWebglObjRenderAppearanceProfile({
+    width: options.canvasWidth,
+    height: options.canvasHeight,
+  })
+  return {
+    profileId: appearance.id,
+    profileLabel: appearance.label,
+    backgroundColor: appearance.backgroundColor,
+    skinColor: appearance.skinColor,
+    material: appearance.material,
+    lighting: appearance.lighting,
+    camera: appearance.camera,
+    renderResolution: appearance.renderResolution,
+    implementation: appearance.implementation,
+    renderBackend: "webgl",
+  }
+}
+
+function buildPlacementFunctionAnalysisCsv(samples: PlacementFunctionAnalysisSampleState[]) {
+  const headers = [
+    "sampleIndex",
+    "qualityUsable",
+    "skippedReason",
+    "knownCenterImageX",
+    "knownCenterImageY",
+    "knownCenterWorkX",
+    "knownCenterWorkY",
+    "knownVisualScaleInput",
+    "requestedYaw",
+    "requestedPitch",
+    "requestedRoll",
+    "returnedYaw",
+    "returnedPitch",
+    "returnedRoll",
+    "poseDiffMagnitude",
+    "matrixAvailable",
+    "tx",
+    "ty",
+    "tz",
+    "negTz",
+    "invNegTz",
+    "txOverNegTz",
+    "tyOverNegTz",
+    "matrixUniformScale",
+    "observedCenterImageX",
+    "observedCenterImageY",
+    "observedCenterWorkX",
+    "observedCenterWorkY",
+    "observedScaleDiag",
+    "renderAspectRatio",
+    "canvasWidth",
+    "canvasHeight",
+  ]
+  const rows = samples.map((sample) => [
+    sample.sampleIndex,
+    sample.quality.usable,
+    sample.quality.skippedReason ?? "",
+    sample.knownPlacement.centerImageX,
+    sample.knownPlacement.centerImageY,
+    sample.knownPlacement.centerWorkX,
+    sample.knownPlacement.centerWorkY,
+    sample.knownPlacement.visualScaleInput,
+    sample.requestedPoseP.yaw,
+    sample.requestedPoseP.pitch,
+    sample.requestedPoseP.roll,
+    sample.mediaPipeResult.returnedPose?.yaw ?? "",
+    sample.mediaPipeResult.returnedPose?.pitch ?? "",
+    sample.mediaPipeResult.returnedPose?.roll ?? "",
+    sample.mediaPipeResult.poseDiffMagnitude ?? "",
+    sample.facialTransformationMatrix.available,
+    sample.matrixFeatures.tx ?? "",
+    sample.matrixFeatures.ty ?? "",
+    sample.matrixFeatures.tz ?? "",
+    sample.matrixFeatures.negTz ?? "",
+    sample.matrixFeatures.invNegTz ?? "",
+    sample.matrixFeatures.txOverNegTz ?? "",
+    sample.matrixFeatures.tyOverNegTz ?? "",
+    sample.matrixFeatures.matrixUniformScale ?? "",
+    sample.observedRenderedBounds?.centerImageX ?? "",
+    sample.observedRenderedBounds?.centerImageY ?? "",
+    sample.observedRenderedBounds?.centerWorkX ?? "",
+    sample.observedRenderedBounds?.centerWorkY ?? "",
+    sample.observedRenderedBounds?.scaleDiag ?? "",
+    sample.knownPlacement.renderAspectRatio,
+    sample.knownPlacement.canvasWidth,
+    sample.knownPlacement.canvasHeight,
+  ])
+  return [
+    headers.join(","),
+    ...rows.map((row) => row.map(formatCsvCell).join(",")),
+  ].join("\n")
 }
 
 function exportModeComparisonJson() {
@@ -16788,6 +18271,7 @@ function buildDebugExport() {
     poseMapping: getPoseMappingRuntimeDebugExport(),
     objPoseDatasetGeneration: getObjPoseCalibrationDebugExport(),
     objPoseMapping: getObjPoseMappingDebugExport(),
+    placementAnalysis: getPlacementFunctionAnalysisRawSummary(),
     mediaPipeOptions: {
       currentLiveOptions: getCurrentLiveMediaPipeOptionsDebug(),
       renderedIdealOptions: getRenderedIdealMediaPipeOptionsDebug(),

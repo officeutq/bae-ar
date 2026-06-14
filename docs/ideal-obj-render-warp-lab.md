@@ -51,6 +51,62 @@ live overlay には `bounds_center_scale_v1` で変換済みの `alignedRendered
 
 `placement mapping samples` は session memory に frame ごとの small summary として保存し、JSON / CSV で export できる。sample には `frameId`、`mediaTimeSec`、`P_camera`、`p`、`P_confirm`、`poseDiffMagnitude`、matrix column-major translation / scale、image / work bounds、`boundsScaleBasis`、`boundsScaleRatio`、aspect ratio、`qualityUsable`、`skippedReason` を含める。
 
+## Placement Function Analysis（配置関数解析）
+
+`Placement Function Analysis（配置関数解析）` は、理想 OBJ 顔だけを使う debug-only の検証機能です。目的は、WebGL で既知配置に置いた理想 OBJ 顔を MediaPipe に通し、返ってきた `facialTransformationMatrix` から `knownPlacement` を復元する placement function を求めることです。
+
+処理の流れ:
+
+```text
+WebGLで既知配置に置いた理想OBJ顔
+  -> 専用の解析用 canvas へ描画
+  -> MediaPipe detect(canvas)
+  -> facialTransformationMatrix
+  -> placement function candidate
+  -> knownPlacement を復元できるか確認
+```
+
+解析用 canvas は live preview / live overlay とは別の `placementAnalysisRenderCanvas` と `placementAnalysisOverlayCanvas` を使います。`placementAnalysisRenderCanvas` は WebGL render された理想 OBJ 顔画像、`placementAnalysisOverlayCanvas` は MediaPipe が返した 478 点を重ねる 2D overlay です。理想顔レンダー本体は WebGL render のみを使い、Canvas 2D の `drawImage()` で理想顔画像を再配置する方式や render backend 比較は行いません。
+
+座標系は CSS 表示サイズではなく drawing buffer を正とします。MediaPipe に渡す画像も解析用 canvas そのものです。
+
+```ts
+imageLandmarker.detect(placementAnalysisRenderCanvas)
+```
+
+`knownPlacement` は canvas 全体を 0..1 とする image-normalized coordinate で記録します。`centerImageX = 0.5` / `centerImageY = 0.5` が canvas 中央です。aspect-corrected work coordinate は以下で記録します。
+
+```text
+centerWorkX = centerImageX * renderAspectRatio
+centerWorkY = centerImageY
+```
+
+初期 canvas は 16:9 の `960 x 540` です。解析用 canvas には letterbox を作らず、canvas 全体を MediaPipe 入力画像全体、かつ `knownPlacement` の 0..1 座標範囲として扱います。
+
+初期 sweep は正面 pose のみで、`centerImageX` / `centerImageY` を `0.42, 0.46, 0.50, 0.54, 0.58`、`visualScaleInput` を `0.80, 0.90, 1.00, 1.10, 1.20` とします。角度は既存の pose mapping の責務であり、この解析では placement（中心・大きさ）だけを扱います。
+
+WebGL 側では、既存の pose-baked vertices の renderer を再利用しつつ、最後段の clip-space transform で `visualScaleInput` と `centerImageX / centerImageY` を適用します。これは物理 camera 再現ではなく、「どこに、どの大きさで描いたか」を明確に制御して matrix と対応付けるための debug 実装です。
+
+UI は以下の分担です。
+
+- 左ペインには配置関数解析ボタンを置きません。OBJ loading や render settings など通常操作の領域として残します。
+- 中央ペインに `配置関数解析プレビュー` tab を追加します。最新または選択中 sample の WebGL render image と MediaPipe returned 478 overlay を表示します。
+- 右ペインに `配置関数解析` tab を追加します。解析実行、停止、サンプル JSON / CSV download、candidate JSON download、compact debug summary を置きます。
+
+sample には `knownPlacement`、front の `requestedPoseP`、MediaPipe の detected / returned pose / `facialTransformationMatrix`、matrix features、補助 debug としての `observedRenderedBounds`、`quality.usable` と `skippedReason` を保存します。JSON export には returned478 配列そのものは含めません。returned478 は中央プレビュー overlay 用の state としてのみ保持します。
+
+placement function candidate は最小構成として以下の一次式を作ります。
+
+```text
+knownCenterWorkX = a0 + a1 * txOverNegTz
+knownCenterWorkY = b0 + b1 * tyOverNegTz
+knownVisualScaleInput = c0 + c1 * invNegTz
+```
+
+使える sample 数が足りない、特徴量が単一値で回帰が特異になる、matrix features が不正な場合は candidate を作らず、右ペインに理由を表示します。
+
+この解析では `current478`、`current478 bounds`、current face、live video、live overlay を一切使いません。`current478 bounds` は teacher data や reference placement として扱いません。通常の live overlay、`alignedRenderedIdeal478`、`bounds_center_scale_v1`、stale / fallback / token mismatch guards、render pose debug、mesh warp、production Shape Warp へは接続しません。
+
 ## 目的
 
 `tools/ideal-obj-render-warp-lab` は、FaceBuilder + Blender sculpt で作成した `テスト.obj` のような OBJ 3D 形状ファイルを、BAE AR の neutral ideal head（無表情基準の理想頭部）候補として使えるか検証する debug / research lab です。
