@@ -83,7 +83,9 @@ centerWorkY = centerImageY
 
 初期 canvas は 16:9 の `960 x 540` です。解析用 canvas には letterbox を作らず、canvas 全体を MediaPipe 入力画像全体、かつ `knownPlacement` の 0..1 座標範囲として扱います。
 
-初期 sweep は正面 pose のみで、`centerImageX` / `centerImageY` を `0.42, 0.46, 0.50, 0.54, 0.58`、`visualScaleInput` を `0.80, 0.90, 1.00, 1.10, 1.20` とします。角度は既存の pose mapping の責務であり、この解析では placement（中心・大きさ）だけを扱います。
+初期 sweep は正面 pose のみで、`centerImageX` / `centerImageY` を `0.42, 0.46, 0.50, 0.54, 0.58`、`visualScaleInput` を `1.10, 1.15, 1.20, 1.25, 1.30` とします。角度は既存の pose mapping の責務であり、この解析では placement（中心・大きさ）だけを扱います。
+
+現状の WebGL レンダー条件では、`visualScaleInput` が `0.80` / `0.90` の小さい顔サイズになると MediaPipe が `no_face` になりやすいことが分かっています。そのため、初期 sweep から `0.80` / `0.90` を外し、検出できる顔サイズ寄りの `1.10` 以上を中心にします。`1.00` 付近は将来の boundary check（境界確認）用として別扱いにします。
 
 WebGL 側では、既存の pose-baked vertices の renderer を再利用しつつ、最後段の clip-space transform で `visualScaleInput` と `centerImageX / centerImageY` を適用します。これは物理 camera 再現ではなく、「どこに、どの大きさで描いたか」を明確に制御して matrix と対応付けるための debug 実装です。
 
@@ -95,6 +97,8 @@ UI は以下の分担です。
 
 sample には `knownPlacement`、front の `requestedPoseP`、MediaPipe の detected / returned pose / `facialTransformationMatrix`、matrix features、補助 debug としての `observedRenderedBounds`、`quality.usable` と `skippedReason` を保存します。JSON export には returned478 配列そのものは含めません。returned478 は中央プレビュー overlay 用の state としてのみ保持します。
 
+右ペインの debug summary と JSON export には、`scaleDetectionSummary`（スケール別検出要約）と `skippedReasonCounts`（除外理由別件数）を含めます。これにより、失敗が小さすぎる顔サイズによる `no_face` なのか、`facialTransformationMatrix` 欠落や matrix feature 不正なのかを切り分けます。
+
 placement function candidate は最小構成として以下の一次式を作ります。
 
 ```text
@@ -104,6 +108,8 @@ knownVisualScaleInput = c0 + c1 * invNegTz
 ```
 
 使える sample 数が足りない、特徴量が単一値で回帰が特異になる、matrix features が不正な場合は candidate を作らず、右ペインに理由を表示します。
+
+candidate metrics は center（中心）と scale（大きさ）に分けて表示します。candidate JSON には optional field として `trainingDataSummary` を含め、学習に使った `visualScaleInput` の範囲、値、scale 別 sample 数を記録します。
 
 この解析では `current478`、`current478 bounds`、current face、live video、live overlay を一切使いません。`current478 bounds` は teacher data や reference placement として扱いません。通常の live overlay、`alignedRenderedIdeal478`、`bounds_center_scale_v1`、stale / fallback / token mismatch guards、render pose debug、mesh warp、production Shape Warp へは接続しません。
 

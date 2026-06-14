@@ -736,6 +736,12 @@ h3 {
   min-width: 0;
 }
 
+.placement-candidate-metrics h4 {
+  color: #26313b;
+  font-size: 13px;
+  margin: 10px 0 8px;
+}
+
 .pose-sync-button {
   justify-self: start;
 }

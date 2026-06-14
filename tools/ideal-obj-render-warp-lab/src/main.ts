@@ -2090,6 +2090,15 @@ type PlacementFunctionAnalysisSkippedReason =
   | "render_pose_invalid"
   | "detect_error"
 
+type PlacementFunctionScaleDetectionSummary = {
+  visualScaleInput: number
+  sampleCount: number
+  detectedCount: number
+  usableCount: number
+  noFaceCount: number
+  failedCount: number
+}
+
 type KnownPlacement = {
   centerImageX: number
   centerImageY: number
@@ -2210,6 +2219,8 @@ type PlacementFunctionAnalysisExport = {
     detectedCount: number
     matrixAvailableCount: number
     failedCount: number
+    scaleDetectionSummary: PlacementFunctionScaleDetectionSummary[]
+    skippedReasonCounts: Record<string, number>
   }
   samples: PlacementFunctionAnalysisSample[]
 }
@@ -2255,6 +2266,11 @@ type PlacementFunctionCandidate = {
     maeVisualScaleInput: number
     maxVisualScaleInput: number
   }
+  trainingDataSummary?: {
+    visualScaleInputRange: [number, number] | null
+    visualScaleInputValues: number[]
+    sampleCountByVisualScaleInput: Record<string, number>
+  }
 }
 
 type PlacementFunctionAnalysisRange = {
@@ -2281,6 +2297,8 @@ type PlacementFunctionAnalysisSummary = {
     centerWorkY: PlacementFunctionAnalysisRange | null
     visualScaleInput: PlacementFunctionAnalysisRange | null
   }
+  scaleDetectionSummary: PlacementFunctionScaleDetectionSummary[]
+  skippedReasonCounts: Record<string, number>
 }
 
 type PlacementFunctionAnalysisState = {
@@ -2433,8 +2451,17 @@ const WEBGL_OBJ_BENCHMARK_DEFAULT_OPTIONS: WebglObjBenchmarkOptions = {
 }
 const PLACEMENT_ANALYSIS_DEFAULT_CANVAS_SIZE = { width: 960, height: 540 } as const
 const PLACEMENT_ANALYSIS_CENTER_VALUES = [0.42, 0.46, 0.5, 0.54, 0.58] as const
-const PLACEMENT_ANALYSIS_SCALE_VALUES = [0.8, 0.9, 1, 1.1, 1.2] as const
+const PLACEMENT_ANALYSIS_SCALE_VALUES = [1.1, 1.15, 1.2, 1.25, 1.3] as const
 const PLACEMENT_ANALYSIS_FRONT_POSE: ObjPoseMappingPose = { yaw: 0, pitch: 0, roll: 0 }
+const PLACEMENT_ANALYSIS_SKIPPED_REASONS: PlacementFunctionAnalysisSkippedReason[] = [
+  "no_face",
+  "invalid_landmarks",
+  "missing_matrix",
+  "invalid_matrix_values",
+  "render_pose_not_applied",
+  "render_pose_invalid",
+  "detect_error",
+]
 const REALTIME_TARGET_FPS_OPTIONS = [5, 10, 15, 30] as const
 const REALTIME_AVERAGE_SAMPLE_COUNT = 30
 const MODE_COMPARISON_MAX_FRAMES = 10000
@@ -9570,6 +9597,8 @@ function createPlacementFunctionAnalysisSummary(
       centerWorkY: calculatePlacementAnalysisRange(samples.map((sample) => sample.knownPlacement.centerWorkY)),
       visualScaleInput: calculatePlacementAnalysisRange(samples.map((sample) => sample.knownPlacement.visualScaleInput)),
     },
+    scaleDetectionSummary: buildPlacementFunctionScaleDetectionSummary(samples),
+    skippedReasonCounts: buildPlacementFunctionSkippedReasonCounts(samples),
   }
 }
 
@@ -9582,6 +9611,56 @@ function calculatePlacementAnalysisRange(values: Array<number | null | undefined
     min: roundForState(Math.min(...finiteValues)) ?? 0,
     max: roundForState(Math.max(...finiteValues)) ?? 0,
   }
+}
+
+function buildPlacementFunctionScaleDetectionSummary(
+  samples: PlacementFunctionAnalysisSampleState[],
+): PlacementFunctionScaleDetectionSummary[] {
+  const byScale = new Map<string, PlacementFunctionScaleDetectionSummary>()
+  for (const sample of samples) {
+    const visualScaleInput = sample.knownPlacement.visualScaleInput
+    const key = formatPlacementScaleKey(visualScaleInput)
+    const current = byScale.get(key) ?? {
+      visualScaleInput,
+      sampleCount: 0,
+      detectedCount: 0,
+      usableCount: 0,
+      noFaceCount: 0,
+      failedCount: 0,
+    }
+    current.sampleCount += 1
+    current.detectedCount += sample.mediaPipeResult.detected ? 1 : 0
+    current.usableCount += sample.quality.usable ? 1 : 0
+    current.noFaceCount += sample.quality.skippedReason === "no_face" ? 1 : 0
+    current.failedCount += sample.quality.usable ? 0 : 1
+    byScale.set(key, current)
+  }
+  return Array.from(byScale.values())
+    .map((item) => ({
+      ...item,
+      visualScaleInput: roundForState(item.visualScaleInput) ?? item.visualScaleInput,
+    }))
+    .sort((a, b) => a.visualScaleInput - b.visualScaleInput)
+}
+
+function buildPlacementFunctionSkippedReasonCounts(
+  samples: PlacementFunctionAnalysisSampleState[],
+): Record<string, number> {
+  const counts: Record<string, number> = Object.fromEntries(
+    PLACEMENT_ANALYSIS_SKIPPED_REASONS.map((reason) => [reason, 0]),
+  )
+  for (const sample of samples) {
+    const reason = sample.quality.skippedReason
+    if (!reason) {
+      continue
+    }
+    counts[reason] = (counts[reason] ?? 0) + 1
+  }
+  return counts
+}
+
+function formatPlacementScaleKey(value: number) {
+  return Number.isFinite(value) ? Number(value.toFixed(6)).toString() : "invalid"
 }
 
 function buildPlacementFunctionCandidate(samples: PlacementFunctionAnalysisSampleState[]): {
@@ -9657,7 +9736,33 @@ function buildPlacementFunctionCandidate(samples: PlacementFunctionAnalysisSampl
         },
       },
       metrics,
+      trainingDataSummary: buildPlacementFunctionCandidateTrainingDataSummary(usableSamples),
     },
+  }
+}
+
+function buildPlacementFunctionCandidateTrainingDataSummary(
+  samples: PlacementFunctionAnalysisSampleState[],
+): PlacementFunctionCandidate["trainingDataSummary"] {
+  const sampleCountByVisualScaleInput: Record<string, number> = {}
+  for (const sample of samples) {
+    const key = formatPlacementScaleKey(sample.knownPlacement.visualScaleInput)
+    sampleCountByVisualScaleInput[key] = (sampleCountByVisualScaleInput[key] ?? 0) + 1
+  }
+  const visualScaleInputValues = Object.keys(sampleCountByVisualScaleInput)
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value))
+    .sort((a, b) => a - b)
+    .map((value) => roundForState(value) ?? value)
+  return {
+    visualScaleInputRange: visualScaleInputValues.length > 0
+      ? [
+          visualScaleInputValues[0],
+          visualScaleInputValues[visualScaleInputValues.length - 1],
+        ]
+      : null,
+    visualScaleInputValues,
+    sampleCountByVisualScaleInput,
   }
 }
 
@@ -17180,13 +17285,21 @@ function renderPlacementFunctionAnalysisDebugTab() {
       </dl>
     </section>
     <section class="review-card">
-      <h3>candidate</h3>
+      <h3>スケール別検出要約</h3>
+      ${renderPlacementScaleDetectionSummaryHtml(summary.scaleDetectionSummary)}
+    </section>
+    <section class="review-card">
+      <h3>失敗理由</h3>
+      ${renderPlacementSkippedReasonCountsHtml(summary.skippedReasonCounts)}
+    </section>
+    <section class="review-card">
+      <h3>配置関数候補</h3>
       <dl class="review-grid">
         <div><dt>available</dt><dd>${String(Boolean(analysis.candidate))}</dd></div>
         <div><dt>modelType</dt><dd>${analysis.candidate?.modelType ?? "-"}</dd></div>
-        <div><dt>metrics</dt><dd>${escapeHtml(formatPlacementFunctionCandidateMetrics(analysis.candidate))}</dd></div>
         <div><dt>reason</dt><dd>${escapeHtml(analysis.candidate ? "-" : analysis.candidateUnavailableReason ?? "-")}</dd></div>
       </dl>
+      ${renderPlacementFunctionCandidateMetricsHtml(analysis.candidate)}
     </section>
   `
   return container
@@ -17208,12 +17321,68 @@ function formatPlacementAnalysisRange(range: PlacementFunctionAnalysisRange | nu
   return range ? `${formatNullableNumber(range.min)} .. ${formatNullableNumber(range.max)}` : "-"
 }
 
-function formatPlacementFunctionCandidateMetrics(candidate: PlacementFunctionCandidate | null) {
+function renderPlacementScaleDetectionSummaryHtml(summary: PlacementFunctionScaleDetectionSummary[]) {
+  if (summary.length === 0) {
+    return `<p class="placeholder-text">解析実行後にスケール別検出要約を表示します。</p>`
+  }
+  return `
+    <div class="table-scroll">
+      <table class="debug-table">
+        <thead>
+          <tr>
+            <th>visualScaleInput</th>
+            <th>detected</th>
+            <th>usable</th>
+            <th>no_face</th>
+            <th>failed</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${summary.map((item) => `
+            <tr>
+              <td>${formatNullableNumber(item.visualScaleInput)}</td>
+              <td>${item.detectedCount} / ${item.sampleCount}</td>
+              <td>${item.usableCount} / ${item.sampleCount}</td>
+              <td>${item.noFaceCount}</td>
+              <td>${item.failedCount}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+  `
+}
+
+function renderPlacementSkippedReasonCountsHtml(counts: Record<string, number>) {
+  const entries = Object.entries(counts)
+  if (entries.length === 0) {
+    return `<p class="placeholder-text">解析実行後に失敗理由を表示します。</p>`
+  }
+  return `
+    <dl class="review-grid">
+      ${entries.map(([reason, count]) => `
+        <div><dt>${escapeHtml(reason)}</dt><dd>${formatNullableCount(count)}</dd></div>
+      `).join("")}
+    </dl>
+  `
+}
+
+function renderPlacementFunctionCandidateMetricsHtml(candidate: PlacementFunctionCandidate | null) {
   if (!candidate) {
-    return "-"
+    return `<p class="placeholder-text">候補生成後に center / scale の評価を表示します。</p>`
   }
   const metrics = candidate.metrics
-  return `maeCenterWork=${formatNullableNumber(metrics.maeCenterWork)}, maxCenterWork=${formatNullableNumber(metrics.maxCenterWork)}, maeVisualScaleInput=${formatNullableNumber(metrics.maeVisualScaleInput)}, maxVisualScaleInput=${formatNullableNumber(metrics.maxVisualScaleInput)}`
+  return `
+    <div class="placement-candidate-metrics">
+      <h4>候補評価</h4>
+      <dl class="review-grid">
+        <div><dt>中心 MAE work</dt><dd>${formatNullableNumber(metrics.maeCenterWork)}</dd></div>
+        <div><dt>中心 Max work</dt><dd>${formatNullableNumber(metrics.maxCenterWork)}</dd></div>
+        <div><dt>大きさ MAE visualScaleInput</dt><dd>${formatNullableNumber(metrics.maeVisualScaleInput)}</dd></div>
+        <div><dt>大きさ Max visualScaleInput</dt><dd>${formatNullableNumber(metrics.maxVisualScaleInput)}</dd></div>
+      </dl>
+    </div>
+  `
 }
 
 function getRenderedIdealPreviewPose(): ReferencePose {
@@ -17451,6 +17620,8 @@ function buildPlacementFunctionAnalysisExport(): PlacementFunctionAnalysisExport
       detectedCount: state.placementAnalysis.summary.detectedCount,
       matrixAvailableCount: state.placementAnalysis.summary.matrixAvailableCount,
       failedCount: state.placementAnalysis.summary.failedCount,
+      scaleDetectionSummary: state.placementAnalysis.summary.scaleDetectionSummary,
+      skippedReasonCounts: state.placementAnalysis.summary.skippedReasonCounts,
     },
     samples: state.placementAnalysis.samples.map(stripPlacementFunctionAnalysisSampleState),
   }
