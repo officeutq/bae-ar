@@ -107,24 +107,30 @@ sample には以下を保存します。
 UI は以下の分担です。
 
 - 左ペインには配置関数解析ボタンを置きません。OBJ loading や render settings など通常操作の領域として残します。
-- 中央ペインに `配置関数解析プレビュー` tab を追加します。最新または選択中 sample の WebGL render image と MediaPipe returned 478 overlay を表示します。
+- 中央ペインに `配置関数解析プレビュー` tab を追加します。最新または選択中 sample の WebGL render image と MediaPipe returned 478 overlay を表示します。プレビューでは変換後の `target478` に加えて、位置・スケール変換前の `base478` も表示できます。`base478` は current478 ではなく、理想 OBJ 由来の変換前478点です。優先的には base render image を MediaPipe に通した `Base 478（pre-transform MediaPipe）` を使い、取得できない場合だけ `Base 478（inverse known transform）` として target478 を既知逆変換で戻した点を使います。
 - 右ペインに `配置関数解析` tab を追加します。解析実行、停止、サンプル JSON / CSV download、candidate JSON download、compact debug summary を置きます。
 
 sample には `knownPlacement`、`basePlacement`、`targetPlacement`、`knownTransform`、front の `requestedPoseP`、MediaPipe の detected / returned pose / `facialTransformationMatrix`、matrix features、補助 debug としての `observedRenderedBounds`、`quality.usable` と `skippedReason` を保存します。JSON export には returned478 配列そのものは含めません。returned478 は中央プレビュー overlay 用の state としてのみ保持します。
 
 右ペインの debug summary と JSON export には、`scaleDetectionSummary`（スケール別検出要約）と `skippedReasonCounts`（除外理由別件数）を含めます。これにより、失敗が小さすぎる顔サイズによる `no_face` なのか、`facialTransformationMatrix` 欠落や matrix feature 不正なのかを切り分けます。
 
-placement function candidate は最小構成として以下の一次式を作ります。
+placement function candidate は、まず `targetCenter` と `scaleRatio` を推定し、`translateAfterScale` を導出します。
 
 ```text
-scaleRatio = c0 + c1 * invNegTz
-translateAfterScaleWorkX = a0 + a1 * txOverNegTz
-translateAfterScaleWorkY = b0 + b1 * tyOverNegTz
+estimatedTargetCenterWorkX = a0 + a1 * txOverNegTz
+estimatedTargetCenterWorkY = b0 + b1 * tyOverNegTz
+estimatedScaleRatio = c0 + c1 * invNegTz
+
+estimatedTranslateAfterScaleWorkX =
+  estimatedTargetCenterWorkX - basePlacement.centerWorkX * estimatedScaleRatio
+
+estimatedTranslateAfterScaleWorkY =
+  estimatedTargetCenterWorkY - basePlacement.centerWorkY * estimatedScaleRatio
 ```
 
 使える sample 数が足りない、特徴量が単一値で回帰が特異になる、matrix features が不正な場合は candidate を作らず、右ペインに理由を表示します。
 
-candidate metrics は `Scale Ratio` と `Translate After Scale` に分けて表示します。candidate JSON の `schemaVersion` は `matrix_to_known_transform_function_candidate_v1` です。candidate JSON には optional field として `trainingDataSummary` を含め、学習に使った `scaleRatio` の範囲、値、scale 別 sample 数を記録します。
+candidate metrics は `Target Center`、`Scale Ratio`、`Derived Translate After Scale` に分けて表示します。candidate JSON の `schemaVersion` は `matrix_to_known_transform_function_candidate_v1` です。candidate JSON には optional field として `trainingDataSummary` を含め、学習に使った `scaleRatio` の範囲、値、scale 別 sample 数を記録します。
 
 この解析では `current478`、`current478 bounds`、current face、live video、live overlay を一切使いません。`current478 bounds` は teacher data や reference placement として扱いません。通常の live overlay、`alignedRenderedIdeal478`、`bounds_center_scale_v1`、stale / fallback / token mismatch guards、render pose debug、mesh warp、production Shape Warp へは接続しません。
 

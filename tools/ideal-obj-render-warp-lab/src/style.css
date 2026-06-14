@@ -621,6 +621,18 @@ h3 {
   min-width: 0;
 }
 
+.placement-analysis-preview-controls {
+  justify-content: flex-start;
+}
+
+.placement-analysis-preview-controls .overlay-toggle {
+  min-width: 0;
+}
+
+.placement-analysis-preview-controls .overlay-toggle span {
+  font-size: 12px;
+}
+
 .live-obj-controls {
   align-items: flex-start;
 }

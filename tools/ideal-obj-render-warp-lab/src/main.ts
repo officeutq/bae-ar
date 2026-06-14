@@ -2137,6 +2137,25 @@ type KnownTransform = {
   translateAfterScaleWorkY: number
 }
 
+type PlacementFunctionBase478Source =
+  | "pre_transform_mediapipe"
+  | "inverse_known_transform"
+  | "unavailable"
+
+type PlacementFunctionPreviewLandmarkSummary = {
+  base478Available: boolean
+  base478Source: PlacementFunctionBase478Source
+  baseLandmarkCount: number
+  targetLandmarkCount: number
+}
+
+type PlacementFunctionBasePreviewReference = {
+  landmarks478: ReferenceLandmark[] | null
+  source: PlacementFunctionBase478Source
+  landmarkCount: number
+  basePlacement: BasePlacement | null
+}
+
 type PlacementFunctionMatrixMajorSummary = {
   tx: number
   ty: number
@@ -2211,6 +2230,7 @@ type PlacementFunctionAnalysisSample = {
   }
   matrixFeatures: PlacementFunctionMatrixFeatures
   observedRenderedBounds?: PlacementFunctionObservedBounds | null
+  previewLandmarkSummary: PlacementFunctionPreviewLandmarkSummary
   preview?: {
     hasSnapshot: boolean
   }
@@ -2222,6 +2242,7 @@ type PlacementFunctionAnalysisSample = {
 
 type PlacementFunctionAnalysisSampleState = PlacementFunctionAnalysisSample & {
   previewLandmarks478: ReferenceLandmark[] | null
+  previewBaseLandmarks478: ReferenceLandmark[] | null
 }
 
 type PlacementFunctionAnalysisRunOptions = {
@@ -2269,11 +2290,25 @@ type PlacementFunctionCandidate = {
   scaleBasis: "width"
   modelType: "linear_v1"
   features: {
+    targetCenterWorkX: ["intercept", "txOverNegTz"]
+    targetCenterWorkY: ["intercept", "tyOverNegTz"]
     scaleRatio: ["intercept", "invNegTz"]
-    translateAfterScaleWorkX: ["intercept", "txOverNegTz"]
-    translateAfterScaleWorkY: ["intercept", "tyOverNegTz"]
+    translateAfterScaleWorkX: ["derived", "targetCenterWorkX", "basePlacement.centerWorkX", "scaleRatio"]
+    translateAfterScaleWorkY: ["derived", "targetCenterWorkY", "basePlacement.centerWorkY", "scaleRatio"]
   }
   models: {
+    targetCenterWorkX: {
+      intercept: number
+      coefficients: {
+        txOverNegTz: number
+      }
+    }
+    targetCenterWorkY: {
+      intercept: number
+      coefficients: {
+        tyOverNegTz: number
+      }
+    }
     scaleRatio: {
       intercept: number
       coefficients: {
@@ -2281,23 +2316,19 @@ type PlacementFunctionCandidate = {
       }
     }
     translateAfterScaleWorkX: {
-      intercept: number
-      coefficients: {
-        txOverNegTz: number
-      }
+      derivedFrom: "targetCenterWorkX - basePlacement.centerWorkX * scaleRatio"
     }
     translateAfterScaleWorkY: {
-      intercept: number
-      coefficients: {
-        tyOverNegTz: number
-      }
+      derivedFrom: "targetCenterWorkY - basePlacement.centerWorkY * scaleRatio"
     }
   }
   metrics: {
+    maeTargetCenterWork: number
+    maxTargetCenterWork: number
     maeScaleRatio: number
     maxScaleRatio: number
-    maeTranslateAfterScaleWork: number
-    maxTranslateAfterScaleWork: number
+    maeDerivedTranslateAfterScaleWork: number
+    maxDerivedTranslateAfterScaleWork: number
   }
   trainingDataSummary?: {
     scaleBasis: "width"
@@ -2356,7 +2387,10 @@ type PlacementFunctionAnalysisState = {
   runOptions: PlacementFunctionAnalysisRunOptions
   samples: PlacementFunctionAnalysisSampleState[]
   selectedSampleIndex: number | null
-  showOverlay: boolean
+  showTarget478: boolean
+  showBase478: boolean
+  showBaseBounds: boolean
+  showTargetBounds: boolean
   summary: PlacementFunctionAnalysisSummary
   candidate: PlacementFunctionCandidate | null
   candidateUnavailableReason: string | null
@@ -3331,8 +3365,20 @@ function renderPlacementAnalysisPreview() {
           <input type="number" min="0" step="1" value="0" data-control="placement-analysis-sample-index" />
         </label>
         <label class="overlay-toggle">
-          <input type="checkbox" data-control="placement-analysis-show-overlay" checked />
-          <span>478点表示</span>
+          <input type="checkbox" data-control="placement-analysis-show-target-478" checked />
+          <span>Show target 478（変換後478）</span>
+        </label>
+        <label class="overlay-toggle">
+          <input type="checkbox" data-control="placement-analysis-show-base-478" checked />
+          <span>Show base 478（変換前478）</span>
+        </label>
+        <label class="overlay-toggle">
+          <input type="checkbox" data-control="placement-analysis-show-base-bounds" checked />
+          <span>Show base bounds（変換前外接範囲）</span>
+        </label>
+        <label class="overlay-toggle">
+          <input type="checkbox" data-control="placement-analysis-show-target-bounds" checked />
+          <span>Show target bounds（変換後外接範囲）</span>
         </label>
       </div>
       <div class="review-card" data-placement-analysis-preview-summary>
@@ -3854,13 +3900,26 @@ function bindEvents() {
   bindOverlayToggle("toggle-grid-anchors", "showGridAnchors")
   bindOverlayToggle("toggle-triangle-mesh", "showTriangleMesh")
 
-  getElement<HTMLInputElement>('[data-control="placement-analysis-show-overlay"]').addEventListener("change", (event) => {
-    state.placementAnalysis.showOverlay = event.currentTarget.checked
-    renderPlacementAnalysisPreviewPanel()
-  })
+  bindPlacementAnalysisPreviewToggle("placement-analysis-show-target-478", "showTarget478")
+  bindPlacementAnalysisPreviewToggle("placement-analysis-show-base-478", "showBase478")
+  bindPlacementAnalysisPreviewToggle("placement-analysis-show-base-bounds", "showBaseBounds")
+  bindPlacementAnalysisPreviewToggle("placement-analysis-show-target-bounds", "showTargetBounds")
 
   getElement<HTMLInputElement>('[data-control="placement-analysis-sample-index"]').addEventListener("input", (event) => {
     selectPlacementAnalysisSample(Math.round(Number(event.currentTarget.value)))
+  })
+}
+
+function bindPlacementAnalysisPreviewToggle(
+  control: string,
+  key: keyof Pick<
+    PlacementFunctionAnalysisState,
+    "showTarget478" | "showBase478" | "showBaseBounds" | "showTargetBounds"
+  >,
+) {
+  getElement<HTMLInputElement>(`[data-control="${control}"]`).addEventListener("change", (event) => {
+    state.placementAnalysis[key] = event.currentTarget.checked
+    renderPlacementAnalysisPreviewPanel()
   })
 }
 
@@ -9234,6 +9293,13 @@ async function startPlacementFunctionAnalysis() {
       width: runOptions.canvasWidth,
       height: runOptions.canvasHeight,
     })
+    const basePreviewReference = createPlacementFunctionBasePreviewReference({
+      detector,
+      renderer,
+      appearance,
+      runOptions,
+      requestedPoseP: PLACEMENT_ANALYSIS_FRONT_POSE,
+    })
     const plans = createPlacementFunctionAnalysisPlans(runOptions)
 
     for (const plan of plans) {
@@ -9253,6 +9319,7 @@ async function startPlacementFunctionAnalysis() {
         sampleIndex: plan.sampleIndex,
         knownPlacement: plan.knownPlacement,
         requestedPoseP: PLACEMENT_ANALYSIS_FRONT_POSE,
+        basePreviewReference,
       })
       appendPlacementFunctionAnalysisSample(sample)
       renderPlacementAnalysisPreviewPanel()
@@ -9340,6 +9407,53 @@ function createPlacementAnalysisClipTransform(knownPlacement: KnownPlacement): W
   }
 }
 
+function createPlacementFunctionBasePreviewReference(input: {
+  detector: FaceLandmarker
+  renderer: WebglObjRenderer
+  appearance: AppliedObjRenderAppearanceProfile
+  runOptions: PlacementFunctionAnalysisRunOptions
+  requestedPoseP: ObjPoseMappingPose
+}): PlacementFunctionBasePreviewReference {
+  const referencePlacement = createKnownPlacement({
+    centerImageX: 0.5,
+    centerImageY: 0.5,
+    visualScaleInput: 1,
+    options: input.runOptions,
+  })
+  try {
+    const renderResult = renderWebglObjToCanvas(input.renderer, {
+      renderSettings: {
+        detectCanvasWidth: input.runOptions.canvasWidth,
+        detectCanvasHeight: input.runOptions.canvasHeight,
+      },
+      appearance: input.appearance,
+      p: input.requestedPoseP,
+      rotationCenter: getObjPoseSyncRotationCenter(),
+    })
+    const result = input.detector.detect(input.renderer.canvas)
+    const landmarks = mapLandmarks(result.faceLandmarks[0] ?? [])
+    const basePlacement = createPlacementFunctionBasePlacement(
+      referencePlacement,
+      renderResult.buffer.baseProjectedBounds ?? null,
+    )
+    return {
+      landmarks478: landmarks.length > 0 ? landmarks : null,
+      source: landmarks.length > 0 ? "pre_transform_mediapipe" : "unavailable",
+      landmarkCount: landmarks.length,
+      basePlacement,
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    addLog(`配置関数解析の base478 検出をスキップしました: ${message}`)
+    return {
+      landmarks478: null,
+      source: "unavailable",
+      landmarkCount: 0,
+      basePlacement: createPlacementFunctionBasePlacement(referencePlacement, null),
+    }
+  }
+}
+
 function runPlacementFunctionAnalysisSample(input: {
   detector: FaceLandmarker
   renderer: WebglObjRenderer
@@ -9347,6 +9461,7 @@ function runPlacementFunctionAnalysisSample(input: {
   sampleIndex: number
   knownPlacement: KnownPlacement
   requestedPoseP: ObjPoseMappingPose
+  basePreviewReference: PlacementFunctionBasePreviewReference
 }): PlacementFunctionAnalysisSampleState {
   const capturedAtMs = Date.now()
   const sampleId = `placement_analysis_${capturedAtMs}_${input.sampleIndex}`
@@ -9370,6 +9485,7 @@ function runPlacementFunctionAnalysisSample(input: {
       requestedPoseP: input.requestedPoseP,
       renderResult,
       result,
+      basePreviewReference: input.basePreviewReference,
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
@@ -9380,6 +9496,7 @@ function runPlacementFunctionAnalysisSample(input: {
       capturedAtMs,
       knownPlacement: input.knownPlacement,
       requestedPoseP: input.requestedPoseP,
+      basePreviewReference: input.basePreviewReference,
       skippedReason: "detect_error",
     })
   }
@@ -9393,6 +9510,7 @@ function buildPlacementFunctionAnalysisSample(input: {
   requestedPoseP: ObjPoseMappingPose
   renderResult: WebglObjRenderResult
   result: FaceLandmarkerResultLike
+  basePreviewReference: PlacementFunctionBasePreviewReference
 }): PlacementFunctionAnalysisSampleState {
   const landmarks = input.result.faceLandmarks[0] ?? []
   const returnedLandmarks = mapLandmarks(landmarks)
@@ -9416,6 +9534,16 @@ function buildPlacementFunctionAnalysisSample(input: {
   )
   const targetPlacement = createPlacementFunctionTargetPlacement(input.knownPlacement, basePlacement)
   const knownTransform = createPlacementFunctionKnownTransform(basePlacement, targetPlacement)
+  const previewBase = createPlacementFunctionBasePreviewLandmarks({
+    targetLandmarks: returnedLandmarks,
+    knownTransform,
+    renderAspectRatio: input.knownPlacement.renderAspectRatio,
+    basePreviewReference: input.basePreviewReference,
+  })
+  const previewLandmarkSummary = createPlacementFunctionPreviewLandmarkSummary(
+    previewBase,
+    returnedLandmarks.length,
+  )
   const skippedReason = getPlacementFunctionAnalysisSkippedReason({
     detected,
     returnedLandmarkCount: landmarks.length,
@@ -9459,6 +9587,7 @@ function buildPlacementFunctionAnalysisSample(input: {
     facialTransformationMatrix,
     matrixFeatures: roundPlacementFunctionMatrixFeatures(matrixFeatures),
     observedRenderedBounds,
+    previewLandmarkSummary,
     preview: {
       hasSnapshot: true,
     },
@@ -9471,6 +9600,7 @@ function buildPlacementFunctionAnalysisSample(input: {
           usable: true,
         },
     previewLandmarks478: returnedLandmarks.length > 0 ? returnedLandmarks : null,
+    previewBaseLandmarks478: previewBase.landmarks,
   }
 }
 
@@ -9480,11 +9610,19 @@ function createPlacementFunctionAnalysisFailureSample(input: {
   capturedAtMs: number
   knownPlacement: KnownPlacement
   requestedPoseP: ObjPoseMappingPose
+  basePreviewReference: PlacementFunctionBasePreviewReference
   skippedReason: PlacementFunctionAnalysisSkippedReason
 }): PlacementFunctionAnalysisSampleState {
   const basePlacement = createPlacementFunctionBasePlacement(input.knownPlacement, null)
   const targetPlacement = createPlacementFunctionTargetPlacement(input.knownPlacement, basePlacement)
   const knownTransform = createPlacementFunctionKnownTransform(basePlacement, targetPlacement)
+  const previewBase = createPlacementFunctionBasePreviewLandmarks({
+    targetLandmarks: [],
+    knownTransform,
+    renderAspectRatio: input.knownPlacement.renderAspectRatio,
+    basePreviewReference: input.basePreviewReference,
+  })
+  const previewLandmarkSummary = createPlacementFunctionPreviewLandmarkSummary(previewBase, 0)
   return {
     schemaVersion: "ideal_obj_render_warp_placement_function_sample_v1",
     sampleId: input.sampleId,
@@ -9511,6 +9649,7 @@ function createPlacementFunctionAnalysisFailureSample(input: {
     },
     matrixFeatures: createEmptyPlacementFunctionMatrixFeatures(),
     observedRenderedBounds: null,
+    previewLandmarkSummary,
     preview: {
       hasSnapshot: false,
     },
@@ -9519,6 +9658,7 @@ function createPlacementFunctionAnalysisFailureSample(input: {
       skippedReason: input.skippedReason,
     },
     previewLandmarks478: null,
+    previewBaseLandmarks478: previewBase.landmarks,
   }
 }
 
@@ -9706,6 +9846,84 @@ function roundPlacementFunctionKnownTransform(transform: KnownTransform): KnownT
     scaleRatio: roundForState(transform.scaleRatio) ?? 0,
     translateAfterScaleWorkX: roundForState(transform.translateAfterScaleWorkX) ?? 0,
     translateAfterScaleWorkY: roundForState(transform.translateAfterScaleWorkY) ?? 0,
+  }
+}
+
+function createPlacementFunctionBasePreviewLandmarks(input: {
+  targetLandmarks: ReferenceLandmark[]
+  knownTransform: KnownTransform
+  renderAspectRatio: number
+  basePreviewReference: PlacementFunctionBasePreviewReference
+}): {
+  landmarks: ReferenceLandmark[] | null
+  source: PlacementFunctionBase478Source
+  landmarkCount: number
+} {
+  if (input.basePreviewReference.landmarks478 && input.basePreviewReference.landmarks478.length > 0) {
+    return {
+      landmarks: input.basePreviewReference.landmarks478,
+      source: "pre_transform_mediapipe",
+      landmarkCount: input.basePreviewReference.landmarkCount,
+    }
+  }
+  const inverseLandmarks = inverseKnownTransformTargetLandmarksToBase({
+    targetLandmarks: input.targetLandmarks,
+    knownTransform: input.knownTransform,
+    renderAspectRatio: input.renderAspectRatio,
+  })
+  if (inverseLandmarks.length > 0) {
+    return {
+      landmarks: inverseLandmarks,
+      source: "inverse_known_transform",
+      landmarkCount: inverseLandmarks.length,
+    }
+  }
+  return {
+    landmarks: null,
+    source: "unavailable",
+    landmarkCount: 0,
+  }
+}
+
+function inverseKnownTransformTargetLandmarksToBase(input: {
+  targetLandmarks: ReferenceLandmark[]
+  knownTransform: KnownTransform
+  renderAspectRatio: number
+}): ReferenceLandmark[] {
+  const scaleRatio = input.knownTransform.scaleRatio
+  if (
+    input.targetLandmarks.length === 0 ||
+    !Number.isFinite(scaleRatio) ||
+    Math.abs(scaleRatio) <= 1e-12 ||
+    !Number.isFinite(input.renderAspectRatio) ||
+    Math.abs(input.renderAspectRatio) <= 1e-12
+  ) {
+    return []
+  }
+  return input.targetLandmarks.map((landmark) => {
+    const targetWorkX = landmark.x * input.renderAspectRatio
+    const targetWorkY = landmark.y
+    const baseWorkX =
+      (targetWorkX - input.knownTransform.translateAfterScaleWorkX) / scaleRatio
+    const baseWorkY =
+      (targetWorkY - input.knownTransform.translateAfterScaleWorkY) / scaleRatio
+    return {
+      ...landmark,
+      x: baseWorkX / input.renderAspectRatio,
+      y: baseWorkY,
+    }
+  })
+}
+
+function createPlacementFunctionPreviewLandmarkSummary(
+  basePreview: { source: PlacementFunctionBase478Source; landmarkCount: number },
+  targetLandmarkCount: number,
+): PlacementFunctionPreviewLandmarkSummary {
+  return {
+    base478Available: basePreview.landmarkCount > 0,
+    base478Source: basePreview.source,
+    baseLandmarkCount: basePreview.landmarkCount,
+    targetLandmarkCount,
   }
 }
 
@@ -9955,32 +10173,32 @@ function buildPlacementFunctionCandidate(samples: PlacementFunctionAnalysisSampl
   if (usableSamples.length < 2) {
     return { candidate: null, reason: "usable sample count too small" }
   }
+  const targetCenterWorkXModel = fitSimpleLinearModel(
+    usableSamples.map((sample) => ({
+      x: sample.matrixFeatures.txOverNegTz,
+      y: sample.targetPlacement.centerWorkX,
+    })),
+  )
+  const targetCenterWorkYModel = fitSimpleLinearModel(
+    usableSamples.map((sample) => ({
+      x: sample.matrixFeatures.tyOverNegTz,
+      y: sample.targetPlacement.centerWorkY,
+    })),
+  )
   const scaleRatioModel = fitSimpleLinearModel(
     usableSamples.map((sample) => ({
       x: sample.matrixFeatures.invNegTz,
       y: sample.knownTransform.scaleRatio,
     })),
   )
-  const translateAfterScaleWorkXModel = fitSimpleLinearModel(
-    usableSamples.map((sample) => ({
-      x: sample.matrixFeatures.txOverNegTz,
-      y: sample.knownTransform.translateAfterScaleWorkX,
-    })),
-  )
-  const translateAfterScaleWorkYModel = fitSimpleLinearModel(
-    usableSamples.map((sample) => ({
-      x: sample.matrixFeatures.tyOverNegTz,
-      y: sample.knownTransform.translateAfterScaleWorkY,
-    })),
-  )
-  if (!scaleRatioModel || !translateAfterScaleWorkXModel || !translateAfterScaleWorkYModel) {
+  if (!targetCenterWorkXModel || !targetCenterWorkYModel || !scaleRatioModel) {
     return { candidate: null, reason: "singular matrix" }
   }
   const metrics = calculatePlacementFunctionCandidateMetrics(
     usableSamples,
+    targetCenterWorkXModel,
+    targetCenterWorkYModel,
     scaleRatioModel,
-    translateAfterScaleWorkXModel,
-    translateAfterScaleWorkYModel,
   )
   return {
     reason: null,
@@ -9997,11 +10215,25 @@ function buildPlacementFunctionCandidate(samples: PlacementFunctionAnalysisSampl
       scaleBasis: "width",
       modelType: "linear_v1",
       features: {
+        targetCenterWorkX: ["intercept", "txOverNegTz"],
+        targetCenterWorkY: ["intercept", "tyOverNegTz"],
         scaleRatio: ["intercept", "invNegTz"],
-        translateAfterScaleWorkX: ["intercept", "txOverNegTz"],
-        translateAfterScaleWorkY: ["intercept", "tyOverNegTz"],
+        translateAfterScaleWorkX: ["derived", "targetCenterWorkX", "basePlacement.centerWorkX", "scaleRatio"],
+        translateAfterScaleWorkY: ["derived", "targetCenterWorkY", "basePlacement.centerWorkY", "scaleRatio"],
       },
       models: {
+        targetCenterWorkX: {
+          intercept: roundForState(targetCenterWorkXModel.intercept) ?? 0,
+          coefficients: {
+            txOverNegTz: roundForState(targetCenterWorkXModel.slope) ?? 0,
+          },
+        },
+        targetCenterWorkY: {
+          intercept: roundForState(targetCenterWorkYModel.intercept) ?? 0,
+          coefficients: {
+            tyOverNegTz: roundForState(targetCenterWorkYModel.slope) ?? 0,
+          },
+        },
         scaleRatio: {
           intercept: roundForState(scaleRatioModel.intercept) ?? 0,
           coefficients: {
@@ -10009,16 +10241,10 @@ function buildPlacementFunctionCandidate(samples: PlacementFunctionAnalysisSampl
           },
         },
         translateAfterScaleWorkX: {
-          intercept: roundForState(translateAfterScaleWorkXModel.intercept) ?? 0,
-          coefficients: {
-            txOverNegTz: roundForState(translateAfterScaleWorkXModel.slope) ?? 0,
-          },
+          derivedFrom: "targetCenterWorkX - basePlacement.centerWorkX * scaleRatio",
         },
         translateAfterScaleWorkY: {
-          intercept: roundForState(translateAfterScaleWorkYModel.intercept) ?? 0,
-          coefficients: {
-            tyOverNegTz: roundForState(translateAfterScaleWorkYModel.slope) ?? 0,
-          },
+          derivedFrom: "targetCenterWorkY - basePlacement.centerWorkY * scaleRatio",
         },
       },
       metrics,
@@ -10079,37 +10305,54 @@ function fitSimpleLinearModel(points: Array<{ x: number | null; y: number | null
 
 function calculatePlacementFunctionCandidateMetrics(
   samples: PlacementFunctionAnalysisSampleState[],
+  targetCenterWorkXModel: { intercept: number; slope: number },
+  targetCenterWorkYModel: { intercept: number; slope: number },
   scaleRatioModel: { intercept: number; slope: number },
-  translateAfterScaleWorkXModel: { intercept: number; slope: number },
-  translateAfterScaleWorkYModel: { intercept: number; slope: number },
 ): PlacementFunctionCandidate["metrics"] {
+  const targetCenterErrors: number[] = []
   const scaleErrors: number[] = []
-  const translateErrors: number[] = []
+  const derivedTranslateErrors: number[] = []
   for (const sample of samples) {
-    const predictedScaleRatio = predictSimpleLinearModel(scaleRatioModel, sample.matrixFeatures.invNegTz)
-    const predictedTranslateX = predictSimpleLinearModel(
-      translateAfterScaleWorkXModel,
+    const predictedTargetCenterWorkX = predictSimpleLinearModel(
+      targetCenterWorkXModel,
       sample.matrixFeatures.txOverNegTz,
     )
-    const predictedTranslateY = predictSimpleLinearModel(
-      translateAfterScaleWorkYModel,
+    const predictedTargetCenterWorkY = predictSimpleLinearModel(
+      targetCenterWorkYModel,
       sample.matrixFeatures.tyOverNegTz,
     )
+    const predictedScaleRatio = predictSimpleLinearModel(scaleRatioModel, sample.matrixFeatures.invNegTz)
+    if (predictedTargetCenterWorkX !== null && predictedTargetCenterWorkY !== null) {
+      targetCenterErrors.push(Math.hypot(
+        predictedTargetCenterWorkX - sample.targetPlacement.centerWorkX,
+        predictedTargetCenterWorkY - sample.targetPlacement.centerWorkY,
+      ))
+    }
     if (predictedScaleRatio !== null) {
       scaleErrors.push(Math.abs(predictedScaleRatio - sample.knownTransform.scaleRatio))
     }
-    if (predictedTranslateX !== null && predictedTranslateY !== null) {
-      translateErrors.push(Math.hypot(
-        predictedTranslateX - sample.knownTransform.translateAfterScaleWorkX,
-        predictedTranslateY - sample.knownTransform.translateAfterScaleWorkY,
+    if (
+      predictedTargetCenterWorkX !== null &&
+      predictedTargetCenterWorkY !== null &&
+      predictedScaleRatio !== null
+    ) {
+      const predictedTranslateAfterScaleWorkX =
+        predictedTargetCenterWorkX - sample.basePlacement.centerWorkX * predictedScaleRatio
+      const predictedTranslateAfterScaleWorkY =
+        predictedTargetCenterWorkY - sample.basePlacement.centerWorkY * predictedScaleRatio
+      derivedTranslateErrors.push(Math.hypot(
+        predictedTranslateAfterScaleWorkX - sample.knownTransform.translateAfterScaleWorkX,
+        predictedTranslateAfterScaleWorkY - sample.knownTransform.translateAfterScaleWorkY,
       ))
     }
   }
   return {
+    maeTargetCenterWork: roundForState(averageFiniteNumbers(targetCenterErrors) ?? 0) ?? 0,
+    maxTargetCenterWork: roundForState(maxNumbers(targetCenterErrors) ?? 0) ?? 0,
     maeScaleRatio: roundForState(averageFiniteNumbers(scaleErrors) ?? 0) ?? 0,
     maxScaleRatio: roundForState(maxNumbers(scaleErrors) ?? 0) ?? 0,
-    maeTranslateAfterScaleWork: roundForState(averageFiniteNumbers(translateErrors) ?? 0) ?? 0,
-    maxTranslateAfterScaleWork: roundForState(maxNumbers(translateErrors) ?? 0) ?? 0,
+    maeDerivedTranslateAfterScaleWork: roundForState(averageFiniteNumbers(derivedTranslateErrors) ?? 0) ?? 0,
+    maxDerivedTranslateAfterScaleWork: roundForState(maxNumbers(derivedTranslateErrors) ?? 0) ?? 0,
   }
 }
 
@@ -10118,6 +10361,57 @@ function predictSimpleLinearModel(model: { intercept: number; slope: number }, v
     return null
   }
   return model.intercept + model.slope * value
+}
+
+function predictPlacementFunctionCandidateForSample(
+  candidate: PlacementFunctionCandidate | null,
+  sample: PlacementFunctionAnalysisSampleState,
+) {
+  if (!candidate) {
+    return null
+  }
+  const estimatedTargetCenterWorkX = predictSimpleLinearModel(
+    {
+      intercept: candidate.models.targetCenterWorkX.intercept,
+      slope: candidate.models.targetCenterWorkX.coefficients.txOverNegTz,
+    },
+    sample.matrixFeatures.txOverNegTz,
+  )
+  const estimatedTargetCenterWorkY = predictSimpleLinearModel(
+    {
+      intercept: candidate.models.targetCenterWorkY.intercept,
+      slope: candidate.models.targetCenterWorkY.coefficients.tyOverNegTz,
+    },
+    sample.matrixFeatures.tyOverNegTz,
+  )
+  const estimatedScaleRatio = predictSimpleLinearModel(
+    {
+      intercept: candidate.models.scaleRatio.intercept,
+      slope: candidate.models.scaleRatio.coefficients.invNegTz,
+    },
+    sample.matrixFeatures.invNegTz,
+  )
+  const estimatedTranslateAfterScaleWorkX =
+    estimatedTargetCenterWorkX !== null && estimatedScaleRatio !== null
+      ? estimatedTargetCenterWorkX - sample.basePlacement.centerWorkX * estimatedScaleRatio
+      : null
+  const estimatedTranslateAfterScaleWorkY =
+    estimatedTargetCenterWorkY !== null && estimatedScaleRatio !== null
+      ? estimatedTargetCenterWorkY - sample.basePlacement.centerWorkY * estimatedScaleRatio
+      : null
+  return {
+    estimatedTargetCenterWorkX,
+    estimatedTargetCenterWorkY,
+    estimatedScaleRatio,
+    estimatedTranslateAfterScaleWorkX,
+    estimatedTranslateAfterScaleWorkY,
+    translateAfterScaleErrorWorkX: estimatedTranslateAfterScaleWorkX !== null
+      ? estimatedTranslateAfterScaleWorkX - sample.knownTransform.translateAfterScaleWorkX
+      : null,
+    translateAfterScaleErrorWorkY: estimatedTranslateAfterScaleWorkY !== null
+      ? estimatedTranslateAfterScaleWorkY - sample.knownTransform.translateAfterScaleWorkY
+      : null,
+  }
 }
 
 function averageFiniteNumbers(values: number[]) {
@@ -16659,7 +16953,10 @@ function createDefaultPlacementFunctionAnalysisState(): PlacementFunctionAnalysi
     runOptions,
     samples: [],
     selectedSampleIndex: null,
-    showOverlay: true,
+    showTarget478: true,
+    showBase478: true,
+    showBaseBounds: true,
+    showTargetBounds: true,
     summary: createPlacementFunctionAnalysisSummary([]),
     candidate: null,
     candidateUnavailableReason: "usable sample count too small",
@@ -17376,12 +17673,18 @@ function renderPlacementAnalysisPreviewPanel() {
   const stage = getElement<HTMLElement>("[data-placement-analysis-stage]")
   const summary = getElement<HTMLElement>("[data-placement-analysis-preview-summary]")
   const sampleIndexInput = getElement<HTMLInputElement>('[data-control="placement-analysis-sample-index"]')
-  const showOverlayInput = getElement<HTMLInputElement>('[data-control="placement-analysis-show-overlay"]')
+  const showTarget478Input = getElement<HTMLInputElement>('[data-control="placement-analysis-show-target-478"]')
+  const showBase478Input = getElement<HTMLInputElement>('[data-control="placement-analysis-show-base-478"]')
+  const showBaseBoundsInput = getElement<HTMLInputElement>('[data-control="placement-analysis-show-base-bounds"]')
+  const showTargetBoundsInput = getElement<HTMLInputElement>('[data-control="placement-analysis-show-target-bounds"]')
   const selectedSample = getSelectedPlacementAnalysisSample()
   const hasSamples = state.placementAnalysis.samples.length > 0
 
   stage.dataset.analysisStatus = selectedSample ? "ready" : "empty"
-  showOverlayInput.checked = state.placementAnalysis.showOverlay
+  showTarget478Input.checked = state.placementAnalysis.showTarget478
+  showBase478Input.checked = state.placementAnalysis.showBase478
+  showBaseBoundsInput.checked = state.placementAnalysis.showBaseBounds
+  showTargetBoundsInput.checked = state.placementAnalysis.showTargetBounds
   sampleIndexInput.max = String(Math.max(0, state.placementAnalysis.samples.length - 1))
   sampleIndexInput.value = String(state.placementAnalysis.selectedSampleIndex ?? 0)
   setDisabled('[data-action="placement-analysis-prev-sample"]', !hasSamples || (state.placementAnalysis.selectedSampleIndex ?? 0) <= 0)
@@ -17391,7 +17694,10 @@ function renderPlacementAnalysisPreviewPanel() {
       (state.placementAnalysis.selectedSampleIndex ?? -1) >= state.placementAnalysis.samples.length - 1,
   )
   sampleIndexInput.disabled = !hasSamples
-  showOverlayInput.disabled = !hasSamples
+  showTarget478Input.disabled = !hasSamples
+  showBase478Input.disabled = !hasSamples
+  showBaseBoundsInput.disabled = !hasSamples
+  showTargetBoundsInput.disabled = !hasSamples
 
   if (!selectedSample) {
     clearPlacementAnalysisPreviewCanvas()
@@ -17414,6 +17720,7 @@ function renderPlacementAnalysisPreviewPanel() {
       <div><dt>sampleIndex</dt><dd>${selectedSample.sampleIndex}</dd></div>
       <div><dt>knownPlacement</dt><dd>${escapeHtml(formatKnownPlacementShort(known))}</dd></div>
       <div><dt>knownTransform</dt><dd>${escapeHtml(formatKnownTransformShort(transform))}</dd></div>
+      <div><dt>base478</dt><dd>${escapeHtml(formatPlacementPreviewLandmarkSummary(selectedSample.previewLandmarkSummary))}</dd></div>
       <div><dt>detected</dt><dd>${String(selectedSample.mediaPipeResult.detected)}</dd></div>
       <div><dt>matrixAvailable</dt><dd>${String(selectedSample.facialTransformationMatrix.available)}</dd></div>
       <div><dt>quality</dt><dd>${selectedSample.quality.usable ? "usable" : `skipped: ${escapeHtml(selectedSample.quality.skippedReason ?? "-")}`}</dd></div>
@@ -17448,7 +17755,7 @@ function selectPlacementAnalysisSample(index: number) {
 
 function renderPlacementAnalysisSamplePreview(sample: PlacementFunctionAnalysisSampleState) {
   renderPlacementAnalysisKnownPlacementToCanvas(sample.knownPlacement, sample.requestedPoseP)
-  drawPlacementAnalysisOverlay(sample.previewLandmarks478)
+  drawPlacementAnalysisOverlay(sample)
 }
 
 function renderPlacementAnalysisKnownPlacementToCanvas(
@@ -17500,10 +17807,10 @@ function ensurePlacementAnalysisCanvasSize(options: PlacementFunctionAnalysisRun
   }
 }
 
-function drawPlacementAnalysisOverlay(landmarks: ReferenceLandmark[] | null) {
+function drawPlacementAnalysisOverlay(sample: PlacementFunctionAnalysisSampleState | null) {
   ensurePlacementAnalysisCanvasSize(state.placementAnalysis.runOptions)
   clearPlacementAnalysisOverlay()
-  if (!state.placementAnalysis.showOverlay || !landmarks || landmarks.length === 0) {
+  if (!sample) {
     return
   }
   const context = placementAnalysisOverlayCanvas.getContext("2d")
@@ -17511,13 +17818,77 @@ function drawPlacementAnalysisOverlay(landmarks: ReferenceLandmark[] | null) {
     return
   }
   context.save()
-  drawLandmarkPoints(
-    context,
-    { x: 0, y: 0, width: placementAnalysisOverlayCanvas.width, height: placementAnalysisOverlayCanvas.height },
-    landmarks,
-    "rgba(14, 116, 144, 0.9)",
-    1.6,
+  const contentRect = {
+    x: 0,
+    y: 0,
+    width: placementAnalysisOverlayCanvas.width,
+    height: placementAnalysisOverlayCanvas.height,
+  }
+  if (state.placementAnalysis.showBaseBounds) {
+    drawPlacementFunctionPlacementBounds(
+      context,
+      contentRect,
+      sample.basePlacement,
+      "rgba(124, 58, 237, 0.8)",
+      true,
+    )
+  }
+  if (state.placementAnalysis.showTargetBounds) {
+    drawPlacementFunctionPlacementBounds(
+      context,
+      contentRect,
+      sample.targetPlacement,
+      "rgba(14, 116, 144, 0.85)",
+      false,
+    )
+  }
+  if (state.placementAnalysis.showBase478 && sample.previewBaseLandmarks478) {
+    drawLandmarkPoints(
+      context,
+      contentRect,
+      sample.previewBaseLandmarks478,
+      "rgba(124, 58, 237, 0.82)",
+      1.25,
+    )
+  }
+  if (state.placementAnalysis.showTarget478 && sample.previewLandmarks478) {
+    drawLandmarkPoints(
+      context,
+      contentRect,
+      sample.previewLandmarks478,
+      "rgba(14, 116, 144, 0.9)",
+      1.6,
+    )
+  }
+  context.restore()
+}
+
+function drawPlacementFunctionPlacementBounds(
+  context: CanvasRenderingContext2D,
+  displayedContentRect: Rect,
+  placement: BasePlacement | TargetPlacement,
+  color: string,
+  dashed: boolean,
+) {
+  const min = normalizedLandmarkToPreviewPixel(
+    {
+      x: placement.centerImageX - placement.widthImage / 2,
+      y: placement.centerImageY - placement.heightImage / 2,
+    },
+    displayedContentRect,
   )
+  const max = normalizedLandmarkToPreviewPixel(
+    {
+      x: placement.centerImageX + placement.widthImage / 2,
+      y: placement.centerImageY + placement.heightImage / 2,
+    },
+    displayedContentRect,
+  )
+  context.save()
+  context.strokeStyle = color
+  context.lineWidth = dashed ? 1.2 : 1.6
+  context.setLineDash(dashed ? [6, 4] : [])
+  context.strokeRect(min.x, min.y, max.x - min.x, max.y - min.y)
   context.restore()
 }
 
@@ -17613,6 +17984,15 @@ function formatKnownTransformShort(transform: KnownTransform) {
   return `scaleRatio=${formatNullableNumber(transform.scaleRatio)} / translateAfterScaleWork=(${formatNullableNumber(transform.translateAfterScaleWorkX)}, ${formatNullableNumber(transform.translateAfterScaleWorkY)})`
 }
 
+function formatPlacementPreviewLandmarkSummary(summary: PlacementFunctionPreviewLandmarkSummary) {
+  const sourceLabel = summary.base478Source === "pre_transform_mediapipe"
+    ? "Base 478（pre-transform MediaPipe）"
+    : summary.base478Source === "inverse_known_transform"
+      ? "Base 478（inverse known transform）"
+      : "Base 478（unavailable）"
+  return `${sourceLabel} / base=${summary.baseLandmarkCount} / target=${summary.targetLandmarkCount}`
+}
+
 function formatLatestPlacementAnalysisSamplePreview() {
   const sample = state.placementAnalysis.samples[state.placementAnalysis.samples.length - 1]
   if (!sample) {
@@ -17688,17 +18068,19 @@ function renderPlacementSkippedReasonCountsHtml(counts: Record<string, number>) 
 
 function renderPlacementFunctionCandidateMetricsHtml(candidate: PlacementFunctionCandidate | null) {
   if (!candidate) {
-    return `<p class="placeholder-text">候補生成後に Known Transform の Scale Ratio / Translate After Scale 評価を表示します。</p>`
+    return `<p class="placeholder-text">候補生成後に Target Center / Scale Ratio / Derived Translate After Scale 評価を表示します。</p>`
   }
   const metrics = candidate.metrics
   return `
     <div class="placement-candidate-metrics">
       <h4>Known Transform（既知変換）</h4>
       <dl class="review-grid">
+        <div><dt>Target Center MAE work</dt><dd>${formatNullableNumber(metrics.maeTargetCenterWork)}</dd></div>
+        <div><dt>Target Center Max work</dt><dd>${formatNullableNumber(metrics.maxTargetCenterWork)}</dd></div>
         <div><dt>Scale Ratio MAE</dt><dd>${formatNullableNumber(metrics.maeScaleRatio)}</dd></div>
         <div><dt>Scale Ratio Max</dt><dd>${formatNullableNumber(metrics.maxScaleRatio)}</dd></div>
-        <div><dt>Translate After Scale MAE work</dt><dd>${formatNullableNumber(metrics.maeTranslateAfterScaleWork)}</dd></div>
-        <div><dt>Translate After Scale Max work</dt><dd>${formatNullableNumber(metrics.maxTranslateAfterScaleWork)}</dd></div>
+        <div><dt>Derived Translate After Scale MAE work</dt><dd>${formatNullableNumber(metrics.maeDerivedTranslateAfterScaleWork)}</dd></div>
+        <div><dt>Derived Translate After Scale Max work</dt><dd>${formatNullableNumber(metrics.maxDerivedTranslateAfterScaleWork)}</dd></div>
       </dl>
     </div>
   `
@@ -17887,7 +18269,7 @@ function exportPlacementFunctionAnalysisCsv() {
   const createdAt = new Date().toISOString()
   downloadTextFile(
     `placement-function-analysis-samples-${formatTimestampForFileName(createdAt)}.csv`,
-    buildPlacementFunctionAnalysisCsv(state.placementAnalysis.samples),
+    buildPlacementFunctionAnalysisCsv(state.placementAnalysis.samples, state.placementAnalysis.candidate),
     "text/csv;charset=utf-8",
   )
   status.textContent = "配置関数解析サンプルCSVをダウンロードしました。"
@@ -17950,7 +18332,11 @@ function buildPlacementFunctionAnalysisExport(): PlacementFunctionAnalysisExport
 function stripPlacementFunctionAnalysisSampleState(
   sample: PlacementFunctionAnalysisSampleState,
 ): PlacementFunctionAnalysisSample {
-  const { previewLandmarks478: _previewLandmarks478, ...exportSample } = sample
+  const {
+    previewLandmarks478: _previewLandmarks478,
+    previewBaseLandmarks478: _previewBaseLandmarks478,
+    ...exportSample
+  } = sample
   return exportSample
 }
 
@@ -17973,7 +18359,10 @@ function getPlacementFunctionAnalysisRenderAppearanceSummary(options: PlacementF
   }
 }
 
-function buildPlacementFunctionAnalysisCsv(samples: PlacementFunctionAnalysisSampleState[]) {
+function buildPlacementFunctionAnalysisCsv(
+  samples: PlacementFunctionAnalysisSampleState[],
+  candidate: PlacementFunctionCandidate | null,
+) {
   const headers = [
     "sampleIndex",
     "qualityUsable",
@@ -17994,6 +18383,13 @@ function buildPlacementFunctionAnalysisCsv(samples: PlacementFunctionAnalysisSam
     "knownScaleRatio",
     "knownTranslateAfterScaleWorkX",
     "knownTranslateAfterScaleWorkY",
+    "estimatedTargetCenterWorkX",
+    "estimatedTargetCenterWorkY",
+    "estimatedScaleRatio",
+    "estimatedTranslateAfterScaleWorkX",
+    "estimatedTranslateAfterScaleWorkY",
+    "translateAfterScaleErrorWorkX",
+    "translateAfterScaleErrorWorkY",
     "requestedYaw",
     "requestedPitch",
     "requestedRoll",
@@ -18019,51 +18415,61 @@ function buildPlacementFunctionAnalysisCsv(samples: PlacementFunctionAnalysisSam
     "canvasWidth",
     "canvasHeight",
   ]
-  const rows = samples.map((sample) => [
-    sample.sampleIndex,
-    sample.quality.usable,
-    sample.quality.skippedReason ?? "",
-    sample.knownPlacement.centerImageX,
-    sample.knownPlacement.centerImageY,
-    sample.knownPlacement.centerWorkX,
-    sample.knownPlacement.centerWorkY,
-    sample.knownPlacement.visualScaleInput,
-    sample.basePlacement.centerWorkX,
-    sample.basePlacement.centerWorkY,
-    sample.basePlacement.widthWork,
-    sample.basePlacement.heightWork,
-    sample.targetPlacement.centerWorkX,
-    sample.targetPlacement.centerWorkY,
-    sample.targetPlacement.widthWork,
-    sample.targetPlacement.heightWork,
-    sample.knownTransform.scaleRatio,
-    sample.knownTransform.translateAfterScaleWorkX,
-    sample.knownTransform.translateAfterScaleWorkY,
-    sample.requestedPoseP.yaw,
-    sample.requestedPoseP.pitch,
-    sample.requestedPoseP.roll,
-    sample.mediaPipeResult.returnedPose?.yaw ?? "",
-    sample.mediaPipeResult.returnedPose?.pitch ?? "",
-    sample.mediaPipeResult.returnedPose?.roll ?? "",
-    sample.mediaPipeResult.poseDiffMagnitude ?? "",
-    sample.facialTransformationMatrix.available,
-    sample.matrixFeatures.tx ?? "",
-    sample.matrixFeatures.ty ?? "",
-    sample.matrixFeatures.tz ?? "",
-    sample.matrixFeatures.negTz ?? "",
-    sample.matrixFeatures.invNegTz ?? "",
-    sample.matrixFeatures.txOverNegTz ?? "",
-    sample.matrixFeatures.tyOverNegTz ?? "",
-    sample.matrixFeatures.matrixUniformScale ?? "",
-    sample.observedRenderedBounds?.centerImageX ?? "",
-    sample.observedRenderedBounds?.centerImageY ?? "",
-    sample.observedRenderedBounds?.centerWorkX ?? "",
-    sample.observedRenderedBounds?.centerWorkY ?? "",
-    sample.observedRenderedBounds?.scaleDiag ?? "",
-    sample.knownPlacement.renderAspectRatio,
-    sample.knownPlacement.canvasWidth,
-    sample.knownPlacement.canvasHeight,
-  ])
+  const rows = samples.map((sample) => {
+    const prediction = predictPlacementFunctionCandidateForSample(candidate, sample)
+    return [
+      sample.sampleIndex,
+      sample.quality.usable,
+      sample.quality.skippedReason ?? "",
+      sample.knownPlacement.centerImageX,
+      sample.knownPlacement.centerImageY,
+      sample.knownPlacement.centerWorkX,
+      sample.knownPlacement.centerWorkY,
+      sample.knownPlacement.visualScaleInput,
+      sample.basePlacement.centerWorkX,
+      sample.basePlacement.centerWorkY,
+      sample.basePlacement.widthWork,
+      sample.basePlacement.heightWork,
+      sample.targetPlacement.centerWorkX,
+      sample.targetPlacement.centerWorkY,
+      sample.targetPlacement.widthWork,
+      sample.targetPlacement.heightWork,
+      sample.knownTransform.scaleRatio,
+      sample.knownTransform.translateAfterScaleWorkX,
+      sample.knownTransform.translateAfterScaleWorkY,
+      prediction?.estimatedTargetCenterWorkX ?? "",
+      prediction?.estimatedTargetCenterWorkY ?? "",
+      prediction?.estimatedScaleRatio ?? "",
+      prediction?.estimatedTranslateAfterScaleWorkX ?? "",
+      prediction?.estimatedTranslateAfterScaleWorkY ?? "",
+      prediction?.translateAfterScaleErrorWorkX ?? "",
+      prediction?.translateAfterScaleErrorWorkY ?? "",
+      sample.requestedPoseP.yaw,
+      sample.requestedPoseP.pitch,
+      sample.requestedPoseP.roll,
+      sample.mediaPipeResult.returnedPose?.yaw ?? "",
+      sample.mediaPipeResult.returnedPose?.pitch ?? "",
+      sample.mediaPipeResult.returnedPose?.roll ?? "",
+      sample.mediaPipeResult.poseDiffMagnitude ?? "",
+      sample.facialTransformationMatrix.available,
+      sample.matrixFeatures.tx ?? "",
+      sample.matrixFeatures.ty ?? "",
+      sample.matrixFeatures.tz ?? "",
+      sample.matrixFeatures.negTz ?? "",
+      sample.matrixFeatures.invNegTz ?? "",
+      sample.matrixFeatures.txOverNegTz ?? "",
+      sample.matrixFeatures.tyOverNegTz ?? "",
+      sample.matrixFeatures.matrixUniformScale ?? "",
+      sample.observedRenderedBounds?.centerImageX ?? "",
+      sample.observedRenderedBounds?.centerImageY ?? "",
+      sample.observedRenderedBounds?.centerWorkX ?? "",
+      sample.observedRenderedBounds?.centerWorkY ?? "",
+      sample.observedRenderedBounds?.scaleDiag ?? "",
+      sample.knownPlacement.renderAspectRatio,
+      sample.knownPlacement.canvasWidth,
+      sample.knownPlacement.canvasHeight,
+    ]
+  })
   return [
     headers.join(","),
     ...rows.map((row) => row.map(formatCsvCell).join(",")),
