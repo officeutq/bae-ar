@@ -53,7 +53,7 @@ live overlay には `bounds_center_scale_v1` で変換済みの `alignedRendered
 
 ## Placement Function Analysis（配置関数解析）
 
-`Placement Function Analysis（配置関数解析）` は、理想 OBJ 顔だけを使う debug-only の検証機能です。目的は、WebGL で既知配置に置いた理想 OBJ 顔を MediaPipe に通し、返ってきた `facialTransformationMatrix` から `knownPlacement` を復元する placement function を求めることです。
+`Placement Function Analysis（配置関数解析）` は、理想 OBJ 顔だけを使う debug-only の検証機能です。目的は、WebGL で既知配置に置いた理想 OBJ 顔を MediaPipe に通し、返ってきた `facialTransformationMatrix` から `scaleRatio + translateAfterScale` を復元する placement function を求めることです。
 
 処理の流れ:
 
@@ -63,7 +63,7 @@ WebGLで既知配置に置いた理想OBJ顔
   -> MediaPipe detect(canvas)
   -> facialTransformationMatrix
   -> placement function candidate
-  -> knownPlacement を復元できるか確認
+  -> knownTransform を復元できるか確認
 ```
 
 解析用 canvas は live preview / live overlay とは別の `placementAnalysisRenderCanvas` と `placementAnalysisOverlayCanvas` を使います。`placementAnalysisRenderCanvas` は WebGL render された理想 OBJ 顔画像、`placementAnalysisOverlayCanvas` は MediaPipe が返した 478 点を重ねる 2D overlay です。理想顔レンダー本体は WebGL render のみを使い、Canvas 2D の `drawImage()` で理想顔画像を再配置する方式や render backend 比較は行いません。
@@ -89,27 +89,42 @@ centerWorkY = centerImageY
 
 WebGL 側では、既存の pose-baked vertices の renderer を再利用しつつ、最後段の clip-space transform で `visualScaleInput` と `centerImageX / centerImageY` を適用します。これは物理 camera 再現ではなく、「どこに、どの大きさで描いたか」を明確に制御して matrix と対応付けるための debug 実装です。
 
+配置関数の主目的変数は、従来の `centerWorkX / centerWorkY / visualScaleInput` 直接復元ではなく、`basePlacement` から `targetPlacement` へ移る `knownTransform` です。変換順序は `scale_then_translate`（拡大縮小してから平行移動）で固定します。
+
+```text
+targetWorkX = baseWorkX * scaleRatio + translateAfterScaleWorkX
+targetWorkY = baseWorkY * scaleRatio + translateAfterScaleWorkY
+```
+
+sample には以下を保存します。
+
+- `basePlacement`: WebGL の analysis placement transform をかける前の projected bounds
+- `targetPlacement`: WebGL に指定した `knownPlacement` と base 幅から計算した目標配置
+- `knownTransform`: `scaleRatio`、`translateAfterScaleWorkX`、`translateAfterScaleWorkY`
+
+`observedRenderedBounds` は MediaPipe returned478 から見た補助 debug であり、`knownTransform` の計算には使いません。
+
 UI は以下の分担です。
 
 - 左ペインには配置関数解析ボタンを置きません。OBJ loading や render settings など通常操作の領域として残します。
 - 中央ペインに `配置関数解析プレビュー` tab を追加します。最新または選択中 sample の WebGL render image と MediaPipe returned 478 overlay を表示します。
 - 右ペインに `配置関数解析` tab を追加します。解析実行、停止、サンプル JSON / CSV download、candidate JSON download、compact debug summary を置きます。
 
-sample には `knownPlacement`、front の `requestedPoseP`、MediaPipe の detected / returned pose / `facialTransformationMatrix`、matrix features、補助 debug としての `observedRenderedBounds`、`quality.usable` と `skippedReason` を保存します。JSON export には returned478 配列そのものは含めません。returned478 は中央プレビュー overlay 用の state としてのみ保持します。
+sample には `knownPlacement`、`basePlacement`、`targetPlacement`、`knownTransform`、front の `requestedPoseP`、MediaPipe の detected / returned pose / `facialTransformationMatrix`、matrix features、補助 debug としての `observedRenderedBounds`、`quality.usable` と `skippedReason` を保存します。JSON export には returned478 配列そのものは含めません。returned478 は中央プレビュー overlay 用の state としてのみ保持します。
 
 右ペインの debug summary と JSON export には、`scaleDetectionSummary`（スケール別検出要約）と `skippedReasonCounts`（除外理由別件数）を含めます。これにより、失敗が小さすぎる顔サイズによる `no_face` なのか、`facialTransformationMatrix` 欠落や matrix feature 不正なのかを切り分けます。
 
 placement function candidate は最小構成として以下の一次式を作ります。
 
 ```text
-knownCenterWorkX = a0 + a1 * txOverNegTz
-knownCenterWorkY = b0 + b1 * tyOverNegTz
-knownVisualScaleInput = c0 + c1 * invNegTz
+scaleRatio = c0 + c1 * invNegTz
+translateAfterScaleWorkX = a0 + a1 * txOverNegTz
+translateAfterScaleWorkY = b0 + b1 * tyOverNegTz
 ```
 
 使える sample 数が足りない、特徴量が単一値で回帰が特異になる、matrix features が不正な場合は candidate を作らず、右ペインに理由を表示します。
 
-candidate metrics は center（中心）と scale（大きさ）に分けて表示します。candidate JSON には optional field として `trainingDataSummary` を含め、学習に使った `visualScaleInput` の範囲、値、scale 別 sample 数を記録します。
+candidate metrics は `Scale Ratio` と `Translate After Scale` に分けて表示します。candidate JSON の `schemaVersion` は `matrix_to_known_transform_function_candidate_v1` です。candidate JSON には optional field として `trainingDataSummary` を含め、学習に使った `scaleRatio` の範囲、値、scale 別 sample 数を記録します。
 
 この解析では `current478`、`current478 bounds`、current face、live video、live overlay を一切使いません。`current478 bounds` は teacher data や reference placement として扱いません。通常の live overlay、`alignedRenderedIdeal478`、`bounds_center_scale_v1`、stale / fallback / token mismatch guards、render pose debug、mesh warp、production Shape Warp へは接続しません。
 

@@ -1034,12 +1034,27 @@ type RenderPoseLifecycleDebug = {
   renderPoseMatchesToken: boolean
   renderPoseMismatchReason: string | null
 }
+type WebglProjectedImageBounds = {
+  centerImageX: number
+  centerImageY: number
+  centerWorkX: number
+  centerWorkY: number
+  widthImage: number
+  heightImage: number
+  widthWork: number
+  heightWork: number
+  diagWork: number
+  renderAspectRatio: number
+  canvasWidth: number
+  canvasHeight: number
+}
 type RenderBufferPoseDebug = {
   bufferPoseMode: "baked_vertices" | "shader_uniform" | "unknown"
   bufferPoseP: { yaw: number; pitch: number; roll: number } | null
   bufferGenerationId: number | null
   bufferReused: boolean
   bufferReuseReason: string | null
+  baseProjectedBounds?: WebglProjectedImageBounds | null
 }
 type DetectCanvasPoseState = {
   canvasGenerationId: number
@@ -2110,6 +2125,18 @@ type KnownPlacement = {
   canvasHeight: number
 }
 
+type BasePlacement = WebglProjectedImageBounds
+type TargetPlacement = WebglProjectedImageBounds
+
+type KnownTransform = {
+  transformOrder: "scale_then_translate"
+  coordinateSpace: "aspect_corrected_work_coordinate"
+  scaleBasis: "width"
+  scaleRatio: number
+  translateAfterScaleWorkX: number
+  translateAfterScaleWorkY: number
+}
+
 type PlacementFunctionMatrixMajorSummary = {
   tx: number
   ty: number
@@ -2147,6 +2174,9 @@ type PlacementFunctionAnalysisSample = {
   sampleIndex: number
   capturedAtMs: number
   knownPlacement: KnownPlacement
+  basePlacement: BasePlacement
+  targetPlacement: TargetPlacement
+  knownTransform: KnownTransform
   requestedPoseP: {
     yaw: number
     pitch: number
@@ -2209,7 +2239,7 @@ type PlacementFunctionAnalysisExport = {
   exportedAt: string
   source: {
     tool: "ideal-obj-render-warp-lab"
-    purpose: "matrix_to_known_placement_function_analysis"
+    purpose: "matrix_to_known_transform_function_analysis"
   }
   renderAppearance: unknown
   runOptions: PlacementFunctionAnalysisRunOptions
@@ -2221,12 +2251,13 @@ type PlacementFunctionAnalysisExport = {
     failedCount: number
     scaleDetectionSummary: PlacementFunctionScaleDetectionSummary[]
     skippedReasonCounts: Record<string, number>
+    transformSummary: PlacementFunctionTransformSummary | null
   }
   samples: PlacementFunctionAnalysisSample[]
 }
 
 type PlacementFunctionCandidate = {
-  schemaVersion: "matrix_to_known_placement_function_candidate_v1"
+  schemaVersion: "matrix_to_known_transform_function_candidate_v1"
   createdAt: string
   source: {
     tool: "ideal-obj-render-warp-lab"
@@ -2234,48 +2265,63 @@ type PlacementFunctionCandidate = {
     usableSampleCount: number
   }
   targetCoordinateSpace: "aspect_corrected_work_coordinate"
+  transformOrder: "scale_then_translate"
+  scaleBasis: "width"
   modelType: "linear_v1"
   features: {
-    centerWorkX: ["intercept", "txOverNegTz"]
-    centerWorkY: ["intercept", "tyOverNegTz"]
-    visualScaleInput: ["intercept", "invNegTz"]
+    scaleRatio: ["intercept", "invNegTz"]
+    translateAfterScaleWorkX: ["intercept", "txOverNegTz"]
+    translateAfterScaleWorkY: ["intercept", "tyOverNegTz"]
   }
   models: {
-    centerWorkX: {
-      intercept: number
-      coefficients: {
-        txOverNegTz: number
-      }
-    }
-    centerWorkY: {
-      intercept: number
-      coefficients: {
-        tyOverNegTz: number
-      }
-    }
-    visualScaleInput: {
+    scaleRatio: {
       intercept: number
       coefficients: {
         invNegTz: number
       }
     }
+    translateAfterScaleWorkX: {
+      intercept: number
+      coefficients: {
+        txOverNegTz: number
+      }
+    }
+    translateAfterScaleWorkY: {
+      intercept: number
+      coefficients: {
+        tyOverNegTz: number
+      }
+    }
   }
   metrics: {
-    maeCenterWork: number
-    maxCenterWork: number
-    maeVisualScaleInput: number
-    maxVisualScaleInput: number
+    maeScaleRatio: number
+    maxScaleRatio: number
+    maeTranslateAfterScaleWork: number
+    maxTranslateAfterScaleWork: number
   }
   trainingDataSummary?: {
-    visualScaleInputRange: [number, number] | null
-    visualScaleInputValues: number[]
-    sampleCountByVisualScaleInput: Record<string, number>
+    scaleBasis: "width"
+    transformOrder: "scale_then_translate"
+    scaleRatioRange: [number, number] | null
+    scaleRatioValues: number[]
+    sampleCountByScaleRatio: Record<string, number>
   }
 }
 
 type PlacementFunctionAnalysisRange = {
   min: number
   max: number
+}
+
+type PlacementFunctionTransformSummary = {
+  transformOrder: "scale_then_translate"
+  scaleBasis: "width"
+  scaleRatioMin: number
+  scaleRatioMax: number
+  translateAfterScaleWorkXMin: number
+  translateAfterScaleWorkXMax: number
+  translateAfterScaleWorkYMin: number
+  translateAfterScaleWorkYMax: number
 }
 
 type PlacementFunctionAnalysisSummary = {
@@ -2299,6 +2345,7 @@ type PlacementFunctionAnalysisSummary = {
   }
   scaleDetectionSummary: PlacementFunctionScaleDetectionSummary[]
   skippedReasonCounts: Record<string, number>
+  transformSummary: PlacementFunctionTransformSummary | null
 }
 
 type PlacementFunctionAnalysisState = {
@@ -7216,6 +7263,11 @@ function buildWebglObjRenderBuffers(context: WebglObjRenderContext) {
     }
   }
   webglRenderBufferGenerationId += 1
+  const baseProjectedBounds = calculateWebglProjectedImageBoundsFromClipPositions(
+    positionValues,
+    width,
+    height,
+  )
   return {
     positions: new Float32Array(positionValues),
     colors: new Float32Array(colorValues),
@@ -7225,7 +7277,64 @@ function buildWebglObjRenderBuffers(context: WebglObjRenderContext) {
       bufferGenerationId: webglRenderBufferGenerationId,
       bufferReused: false,
       bufferReuseReason: null,
+      baseProjectedBounds,
     },
+  }
+}
+
+function calculateWebglProjectedImageBoundsFromClipPositions(
+  positions: number[],
+  canvasWidth: number,
+  canvasHeight: number,
+): WebglProjectedImageBounds | null {
+  if (positions.length < 2 || canvasWidth <= 0 || canvasHeight <= 0) {
+    return null
+  }
+  let minImageX = Number.POSITIVE_INFINITY
+  let maxImageX = Number.NEGATIVE_INFINITY
+  let minImageY = Number.POSITIVE_INFINITY
+  let maxImageY = Number.NEGATIVE_INFINITY
+  for (let index = 0; index < positions.length - 1; index += 2) {
+    const clipX = positions[index]
+    const clipY = positions[index + 1]
+    if (!Number.isFinite(clipX) || !Number.isFinite(clipY)) {
+      continue
+    }
+    const imageX = (clipX + 1) / 2
+    const imageY = (1 - clipY) / 2
+    minImageX = Math.min(minImageX, imageX)
+    maxImageX = Math.max(maxImageX, imageX)
+    minImageY = Math.min(minImageY, imageY)
+    maxImageY = Math.max(maxImageY, imageY)
+  }
+  if (
+    !Number.isFinite(minImageX) ||
+    !Number.isFinite(maxImageX) ||
+    !Number.isFinite(minImageY) ||
+    !Number.isFinite(maxImageY)
+  ) {
+    return null
+  }
+  const renderAspectRatio = canvasWidth / canvasHeight
+  const centerImageX = (minImageX + maxImageX) / 2
+  const centerImageY = (minImageY + maxImageY) / 2
+  const widthImage = maxImageX - minImageX
+  const heightImage = maxImageY - minImageY
+  const widthWork = widthImage * renderAspectRatio
+  const heightWork = heightImage
+  return {
+    centerImageX,
+    centerImageY,
+    centerWorkX: centerImageX * renderAspectRatio,
+    centerWorkY: centerImageY,
+    widthImage,
+    heightImage,
+    widthWork,
+    heightWork,
+    diagWork: Math.hypot(widthWork, heightWork),
+    renderAspectRatio,
+    canvasWidth,
+    canvasHeight,
   }
 }
 
@@ -9301,12 +9410,21 @@ function buildPlacementFunctionAnalysisSample(input: {
     returnedLandmarks,
     input.knownPlacement.renderAspectRatio,
   )
+  const basePlacement = createPlacementFunctionBasePlacement(
+    input.knownPlacement,
+    input.renderResult.buffer.baseProjectedBounds ?? null,
+  )
+  const targetPlacement = createPlacementFunctionTargetPlacement(input.knownPlacement, basePlacement)
+  const knownTransform = createPlacementFunctionKnownTransform(basePlacement, targetPlacement)
   const skippedReason = getPlacementFunctionAnalysisSkippedReason({
     detected,
     returnedLandmarkCount: landmarks.length,
     matrixAvailable: facialTransformationMatrix.available,
     matrixFeatures,
     knownPlacement: input.knownPlacement,
+    basePlacement,
+    targetPlacement,
+    knownTransform,
     renderPoseAppliedToWebGL,
     renderPoseValid,
   })
@@ -9317,6 +9435,9 @@ function buildPlacementFunctionAnalysisSample(input: {
     sampleIndex: input.sampleIndex,
     capturedAtMs: input.capturedAtMs,
     knownPlacement: roundKnownPlacement(input.knownPlacement),
+    basePlacement: roundPlacementFunctionPlacement(basePlacement),
+    targetPlacement: roundPlacementFunctionPlacement(targetPlacement),
+    knownTransform: roundPlacementFunctionKnownTransform(knownTransform),
     requestedPoseP: cloneObjPoseMappingPose(input.requestedPoseP),
     renderPoseDebug: {
       renderPoseAppliedToWebGL,
@@ -9361,12 +9482,18 @@ function createPlacementFunctionAnalysisFailureSample(input: {
   requestedPoseP: ObjPoseMappingPose
   skippedReason: PlacementFunctionAnalysisSkippedReason
 }): PlacementFunctionAnalysisSampleState {
+  const basePlacement = createPlacementFunctionBasePlacement(input.knownPlacement, null)
+  const targetPlacement = createPlacementFunctionTargetPlacement(input.knownPlacement, basePlacement)
+  const knownTransform = createPlacementFunctionKnownTransform(basePlacement, targetPlacement)
   return {
     schemaVersion: "ideal_obj_render_warp_placement_function_sample_v1",
     sampleId: input.sampleId,
     sampleIndex: input.sampleIndex,
     capturedAtMs: input.capturedAtMs,
     knownPlacement: roundKnownPlacement(input.knownPlacement),
+    basePlacement: roundPlacementFunctionPlacement(basePlacement),
+    targetPlacement: roundPlacementFunctionPlacement(targetPlacement),
+    knownTransform: roundPlacementFunctionKnownTransform(knownTransform),
     requestedPoseP: cloneObjPoseMappingPose(input.requestedPoseP),
     renderPoseDebug: {
       renderPoseAppliedToWebGL: false,
@@ -9486,6 +9613,102 @@ function roundKnownPlacement(knownPlacement: KnownPlacement): KnownPlacement {
   }
 }
 
+function createPlacementFunctionBasePlacement(
+  knownPlacement: KnownPlacement,
+  baseProjectedBounds: WebglProjectedImageBounds | null,
+): BasePlacement {
+  if (baseProjectedBounds && isFinitePlacementFunctionPlacement(baseProjectedBounds)) {
+    return baseProjectedBounds
+  }
+  const renderAspectRatio = knownPlacement.renderAspectRatio
+  const widthWork = 1
+  const heightWork = 1
+  const widthImage = renderAspectRatio > 0 ? widthWork / renderAspectRatio : 1
+  return {
+    centerImageX: 0.5,
+    centerImageY: 0.5,
+    centerWorkX: 0.5 * renderAspectRatio,
+    centerWorkY: 0.5,
+    widthImage,
+    heightImage: heightWork,
+    widthWork,
+    heightWork,
+    diagWork: Math.hypot(widthWork, heightWork),
+    renderAspectRatio,
+    canvasWidth: knownPlacement.canvasWidth,
+    canvasHeight: knownPlacement.canvasHeight,
+  }
+}
+
+function createPlacementFunctionTargetPlacement(
+  knownPlacement: KnownPlacement,
+  basePlacement: BasePlacement,
+): TargetPlacement {
+  const scaleRatio = knownPlacement.visualScaleInput
+  const widthWork = basePlacement.widthWork * scaleRatio
+  const heightWork = basePlacement.heightWork * scaleRatio
+  const widthImage = knownPlacement.renderAspectRatio > 0 ? widthWork / knownPlacement.renderAspectRatio : 0
+  return {
+    centerImageX: knownPlacement.centerImageX,
+    centerImageY: knownPlacement.centerImageY,
+    centerWorkX: knownPlacement.centerWorkX,
+    centerWorkY: knownPlacement.centerWorkY,
+    widthImage,
+    heightImage: heightWork,
+    widthWork,
+    heightWork,
+    diagWork: Math.hypot(widthWork, heightWork),
+    renderAspectRatio: knownPlacement.renderAspectRatio,
+    canvasWidth: knownPlacement.canvasWidth,
+    canvasHeight: knownPlacement.canvasHeight,
+  }
+}
+
+function createPlacementFunctionKnownTransform(
+  basePlacement: BasePlacement,
+  targetPlacement: TargetPlacement,
+): KnownTransform {
+  const scaleRatio = basePlacement.widthWork > 1e-12
+    ? targetPlacement.widthWork / basePlacement.widthWork
+    : 0
+  return {
+    transformOrder: "scale_then_translate",
+    coordinateSpace: "aspect_corrected_work_coordinate",
+    scaleBasis: "width",
+    scaleRatio,
+    translateAfterScaleWorkX: targetPlacement.centerWorkX - basePlacement.centerWorkX * scaleRatio,
+    translateAfterScaleWorkY: targetPlacement.centerWorkY - basePlacement.centerWorkY * scaleRatio,
+  }
+}
+
+function roundPlacementFunctionPlacement<T extends WebglProjectedImageBounds>(placement: T): T {
+  return {
+    centerImageX: roundForState(placement.centerImageX) ?? 0,
+    centerImageY: roundForState(placement.centerImageY) ?? 0,
+    centerWorkX: roundForState(placement.centerWorkX) ?? 0,
+    centerWorkY: roundForState(placement.centerWorkY) ?? 0,
+    widthImage: roundForState(placement.widthImage) ?? 0,
+    heightImage: roundForState(placement.heightImage) ?? 0,
+    widthWork: roundForState(placement.widthWork) ?? 0,
+    heightWork: roundForState(placement.heightWork) ?? 0,
+    diagWork: roundForState(placement.diagWork) ?? 0,
+    renderAspectRatio: roundForState(placement.renderAspectRatio) ?? 0,
+    canvasWidth: placement.canvasWidth,
+    canvasHeight: placement.canvasHeight,
+  } as T
+}
+
+function roundPlacementFunctionKnownTransform(transform: KnownTransform): KnownTransform {
+  return {
+    transformOrder: transform.transformOrder,
+    coordinateSpace: transform.coordinateSpace,
+    scaleBasis: transform.scaleBasis,
+    scaleRatio: roundForState(transform.scaleRatio) ?? 0,
+    translateAfterScaleWorkX: roundForState(transform.translateAfterScaleWorkX) ?? 0,
+    translateAfterScaleWorkY: roundForState(transform.translateAfterScaleWorkY) ?? 0,
+  }
+}
+
 function roundPlacementFunctionMatrixFeatures(
   features: PlacementFunctionMatrixFeatures,
 ): PlacementFunctionMatrixFeatures {
@@ -9514,12 +9737,40 @@ function isFiniteKnownPlacement(knownPlacement: KnownPlacement) {
   ].every((value) => Number.isFinite(value))
 }
 
+function isFinitePlacementFunctionPlacement(placement: WebglProjectedImageBounds) {
+  return [
+    placement.centerImageX,
+    placement.centerImageY,
+    placement.centerWorkX,
+    placement.centerWorkY,
+    placement.widthImage,
+    placement.heightImage,
+    placement.widthWork,
+    placement.heightWork,
+    placement.diagWork,
+    placement.renderAspectRatio,
+    placement.canvasWidth,
+    placement.canvasHeight,
+  ].every((value) => Number.isFinite(value))
+}
+
+function isFinitePlacementFunctionKnownTransform(transform: KnownTransform) {
+  return [
+    transform.scaleRatio,
+    transform.translateAfterScaleWorkX,
+    transform.translateAfterScaleWorkY,
+  ].every((value) => Number.isFinite(value))
+}
+
 function getPlacementFunctionAnalysisSkippedReason(input: {
   detected: boolean
   returnedLandmarkCount: number
   matrixAvailable: boolean
   matrixFeatures: PlacementFunctionMatrixFeatures
   knownPlacement: KnownPlacement
+  basePlacement: BasePlacement
+  targetPlacement: TargetPlacement
+  knownTransform: KnownTransform
   renderPoseAppliedToWebGL: boolean
   renderPoseValid: boolean
 }): PlacementFunctionAnalysisSkippedReason | null {
@@ -9542,7 +9793,12 @@ function getPlacementFunctionAnalysisSkippedReason(input: {
   ) {
     return "invalid_matrix_values"
   }
-  if (!isFiniteKnownPlacement(input.knownPlacement)) {
+  if (
+    !isFiniteKnownPlacement(input.knownPlacement) ||
+    !isFinitePlacementFunctionPlacement(input.basePlacement) ||
+    !isFinitePlacementFunctionPlacement(input.targetPlacement) ||
+    !isFinitePlacementFunctionKnownTransform(input.knownTransform)
+  ) {
     return "invalid_matrix_values"
   }
   if (!input.renderPoseAppliedToWebGL) {
@@ -9599,6 +9855,7 @@ function createPlacementFunctionAnalysisSummary(
     },
     scaleDetectionSummary: buildPlacementFunctionScaleDetectionSummary(samples),
     skippedReasonCounts: buildPlacementFunctionSkippedReasonCounts(samples),
+    transformSummary: buildPlacementFunctionTransformSummary(samples),
   }
 }
 
@@ -9659,6 +9916,33 @@ function buildPlacementFunctionSkippedReasonCounts(
   return counts
 }
 
+function buildPlacementFunctionTransformSummary(
+  samples: PlacementFunctionAnalysisSampleState[],
+): PlacementFunctionTransformSummary | null {
+  const scaleRatioRange = calculatePlacementAnalysisRange(
+    samples.map((sample) => sample.knownTransform.scaleRatio),
+  )
+  const translateXRange = calculatePlacementAnalysisRange(
+    samples.map((sample) => sample.knownTransform.translateAfterScaleWorkX),
+  )
+  const translateYRange = calculatePlacementAnalysisRange(
+    samples.map((sample) => sample.knownTransform.translateAfterScaleWorkY),
+  )
+  if (!scaleRatioRange || !translateXRange || !translateYRange) {
+    return null
+  }
+  return {
+    transformOrder: "scale_then_translate",
+    scaleBasis: "width",
+    scaleRatioMin: scaleRatioRange.min,
+    scaleRatioMax: scaleRatioRange.max,
+    translateAfterScaleWorkXMin: translateXRange.min,
+    translateAfterScaleWorkXMax: translateXRange.max,
+    translateAfterScaleWorkYMin: translateYRange.min,
+    translateAfterScaleWorkYMax: translateYRange.max,
+  }
+}
+
 function formatPlacementScaleKey(value: number) {
   return Number.isFinite(value) ? Number(value.toFixed(6)).toString() : "invalid"
 }
@@ -9671,37 +9955,37 @@ function buildPlacementFunctionCandidate(samples: PlacementFunctionAnalysisSampl
   if (usableSamples.length < 2) {
     return { candidate: null, reason: "usable sample count too small" }
   }
-  const centerWorkXModel = fitSimpleLinearModel(
-    usableSamples.map((sample) => ({
-      x: sample.matrixFeatures.txOverNegTz,
-      y: sample.knownPlacement.centerWorkX,
-    })),
-  )
-  const centerWorkYModel = fitSimpleLinearModel(
-    usableSamples.map((sample) => ({
-      x: sample.matrixFeatures.tyOverNegTz,
-      y: sample.knownPlacement.centerWorkY,
-    })),
-  )
-  const visualScaleInputModel = fitSimpleLinearModel(
+  const scaleRatioModel = fitSimpleLinearModel(
     usableSamples.map((sample) => ({
       x: sample.matrixFeatures.invNegTz,
-      y: sample.knownPlacement.visualScaleInput,
+      y: sample.knownTransform.scaleRatio,
     })),
   )
-  if (!centerWorkXModel || !centerWorkYModel || !visualScaleInputModel) {
+  const translateAfterScaleWorkXModel = fitSimpleLinearModel(
+    usableSamples.map((sample) => ({
+      x: sample.matrixFeatures.txOverNegTz,
+      y: sample.knownTransform.translateAfterScaleWorkX,
+    })),
+  )
+  const translateAfterScaleWorkYModel = fitSimpleLinearModel(
+    usableSamples.map((sample) => ({
+      x: sample.matrixFeatures.tyOverNegTz,
+      y: sample.knownTransform.translateAfterScaleWorkY,
+    })),
+  )
+  if (!scaleRatioModel || !translateAfterScaleWorkXModel || !translateAfterScaleWorkYModel) {
     return { candidate: null, reason: "singular matrix" }
   }
   const metrics = calculatePlacementFunctionCandidateMetrics(
     usableSamples,
-    centerWorkXModel,
-    centerWorkYModel,
-    visualScaleInputModel,
+    scaleRatioModel,
+    translateAfterScaleWorkXModel,
+    translateAfterScaleWorkYModel,
   )
   return {
     reason: null,
     candidate: {
-      schemaVersion: "matrix_to_known_placement_function_candidate_v1",
+      schemaVersion: "matrix_to_known_transform_function_candidate_v1",
       createdAt: new Date().toISOString(),
       source: {
         tool: "ideal-obj-render-warp-lab",
@@ -9709,29 +9993,31 @@ function buildPlacementFunctionCandidate(samples: PlacementFunctionAnalysisSampl
         usableSampleCount: usableSamples.length,
       },
       targetCoordinateSpace: "aspect_corrected_work_coordinate",
+      transformOrder: "scale_then_translate",
+      scaleBasis: "width",
       modelType: "linear_v1",
       features: {
-        centerWorkX: ["intercept", "txOverNegTz"],
-        centerWorkY: ["intercept", "tyOverNegTz"],
-        visualScaleInput: ["intercept", "invNegTz"],
+        scaleRatio: ["intercept", "invNegTz"],
+        translateAfterScaleWorkX: ["intercept", "txOverNegTz"],
+        translateAfterScaleWorkY: ["intercept", "tyOverNegTz"],
       },
       models: {
-        centerWorkX: {
-          intercept: roundForState(centerWorkXModel.intercept) ?? 0,
+        scaleRatio: {
+          intercept: roundForState(scaleRatioModel.intercept) ?? 0,
           coefficients: {
-            txOverNegTz: roundForState(centerWorkXModel.slope) ?? 0,
+            invNegTz: roundForState(scaleRatioModel.slope) ?? 0,
           },
         },
-        centerWorkY: {
-          intercept: roundForState(centerWorkYModel.intercept) ?? 0,
+        translateAfterScaleWorkX: {
+          intercept: roundForState(translateAfterScaleWorkXModel.intercept) ?? 0,
           coefficients: {
-            tyOverNegTz: roundForState(centerWorkYModel.slope) ?? 0,
+            txOverNegTz: roundForState(translateAfterScaleWorkXModel.slope) ?? 0,
           },
         },
-        visualScaleInput: {
-          intercept: roundForState(visualScaleInputModel.intercept) ?? 0,
+        translateAfterScaleWorkY: {
+          intercept: roundForState(translateAfterScaleWorkYModel.intercept) ?? 0,
           coefficients: {
-            invNegTz: roundForState(visualScaleInputModel.slope) ?? 0,
+            tyOverNegTz: roundForState(translateAfterScaleWorkYModel.slope) ?? 0,
           },
         },
       },
@@ -9744,25 +10030,27 @@ function buildPlacementFunctionCandidate(samples: PlacementFunctionAnalysisSampl
 function buildPlacementFunctionCandidateTrainingDataSummary(
   samples: PlacementFunctionAnalysisSampleState[],
 ): PlacementFunctionCandidate["trainingDataSummary"] {
-  const sampleCountByVisualScaleInput: Record<string, number> = {}
+  const sampleCountByScaleRatio: Record<string, number> = {}
   for (const sample of samples) {
-    const key = formatPlacementScaleKey(sample.knownPlacement.visualScaleInput)
-    sampleCountByVisualScaleInput[key] = (sampleCountByVisualScaleInput[key] ?? 0) + 1
+    const key = formatPlacementScaleKey(sample.knownTransform.scaleRatio)
+    sampleCountByScaleRatio[key] = (sampleCountByScaleRatio[key] ?? 0) + 1
   }
-  const visualScaleInputValues = Object.keys(sampleCountByVisualScaleInput)
+  const scaleRatioValues = Object.keys(sampleCountByScaleRatio)
     .map((value) => Number(value))
     .filter((value) => Number.isFinite(value))
     .sort((a, b) => a - b)
     .map((value) => roundForState(value) ?? value)
   return {
-    visualScaleInputRange: visualScaleInputValues.length > 0
+    scaleBasis: "width",
+    transformOrder: "scale_then_translate",
+    scaleRatioRange: scaleRatioValues.length > 0
       ? [
-          visualScaleInputValues[0],
-          visualScaleInputValues[visualScaleInputValues.length - 1],
+          scaleRatioValues[0],
+          scaleRatioValues[scaleRatioValues.length - 1],
         ]
       : null,
-    visualScaleInputValues,
-    sampleCountByVisualScaleInput,
+    scaleRatioValues,
+    sampleCountByScaleRatio,
   }
 }
 
@@ -9791,31 +10079,37 @@ function fitSimpleLinearModel(points: Array<{ x: number | null; y: number | null
 
 function calculatePlacementFunctionCandidateMetrics(
   samples: PlacementFunctionAnalysisSampleState[],
-  centerWorkXModel: { intercept: number; slope: number },
-  centerWorkYModel: { intercept: number; slope: number },
-  visualScaleInputModel: { intercept: number; slope: number },
+  scaleRatioModel: { intercept: number; slope: number },
+  translateAfterScaleWorkXModel: { intercept: number; slope: number },
+  translateAfterScaleWorkYModel: { intercept: number; slope: number },
 ): PlacementFunctionCandidate["metrics"] {
-  const centerErrors: number[] = []
   const scaleErrors: number[] = []
+  const translateErrors: number[] = []
   for (const sample of samples) {
-    const predictedCenterWorkX = predictSimpleLinearModel(centerWorkXModel, sample.matrixFeatures.txOverNegTz)
-    const predictedCenterWorkY = predictSimpleLinearModel(centerWorkYModel, sample.matrixFeatures.tyOverNegTz)
-    const predictedVisualScale = predictSimpleLinearModel(visualScaleInputModel, sample.matrixFeatures.invNegTz)
-    if (predictedCenterWorkX !== null && predictedCenterWorkY !== null) {
-      centerErrors.push(Math.hypot(
-        predictedCenterWorkX - sample.knownPlacement.centerWorkX,
-        predictedCenterWorkY - sample.knownPlacement.centerWorkY,
-      ))
+    const predictedScaleRatio = predictSimpleLinearModel(scaleRatioModel, sample.matrixFeatures.invNegTz)
+    const predictedTranslateX = predictSimpleLinearModel(
+      translateAfterScaleWorkXModel,
+      sample.matrixFeatures.txOverNegTz,
+    )
+    const predictedTranslateY = predictSimpleLinearModel(
+      translateAfterScaleWorkYModel,
+      sample.matrixFeatures.tyOverNegTz,
+    )
+    if (predictedScaleRatio !== null) {
+      scaleErrors.push(Math.abs(predictedScaleRatio - sample.knownTransform.scaleRatio))
     }
-    if (predictedVisualScale !== null) {
-      scaleErrors.push(Math.abs(predictedVisualScale - sample.knownPlacement.visualScaleInput))
+    if (predictedTranslateX !== null && predictedTranslateY !== null) {
+      translateErrors.push(Math.hypot(
+        predictedTranslateX - sample.knownTransform.translateAfterScaleWorkX,
+        predictedTranslateY - sample.knownTransform.translateAfterScaleWorkY,
+      ))
     }
   }
   return {
-    maeCenterWork: roundForState(averageFiniteNumbers(centerErrors) ?? 0) ?? 0,
-    maxCenterWork: roundForState(maxNumbers(centerErrors) ?? 0) ?? 0,
-    maeVisualScaleInput: roundForState(averageFiniteNumbers(scaleErrors) ?? 0) ?? 0,
-    maxVisualScaleInput: roundForState(maxNumbers(scaleErrors) ?? 0) ?? 0,
+    maeScaleRatio: roundForState(averageFiniteNumbers(scaleErrors) ?? 0) ?? 0,
+    maxScaleRatio: roundForState(maxNumbers(scaleErrors) ?? 0) ?? 0,
+    maeTranslateAfterScaleWork: roundForState(averageFiniteNumbers(translateErrors) ?? 0) ?? 0,
+    maxTranslateAfterScaleWork: roundForState(maxNumbers(translateErrors) ?? 0) ?? 0,
   }
 }
 
@@ -17114,10 +17408,12 @@ function renderPlacementAnalysisPreviewPanel() {
   }
 
   const known = selectedSample.knownPlacement
+  const transform = selectedSample.knownTransform
   summary.innerHTML = `
     <dl class="obj-preview-list placement-analysis-preview-list">
       <div><dt>sampleIndex</dt><dd>${selectedSample.sampleIndex}</dd></div>
       <div><dt>knownPlacement</dt><dd>${escapeHtml(formatKnownPlacementShort(known))}</dd></div>
+      <div><dt>knownTransform</dt><dd>${escapeHtml(formatKnownTransformShort(transform))}</dd></div>
       <div><dt>detected</dt><dd>${String(selectedSample.mediaPipeResult.detected)}</dd></div>
       <div><dt>matrixAvailable</dt><dd>${String(selectedSample.facialTransformationMatrix.available)}</dd></div>
       <div><dt>quality</dt><dd>${selectedSample.quality.usable ? "usable" : `skipped: ${escapeHtml(selectedSample.quality.skippedReason ?? "-")}`}</dd></div>
@@ -17285,6 +17581,10 @@ function renderPlacementFunctionAnalysisDebugTab() {
       </dl>
     </section>
     <section class="review-card">
+      <h3>既知変換</h3>
+      ${renderPlacementTransformSummaryHtml(summary.transformSummary)}
+    </section>
+    <section class="review-card">
       <h3>スケール別検出要約</h3>
       ${renderPlacementScaleDetectionSummaryHtml(summary.scaleDetectionSummary)}
     </section>
@@ -17309,16 +17609,35 @@ function formatKnownPlacementShort(known: KnownPlacement) {
   return `centerImage=(${formatNullableNumber(known.centerImageX)}, ${formatNullableNumber(known.centerImageY)}) / centerWork=(${formatNullableNumber(known.centerWorkX)}, ${formatNullableNumber(known.centerWorkY)}) / visualScaleInput=${formatNullableNumber(known.visualScaleInput)} / canvas=${known.canvasWidth}x${known.canvasHeight}`
 }
 
+function formatKnownTransformShort(transform: KnownTransform) {
+  return `scaleRatio=${formatNullableNumber(transform.scaleRatio)} / translateAfterScaleWork=(${formatNullableNumber(transform.translateAfterScaleWorkX)}, ${formatNullableNumber(transform.translateAfterScaleWorkY)})`
+}
+
 function formatLatestPlacementAnalysisSamplePreview() {
   const sample = state.placementAnalysis.samples[state.placementAnalysis.samples.length - 1]
   if (!sample) {
     return "-"
   }
-  return `#${sample.sampleIndex} ${formatKnownPlacementShort(sample.knownPlacement)} / detected=${String(sample.mediaPipeResult.detected)} / matrix=${String(sample.facialTransformationMatrix.available)}`
+  return `#${sample.sampleIndex} ${formatKnownTransformShort(sample.knownTransform)} / ${formatKnownPlacementShort(sample.knownPlacement)} / detected=${String(sample.mediaPipeResult.detected)} / matrix=${String(sample.facialTransformationMatrix.available)}`
 }
 
 function formatPlacementAnalysisRange(range: PlacementFunctionAnalysisRange | null) {
   return range ? `${formatNullableNumber(range.min)} .. ${formatNullableNumber(range.max)}` : "-"
+}
+
+function renderPlacementTransformSummaryHtml(summary: PlacementFunctionTransformSummary | null) {
+  if (!summary) {
+    return `<p class="placeholder-text">解析実行後に knownTransform の範囲を表示します。</p>`
+  }
+  return `
+    <dl class="review-grid">
+      <div><dt>transformOrder</dt><dd>${summary.transformOrder}</dd></div>
+      <div><dt>scaleBasis</dt><dd>${summary.scaleBasis}</dd></div>
+      <div><dt>scaleRatio range</dt><dd>${formatNullableNumber(summary.scaleRatioMin)} .. ${formatNullableNumber(summary.scaleRatioMax)}</dd></div>
+      <div><dt>translateAfterScaleWorkX range</dt><dd>${formatNullableNumber(summary.translateAfterScaleWorkXMin)} .. ${formatNullableNumber(summary.translateAfterScaleWorkXMax)}</dd></div>
+      <div><dt>translateAfterScaleWorkY range</dt><dd>${formatNullableNumber(summary.translateAfterScaleWorkYMin)} .. ${formatNullableNumber(summary.translateAfterScaleWorkYMax)}</dd></div>
+    </dl>
+  `
 }
 
 function renderPlacementScaleDetectionSummaryHtml(summary: PlacementFunctionScaleDetectionSummary[]) {
@@ -17369,17 +17688,17 @@ function renderPlacementSkippedReasonCountsHtml(counts: Record<string, number>) 
 
 function renderPlacementFunctionCandidateMetricsHtml(candidate: PlacementFunctionCandidate | null) {
   if (!candidate) {
-    return `<p class="placeholder-text">候補生成後に center / scale の評価を表示します。</p>`
+    return `<p class="placeholder-text">候補生成後に Known Transform の Scale Ratio / Translate After Scale 評価を表示します。</p>`
   }
   const metrics = candidate.metrics
   return `
     <div class="placement-candidate-metrics">
-      <h4>候補評価</h4>
+      <h4>Known Transform（既知変換）</h4>
       <dl class="review-grid">
-        <div><dt>中心 MAE work</dt><dd>${formatNullableNumber(metrics.maeCenterWork)}</dd></div>
-        <div><dt>中心 Max work</dt><dd>${formatNullableNumber(metrics.maxCenterWork)}</dd></div>
-        <div><dt>大きさ MAE visualScaleInput</dt><dd>${formatNullableNumber(metrics.maeVisualScaleInput)}</dd></div>
-        <div><dt>大きさ Max visualScaleInput</dt><dd>${formatNullableNumber(metrics.maxVisualScaleInput)}</dd></div>
+        <div><dt>Scale Ratio MAE</dt><dd>${formatNullableNumber(metrics.maeScaleRatio)}</dd></div>
+        <div><dt>Scale Ratio Max</dt><dd>${formatNullableNumber(metrics.maxScaleRatio)}</dd></div>
+        <div><dt>Translate After Scale MAE work</dt><dd>${formatNullableNumber(metrics.maeTranslateAfterScaleWork)}</dd></div>
+        <div><dt>Translate After Scale Max work</dt><dd>${formatNullableNumber(metrics.maxTranslateAfterScaleWork)}</dd></div>
       </dl>
     </div>
   `
@@ -17602,7 +17921,7 @@ function buildPlacementFunctionAnalysisExport(): PlacementFunctionAnalysisExport
     exportedAt,
     source: {
       tool: "ideal-obj-render-warp-lab",
-      purpose: "matrix_to_known_placement_function_analysis",
+      purpose: "matrix_to_known_transform_function_analysis",
     },
     renderAppearance: getPlacementFunctionAnalysisRenderAppearanceSummary(options),
     runOptions: {
@@ -17622,6 +17941,7 @@ function buildPlacementFunctionAnalysisExport(): PlacementFunctionAnalysisExport
       failedCount: state.placementAnalysis.summary.failedCount,
       scaleDetectionSummary: state.placementAnalysis.summary.scaleDetectionSummary,
       skippedReasonCounts: state.placementAnalysis.summary.skippedReasonCounts,
+      transformSummary: state.placementAnalysis.summary.transformSummary,
     },
     samples: state.placementAnalysis.samples.map(stripPlacementFunctionAnalysisSampleState),
   }
@@ -17663,6 +17983,17 @@ function buildPlacementFunctionAnalysisCsv(samples: PlacementFunctionAnalysisSam
     "knownCenterWorkX",
     "knownCenterWorkY",
     "knownVisualScaleInput",
+    "baseCenterWorkX",
+    "baseCenterWorkY",
+    "baseWidthWork",
+    "baseHeightWork",
+    "targetCenterWorkX",
+    "targetCenterWorkY",
+    "targetWidthWork",
+    "targetHeightWork",
+    "knownScaleRatio",
+    "knownTranslateAfterScaleWorkX",
+    "knownTranslateAfterScaleWorkY",
     "requestedYaw",
     "requestedPitch",
     "requestedRoll",
@@ -17697,6 +18028,17 @@ function buildPlacementFunctionAnalysisCsv(samples: PlacementFunctionAnalysisSam
     sample.knownPlacement.centerWorkX,
     sample.knownPlacement.centerWorkY,
     sample.knownPlacement.visualScaleInput,
+    sample.basePlacement.centerWorkX,
+    sample.basePlacement.centerWorkY,
+    sample.basePlacement.widthWork,
+    sample.basePlacement.heightWork,
+    sample.targetPlacement.centerWorkX,
+    sample.targetPlacement.centerWorkY,
+    sample.targetPlacement.widthWork,
+    sample.targetPlacement.heightWork,
+    sample.knownTransform.scaleRatio,
+    sample.knownTransform.translateAfterScaleWorkX,
+    sample.knownTransform.translateAfterScaleWorkY,
     sample.requestedPoseP.yaw,
     sample.requestedPoseP.pitch,
     sample.requestedPoseP.roll,
