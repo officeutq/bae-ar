@@ -89,18 +89,21 @@ centerWorkY = centerImageY
 
 WebGL 側では、既存の pose-baked vertices の renderer を再利用しつつ、最後段の clip-space transform で `visualScaleInput` と `centerImageX / centerImageY` を適用します。これは物理 camera 再現ではなく、「どこに、どの大きさで描いたか」を明確に制御して matrix と対応付けるための debug 実装です。
 
-配置関数の主目的変数は、従来の `centerWorkX / centerWorkY / visualScaleInput` 直接復元ではなく、`basePlacement` から `targetPlacement` へ移る `knownTransform` です。変換順序は `scale_then_translate`（拡大縮小してから平行移動）で固定します。
+配置関数の主目的変数は、従来の `centerWorkX / centerWorkY / visualScaleInput` 直接復元ではなく、`basePlacement` から `targetPlacement` へ移る `knownTransform` です。変換順序は `scale_then_translate`（拡大縮小してから平行移動）で固定します。candidate function は production 側の画像 aspect ratio が固定とは限らないため、`aspect_corrected_work_coordinate` ではなく `image_normalized_coordinate` を主座標系にします。work coordinate は preview / debug / 適用時に必要な場合だけ aspect ratio から派生します。
 
 ```text
-targetWorkX = baseWorkX * scaleRatio + translateAfterScaleWorkX
-targetWorkY = baseWorkY * scaleRatio + translateAfterScaleWorkY
+targetImageX = baseImageX * scaleRatio + translateAfterScaleImageX
+targetImageY = baseImageY * scaleRatio + translateAfterScaleImageY
+
+workX = imageX * renderAspectRatio
+workY = imageY
 ```
 
 sample には以下を保存します。
 
 - `basePlacement`: WebGL の analysis placement transform をかける前の projected bounds
 - `targetPlacement`: WebGL に指定した `knownPlacement` と base 幅から計算した目標配置
-- `knownTransform`: `scaleRatio`、`translateAfterScaleWorkX`、`translateAfterScaleWorkY`
+- `knownTransform`: `scaleRatio`、`translateAfterScaleImageX`、`translateAfterScaleImageY`、debug 用の `translateAfterScaleWorkX`、`translateAfterScaleWorkY`
 
 `observedRenderedBounds` は MediaPipe returned478 から見た補助 debug であり、`knownTransform` の計算には使いません。
 
@@ -114,23 +117,23 @@ sample には `knownPlacement`、`basePlacement`、`targetPlacement`、`knownTra
 
 右ペインの debug summary と JSON export には、`scaleDetectionSummary`（スケール別検出要約）と `skippedReasonCounts`（除外理由別件数）を含めます。これにより、失敗が小さすぎる顔サイズによる `no_face` なのか、`facialTransformationMatrix` 欠落や matrix feature 不正なのかを切り分けます。
 
-placement function candidate は、まず `targetCenter` と `scaleRatio` を推定し、`translateAfterScale` を導出します。
+placement function candidate は、まず image-normalized coordinate の `targetCenter` と `scaleRatio` を推定し、`translateAfterScaleImage` を導出します。candidate 内では fixed aspect ratio を混ぜず、work coordinate は candidate の外側で必要に応じて `imageX * aspectRatio` として計算します。
 
 ```text
-estimatedTargetCenterWorkX = a0 + a1 * txOverNegTz
-estimatedTargetCenterWorkY = b0 + b1 * tyOverNegTz
+estimatedTargetCenterImageX = a0 + a1 * txOverNegTz
+estimatedTargetCenterImageY = b0 + b1 * tyOverNegTz
 estimatedScaleRatio = c0 + c1 * invNegTz
 
-estimatedTranslateAfterScaleWorkX =
-  estimatedTargetCenterWorkX - basePlacement.centerWorkX * estimatedScaleRatio
+estimatedTranslateAfterScaleImageX =
+  estimatedTargetCenterImageX - basePlacement.centerImageX * estimatedScaleRatio
 
-estimatedTranslateAfterScaleWorkY =
-  estimatedTargetCenterWorkY - basePlacement.centerWorkY * estimatedScaleRatio
+estimatedTranslateAfterScaleImageY =
+  estimatedTargetCenterImageY - basePlacement.centerImageY * estimatedScaleRatio
 ```
 
 使える sample 数が足りない、特徴量が単一値で回帰が特異になる、matrix features が不正な場合は candidate を作らず、右ペインに理由を表示します。
 
-candidate metrics は `Target Center`、`Scale Ratio`、`Derived Translate After Scale` に分けて表示します。candidate JSON の `schemaVersion` は `matrix_to_known_transform_function_candidate_v1` です。candidate JSON には optional field として `trainingDataSummary` を含め、学習に使った `scaleRatio` の範囲、値、scale 別 sample 数を記録します。
+candidate metrics は `Target Center Image`、`Scale Ratio`、`Derived Translate After Scale Image` に分けて表示します。candidate JSON の `schemaVersion` は `matrix_to_known_image_transform_function_candidate_v1`、`targetCoordinateSpace` は `image_normalized_coordinate` です。candidate JSON には optional field として `trainingDataSummary` を含め、学習に使った `scaleRatio` の範囲、値、scale 別 sample 数を記録します。
 
 この解析では `current478`、`current478 bounds`、current face、live video、live overlay を一切使いません。`current478 bounds` は teacher data や reference placement として扱いません。通常の live overlay、`alignedRenderedIdeal478`、`bounds_center_scale_v1`、stale / fallback / token mismatch guards、render pose debug、mesh warp、production Shape Warp へは接続しません。
 

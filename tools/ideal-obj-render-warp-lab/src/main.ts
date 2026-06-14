@@ -1041,6 +1041,7 @@ type WebglProjectedImageBounds = {
   centerWorkY: number
   widthImage: number
   heightImage: number
+  diagImage: number
   widthWork: number
   heightWork: number
   diagWork: number
@@ -2130,9 +2131,11 @@ type TargetPlacement = WebglProjectedImageBounds
 
 type KnownTransform = {
   transformOrder: "scale_then_translate"
-  coordinateSpace: "aspect_corrected_work_coordinate"
+  coordinateSpace: "image_normalized_coordinate"
   scaleBasis: "width"
   scaleRatio: number
+  translateAfterScaleImageX: number
+  translateAfterScaleImageY: number
   translateAfterScaleWorkX: number
   translateAfterScaleWorkY: number
 }
@@ -2260,7 +2263,7 @@ type PlacementFunctionAnalysisExport = {
   exportedAt: string
   source: {
     tool: "ideal-obj-render-warp-lab"
-    purpose: "matrix_to_known_transform_function_analysis"
+    purpose: "matrix_to_known_image_transform_function_analysis"
   }
   renderAppearance: unknown
   runOptions: PlacementFunctionAnalysisRunOptions
@@ -2278,32 +2281,32 @@ type PlacementFunctionAnalysisExport = {
 }
 
 type PlacementFunctionCandidate = {
-  schemaVersion: "matrix_to_known_transform_function_candidate_v1"
+  schemaVersion: "matrix_to_known_image_transform_function_candidate_v1"
   createdAt: string
   source: {
     tool: "ideal-obj-render-warp-lab"
     sampleCount: number
     usableSampleCount: number
   }
-  targetCoordinateSpace: "aspect_corrected_work_coordinate"
+  targetCoordinateSpace: "image_normalized_coordinate"
   transformOrder: "scale_then_translate"
   scaleBasis: "width"
   modelType: "linear_v1"
   features: {
-    targetCenterWorkX: ["intercept", "txOverNegTz"]
-    targetCenterWorkY: ["intercept", "tyOverNegTz"]
+    targetCenterImageX: ["intercept", "txOverNegTz"]
+    targetCenterImageY: ["intercept", "tyOverNegTz"]
     scaleRatio: ["intercept", "invNegTz"]
-    translateAfterScaleWorkX: ["derived", "targetCenterWorkX", "basePlacement.centerWorkX", "scaleRatio"]
-    translateAfterScaleWorkY: ["derived", "targetCenterWorkY", "basePlacement.centerWorkY", "scaleRatio"]
+    translateAfterScaleImageX: ["derived", "targetCenterImageX", "basePlacement.centerImageX", "scaleRatio"]
+    translateAfterScaleImageY: ["derived", "targetCenterImageY", "basePlacement.centerImageY", "scaleRatio"]
   }
   models: {
-    targetCenterWorkX: {
+    targetCenterImageX: {
       intercept: number
       coefficients: {
         txOverNegTz: number
       }
     }
-    targetCenterWorkY: {
+    targetCenterImageY: {
       intercept: number
       coefficients: {
         tyOverNegTz: number
@@ -2315,20 +2318,20 @@ type PlacementFunctionCandidate = {
         invNegTz: number
       }
     }
-    translateAfterScaleWorkX: {
-      derivedFrom: "targetCenterWorkX - basePlacement.centerWorkX * scaleRatio"
+    translateAfterScaleImageX: {
+      derivedFrom: "targetCenterImageX - basePlacement.centerImageX * scaleRatio"
     }
-    translateAfterScaleWorkY: {
-      derivedFrom: "targetCenterWorkY - basePlacement.centerWorkY * scaleRatio"
+    translateAfterScaleImageY: {
+      derivedFrom: "targetCenterImageY - basePlacement.centerImageY * scaleRatio"
     }
   }
   metrics: {
-    maeTargetCenterWork: number
-    maxTargetCenterWork: number
+    maeTargetCenterImage: number
+    maxTargetCenterImage: number
     maeScaleRatio: number
     maxScaleRatio: number
-    maeDerivedTranslateAfterScaleWork: number
-    maxDerivedTranslateAfterScaleWork: number
+    maeDerivedTranslateAfterScaleImage: number
+    maxDerivedTranslateAfterScaleImage: number
   }
   trainingDataSummary?: {
     scaleBasis: "width"
@@ -2346,13 +2349,15 @@ type PlacementFunctionAnalysisRange = {
 
 type PlacementFunctionTransformSummary = {
   transformOrder: "scale_then_translate"
+  coordinateSpace: "image_normalized_coordinate"
   scaleBasis: "width"
   scaleRatioMin: number
   scaleRatioMax: number
-  translateAfterScaleWorkXMin: number
-  translateAfterScaleWorkXMax: number
-  translateAfterScaleWorkYMin: number
-  translateAfterScaleWorkYMax: number
+  translateAfterScaleImageXMin: number
+  translateAfterScaleImageXMax: number
+  translateAfterScaleImageYMin: number
+  translateAfterScaleImageYMax: number
+  renderAspectRatio: number
 }
 
 type PlacementFunctionAnalysisSummary = {
@@ -2370,8 +2375,8 @@ type PlacementFunctionAnalysisSummary = {
     invNegTz: PlacementFunctionAnalysisRange | null
   }
   knownPlacementRanges: {
-    centerWorkX: PlacementFunctionAnalysisRange | null
-    centerWorkY: PlacementFunctionAnalysisRange | null
+    centerImageX: PlacementFunctionAnalysisRange | null
+    centerImageY: PlacementFunctionAnalysisRange | null
     visualScaleInput: PlacementFunctionAnalysisRange | null
   }
   scaleDetectionSummary: PlacementFunctionScaleDetectionSummary[]
@@ -7388,6 +7393,7 @@ function calculateWebglProjectedImageBoundsFromClipPositions(
     centerWorkY: centerImageY,
     widthImage,
     heightImage,
+    diagImage: Math.hypot(widthImage, heightImage),
     widthWork,
     heightWork,
     diagWork: Math.hypot(widthWork, heightWork),
@@ -9537,7 +9543,6 @@ function buildPlacementFunctionAnalysisSample(input: {
   const previewBase = createPlacementFunctionBasePreviewLandmarks({
     targetLandmarks: returnedLandmarks,
     knownTransform,
-    renderAspectRatio: input.knownPlacement.renderAspectRatio,
     basePreviewReference: input.basePreviewReference,
   })
   const previewLandmarkSummary = createPlacementFunctionPreviewLandmarkSummary(
@@ -9619,7 +9624,6 @@ function createPlacementFunctionAnalysisFailureSample(input: {
   const previewBase = createPlacementFunctionBasePreviewLandmarks({
     targetLandmarks: [],
     knownTransform,
-    renderAspectRatio: input.knownPlacement.renderAspectRatio,
     basePreviewReference: input.basePreviewReference,
   })
   const previewLandmarkSummary = createPlacementFunctionPreviewLandmarkSummary(previewBase, 0)
@@ -9771,6 +9775,7 @@ function createPlacementFunctionBasePlacement(
     centerWorkY: 0.5,
     widthImage,
     heightImage: heightWork,
+    diagImage: Math.hypot(widthImage, heightWork),
     widthWork,
     heightWork,
     diagWork: Math.hypot(widthWork, heightWork),
@@ -9785,16 +9790,18 @@ function createPlacementFunctionTargetPlacement(
   basePlacement: BasePlacement,
 ): TargetPlacement {
   const scaleRatio = knownPlacement.visualScaleInput
-  const widthWork = basePlacement.widthWork * scaleRatio
-  const heightWork = basePlacement.heightWork * scaleRatio
-  const widthImage = knownPlacement.renderAspectRatio > 0 ? widthWork / knownPlacement.renderAspectRatio : 0
+  const widthImage = basePlacement.widthImage * scaleRatio
+  const heightImage = basePlacement.heightImage * scaleRatio
+  const widthWork = widthImage * knownPlacement.renderAspectRatio
+  const heightWork = heightImage
   return {
     centerImageX: knownPlacement.centerImageX,
     centerImageY: knownPlacement.centerImageY,
     centerWorkX: knownPlacement.centerWorkX,
     centerWorkY: knownPlacement.centerWorkY,
     widthImage,
-    heightImage: heightWork,
+    heightImage,
+    diagImage: Math.hypot(widthImage, heightImage),
     widthWork,
     heightWork,
     diagWork: Math.hypot(widthWork, heightWork),
@@ -9808,16 +9815,22 @@ function createPlacementFunctionKnownTransform(
   basePlacement: BasePlacement,
   targetPlacement: TargetPlacement,
 ): KnownTransform {
-  const scaleRatio = basePlacement.widthWork > 1e-12
-    ? targetPlacement.widthWork / basePlacement.widthWork
+  const scaleRatio = basePlacement.widthImage > 1e-12
+    ? targetPlacement.widthImage / basePlacement.widthImage
     : 0
+  const translateAfterScaleImageX =
+    targetPlacement.centerImageX - basePlacement.centerImageX * scaleRatio
+  const translateAfterScaleImageY =
+    targetPlacement.centerImageY - basePlacement.centerImageY * scaleRatio
   return {
     transformOrder: "scale_then_translate",
-    coordinateSpace: "aspect_corrected_work_coordinate",
+    coordinateSpace: "image_normalized_coordinate",
     scaleBasis: "width",
     scaleRatio,
-    translateAfterScaleWorkX: targetPlacement.centerWorkX - basePlacement.centerWorkX * scaleRatio,
-    translateAfterScaleWorkY: targetPlacement.centerWorkY - basePlacement.centerWorkY * scaleRatio,
+    translateAfterScaleImageX,
+    translateAfterScaleImageY,
+    translateAfterScaleWorkX: translateAfterScaleImageX * targetPlacement.renderAspectRatio,
+    translateAfterScaleWorkY: translateAfterScaleImageY,
   }
 }
 
@@ -9829,6 +9842,7 @@ function roundPlacementFunctionPlacement<T extends WebglProjectedImageBounds>(pl
     centerWorkY: roundForState(placement.centerWorkY) ?? 0,
     widthImage: roundForState(placement.widthImage) ?? 0,
     heightImage: roundForState(placement.heightImage) ?? 0,
+    diagImage: roundForState(placement.diagImage) ?? 0,
     widthWork: roundForState(placement.widthWork) ?? 0,
     heightWork: roundForState(placement.heightWork) ?? 0,
     diagWork: roundForState(placement.diagWork) ?? 0,
@@ -9844,6 +9858,8 @@ function roundPlacementFunctionKnownTransform(transform: KnownTransform): KnownT
     coordinateSpace: transform.coordinateSpace,
     scaleBasis: transform.scaleBasis,
     scaleRatio: roundForState(transform.scaleRatio) ?? 0,
+    translateAfterScaleImageX: roundForState(transform.translateAfterScaleImageX) ?? 0,
+    translateAfterScaleImageY: roundForState(transform.translateAfterScaleImageY) ?? 0,
     translateAfterScaleWorkX: roundForState(transform.translateAfterScaleWorkX) ?? 0,
     translateAfterScaleWorkY: roundForState(transform.translateAfterScaleWorkY) ?? 0,
   }
@@ -9852,7 +9868,6 @@ function roundPlacementFunctionKnownTransform(transform: KnownTransform): KnownT
 function createPlacementFunctionBasePreviewLandmarks(input: {
   targetLandmarks: ReferenceLandmark[]
   knownTransform: KnownTransform
-  renderAspectRatio: number
   basePreviewReference: PlacementFunctionBasePreviewReference
 }): {
   landmarks: ReferenceLandmark[] | null
@@ -9869,7 +9884,6 @@ function createPlacementFunctionBasePreviewLandmarks(input: {
   const inverseLandmarks = inverseKnownTransformTargetLandmarksToBase({
     targetLandmarks: input.targetLandmarks,
     knownTransform: input.knownTransform,
-    renderAspectRatio: input.renderAspectRatio,
   })
   if (inverseLandmarks.length > 0) {
     return {
@@ -9888,29 +9902,20 @@ function createPlacementFunctionBasePreviewLandmarks(input: {
 function inverseKnownTransformTargetLandmarksToBase(input: {
   targetLandmarks: ReferenceLandmark[]
   knownTransform: KnownTransform
-  renderAspectRatio: number
 }): ReferenceLandmark[] {
   const scaleRatio = input.knownTransform.scaleRatio
   if (
     input.targetLandmarks.length === 0 ||
     !Number.isFinite(scaleRatio) ||
-    Math.abs(scaleRatio) <= 1e-12 ||
-    !Number.isFinite(input.renderAspectRatio) ||
-    Math.abs(input.renderAspectRatio) <= 1e-12
+    Math.abs(scaleRatio) <= 1e-12
   ) {
     return []
   }
   return input.targetLandmarks.map((landmark) => {
-    const targetWorkX = landmark.x * input.renderAspectRatio
-    const targetWorkY = landmark.y
-    const baseWorkX =
-      (targetWorkX - input.knownTransform.translateAfterScaleWorkX) / scaleRatio
-    const baseWorkY =
-      (targetWorkY - input.knownTransform.translateAfterScaleWorkY) / scaleRatio
     return {
       ...landmark,
-      x: baseWorkX / input.renderAspectRatio,
-      y: baseWorkY,
+      x: (landmark.x - input.knownTransform.translateAfterScaleImageX) / scaleRatio,
+      y: (landmark.y - input.knownTransform.translateAfterScaleImageY) / scaleRatio,
     }
   })
 }
@@ -9963,6 +9968,7 @@ function isFinitePlacementFunctionPlacement(placement: WebglProjectedImageBounds
     placement.centerWorkY,
     placement.widthImage,
     placement.heightImage,
+    placement.diagImage,
     placement.widthWork,
     placement.heightWork,
     placement.diagWork,
@@ -9975,6 +9981,8 @@ function isFinitePlacementFunctionPlacement(placement: WebglProjectedImageBounds
 function isFinitePlacementFunctionKnownTransform(transform: KnownTransform) {
   return [
     transform.scaleRatio,
+    transform.translateAfterScaleImageX,
+    transform.translateAfterScaleImageY,
     transform.translateAfterScaleWorkX,
     transform.translateAfterScaleWorkY,
   ].every((value) => Number.isFinite(value))
@@ -10067,8 +10075,8 @@ function createPlacementFunctionAnalysisSummary(
       invNegTz: calculatePlacementAnalysisRange(samples.map((sample) => sample.matrixFeatures.invNegTz)),
     },
     knownPlacementRanges: {
-      centerWorkX: calculatePlacementAnalysisRange(samples.map((sample) => sample.knownPlacement.centerWorkX)),
-      centerWorkY: calculatePlacementAnalysisRange(samples.map((sample) => sample.knownPlacement.centerWorkY)),
+      centerImageX: calculatePlacementAnalysisRange(samples.map((sample) => sample.knownPlacement.centerImageX)),
+      centerImageY: calculatePlacementAnalysisRange(samples.map((sample) => sample.knownPlacement.centerImageY)),
       visualScaleInput: calculatePlacementAnalysisRange(samples.map((sample) => sample.knownPlacement.visualScaleInput)),
     },
     scaleDetectionSummary: buildPlacementFunctionScaleDetectionSummary(samples),
@@ -10141,23 +10149,28 @@ function buildPlacementFunctionTransformSummary(
     samples.map((sample) => sample.knownTransform.scaleRatio),
   )
   const translateXRange = calculatePlacementAnalysisRange(
-    samples.map((sample) => sample.knownTransform.translateAfterScaleWorkX),
+    samples.map((sample) => sample.knownTransform.translateAfterScaleImageX),
   )
   const translateYRange = calculatePlacementAnalysisRange(
-    samples.map((sample) => sample.knownTransform.translateAfterScaleWorkY),
+    samples.map((sample) => sample.knownTransform.translateAfterScaleImageY),
+  )
+  const renderAspectRatioRange = calculatePlacementAnalysisRange(
+    samples.map((sample) => sample.knownPlacement.renderAspectRatio),
   )
   if (!scaleRatioRange || !translateXRange || !translateYRange) {
     return null
   }
   return {
     transformOrder: "scale_then_translate",
+    coordinateSpace: "image_normalized_coordinate",
     scaleBasis: "width",
     scaleRatioMin: scaleRatioRange.min,
     scaleRatioMax: scaleRatioRange.max,
-    translateAfterScaleWorkXMin: translateXRange.min,
-    translateAfterScaleWorkXMax: translateXRange.max,
-    translateAfterScaleWorkYMin: translateYRange.min,
-    translateAfterScaleWorkYMax: translateYRange.max,
+    translateAfterScaleImageXMin: translateXRange.min,
+    translateAfterScaleImageXMax: translateXRange.max,
+    translateAfterScaleImageYMin: translateYRange.min,
+    translateAfterScaleImageYMax: translateYRange.max,
+    renderAspectRatio: renderAspectRatioRange?.min ?? samples[0]?.knownPlacement.renderAspectRatio ?? 0,
   }
 }
 
@@ -10173,16 +10186,16 @@ function buildPlacementFunctionCandidate(samples: PlacementFunctionAnalysisSampl
   if (usableSamples.length < 2) {
     return { candidate: null, reason: "usable sample count too small" }
   }
-  const targetCenterWorkXModel = fitSimpleLinearModel(
+  const targetCenterImageXModel = fitSimpleLinearModel(
     usableSamples.map((sample) => ({
       x: sample.matrixFeatures.txOverNegTz,
-      y: sample.targetPlacement.centerWorkX,
+      y: sample.targetPlacement.centerImageX,
     })),
   )
-  const targetCenterWorkYModel = fitSimpleLinearModel(
+  const targetCenterImageYModel = fitSimpleLinearModel(
     usableSamples.map((sample) => ({
       x: sample.matrixFeatures.tyOverNegTz,
-      y: sample.targetPlacement.centerWorkY,
+      y: sample.targetPlacement.centerImageY,
     })),
   )
   const scaleRatioModel = fitSimpleLinearModel(
@@ -10191,47 +10204,47 @@ function buildPlacementFunctionCandidate(samples: PlacementFunctionAnalysisSampl
       y: sample.knownTransform.scaleRatio,
     })),
   )
-  if (!targetCenterWorkXModel || !targetCenterWorkYModel || !scaleRatioModel) {
+  if (!targetCenterImageXModel || !targetCenterImageYModel || !scaleRatioModel) {
     return { candidate: null, reason: "singular matrix" }
   }
   const metrics = calculatePlacementFunctionCandidateMetrics(
     usableSamples,
-    targetCenterWorkXModel,
-    targetCenterWorkYModel,
+    targetCenterImageXModel,
+    targetCenterImageYModel,
     scaleRatioModel,
   )
   return {
     reason: null,
     candidate: {
-      schemaVersion: "matrix_to_known_transform_function_candidate_v1",
+      schemaVersion: "matrix_to_known_image_transform_function_candidate_v1",
       createdAt: new Date().toISOString(),
       source: {
         tool: "ideal-obj-render-warp-lab",
         sampleCount: samples.length,
         usableSampleCount: usableSamples.length,
       },
-      targetCoordinateSpace: "aspect_corrected_work_coordinate",
+      targetCoordinateSpace: "image_normalized_coordinate",
       transformOrder: "scale_then_translate",
       scaleBasis: "width",
       modelType: "linear_v1",
       features: {
-        targetCenterWorkX: ["intercept", "txOverNegTz"],
-        targetCenterWorkY: ["intercept", "tyOverNegTz"],
+        targetCenterImageX: ["intercept", "txOverNegTz"],
+        targetCenterImageY: ["intercept", "tyOverNegTz"],
         scaleRatio: ["intercept", "invNegTz"],
-        translateAfterScaleWorkX: ["derived", "targetCenterWorkX", "basePlacement.centerWorkX", "scaleRatio"],
-        translateAfterScaleWorkY: ["derived", "targetCenterWorkY", "basePlacement.centerWorkY", "scaleRatio"],
+        translateAfterScaleImageX: ["derived", "targetCenterImageX", "basePlacement.centerImageX", "scaleRatio"],
+        translateAfterScaleImageY: ["derived", "targetCenterImageY", "basePlacement.centerImageY", "scaleRatio"],
       },
       models: {
-        targetCenterWorkX: {
-          intercept: roundForState(targetCenterWorkXModel.intercept) ?? 0,
+        targetCenterImageX: {
+          intercept: roundForState(targetCenterImageXModel.intercept) ?? 0,
           coefficients: {
-            txOverNegTz: roundForState(targetCenterWorkXModel.slope) ?? 0,
+            txOverNegTz: roundForState(targetCenterImageXModel.slope) ?? 0,
           },
         },
-        targetCenterWorkY: {
-          intercept: roundForState(targetCenterWorkYModel.intercept) ?? 0,
+        targetCenterImageY: {
+          intercept: roundForState(targetCenterImageYModel.intercept) ?? 0,
           coefficients: {
-            tyOverNegTz: roundForState(targetCenterWorkYModel.slope) ?? 0,
+            tyOverNegTz: roundForState(targetCenterImageYModel.slope) ?? 0,
           },
         },
         scaleRatio: {
@@ -10240,11 +10253,11 @@ function buildPlacementFunctionCandidate(samples: PlacementFunctionAnalysisSampl
             invNegTz: roundForState(scaleRatioModel.slope) ?? 0,
           },
         },
-        translateAfterScaleWorkX: {
-          derivedFrom: "targetCenterWorkX - basePlacement.centerWorkX * scaleRatio",
+        translateAfterScaleImageX: {
+          derivedFrom: "targetCenterImageX - basePlacement.centerImageX * scaleRatio",
         },
-        translateAfterScaleWorkY: {
-          derivedFrom: "targetCenterWorkY - basePlacement.centerWorkY * scaleRatio",
+        translateAfterScaleImageY: {
+          derivedFrom: "targetCenterImageY - basePlacement.centerImageY * scaleRatio",
         },
       },
       metrics,
@@ -10305,54 +10318,54 @@ function fitSimpleLinearModel(points: Array<{ x: number | null; y: number | null
 
 function calculatePlacementFunctionCandidateMetrics(
   samples: PlacementFunctionAnalysisSampleState[],
-  targetCenterWorkXModel: { intercept: number; slope: number },
-  targetCenterWorkYModel: { intercept: number; slope: number },
+  targetCenterImageXModel: { intercept: number; slope: number },
+  targetCenterImageYModel: { intercept: number; slope: number },
   scaleRatioModel: { intercept: number; slope: number },
 ): PlacementFunctionCandidate["metrics"] {
   const targetCenterErrors: number[] = []
   const scaleErrors: number[] = []
   const derivedTranslateErrors: number[] = []
   for (const sample of samples) {
-    const predictedTargetCenterWorkX = predictSimpleLinearModel(
-      targetCenterWorkXModel,
+    const predictedTargetCenterImageX = predictSimpleLinearModel(
+      targetCenterImageXModel,
       sample.matrixFeatures.txOverNegTz,
     )
-    const predictedTargetCenterWorkY = predictSimpleLinearModel(
-      targetCenterWorkYModel,
+    const predictedTargetCenterImageY = predictSimpleLinearModel(
+      targetCenterImageYModel,
       sample.matrixFeatures.tyOverNegTz,
     )
     const predictedScaleRatio = predictSimpleLinearModel(scaleRatioModel, sample.matrixFeatures.invNegTz)
-    if (predictedTargetCenterWorkX !== null && predictedTargetCenterWorkY !== null) {
+    if (predictedTargetCenterImageX !== null && predictedTargetCenterImageY !== null) {
       targetCenterErrors.push(Math.hypot(
-        predictedTargetCenterWorkX - sample.targetPlacement.centerWorkX,
-        predictedTargetCenterWorkY - sample.targetPlacement.centerWorkY,
+        predictedTargetCenterImageX - sample.targetPlacement.centerImageX,
+        predictedTargetCenterImageY - sample.targetPlacement.centerImageY,
       ))
     }
     if (predictedScaleRatio !== null) {
       scaleErrors.push(Math.abs(predictedScaleRatio - sample.knownTransform.scaleRatio))
     }
     if (
-      predictedTargetCenterWorkX !== null &&
-      predictedTargetCenterWorkY !== null &&
+      predictedTargetCenterImageX !== null &&
+      predictedTargetCenterImageY !== null &&
       predictedScaleRatio !== null
     ) {
-      const predictedTranslateAfterScaleWorkX =
-        predictedTargetCenterWorkX - sample.basePlacement.centerWorkX * predictedScaleRatio
-      const predictedTranslateAfterScaleWorkY =
-        predictedTargetCenterWorkY - sample.basePlacement.centerWorkY * predictedScaleRatio
+      const predictedTranslateAfterScaleImageX =
+        predictedTargetCenterImageX - sample.basePlacement.centerImageX * predictedScaleRatio
+      const predictedTranslateAfterScaleImageY =
+        predictedTargetCenterImageY - sample.basePlacement.centerImageY * predictedScaleRatio
       derivedTranslateErrors.push(Math.hypot(
-        predictedTranslateAfterScaleWorkX - sample.knownTransform.translateAfterScaleWorkX,
-        predictedTranslateAfterScaleWorkY - sample.knownTransform.translateAfterScaleWorkY,
+        predictedTranslateAfterScaleImageX - sample.knownTransform.translateAfterScaleImageX,
+        predictedTranslateAfterScaleImageY - sample.knownTransform.translateAfterScaleImageY,
       ))
     }
   }
   return {
-    maeTargetCenterWork: roundForState(averageFiniteNumbers(targetCenterErrors) ?? 0) ?? 0,
-    maxTargetCenterWork: roundForState(maxNumbers(targetCenterErrors) ?? 0) ?? 0,
+    maeTargetCenterImage: roundForState(averageFiniteNumbers(targetCenterErrors) ?? 0) ?? 0,
+    maxTargetCenterImage: roundForState(maxNumbers(targetCenterErrors) ?? 0) ?? 0,
     maeScaleRatio: roundForState(averageFiniteNumbers(scaleErrors) ?? 0) ?? 0,
     maxScaleRatio: roundForState(maxNumbers(scaleErrors) ?? 0) ?? 0,
-    maeDerivedTranslateAfterScaleWork: roundForState(averageFiniteNumbers(derivedTranslateErrors) ?? 0) ?? 0,
-    maxDerivedTranslateAfterScaleWork: roundForState(maxNumbers(derivedTranslateErrors) ?? 0) ?? 0,
+    maeDerivedTranslateAfterScaleImage: roundForState(averageFiniteNumbers(derivedTranslateErrors) ?? 0) ?? 0,
+    maxDerivedTranslateAfterScaleImage: roundForState(maxNumbers(derivedTranslateErrors) ?? 0) ?? 0,
   }
 }
 
@@ -10370,17 +10383,17 @@ function predictPlacementFunctionCandidateForSample(
   if (!candidate) {
     return null
   }
-  const estimatedTargetCenterWorkX = predictSimpleLinearModel(
+  const estimatedTargetCenterImageX = predictSimpleLinearModel(
     {
-      intercept: candidate.models.targetCenterWorkX.intercept,
-      slope: candidate.models.targetCenterWorkX.coefficients.txOverNegTz,
+      intercept: candidate.models.targetCenterImageX.intercept,
+      slope: candidate.models.targetCenterImageX.coefficients.txOverNegTz,
     },
     sample.matrixFeatures.txOverNegTz,
   )
-  const estimatedTargetCenterWorkY = predictSimpleLinearModel(
+  const estimatedTargetCenterImageY = predictSimpleLinearModel(
     {
-      intercept: candidate.models.targetCenterWorkY.intercept,
-      slope: candidate.models.targetCenterWorkY.coefficients.tyOverNegTz,
+      intercept: candidate.models.targetCenterImageY.intercept,
+      slope: candidate.models.targetCenterImageY.coefficients.tyOverNegTz,
     },
     sample.matrixFeatures.tyOverNegTz,
   )
@@ -10391,25 +10404,31 @@ function predictPlacementFunctionCandidateForSample(
     },
     sample.matrixFeatures.invNegTz,
   )
-  const estimatedTranslateAfterScaleWorkX =
-    estimatedTargetCenterWorkX !== null && estimatedScaleRatio !== null
-      ? estimatedTargetCenterWorkX - sample.basePlacement.centerWorkX * estimatedScaleRatio
+  const estimatedTranslateAfterScaleImageX =
+    estimatedTargetCenterImageX !== null && estimatedScaleRatio !== null
+      ? estimatedTargetCenterImageX - sample.basePlacement.centerImageX * estimatedScaleRatio
       : null
-  const estimatedTranslateAfterScaleWorkY =
-    estimatedTargetCenterWorkY !== null && estimatedScaleRatio !== null
-      ? estimatedTargetCenterWorkY - sample.basePlacement.centerWorkY * estimatedScaleRatio
+  const estimatedTranslateAfterScaleImageY =
+    estimatedTargetCenterImageY !== null && estimatedScaleRatio !== null
+      ? estimatedTargetCenterImageY - sample.basePlacement.centerImageY * estimatedScaleRatio
       : null
   return {
-    estimatedTargetCenterWorkX,
-    estimatedTargetCenterWorkY,
+    estimatedTargetCenterImageX,
+    estimatedTargetCenterImageY,
     estimatedScaleRatio,
-    estimatedTranslateAfterScaleWorkX,
-    estimatedTranslateAfterScaleWorkY,
-    translateAfterScaleErrorWorkX: estimatedTranslateAfterScaleWorkX !== null
-      ? estimatedTranslateAfterScaleWorkX - sample.knownTransform.translateAfterScaleWorkX
+    estimatedTranslateAfterScaleImageX,
+    estimatedTranslateAfterScaleImageY,
+    targetCenterImageErrorX: estimatedTargetCenterImageX !== null
+      ? estimatedTargetCenterImageX - sample.targetPlacement.centerImageX
       : null,
-    translateAfterScaleErrorWorkY: estimatedTranslateAfterScaleWorkY !== null
-      ? estimatedTranslateAfterScaleWorkY - sample.knownTransform.translateAfterScaleWorkY
+    targetCenterImageErrorY: estimatedTargetCenterImageY !== null
+      ? estimatedTargetCenterImageY - sample.targetPlacement.centerImageY
+      : null,
+    translateAfterScaleImageErrorX: estimatedTranslateAfterScaleImageX !== null
+      ? estimatedTranslateAfterScaleImageX - sample.knownTransform.translateAfterScaleImageX
+      : null,
+    translateAfterScaleImageErrorY: estimatedTranslateAfterScaleImageY !== null
+      ? estimatedTranslateAfterScaleImageY - sample.knownTransform.translateAfterScaleImageY
       : null,
   }
 }
@@ -17720,7 +17739,7 @@ function renderPlacementAnalysisPreviewPanel() {
       <div><dt>sampleIndex</dt><dd>${selectedSample.sampleIndex}</dd></div>
       <div><dt>knownPlacement</dt><dd>${escapeHtml(formatKnownPlacementShort(known))}</dd></div>
       <div><dt>knownTransform</dt><dd>${escapeHtml(formatKnownTransformShort(transform))}</dd></div>
-      <div><dt>base478</dt><dd>${escapeHtml(formatPlacementPreviewLandmarkSummary(selectedSample.previewLandmarkSummary))}</dd></div>
+      <div><dt>Base 478 source</dt><dd>${escapeHtml(formatPlacementPreviewLandmarkSummary(selectedSample.previewLandmarkSummary))}</dd></div>
       <div><dt>detected</dt><dd>${String(selectedSample.mediaPipeResult.detected)}</dd></div>
       <div><dt>matrixAvailable</dt><dd>${String(selectedSample.facialTransformationMatrix.available)}</dd></div>
       <div><dt>quality</dt><dd>${selectedSample.quality.usable ? "usable" : `skipped: ${escapeHtml(selectedSample.quality.skippedReason ?? "-")}`}</dd></div>
@@ -17946,8 +17965,8 @@ function renderPlacementFunctionAnalysisDebugTab() {
     <section class="review-card">
       <h3>known placement range</h3>
       <dl class="review-grid">
-        <div><dt>centerWorkX range</dt><dd>${formatPlacementAnalysisRange(summary.knownPlacementRanges.centerWorkX)}</dd></div>
-        <div><dt>centerWorkY range</dt><dd>${formatPlacementAnalysisRange(summary.knownPlacementRanges.centerWorkY)}</dd></div>
+        <div><dt>centerImageX range</dt><dd>${formatPlacementAnalysisRange(summary.knownPlacementRanges.centerImageX)}</dd></div>
+        <div><dt>centerImageY range</dt><dd>${formatPlacementAnalysisRange(summary.knownPlacementRanges.centerImageY)}</dd></div>
         <div><dt>visualScaleInput range</dt><dd>${formatPlacementAnalysisRange(summary.knownPlacementRanges.visualScaleInput)}</dd></div>
       </dl>
     </section>
@@ -17981,7 +18000,7 @@ function formatKnownPlacementShort(known: KnownPlacement) {
 }
 
 function formatKnownTransformShort(transform: KnownTransform) {
-  return `scaleRatio=${formatNullableNumber(transform.scaleRatio)} / translateAfterScaleWork=(${formatNullableNumber(transform.translateAfterScaleWorkX)}, ${formatNullableNumber(transform.translateAfterScaleWorkY)})`
+  return `scaleRatio=${formatNullableNumber(transform.scaleRatio)} / translateAfterScaleImage=(${formatNullableNumber(transform.translateAfterScaleImageX)}, ${formatNullableNumber(transform.translateAfterScaleImageY)}) / translateAfterScaleWorkDebug=(${formatNullableNumber(transform.translateAfterScaleWorkX)}, ${formatNullableNumber(transform.translateAfterScaleWorkY)})`
 }
 
 function formatPlacementPreviewLandmarkSummary(summary: PlacementFunctionPreviewLandmarkSummary) {
@@ -18012,10 +18031,12 @@ function renderPlacementTransformSummaryHtml(summary: PlacementFunctionTransform
   return `
     <dl class="review-grid">
       <div><dt>transformOrder</dt><dd>${summary.transformOrder}</dd></div>
+      <div><dt>coordinateSpace</dt><dd>${summary.coordinateSpace}</dd></div>
       <div><dt>scaleBasis</dt><dd>${summary.scaleBasis}</dd></div>
       <div><dt>scaleRatio range</dt><dd>${formatNullableNumber(summary.scaleRatioMin)} .. ${formatNullableNumber(summary.scaleRatioMax)}</dd></div>
-      <div><dt>translateAfterScaleWorkX range</dt><dd>${formatNullableNumber(summary.translateAfterScaleWorkXMin)} .. ${formatNullableNumber(summary.translateAfterScaleWorkXMax)}</dd></div>
-      <div><dt>translateAfterScaleWorkY range</dt><dd>${formatNullableNumber(summary.translateAfterScaleWorkYMin)} .. ${formatNullableNumber(summary.translateAfterScaleWorkYMax)}</dd></div>
+      <div><dt>translateAfterScaleImageX range</dt><dd>${formatNullableNumber(summary.translateAfterScaleImageXMin)} .. ${formatNullableNumber(summary.translateAfterScaleImageXMax)}</dd></div>
+      <div><dt>translateAfterScaleImageY range</dt><dd>${formatNullableNumber(summary.translateAfterScaleImageYMin)} .. ${formatNullableNumber(summary.translateAfterScaleImageYMax)}</dd></div>
+      <div><dt>renderAspectRatio</dt><dd>${formatNullableNumber(summary.renderAspectRatio)}</dd></div>
     </dl>
   `
 }
@@ -18075,12 +18096,12 @@ function renderPlacementFunctionCandidateMetricsHtml(candidate: PlacementFunctio
     <div class="placement-candidate-metrics">
       <h4>Known Transform（既知変換）</h4>
       <dl class="review-grid">
-        <div><dt>Target Center MAE work</dt><dd>${formatNullableNumber(metrics.maeTargetCenterWork)}</dd></div>
-        <div><dt>Target Center Max work</dt><dd>${formatNullableNumber(metrics.maxTargetCenterWork)}</dd></div>
+        <div><dt>Target Center Image MAE</dt><dd>${formatNullableNumber(metrics.maeTargetCenterImage)}</dd></div>
+        <div><dt>Target Center Image Max</dt><dd>${formatNullableNumber(metrics.maxTargetCenterImage)}</dd></div>
         <div><dt>Scale Ratio MAE</dt><dd>${formatNullableNumber(metrics.maeScaleRatio)}</dd></div>
         <div><dt>Scale Ratio Max</dt><dd>${formatNullableNumber(metrics.maxScaleRatio)}</dd></div>
-        <div><dt>Derived Translate After Scale MAE work</dt><dd>${formatNullableNumber(metrics.maeDerivedTranslateAfterScaleWork)}</dd></div>
-        <div><dt>Derived Translate After Scale Max work</dt><dd>${formatNullableNumber(metrics.maxDerivedTranslateAfterScaleWork)}</dd></div>
+        <div><dt>Derived Translate After Scale Image MAE</dt><dd>${formatNullableNumber(metrics.maeDerivedTranslateAfterScaleImage)}</dd></div>
+        <div><dt>Derived Translate After Scale Image Max</dt><dd>${formatNullableNumber(metrics.maxDerivedTranslateAfterScaleImage)}</dd></div>
       </dl>
     </div>
   `
@@ -18303,7 +18324,7 @@ function buildPlacementFunctionAnalysisExport(): PlacementFunctionAnalysisExport
     exportedAt,
     source: {
       tool: "ideal-obj-render-warp-lab",
-      purpose: "matrix_to_known_transform_function_analysis",
+      purpose: "matrix_to_known_image_transform_function_analysis",
     },
     renderAppearance: getPlacementFunctionAnalysisRenderAppearanceSummary(options),
     runOptions: {
@@ -18372,6 +18393,28 @@ function buildPlacementFunctionAnalysisCsv(
     "knownCenterWorkX",
     "knownCenterWorkY",
     "knownVisualScaleInput",
+    "baseCenterImageX",
+    "baseCenterImageY",
+    "baseWidthImage",
+    "baseHeightImage",
+    "baseDiagImage",
+    "targetCenterImageX",
+    "targetCenterImageY",
+    "targetWidthImage",
+    "targetHeightImage",
+    "targetDiagImage",
+    "knownScaleRatio",
+    "knownTranslateAfterScaleImageX",
+    "knownTranslateAfterScaleImageY",
+    "estimatedTargetCenterImageX",
+    "estimatedTargetCenterImageY",
+    "estimatedScaleRatio",
+    "estimatedTranslateAfterScaleImageX",
+    "estimatedTranslateAfterScaleImageY",
+    "targetCenterImageErrorX",
+    "targetCenterImageErrorY",
+    "translateAfterScaleImageErrorX",
+    "translateAfterScaleImageErrorY",
     "baseCenterWorkX",
     "baseCenterWorkY",
     "baseWidthWork",
@@ -18380,16 +18423,8 @@ function buildPlacementFunctionAnalysisCsv(
     "targetCenterWorkY",
     "targetWidthWork",
     "targetHeightWork",
-    "knownScaleRatio",
     "knownTranslateAfterScaleWorkX",
     "knownTranslateAfterScaleWorkY",
-    "estimatedTargetCenterWorkX",
-    "estimatedTargetCenterWorkY",
-    "estimatedScaleRatio",
-    "estimatedTranslateAfterScaleWorkX",
-    "estimatedTranslateAfterScaleWorkY",
-    "translateAfterScaleErrorWorkX",
-    "translateAfterScaleErrorWorkY",
     "requestedYaw",
     "requestedPitch",
     "requestedRoll",
@@ -18426,6 +18461,28 @@ function buildPlacementFunctionAnalysisCsv(
       sample.knownPlacement.centerWorkX,
       sample.knownPlacement.centerWorkY,
       sample.knownPlacement.visualScaleInput,
+      sample.basePlacement.centerImageX,
+      sample.basePlacement.centerImageY,
+      sample.basePlacement.widthImage,
+      sample.basePlacement.heightImage,
+      sample.basePlacement.diagImage,
+      sample.targetPlacement.centerImageX,
+      sample.targetPlacement.centerImageY,
+      sample.targetPlacement.widthImage,
+      sample.targetPlacement.heightImage,
+      sample.targetPlacement.diagImage,
+      sample.knownTransform.scaleRatio,
+      sample.knownTransform.translateAfterScaleImageX,
+      sample.knownTransform.translateAfterScaleImageY,
+      prediction?.estimatedTargetCenterImageX ?? "",
+      prediction?.estimatedTargetCenterImageY ?? "",
+      prediction?.estimatedScaleRatio ?? "",
+      prediction?.estimatedTranslateAfterScaleImageX ?? "",
+      prediction?.estimatedTranslateAfterScaleImageY ?? "",
+      prediction?.targetCenterImageErrorX ?? "",
+      prediction?.targetCenterImageErrorY ?? "",
+      prediction?.translateAfterScaleImageErrorX ?? "",
+      prediction?.translateAfterScaleImageErrorY ?? "",
       sample.basePlacement.centerWorkX,
       sample.basePlacement.centerWorkY,
       sample.basePlacement.widthWork,
@@ -18434,16 +18491,8 @@ function buildPlacementFunctionAnalysisCsv(
       sample.targetPlacement.centerWorkY,
       sample.targetPlacement.widthWork,
       sample.targetPlacement.heightWork,
-      sample.knownTransform.scaleRatio,
       sample.knownTransform.translateAfterScaleWorkX,
       sample.knownTransform.translateAfterScaleWorkY,
-      prediction?.estimatedTargetCenterWorkX ?? "",
-      prediction?.estimatedTargetCenterWorkY ?? "",
-      prediction?.estimatedScaleRatio ?? "",
-      prediction?.estimatedTranslateAfterScaleWorkX ?? "",
-      prediction?.estimatedTranslateAfterScaleWorkY ?? "",
-      prediction?.translateAfterScaleErrorWorkX ?? "",
-      prediction?.translateAfterScaleErrorWorkY ?? "",
       sample.requestedPoseP.yaw,
       sample.requestedPoseP.pitch,
       sample.requestedPoseP.roll,
