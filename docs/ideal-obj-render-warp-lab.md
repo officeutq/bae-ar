@@ -176,6 +176,12 @@ Placement Function Analysis（配置関数解析）では、selected sample の 
 
 全 condition x 全 candidate の render / MediaPipe detect は重くなるため、condition batch roundtrip comparison は progress / cancel を持つ debug-only batch として扱います。`predictedLandmarks478` 配列は全 condition 分保持せず JSON export にも含めません。保存するのは summary、numeric condition results、worst conditions のみで、preview 用には最後に処理した condition の best candidate の predicted 478 だけを state に保持します。
 
+Placement Function Analysis（配置関数解析）では、既存の `direct_quadratic_normalized_v1` だけでは二次式全般を検討したとは扱いません。Quadratic Candidate Expansion（二次式候補拡張）として、二次項の入れ方を変えた direct quadratic candidates、標準化した quadratic candidates、ridge 正則化付き quadratic candidates、center-derived quadratic candidates を追加比較します。
+
+目的は、1本の一次関数で崩れる条件を二次式で吸収できるか、または二次式でも端条件に系統的な崩れが残るため piecewise linear（分割一次関数）へ進むべきかを判断することです。評価は transform error だけではなく、conditionKey batch roundtrip comparison による `predictedMatrixFeatures` の再現性を主評価にします。mean だけでなく p95 / max / worst conditions を重視します。
+
+condition batch roundtrip comparison では candidate set を選択できます。`core` は既存5候補のみ、`quadratic_expanded` は既存5候補と expanded candidates、`quadratic_only` は expanded candidates のみを評価します。候補数が増えると render / MediaPipe detect 回数も増えるため、初期値は `core` のままにします。batch 完了後は `quadraticInterpretationSummary` に best mean / p95 / max candidate と、piecewise linear を次に試すべきかの仮判断理由を保存します。
+
 配置関数解析プレビューでは、known target 478 と predicted roundtrip 478 を重ねて比較します。roundtrip candidate comparison 後は、best candidate の predicted 478 だけを preview state に保持し、追加 toggle で表示できます。各 candidate の predicted 478 配列は JSON export には含めません。`base478` / `base bounds` は変換前478点の補助 debug であり、roundtrip validation / roundtrip candidate comparison の主対象ではないため、toggle は残しますがデフォルト非表示にします。
 
 使える sample 数が足りない、特徴量が単一値で回帰が特異になる、matrix features が不正な場合は candidate を作らず、右ペインに理由を表示します。
