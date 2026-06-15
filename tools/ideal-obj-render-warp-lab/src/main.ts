@@ -2448,6 +2448,91 @@ type PlacementFunctionCandidate = {
     scaleRatioValues: number[]
     sampleCountByScaleRatio: Record<string, number>
   }
+  directTransformCandidates: PlacementFunctionDirectTransformCandidate[]
+  candidateComparison: PlacementFunctionCandidateComparison
+}
+
+type PlacementFunctionDirectCandidateId =
+  | "direct_linear_normalized_v1"
+  | "direct_linear_raw_matrix_v1"
+  | "direct_linear_split_v1"
+  | "direct_quadratic_normalized_v1"
+
+type PlacementFunctionDirectOutputKey =
+  | "scaleRatio"
+  | "translateAfterScaleImageX"
+  | "translateAfterScaleImageY"
+
+type PlacementFunctionDirectFeatureName =
+  | "tx"
+  | "ty"
+  | "tz"
+  | "txOverNegTz"
+  | "tyOverNegTz"
+  | "invNegTz"
+  | "txOverNegTz^2"
+  | "tyOverNegTz^2"
+  | "invNegTz^2"
+  | "txOverNegTz*tyOverNegTz"
+  | "txOverNegTz*invNegTz"
+  | "tyOverNegTz*invNegTz"
+
+type PlacementFunctionDirectJsonFeatureName = "intercept" | PlacementFunctionDirectFeatureName
+
+type PlacementFunctionDirectCandidateDefinition = {
+  id: PlacementFunctionDirectCandidateId
+  modelType: "linear_v1" | "quadratic_v1"
+  featureNamesByOutput: Record<PlacementFunctionDirectOutputKey, PlacementFunctionDirectFeatureName[]>
+}
+
+type PlacementFunctionDirectRegressionModel = {
+  intercept: number
+  coefficients: Record<string, number>
+}
+
+type PlacementFunctionDirectTransformCandidateMetrics = {
+  maeScaleRatio: number
+  maxScaleRatio: number
+  rmseScaleRatio: number
+  maeTranslateAfterScaleImageX: number
+  maxTranslateAfterScaleImageX: number
+  rmseTranslateAfterScaleImageX: number
+  maeTranslateAfterScaleImageY: number
+  maxTranslateAfterScaleImageY: number
+  rmseTranslateAfterScaleImageY: number
+  meanTranslateAfterScaleImageEuclidean: number
+  maxTranslateAfterScaleImageEuclidean: number
+  weightedScore: number
+}
+
+type PlacementFunctionDirectTransformCandidate = {
+  id: PlacementFunctionDirectCandidateId
+  modelType: "linear_v1" | "quadratic_v1"
+  targetCoordinateSpace: "image_normalized_coordinate"
+  transformOrder: "scale_then_translate"
+  fittingAggregation: "condition_mean"
+  features: Record<PlacementFunctionDirectOutputKey, PlacementFunctionDirectJsonFeatureName[]>
+  models: Record<PlacementFunctionDirectOutputKey, PlacementFunctionDirectRegressionModel>
+  metrics: PlacementFunctionDirectTransformCandidateMetrics
+}
+
+type PlacementFunctionCandidateComparison = {
+  baselineCenterDerived: {
+    id: "center_derived_linear_v1"
+    metrics: {
+      maeScaleRatio: number
+      maxScaleRatio: number
+      meanTranslateAfterScaleImageEuclidean: number
+      maxTranslateAfterScaleImageEuclidean: number
+      weightedScore: number
+    }
+  }
+  directCandidates: Array<{
+    id: PlacementFunctionDirectCandidateId
+    metrics: PlacementFunctionDirectTransformCandidateMetrics
+    rankByWeightedScore: number
+  }>
+  bestDirectCandidateId: PlacementFunctionDirectCandidateId | null
 }
 
 type PlacementFunctionAnalysisRange = {
@@ -10882,6 +10967,7 @@ function buildPlacementFunctionCandidate(samples: PlacementFunctionAnalysisSampl
     targetCenterImageYModel,
     scaleRatioModel,
   )
+  const directTransformCandidates = buildPlacementFunctionDirectTransformCandidates(fittingSamples)
   return {
     reason: null,
     candidate: {
@@ -10934,7 +11020,394 @@ function buildPlacementFunctionCandidate(samples: PlacementFunctionAnalysisSampl
       },
       metrics,
       trainingDataSummary: buildPlacementFunctionCandidateTrainingDataSummary(fittingSamples),
+      directTransformCandidates,
+      candidateComparison: buildPlacementFunctionCandidateComparison(metrics, directTransformCandidates),
     },
+  }
+}
+
+function buildPlacementFunctionDirectTransformCandidates(
+  fittingSamples: PlacementFunctionCandidateTrainingSample[],
+): PlacementFunctionDirectTransformCandidate[] {
+  return getPlacementFunctionDirectCandidateDefinitions()
+    .map((definition) => buildPlacementFunctionDirectTransformCandidate(definition, fittingSamples))
+    .filter((candidate): candidate is PlacementFunctionDirectTransformCandidate => candidate !== null)
+}
+
+function getPlacementFunctionDirectCandidateDefinitions(): PlacementFunctionDirectCandidateDefinition[] {
+  const normalizedLinearFeatures: PlacementFunctionDirectFeatureName[] = [
+    "txOverNegTz",
+    "tyOverNegTz",
+    "invNegTz",
+  ]
+  const rawMatrixLinearFeatures: PlacementFunctionDirectFeatureName[] = ["tx", "ty", "tz"]
+  const normalizedQuadraticFeatures: PlacementFunctionDirectFeatureName[] = [
+    "txOverNegTz",
+    "tyOverNegTz",
+    "invNegTz",
+    "txOverNegTz^2",
+    "tyOverNegTz^2",
+    "invNegTz^2",
+    "txOverNegTz*tyOverNegTz",
+    "txOverNegTz*invNegTz",
+    "tyOverNegTz*invNegTz",
+  ]
+  return [
+    {
+      id: "direct_linear_normalized_v1",
+      modelType: "linear_v1",
+      featureNamesByOutput: {
+        scaleRatio: normalizedLinearFeatures,
+        translateAfterScaleImageX: normalizedLinearFeatures,
+        translateAfterScaleImageY: normalizedLinearFeatures,
+      },
+    },
+    {
+      id: "direct_linear_raw_matrix_v1",
+      modelType: "linear_v1",
+      featureNamesByOutput: {
+        scaleRatio: rawMatrixLinearFeatures,
+        translateAfterScaleImageX: rawMatrixLinearFeatures,
+        translateAfterScaleImageY: rawMatrixLinearFeatures,
+      },
+    },
+    {
+      id: "direct_linear_split_v1",
+      modelType: "linear_v1",
+      featureNamesByOutput: {
+        scaleRatio: ["ty", "tz"],
+        translateAfterScaleImageX: ["tx", "tz"],
+        translateAfterScaleImageY: ["ty", "tz"],
+      },
+    },
+    {
+      id: "direct_quadratic_normalized_v1",
+      modelType: "quadratic_v1",
+      featureNamesByOutput: {
+        scaleRatio: normalizedQuadraticFeatures,
+        translateAfterScaleImageX: normalizedQuadraticFeatures,
+        translateAfterScaleImageY: normalizedQuadraticFeatures,
+      },
+    },
+  ]
+}
+
+function buildPlacementFunctionDirectTransformCandidate(
+  definition: PlacementFunctionDirectCandidateDefinition,
+  fittingSamples: PlacementFunctionCandidateTrainingSample[],
+): PlacementFunctionDirectTransformCandidate | null {
+  const scaleRatioModel = fitPlacementFunctionDirectRegressionModel(
+    fittingSamples,
+    definition.featureNamesByOutput.scaleRatio,
+    (sample) => sample.knownTransform.scaleRatio,
+  )
+  const translateXModel = fitPlacementFunctionDirectRegressionModel(
+    fittingSamples,
+    definition.featureNamesByOutput.translateAfterScaleImageX,
+    (sample) => sample.knownTransform.translateAfterScaleImageX,
+  )
+  const translateYModel = fitPlacementFunctionDirectRegressionModel(
+    fittingSamples,
+    definition.featureNamesByOutput.translateAfterScaleImageY,
+    (sample) => sample.knownTransform.translateAfterScaleImageY,
+  )
+  if (!scaleRatioModel || !translateXModel || !translateYModel) {
+    return null
+  }
+
+  const candidateWithoutMetrics = {
+    id: definition.id,
+    modelType: definition.modelType,
+    targetCoordinateSpace: "image_normalized_coordinate",
+    transformOrder: "scale_then_translate",
+    fittingAggregation: "condition_mean",
+    features: {
+      scaleRatio: createPlacementFunctionDirectJsonFeatures(definition.featureNamesByOutput.scaleRatio),
+      translateAfterScaleImageX: createPlacementFunctionDirectJsonFeatures(
+        definition.featureNamesByOutput.translateAfterScaleImageX,
+      ),
+      translateAfterScaleImageY: createPlacementFunctionDirectJsonFeatures(
+        definition.featureNamesByOutput.translateAfterScaleImageY,
+      ),
+    },
+    models: {
+      scaleRatio: roundPlacementFunctionDirectRegressionModel(scaleRatioModel),
+      translateAfterScaleImageX: roundPlacementFunctionDirectRegressionModel(translateXModel),
+      translateAfterScaleImageY: roundPlacementFunctionDirectRegressionModel(translateYModel),
+    },
+  } satisfies Omit<PlacementFunctionDirectTransformCandidate, "metrics">
+
+  return {
+    ...candidateWithoutMetrics,
+    metrics: calculatePlacementFunctionDirectTransformCandidateMetrics(
+      fittingSamples,
+      candidateWithoutMetrics,
+    ),
+  }
+}
+
+function createPlacementFunctionDirectJsonFeatures(
+  featureNames: PlacementFunctionDirectFeatureName[],
+): PlacementFunctionDirectJsonFeatureName[] {
+  return ["intercept", ...featureNames]
+}
+
+function fitPlacementFunctionDirectRegressionModel(
+  samples: PlacementFunctionCandidateTrainingSample[],
+  featureNames: PlacementFunctionDirectFeatureName[],
+  getTarget: (sample: PlacementFunctionCandidateTrainingSample) => number,
+): PlacementFunctionDirectRegressionModel | null {
+  const rows: Array<{ x: number[]; y: number }> = []
+  for (const sample of samples) {
+    const featureValues = createPlacementFunctionDirectFeatureVector(sample, featureNames)
+    const y = getTarget(sample)
+    if (!featureValues || !Number.isFinite(y)) {
+      continue
+    }
+    rows.push({ x: [1, ...featureValues], y })
+  }
+  const parameterCount = featureNames.length + 1
+  if (rows.length < parameterCount) {
+    return null
+  }
+
+  const normalMatrix: number[][] = Array.from(
+    { length: parameterCount },
+    () => Array<number>(parameterCount).fill(0),
+  )
+  const normalVector = Array<number>(parameterCount).fill(0)
+  for (const row of rows) {
+    for (let rowIndex = 0; rowIndex < parameterCount; rowIndex += 1) {
+      normalVector[rowIndex] += row.x[rowIndex] * row.y
+      for (let columnIndex = 0; columnIndex < parameterCount; columnIndex += 1) {
+        normalMatrix[rowIndex][columnIndex] += row.x[rowIndex] * row.x[columnIndex]
+      }
+    }
+  }
+
+  const coefficients = solvePlacementFunctionLinearSystem(normalMatrix, normalVector)
+  if (!coefficients) {
+    return null
+  }
+  const featureCoefficients: Record<string, number> = {}
+  for (const [index, featureName] of featureNames.entries()) {
+    const coefficient = coefficients[index + 1]
+    if (!Number.isFinite(coefficient)) {
+      return null
+    }
+    featureCoefficients[featureName] = coefficient
+  }
+  return Number.isFinite(coefficients[0])
+    ? {
+        intercept: coefficients[0],
+        coefficients: featureCoefficients,
+      }
+    : null
+}
+
+function solvePlacementFunctionLinearSystem(matrix: number[][], vector: number[]) {
+  const size = vector.length
+  const augmented = matrix.map((row, index) => [...row, vector[index]])
+  for (let pivotIndex = 0; pivotIndex < size; pivotIndex += 1) {
+    let bestRowIndex = pivotIndex
+    for (let rowIndex = pivotIndex + 1; rowIndex < size; rowIndex += 1) {
+      if (Math.abs(augmented[rowIndex][pivotIndex]) > Math.abs(augmented[bestRowIndex][pivotIndex])) {
+        bestRowIndex = rowIndex
+      }
+    }
+    const pivot = augmented[bestRowIndex][pivotIndex]
+    if (!Number.isFinite(pivot) || Math.abs(pivot) <= 1e-12) {
+      return null
+    }
+    if (bestRowIndex !== pivotIndex) {
+      const currentRow = augmented[pivotIndex]
+      augmented[pivotIndex] = augmented[bestRowIndex]
+      augmented[bestRowIndex] = currentRow
+    }
+
+    const normalizedPivot = augmented[pivotIndex][pivotIndex]
+    for (let columnIndex = pivotIndex; columnIndex <= size; columnIndex += 1) {
+      augmented[pivotIndex][columnIndex] /= normalizedPivot
+    }
+    for (let rowIndex = 0; rowIndex < size; rowIndex += 1) {
+      if (rowIndex === pivotIndex) {
+        continue
+      }
+      const factor = augmented[rowIndex][pivotIndex]
+      for (let columnIndex = pivotIndex; columnIndex <= size; columnIndex += 1) {
+        augmented[rowIndex][columnIndex] -= factor * augmented[pivotIndex][columnIndex]
+      }
+    }
+  }
+  const solution = augmented.map((row) => row[size])
+  return solution.every((value) => Number.isFinite(value)) ? solution : null
+}
+
+function createPlacementFunctionDirectFeatureVector(
+  sample: PlacementFunctionCandidateTrainingSample,
+  featureNames: PlacementFunctionDirectFeatureName[],
+) {
+  const values: number[] = []
+  for (const featureName of featureNames) {
+    const value = getPlacementFunctionDirectFeatureValue(sample, featureName)
+    if (value === null || !Number.isFinite(value)) {
+      return null
+    }
+    values.push(value)
+  }
+  return values
+}
+
+function getPlacementFunctionDirectFeatureValue(
+  sample: { matrixFeatures: PlacementFunctionMatrixFeatures },
+  featureName: PlacementFunctionDirectFeatureName,
+) {
+  const features = sample.matrixFeatures
+  switch (featureName) {
+    case "tx":
+      return features.tx
+    case "ty":
+      return features.ty
+    case "tz":
+      return features.tz
+    case "txOverNegTz":
+      return features.txOverNegTz
+    case "tyOverNegTz":
+      return features.tyOverNegTz
+    case "invNegTz":
+      return features.invNegTz
+    case "txOverNegTz^2":
+      return features.txOverNegTz === null ? null : features.txOverNegTz ** 2
+    case "tyOverNegTz^2":
+      return features.tyOverNegTz === null ? null : features.tyOverNegTz ** 2
+    case "invNegTz^2":
+      return features.invNegTz === null ? null : features.invNegTz ** 2
+    case "txOverNegTz*tyOverNegTz":
+      return features.txOverNegTz === null || features.tyOverNegTz === null
+        ? null
+        : features.txOverNegTz * features.tyOverNegTz
+    case "txOverNegTz*invNegTz":
+      return features.txOverNegTz === null || features.invNegTz === null
+        ? null
+        : features.txOverNegTz * features.invNegTz
+    case "tyOverNegTz*invNegTz":
+      return features.tyOverNegTz === null || features.invNegTz === null
+        ? null
+        : features.tyOverNegTz * features.invNegTz
+  }
+}
+
+function roundPlacementFunctionDirectRegressionModel(
+  model: PlacementFunctionDirectRegressionModel,
+): PlacementFunctionDirectRegressionModel {
+  return {
+    intercept: roundForState(model.intercept) ?? 0,
+    coefficients: Object.fromEntries(
+      Object.entries(model.coefficients).map(([featureName, coefficient]) => [
+        featureName,
+        roundForState(coefficient) ?? 0,
+      ]),
+    ),
+  }
+}
+
+function calculatePlacementFunctionDirectTransformCandidateMetrics(
+  samples: PlacementFunctionCandidateTrainingSample[],
+  candidate: Omit<PlacementFunctionDirectTransformCandidate, "metrics">,
+): PlacementFunctionDirectTransformCandidateMetrics {
+  const scaleErrors: number[] = []
+  const translateXErrors: number[] = []
+  const translateYErrors: number[] = []
+  const translateEuclideanErrors: number[] = []
+  for (const sample of samples) {
+    const prediction = predictPlacementFunctionDirectCandidateForSample(candidate, sample)
+    if (prediction.estimatedScaleRatio !== null) {
+      scaleErrors.push(prediction.estimatedScaleRatio - sample.knownTransform.scaleRatio)
+    }
+    if (prediction.estimatedTranslateAfterScaleImageX !== null) {
+      translateXErrors.push(
+        prediction.estimatedTranslateAfterScaleImageX - sample.knownTransform.translateAfterScaleImageX,
+      )
+    }
+    if (prediction.estimatedTranslateAfterScaleImageY !== null) {
+      translateYErrors.push(
+        prediction.estimatedTranslateAfterScaleImageY - sample.knownTransform.translateAfterScaleImageY,
+      )
+    }
+    if (
+      prediction.estimatedTranslateAfterScaleImageX !== null &&
+      prediction.estimatedTranslateAfterScaleImageY !== null
+    ) {
+      translateEuclideanErrors.push(Math.hypot(
+        prediction.estimatedTranslateAfterScaleImageX - sample.knownTransform.translateAfterScaleImageX,
+        prediction.estimatedTranslateAfterScaleImageY - sample.knownTransform.translateAfterScaleImageY,
+      ))
+    }
+  }
+  const scaleStats = calculatePlacementFunctionErrorStats(scaleErrors)
+  const translateXStats = calculatePlacementFunctionErrorStats(translateXErrors)
+  const translateYStats = calculatePlacementFunctionErrorStats(translateYErrors)
+  const meanTranslateAfterScaleImageEuclidean = averageFiniteNumbers(translateEuclideanErrors) ?? 0
+  return {
+    maeScaleRatio: scaleStats.mae,
+    maxScaleRatio: scaleStats.maxAbsError,
+    rmseScaleRatio: scaleStats.rmse,
+    maeTranslateAfterScaleImageX: translateXStats.mae,
+    maxTranslateAfterScaleImageX: translateXStats.maxAbsError,
+    rmseTranslateAfterScaleImageX: translateXStats.rmse,
+    maeTranslateAfterScaleImageY: translateYStats.mae,
+    maxTranslateAfterScaleImageY: translateYStats.maxAbsError,
+    rmseTranslateAfterScaleImageY: translateYStats.rmse,
+    meanTranslateAfterScaleImageEuclidean: roundForState(meanTranslateAfterScaleImageEuclidean) ?? 0,
+    maxTranslateAfterScaleImageEuclidean: roundForState(maxNumbers(translateEuclideanErrors) ?? 0) ?? 0,
+    weightedScore: roundForState(scaleStats.mae + meanTranslateAfterScaleImageEuclidean) ?? 0,
+  }
+}
+
+function calculatePlacementFunctionErrorStats(errors: number[]) {
+  const finiteErrors = errors.filter((value) => Number.isFinite(value))
+  if (finiteErrors.length === 0) {
+    return {
+      mae: 0,
+      maxAbsError: 0,
+      rmse: 0,
+    }
+  }
+  const absErrors = finiteErrors.map((value) => Math.abs(value))
+  const meanSquaredError = averageFiniteNumbers(finiteErrors.map((value) => value ** 2)) ?? 0
+  return {
+    mae: roundForState(averageFiniteNumbers(absErrors) ?? 0) ?? 0,
+    maxAbsError: roundForState(maxNumbers(absErrors) ?? 0) ?? 0,
+    rmse: roundForState(Math.sqrt(meanSquaredError)) ?? 0,
+  }
+}
+
+function buildPlacementFunctionCandidateComparison(
+  baselineMetrics: PlacementFunctionCandidate["metrics"],
+  directTransformCandidates: PlacementFunctionDirectTransformCandidate[],
+): PlacementFunctionCandidateComparison {
+  const directCandidates = [...directTransformCandidates]
+    .sort((a, b) => a.metrics.weightedScore - b.metrics.weightedScore)
+    .map((candidate, index) => ({
+      id: candidate.id,
+      metrics: candidate.metrics,
+      rankByWeightedScore: index + 1,
+    }))
+  return {
+    baselineCenterDerived: {
+      id: "center_derived_linear_v1",
+      metrics: {
+        maeScaleRatio: baselineMetrics.maeScaleRatio,
+        maxScaleRatio: baselineMetrics.maxScaleRatio,
+        meanTranslateAfterScaleImageEuclidean: baselineMetrics.maeDerivedTranslateAfterScaleImage,
+        maxTranslateAfterScaleImageEuclidean: baselineMetrics.maxDerivedTranslateAfterScaleImage,
+        weightedScore: roundForState(
+          baselineMetrics.maeScaleRatio + baselineMetrics.maeDerivedTranslateAfterScaleImage,
+        ) ?? 0,
+      },
+    },
+    directCandidates,
+    bestDirectCandidateId: directCandidates[0]?.id ?? null,
   }
 }
 
@@ -10949,13 +11422,37 @@ function createPlacementFunctionConditionMeanFittingSamples(
         knownPlacement: first.knownPlacement,
         basePlacement: first.basePlacement,
         targetPlacement: first.targetPlacement,
-        knownTransform: first.knownTransform,
+        knownTransform: averagePlacementFunctionKnownTransform(
+          conditionSamples.map((sample) => sample.knownTransform),
+        ),
         matrixFeatures: averagePlacementFunctionMatrixFeatures(
           conditionSamples.map((sample) => sample.matrixFeatures),
         ),
       }
     })
     .sort((a, b) => a.conditionKey.localeCompare(b.conditionKey))
+}
+
+function averagePlacementFunctionKnownTransform(transforms: KnownTransform[]): KnownTransform {
+  const first = transforms[0]
+  return {
+    transformOrder: "scale_then_translate",
+    coordinateSpace: "image_normalized_coordinate",
+    scaleBasis: "width",
+    scaleRatio: averagePlacementFunctionNullableFeature(transforms.map((transform) => transform.scaleRatio)) ?? first.scaleRatio,
+    translateAfterScaleImageX:
+      averagePlacementFunctionNullableFeature(transforms.map((transform) => transform.translateAfterScaleImageX)) ??
+      first.translateAfterScaleImageX,
+    translateAfterScaleImageY:
+      averagePlacementFunctionNullableFeature(transforms.map((transform) => transform.translateAfterScaleImageY)) ??
+      first.translateAfterScaleImageY,
+    translateAfterScaleWorkX:
+      averagePlacementFunctionNullableFeature(transforms.map((transform) => transform.translateAfterScaleWorkX)) ??
+      first.translateAfterScaleWorkX,
+    translateAfterScaleWorkY:
+      averagePlacementFunctionNullableFeature(transforms.map((transform) => transform.translateAfterScaleWorkY)) ??
+      first.translateAfterScaleWorkY,
+  }
 }
 
 function averagePlacementFunctionMatrixFeatures(
@@ -11150,6 +11647,80 @@ function predictPlacementFunctionCandidateForSample(
       ? estimatedTranslateAfterScaleImageY - sample.knownTransform.translateAfterScaleImageY
       : null,
   }
+}
+
+function predictPlacementFunctionDirectCandidateForSample(
+  candidate: Omit<PlacementFunctionDirectTransformCandidate, "metrics"> | PlacementFunctionDirectTransformCandidate,
+  sample: PlacementFunctionCandidateTrainingSample | PlacementFunctionAnalysisSampleState,
+) {
+  const estimatedScaleRatio = predictPlacementFunctionDirectOutput(
+    candidate.models.scaleRatio,
+    candidate.features.scaleRatio,
+    sample,
+  )
+  const estimatedTranslateAfterScaleImageX = predictPlacementFunctionDirectOutput(
+    candidate.models.translateAfterScaleImageX,
+    candidate.features.translateAfterScaleImageX,
+    sample,
+  )
+  const estimatedTranslateAfterScaleImageY = predictPlacementFunctionDirectOutput(
+    candidate.models.translateAfterScaleImageY,
+    candidate.features.translateAfterScaleImageY,
+    sample,
+  )
+  const scaleRatioError = estimatedScaleRatio !== null
+    ? estimatedScaleRatio - sample.knownTransform.scaleRatio
+    : null
+  const translateAfterScaleImageXError = estimatedTranslateAfterScaleImageX !== null
+    ? estimatedTranslateAfterScaleImageX - sample.knownTransform.translateAfterScaleImageX
+    : null
+  const translateAfterScaleImageYError = estimatedTranslateAfterScaleImageY !== null
+    ? estimatedTranslateAfterScaleImageY - sample.knownTransform.translateAfterScaleImageY
+    : null
+  return {
+    estimatedScaleRatio,
+    estimatedTranslateAfterScaleImageX,
+    estimatedTranslateAfterScaleImageY,
+    scaleRatioError,
+    translateAfterScaleImageXError,
+    translateAfterScaleImageYError,
+    translateAfterScaleImageEuclideanError:
+      translateAfterScaleImageXError !== null && translateAfterScaleImageYError !== null
+        ? Math.hypot(translateAfterScaleImageXError, translateAfterScaleImageYError)
+        : null,
+  }
+}
+
+function getPlacementFunctionBestDirectCandidate(candidate: PlacementFunctionCandidate | null) {
+  const bestDirectCandidateId = candidate?.candidateComparison.bestDirectCandidateId ?? null
+  return bestDirectCandidateId
+    ? candidate?.directTransformCandidates.find((directCandidate) => directCandidate.id === bestDirectCandidateId) ?? null
+    : null
+}
+
+function predictPlacementFunctionDirectOutput(
+  model: PlacementFunctionDirectRegressionModel,
+  features: PlacementFunctionDirectJsonFeatureName[],
+  sample: PlacementFunctionCandidateTrainingSample | PlacementFunctionAnalysisSampleState,
+) {
+  let result = model.intercept
+  for (const featureName of features) {
+    if (featureName === "intercept") {
+      continue
+    }
+    const coefficient = model.coefficients[featureName]
+    const value = getPlacementFunctionDirectFeatureValue(sample, featureName)
+    if (
+      coefficient === undefined ||
+      value === null ||
+      !Number.isFinite(coefficient) ||
+      !Number.isFinite(value)
+    ) {
+      return null
+    }
+    result += coefficient * value
+  }
+  return Number.isFinite(result) ? result : null
 }
 
 function averageFiniteNumbers(values: number[]) {
@@ -18747,6 +19318,7 @@ function renderPlacementFunctionAnalysisDebugTab() {
         <div><dt>reason</dt><dd>${escapeHtml(analysis.candidate ? "-" : analysis.candidateUnavailableReason ?? "-")}</dd></div>
       </dl>
       ${renderPlacementFunctionCandidateMetricsHtml(analysis.candidate)}
+      ${renderPlacementFunctionCandidateComparisonHtml(analysis.candidate)}
     </section>
   `
   return container
@@ -18980,6 +19552,56 @@ function renderPlacementFunctionCandidateMetricsHtml(candidate: PlacementFunctio
         <div><dt>Derived Translate After Scale Image MAE</dt><dd>${formatNullableNumber(metrics.maeDerivedTranslateAfterScaleImage)}</dd></div>
         <div><dt>Derived Translate After Scale Image Max</dt><dd>${formatNullableNumber(metrics.maxDerivedTranslateAfterScaleImage)}</dd></div>
       </dl>
+    </div>
+  `
+}
+
+function renderPlacementFunctionCandidateComparisonHtml(candidate: PlacementFunctionCandidate | null) {
+  if (!candidate) {
+    return `<p class="placeholder-text">候補生成後に direct transform candidate の比較を表示します。</p>`
+  }
+  const comparison = candidate.candidateComparison
+  const baselineMetrics = comparison.baselineCenterDerived.metrics
+  return `
+    <div class="placement-candidate-comparison">
+      <h4>候補比較</h4>
+      <dl class="review-grid">
+        <div><dt>baseline</dt><dd>${comparison.baselineCenterDerived.id}</dd></div>
+        <div><dt>bestDirectCandidateId</dt><dd>${comparison.bestDirectCandidateId ?? "-"}</dd></div>
+        <div><dt>directCandidateCount</dt><dd>${formatNullableCount(comparison.directCandidates.length)}</dd></div>
+        <div><dt>baseline scale MAE / max</dt><dd>${formatNullableNumber(baselineMetrics.maeScaleRatio)} / ${formatNullableNumber(baselineMetrics.maxScaleRatio)}</dd></div>
+        <div><dt>baseline translate mean / max</dt><dd>${formatNullableNumber(baselineMetrics.meanTranslateAfterScaleImageEuclidean)} / ${formatNullableNumber(baselineMetrics.maxTranslateAfterScaleImageEuclidean)}</dd></div>
+      </dl>
+      ${comparison.directCandidates.length === 0 ? `<p class="placeholder-text">direct transform candidate を生成できませんでした。</p>` : `
+        <div class="table-scroll">
+          <table class="debug-table placement-candidate-comparison-table">
+            <thead>
+              <tr>
+                <th>rank</th>
+                <th>candidate</th>
+                <th>scale MAE / max / RMSE</th>
+                <th>translate X MAE / max / RMSE</th>
+                <th>translate Y MAE / max / RMSE</th>
+                <th>translate euclidean mean / max</th>
+                <th>weightedScore</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${comparison.directCandidates.map((item) => `
+                <tr>
+                  <td>${item.rankByWeightedScore}</td>
+                  <td>${escapeHtml(item.id)}</td>
+                  <td>${formatNullableNumber(item.metrics.maeScaleRatio)} / ${formatNullableNumber(item.metrics.maxScaleRatio)} / ${formatNullableNumber(item.metrics.rmseScaleRatio)}</td>
+                  <td>${formatNullableNumber(item.metrics.maeTranslateAfterScaleImageX)} / ${formatNullableNumber(item.metrics.maxTranslateAfterScaleImageX)} / ${formatNullableNumber(item.metrics.rmseTranslateAfterScaleImageX)}</td>
+                  <td>${formatNullableNumber(item.metrics.maeTranslateAfterScaleImageY)} / ${formatNullableNumber(item.metrics.maxTranslateAfterScaleImageY)} / ${formatNullableNumber(item.metrics.rmseTranslateAfterScaleImageY)}</td>
+                  <td>${formatNullableNumber(item.metrics.meanTranslateAfterScaleImageEuclidean)} / ${formatNullableNumber(item.metrics.maxTranslateAfterScaleImageEuclidean)}</td>
+                  <td>${formatNullableNumber(item.metrics.weightedScore)}</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        </div>
+      `}
     </div>
   `
 }
@@ -19321,6 +19943,14 @@ function buildPlacementFunctionAnalysisCsv(
     "targetCenterImageErrorY",
     "translateAfterScaleImageErrorX",
     "translateAfterScaleImageErrorY",
+    "bestDirectCandidateId",
+    "bestDirectEstimatedScaleRatio",
+    "bestDirectEstimatedTranslateAfterScaleImageX",
+    "bestDirectEstimatedTranslateAfterScaleImageY",
+    "bestDirectScaleRatioError",
+    "bestDirectTranslateAfterScaleImageXError",
+    "bestDirectTranslateAfterScaleImageYError",
+    "bestDirectTranslateAfterScaleImageEuclideanError",
     "baseCenterWorkX",
     "baseCenterWorkY",
     "baseWidthWork",
@@ -19371,8 +20001,12 @@ function buildPlacementFunctionAnalysisCsv(
       summary,
     ]),
   )
+  const bestDirectCandidate = getPlacementFunctionBestDirectCandidate(candidate)
   const rows = samples.map((sample) => {
     const prediction = predictPlacementFunctionCandidateForSample(candidate, sample)
+    const bestDirectPrediction = bestDirectCandidate
+      ? predictPlacementFunctionDirectCandidateForSample(bestDirectCandidate, sample)
+      : null
     const conditionStats = conditionStatsByKey.get(sample.conditionKey)
     const positionCorrelation = positionCorrelationByScale.get(
       formatPlacementScaleKey(sample.knownTransform.scaleRatio),
@@ -19433,6 +20067,14 @@ function buildPlacementFunctionAnalysisCsv(
       prediction?.targetCenterImageErrorY ?? "",
       prediction?.translateAfterScaleImageErrorX ?? "",
       prediction?.translateAfterScaleImageErrorY ?? "",
+      bestDirectCandidate?.id ?? "",
+      bestDirectPrediction?.estimatedScaleRatio ?? "",
+      bestDirectPrediction?.estimatedTranslateAfterScaleImageX ?? "",
+      bestDirectPrediction?.estimatedTranslateAfterScaleImageY ?? "",
+      bestDirectPrediction?.scaleRatioError ?? "",
+      bestDirectPrediction?.translateAfterScaleImageXError ?? "",
+      bestDirectPrediction?.translateAfterScaleImageYError ?? "",
+      bestDirectPrediction?.translateAfterScaleImageEuclideanError ?? "",
       sample.basePlacement.centerWorkX,
       sample.basePlacement.centerWorkY,
       sample.basePlacement.widthWork,

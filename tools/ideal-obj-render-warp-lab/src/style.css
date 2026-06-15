@@ -758,6 +758,10 @@ h3 {
   min-width: 860px;
 }
 
+.placement-candidate-comparison-table {
+  min-width: 1080px;
+}
+
 .pose-sync-button {
   justify-self: start;
 }
