@@ -168,7 +168,9 @@ Placement Function Analysis（配置関数解析）では、transform error（�
 
 roundtrip validation の初期 candidate は `candidateComparison.bestDirectCandidateId` があればそれを使い、なければ `center_derived_linear_v1` に fallback します。右ペインでは selected sample のみを対象に実行し、全サンプル一括 validation は扱いません。結果 summary には estimated transform、matrix feature error、returnedPose error、可能な場合の 2D landmark diff を表示します。
 
-配置関数解析プレビューでは、known target 478 と predicted roundtrip 478 を重ねて比較します。`base478` / `base bounds` は変換前478点の補助 debug であり、roundtrip validation の主対象ではないため、toggle は残しますがデフォルト非表示にします。
+selected sample に対する roundtrip candidate comparison（再レンダー候補比較）では、`center_derived_linear_v1` と direct candidates を同じ sample の `matrixFeatures` からそれぞれ `estimatedTransform` に変換し、同じ render / MediaPipe detect 経路へ順番に通します。目的は `knownTransform` の数値一致だけを見ることではなく、再レンダー後に得られる `predictedMatrixFeatures` が元 sample の `matrixFeatures` にどれだけ近いかを比較することです。主な比較指標は `tx` / `ty` / `tz`、`txOverNegTz` / `tyOverNegTz` / `invNegTz`、returnedPose の yaw / pitch / roll、可能な場合の 478点 landmark diff です。
+
+配置関数解析プレビューでは、known target 478 と predicted roundtrip 478 を重ねて比較します。roundtrip candidate comparison 後は、best candidate の predicted 478 だけを preview state に保持し、追加 toggle で表示できます。各 candidate の predicted 478 配列は JSON export には含めません。`base478` / `base bounds` は変換前478点の補助 debug であり、roundtrip validation / roundtrip candidate comparison の主対象ではないため、toggle は残しますがデフォルト非表示にします。
 
 使える sample 数が足りない、特徴量が単一値で回帰が特異になる、matrix features が不正な場合は candidate を作らず、右ペインに理由を表示します。
 
