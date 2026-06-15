@@ -164,6 +164,12 @@ candidate JSON には既存 top-level の `features` / `models` / `metrics` を 
 
 `anchorLandmark` は補助 debug として残しますが、`baseAnchorSource = inverse_known_transform` の場合は knownTransform と一致して当然です。そのため、anchor 由来の translate error は direct model の主評価には使いません。
 
+Placement Function Analysis（配置関数解析）では、transform error（既知変換との差分）だけでなく、selected sample に対する roundtrip validation（再レンダー検証）も行います。roundtrip validation では、candidate が推定した `scaleRatio` / `translateAfterScaleImageX` / `translateAfterScaleImageY` で理想 OBJ 顔を再レンダーし、MediaPipe に再入力します。目的は、再入力で得た `predictedMatrix` / `predictedMatrixFeatures` が、元 sample の `facialTransformationMatrix` / `matrixFeatures` とどれくらい一致するかを確認することです。
+
+roundtrip validation の初期 candidate は `candidateComparison.bestDirectCandidateId` があればそれを使い、なければ `center_derived_linear_v1` に fallback します。右ペインでは selected sample のみを対象に実行し、全サンプル一括 validation は扱いません。結果 summary には estimated transform、matrix feature error、returnedPose error、可能な場合の 2D landmark diff を表示します。
+
+配置関数解析プレビューでは、known target 478 と predicted roundtrip 478 を重ねて比較します。`base478` / `base bounds` は変換前478点の補助 debug であり、roundtrip validation の主対象ではないため、toggle は残しますがデフォルト非表示にします。
+
 使える sample 数が足りない、特徴量が単一値で回帰が特異になる、matrix features が不正な場合は candidate を作らず、右ペインに理由を表示します。
 
 candidate metrics は `Target Center Image`、`Scale Ratio`、`Derived Translate After Scale Image` に分けて表示します。candidate JSON の `schemaVersion` は `matrix_to_known_image_transform_function_candidate_v1`、`targetCoordinateSpace` は `image_normalized_coordinate` です。candidate JSON には optional field として `trainingDataSummary` を含め、学習に使った `scaleRatio` の範囲、値、scale 別 sample 数を記録します。
