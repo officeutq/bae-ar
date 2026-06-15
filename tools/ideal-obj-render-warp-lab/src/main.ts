@@ -3741,6 +3741,262 @@ const realtimeDriveModeLabels: Record<RealtimeDriveMode, string> = {
 
 const DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE_ID: LivePlacementFunctionCandidateId =
   "direct_piecewise_ty3_linear_normalized_v1"
+const DEFAULT_LIVE_PLACEMENT_FUNCTION_DIRECT_FALLBACK_CANDIDATE: PlacementFunctionDirectTransformCandidate = {
+  id: "direct_linear_normalized_v1",
+  modelType: "linear_v1",
+  targetCoordinateSpace: "image_normalized_coordinate",
+  transformOrder: "scale_then_translate",
+  fittingAggregation: "condition_mean",
+  features: {
+    scaleRatio: ["intercept", "txOverNegTz", "tyOverNegTz", "invNegTz"],
+    translateAfterScaleImageX: ["intercept", "txOverNegTz", "tyOverNegTz", "invNegTz"],
+    translateAfterScaleImageY: ["intercept", "txOverNegTz", "tyOverNegTz", "invNegTz"],
+  },
+  models: {
+    scaleRatio: {
+      intercept: -0.217236,
+      coefficients: {
+        txOverNegTz: 0.011313,
+        tyOverNegTz: 0.101563,
+        invNegTz: 87.348055,
+      },
+    },
+    translateAfterScaleImageX: {
+      intercept: 0.608787,
+      coefficients: {
+        txOverNegTz: 0.475756,
+        tyOverNegTz: -0.05069,
+        invNegTz: -43.369023,
+      },
+    },
+    translateAfterScaleImageY: {
+      intercept: 0.61998,
+      coefficients: {
+        txOverNegTz: -0.004392,
+        tyOverNegTz: -0.902063,
+        invNegTz: -42.013636,
+      },
+    },
+  },
+  metrics: {
+    maeScaleRatio: 0.014701,
+    maxScaleRatio: 0.09211,
+    rmseScaleRatio: 0.020548,
+    maeTranslateAfterScaleImageX: 0.007378,
+    maxTranslateAfterScaleImageX: 0.046075,
+    rmseTranslateAfterScaleImageX: 0.010342,
+    maeTranslateAfterScaleImageY: 0.007742,
+    maxTranslateAfterScaleImageY: 0.05197,
+    rmseTranslateAfterScaleImageY: 0.010953,
+    meanTranslateAfterScaleImageEuclidean: 0.010758,
+    maxTranslateAfterScaleImageEuclidean: 0.069454,
+    weightedScore: 0.025459,
+  },
+}
+const DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE: PlacementFunctionPiecewiseTransformCandidate = {
+  id: DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE_ID,
+  family: "direct_piecewise_linear",
+  modelType: "piecewise_linear_v1",
+  targetCoordinateSpace: "image_normalized_coordinate",
+  transformOrder: "scale_then_translate",
+  fittingAggregation: "condition_mean",
+  gate: {
+    type: "single_feature_quantile",
+    features: ["tyOverNegTz"],
+    thresholds: {
+      tyOverNegTz: [-0.000898, 0.091875],
+    },
+    segmentCount: 3,
+    minSegmentSampleCount: 12,
+    fallbackCandidateId: "direct_linear_normalized_v1",
+  },
+  features: {
+    scaleRatio: ["intercept", "txOverNegTz", "tyOverNegTz", "invNegTz"],
+    translateAfterScaleImageX: ["intercept", "txOverNegTz", "tyOverNegTz", "invNegTz"],
+    translateAfterScaleImageY: ["intercept", "txOverNegTz", "tyOverNegTz", "invNegTz"],
+  },
+  segments: [
+    {
+      segmentId: "tyOverNegTz_s1",
+      gateRange: [
+        {
+          featureName: "tyOverNegTz",
+          min: null,
+          max: -0.000898,
+          lowerInclusive: true,
+          upperInclusive: true,
+        },
+      ],
+      sampleCount: 92,
+      usableForFit: true,
+      skippedReason: null,
+      models: {
+        scaleRatio: {
+          intercept: -0.201182,
+          coefficients: {
+            txOverNegTz: 0.0055,
+            tyOverNegTz: 0.097443,
+            invNegTz: 86.323258,
+          },
+        },
+        translateAfterScaleImageX: {
+          intercept: 0.601019,
+          coefficients: {
+            txOverNegTz: 0.478697,
+            tyOverNegTz: -0.045332,
+            invNegTz: -42.862295,
+          },
+        },
+        translateAfterScaleImageY: {
+          intercept: 0.612546,
+          coefficients: {
+            txOverNegTz: -0.001455,
+            tyOverNegTz: -0.880709,
+            invNegTz: -41.476995,
+          },
+        },
+      },
+      metrics: {
+        maeScaleRatio: 0.015447,
+        maxScaleRatio: 0.074957,
+        rmseScaleRatio: 0.020934,
+        maeTranslateAfterScaleImageX: 0.007771,
+        maxTranslateAfterScaleImageX: 0.037221,
+        rmseTranslateAfterScaleImageX: 0.010581,
+        maeTranslateAfterScaleImageY: 0.008341,
+        maxTranslateAfterScaleImageY: 0.043637,
+        rmseTranslateAfterScaleImageY: 0.011596,
+        meanTranslateAfterScaleImageEuclidean: 0.011447,
+        maxTranslateAfterScaleImageEuclidean: 0.057355,
+        weightedScore: 0.026894,
+      },
+    },
+    {
+      segmentId: "tyOverNegTz_s2",
+      gateRange: [
+        {
+          featureName: "tyOverNegTz",
+          min: -0.000898,
+          max: 0.091875,
+          lowerInclusive: false,
+          upperInclusive: true,
+        },
+      ],
+      sampleCount: 91,
+      usableForFit: true,
+      skippedReason: null,
+      models: {
+        scaleRatio: {
+          intercept: -0.246333,
+          coefficients: {
+            txOverNegTz: 0.01025,
+            tyOverNegTz: 0.125799,
+            invNegTz: 89.07997,
+          },
+        },
+        translateAfterScaleImageX: {
+          intercept: 0.622717,
+          coefficients: {
+            txOverNegTz: 0.476301,
+            tyOverNegTz: -0.062766,
+            invNegTz: -44.201289,
+          },
+        },
+        translateAfterScaleImageY: {
+          intercept: 0.628112,
+          coefficients: {
+            txOverNegTz: -0.005457,
+            tyOverNegTz: -0.916538,
+            invNegTz: -42.504644,
+          },
+        },
+      },
+      metrics: {
+        maeScaleRatio: 0.013423,
+        maxScaleRatio: 0.074907,
+        rmseScaleRatio: 0.018389,
+        maeTranslateAfterScaleImageX: 0.006662,
+        maxTranslateAfterScaleImageX: 0.037876,
+        rmseTranslateAfterScaleImageX: 0.009135,
+        maeTranslateAfterScaleImageY: 0.006799,
+        maxTranslateAfterScaleImageY: 0.039641,
+        rmseTranslateAfterScaleImageY: 0.009369,
+        meanTranslateAfterScaleImageEuclidean: 0.009573,
+        maxTranslateAfterScaleImageEuclidean: 0.054827,
+        weightedScore: 0.022996,
+      },
+    },
+    {
+      segmentId: "tyOverNegTz_s3",
+      gateRange: [
+        {
+          featureName: "tyOverNegTz",
+          min: 0.091875,
+          max: null,
+          lowerInclusive: false,
+          upperInclusive: true,
+        },
+      ],
+      sampleCount: 91,
+      usableForFit: true,
+      skippedReason: null,
+      models: {
+        scaleRatio: {
+          intercept: -0.190025,
+          coefficients: {
+            txOverNegTz: 0.019042,
+            tyOverNegTz: -0.01798,
+            invNegTz: 86.65503,
+          },
+        },
+        translateAfterScaleImageX: {
+          intercept: 0.596097,
+          coefficients: {
+            txOverNegTz: 0.47183,
+            tyOverNegTz: 0.005057,
+            invNegTz: -43.04443,
+          },
+        },
+        translateAfterScaleImageY: {
+          intercept: 0.614869,
+          coefficients: {
+            txOverNegTz: -0.00674,
+            tyOverNegTz: -0.86003,
+            invNegTz: -42.036121,
+          },
+        },
+      },
+      metrics: {
+        maeScaleRatio: 0.015339,
+        maxScaleRatio: 0.088647,
+        rmseScaleRatio: 0.021848,
+        maeTranslateAfterScaleImageX: 0.007735,
+        maxTranslateAfterScaleImageX: 0.044461,
+        rmseTranslateAfterScaleImageX: 0.011068,
+        maeTranslateAfterScaleImageY: 0.008141,
+        maxTranslateAfterScaleImageY: 0.050509,
+        rmseTranslateAfterScaleImageY: 0.011628,
+        meanTranslateAfterScaleImageEuclidean: 0.011292,
+        maxTranslateAfterScaleImageEuclidean: 0.06729,
+        weightedScore: 0.026631,
+      },
+    },
+  ],
+  metrics: {
+    maeScaleRatio: 0.014739,
+    maxScaleRatio: 0.088647,
+    rmseScaleRatio: 0.020445,
+    maeTranslateAfterScaleImageX: 0.007391,
+    maxTranslateAfterScaleImageX: 0.044461,
+    rmseTranslateAfterScaleImageX: 0.010295,
+    maeTranslateAfterScaleImageY: 0.007762,
+    maxTranslateAfterScaleImageY: 0.050509,
+    rmseTranslateAfterScaleImageY: 0.010918,
+    meanTranslateAfterScaleImageEuclidean: 0.010773,
+    maxTranslateAfterScaleImageEuclidean: 0.06729,
+    weightedScore: 0.025512,
+  },
+}
 
 const DEFAULT_POSE_MAPPING_SETTINGS: LabState["poseMappingSettings"] = {
   hideIdealOverlayWhenRenderPoseNotApplied: true,
@@ -9005,20 +9261,11 @@ function evaluateLivePlacementFunctionCandidate(
   translateAfterScaleImageY: number | null
   evaluationDebug: PlacementFunctionCandidateEvaluationDebug | null
 } | null {
-  const candidateSet = state.placementAnalysis.candidate
-  const candidate = candidateSet?.piecewiseTransformCandidates.find(
-    (item) => item.id === DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE_ID,
-  ) ?? null
-  if (!candidateSet || !candidate) {
-    return null
-  }
-  const directFallbackCandidate = candidateSet.directTransformCandidates.find(
-    (item) => item.id === "direct_linear_normalized_v1",
-  ) ?? null
+  const sample = createLivePlacementFunctionCandidateTrainingSample(matrixFeatures)
   const prediction = predictPlacementFunctionPiecewiseCandidateForSample(
-    candidate,
-    { matrixFeatures } as PlacementFunctionCandidateTrainingSample,
-    directFallbackCandidate,
+    DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE,
+    sample,
+    DEFAULT_LIVE_PLACEMENT_FUNCTION_DIRECT_FALLBACK_CANDIDATE,
     null,
   )
   if (!prediction) {
@@ -9031,9 +9278,34 @@ function evaluateLivePlacementFunctionCandidate(
     translateAfterScaleImageY: prediction.estimatedTranslateAfterScaleImageY,
     evaluationDebug: evaluationDebug ?? {
       candidateId: DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE_ID,
-      family: candidate.family,
-      modelType: candidate.modelType,
+      family: DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE.family,
+      modelType: DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE.modelType,
     },
+  }
+}
+
+function createLivePlacementFunctionCandidateTrainingSample(
+  matrixFeatures: PlacementFunctionMatrixFeatures,
+): PlacementFunctionCandidateTrainingSample {
+  const knownPlacement: KnownPlacement = {
+    centerImageX: 0.5,
+    centerImageY: 0.5,
+    centerWorkX: 0.5,
+    centerWorkY: 0.5,
+    visualScaleInput: 1,
+    renderAspectRatio: 1,
+    canvasWidth: 1,
+    canvasHeight: 1,
+  }
+  const basePlacement = createPlacementFunctionBasePlacement(knownPlacement, null)
+  const targetPlacement = createPlacementFunctionTargetPlacement(knownPlacement, basePlacement)
+  return {
+    conditionKey: "live_runtime",
+    knownPlacement,
+    basePlacement,
+    targetPlacement,
+    knownTransform: createPlacementFunctionKnownTransform(basePlacement, targetPlacement),
+    matrixFeatures,
   }
 }
 

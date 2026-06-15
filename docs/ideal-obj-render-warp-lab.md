@@ -51,6 +51,13 @@ placement function を評価できない場合は、旧 alignment へ fallback �
 - `alignedLandmarkCount`
 - `invalidAlignedLandmarkCount`
 
+live runtime（ライブ実行時処理）は `state.placementAnalysis.candidate`（配置関数解析 state の候補）を参照しない。
+既定候補は `tools/ideal-obj-render-warp-lab/src/main.ts` の `DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE` と
+`DEFAULT_LIVE_PLACEMENT_FUNCTION_DIRECT_FALLBACK_CANDIDATE` に固定定義する。
+この係数は Placement Function Analysis（配置関数解析）で `sampleCount = 550`、`usableSampleCount = 548`、
+`fittingSampleCount = 274` から生成した `matrix_to_known_image_transform_function_candidate_v1` の
+`direct_piecewise_ty3_linear_normalized_v1` と `direct_linear_normalized_v1` を埋め込んだものとする。
+
 `placement mapping samples` は session memory に frame ごとの small summary として保存し、JSON / CSV で export できる。sample には `frameId`、`mediaTimeSec`、`P_camera`、`p`、`P_confirm`、`poseDiffMagnitude`、matrix column-major translation / scale、current / rendered / aligned bounds、placement function candidate id / status、scale / translate、`matrixFeatures`、aspect ratio、`qualityUsable`、`skippedReason` を含める。
 
 ## Central Pane Coordinate Tabs（中央ペイン座標系タブ）
