@@ -950,6 +950,12 @@ type PoseSignConvention =
 type RenderPoseConversion =
   | "none"
   | "applyObjPoseComparisonSign"
+  | "apply_runtime_render_pose_sign"
+type RuntimeRenderPoseSign = {
+  yaw: number
+  pitch: number
+  roll: number
+}
 
 type PoseMappingCurrentFaceStatus = "detected" | "missing" | "invalid"
 type LivePlacementFunctionCandidateId = "direct_piecewise_ty3_linear_normalized_v1"
@@ -1302,6 +1308,7 @@ type PoseMappingRuntimeState = {
   p: ObjPoseMappingPose | null
   pFromProfile: ObjPoseMappingPose | null
   pForWebglRender: ObjPoseMappingPose | null
+  runtimeRenderPoseSign: RuntimeRenderPoseSign
   poseSignConvention: PoseSignConvention
   renderPoseConversion: RenderPoseConversion
   poseDiffBeforeConversionSummary: PoseMappingPoseDiff
@@ -1430,6 +1437,7 @@ type DetectPerformanceExport = {
     p: ObjPoseMappingPose | null
     pFromProfile: ObjPoseMappingPose | null
     pForWebglRender: ObjPoseMappingPose | null
+    runtimeRenderPoseSign: RuntimeRenderPoseSign
     poseSignConvention: PoseSignConvention
     renderPoseConversion: RenderPoseConversion
     P_confirm: ReferencePose
@@ -1619,6 +1627,7 @@ type WebglObjBenchmarkExport = {
     p: ObjPoseMappingPose | null
     pFromProfile: ObjPoseMappingPose | null
     pForWebglRender: ObjPoseMappingPose | null
+    runtimeRenderPoseSign: RuntimeRenderPoseSign
     poseSignConvention: PoseSignConvention
     renderPoseConversion: RenderPoseConversion
     canvas2dConfirm: {
@@ -2107,6 +2116,7 @@ type PlacementMappingSample = {
   p: { yaw: number; pitch: number; roll: number } | null
   pFromProfile: { yaw: number; pitch: number; roll: number } | null
   pForWebglRender: { yaw: number; pitch: number; roll: number } | null
+  runtimeRenderPoseSign: RuntimeRenderPoseSign
   poseSignConvention: PoseSignConvention
   renderPoseConversion: RenderPoseConversion
   P_confirm: { yaw: number | null; pitch: number | null; roll: number | null } | null
@@ -3600,8 +3610,13 @@ const OBJ_POSE_COMPARISON_SIGN = {
   pitch: -1,
   roll: -1,
 } as const
+const POSE_MAPPING_RUNTIME_RENDER_POSE_SIGN: RuntimeRenderPoseSign = {
+  yaw: OBJ_POSE_COMPARISON_SIGN.yaw,
+  pitch: OBJ_POSE_COMPARISON_SIGN.pitch,
+  roll: OBJ_POSE_COMPARISON_SIGN.roll,
+}
 const DEFAULT_POSE_SIGN_CONVENTION: PoseSignConvention = "profile_output_is_mediapipe_returned_pose"
-const DEFAULT_RENDER_POSE_CONVERSION: RenderPoseConversion = "applyObjPoseComparisonSign"
+const DEFAULT_RENDER_POSE_CONVERSION: RenderPoseConversion = "apply_runtime_render_pose_sign"
 const OBJ_POSE_CALIBRATION_POSES: ObjPoseCalibrationPose[] = [
   { id: "front", label: "正面", yawDeg: 0, pitchDeg: 0, rollDeg: 0 },
   { id: "yaw_negative_15", label: "yaw負方向 15度", yawDeg: -15, pitchDeg: 0, rollDeg: 0 },
@@ -5995,8 +6010,9 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
     const profileEvaluateMs = performance.now() - evaluateStartMs
     const pFromProfile = evaluateResult.p
     const poseSignConvention = getRuntimePoseSignConvention()
-    const renderPoseConversion = getRenderPoseConversionForPoseSignConvention(poseSignConvention)
-    const pForWebglRender = convertProfilePoseToWebglRenderPose(pFromProfile, poseSignConvention)
+    const runtimeRenderPoseSign = getPoseMappingRuntimeRenderPoseSign()
+    const renderPoseConversion = getRuntimeRenderPoseConversion()
+    const pForWebglRender = convertProfilePoseToWebglRenderPose(pFromProfile)
     const poseDiffBeforeConversionSummary = calculatePoseMappingPoseToPoseDiff(P_camera, pFromProfile)
     const poseDiffAfterConversionSummary = calculatePoseMappingPoseToPoseDiff(P_camera, pForWebglRender)
 
@@ -6045,6 +6061,7 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
         p: pFromProfile,
         pFromProfile,
         pForWebglRender,
+        runtimeRenderPoseSign,
         poseSignConvention,
         renderPoseConversion,
         poseDiffBeforeConversionSummary,
@@ -6225,6 +6242,7 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
       p: pFromProfile,
       pFromProfile,
       pForWebglRender,
+      runtimeRenderPoseSign,
       poseSignConvention,
       renderPoseConversion,
       poseDiffBeforeConversionSummary,
@@ -6527,6 +6545,7 @@ async function prepareDetectPerformanceBenchmarkContext() {
     p: runtime.pForWebglRender,
     pFromProfile: runtime.pFromProfile,
     pForWebglRender: runtime.pForWebglRender,
+    runtimeRenderPoseSign: runtime.runtimeRenderPoseSign,
     poseSignConvention: runtime.poseSignConvention,
     renderPoseConversion: runtime.renderPoseConversion,
     rotationCenter: getObjPoseSyncRotationCenter(),
@@ -6948,6 +6967,7 @@ function buildDetectPerformanceExport(
       p: roundPoseMappingPose(context.p),
       pFromProfile: roundPoseMappingPose(context.pFromProfile),
       pForWebglRender: roundPoseMappingPose(context.pForWebglRender),
+      runtimeRenderPoseSign: context.runtimeRenderPoseSign,
       poseSignConvention: context.poseSignConvention,
       renderPoseConversion: context.renderPoseConversion,
       P_confirm: roundPoseForState(context.P_confirm),
@@ -7435,6 +7455,7 @@ function buildRenderDetectHandoffExport(
       p: roundPoseMappingPose(context.p),
       pFromProfile: roundPoseMappingPose(context.pFromProfile),
       pForWebglRender: roundPoseMappingPose(context.pForWebglRender),
+      runtimeRenderPoseSign: context.runtimeRenderPoseSign,
       poseSignConvention: context.poseSignConvention,
       renderPoseConversion: context.renderPoseConversion,
       P_confirm: roundPoseForState(context.P_confirm),
@@ -8110,6 +8131,7 @@ function buildWebglObjBenchmarkExport(
       p: roundPoseMappingPose(context.p),
       pFromProfile: roundPoseMappingPose(context.pFromProfile),
       pForWebglRender: roundPoseMappingPose(context.pForWebglRender),
+      runtimeRenderPoseSign: context.runtimeRenderPoseSign,
       poseSignConvention: context.poseSignConvention,
       renderPoseConversion: context.renderPoseConversion,
       canvas2dConfirm: {
@@ -16145,32 +16167,43 @@ function applyObjPoseComparisonSign(pose: { yaw: number; pitch: number; roll: nu
   }
 }
 
+function getPoseMappingRuntimeRenderPoseSign(): RuntimeRenderPoseSign {
+  return {
+    yaw: POSE_MAPPING_RUNTIME_RENDER_POSE_SIGN.yaw,
+    pitch: POSE_MAPPING_RUNTIME_RENDER_POSE_SIGN.pitch,
+    roll: POSE_MAPPING_RUNTIME_RENDER_POSE_SIGN.roll,
+  }
+}
+
+function applyPoseMappingRuntimeRenderPoseSign(
+  pFromProfile: ObjPoseMappingPose,
+): ObjPoseMappingPose {
+  const runtimeRenderPoseSign = getPoseMappingRuntimeRenderPoseSign()
+  return {
+    yaw: pFromProfile.yaw * runtimeRenderPoseSign.yaw,
+    pitch: pFromProfile.pitch * runtimeRenderPoseSign.pitch,
+    roll: pFromProfile.roll * runtimeRenderPoseSign.roll,
+  }
+}
+
 function getRuntimePoseSignConvention(): PoseSignConvention {
   return DEFAULT_POSE_SIGN_CONVENTION
 }
 
-function getRenderPoseConversionForPoseSignConvention(
-  convention: PoseSignConvention,
-): RenderPoseConversion {
-  return convention === "profile_output_is_mediapipe_returned_pose"
-    ? "applyObjPoseComparisonSign"
-    : "none"
+function getRuntimeRenderPoseConversion(): RenderPoseConversion {
+  return DEFAULT_RENDER_POSE_CONVERSION
 }
 
 function convertProfilePoseToWebglRenderPose(
   pFromProfile: ObjPoseMappingPose,
-  convention: PoseSignConvention,
 ): ObjPoseMappingPose {
-  if (convention === "profile_output_is_webgl_render_pose") {
-    return cloneObjPoseMappingPose(pFromProfile)
-  }
-  return applyObjPoseComparisonSignToProfileOutputPose(pFromProfile)
+  return applyPoseMappingRuntimeRenderPoseSignToProfileOutputPose(pFromProfile)
 }
 
-function applyObjPoseComparisonSignToProfileOutputPose(
+function applyPoseMappingRuntimeRenderPoseSignToProfileOutputPose(
   pFromProfile: ObjPoseMappingPose,
 ): ObjPoseMappingPose {
-  return applyObjPoseComparisonSign(pFromProfile)
+  return applyPoseMappingRuntimeRenderPoseSign(pFromProfile)
 }
 
 function addCurrentPoseSearchFrame() {
@@ -18688,6 +18721,7 @@ function renderPoseMappingLiveSummaryCard() {
       <div><dt>P_camera</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.P_camera))}</dd></div>
       <div><dt>pFromProfile（プロファイル出力姿勢）</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.pFromProfile))}</dd></div>
       <div><dt>pForWebglRender（WebGL描画用姿勢）</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.pForWebglRender))}</dd></div>
+      <div><dt>runtimeRenderPoseSign（実行時描画姿勢符号）</dt><dd>${escapeHtml(formatRuntimeRenderPoseSign(runtime.runtimeRenderPoseSign))}</dd></div>
       <div><dt>poseSignConvention（姿勢符号規約）</dt><dd>${escapeHtml(runtime.poseSignConvention)}</dd></div>
       <div><dt>renderPoseConversion（描画姿勢変換）</dt><dd>${escapeHtml(runtime.renderPoseConversion)}</dd></div>
       <div><dt>P_confirm</dt><dd>${escapeHtml(formatPose(runtime.P_confirm))}</dd></div>
@@ -18922,6 +18956,7 @@ function renderPoseMappingDebugTab() {
         <div><dt>Profile mismatch error</dt><dd>${escapeHtml(runtime.profileMismatchError ?? "-")}</dd></div>
         <div><dt>pFromProfile（プロファイル出力姿勢）</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.pFromProfile))}</dd></div>
         <div><dt>pForWebglRender（WebGL描画用姿勢）</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.pForWebglRender))}</dd></div>
+        <div><dt>runtimeRenderPoseSign（実行時描画姿勢符号）</dt><dd>${escapeHtml(formatRuntimeRenderPoseSign(runtime.runtimeRenderPoseSign))}</dd></div>
         <div><dt>poseSignConvention（姿勢符号規約）</dt><dd>${escapeHtml(runtime.poseSignConvention)}</dd></div>
         <div><dt>renderPoseConversion（描画姿勢変換）</dt><dd>${escapeHtml(runtime.renderPoseConversion)}</dd></div>
         <div><dt>poseDiffBeforeConversionSummary（変換前: pFromProfile - P_camera）</dt><dd>${escapeHtml(formatPoseMappingDiff(runtime.poseDiffBeforeConversionSummary))}</dd></div>
@@ -19132,6 +19167,7 @@ function renderDetectPerformanceSummaryHtml() {
     p: roundPoseMappingPose(state.poseMappingRuntime.pForWebglRender),
     pFromProfile: roundPoseMappingPose(state.poseMappingRuntime.pFromProfile),
     pForWebglRender: roundPoseMappingPose(state.poseMappingRuntime.pForWebglRender),
+    runtimeRenderPoseSign: state.poseMappingRuntime.runtimeRenderPoseSign,
     poseSignConvention: state.poseMappingRuntime.poseSignConvention,
     renderPoseConversion: state.poseMappingRuntime.renderPoseConversion,
     P_confirm: roundPoseForState(state.poseMappingRuntime.P_confirm),
@@ -19215,6 +19251,7 @@ function renderRenderDetectHandoffSummaryHtml() {
     p: roundPoseMappingPose(state.poseMappingRuntime.pForWebglRender),
     pFromProfile: roundPoseMappingPose(state.poseMappingRuntime.pFromProfile),
     pForWebglRender: roundPoseMappingPose(state.poseMappingRuntime.pForWebglRender),
+    runtimeRenderPoseSign: state.poseMappingRuntime.runtimeRenderPoseSign,
     poseSignConvention: state.poseMappingRuntime.poseSignConvention,
     renderPoseConversion: state.poseMappingRuntime.renderPoseConversion,
     P_confirm: roundPoseForState(state.poseMappingRuntime.P_confirm),
@@ -19312,6 +19349,7 @@ function renderWebglObjBenchmarkSummaryHtml() {
     p: roundPoseMappingPose(state.poseMappingRuntime.pForWebglRender),
     pFromProfile: roundPoseMappingPose(state.poseMappingRuntime.pFromProfile),
     pForWebglRender: roundPoseMappingPose(state.poseMappingRuntime.pForWebglRender),
+    runtimeRenderPoseSign: state.poseMappingRuntime.runtimeRenderPoseSign,
     poseSignConvention: state.poseMappingRuntime.poseSignConvention,
     renderPoseConversion: state.poseMappingRuntime.renderPoseConversion,
     canvas2dConfirm: {
@@ -21694,6 +21732,7 @@ function createDefaultPoseMappingRuntimeState(): PoseMappingRuntimeState {
     p: null,
     pFromProfile: null,
     pForWebglRender: null,
+    runtimeRenderPoseSign: getPoseMappingRuntimeRenderPoseSign(),
     poseSignConvention: DEFAULT_POSE_SIGN_CONVENTION,
     renderPoseConversion: DEFAULT_RENDER_POSE_CONVERSION,
     poseDiffBeforeConversionSummary: {
@@ -25107,6 +25146,7 @@ function buildPlacementMappingSample(runtime: PoseMappingRuntimeState): Placemen
     p: roundPoseMappingPose(runtime.p),
     pFromProfile: roundPoseMappingPose(runtime.pFromProfile),
     pForWebglRender: roundPoseMappingPose(runtime.pForWebglRender),
+    runtimeRenderPoseSign: runtime.runtimeRenderPoseSign,
     poseSignConvention: runtime.poseSignConvention,
     renderPoseConversion: runtime.renderPoseConversion,
     P_confirm: runtime.P_confirm ? roundPoseForState(runtime.P_confirm) : null,
@@ -26365,6 +26405,7 @@ function formatPoseMappingPreviewNote() {
     `P_camera: ${formatPoseMappingPose(state.poseMappingRuntime.P_camera)}`,
     `pFromProfile: ${formatPoseMappingPose(state.poseMappingRuntime.pFromProfile)}`,
     `pForWebglRender: ${formatPoseMappingPose(state.poseMappingRuntime.pForWebglRender)}`,
+    `runtimeRenderPoseSign: ${formatRuntimeRenderPoseSign(state.poseMappingRuntime.runtimeRenderPoseSign)}`,
     `P_confirm: ${formatPose(state.poseMappingRuntime.P_confirm)}`,
     `pose diff: ${formatPoseMappingDiff(state.poseMappingRuntime.poseDiff)}`,
   ].join(" / ")
@@ -26408,6 +26449,10 @@ function formatPoseCenterSearchBestRotationCenter() {
 
 function formatObjPoseComparisonSign() {
   return `yaw=${formatNumber(OBJ_POSE_COMPARISON_SIGN.yaw)} / pitch=${formatNumber(OBJ_POSE_COMPARISON_SIGN.pitch)} / roll=${formatNumber(OBJ_POSE_COMPARISON_SIGN.roll)}`
+}
+
+function formatRuntimeRenderPoseSign(sign: RuntimeRenderPoseSign) {
+  return `yaw=${formatNumber(sign.yaw)} / pitch=${formatNumber(sign.pitch)} / roll=${formatNumber(sign.roll)}`
 }
 
 function formatPitchOffsetSearchRange() {
@@ -27000,6 +27045,7 @@ function getPoseMappingRuntimeRawSummary() {
     p: roundPoseMappingPose(runtime.p),
     pFromProfile: roundPoseMappingPose(runtime.pFromProfile),
     pForWebglRender: roundPoseMappingPose(runtime.pForWebglRender),
+    runtimeRenderPoseSign: runtime.runtimeRenderPoseSign,
     poseSignConvention: runtime.poseSignConvention,
     renderPoseConversion: runtime.renderPoseConversion,
     poseDiffBeforeConversionSummary: roundPoseMappingDiff(runtime.poseDiffBeforeConversionSummary),
@@ -27101,6 +27147,7 @@ function getPoseMappingRuntimeDebugExport() {
       p: roundPoseMappingPose(runtime.p),
       pFromProfile: roundPoseMappingPose(runtime.pFromProfile),
       pForWebglRender: roundPoseMappingPose(runtime.pForWebglRender),
+      runtimeRenderPoseSign: runtime.runtimeRenderPoseSign,
       poseSignConvention: runtime.poseSignConvention,
       renderPoseConversion: runtime.renderPoseConversion,
       poseDiffBeforeConversionSummary: roundPoseMappingDiff(runtime.poseDiffBeforeConversionSummary),
