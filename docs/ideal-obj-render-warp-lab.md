@@ -53,6 +53,36 @@ placement function を評価できない場合は、旧 alignment へ fallback �
 
 `placement mapping samples` は session memory に frame ごとの small summary として保存し、JSON / CSV で export できる。sample には `frameId`、`mediaTimeSec`、`P_camera`、`p`、`P_confirm`、`poseDiffMagnitude`、matrix column-major translation / scale、current / rendered / aligned bounds、placement function candidate id / status、scale / translate、`matrixFeatures`、aspect ratio、`qualityUsable`、`skippedReason` を含める。
 
+## Central Pane Coordinate Tabs（中央ペイン座標系タブ）
+
+中央ペインは処理名ではなく coordinate system（座標系）ごとに tab（タブ）を分ける。
+
+- `OBJ 3D（OBJ座標）`: OBJ coordinate（OBJ座標）で OBJ mesh / vertices / faces / raw OBJ bounds を確認する。`current478`、`renderedIdeal478`、`alignedRenderedIdeal478`、`meshSourceVertices`、`meshTargetVertices` は表示しない。
+- `レンダー画像（render canvas座標）`: render canvas image-normalized coordinate / render canvas pixel coordinate（レンダーcanvas画像正規化座標 / レンダーcanvasピクセル座標）で rendered ideal image と `renderedIdeal478` を確認する。
+- `ライブ座標（live image-normalized座標）`: live video image-normalized coordinate（ライブ映像の画像正規化座標）で `current478`、`alignedRenderedIdeal478`、`current478 -> alignedRenderedIdeal478` の対応線、`meshSourceVertices`、`meshTargetVertices` を確認する。
+- `表示重ね描き（displayedContentRect pixel座標）`: displayedContentRect pixel coordinate / canvas pixel coordinate（表示領域ピクセル座標 / canvasピクセル座標）で live video と overlay canvas の表示ズレを確認する。
+- `配置関数解析（placement analysis）`: placement analysis image-normalized coordinate / analysis render canvas coordinate（配置関数解析用の画像正規化座標 / 解析レンダーcanvas座標）で placement samples、candidate comparison、roundtrip validation を確認する。placement analysis の candidate は live runtime へ自動反映しない。
+
+`renderedIdeal478`（レンダー理想478点）は render canvas coordinate（レンダーcanvas座標）の点であり、live video（ライブ映像）上に直接表示しない。live video 上に表示してよい理想点は、placement function（配置関数）で live video image-normalized coordinate（ライブ映像の画像正規化座標）へ変換済みの `alignedRenderedIdeal478`（位置合わせ済み理想478点）だけとする。
+
+overlay（重ね表示）は displayedContentRect pixel coordinate（表示領域ピクセル座標）で扱う。live video の letterbox / pillarbox を含む表示領域は `displayedContentRect` で確認し、render canvas coordinate や OBJ coordinate を overlay canvas に混ぜない。
+
+checkbox（チェックボックス）は各 coordinate tab（座標系タブ）内に置く。データがない checkbox は disabled（無効）にし、理由を表示する。例:
+
+```text
+alignedRenderedIdeal478（位置合わせ済み理想478点）
+  status: not available（未生成）
+  reason: placementFunctionStatus = skipped_invalid_candidate
+
+meshTargetVertices（変形先メッシュ頂点）
+  status: not available（未生成）
+  reason: alignmentStatus = skipped_invalid_placement_function
+
+renderedIdeal478（レンダー理想478点）
+  status: not available（未生成）
+  reason: renderedIdealStatus = no_face
+```
+
 ## Removed Legacy Alignment
 
 以下の旧 live alignment mode は廃止済みであり、fallback / 比較用としても runtime には残さない。
@@ -510,9 +540,12 @@ Live overlay の描画は必ず `displayedContentRect` を使い、動画の let
 の場合は `alignedRenderedIdeal478`、対応線、mesh target を描画せず、fallback 正面顔も表示しません。
 この段階ではまだ WebGL mesh warp（変形加工）は行いません。
 
-overlay controls は `Live Overlay（ライブ重ね表示）` と `Mesh Debug（メッシュデバッグ）` に再分類します。
-実体がまだない no-op checkbox は残さず、未対応のものは disabled または非表示にします。現時点では
-triangle mesh は未生成なので disabled とし、grid / anchors は alignment anchors の表示に使います。
+overlay controls は中央ペイン上部の共通領域には置かず、対象 coordinate tab（座標系タブ）内に置きます。
+`current478` / `alignedRenderedIdeal478` / 対応線 / `meshSourceVertices` / `meshTargetVertices` は
+`ライブ座標（live image-normalized座標）` で確認し、実際の video element と overlay canvas 上の表示ズレは
+`表示重ね描き（displayedContentRect pixel座標）` で確認します。実体がまだない no-op checkbox は残さず、
+未対応のものは disabled または非表示にします。現時点では triangle mesh と grid / anchors は未生成なので
+disabled とします。
 
 初期 profile:
 
