@@ -415,6 +415,11 @@ h3 {
   min-height: 420px;
 }
 
+.placement-analysis-stage {
+  aspect-ratio: 16 / 9;
+  min-height: 360px;
+}
+
 .obj-preview-canvas {
   background:
     linear-gradient(90deg, rgba(32, 38, 45, 0.055) 1px, transparent 1px),
@@ -480,6 +485,27 @@ h3 {
   z-index: 2;
 }
 
+.placement-analysis-render-canvas,
+.placement-analysis-overlay-canvas {
+  grid-area: 1 / 1;
+  height: 100%;
+  max-width: 100%;
+  min-height: 360px;
+  width: 100%;
+}
+
+.placement-analysis-render-canvas {
+  background: #f5f7f9;
+  display: none;
+}
+
+.placement-analysis-overlay-canvas {
+  display: none;
+  pointer-events: none;
+  position: relative;
+  z-index: 2;
+}
+
 .obj-preview-stage[data-preview-status="ready"] .obj-preview-canvas {
   display: block;
 }
@@ -501,6 +527,15 @@ h3 {
 }
 
 .rendered-ideal-stage[data-render-status="rendered"] .preview-placeholder {
+  display: none;
+}
+
+.placement-analysis-stage[data-analysis-status="ready"] .placement-analysis-render-canvas,
+.placement-analysis-stage[data-analysis-status="ready"] .placement-analysis-overlay-canvas {
+  display: block;
+}
+
+.placement-analysis-stage[data-analysis-status="ready"] .preview-placeholder {
   display: none;
 }
 
@@ -586,6 +621,18 @@ h3 {
   min-width: 0;
 }
 
+.placement-analysis-preview-controls {
+  justify-content: flex-start;
+}
+
+.placement-analysis-preview-controls .overlay-toggle {
+  min-width: 0;
+}
+
+.placement-analysis-preview-controls .overlay-toggle span {
+  font-size: 12px;
+}
+
 .live-obj-controls {
   align-items: flex-start;
 }
@@ -651,7 +698,8 @@ h3 {
   font-weight: 700;
 }
 
-.select-field select {
+.select-field select,
+.select-field input {
   background: #ffffff;
   border: 1px solid #aab6c2;
   border-radius: 6px;
@@ -690,6 +738,20 @@ h3 {
   gap: 6px;
   justify-content: flex-end;
   min-width: 0;
+}
+
+.placement-analysis-buttons {
+  align-items: stretch;
+}
+
+.placement-analysis-buttons button {
+  min-width: 0;
+}
+
+.placement-candidate-metrics h4 {
+  color: #26313b;
+  font-size: 13px;
+  margin: 10px 0 8px;
 }
 
 .pose-sync-button {
