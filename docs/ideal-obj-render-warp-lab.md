@@ -946,6 +946,10 @@ Live overlay の current overlay（現在顔重ね表示）は、最新 frame �
 
 aligned ideal overlay（位置合わせ済み理想顔重ね表示）の `placementFunctionStatus` / `alignmentStatus` / `renderedIdealStatus` / token match / render pose gate の失敗は、current overlay（現在顔重ね表示）の表示可否には影響させません。これらの gate は aligned ideal overlay、correspondence line、mesh target の表示可否にだけ使います。
 
+`表示重ね描き（displayedContentRect pixel座標）` tab（タブ）は、active（有効）になったタイミングで最新 state（状態）から redraw（再描画）します。tab switch（タブ切替）で戻った直後は `requestAnimationFrame`（次描画フレーム待ち）後に overlay canvas（重ね描き canvas）の表示サイズを再計測し、`displayedContentRect`（表示領域矩形）を再計算してから描画します。hidden（非表示）状態の tab で計算した 0 size（ゼロサイズ）由来の `displayedContentRect` は使い回しません。
+
+tab switch（タブ切替）後の current overlay（現在顔重ね表示）は、次の video frame（動画フレーム）や `timeupdate`（時間更新イベント）を待たず、最新の `currentAnalysis.landmarks478`（現在解析478点）が 478 点そろっていれば復帰します。current overlay は aligned ideal overlay（位置合わせ済み理想顔重ね表示）の `skippedReason`（スキップ理由）に依存しません。
+
 OBJ、poseMappingProfile、render appearance、renderer が変わった場合は generation を進めます。rendered ideal の render 成功後に `RenderedIdealFrameToken` を作り、同じ token が current generation と一致する場合だけ MediaPipe detect 結果と alignment 結果を採用します。WebGL canvas は detect 前に clear し、render 成功 token がない canvas に対して detect を進めません。
 
 Live overlay の aligned rendered ideal は、以下をすべて満たす場合だけ表示します。

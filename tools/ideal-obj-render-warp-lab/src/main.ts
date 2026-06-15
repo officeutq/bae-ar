@@ -1107,6 +1107,34 @@ type CurrentOverlayDebugState = {
   checkboxEnabled: boolean
   current478Available: boolean
 }
+type DisplayOverlayPreviewStatus =
+  | CurrentOverlayStatus
+  | "waiting_for_redraw"
+  | "invalid_displayed_content_rect"
+  | "hidden_inactive_tab"
+type DisplayOverlayRedrawReason =
+  | "initial"
+  | "tab_activated"
+  | "frame_updated"
+  | "manual_render"
+  | "resize_observed"
+  | "toggle_changed"
+type DisplayedContentRectStatus =
+  | "valid"
+  | "invalid_zero_size"
+  | "unavailable"
+type DisplayOverlayRedrawDebugState = {
+  displayOverlayPreviewStatus: DisplayOverlayPreviewStatus
+  activeCenterTab: PreviewTab
+  displayOverlayRedrawReason: DisplayOverlayRedrawReason
+  displayedContentRectStatus: DisplayedContentRectStatus
+  currentOverlayStatus: CurrentOverlayStatus
+  currentOverlayFrameId: number
+  lastDisplayOverlayRedrawAtMs: number | null
+  overlayCanvasCssWidth: number | null
+  overlayCanvasCssHeight: number | null
+  displayedContentRect: Rect | null
+}
 type AssetLifecycle = AssetGeneration & {
   objStatus: AssetStatus
   profileStatus: AssetStatus
@@ -3161,6 +3189,10 @@ type RenderUpdateTiming = {
   liveOverlayDrawMs: number | null
   debugUpdateMs: number | null
 }
+type RenderAllOptions = {
+  skipObjRender?: boolean
+  displayOverlayRedrawReason?: DisplayOverlayRedrawReason
+}
 
 type Rect = {
   x: number
@@ -3745,6 +3777,19 @@ let currentOverlayLastFrameKey = ""
 let currentOverlaySawNoFaceFrame = false
 let currentOverlayLastVisibleFrameId: number | null = null
 let currentOverlayDebugState: CurrentOverlayDebugState = createEmptyCurrentOverlayDebugState()
+let displayOverlayRedrawAnimationFrameId: number | null = null
+let displayOverlayRedrawDebugState: DisplayOverlayRedrawDebugState = {
+  displayOverlayPreviewStatus: "waiting_for_redraw",
+  activeCenterTab: state.activePreviewTab,
+  displayOverlayRedrawReason: "initial",
+  displayedContentRectStatus: "unavailable",
+  currentOverlayStatus: "hidden_no_current_face",
+  currentOverlayFrameId: 0,
+  lastDisplayOverlayRedrawAtMs: null,
+  overlayCanvasCssWidth: null,
+  overlayCanvasCssHeight: null,
+  displayedContentRect: null,
+}
 
 const app = document.querySelector<HTMLDivElement>("#app")
 
@@ -4333,11 +4378,11 @@ function bindEvents() {
 
   liveVideoElement.addEventListener("timeupdate", () => {
     syncLiveCurrentTime()
-    drawLiveOverlay()
+    drawLiveOverlay("frame_updated")
     if (state.modeComparison.status !== "running") {
       maybeAnalyzeLiveFrame()
     }
-    renderAll()
+    renderAll({ displayOverlayRedrawReason: "frame_updated" })
   })
 
   liveVideoElement.addEventListener("seeked", () => {
@@ -4676,7 +4721,7 @@ function bindEvents() {
   window.addEventListener("resize", () => {
     renderObjPreviewCanvas()
     renderRenderedIdealCanvas()
-    drawLiveOverlay()
+    scheduleDisplayOverlayRedraw("resize_observed")
     drawRenderedIdealOverlay()
   })
 
@@ -4689,8 +4734,7 @@ function bindEvents() {
       const group = button.dataset.tabGroup
       const value = button.dataset.tabValue
       if (group === "preview" && isPreviewTab(value)) {
-        state.activePreviewTab = value
-        renderAll()
+        activatePreviewTab(value)
       }
       if (group === "debug" && isDebugTab(value)) {
         state.activeDebugTab = value
@@ -4873,7 +4917,10 @@ function bindOverlayToggle(
   getElement<HTMLInputElement>(`[data-action="${action}"]`).addEventListener("change", (event) => {
     state.overlay[key] = event.currentTarget.checked
     addLog(`${event.currentTarget.nextElementSibling?.textContent ?? action}を${event.currentTarget.checked ? "ON" : "OFF"}にしました。`)
-    renderAll()
+    renderAll({ displayOverlayRedrawReason: "toggle_changed" })
+    if (state.activePreviewTab === "displayOverlay") {
+      scheduleDisplayOverlayRedraw("toggle_changed")
+    }
   })
 }
 
@@ -4966,9 +5013,8 @@ async function loadObjFile(file: File) {
     sampledEdgeCount: 0,
   }
   state.objErrorMessage = null
-  state.activePreviewTab = "obj"
   addLog(`OBJファイル情報を読み込みました: ${file.name}`)
-  renderAll()
+  activatePreviewTab("obj")
 
   try {
     const objText = await file.text()
@@ -5430,9 +5476,8 @@ function loadLiveVideo(file: File) {
   liveVideoElement.srcObject = null
   liveVideoElement.src = objectUrl
   liveVideoElement.load()
-  state.activePreviewTab = "displayOverlay"
   addLog(`MP4ファイルを読み込みました: ${file.name}`)
-  renderAll()
+  activatePreviewTab("displayOverlay")
 }
 
 async function startCameraInput() {
@@ -5467,8 +5512,7 @@ async function startCameraInput() {
     sourceType: "camera",
     status: "starting",
   }
-  state.activePreviewTab = "displayOverlay"
-  renderAll()
+  activatePreviewTab("displayOverlay")
 
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
@@ -9945,10 +9989,9 @@ async function startPlacementFunctionAnalysis() {
     startedAt: new Date().toISOString(),
     runOptions,
   }
-  state.activePreviewTab = "placementAnalysis"
   state.activeDebugTab = "placementAnalysis"
   addLog("配置関数解析を開始しました。")
-  renderAll()
+  activatePreviewTab("placementAnalysis")
 
   try {
     const detector = await getRenderedIdealFaceLandmarker()
@@ -10435,10 +10478,9 @@ async function runPlacementFunctionConditionBatchRoundtripComparison() {
       candidateIds,
     },
   }
-  state.activePreviewTab = "placementAnalysis"
   state.activeDebugTab = "placementAnalysis"
   addLog(`条件単位まとめ再レンダー比較を開始しました: ${inputs.length} conditions / ${candidateIds.length} candidates`)
-  renderAll()
+  activatePreviewTab("placementAnalysis")
 
   const conditionResults: PlacementFunctionConditionBatchResult[] = []
   let processedConditionCount = 0
@@ -16859,9 +16901,8 @@ async function startModeComparison() {
     status: "running",
     startedAt: new Date().toISOString(),
   }
-  state.activePreviewTab = "displayOverlay"
   addLog("モード比較を開始しました。IMAGE mode（静止画モード）と VIDEO mode（動画モード）を同じ canvas frame で比較します。")
-  renderAll()
+  activatePreviewTab("displayOverlay")
 
   try {
     const { imageLandmarker, videoLandmarker } = await getModeComparisonLandmarkers()
@@ -17985,27 +18026,102 @@ async function runRealtimeTick(frameTick: RealtimeFrameTick) {
   }
 }
 
-function renderAll(options: { skipObjRender?: boolean } = {}): RenderUpdateTiming {
+function renderAll(options: RenderAllOptions = {}): RenderUpdateTiming {
   updateObjPoseSyncFromCurrentAnalysis()
   renderPreviewTabs()
   renderPreviewPanels(options)
   renderControls()
   renderDebugTabs()
 
+  const overlayStartMs = performance.now()
+  drawLiveCoordinatePreview()
+  drawLiveOverlay(options.displayOverlayRedrawReason ?? "manual_render")
+  drawRenderedIdealOverlay()
+  renderDisplayOverlaySummaryCard()
+  const liveOverlayDrawMs = performance.now() - overlayStartMs
+
   const debugStartMs = performance.now()
   renderDebugContent()
   const debugUpdateMs = performance.now() - debugStartMs
-
-  const overlayStartMs = performance.now()
-  drawLiveCoordinatePreview()
-  drawLiveOverlay()
-  drawRenderedIdealOverlay()
-  const liveOverlayDrawMs = performance.now() - overlayStartMs
 
   return {
     liveOverlayDrawMs,
     debugUpdateMs,
   }
+}
+
+function activatePreviewTab(nextTab: PreviewTab) {
+  const previousTab = state.activePreviewTab
+  state.activePreviewTab = nextTab
+  renderAll({
+    displayOverlayRedrawReason: nextTab === "displayOverlay" ? "tab_activated" : "manual_render",
+  })
+
+  if (nextTab === "displayOverlay" && previousTab !== "displayOverlay") {
+    scheduleDisplayOverlayRedraw("tab_activated")
+  }
+}
+
+function scheduleDisplayOverlayRedraw(reason: DisplayOverlayRedrawReason) {
+  markDisplayOverlayWaitingForRedraw(reason)
+  renderDisplayOverlaySummaryCard()
+  if (state.activePreviewTab !== "displayOverlay") {
+    return
+  }
+
+  if (displayOverlayRedrawAnimationFrameId !== null) {
+    window.cancelAnimationFrame(displayOverlayRedrawAnimationFrameId)
+  }
+
+  displayOverlayRedrawAnimationFrameId = window.requestAnimationFrame(() => {
+    displayOverlayRedrawAnimationFrameId = null
+    drawLiveOverlay(reason)
+    renderDisplayOverlaySummaryCard()
+    if (state.activeDebugTab === "raw") {
+      renderDebugContent()
+    }
+  })
+}
+
+function markDisplayOverlayWaitingForRedraw(reason: DisplayOverlayRedrawReason) {
+  const currentOverlayDebug = getCurrentOverlayDebugState()
+  displayOverlayRedrawDebugState = {
+    ...displayOverlayRedrawDebugState,
+    displayOverlayPreviewStatus:
+      state.activePreviewTab === "displayOverlay" ? "waiting_for_redraw" : "hidden_inactive_tab",
+    activeCenterTab: state.activePreviewTab,
+    displayOverlayRedrawReason: reason,
+    displayedContentRectStatus: getDisplayedContentRectStatus(
+      state.poseMappingRuntime.alignment.displayedContentRect,
+    ),
+    currentOverlayStatus: currentOverlayDebug.status,
+    currentOverlayFrameId: currentOverlayDebug.currentFrameId,
+  }
+}
+
+function getDisplayedContentRectStatus(rect: Rect | null | undefined): DisplayedContentRectStatus {
+  if (!rect) {
+    return "unavailable"
+  }
+  return Number.isFinite(rect.width) &&
+    Number.isFinite(rect.height) &&
+    rect.width > 0 &&
+    rect.height > 0
+    ? "valid"
+    : "invalid_zero_size"
+}
+
+function getDisplayOverlayPreviewStatus(
+  displayedContentRectStatus: DisplayedContentRectStatus,
+  currentOverlayStatus: CurrentOverlayStatus,
+): DisplayOverlayPreviewStatus {
+  if (displayedContentRectStatus === "invalid_zero_size") {
+    return "invalid_displayed_content_rect"
+  }
+  if (displayedContentRectStatus === "unavailable") {
+    return "waiting_for_redraw"
+  }
+  return currentOverlayStatus
 }
 
 function renderPreviewTabs() {
@@ -18016,7 +18132,7 @@ function renderPreviewTabs() {
   })
 }
 
-function renderPreviewPanels(options: { skipObjRender?: boolean } = {}) {
+function renderPreviewPanels(options: RenderAllOptions = {}) {
   app.querySelectorAll<HTMLElement>("[data-preview-panel]").forEach((panel) => {
     panel.hidden = panel.dataset.previewPanel !== state.activePreviewTab
   })
@@ -18041,7 +18157,6 @@ function renderPreviewPanels(options: { skipObjRender?: boolean } = {}) {
 
   const poseMappingStatus = getPoseMappingPreviewStatus()
   renderPoseMappingLiveSummaryCard()
-  renderDisplayOverlaySummaryCard()
   if (poseMappingStatus !== "ready" && !options.skipObjRender) {
     clearPoseMappingPreviewCanvas()
   }
@@ -18513,6 +18628,7 @@ function renderDisplayOverlaySummaryCard() {
   const runtime = state.poseMappingRuntime
   const lifecycle = createOverlayLifecycleFromRuntime(runtime)
   const currentOverlayDebug = getCurrentOverlayDebugState()
+  const displayOverlayRedrawDebug = displayOverlayRedrawDebugState
   card.innerHTML = `
     <p>displayedContentRect（動画の実表示領域）を使い、overlay canvas（重ね描きcanvas）上で表示ズレを確認します。</p>
     <dl class="review-grid">
@@ -18527,6 +18643,21 @@ function renderDisplayOverlaySummaryCard() {
       <div><dt>overlayLifecycle（重ね表示ライフサイクル）</dt><dd>visible ${String(lifecycle.alignedRenderedIdealVisible)} / gen ${String(lifecycle.generationMatch)} / token ${String(lifecycle.tokenMatch)} / renderPose ${String(lifecycle.renderPoseValid)}</dd></div>
       <div><dt>overlay skipped reason（重ね表示スキップ理由）</dt><dd>${escapeHtml(lifecycle.skippedReason)}</dd></div>
       <div><dt>renderedIdeal478（レンダー理想478点）</dt><dd>live video（ライブ映像）上には直接表示しません。</dd></div>
+    </dl>
+  `
+  card.insertAdjacentHTML("beforeend", renderDisplayOverlayRedrawSummary(displayOverlayRedrawDebug))
+}
+
+function renderDisplayOverlayRedrawSummary(debug: DisplayOverlayRedrawDebugState) {
+  return `
+    <dl class="review-grid">
+      <div><dt>displayOverlayPreviewStatus（表示重ね描きプレビュー状態）</dt><dd>${escapeHtml(debug.displayOverlayPreviewStatus)}</dd></div>
+      <div><dt>activeCenterTab（有効な中央タブ）</dt><dd>${escapeHtml(debug.activeCenterTab)}</dd></div>
+      <div><dt>displayOverlayRedrawReason（表示重ね描き再描画理由）</dt><dd>${escapeHtml(debug.displayOverlayRedrawReason)}</dd></div>
+      <div><dt>displayedContentRectStatus（表示領域矩形状態）</dt><dd>${escapeHtml(debug.displayedContentRectStatus)}</dd></div>
+      <div><dt>currentOverlayStatus（現在顔重ね表示状態）</dt><dd>${escapeHtml(debug.currentOverlayStatus)}</dd></div>
+      <div><dt>currentOverlayFrameId（現在顔重ね表示フレームID）</dt><dd>${formatNullableCount(debug.currentOverlayFrameId)}</dd></div>
+      <div><dt>lastDisplayOverlayRedrawAtMs（最後の表示重ね描き再描画ms）</dt><dd>${formatRealtimeNullableNumber(debug.lastDisplayOverlayRedrawAtMs)}</dd></div>
     </dl>
   `
 }
@@ -20168,7 +20299,7 @@ function drawNormalizedCoordinateFrame(context: CanvasRenderingContext2D, rect: 
   context.restore()
 }
 
-function drawLiveOverlay() {
+function drawLiveOverlay(reason: DisplayOverlayRedrawReason = "manual_render") {
   const context = liveOverlayCanvas.getContext("2d")
   if (!context) {
     return
@@ -20181,11 +20312,41 @@ function drawLiveOverlay() {
   context.setTransform(dpr, 0, 0, dpr, 0, 0)
   context.clearRect(0, 0, rect.width, rect.height)
 
-  if (
-    state.activePreviewTab !== "displayOverlay" ||
-    rect.width <= 0 ||
-    rect.height <= 0
-  ) {
+  const currentOverlayDebug = getCurrentOverlayDebugState()
+
+  if (state.activePreviewTab !== "displayOverlay") {
+    displayOverlayRedrawDebugState = {
+      ...displayOverlayRedrawDebugState,
+      displayOverlayPreviewStatus: "hidden_inactive_tab",
+      activeCenterTab: state.activePreviewTab,
+      displayOverlayRedrawReason: reason,
+      displayedContentRectStatus: "unavailable",
+      currentOverlayStatus: currentOverlayDebug.status,
+      currentOverlayFrameId: currentOverlayDebug.currentFrameId,
+      overlayCanvasCssWidth: rect.width,
+      overlayCanvasCssHeight: rect.height,
+      displayedContentRect: null,
+    }
+    return
+  }
+
+  if (rect.width <= 0 || rect.height <= 0) {
+    state.poseMappingRuntime.alignment = {
+      ...state.poseMappingRuntime.alignment,
+      displayedContentRect: null,
+    }
+    displayOverlayRedrawDebugState = {
+      ...displayOverlayRedrawDebugState,
+      displayOverlayPreviewStatus: "invalid_displayed_content_rect",
+      activeCenterTab: state.activePreviewTab,
+      displayOverlayRedrawReason: reason,
+      displayedContentRectStatus: "invalid_zero_size",
+      currentOverlayStatus: currentOverlayDebug.status,
+      currentOverlayFrameId: currentOverlayDebug.currentFrameId,
+      overlayCanvasCssWidth: rect.width,
+      overlayCanvasCssHeight: rect.height,
+      displayedContentRect: null,
+    }
     return
   }
 
@@ -20195,9 +20356,30 @@ function drawLiveOverlay() {
     rect.width,
     rect.height,
   )
+  const displayedContentRectStatus = getDisplayedContentRectStatus(displayedContentRect)
   state.poseMappingRuntime.alignment = {
     ...state.poseMappingRuntime.alignment,
-    displayedContentRect,
+    displayedContentRect: displayedContentRectStatus === "valid" ? displayedContentRect : null,
+  }
+  displayOverlayRedrawDebugState = {
+    ...displayOverlayRedrawDebugState,
+    displayOverlayPreviewStatus: getDisplayOverlayPreviewStatus(
+      displayedContentRectStatus,
+      currentOverlayDebug.status,
+    ),
+    activeCenterTab: state.activePreviewTab,
+    displayOverlayRedrawReason: reason,
+    displayedContentRectStatus,
+    currentOverlayStatus: currentOverlayDebug.status,
+    currentOverlayFrameId: currentOverlayDebug.currentFrameId,
+    lastDisplayOverlayRedrawAtMs: performance.now(),
+    overlayCanvasCssWidth: rect.width,
+    overlayCanvasCssHeight: rect.height,
+    displayedContentRect: displayedContentRectStatus === "valid" ? displayedContentRect : null,
+  }
+
+  if (displayedContentRectStatus !== "valid") {
+    return
   }
 
   if (state.overlay.showDisplayedContentRect) {
@@ -20210,7 +20392,6 @@ function drawLiveOverlay() {
   const meshTargetVertices = state.poseMappingRuntime.meshTargetVertices
   const canDrawAlignedIdeal = canDrawPoseMappingAlignedIdealOverlay()
   const overlayLifecycle = createOverlayLifecycleFromRuntime(state.poseMappingRuntime)
-  const currentOverlayDebug = getCurrentOverlayDebugState()
 
   if (
     canDrawAlignedIdeal &&
@@ -20962,13 +21143,32 @@ function getPlacementFunctionAnalysisRawSummary() {
   }
 }
 
+function getDisplayOverlayRedrawRawSummary() {
+  return {
+    displayOverlayPreviewStatus: displayOverlayRedrawDebugState.displayOverlayPreviewStatus,
+    activeCenterTab: displayOverlayRedrawDebugState.activeCenterTab,
+    displayOverlayRedrawReason: displayOverlayRedrawDebugState.displayOverlayRedrawReason,
+    displayedContentRectStatus: displayOverlayRedrawDebugState.displayedContentRectStatus,
+    currentOverlayStatus: displayOverlayRedrawDebugState.currentOverlayStatus,
+    currentOverlayFrameId: displayOverlayRedrawDebugState.currentOverlayFrameId,
+    lastDisplayOverlayRedrawAtMs: roundForState(
+      displayOverlayRedrawDebugState.lastDisplayOverlayRedrawAtMs,
+    ),
+    overlayCanvasCssWidth: roundForState(displayOverlayRedrawDebugState.overlayCanvasCssWidth),
+    overlayCanvasCssHeight: roundForState(displayOverlayRedrawDebugState.overlayCanvasCssHeight),
+    displayedContentRect: roundRectForState(displayOverlayRedrawDebugState.displayedContentRect),
+  }
+}
+
 function getRawState() {
   return {
     labName: LAB_NAME,
     activePreviewTab: state.activePreviewTab,
+    activeCenterTab: state.activePreviewTab,
     activeDebugTab: state.activeDebugTab,
     overlay: state.overlay,
     currentOverlayDebug: getCurrentOverlayDebugState(),
+    displayOverlayRedrawDebug: getDisplayOverlayRedrawRawSummary(),
     objFile: state.objFile,
     objSummary: state.objSummary,
     objPreviewState: getRoundedObjPreviewState(),
