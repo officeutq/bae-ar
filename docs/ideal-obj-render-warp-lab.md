@@ -58,12 +58,16 @@ placement function を評価できない場合は、旧 alignment へ fallback �
 中央ペインは処理名ではなく coordinate system（座標系）ごとに tab（タブ）を分ける。
 
 - `OBJ 3D（OBJ座標）`: OBJ coordinate（OBJ座標）で OBJ mesh / vertices / faces / raw OBJ bounds を確認する。`current478`、`renderedIdeal478`、`alignedRenderedIdeal478`、`meshSourceVertices`、`meshTargetVertices` は表示しない。
-- `レンダー画像（render canvas座標）`: render canvas image-normalized coordinate / render canvas pixel coordinate（レンダーcanvas画像正規化座標 / レンダーcanvasピクセル座標）で rendered ideal image と `renderedIdeal478` を確認する。
+- `レンダー画像（render canvas座標）`: poseMapping runtime render（姿勢対応実行時レンダー）の WebGL render result（WebGL描画結果）を、runtime render canvas image-normalized coordinate / runtime render canvas pixel coordinate（実行時レンダーcanvas画像正規化座標 / 実行時レンダーcanvasピクセル座標）で確認する。ここでは `P_camera`（カメラ顔姿勢） -> `poseMappingProfile`（姿勢対応プロファイル） -> `pFromProfile`（プロファイル出力姿勢） -> `pForWebglRender`（WebGL描画用姿勢） -> WebGL OBJ render（WebGL OBJ描画） -> MediaPipe detect（MediaPipe検出）で生成された runtime rendered ideal image（実行時レンダー理想画像）、`renderedIdeal478`（レンダー理想478点）、`P_confirm`（確認姿勢）を確認する。
 - `ライブ座標（live image-normalized座標）`: live video image-normalized coordinate（ライブ映像の画像正規化座標）で `current478`、`alignedRenderedIdeal478`、`current478 -> alignedRenderedIdeal478` の対応線、`meshSourceVertices`、`meshTargetVertices` を確認する。
 - `表示重ね描き（displayedContentRect pixel座標）`: displayedContentRect pixel coordinate / canvas pixel coordinate（表示領域ピクセル座標 / canvasピクセル座標）で live video と overlay canvas の表示ズレを確認する。
 - `配置関数解析（placement analysis）`: placement analysis image-normalized coordinate / analysis render canvas coordinate（配置関数解析用の画像正規化座標 / 解析レンダーcanvas座標）で placement samples、candidate comparison、roundtrip validation を確認する。placement analysis の candidate は live runtime へ自動反映しない。
 
 `renderedIdeal478`（レンダー理想478点）は render canvas coordinate（レンダーcanvas座標）の点であり、live video（ライブ映像）上に直接表示しない。live video 上に表示してよい理想点は、placement function（配置関数）で live video image-normalized coordinate（ライブ映像の画像正規化座標）へ変換済みの `alignedRenderedIdeal478`（位置合わせ済み理想478点）だけとする。
+
+`レンダー画像（render canvas座標）` tab は standalone preview（独立プレビュー）ではなく、poseMapping runtime render（姿勢対応実行時レンダー）の結果を主表示とする。旧 standalone preview 経路は debug / benchmark 用に残す場合でも、中央 tab の主表示ソースには使わない。runtime render result（実行時レンダー結果）が未生成の場合は空の standalone preview を出さず、`poseMappingStatus`（姿勢対応状態）や `renderedIdealStatus`（レンダー理想状態）を reason（理由）として表示する。
+
+`renderedIdeal478`（レンダー理想478点）は runtime render canvas coordinate（実行時レンダーcanvas座標）の点であり、live video（ライブ映像）上に配置済みの点ではない。live video 上に表示する理想点は `alignedRenderedIdeal478`（位置合わせ済み理想478点）だけである。
 
 overlay（重ね表示）は displayedContentRect pixel coordinate（表示領域ピクセル座標）で扱う。live video の letterbox / pillarbox を含む表示領域は `displayedContentRect` で確認し、render canvas coordinate や OBJ coordinate を overlay canvas に混ぜない。
 
@@ -926,9 +930,9 @@ Live alignment は position / scale の配置だけを行います。rendered id
 
 Pose Mapping runtime では、`pFromProfile（プロファイル出力姿勢）` と `pForWebglRender（WebGL描画用姿勢）` を分けて扱います。`pFromProfile` は `poseMappingProfile（姿勢対応プロファイル）` が返した生の姿勢で、`pForWebglRender` は WebGL render（WebGL描画）へ実際に渡す姿勢です。
 
-`runtimeRenderPoseSign（実行時描画姿勢符号）` は、poseMappingProfile の出力を runtime の WebGL render（WebGL描画）へ渡す前に必ず適用する固定符号です。現在は yaw / pitch / roll すべて `-1` で、`pForWebglRender.yaw = -pFromProfile.yaw`、`pForWebglRender.pitch = -pFromProfile.pitch`、`pForWebglRender.roll = -pFromProfile.roll` として決めます。
+現在の `pose_mapping_profile_candidate` は `inputFeatures: P_yaw / P_pitch / P_roll`、`target: p_yaw / p_pitch / p_roll` の `P -> p` モデルです。つまり `poseMappingProfile` の出力はすでに OBJ / WebGL render pose（OBJ / WebGL描画姿勢）であり、runtime では `poseSignConvention: profile_output_is_webgl_render_pose`、`renderPoseConversion: none` として `pForWebglRender = pFromProfile` を使います。
 
-`poseSignConvention（姿勢符号規約）` は、profile 出力を MediaPipe returned pose（MediaPipe返却姿勢）寄りとして扱う既存 debug 情報として残します。runtime 本線の render pose conversion（描画姿勢変換）は固定で `renderPoseConversion: apply_runtime_render_pose_sign` です。評価では見た目だけでなく、`P_confirm（確認姿勢） - P_camera（カメラ顔姿勢）` の yaw / pitch / roll / magnitude が小さくなることを主に確認します。
+`OBJ_POSE_COMPARISON_SIGN` / `POSE_MAPPING_RUNTIME_RENDER_POSE_SIGN` の `-1, -1, -1` は、WebGL render pose（WebGL描画姿勢）と MediaPipe returned pose（MediaPipe返却姿勢）の比較規約を表す補助情報です。profile 出力が MediaPipe returned pose 寄りの別モデルを使う場合だけ `renderPoseConversion: apply_runtime_render_pose_sign` として適用します。現在の profile へ重ねて適用すると二重符号変換になり、同一フレームで render canvas（レンダーcanvas）と display overlay（表示重ね描き）の顔向きが逆に見えるため適用しません。評価では見た目だけでなく、`P_confirm（確認姿勢） - P_camera（カメラ顔姿勢）` の yaw / pitch / roll / magnitude が小さくなることを主に確認します。
 
 Pose Mapping runtime の `renderedIdealLifecycle.renderPose` では、`renderToken.p` 由来の `requestedPoseP` を `pForWebglRender（WebGL描画用姿勢）` として扱い、WebGL renderer が実際に使った `actualRenderPoseP` と別々に記録します。`renderPoseMatchesToken` は token と WebGL 適用値の一致確認、`renderPoseAppliedToWebGL` は token 一致に加えて `P_confirm` が requested pose に対して front 固定に見えないことを確認する debug flag です。
 
