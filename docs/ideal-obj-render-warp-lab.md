@@ -182,6 +182,14 @@ Placement Function Analysis（配置関数解析）では、既存の `direct_qu
 
 condition batch roundtrip comparison では candidate set を選択できます。`core` は既存5候補のみ、`quadratic_expanded` は既存5候補と expanded candidates、`quadratic_only` は expanded candidates のみを評価します。候補数が増えると render / MediaPipe detect 回数も増えるため、初期値は `core` のままにします。batch 完了後は `quadraticInterpretationSummary` に best mean / p95 / max candidate と、piecewise linear を次に試すべきかの仮判断理由を保存します。
 
+Piecewise Linear Candidate Expansion（区分線形候補拡張）では、Quadratic Candidate Expansion の結果を受けて、単一の一次関数や単一の二次式では吸収しきれない scale edge / vertical position edge の崩れを、`matrixFeatures` の範囲分割で吸収できるかを検証します。piecewise candidate は `knownTransform.scaleRatio` や `knownPlacement.centerImageX/Y` を runtime gate として使いません。gate には MediaPipe matrix から得られる `invNegTz` / `tyOverNegTz` を使い、各 segment の fitting は raw repeat sample ではなく `condition_mean` fitting samples だけで行います。
+
+追加する piecewise candidates は、`direct_piecewise_inv3_linear_normalized_v1`、`direct_piecewise_inv5_linear_normalized_v1`、`direct_piecewise_ty3_linear_normalized_v1`、`direct_piecewise_inv3_ty3_linear_normalized_v1`、`center_derived_piecewise_inv3_linear_normalized_v1`、`center_derived_piecewise_inv3_ty3_linear_normalized_v1` です。各 segment の最小 sample count は 12 とし、不足する segment は direct 系なら `direct_linear_normalized_v1`、center-derived 系なら `center_derived_linear_v1` に fallback します。candidate JSON には `piecewiseTransformCandidates`、`candidateComparison.piecewiseCandidates`、`bestPiecewiseCandidateId`、各 segment の threshold / sampleCount / usableForFit / metrics を保存します。
+
+condition batch roundtrip comparison の candidate set には、`piecewise_linear_expanded`、`piecewise_linear_only`、`all_expanded` を追加します。`piecewise_linear_expanded` は core + piecewise candidates、`piecewise_linear_only` は piecewise candidates のみ、`all_expanded` は core + quadratic expanded + piecewise candidates を評価します。candidate set に応じて `totalRenderCount` は実際の candidate 数から計算します。
+
+batch 完了後は `piecewiseInterpretationSummary` と `piecewiseSegmentBreakdown` を表示・export します。判断では mean だけでなく p95 / max / worst conditions / segment breakdown を重視します。piecewise で p95 / max が明確に改善する場合は piecewise linear を本命候補に近づけ、改善が mean に留まる場合や segment imbalance / fallback 多用がある場合は quadratic / ridge quadratic / direct linear と比較して慎重に判断します。`predictedLandmarks478` 配列は引き続き全 condition 分保持せず、JSON export にも含めません。
+
 配置関数解析プレビューでは、known target 478 と predicted roundtrip 478 を重ねて比較します。roundtrip candidate comparison 後は、best candidate の predicted 478 だけを preview state に保持し、追加 toggle で表示できます。各 candidate の predicted 478 配列は JSON export には含めません。`base478` / `base bounds` は変換前478点の補助 debug であり、roundtrip validation / roundtrip candidate comparison の主対象ではないため、toggle は残しますがデフォルト非表示にします。
 
 使える sample 数が足りない、特徴量が単一値で回帰が特異になる、matrix features が不正な場合は candidate を作らず、右ペインに理由を表示します。

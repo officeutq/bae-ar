@@ -2453,6 +2453,7 @@ type PlacementFunctionCandidate = {
   }
   directTransformCandidates: PlacementFunctionDirectTransformCandidate[]
   expandedTransformCandidates: PlacementFunctionExpandedTransformCandidate[]
+  piecewiseTransformCandidates: PlacementFunctionPiecewiseTransformCandidate[]
   candidateComparison: PlacementFunctionCandidateComparison
 }
 
@@ -2471,6 +2472,14 @@ type PlacementFunctionExpandedCandidateId =
   | "direct_quadratic_ridge_standardized_full_v1"
   | "center_derived_quadratic_standardized_v1"
   | "center_derived_quadratic_ridge_standardized_v1"
+
+type PlacementFunctionPiecewiseCandidateId =
+  | "direct_piecewise_inv3_linear_normalized_v1"
+  | "direct_piecewise_inv5_linear_normalized_v1"
+  | "direct_piecewise_ty3_linear_normalized_v1"
+  | "direct_piecewise_inv3_ty3_linear_normalized_v1"
+  | "center_derived_piecewise_inv3_linear_normalized_v1"
+  | "center_derived_piecewise_inv3_ty3_linear_normalized_v1"
 
 type PlacementFunctionDirectOutputKey =
   | "scaleRatio"
@@ -2527,13 +2536,28 @@ type PlacementFunctionExpandedModelType =
   | "quadratic_standardized_v1"
   | "quadratic_ridge_standardized_v1"
 
+type PlacementFunctionPiecewiseCandidateFamily = "direct_piecewise_linear" | "center_derived_piecewise_linear"
+
+type PlacementFunctionPiecewiseModelType = "piecewise_linear_v1"
+
+type PlacementFunctionPiecewiseGateFeatureName = "invNegTz" | "tyOverNegTz"
+
+type PlacementFunctionPiecewiseGateType = "single_feature_quantile" | "two_feature_quantile_grid"
+
 type PlacementFunctionCandidateFamily =
   | "center_derived_linear"
   | "direct_linear"
   | "direct_quadratic"
   | "center_derived_quadratic"
+  | PlacementFunctionPiecewiseCandidateFamily
 
-type PlacementFunctionCandidateSet = "core" | "quadratic_expanded" | "quadratic_only"
+type PlacementFunctionCandidateSet =
+  | "core"
+  | "quadratic_expanded"
+  | "quadratic_only"
+  | "piecewise_linear_expanded"
+  | "piecewise_linear_only"
+  | "all_expanded"
 
 type PlacementFunctionExpandedCandidateDefinition = {
   id: PlacementFunctionExpandedCandidateId
@@ -2542,6 +2566,16 @@ type PlacementFunctionExpandedCandidateDefinition = {
   featureNamesByOutput: Record<string, PlacementFunctionRegressionFeatureName[]>
   usesStandardizedFeatures: boolean
   regularization?: "ridge_l2"
+}
+
+type PlacementFunctionPiecewiseCandidateDefinition = {
+  id: PlacementFunctionPiecewiseCandidateId
+  family: PlacementFunctionPiecewiseCandidateFamily
+  modelType: PlacementFunctionPiecewiseModelType
+  gateFeatures: PlacementFunctionPiecewiseGateFeatureName[]
+  quantilesByFeature: Record<PlacementFunctionPiecewiseGateFeatureName, number[]>
+  featureNamesByOutput: Record<string, PlacementFunctionRegressionFeatureName[]>
+  fallbackCandidateId: "direct_linear_normalized_v1" | "center_derived_linear_v1"
 }
 
 type PlacementFunctionDirectRegressionModel = {
@@ -2620,6 +2654,44 @@ type PlacementFunctionExpandedTransformCandidate = {
   metrics: PlacementFunctionDirectTransformCandidateMetrics
 }
 
+type PlacementFunctionPiecewiseGateRange = {
+  featureName: PlacementFunctionPiecewiseGateFeatureName
+  min: number | null
+  max: number | null
+  lowerInclusive: boolean
+  upperInclusive: boolean
+}
+
+type PlacementFunctionPiecewiseSegment = {
+  segmentId: string
+  gateRange: PlacementFunctionPiecewiseGateRange[]
+  sampleCount: number
+  usableForFit: boolean
+  skippedReason?: "insufficient_samples" | null
+  models?: Record<string, PlacementFunctionDirectRegressionModel>
+  metrics?: PlacementFunctionDirectTransformCandidateMetrics | null
+}
+
+type PlacementFunctionPiecewiseTransformCandidate = {
+  id: PlacementFunctionPiecewiseCandidateId
+  family: PlacementFunctionPiecewiseCandidateFamily
+  modelType: PlacementFunctionPiecewiseModelType
+  targetCoordinateSpace: "image_normalized_coordinate"
+  transformOrder: "scale_then_translate"
+  fittingAggregation: "condition_mean"
+  gate: {
+    type: PlacementFunctionPiecewiseGateType
+    features: PlacementFunctionPiecewiseGateFeatureName[]
+    thresholds: Record<string, number[]>
+    segmentCount: number
+    minSegmentSampleCount: number
+    fallbackCandidateId: "direct_linear_normalized_v1" | "center_derived_linear_v1"
+  }
+  features: Record<string, PlacementFunctionRegressionJsonFeatureName[]>
+  segments: PlacementFunctionPiecewiseSegment[]
+  metrics: PlacementFunctionDirectTransformCandidateMetrics
+}
+
 type PlacementFunctionCandidateComparison = {
   baselineCenterDerived: {
     id: "center_derived_linear_v1"
@@ -2645,6 +2717,15 @@ type PlacementFunctionCandidateComparison = {
     rankByWeightedScore: number
   }>
   bestExpandedCandidateId: PlacementFunctionExpandedCandidateId | null
+  piecewiseCandidates: Array<{
+    id: PlacementFunctionPiecewiseCandidateId
+    family: PlacementFunctionPiecewiseCandidateFamily
+    modelType: PlacementFunctionPiecewiseModelType
+    gate: PlacementFunctionPiecewiseTransformCandidate["gate"]
+    metrics: PlacementFunctionDirectTransformCandidateMetrics
+    rankByWeightedScore: number
+  }>
+  bestPiecewiseCandidateId: PlacementFunctionPiecewiseCandidateId | null
   bestOverallCandidateId: PlacementFunctionRoundtripCandidateId | null
 }
 
@@ -2652,6 +2733,7 @@ type PlacementFunctionRoundtripCandidateId =
   | "center_derived_linear_v1"
   | PlacementFunctionDirectCandidateId
   | PlacementFunctionExpandedCandidateId
+  | PlacementFunctionPiecewiseCandidateId
 
 const PLACEMENT_FUNCTION_CORE_ROUNDTRIP_CANDIDATE_IDS: PlacementFunctionRoundtripCandidateId[] = [
   "center_derived_linear_v1",
@@ -2671,6 +2753,8 @@ const PLACEMENT_FUNCTION_RIDGE_LAMBDA_CANDIDATES = [
   1e-1,
   1,
 ] as const
+
+const PLACEMENT_FUNCTION_PIECEWISE_MIN_SEGMENT_SAMPLE_COUNT = 12
 
 type PlacementFunctionRoundtripEstimatedTransform = {
   scaleRatio: number
@@ -2768,11 +2852,28 @@ type PlacementFunctionRoundtripComparisonScores = {
   roundtripScore: number | null
 }
 
+type PlacementFunctionCandidateEvaluationDebug = {
+  candidateId: PlacementFunctionRoundtripCandidateId
+  family: PlacementFunctionCandidateFamily
+  modelType: string
+  gateType?: PlacementFunctionPiecewiseGateType | null
+  segmentId?: string | null
+  fallbackUsed?: boolean
+  fallbackCandidateId?: PlacementFunctionRoundtripCandidateId | null
+  gateFeatureValues?: Partial<Record<PlacementFunctionPiecewiseGateFeatureName, number | null>>
+}
+
+type PlacementFunctionCandidateEvaluationResult = {
+  estimatedTransform: PlacementFunctionRoundtripEstimatedTransform
+  evaluationDebug: PlacementFunctionCandidateEvaluationDebug
+}
+
 type PlacementFunctionRoundtripComparisonResult = {
   candidateId: PlacementFunctionRoundtripCandidateId
   status: "completed" | "skipped" | "error"
   skippedReason?: string | null
   errorMessage?: string | null
+  evaluationDebug?: PlacementFunctionCandidateEvaluationDebug | null
   estimatedTransform: PlacementFunctionRoundtripEstimatedTransform | null
   predictedMediaPipeResult: PlacementFunctionRoundtripMediaPipeResult | null
   predictedMatrixFeatures: PlacementFunctionRoundtripMatrixFeatures | null
@@ -2837,6 +2938,13 @@ type PlacementFunctionConditionBatchCandidateSummary = {
   candidateId: PlacementFunctionRoundtripCandidateId
   candidateFamily: PlacementFunctionCandidateFamily
   candidateModelType: string
+  gateType: PlacementFunctionPiecewiseGateType | null
+  segmentSummary: {
+    totalCount: number
+    usableForFitCount: number
+    insufficientSampleCount: number
+  } | null
+  fallbackCount: number
   completedCount: number
   skippedCount: number
   errorCount: number
@@ -2869,6 +2977,11 @@ type PlacementFunctionConditionBatchWorstCondition = {
   candidateId: PlacementFunctionRoundtripCandidateId
   candidateFamily: PlacementFunctionCandidateFamily
   candidateModelType: string
+  gateType: PlacementFunctionPiecewiseGateType | null
+  segmentId: string | null
+  fallbackUsed: boolean
+  fallbackCandidateId: PlacementFunctionRoundtripCandidateId | null
+  gateFeatureValues: Partial<Record<PlacementFunctionPiecewiseGateFeatureName, number | null>> | null
   matrixNormalizedScore: number | null
   roundtripScore: number | null
   matrixRawTranslationScore: number | null
@@ -2887,6 +3000,30 @@ type PlacementFunctionQuadraticInterpretationSummary = {
   currentQuadraticBaselineCandidateId: "direct_quadratic_normalized_v1"
   shouldTryPiecewiseLinear: boolean
   reasons: string[]
+}
+
+type PlacementFunctionPiecewiseInterpretationSummary = {
+  bestPiecewiseMeanCandidateId: PlacementFunctionRoundtripCandidateId | null
+  bestPiecewiseP95CandidateId: PlacementFunctionRoundtripCandidateId | null
+  bestPiecewiseMaxCandidateId: PlacementFunctionRoundtripCandidateId | null
+  linearBaselineCandidateId: "direct_linear_normalized_v1"
+  quadraticBaselineCandidateId: PlacementFunctionRoundtripCandidateId | null
+  shouldPreferPiecewiseLinear: boolean
+  shouldKeepQuadraticCandidate: boolean
+  reasons: string[]
+}
+
+type PlacementFunctionPiecewiseSegmentBreakdown = {
+  candidateId: PlacementFunctionRoundtripCandidateId
+  segmentId: string
+  conditionCount: number
+  completedCount: number
+  noFaceCount: number
+  errorCount: number
+  matrixNormalizedScore: PlacementFunctionConditionBatchCompactScoreStats
+  roundtripScore: PlacementFunctionConditionBatchCompactScoreStats
+  winCountByRoundtripScore: number
+  winCountByMatrixNormalizedScore: number
 }
 
 type PlacementFunctionConditionBatchRoundtripComparisonState = {
@@ -2908,8 +3045,11 @@ type PlacementFunctionConditionBatchRoundtripComparisonState = {
   candidateSummaries: PlacementFunctionConditionBatchCandidateSummary[]
   worstConditions: PlacementFunctionConditionBatchWorstCondition[]
   worstConditionCandidateFilterId: PlacementFunctionRoundtripCandidateId | null
+  worstConditionSegmentFilterId: string | null
   conditionResults: PlacementFunctionConditionBatchResult[]
   quadraticInterpretationSummary: PlacementFunctionQuadraticInterpretationSummary | null
+  piecewiseInterpretationSummary: PlacementFunctionPiecewiseInterpretationSummary | null
+  piecewiseSegmentBreakdown: PlacementFunctionPiecewiseSegmentBreakdown[]
   previewConditionKey: string | null
   previewCandidateId: PlacementFunctionRoundtripCandidateId | null
   previewRepresentativeSampleIndex: number | null
@@ -4361,8 +4501,11 @@ function bindEvents() {
           candidateSummaries: [],
           worstConditions: [],
           worstConditionCandidateFilterId: null,
+          worstConditionSegmentFilterId: null,
           conditionResults: [],
           quadraticInterpretationSummary: null,
+          piecewiseInterpretationSummary: null,
+          piecewiseSegmentBreakdown: [],
         }
         renderDebugContent()
       }
@@ -4372,6 +4515,14 @@ function bindEvents() {
           worstConditionCandidateFilterId: target.value === "all"
             ? null
             : target.value as PlacementFunctionRoundtripCandidateId,
+          worstConditionSegmentFilterId: null,
+        }
+        renderDebugContent()
+      }
+      if (target.dataset.control === "placement-analysis-condition-batch-segment-filter") {
+        state.placementAnalysis.conditionBatchRoundtripComparison = {
+          ...state.placementAnalysis.conditionBatchRoundtripComparison,
+          worstConditionSegmentFilterId: target.value === "all" ? null : target.value,
         }
         renderDebugContent()
       }
@@ -10320,14 +10471,15 @@ async function runSelectedPlacementFunctionRoundtripComparison() {
           skippedReason: "candidate JSON に存在しません。",
         })
       } else {
-        const estimatedTransform = estimatePlacementFunctionRoundtripTransform(candidate, candidateId, sample)
-        if (!estimatedTransform) {
+        const evaluation = evaluatePlacementFunctionCandidate(candidate, candidateId, sample)
+        if (!evaluation) {
           comparisonResult = createPlacementFunctionRoundtripComparisonResult({
             candidateId,
             status: "error",
             errorMessage: "candidate から estimatedTransform を生成できませんでした。",
           })
         } else {
+          const { estimatedTransform, evaluationDebug } = evaluation
           try {
             const roundtripResult = runPlacementFunctionRoundtripRenderDetect(
               sample,
@@ -10339,6 +10491,7 @@ async function runSelectedPlacementFunctionRoundtripComparison() {
               candidateId,
               status: "completed",
               estimatedTransform,
+              evaluationDebug,
               ...roundtripResult,
             })
             if (roundtripResult.predictedLandmarks478ForPreview) {
@@ -10350,6 +10503,7 @@ async function runSelectedPlacementFunctionRoundtripComparison() {
               candidateId,
               status: "error",
               estimatedTransform,
+              evaluationDebug,
               errorMessage: message,
             })
           }
@@ -10536,14 +10690,15 @@ async function runPlacementFunctionConditionBatchRoundtripComparison() {
             skippedReason: "candidate JSON に存在しません。",
           })
         } else {
-          const estimatedTransform = estimatePlacementFunctionRoundtripTransform(candidate, candidateId, input)
-          if (!estimatedTransform) {
+          const evaluation = evaluatePlacementFunctionCandidate(candidate, candidateId, input)
+          if (!evaluation) {
             comparisonResult = createPlacementFunctionRoundtripComparisonResult({
               candidateId,
               status: "error",
               errorMessage: "candidate から estimatedTransform を生成できませんでした。",
             })
           } else {
+            const { estimatedTransform, evaluationDebug } = evaluation
             try {
               const roundtripResult = runPlacementFunctionRoundtripRenderDetect(
                 input,
@@ -10556,6 +10711,7 @@ async function runPlacementFunctionConditionBatchRoundtripComparison() {
                 candidateId,
                 status: "completed",
                 estimatedTransform,
+                evaluationDebug,
                 ...roundtripResult,
               })
               if (roundtripResult.predictedLandmarks478ForPreview) {
@@ -10567,6 +10723,7 @@ async function runPlacementFunctionConditionBatchRoundtripComparison() {
                 candidateId,
                 status: "error",
                 estimatedTransform,
+                evaluationDebug,
                 errorMessage: message,
               })
             }
@@ -10725,6 +10882,8 @@ function updatePlacementFunctionConditionBatchRoundtripState(input: {
       candidateSummaries: aggregate.candidateSummaries,
       worstConditions: aggregate.worstConditions,
       quadraticInterpretationSummary: aggregate.quadraticInterpretationSummary,
+      piecewiseInterpretationSummary: aggregate.piecewiseInterpretationSummary,
+      piecewiseSegmentBreakdown: aggregate.piecewiseSegmentBreakdown,
       conditionResults: input.conditionResults,
       errorMessage: input.errorMessage ?? null,
     },
@@ -10828,6 +10987,9 @@ function buildPlacementFunctionConditionBatchRoundtripAggregate(
       candidateId,
       candidateFamily: definition?.family ?? "direct_linear",
       candidateModelType: definition?.modelType ?? "-",
+      gateType: definition?.gateType ?? null,
+      segmentSummary: definition?.segmentSummary ?? null,
+      fallbackCount: results.filter((result) => result.evaluationDebug?.fallbackUsed === true).length,
       completedCount: results.filter((result) => result.status === "completed").length,
       skippedCount: results.filter((result) => result.status === "skipped").length,
       errorCount: results.filter((result) => result.status === "error").length,
@@ -10866,6 +11028,11 @@ function buildPlacementFunctionConditionBatchRoundtripAggregate(
           state.placementAnalysis.candidate,
           result.candidateId,
         )?.modelType ?? "-",
+        gateType: result.evaluationDebug?.gateType ?? null,
+        segmentId: result.evaluationDebug?.segmentId ?? null,
+        fallbackUsed: result.evaluationDebug?.fallbackUsed === true,
+        fallbackCandidateId: result.evaluationDebug?.fallbackCandidateId ?? null,
+        gateFeatureValues: result.evaluationDebug?.gateFeatureValues ?? null,
         matrixNormalizedScore: result.scores.matrixNormalizedScore,
         roundtripScore: result.scores.roundtripScore,
         matrixRawTranslationScore: result.scores.matrixRawTranslationScore,
@@ -10884,11 +11051,19 @@ function buildPlacementFunctionConditionBatchRoundtripAggregate(
     candidateSummaries,
     worstConditions,
   )
+  const piecewiseSegmentBreakdown = buildPlacementFunctionPiecewiseSegmentBreakdown(conditionResults)
+  const piecewiseInterpretationSummary = buildPlacementFunctionPiecewiseInterpretationSummary(
+    candidateSummaries,
+    worstConditions,
+    piecewiseSegmentBreakdown,
+  )
 
   return {
     candidateSummaries,
     worstConditions,
     quadraticInterpretationSummary,
+    piecewiseInterpretationSummary,
+    piecewiseSegmentBreakdown,
     bestByRoundtripScoreCandidateId: getBestPlacementFunctionConditionBatchSummaryCandidateId(
       candidateSummaries,
       "roundtripScore",
@@ -10965,6 +11140,183 @@ function buildPlacementFunctionQuadraticInterpretationSummary(
     shouldTryPiecewiseLinear,
     reasons,
   }
+}
+
+function buildPlacementFunctionPiecewiseInterpretationSummary(
+  candidateSummaries: PlacementFunctionConditionBatchCandidateSummary[],
+  worstConditions: PlacementFunctionConditionBatchWorstCondition[],
+  segmentBreakdown: PlacementFunctionPiecewiseSegmentBreakdown[],
+): PlacementFunctionPiecewiseInterpretationSummary {
+  const piecewiseSummaries = candidateSummaries.filter((summary) =>
+    summary.candidateFamily === "direct_piecewise_linear" ||
+    summary.candidateFamily === "center_derived_piecewise_linear"
+  )
+  const quadraticSummaries = candidateSummaries.filter((summary) =>
+    summary.candidateFamily === "direct_quadratic" || summary.candidateFamily === "center_derived_quadratic"
+  )
+  const bestPiecewiseMean = getBestPlacementFunctionConditionBatchSummaryByStat(piecewiseSummaries, "mean")
+  const bestPiecewiseP95 = getBestPlacementFunctionConditionBatchSummaryByStat(piecewiseSummaries, "p95")
+  const bestPiecewiseMax = getBestPlacementFunctionConditionBatchSummaryByStat(piecewiseSummaries, "max")
+  const linearBaseline = candidateSummaries.find((summary) => summary.candidateId === "direct_linear_normalized_v1")
+  const bestQuadraticP95 = getBestPlacementFunctionConditionBatchSummaryByStat(quadraticSummaries, "p95")
+  const bestQuadraticMax = getBestPlacementFunctionConditionBatchSummaryByStat(quadraticSummaries, "max")
+  const reasons: string[] = []
+  let shouldPreferPiecewiseLinear = false
+  let shouldKeepQuadraticCandidate = quadraticSummaries.length > 0
+
+  if (piecewiseSummaries.length === 0) {
+    reasons.push("piecewise candidate set is not included in this batch")
+  } else if (!linearBaseline) {
+    reasons.push("linear baseline is not included in this batch")
+  } else {
+    const piecewiseP95 = bestPiecewiseP95?.roundtripScore.p95 ?? null
+    const piecewiseMax = bestPiecewiseMax?.roundtripScore.max ?? null
+    const linearP95 = linearBaseline.roundtripScore.p95
+    const linearMax = linearBaseline.roundtripScore.max
+    const improvesP95 = isFiniteNumber(piecewiseP95) && isFiniteNumber(linearP95) && piecewiseP95 < linearP95
+    const improvesMax = isFiniteNumber(piecewiseMax) && isFiniteNumber(linearMax) && piecewiseMax < linearMax
+    const decisiveP95 = isFiniteNumber(piecewiseP95) && isFiniteNumber(linearP95) && piecewiseP95 < linearP95 * 0.95
+    const decisiveMax = isFiniteNumber(piecewiseMax) && isFiniteNumber(linearMax) && piecewiseMax < linearMax * 0.95
+    const meanImproved = isFiniteNumber(bestPiecewiseMean?.roundtripScore.mean ?? null) &&
+      isFiniteNumber(linearBaseline.roundtripScore.mean) &&
+      (bestPiecewiseMean?.roundtripScore.mean ?? Number.POSITIVE_INFINITY) < linearBaseline.roundtripScore.mean
+
+    if (decisiveP95 && decisiveMax) {
+      shouldPreferPiecewiseLinear = true
+      reasons.push("piecewise candidates improve both p95 and max roundtripScore versus direct_linear_normalized_v1")
+    } else if (improvesP95 || improvesMax) {
+      shouldPreferPiecewiseLinear = true
+      reasons.push("piecewise candidates improve one worst-case statistic versus direct_linear_normalized_v1")
+    } else if (meanImproved) {
+      reasons.push("piecewise candidates improve mean but do not clearly improve p95/max worst-case")
+    } else {
+      reasons.push("piecewise candidates do not clearly improve the linear baseline")
+    }
+
+    const quadraticP95 = bestQuadraticP95?.roundtripScore.p95 ?? null
+    const quadraticMax = bestQuadraticMax?.roundtripScore.max ?? null
+    if (
+      isFiniteNumber(quadraticP95) &&
+      isFiniteNumber(piecewiseP95) &&
+      isFiniteNumber(quadraticMax) &&
+      isFiniteNumber(piecewiseMax) &&
+      piecewiseP95 < quadraticP95 * 0.98 &&
+      piecewiseMax < quadraticMax * 0.98
+    ) {
+      shouldKeepQuadraticCandidate = false
+      reasons.push("piecewise candidates beat the best quadratic candidate on p95 and max")
+    } else if (quadraticSummaries.length > 0) {
+      reasons.push("quadratic candidates remain close enough to keep as comparison candidates")
+    }
+  }
+
+  const bestPiecewiseCandidateId = bestPiecewiseP95?.candidateId ?? bestPiecewiseMean?.candidateId ?? null
+  if (bestPiecewiseCandidateId) {
+    const bestSummary = candidateSummaries.find((summary) => summary.candidateId === bestPiecewiseCandidateId)
+    if (
+      bestSummary?.segmentSummary &&
+      bestSummary.segmentSummary.usableForFitCount < bestSummary.segmentSummary.totalCount
+    ) {
+      shouldPreferPiecewiseLinear = false
+      reasons.push("segment imbalance: some piecewise segments use fallback due to insufficient samples")
+    }
+    const fallbackRatio = bestSummary && bestSummary.completedCount > 0
+      ? bestSummary.fallbackCount / bestSummary.completedCount
+      : 0
+    if (fallbackRatio > 0.25) {
+      shouldPreferPiecewiseLinear = false
+      reasons.push("segment imbalance: fallback is used for many completed conditions")
+    }
+    const bestBreakdown = segmentBreakdown.filter((item) => item.candidateId === bestPiecewiseCandidateId)
+    const completedCounts = bestBreakdown.map((item) => item.completedCount).filter((value) => value > 0)
+    if (completedCounts.length > 1 && Math.max(...completedCounts) > Math.min(...completedCounts) * 4) {
+      shouldPreferPiecewiseLinear = false
+      reasons.push("segment imbalance: completed condition counts are uneven across segments")
+    }
+  }
+
+  const piecewiseWorstConditions = worstConditions.filter((condition) =>
+    condition.candidateFamily === "direct_piecewise_linear" ||
+    condition.candidateFamily === "center_derived_piecewise_linear"
+  )
+  const edgeReasons = buildPlacementFunctionWorstConditionEdgeBiasReasons(piecewiseWorstConditions)
+  if (edgeReasons.length === 0 && piecewiseWorstConditions.length > 0) {
+    reasons.push("piecewise worst conditions are less concentrated at scale/position edges")
+  } else if (edgeReasons.length > 0) {
+    reasons.push(...edgeReasons.map((reason) => `piecewise ${reason}`))
+  }
+
+  return {
+    bestPiecewiseMeanCandidateId: bestPiecewiseMean?.candidateId ?? null,
+    bestPiecewiseP95CandidateId: bestPiecewiseP95?.candidateId ?? null,
+    bestPiecewiseMaxCandidateId: bestPiecewiseMax?.candidateId ?? null,
+    linearBaselineCandidateId: "direct_linear_normalized_v1",
+    quadraticBaselineCandidateId: bestQuadraticP95?.candidateId ?? bestQuadraticMax?.candidateId ?? null,
+    shouldPreferPiecewiseLinear,
+    shouldKeepQuadraticCandidate,
+    reasons,
+  }
+}
+
+function buildPlacementFunctionPiecewiseSegmentBreakdown(
+  conditionResults: PlacementFunctionConditionBatchResult[],
+): PlacementFunctionPiecewiseSegmentBreakdown[] {
+  const groups = new Map<string, {
+    candidateId: PlacementFunctionRoundtripCandidateId
+    segmentId: string
+    results: PlacementFunctionRoundtripComparisonResult[]
+    winCountByRoundtripScore: number
+    winCountByMatrixNormalizedScore: number
+  }>()
+  for (const conditionResult of conditionResults) {
+    for (const result of conditionResult.results) {
+      const segmentId = result.evaluationDebug?.segmentId ?? null
+      if (!segmentId) {
+        continue
+      }
+      const family = result.evaluationDebug?.family
+      if (family !== "direct_piecewise_linear" && family !== "center_derived_piecewise_linear") {
+        continue
+      }
+      const key = `${result.candidateId}::${segmentId}`
+      const group = groups.get(key) ?? {
+        candidateId: result.candidateId,
+        segmentId,
+        results: [],
+        winCountByRoundtripScore: 0,
+        winCountByMatrixNormalizedScore: 0,
+      }
+      group.results.push(result)
+      if (conditionResult.bestByRoundtripScoreCandidateId === result.candidateId) {
+        group.winCountByRoundtripScore += 1
+      }
+      if (conditionResult.bestByMatrixNormalizedScoreCandidateId === result.candidateId) {
+        group.winCountByMatrixNormalizedScore += 1
+      }
+      groups.set(key, group)
+    }
+  }
+  return Array.from(groups.values())
+    .map((group) => ({
+      candidateId: group.candidateId,
+      segmentId: group.segmentId,
+      conditionCount: group.results.length,
+      completedCount: group.results.filter((result) => result.status === "completed").length,
+      noFaceCount: group.results.filter((result) => result.status === "completed" && result.predictedMediaPipeResult?.detected === false).length,
+      errorCount: group.results.filter((result) => result.status === "error").length,
+      matrixNormalizedScore: summarizePlacementFunctionConditionBatchCompactScores(
+        group.results.map((result) => result.scores.matrixNormalizedScore),
+      ),
+      roundtripScore: summarizePlacementFunctionConditionBatchCompactScores(
+        group.results.map((result) => result.scores.roundtripScore),
+      ),
+      winCountByRoundtripScore: group.winCountByRoundtripScore,
+      winCountByMatrixNormalizedScore: group.winCountByMatrixNormalizedScore,
+    }))
+    .sort((a, b) => {
+      const candidateCompare = String(a.candidateId).localeCompare(String(b.candidateId))
+      return candidateCompare !== 0 ? candidateCompare : a.segmentId.localeCompare(b.segmentId)
+    })
 }
 
 function getBestPlacementFunctionConditionBatchSummaryByStat(
@@ -12448,6 +12800,33 @@ function buildPlacementFunctionCandidate(samples: PlacementFunctionAnalysisSampl
   )
   const directTransformCandidates = buildPlacementFunctionDirectTransformCandidates(fittingSamples)
   const expandedTransformCandidates = buildPlacementFunctionExpandedTransformCandidates(fittingSamples)
+  const centerFallbackCandidateForPiecewise = {
+    models: {
+      targetCenterImageX: {
+        intercept: roundForState(targetCenterImageXModel.intercept) ?? 0,
+        coefficients: {
+          txOverNegTz: roundForState(targetCenterImageXModel.slope) ?? 0,
+        },
+      },
+      targetCenterImageY: {
+        intercept: roundForState(targetCenterImageYModel.intercept) ?? 0,
+        coefficients: {
+          tyOverNegTz: roundForState(targetCenterImageYModel.slope) ?? 0,
+        },
+      },
+      scaleRatio: {
+        intercept: roundForState(scaleRatioModel.intercept) ?? 0,
+        coefficients: {
+          invNegTz: roundForState(scaleRatioModel.slope) ?? 0,
+        },
+      },
+    },
+  } as PlacementFunctionCandidate
+  const piecewiseTransformCandidates = buildPlacementFunctionPiecewiseTransformCandidates(
+    fittingSamples,
+    directTransformCandidates,
+    centerFallbackCandidateForPiecewise,
+  )
   return {
     reason: null,
     candidate: {
@@ -12502,10 +12881,12 @@ function buildPlacementFunctionCandidate(samples: PlacementFunctionAnalysisSampl
       trainingDataSummary: buildPlacementFunctionCandidateTrainingDataSummary(fittingSamples),
       directTransformCandidates,
       expandedTransformCandidates,
+      piecewiseTransformCandidates,
       candidateComparison: buildPlacementFunctionCandidateComparison(
         metrics,
         directTransformCandidates,
         expandedTransformCandidates,
+        piecewiseTransformCandidates,
       ),
     },
   }
@@ -12791,6 +13172,396 @@ function buildPlacementFunctionExpandedTransformCandidate(
       candidateWithoutMetrics,
     ),
   }
+}
+
+function buildPlacementFunctionPiecewiseTransformCandidates(
+  fittingSamples: PlacementFunctionCandidateTrainingSample[],
+  directTransformCandidates: PlacementFunctionDirectTransformCandidate[],
+  centerFallbackCandidate: PlacementFunctionCandidate | null,
+): PlacementFunctionPiecewiseTransformCandidate[] {
+  return getPlacementFunctionPiecewiseCandidateDefinitions()
+    .map((definition) =>
+      buildPlacementFunctionPiecewiseTransformCandidate(
+        definition,
+        fittingSamples,
+        directTransformCandidates,
+        centerFallbackCandidate,
+      )
+    )
+    .filter((candidate): candidate is PlacementFunctionPiecewiseTransformCandidate => candidate !== null)
+}
+
+function getPlacementFunctionPiecewiseCandidateDefinitions(): PlacementFunctionPiecewiseCandidateDefinition[] {
+  const normalizedLinearFeatures: PlacementFunctionRegressionFeatureName[] = [
+    "txOverNegTz",
+    "tyOverNegTz",
+    "invNegTz",
+  ]
+  const directOutputs: PlacementFunctionDirectOutputKey[] = [
+    "scaleRatio",
+    "translateAfterScaleImageX",
+    "translateAfterScaleImageY",
+  ]
+  const centerDerivedOutputs: PlacementFunctionCenterDerivedOutputKey[] = [
+    "targetCenterImageX",
+    "targetCenterImageY",
+    "scaleRatio",
+  ]
+  const sameFeaturesForOutputs = <TOutput extends string>(
+    outputKeys: TOutput[],
+    features: PlacementFunctionRegressionFeatureName[],
+  ): Record<TOutput, PlacementFunctionRegressionFeatureName[]> =>
+    Object.fromEntries(outputKeys.map((outputKey) => [outputKey, features])) as Record<
+      TOutput,
+      PlacementFunctionRegressionFeatureName[]
+    >
+  const inv3Quantiles = [1 / 3, 2 / 3]
+  const inv5Quantiles = [0.2, 0.4, 0.6, 0.8]
+  const ty3Quantiles = [1 / 3, 2 / 3]
+  return [
+    {
+      id: "direct_piecewise_inv3_linear_normalized_v1",
+      family: "direct_piecewise_linear",
+      modelType: "piecewise_linear_v1",
+      gateFeatures: ["invNegTz"],
+      quantilesByFeature: {
+        invNegTz: inv3Quantiles,
+        tyOverNegTz: [],
+      },
+      featureNamesByOutput: sameFeaturesForOutputs(directOutputs, normalizedLinearFeatures),
+      fallbackCandidateId: "direct_linear_normalized_v1",
+    },
+    {
+      id: "direct_piecewise_inv5_linear_normalized_v1",
+      family: "direct_piecewise_linear",
+      modelType: "piecewise_linear_v1",
+      gateFeatures: ["invNegTz"],
+      quantilesByFeature: {
+        invNegTz: inv5Quantiles,
+        tyOverNegTz: [],
+      },
+      featureNamesByOutput: sameFeaturesForOutputs(directOutputs, normalizedLinearFeatures),
+      fallbackCandidateId: "direct_linear_normalized_v1",
+    },
+    {
+      id: "direct_piecewise_ty3_linear_normalized_v1",
+      family: "direct_piecewise_linear",
+      modelType: "piecewise_linear_v1",
+      gateFeatures: ["tyOverNegTz"],
+      quantilesByFeature: {
+        invNegTz: [],
+        tyOverNegTz: ty3Quantiles,
+      },
+      featureNamesByOutput: sameFeaturesForOutputs(directOutputs, normalizedLinearFeatures),
+      fallbackCandidateId: "direct_linear_normalized_v1",
+    },
+    {
+      id: "direct_piecewise_inv3_ty3_linear_normalized_v1",
+      family: "direct_piecewise_linear",
+      modelType: "piecewise_linear_v1",
+      gateFeatures: ["invNegTz", "tyOverNegTz"],
+      quantilesByFeature: {
+        invNegTz: inv3Quantiles,
+        tyOverNegTz: ty3Quantiles,
+      },
+      featureNamesByOutput: sameFeaturesForOutputs(directOutputs, normalizedLinearFeatures),
+      fallbackCandidateId: "direct_linear_normalized_v1",
+    },
+    {
+      id: "center_derived_piecewise_inv3_linear_normalized_v1",
+      family: "center_derived_piecewise_linear",
+      modelType: "piecewise_linear_v1",
+      gateFeatures: ["invNegTz"],
+      quantilesByFeature: {
+        invNegTz: inv3Quantiles,
+        tyOverNegTz: [],
+      },
+      featureNamesByOutput: sameFeaturesForOutputs(centerDerivedOutputs, normalizedLinearFeatures),
+      fallbackCandidateId: "center_derived_linear_v1",
+    },
+    {
+      id: "center_derived_piecewise_inv3_ty3_linear_normalized_v1",
+      family: "center_derived_piecewise_linear",
+      modelType: "piecewise_linear_v1",
+      gateFeatures: ["invNegTz", "tyOverNegTz"],
+      quantilesByFeature: {
+        invNegTz: inv3Quantiles,
+        tyOverNegTz: ty3Quantiles,
+      },
+      featureNamesByOutput: sameFeaturesForOutputs(centerDerivedOutputs, normalizedLinearFeatures),
+      fallbackCandidateId: "center_derived_linear_v1",
+    },
+  ]
+}
+
+function buildPlacementFunctionPiecewiseTransformCandidate(
+  definition: PlacementFunctionPiecewiseCandidateDefinition,
+  fittingSamples: PlacementFunctionCandidateTrainingSample[],
+  directTransformCandidates: PlacementFunctionDirectTransformCandidate[],
+  centerFallbackCandidate: PlacementFunctionCandidate | null,
+): PlacementFunctionPiecewiseTransformCandidate | null {
+  const thresholds = buildPlacementFunctionPiecewiseGateThresholds(fittingSamples, definition)
+  if (!thresholds) {
+    return null
+  }
+  const segmentSpecs = buildPlacementFunctionPiecewiseSegmentSpecs(definition.gateFeatures, thresholds)
+  const segments = segmentSpecs.map((spec) => {
+    const segmentSamples = fittingSamples.filter((sample) =>
+      getPlacementFunctionPiecewiseSegmentIdForSample(sample, definition.gateFeatures, thresholds) === spec.segmentId
+    )
+    if (segmentSamples.length < PLACEMENT_FUNCTION_PIECEWISE_MIN_SEGMENT_SAMPLE_COUNT) {
+      return {
+        segmentId: spec.segmentId,
+        gateRange: spec.gateRange,
+        sampleCount: segmentSamples.length,
+        usableForFit: false,
+        skippedReason: "insufficient_samples",
+        metrics: null,
+      } satisfies PlacementFunctionPiecewiseSegment
+    }
+
+    const models: Record<string, PlacementFunctionDirectRegressionModel> = {}
+    for (const [outputKey, featureNames] of Object.entries(definition.featureNamesByOutput)) {
+      const model = fitPlacementFunctionRegressionModel(
+        segmentSamples,
+        featureNames,
+        (sample) => getPlacementFunctionExpandedTargetValue(sample, outputKey),
+      )
+      if (!model) {
+        return {
+          segmentId: spec.segmentId,
+          gateRange: spec.gateRange,
+          sampleCount: segmentSamples.length,
+          usableForFit: false,
+          skippedReason: "insufficient_samples",
+          metrics: null,
+        } satisfies PlacementFunctionPiecewiseSegment
+      }
+      models[outputKey] = roundPlacementFunctionDirectRegressionModel(model)
+    }
+
+    const segmentCandidate = {
+      id: definition.id,
+      family: definition.family,
+      modelType: definition.modelType,
+      targetCoordinateSpace: "image_normalized_coordinate",
+      transformOrder: "scale_then_translate",
+      fittingAggregation: "condition_mean",
+      gate: {
+        type: definition.gateFeatures.length === 1
+          ? "single_feature_quantile"
+          : "two_feature_quantile_grid",
+        features: definition.gateFeatures,
+        thresholds,
+        segmentCount: segmentSpecs.length,
+        minSegmentSampleCount: PLACEMENT_FUNCTION_PIECEWISE_MIN_SEGMENT_SAMPLE_COUNT,
+        fallbackCandidateId: definition.fallbackCandidateId,
+      },
+      features: Object.fromEntries(
+        Object.entries(definition.featureNamesByOutput).map(([outputKey, featureNames]) => [
+          outputKey,
+          createPlacementFunctionRegressionJsonFeatures(featureNames),
+        ]),
+      ),
+      segments: [
+        {
+          segmentId: spec.segmentId,
+          gateRange: spec.gateRange,
+          sampleCount: segmentSamples.length,
+          usableForFit: true,
+          skippedReason: null,
+          models,
+          metrics: null,
+        },
+      ],
+    } satisfies Omit<PlacementFunctionPiecewiseTransformCandidate, "metrics">
+
+    return {
+      segmentId: spec.segmentId,
+      gateRange: spec.gateRange,
+      sampleCount: segmentSamples.length,
+      usableForFit: true,
+      skippedReason: null,
+      models,
+      metrics: calculatePlacementFunctionTransformCandidateMetrics(segmentSamples, (sample) => {
+        const prediction = predictPlacementFunctionPiecewiseSegmentModelsForSample(segmentCandidate, models, sample)
+        return prediction ?? {
+          estimatedScaleRatio: null,
+          estimatedTranslateAfterScaleImageX: null,
+          estimatedTranslateAfterScaleImageY: null,
+        }
+      }),
+    } satisfies PlacementFunctionPiecewiseSegment
+  })
+
+  const candidateWithoutMetrics = {
+    id: definition.id,
+    family: definition.family,
+    modelType: definition.modelType,
+    targetCoordinateSpace: "image_normalized_coordinate",
+    transformOrder: "scale_then_translate",
+    fittingAggregation: "condition_mean",
+    gate: {
+      type: definition.gateFeatures.length === 1
+        ? "single_feature_quantile"
+        : "two_feature_quantile_grid",
+      features: definition.gateFeatures,
+      thresholds,
+      segmentCount: segmentSpecs.length,
+      minSegmentSampleCount: PLACEMENT_FUNCTION_PIECEWISE_MIN_SEGMENT_SAMPLE_COUNT,
+      fallbackCandidateId: definition.fallbackCandidateId,
+    },
+    features: Object.fromEntries(
+      Object.entries(definition.featureNamesByOutput).map(([outputKey, featureNames]) => [
+        outputKey,
+        createPlacementFunctionRegressionJsonFeatures(featureNames),
+      ]),
+    ),
+    segments,
+  } satisfies Omit<PlacementFunctionPiecewiseTransformCandidate, "metrics">
+
+  const directFallbackCandidate = directTransformCandidates.find(
+    (candidate) => candidate.id === "direct_linear_normalized_v1",
+  ) ?? null
+  return {
+    ...candidateWithoutMetrics,
+    metrics: calculatePlacementFunctionPiecewiseTransformCandidateMetrics(
+      fittingSamples,
+      candidateWithoutMetrics,
+      directFallbackCandidate,
+      centerFallbackCandidate,
+    ),
+  }
+}
+
+function buildPlacementFunctionPiecewiseGateThresholds(
+  samples: PlacementFunctionCandidateTrainingSample[],
+  definition: PlacementFunctionPiecewiseCandidateDefinition,
+) {
+  const thresholds: Record<string, number[]> = {}
+  for (const featureName of definition.gateFeatures) {
+    const values = samples
+      .map((sample) => sample.matrixFeatures[featureName])
+      .filter((value): value is number => typeof value === "number" && Number.isFinite(value))
+      .sort((a, b) => a - b)
+    if (values.length === 0) {
+      return null
+    }
+    thresholds[featureName] = definition.quantilesByFeature[featureName]
+      .map((quantile) => roundForState(calculatePlacementFunctionQuantile(values, quantile)))
+      .filter((value): value is number => typeof value === "number" && Number.isFinite(value))
+  }
+  return thresholds
+}
+
+function calculatePlacementFunctionQuantile(sortedValues: number[], quantile: number) {
+  if (sortedValues.length === 0) {
+    return null
+  }
+  const clamped = clamp(quantile, 0, 1)
+  const index = Math.min(sortedValues.length - 1, Math.max(0, Math.ceil(clamped * sortedValues.length) - 1))
+  return sortedValues[index]
+}
+
+function buildPlacementFunctionPiecewiseSegmentSpecs(
+  gateFeatures: PlacementFunctionPiecewiseGateFeatureName[],
+  thresholds: Record<string, number[]>,
+) {
+  const binsByFeature = gateFeatures.map((featureName) =>
+    buildPlacementFunctionPiecewiseFeatureBins(featureName, thresholds[featureName] ?? [])
+  )
+  const specs: Array<{ segmentId: string; gateRange: PlacementFunctionPiecewiseGateRange[] }> = []
+  const walk = (featureIndex: number, selected: Array<{
+    featureName: PlacementFunctionPiecewiseGateFeatureName
+    binIndex: number
+    range: PlacementFunctionPiecewiseGateRange
+  }>) => {
+    if (featureIndex >= binsByFeature.length) {
+      specs.push({
+        segmentId: selected
+          .map((item) => `${item.featureName}_s${item.binIndex + 1}`)
+          .join("__"),
+        gateRange: selected.map((item) => item.range),
+      })
+      return
+    }
+    for (const bin of binsByFeature[featureIndex]) {
+      walk(featureIndex + 1, [...selected, bin])
+    }
+  }
+  walk(0, [])
+  return specs
+}
+
+function buildPlacementFunctionPiecewiseFeatureBins(
+  featureName: PlacementFunctionPiecewiseGateFeatureName,
+  thresholds: number[],
+) {
+  const sortedThresholds = [...thresholds].filter(Number.isFinite).sort((a, b) => a - b)
+  return Array.from({ length: sortedThresholds.length + 1 }, (_, binIndex) => {
+    const min = binIndex === 0 ? null : sortedThresholds[binIndex - 1]
+    const max = binIndex >= sortedThresholds.length ? null : sortedThresholds[binIndex]
+    return {
+      featureName,
+      binIndex,
+      range: {
+        featureName,
+        min,
+        max,
+        lowerInclusive: binIndex === 0,
+        upperInclusive: true,
+      },
+    }
+  })
+}
+
+function getPlacementFunctionPiecewiseSegmentIdForSample(
+  sample: PlacementFunctionCandidateTrainingSample,
+  gateFeatures: PlacementFunctionPiecewiseGateFeatureName[],
+  thresholds: Record<string, number[]>,
+) {
+  const parts: string[] = []
+  for (const featureName of gateFeatures) {
+    const value = sample.matrixFeatures[featureName]
+    if (value === null || !Number.isFinite(value)) {
+      return null
+    }
+    const featureThresholds = thresholds[featureName] ?? []
+    const binIndex = getPlacementFunctionPiecewiseBinIndex(value, featureThresholds)
+    parts.push(`${featureName}_s${binIndex + 1}`)
+  }
+  return parts.join("__")
+}
+
+function getPlacementFunctionPiecewiseBinIndex(value: number, thresholds: number[]) {
+  const sortedThresholds = [...thresholds].filter(Number.isFinite).sort((a, b) => a - b)
+  for (const [index, threshold] of sortedThresholds.entries()) {
+    if (value <= threshold) {
+      return index
+    }
+  }
+  return sortedThresholds.length
+}
+
+function calculatePlacementFunctionPiecewiseTransformCandidateMetrics(
+  samples: PlacementFunctionCandidateTrainingSample[],
+  candidate: Omit<PlacementFunctionPiecewiseTransformCandidate, "metrics">,
+  directFallbackCandidate: PlacementFunctionDirectTransformCandidate | null,
+  centerFallbackCandidate: PlacementFunctionCandidate | null,
+): PlacementFunctionDirectTransformCandidateMetrics {
+  return calculatePlacementFunctionTransformCandidateMetrics(samples, (sample) => {
+    const prediction = predictPlacementFunctionPiecewiseCandidateForSample(
+      candidate,
+      sample,
+      directFallbackCandidate,
+      centerFallbackCandidate,
+    )
+    return prediction ?? {
+      estimatedScaleRatio: null,
+      estimatedTranslateAfterScaleImageX: null,
+      estimatedTranslateAfterScaleImageY: null,
+    }
+  })
 }
 
 function buildPlacementFunctionDirectTransformCandidate(
@@ -13224,6 +13995,7 @@ function buildPlacementFunctionCandidateComparison(
   baselineMetrics: PlacementFunctionCandidate["metrics"],
   directTransformCandidates: PlacementFunctionDirectTransformCandidate[],
   expandedTransformCandidates: PlacementFunctionExpandedTransformCandidate[],
+  piecewiseTransformCandidates: PlacementFunctionPiecewiseTransformCandidate[],
 ): PlacementFunctionCandidateComparison {
   const directCandidates = [...directTransformCandidates]
     .sort((a, b) => a.metrics.weightedScore - b.metrics.weightedScore)
@@ -13238,6 +14010,16 @@ function buildPlacementFunctionCandidateComparison(
       id: candidate.id,
       family: candidate.family,
       modelType: candidate.modelType,
+      metrics: candidate.metrics,
+      rankByWeightedScore: index + 1,
+    }))
+  const piecewiseCandidates = [...piecewiseTransformCandidates]
+    .sort((a, b) => a.metrics.weightedScore - b.metrics.weightedScore)
+    .map((candidate, index) => ({
+      id: candidate.id,
+      family: candidate.family,
+      modelType: candidate.modelType,
+      gate: candidate.gate,
       metrics: candidate.metrics,
       rankByWeightedScore: index + 1,
     }))
@@ -13257,6 +14039,10 @@ function buildPlacementFunctionCandidateComparison(
       id: candidate.id,
       weightedScore: candidate.metrics.weightedScore,
     })),
+    ...piecewiseTransformCandidates.map((candidate) => ({
+      id: candidate.id,
+      weightedScore: candidate.metrics.weightedScore,
+    })),
   ].sort((a, b) => a.weightedScore - b.weightedScore)
   return {
     baselineCenterDerived: {
@@ -13273,6 +14059,8 @@ function buildPlacementFunctionCandidateComparison(
     bestDirectCandidateId: directCandidates[0]?.id ?? null,
     expandedCandidates,
     bestExpandedCandidateId: expandedCandidates[0]?.id ?? null,
+    piecewiseCandidates,
+    bestPiecewiseCandidateId: piecewiseCandidates[0]?.id ?? null,
     bestOverallCandidateId: overallCandidates[0]?.id ?? null,
   }
 }
@@ -13677,6 +14465,144 @@ function predictPlacementFunctionExpandedCandidateForSample(
   }
 }
 
+function predictPlacementFunctionPiecewiseCandidateForSample(
+  candidate: Omit<PlacementFunctionPiecewiseTransformCandidate, "metrics"> | PlacementFunctionPiecewiseTransformCandidate,
+  sample: PlacementFunctionCandidateTrainingSample,
+  directFallbackCandidate: PlacementFunctionDirectTransformCandidate | null,
+  centerFallbackCandidate: PlacementFunctionCandidate | null,
+) {
+  const gateFeatureValues = Object.fromEntries(
+    candidate.gate.features.map((featureName) => [
+      featureName,
+      sample.matrixFeatures[featureName] ?? null,
+    ]),
+  ) as Partial<Record<PlacementFunctionPiecewiseGateFeatureName, number | null>>
+  const segmentId = getPlacementFunctionPiecewiseSegmentIdForSample(
+    sample,
+    candidate.gate.features,
+    candidate.gate.thresholds,
+  )
+  const debugBase: PlacementFunctionCandidateEvaluationDebug = {
+    candidateId: candidate.id,
+    family: candidate.family,
+    modelType: candidate.modelType,
+    gateType: candidate.gate.type,
+    segmentId,
+    fallbackUsed: false,
+    fallbackCandidateId: null,
+    gateFeatureValues,
+  }
+  const segment = segmentId
+    ? candidate.segments.find((item) => item.segmentId === segmentId) ?? null
+    : null
+  if (segment?.usableForFit && segment.models) {
+    const prediction = predictPlacementFunctionPiecewiseSegmentModelsForSample(candidate, segment.models, sample)
+    if (prediction && isCompletePlacementFunctionTransformPrediction(prediction)) {
+      return {
+        ...prediction,
+        evaluationDebug: debugBase,
+      }
+    }
+  }
+
+  const fallbackPrediction = candidate.gate.fallbackCandidateId === "direct_linear_normalized_v1"
+    ? directFallbackCandidate
+      ? predictPlacementFunctionDirectCandidateForSample(directFallbackCandidate, sample)
+      : null
+    : predictPlacementFunctionCandidateForSample(centerFallbackCandidate, sample)
+  if (!fallbackPrediction || !isCompletePlacementFunctionTransformPrediction(fallbackPrediction)) {
+    return null
+  }
+  return {
+    ...fallbackPrediction,
+    evaluationDebug: {
+      ...debugBase,
+      fallbackUsed: true,
+      fallbackCandidateId: candidate.gate.fallbackCandidateId,
+    },
+  }
+}
+
+function predictPlacementFunctionPiecewiseSegmentModelsForSample(
+  candidate: Pick<PlacementFunctionPiecewiseTransformCandidate, "family" | "features">,
+  models: Record<string, PlacementFunctionDirectRegressionModel>,
+  sample: PlacementFunctionCandidateTrainingSample,
+) {
+  if (candidate.family === "direct_piecewise_linear") {
+    const estimatedScaleRatio = predictPlacementFunctionRegressionOutput(
+      models.scaleRatio,
+      candidate.features.scaleRatio,
+      sample,
+    )
+    const estimatedTranslateAfterScaleImageX = predictPlacementFunctionRegressionOutput(
+      models.translateAfterScaleImageX,
+      candidate.features.translateAfterScaleImageX,
+      sample,
+    )
+    const estimatedTranslateAfterScaleImageY = predictPlacementFunctionRegressionOutput(
+      models.translateAfterScaleImageY,
+      candidate.features.translateAfterScaleImageY,
+      sample,
+    )
+    return createPlacementFunctionTransformPredictionSummary(sample, {
+      estimatedScaleRatio,
+      estimatedTranslateAfterScaleImageX,
+      estimatedTranslateAfterScaleImageY,
+    })
+  }
+
+  const estimatedTargetCenterImageX = predictPlacementFunctionRegressionOutput(
+    models.targetCenterImageX,
+    candidate.features.targetCenterImageX,
+    sample,
+  )
+  const estimatedTargetCenterImageY = predictPlacementFunctionRegressionOutput(
+    models.targetCenterImageY,
+    candidate.features.targetCenterImageY,
+    sample,
+  )
+  const estimatedScaleRatio = predictPlacementFunctionRegressionOutput(
+    models.scaleRatio,
+    candidate.features.scaleRatio,
+    sample,
+  )
+  const estimatedTranslateAfterScaleImageX =
+    estimatedTargetCenterImageX !== null && estimatedScaleRatio !== null
+      ? estimatedTargetCenterImageX - sample.basePlacement.centerImageX * estimatedScaleRatio
+      : null
+  const estimatedTranslateAfterScaleImageY =
+    estimatedTargetCenterImageY !== null && estimatedScaleRatio !== null
+      ? estimatedTargetCenterImageY - sample.basePlacement.centerImageY * estimatedScaleRatio
+      : null
+  return {
+    ...createPlacementFunctionTransformPredictionSummary(sample, {
+      estimatedScaleRatio,
+      estimatedTranslateAfterScaleImageX,
+      estimatedTranslateAfterScaleImageY,
+    }),
+    estimatedTargetCenterImageX,
+    estimatedTargetCenterImageY,
+    targetCenterImageErrorX: estimatedTargetCenterImageX !== null
+      ? estimatedTargetCenterImageX - sample.targetPlacement.centerImageX
+      : null,
+    targetCenterImageErrorY: estimatedTargetCenterImageY !== null
+      ? estimatedTargetCenterImageY - sample.targetPlacement.centerImageY
+      : null,
+  }
+}
+
+function isCompletePlacementFunctionTransformPrediction(prediction: {
+  estimatedScaleRatio: number | null
+  estimatedTranslateAfterScaleImageX: number | null
+  estimatedTranslateAfterScaleImageY: number | null
+}) {
+  return (
+    isFiniteNumber(prediction.estimatedScaleRatio) &&
+    isFiniteNumber(prediction.estimatedTranslateAfterScaleImageX) &&
+    isFiniteNumber(prediction.estimatedTranslateAfterScaleImageY)
+  )
+}
+
 function createPlacementFunctionTransformPredictionSummary(
   sample: PlacementFunctionCandidateTrainingSample,
   prediction: {
@@ -13726,6 +14652,28 @@ function getPlacementFunctionConditionBatchCandidateIds(
   candidateSet: PlacementFunctionCandidateSet,
 ): PlacementFunctionRoundtripCandidateId[] {
   const definitions = getPlacementFunctionCandidateDefinitions(candidate)
+  if (candidateSet === "all_expanded") {
+    return definitions.map((definition) => definition.id)
+  }
+  if (candidateSet === "piecewise_linear_only") {
+    return definitions
+      .filter((definition) =>
+        definition.family === "direct_piecewise_linear" || definition.family === "center_derived_piecewise_linear"
+      )
+      .map((definition) => definition.id)
+  }
+  if (candidateSet === "piecewise_linear_expanded") {
+    const piecewiseIds = definitions
+      .filter((definition) =>
+        definition.family === "direct_piecewise_linear" || definition.family === "center_derived_piecewise_linear"
+      )
+      .map((definition) => definition.id)
+    const availableIds = new Set(definitions.map((definition) => definition.id))
+    return [
+      ...PLACEMENT_FUNCTION_CORE_ROUNDTRIP_CANDIDATE_IDS.filter((candidateId) => availableIds.has(candidateId)),
+      ...piecewiseIds,
+    ]
+  }
   if (candidateSet === "quadratic_only") {
     return definitions
       .filter((definition) =>
@@ -13735,7 +14683,12 @@ function getPlacementFunctionConditionBatchCandidateIds(
       .map((definition) => definition.id)
   }
   if (candidateSet === "quadratic_expanded") {
-    return definitions.map((definition) => definition.id)
+    return definitions
+      .filter((definition) =>
+        definition.family !== "direct_piecewise_linear" &&
+        definition.family !== "center_derived_piecewise_linear"
+      )
+      .map((definition) => definition.id)
   }
   const availableIds = new Set(definitions.map((definition) => definition.id))
   return PLACEMENT_FUNCTION_CORE_ROUNDTRIP_CANDIDATE_IDS.filter((candidateId) => availableIds.has(candidateId))
@@ -13747,6 +14700,8 @@ function getPlacementFunctionCandidateDefinitions(candidate: PlacementFunctionCa
   modelType: string
   featureSet: string
   regularization: string | null
+  gateType: PlacementFunctionPiecewiseGateType | null
+  segmentSummary: PlacementFunctionConditionBatchCandidateSummary["segmentSummary"]
 }> {
   return [
     {
@@ -13755,6 +14710,8 @@ function getPlacementFunctionCandidateDefinitions(candidate: PlacementFunctionCa
       modelType: "linear_v1",
       featureSet: "targetCenterImageX(txOverNegTz), targetCenterImageY(tyOverNegTz), scaleRatio(invNegTz)",
       regularization: null,
+      gateType: null,
+      segmentSummary: null,
     },
     ...(candidate?.directTransformCandidates.map((directCandidate) => ({
       id: directCandidate.id,
@@ -13762,6 +14719,8 @@ function getPlacementFunctionCandidateDefinitions(candidate: PlacementFunctionCa
       modelType: directCandidate.modelType,
       featureSet: formatPlacementFunctionFeatureSet(directCandidate.features),
       regularization: null,
+      gateType: null,
+      segmentSummary: null,
     })) ?? []),
     ...(candidate?.expandedTransformCandidates.map((expandedCandidate) => ({
       id: expandedCandidate.id,
@@ -13771,6 +14730,17 @@ function getPlacementFunctionCandidateDefinitions(candidate: PlacementFunctionCa
       regularization: expandedCandidate.regularization
         ? `${expandedCandidate.regularization.type}`
         : null,
+      gateType: null,
+      segmentSummary: null,
+    })) ?? []),
+    ...(candidate?.piecewiseTransformCandidates.map((piecewiseCandidate) => ({
+      id: piecewiseCandidate.id,
+      family: piecewiseCandidate.family,
+      modelType: piecewiseCandidate.modelType,
+      featureSet: formatPlacementFunctionFeatureSet(piecewiseCandidate.features),
+      regularization: null,
+      gateType: piecewiseCandidate.gate.type,
+      segmentSummary: summarizePlacementFunctionPiecewiseSegments(piecewiseCandidate.segments),
     })) ?? []),
   ]
 }
@@ -13781,8 +14751,23 @@ function formatPlacementFunctionFeatureSet(features: Record<string, Array<string
     .join(" / ")
 }
 
+function summarizePlacementFunctionPiecewiseSegments(segments: PlacementFunctionPiecewiseSegment[]) {
+  return {
+    totalCount: segments.length,
+    usableForFitCount: segments.filter((segment) => segment.usableForFit).length,
+    insufficientSampleCount: segments.filter((segment) => !segment.usableForFit).length,
+  }
+}
+
 function isPlacementFunctionCandidateSet(value: string): value is PlacementFunctionCandidateSet {
-  return value === "core" || value === "quadratic_expanded" || value === "quadratic_only"
+  return (
+    value === "core" ||
+    value === "quadratic_expanded" ||
+    value === "quadratic_only" ||
+    value === "piecewise_linear_expanded" ||
+    value === "piecewise_linear_only" ||
+    value === "all_expanded"
+  )
 }
 
 function getPlacementFunctionCandidateDefinition(
@@ -13843,14 +14828,14 @@ function estimatePlacementFunctionRoundtripTransform(
   candidateId: PlacementFunctionRoundtripCandidateId,
   sample: PlacementFunctionRoundtripInput,
 ): PlacementFunctionRoundtripEstimatedTransform | null {
-  return evaluatePlacementFunctionCandidate(candidate, candidateId, sample)
+  return evaluatePlacementFunctionCandidate(candidate, candidateId, sample)?.estimatedTransform ?? null
 }
 
 function evaluatePlacementFunctionCandidate(
   candidate: PlacementFunctionCandidate,
   candidateId: PlacementFunctionRoundtripCandidateId,
   sample: PlacementFunctionRoundtripInput,
-): PlacementFunctionRoundtripEstimatedTransform | null {
+): PlacementFunctionCandidateEvaluationResult | null {
   if (candidateId === "center_derived_linear_v1") {
     const prediction = predictPlacementFunctionCandidateForSample(candidate, sample)
     if (
@@ -13861,23 +14846,41 @@ function evaluatePlacementFunctionCandidate(
     ) {
       return null
     }
-    return roundPlacementFunctionRoundtripEstimatedTransform({
-      scaleRatio: prediction.estimatedScaleRatio,
-      translateAfterScaleImageX: prediction.estimatedTranslateAfterScaleImageX,
-      translateAfterScaleImageY: prediction.estimatedTranslateAfterScaleImageY,
-      translateAfterScaleWorkX:
-        prediction.estimatedTranslateAfterScaleImageX * sample.knownPlacement.renderAspectRatio,
-      translateAfterScaleWorkY: prediction.estimatedTranslateAfterScaleImageY,
-    })
+    return {
+      estimatedTransform: roundPlacementFunctionRoundtripEstimatedTransform({
+        scaleRatio: prediction.estimatedScaleRatio,
+        translateAfterScaleImageX: prediction.estimatedTranslateAfterScaleImageX,
+        translateAfterScaleImageY: prediction.estimatedTranslateAfterScaleImageY,
+        translateAfterScaleWorkX:
+          prediction.estimatedTranslateAfterScaleImageX * sample.knownPlacement.renderAspectRatio,
+        translateAfterScaleWorkY: prediction.estimatedTranslateAfterScaleImageY,
+      }),
+      evaluationDebug: {
+        candidateId,
+        family: "center_derived_linear",
+        modelType: "linear_v1",
+      },
+    }
   }
 
   const directCandidate = candidate.directTransformCandidates.find((item) => item.id === candidateId)
   const expandedCandidate = candidate.expandedTransformCandidates.find((item) => item.id === candidateId)
+  const piecewiseCandidate = candidate.piecewiseTransformCandidates.find((item) => item.id === candidateId)
+  const directFallbackCandidate = candidate.directTransformCandidates.find(
+    (item) => item.id === "direct_linear_normalized_v1",
+  ) ?? null
   const prediction = directCandidate
     ? predictPlacementFunctionDirectCandidateForSample(directCandidate, sample)
     : expandedCandidate
       ? predictPlacementFunctionExpandedCandidateForSample(expandedCandidate, sample)
-      : null
+      : piecewiseCandidate
+        ? predictPlacementFunctionPiecewiseCandidateForSample(
+          piecewiseCandidate,
+          sample,
+          directFallbackCandidate,
+          candidate,
+        )
+        : null
   if (!prediction) {
     return null
   }
@@ -13888,14 +14891,22 @@ function evaluatePlacementFunctionCandidate(
   ) {
     return null
   }
-  return roundPlacementFunctionRoundtripEstimatedTransform({
-    scaleRatio: prediction.estimatedScaleRatio,
-    translateAfterScaleImageX: prediction.estimatedTranslateAfterScaleImageX,
-    translateAfterScaleImageY: prediction.estimatedTranslateAfterScaleImageY,
-    translateAfterScaleWorkX:
-      prediction.estimatedTranslateAfterScaleImageX * sample.knownPlacement.renderAspectRatio,
-    translateAfterScaleWorkY: prediction.estimatedTranslateAfterScaleImageY,
-  })
+  const definition = getPlacementFunctionCandidateDefinition(candidate, candidateId)
+  return {
+    estimatedTransform: roundPlacementFunctionRoundtripEstimatedTransform({
+      scaleRatio: prediction.estimatedScaleRatio,
+      translateAfterScaleImageX: prediction.estimatedTranslateAfterScaleImageX,
+      translateAfterScaleImageY: prediction.estimatedTranslateAfterScaleImageY,
+      translateAfterScaleWorkX:
+        prediction.estimatedTranslateAfterScaleImageX * sample.knownPlacement.renderAspectRatio,
+      translateAfterScaleWorkY: prediction.estimatedTranslateAfterScaleImageY,
+    }),
+    evaluationDebug: prediction.evaluationDebug ?? {
+      candidateId,
+      family: definition?.family ?? "direct_linear",
+      modelType: definition?.modelType ?? "-",
+    },
+  }
 }
 
 function roundPlacementFunctionRoundtripEstimatedTransform(
@@ -14158,6 +15169,7 @@ function createPlacementFunctionRoundtripComparisonResult(
     status: PlacementFunctionRoundtripComparisonResult["status"]
     skippedReason?: string | null
     errorMessage?: string | null
+    evaluationDebug?: PlacementFunctionCandidateEvaluationDebug | null
     estimatedTransform?: PlacementFunctionRoundtripEstimatedTransform | null
     predictedMediaPipeResult?: PlacementFunctionRoundtripMediaPipeResult | null
     predictedMatrixFeatures?: PlacementFunctionRoundtripMatrixFeatures | null
@@ -14174,6 +15186,7 @@ function createPlacementFunctionRoundtripComparisonResult(
     status: input.status,
     skippedReason: input.skippedReason ?? null,
     errorMessage: input.errorMessage ?? null,
+    evaluationDebug: input.evaluationDebug ?? null,
     estimatedTransform: input.estimatedTransform ?? null,
     predictedMediaPipeResult: input.predictedMediaPipeResult ?? null,
     predictedMatrixFeatures: input.predictedMatrixFeatures ?? null,
@@ -20898,8 +21911,11 @@ function createDefaultPlacementFunctionConditionBatchRoundtripComparisonState():
     candidateSummaries: [],
     worstConditions: [],
     worstConditionCandidateFilterId: null,
+    worstConditionSegmentFilterId: null,
     conditionResults: [],
     quadraticInterpretationSummary: null,
+    piecewiseInterpretationSummary: null,
+    piecewiseSegmentBreakdown: [],
     previewConditionKey: null,
     previewCandidateId: null,
     previewRepresentativeSampleIndex: null,
@@ -22324,9 +23340,11 @@ function renderPlacementFunctionCandidateComparisonHtml(candidate: PlacementFunc
         <div><dt>baseline</dt><dd>${comparison.baselineCenterDerived.id}</dd></div>
         <div><dt>bestDirectCandidateId</dt><dd>${comparison.bestDirectCandidateId ?? "-"}</dd></div>
         <div><dt>bestExpandedCandidateId</dt><dd>${comparison.bestExpandedCandidateId ?? "-"}</dd></div>
+        <div><dt>bestPiecewiseCandidateId</dt><dd>${comparison.bestPiecewiseCandidateId ?? "-"}</dd></div>
         <div><dt>bestOverallCandidateId</dt><dd>${comparison.bestOverallCandidateId ?? "-"}</dd></div>
         <div><dt>directCandidateCount</dt><dd>${formatNullableCount(comparison.directCandidates.length)}</dd></div>
         <div><dt>expandedCandidateCount</dt><dd>${formatNullableCount(comparison.expandedCandidates.length)}</dd></div>
+        <div><dt>piecewiseCandidateCount</dt><dd>${formatNullableCount(comparison.piecewiseCandidates.length)}</dd></div>
         <div><dt>baseline scale MAE / max</dt><dd>${formatNullableNumber(baselineMetrics.maeScaleRatio)} / ${formatNullableNumber(baselineMetrics.maxScaleRatio)}</dd></div>
         <div><dt>baseline translate mean / max</dt><dd>${formatNullableNumber(baselineMetrics.meanTranslateAfterScaleImageEuclidean)} / ${formatNullableNumber(baselineMetrics.maxTranslateAfterScaleImageEuclidean)}</dd></div>
       </dl>
@@ -22388,6 +23406,48 @@ function renderPlacementFunctionCandidateComparisonHtml(candidate: PlacementFunc
                     <td>${escapeHtml(item.modelType)}</td>
                     <td>${escapeHtml(expandedCandidate ? formatPlacementFunctionFeatureSet(expandedCandidate.features) : "-")}</td>
                     <td>${escapeHtml(expandedCandidate?.regularization?.type ?? "-")}</td>
+                    <td>${formatNullableNumber(item.metrics.weightedScore)}</td>
+                    <td>${formatNullableNumber(item.metrics.maeScaleRatio)}</td>
+                    <td>${formatNullableNumber(item.metrics.meanTranslateAfterScaleImageEuclidean)} / ${formatNullableNumber(item.metrics.maxTranslateAfterScaleImageEuclidean)}</td>
+                  </tr>
+                `
+              }).join("")}
+            </tbody>
+          </table>
+        </div>
+      `}
+      <h4>Piecewise Linear Candidate Expansion（区分線形候補拡張）</h4>
+      ${comparison.piecewiseCandidates.length === 0 ? `<p class="placeholder-text">piecewise transform candidate を生成できませんでした。</p>` : `
+        <div class="table-scroll">
+          <table class="debug-table placement-piecewise-candidate-table">
+            <thead>
+              <tr>
+                <th>rank</th>
+                <th>candidateId</th>
+                <th>family</th>
+                <th>gate type</th>
+                <th>gate features</th>
+                <th>thresholds</th>
+                <th>segments</th>
+                <th>fallback</th>
+                <th>weightedScore</th>
+                <th>scale MAE</th>
+                <th>translate mean / max</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${comparison.piecewiseCandidates.map((item) => {
+                const piecewiseCandidate = candidate.piecewiseTransformCandidates.find((candidateItem) => candidateItem.id === item.id)
+                return `
+                  <tr>
+                    <td>${item.rankByWeightedScore}</td>
+                    <td>${escapeHtml(item.id)}</td>
+                    <td>${escapeHtml(item.family)}</td>
+                    <td>${escapeHtml(item.gate.type)}</td>
+                    <td>${item.gate.features.map((feature) => escapeHtml(feature)).join(", ")}</td>
+                    <td>${escapeHtml(formatPlacementFunctionGateThresholds(item.gate.thresholds))}</td>
+                    <td>${escapeHtml(piecewiseCandidate ? formatPlacementFunctionPiecewiseSegmentSummary(summarizePlacementFunctionPiecewiseSegments(piecewiseCandidate.segments)) : "-")}</td>
+                    <td>${escapeHtml(item.gate.fallbackCandidateId)}</td>
                     <td>${formatNullableNumber(item.metrics.weightedScore)}</td>
                     <td>${formatNullableNumber(item.metrics.maeScaleRatio)}</td>
                     <td>${formatNullableNumber(item.metrics.meanTranslateAfterScaleImageEuclidean)} / ${formatNullableNumber(item.metrics.maxTranslateAfterScaleImageEuclidean)}</td>
@@ -22499,9 +23559,15 @@ function renderPlacementFunctionRoundtripComparisonHtml(comparison: PlacementFun
 function renderPlacementFunctionConditionBatchRoundtripComparisonHtml(
   batch: PlacementFunctionConditionBatchRoundtripComparisonState,
 ) {
-  const visibleWorstConditions = batch.worstConditionCandidateFilterId
+  const candidateFilteredWorstConditions = batch.worstConditionCandidateFilterId
     ? batch.worstConditions.filter((condition) => condition.candidateId === batch.worstConditionCandidateFilterId)
     : batch.worstConditions
+  const visibleWorstConditions = batch.worstConditionSegmentFilterId
+    ? candidateFilteredWorstConditions.filter((condition) => condition.segmentId === batch.worstConditionSegmentFilterId)
+    : candidateFilteredWorstConditions
+  const segmentFilterOptions = Array.from(
+    new Set(candidateFilteredWorstConditions.map((condition) => condition.segmentId).filter(Boolean)),
+  ).sort()
   const sortedSummaries = [...batch.candidateSummaries].sort((a, b) => {
     const scoreCompare = comparePlacementFunctionRoundtripScore(
       a.roundtripScore.mean,
@@ -22536,6 +23602,8 @@ function renderPlacementFunctionConditionBatchRoundtripComparisonHtml(
     </dl>
     <h4>Quadratic Interpretation Summary（結論ヒント）</h4>
     ${renderPlacementFunctionQuadraticInterpretationSummaryHtml(batch.quadraticInterpretationSummary)}
+    <h4>Piecewise Interpretation Summary（区分線形解釈サマリ）</h4>
+    ${renderPlacementFunctionPiecewiseInterpretationSummaryHtml(batch.piecewiseInterpretationSummary)}
     <h4>Candidate Summary（候補要約）</h4>
     ${sortedSummaries.length === 0 ? `<p class="placeholder-text">条件単位まとめ再レンダー比較を実行すると candidate summary を表示します。</p>` : `
       <div class="table-scroll">
@@ -22543,7 +23611,8 @@ function renderPlacementFunctionConditionBatchRoundtripComparisonHtml(
           <thead>
             <tr>
               <th>candidateId</th>
-              <th>family / modelType</th>
+              <th>family / modelType / gate</th>
+              <th>segment summary / fallback</th>
               <th>completed / detected / noFace</th>
               <th>skipped / error</th>
               <th>matrixNormalized mean / p50 / p90 / p95 / max</th>
@@ -22558,7 +23627,8 @@ function renderPlacementFunctionConditionBatchRoundtripComparisonHtml(
             ${sortedSummaries.map((summary) => `
               <tr>
                 <td>${escapeHtml(summary.candidateId)}</td>
-                <td>${escapeHtml(summary.candidateFamily)} / ${escapeHtml(summary.candidateModelType)}</td>
+                <td>${escapeHtml(summary.candidateFamily)} / ${escapeHtml(summary.candidateModelType)} / ${escapeHtml(summary.gateType ?? "-")}</td>
+                <td>${escapeHtml(formatPlacementFunctionPiecewiseSegmentSummary(summary.segmentSummary))} / fallback ${formatNullableCount(summary.fallbackCount)}</td>
                 <td>${formatNullableCount(summary.completedCount)} / ${formatNullableCount(summary.detectedCount)} / ${formatNullableCount(summary.noFaceCount)}</td>
                 <td>${formatNullableCount(summary.skippedCount)} / ${formatNullableCount(summary.errorCount)}</td>
                 <td>${formatNullableNumber(summary.matrixNormalizedScore.mean)} / ${formatNullableNumber(summary.matrixNormalizedScore.p50)} / ${formatNullableNumber(summary.matrixNormalizedScore.p90)} / ${formatNullableNumber(summary.matrixNormalizedScore.p95)} / ${formatNullableNumber(summary.matrixNormalizedScore.max)}</td>
@@ -22573,6 +23643,8 @@ function renderPlacementFunctionConditionBatchRoundtripComparisonHtml(
         </table>
       </div>
     `}
+    <h4>Piecewise Segment Breakdown（区分別サマリ）</h4>
+    ${renderPlacementFunctionPiecewiseSegmentBreakdownHtml(batch)}
     <h4>Worst Conditions（悪い条件）</h4>
     <label class="select-field">
       <span>worst candidate filter</span>
@@ -22580,6 +23652,15 @@ function renderPlacementFunctionConditionBatchRoundtripComparisonHtml(
         <option value="all" ${batch.worstConditionCandidateFilterId === null ? "selected" : ""}>all</option>
         ${batch.candidateIds.map((candidateId) => `
           <option value="${escapeHtml(candidateId)}" ${candidateId === batch.worstConditionCandidateFilterId ? "selected" : ""}>${escapeHtml(candidateId)}</option>
+        `).join("")}
+      </select>
+    </label>
+    <label class="select-field">
+      <span>worst segment filter</span>
+      <select data-control="placement-analysis-condition-batch-segment-filter">
+        <option value="all" ${batch.worstConditionSegmentFilterId === null ? "selected" : ""}>all</option>
+        ${segmentFilterOptions.map((segmentId) => `
+          <option value="${escapeHtml(segmentId)}" ${segmentId === batch.worstConditionSegmentFilterId ? "selected" : ""}>${escapeHtml(segmentId)}</option>
         `).join("")}
       </select>
     </label>
@@ -22592,6 +23673,8 @@ function renderPlacementFunctionConditionBatchRoundtripComparisonHtml(
               <th>representativeSampleIndex</th>
               <th>candidateId</th>
               <th>family / modelType</th>
+              <th>segment / fallback</th>
+              <th>gate values</th>
               <th>matrixNormalizedScore</th>
               <th>roundtripScore</th>
               <th>poseScore</th>
@@ -22608,6 +23691,8 @@ function renderPlacementFunctionConditionBatchRoundtripComparisonHtml(
                 <td>${condition.representativeSampleIndex ?? "-"}</td>
                 <td>${escapeHtml(condition.candidateId)}</td>
                 <td>${escapeHtml(condition.candidateFamily)} / ${escapeHtml(condition.candidateModelType)}</td>
+                <td>${escapeHtml(condition.segmentId ?? "-")} / ${condition.fallbackUsed ? `fallback ${escapeHtml(condition.fallbackCandidateId ?? "-")}` : "-"}</td>
+                <td>${escapeHtml(formatPlacementFunctionGateFeatureValues(condition.gateFeatureValues))}</td>
                 <td>${formatNullableNumber(condition.matrixNormalizedScore)}</td>
                 <td>${formatNullableNumber(condition.roundtripScore)}</td>
                 <td>${formatNullableNumber(condition.poseScore)}</td>
@@ -22629,6 +23714,9 @@ function renderPlacementFunctionCandidateSetOptions(selectedCandidateSet: Placem
     { value: "core", label: "core（既存5候補）" },
     { value: "quadratic_expanded", label: "quadratic_expanded（既存 + 二次拡張）" },
     { value: "quadratic_only", label: "quadratic_only（二次拡張のみ）" },
+    { value: "piecewise_linear_expanded", label: "piecewise_linear_expanded（既存 + 区分線形）" },
+    { value: "piecewise_linear_only", label: "piecewise_linear_only（区分線形のみ）" },
+    { value: "all_expanded", label: "all_expanded（既存 + 二次拡張 + 区分線形）" },
   ]
   return options.map((option) => `
     <option value="${option.value}" ${option.value === selectedCandidateSet ? "selected" : ""}>${option.label}</option>
@@ -22652,6 +23740,96 @@ function renderPlacementFunctionQuadraticInterpretationSummaryHtml(
       <div><dt>reasons</dt><dd>${summary.reasons.map((reason) => escapeHtml(reason)).join("\n") || "-"}</dd></div>
     </dl>
   `
+}
+
+function renderPlacementFunctionPiecewiseInterpretationSummaryHtml(
+  summary: PlacementFunctionPiecewiseInterpretationSummary | null,
+) {
+  if (!summary) {
+    return `<p class="placeholder-text">batch 完了後に区分線形候補の結論ヒントを表示します。</p>`
+  }
+  return `
+    <dl class="review-grid">
+      <div><dt>bestPiecewiseMeanCandidateId</dt><dd>${summary.bestPiecewiseMeanCandidateId ?? "-"}</dd></div>
+      <div><dt>bestPiecewiseP95CandidateId</dt><dd>${summary.bestPiecewiseP95CandidateId ?? "-"}</dd></div>
+      <div><dt>bestPiecewiseMaxCandidateId</dt><dd>${summary.bestPiecewiseMaxCandidateId ?? "-"}</dd></div>
+      <div><dt>linearBaselineCandidateId</dt><dd>${summary.linearBaselineCandidateId}</dd></div>
+      <div><dt>quadraticBaselineCandidateId</dt><dd>${summary.quadraticBaselineCandidateId ?? "-"}</dd></div>
+      <div><dt>shouldPreferPiecewiseLinear</dt><dd>${String(summary.shouldPreferPiecewiseLinear)}</dd></div>
+      <div><dt>shouldKeepQuadraticCandidate</dt><dd>${String(summary.shouldKeepQuadraticCandidate)}</dd></div>
+      <div><dt>reasons</dt><dd>${summary.reasons.map((reason) => escapeHtml(reason)).join("\n") || "-"}</dd></div>
+    </dl>
+  `
+}
+
+function renderPlacementFunctionPiecewiseSegmentBreakdownHtml(
+  batch: PlacementFunctionConditionBatchRoundtripComparisonState,
+) {
+  const preferredCandidateId =
+    batch.piecewiseInterpretationSummary?.bestPiecewiseP95CandidateId ??
+    batch.piecewiseInterpretationSummary?.bestPiecewiseMeanCandidateId ??
+    null
+  const visibleBreakdown = preferredCandidateId
+    ? batch.piecewiseSegmentBreakdown.filter((item) => item.candidateId === preferredCandidateId)
+    : batch.piecewiseSegmentBreakdown
+  if (visibleBreakdown.length === 0) {
+    return `<p class="placeholder-text">piecewise candidate を含む batch 完了後に segment breakdown を表示します。</p>`
+  }
+  return `
+    <div class="table-scroll">
+      <table class="debug-table placement-piecewise-segment-table">
+        <thead>
+          <tr>
+            <th>candidateId</th>
+            <th>segmentId</th>
+            <th>condition / completed / noFace / error</th>
+            <th>matrixNormalized mean / p95 / max</th>
+            <th>roundtrip mean / p95 / max</th>
+            <th>win roundtrip / matrix</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${visibleBreakdown.map((item) => `
+            <tr>
+              <td>${escapeHtml(item.candidateId)}</td>
+              <td>${escapeHtml(item.segmentId)}</td>
+              <td>${formatNullableCount(item.conditionCount)} / ${formatNullableCount(item.completedCount)} / ${formatNullableCount(item.noFaceCount)} / ${formatNullableCount(item.errorCount)}</td>
+              <td>${formatNullableNumber(item.matrixNormalizedScore.mean)} / ${formatNullableNumber(item.matrixNormalizedScore.p95)} / ${formatNullableNumber(item.matrixNormalizedScore.max)}</td>
+              <td>${formatNullableNumber(item.roundtripScore.mean)} / ${formatNullableNumber(item.roundtripScore.p95)} / ${formatNullableNumber(item.roundtripScore.max)}</td>
+              <td>${formatNullableCount(item.winCountByRoundtripScore)} / ${formatNullableCount(item.winCountByMatrixNormalizedScore)}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+  `
+}
+
+function formatPlacementFunctionPiecewiseSegmentSummary(
+  summary: PlacementFunctionConditionBatchCandidateSummary["segmentSummary"],
+) {
+  if (!summary) {
+    return "-"
+  }
+  return `${summary.usableForFitCount}/${summary.totalCount} fit, ${summary.insufficientSampleCount} fallback segments`
+}
+
+function formatPlacementFunctionGateThresholds(thresholds: Record<string, number[]>) {
+  const parts = Object.entries(thresholds).map(([featureName, values]) =>
+    `${featureName}: ${values.map((value) => formatNullableNumber(value)).join(" / ")}`
+  )
+  return parts.length > 0 ? parts.join("; ") : "-"
+}
+
+function formatPlacementFunctionGateFeatureValues(
+  values: Partial<Record<PlacementFunctionPiecewiseGateFeatureName, number | null>> | null,
+) {
+  if (!values || Object.keys(values).length === 0) {
+    return "-"
+  }
+  return Object.entries(values)
+    .map(([featureName, value]) => `${featureName}: ${formatNullableNumber(value)}`)
+    .join(" / ")
 }
 
 function comparePlacementFunctionRoundtripScore(a: number | null, b: number | null) {

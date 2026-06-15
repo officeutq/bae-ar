@@ -766,16 +766,24 @@ h3 {
   min-width: 1560px;
 }
 
+.placement-piecewise-candidate-table {
+  min-width: 1720px;
+}
+
 .placement-roundtrip-comparison-table {
   min-width: 1480px;
 }
 
 .placement-condition-batch-summary-table {
-  min-width: 1880px;
+  min-width: 2140px;
 }
 
 .placement-condition-batch-worst-table {
-  min-width: 1680px;
+  min-width: 2020px;
+}
+
+.placement-piecewise-segment-table {
+  min-width: 1320px;
 }
 
 .pose-sync-button {
