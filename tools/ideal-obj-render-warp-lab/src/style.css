@@ -754,6 +754,10 @@ h3 {
   margin: 10px 0 8px;
 }
 
+.placement-analysis-summary-table {
+  min-width: 860px;
+}
+
 .pose-sync-button {
   justify-self: start;
 }

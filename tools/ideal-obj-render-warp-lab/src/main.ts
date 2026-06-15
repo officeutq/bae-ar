@@ -2115,6 +2115,56 @@ type PlacementFunctionScaleDetectionSummary = {
   failedCount: number
 }
 
+type PlacementFunctionRepeatSummary = {
+  repeatCount: number
+  uniqueConditionCount: number
+  sampleCount: number
+  usableSampleCount: number
+  negTzWithinCondition: {
+    meanRange: number
+    maxRange: number
+    meanStdDev: number
+    maxStdDev: number
+  }
+  invNegTzWithinCondition: {
+    meanRange: number
+    maxRange: number
+    meanStdDev: number
+    maxStdDev: number
+  }
+  scaleRatioWithinCondition: {
+    meanEstimatedRange?: number
+    maxEstimatedRange?: number
+  }
+}
+
+type PlacementFunctionPositionCorrelationSummary = {
+  scaleRatio: number
+  usableSampleCount: number
+  corrCenterImageXNegTz: number | null
+  corrCenterImageYNegTz: number | null
+  corrCenterImageXInvNegTz: number | null
+  corrCenterImageYInvNegTz: number | null
+  negTzMin: number
+  negTzMax: number
+  negTzRange: number
+  negTzMean: number
+  negTzStdDev: number
+}
+
+type PlacementFunctionVerticalPositionSummary = {
+  scaleRatio: number
+  centerImageY: number
+  usableSampleCount: number
+  negTzMin: number
+  negTzMax: number
+  negTzRange: number
+  negTzMean: number
+  negTzStdDev: number
+  invNegTzMean: number
+  invNegTzStdDev: number
+}
+
 type KnownPlacement = {
   centerImageX: number
   centerImageY: number
@@ -2194,6 +2244,9 @@ type PlacementFunctionAnalysisSample = {
   schemaVersion: "ideal_obj_render_warp_placement_function_sample_v1"
   sampleId: string
   sampleIndex: number
+  repeatIndex: number
+  repeatCount: number
+  conditionKey: string
   capturedAtMs: number
   knownPlacement: KnownPlacement
   basePlacement: BasePlacement
@@ -2252,6 +2305,7 @@ type PlacementFunctionAnalysisRunOptions = {
   centerImageXValues: number[]
   centerImageYValues: number[]
   visualScaleInputValues: number[]
+  repeatCount: number
   poseSet: "front"
   renderAspectRatio: number
   canvasWidth: number
@@ -2276,6 +2330,9 @@ type PlacementFunctionAnalysisExport = {
     scaleDetectionSummary: PlacementFunctionScaleDetectionSummary[]
     skippedReasonCounts: Record<string, number>
     transformSummary: PlacementFunctionTransformSummary | null
+    repeatSummary: PlacementFunctionRepeatSummary
+    positionCorrelationSummary: PlacementFunctionPositionCorrelationSummary[]
+    verticalPositionSummary: PlacementFunctionVerticalPositionSummary[]
   }
   samples: PlacementFunctionAnalysisSample[]
 }
@@ -2287,6 +2344,9 @@ type PlacementFunctionCandidate = {
     tool: "ideal-obj-render-warp-lab"
     sampleCount: number
     usableSampleCount: number
+    uniqueConditionCount: number
+    fittingSampleCount: number
+    fittingAggregation: "condition_mean" | "raw_samples"
   }
   targetCoordinateSpace: "image_normalized_coordinate"
   transformOrder: "scale_then_translate"
@@ -2360,6 +2420,34 @@ type PlacementFunctionTransformSummary = {
   renderAspectRatio: number
 }
 
+type PlacementFunctionNumericStats = {
+  min: number
+  max: number
+  range: number
+  mean: number
+  stdDev: number
+}
+
+type PlacementFunctionCandidateTrainingSample = {
+  conditionKey: string
+  knownPlacement: KnownPlacement
+  basePlacement: BasePlacement
+  targetPlacement: TargetPlacement
+  knownTransform: KnownTransform
+  matrixFeatures: PlacementFunctionMatrixFeatures
+}
+
+type PlacementFunctionConditionStats = {
+  conditionKey: string
+  usableSampleCount: number
+  negTzMean: number | null
+  negTzStdDev: number | null
+  negTzRange: number | null
+  invNegTzMean: number | null
+  invNegTzStdDev: number | null
+  invNegTzRange: number | null
+}
+
 type PlacementFunctionAnalysisSummary = {
   sampleCount: number
   usableSampleCount: number
@@ -2382,6 +2470,9 @@ type PlacementFunctionAnalysisSummary = {
   scaleDetectionSummary: PlacementFunctionScaleDetectionSummary[]
   skippedReasonCounts: Record<string, number>
   transformSummary: PlacementFunctionTransformSummary | null
+  repeatSummary: PlacementFunctionRepeatSummary
+  positionCorrelationSummary: PlacementFunctionPositionCorrelationSummary[]
+  verticalPositionSummary: PlacementFunctionVerticalPositionSummary[]
 }
 
 type PlacementFunctionAnalysisState = {
@@ -2536,8 +2627,22 @@ const WEBGL_OBJ_BENCHMARK_DEFAULT_OPTIONS: WebglObjBenchmarkOptions = {
   measuredRuns: 20,
 }
 const PLACEMENT_ANALYSIS_DEFAULT_CANVAS_SIZE = { width: 960, height: 540 } as const
-const PLACEMENT_ANALYSIS_CENTER_VALUES = [0.42, 0.46, 0.5, 0.54, 0.58] as const
+const PLACEMENT_ANALYSIS_CENTER_IMAGE_X_VALUES = [0.42, 0.46, 0.5, 0.54, 0.58] as const
+const PLACEMENT_ANALYSIS_CENTER_IMAGE_Y_VALUES = [
+  0.4,
+  0.42,
+  0.44,
+  0.46,
+  0.48,
+  0.5,
+  0.52,
+  0.54,
+  0.56,
+  0.58,
+  0.6,
+] as const
 const PLACEMENT_ANALYSIS_SCALE_VALUES = [1.1, 1.15, 1.2, 1.25, 1.3] as const
+const PLACEMENT_ANALYSIS_DEFAULT_REPEAT_COUNT = 2
 const PLACEMENT_ANALYSIS_FRONT_POSE: ObjPoseMappingPose = { yaw: 0, pitch: 0, roll: 0 }
 const PLACEMENT_ANALYSIS_SKIPPED_REASONS: PlacementFunctionAnalysisSkippedReason[] = [
   "no_face",
@@ -9323,6 +9428,9 @@ async function startPlacementFunctionAnalysis() {
         renderer,
         appearance,
         sampleIndex: plan.sampleIndex,
+        repeatIndex: plan.repeatIndex,
+        repeatCount: plan.repeatCount,
+        conditionKey: plan.conditionKey,
         knownPlacement: plan.knownPlacement,
         requestedPoseP: PLACEMENT_ANALYSIS_FRONT_POSE,
         basePreviewReference,
@@ -9367,23 +9475,56 @@ function stopPlacementFunctionAnalysis() {
 }
 
 function createPlacementFunctionAnalysisPlans(options: PlacementFunctionAnalysisRunOptions) {
-  const plans: Array<{ sampleIndex: number; knownPlacement: KnownPlacement }> = []
+  const plans: Array<{
+    sampleIndex: number
+    repeatIndex: number
+    repeatCount: number
+    conditionKey: string
+    knownPlacement: KnownPlacement
+  }> = []
+  const repeatCount = Math.max(1, Math.floor(options.repeatCount))
   for (const centerImageY of options.centerImageYValues) {
     for (const centerImageX of options.centerImageXValues) {
       for (const visualScaleInput of options.visualScaleInputValues) {
-        plans.push({
-          sampleIndex: plans.length,
-          knownPlacement: createKnownPlacement({
-            centerImageX,
-            centerImageY,
-            visualScaleInput,
-            options,
-          }),
+        const knownPlacement = createKnownPlacement({
+          centerImageX,
+          centerImageY,
+          visualScaleInput,
+          options,
         })
+        const conditionKey = createPlacementFunctionConditionKey({
+          centerImageX,
+          centerImageY,
+          visualScaleInput,
+          poseSet: options.poseSet,
+        })
+        for (let repeatIndex = 0; repeatIndex < repeatCount; repeatIndex += 1) {
+          plans.push({
+            sampleIndex: plans.length,
+            repeatIndex,
+            repeatCount,
+            conditionKey,
+            knownPlacement,
+          })
+        }
       }
     }
   }
   return plans
+}
+
+function createPlacementFunctionConditionKey(input: {
+  centerImageX: number
+  centerImageY: number
+  visualScaleInput: number
+  poseSet: PlacementFunctionAnalysisRunOptions["poseSet"]
+}) {
+  return [
+    `x=${input.centerImageX.toFixed(3)}`,
+    `y=${input.centerImageY.toFixed(3)}`,
+    `scale=${input.visualScaleInput.toFixed(3)}`,
+    `pose=${input.poseSet}`,
+  ].join("_")
 }
 
 function createKnownPlacement(input: {
@@ -9465,6 +9606,9 @@ function runPlacementFunctionAnalysisSample(input: {
   renderer: WebglObjRenderer
   appearance: AppliedObjRenderAppearanceProfile
   sampleIndex: number
+  repeatIndex: number
+  repeatCount: number
+  conditionKey: string
   knownPlacement: KnownPlacement
   requestedPoseP: ObjPoseMappingPose
   basePreviewReference: PlacementFunctionBasePreviewReference
@@ -9486,6 +9630,9 @@ function runPlacementFunctionAnalysisSample(input: {
     return buildPlacementFunctionAnalysisSample({
       sampleId,
       sampleIndex: input.sampleIndex,
+      repeatIndex: input.repeatIndex,
+      repeatCount: input.repeatCount,
+      conditionKey: input.conditionKey,
       capturedAtMs,
       knownPlacement: input.knownPlacement,
       requestedPoseP: input.requestedPoseP,
@@ -9499,6 +9646,9 @@ function runPlacementFunctionAnalysisSample(input: {
     return createPlacementFunctionAnalysisFailureSample({
       sampleId,
       sampleIndex: input.sampleIndex,
+      repeatIndex: input.repeatIndex,
+      repeatCount: input.repeatCount,
+      conditionKey: input.conditionKey,
       capturedAtMs,
       knownPlacement: input.knownPlacement,
       requestedPoseP: input.requestedPoseP,
@@ -9511,6 +9661,9 @@ function runPlacementFunctionAnalysisSample(input: {
 function buildPlacementFunctionAnalysisSample(input: {
   sampleId: string
   sampleIndex: number
+  repeatIndex: number
+  repeatCount: number
+  conditionKey: string
   capturedAtMs: number
   knownPlacement: KnownPlacement
   requestedPoseP: ObjPoseMappingPose
@@ -9566,6 +9719,9 @@ function buildPlacementFunctionAnalysisSample(input: {
     schemaVersion: "ideal_obj_render_warp_placement_function_sample_v1",
     sampleId: input.sampleId,
     sampleIndex: input.sampleIndex,
+    repeatIndex: input.repeatIndex,
+    repeatCount: input.repeatCount,
+    conditionKey: input.conditionKey,
     capturedAtMs: input.capturedAtMs,
     knownPlacement: roundKnownPlacement(input.knownPlacement),
     basePlacement: roundPlacementFunctionPlacement(basePlacement),
@@ -9612,6 +9768,9 @@ function buildPlacementFunctionAnalysisSample(input: {
 function createPlacementFunctionAnalysisFailureSample(input: {
   sampleId: string
   sampleIndex: number
+  repeatIndex: number
+  repeatCount: number
+  conditionKey: string
   capturedAtMs: number
   knownPlacement: KnownPlacement
   requestedPoseP: ObjPoseMappingPose
@@ -9631,6 +9790,9 @@ function createPlacementFunctionAnalysisFailureSample(input: {
     schemaVersion: "ideal_obj_render_warp_placement_function_sample_v1",
     sampleId: input.sampleId,
     sampleIndex: input.sampleIndex,
+    repeatIndex: input.repeatIndex,
+    repeatCount: input.repeatCount,
+    conditionKey: input.conditionKey,
     capturedAtMs: input.capturedAtMs,
     knownPlacement: roundKnownPlacement(input.knownPlacement),
     basePlacement: roundPlacementFunctionPlacement(basePlacement),
@@ -9669,11 +9831,16 @@ function createPlacementFunctionAnalysisFailureSample(input: {
 function appendPlacementFunctionAnalysisSample(sample: PlacementFunctionAnalysisSampleState) {
   const samples = [...state.placementAnalysis.samples, sample]
   const candidateResult = buildPlacementFunctionCandidate(samples)
+  const summary = createPlacementFunctionAnalysisSummary(
+    samples,
+    state.placementAnalysis.runOptions,
+    candidateResult.candidate,
+  )
   state.placementAnalysis = {
     ...state.placementAnalysis,
     samples,
     selectedSampleIndex: sample.sampleIndex,
-    summary: createPlacementFunctionAnalysisSummary(samples),
+    summary,
     candidate: candidateResult.candidate,
     candidateUnavailableReason: candidateResult.reason,
   }
@@ -10059,6 +10226,8 @@ function calculatePlacementFunctionObservedBounds(
 
 function createPlacementFunctionAnalysisSummary(
   samples: PlacementFunctionAnalysisSampleState[],
+  options: PlacementFunctionAnalysisRunOptions,
+  candidate: PlacementFunctionCandidate | null = null,
 ): PlacementFunctionAnalysisSummary {
   return {
     sampleCount: samples.length,
@@ -10082,6 +10251,9 @@ function createPlacementFunctionAnalysisSummary(
     scaleDetectionSummary: buildPlacementFunctionScaleDetectionSummary(samples),
     skippedReasonCounts: buildPlacementFunctionSkippedReasonCounts(samples),
     transformSummary: buildPlacementFunctionTransformSummary(samples),
+    repeatSummary: buildPlacementFunctionRepeatSummary(samples, options, candidate),
+    positionCorrelationSummary: buildPlacementFunctionPositionCorrelationSummary(samples),
+    verticalPositionSummary: buildPlacementFunctionVerticalPositionSummary(samples),
   }
 }
 
@@ -10174,6 +10346,267 @@ function buildPlacementFunctionTransformSummary(
   }
 }
 
+function buildPlacementFunctionRepeatSummary(
+  samples: PlacementFunctionAnalysisSampleState[],
+  options: PlacementFunctionAnalysisRunOptions,
+  candidate: PlacementFunctionCandidate | null,
+): PlacementFunctionRepeatSummary {
+  const usableSamples = getUsablePlacementFunctionAnalysisSamples(samples)
+  const conditionGroups = groupPlacementFunctionSamplesByCondition(usableSamples)
+  return {
+    repeatCount: Math.max(1, Math.floor(options.repeatCount)),
+    uniqueConditionCount: countUniquePlacementFunctionConditions(samples),
+    sampleCount: samples.length,
+    usableSampleCount: usableSamples.length,
+    negTzWithinCondition: summarizePlacementFunctionWithinCondition(
+      conditionGroups,
+      (sample) => sample.matrixFeatures.negTz,
+    ),
+    invNegTzWithinCondition: summarizePlacementFunctionWithinCondition(
+      conditionGroups,
+      (sample) => sample.matrixFeatures.invNegTz,
+    ),
+    scaleRatioWithinCondition: candidate
+      ? summarizePlacementFunctionEstimatedScaleWithinCondition(conditionGroups, candidate)
+      : {},
+  }
+}
+
+function buildPlacementFunctionPositionCorrelationSummary(
+  samples: PlacementFunctionAnalysisSampleState[],
+): PlacementFunctionPositionCorrelationSummary[] {
+  const byScale = groupPlacementFunctionSamplesByScaleRatio(
+    getUsablePlacementFunctionAnalysisSamples(samples),
+  )
+  return Array.from(byScale.values())
+    .map((scaleSamples) => {
+      const negTzStats = calculatePlacementFunctionNumericStats(
+        scaleSamples.map((sample) => sample.matrixFeatures.negTz),
+      )
+      if (!negTzStats) {
+        return null
+      }
+      return {
+        scaleRatio: roundForState(scaleSamples[0].knownTransform.scaleRatio) ?? 0,
+        usableSampleCount: scaleSamples.length,
+        corrCenterImageXNegTz: calculatePlacementFunctionCorrelation(
+          scaleSamples.map((sample) => sample.knownPlacement.centerImageX),
+          scaleSamples.map((sample) => sample.matrixFeatures.negTz),
+        ),
+        corrCenterImageYNegTz: calculatePlacementFunctionCorrelation(
+          scaleSamples.map((sample) => sample.knownPlacement.centerImageY),
+          scaleSamples.map((sample) => sample.matrixFeatures.negTz),
+        ),
+        corrCenterImageXInvNegTz: calculatePlacementFunctionCorrelation(
+          scaleSamples.map((sample) => sample.knownPlacement.centerImageX),
+          scaleSamples.map((sample) => sample.matrixFeatures.invNegTz),
+        ),
+        corrCenterImageYInvNegTz: calculatePlacementFunctionCorrelation(
+          scaleSamples.map((sample) => sample.knownPlacement.centerImageY),
+          scaleSamples.map((sample) => sample.matrixFeatures.invNegTz),
+        ),
+        negTzMin: negTzStats.min,
+        negTzMax: negTzStats.max,
+        negTzRange: negTzStats.range,
+        negTzMean: negTzStats.mean,
+        negTzStdDev: negTzStats.stdDev,
+      }
+    })
+    .filter((item): item is PlacementFunctionPositionCorrelationSummary => item !== null)
+    .sort((a, b) => a.scaleRatio - b.scaleRatio)
+}
+
+function buildPlacementFunctionVerticalPositionSummary(
+  samples: PlacementFunctionAnalysisSampleState[],
+): PlacementFunctionVerticalPositionSummary[] {
+  const byScaleAndY = new Map<string, PlacementFunctionAnalysisSampleState[]>()
+  for (const sample of getUsablePlacementFunctionAnalysisSamples(samples)) {
+    const key = [
+      formatPlacementScaleKey(sample.knownTransform.scaleRatio),
+      formatPlacementScaleKey(sample.knownPlacement.centerImageY),
+    ].join("|")
+    byScaleAndY.set(key, [...(byScaleAndY.get(key) ?? []), sample])
+  }
+  return Array.from(byScaleAndY.values())
+    .map((groupSamples) => {
+      const negTzStats = calculatePlacementFunctionNumericStats(
+        groupSamples.map((sample) => sample.matrixFeatures.negTz),
+      )
+      const invNegTzStats = calculatePlacementFunctionNumericStats(
+        groupSamples.map((sample) => sample.matrixFeatures.invNegTz),
+      )
+      if (!negTzStats || !invNegTzStats) {
+        return null
+      }
+      return {
+        scaleRatio: roundForState(groupSamples[0].knownTransform.scaleRatio) ?? 0,
+        centerImageY: roundForState(groupSamples[0].knownPlacement.centerImageY) ?? 0,
+        usableSampleCount: groupSamples.length,
+        negTzMin: negTzStats.min,
+        negTzMax: negTzStats.max,
+        negTzRange: negTzStats.range,
+        negTzMean: negTzStats.mean,
+        negTzStdDev: negTzStats.stdDev,
+        invNegTzMean: invNegTzStats.mean,
+        invNegTzStdDev: invNegTzStats.stdDev,
+      }
+    })
+    .filter((item): item is PlacementFunctionVerticalPositionSummary => item !== null)
+    .sort((a, b) => a.scaleRatio - b.scaleRatio || a.centerImageY - b.centerImageY)
+}
+
+function getUsablePlacementFunctionAnalysisSamples(samples: PlacementFunctionAnalysisSampleState[]) {
+  return samples.filter((sample) => sample.quality.usable)
+}
+
+function groupPlacementFunctionSamplesByCondition(samples: PlacementFunctionAnalysisSampleState[]) {
+  const byCondition = new Map<string, PlacementFunctionAnalysisSampleState[]>()
+  for (const sample of samples) {
+    byCondition.set(sample.conditionKey, [...(byCondition.get(sample.conditionKey) ?? []), sample])
+  }
+  return byCondition
+}
+
+function groupPlacementFunctionSamplesByScaleRatio(samples: PlacementFunctionAnalysisSampleState[]) {
+  const byScale = new Map<string, PlacementFunctionAnalysisSampleState[]>()
+  for (const sample of samples) {
+    const key = formatPlacementScaleKey(sample.knownTransform.scaleRatio)
+    byScale.set(key, [...(byScale.get(key) ?? []), sample])
+  }
+  return byScale
+}
+
+function countUniquePlacementFunctionConditions(samples: PlacementFunctionAnalysisSampleState[]) {
+  return new Set(samples.map((sample) => sample.conditionKey)).size
+}
+
+function summarizePlacementFunctionWithinCondition(
+  conditionGroups: Map<string, PlacementFunctionAnalysisSampleState[]>,
+  getValue: (sample: PlacementFunctionAnalysisSampleState) => number | null | undefined,
+) {
+  const ranges: number[] = []
+  const stdDevs: number[] = []
+  for (const groupSamples of conditionGroups.values()) {
+    const stats = calculatePlacementFunctionNumericStats(groupSamples.map(getValue))
+    if (!stats) {
+      continue
+    }
+    ranges.push(stats.range)
+    stdDevs.push(stats.stdDev)
+  }
+  return {
+    meanRange: roundForState(averageFiniteNumbers(ranges) ?? 0) ?? 0,
+    maxRange: roundForState(maxNumbers(ranges) ?? 0) ?? 0,
+    meanStdDev: roundForState(averageFiniteNumbers(stdDevs) ?? 0) ?? 0,
+    maxStdDev: roundForState(maxNumbers(stdDevs) ?? 0) ?? 0,
+  }
+}
+
+function summarizePlacementFunctionEstimatedScaleWithinCondition(
+  conditionGroups: Map<string, PlacementFunctionAnalysisSampleState[]>,
+  candidate: PlacementFunctionCandidate,
+): PlacementFunctionRepeatSummary["scaleRatioWithinCondition"] {
+  const ranges: number[] = []
+  for (const groupSamples of conditionGroups.values()) {
+    const stats = calculatePlacementFunctionNumericStats(
+      groupSamples.map((sample) => predictPlacementFunctionCandidateScaleRatio(candidate, sample)),
+    )
+    if (!stats) {
+      continue
+    }
+    ranges.push(stats.range)
+  }
+  if (ranges.length === 0) {
+    return {}
+  }
+  return {
+    meanEstimatedRange: roundForState(averageFiniteNumbers(ranges) ?? 0) ?? 0,
+    maxEstimatedRange: roundForState(maxNumbers(ranges) ?? 0) ?? 0,
+  }
+}
+
+function buildPlacementFunctionConditionStats(
+  samples: PlacementFunctionAnalysisSampleState[],
+): Map<string, PlacementFunctionConditionStats> {
+  const conditionStats = new Map<string, PlacementFunctionConditionStats>()
+  for (const [conditionKey, groupSamples] of groupPlacementFunctionSamplesByCondition(
+    getUsablePlacementFunctionAnalysisSamples(samples),
+  )) {
+    const negTzStats = calculatePlacementFunctionNumericStats(
+      groupSamples.map((sample) => sample.matrixFeatures.negTz),
+    )
+    const invNegTzStats = calculatePlacementFunctionNumericStats(
+      groupSamples.map((sample) => sample.matrixFeatures.invNegTz),
+    )
+    conditionStats.set(conditionKey, {
+      conditionKey,
+      usableSampleCount: groupSamples.length,
+      negTzMean: negTzStats?.mean ?? null,
+      negTzStdDev: negTzStats?.stdDev ?? null,
+      negTzRange: negTzStats?.range ?? null,
+      invNegTzMean: invNegTzStats?.mean ?? null,
+      invNegTzStdDev: invNegTzStats?.stdDev ?? null,
+      invNegTzRange: invNegTzStats?.range ?? null,
+    })
+  }
+  return conditionStats
+}
+
+function calculatePlacementFunctionNumericStats(
+  values: Array<number | null | undefined>,
+): PlacementFunctionNumericStats | null {
+  const finiteValues = values
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value))
+    .sort((a, b) => a - b)
+  if (finiteValues.length === 0) {
+    return null
+  }
+  const min = finiteValues[0]
+  const max = finiteValues[finiteValues.length - 1]
+  const mean = averageFiniteNumbers(finiteValues) ?? 0
+  const variance = averageFiniteNumbers(finiteValues.map((value) => (value - mean) ** 2)) ?? 0
+  return {
+    min: roundForState(min) ?? 0,
+    max: roundForState(max) ?? 0,
+    range: roundForState(max - min) ?? 0,
+    mean: roundForState(mean) ?? 0,
+    stdDev: roundForState(Math.sqrt(variance)) ?? 0,
+  }
+}
+
+function calculatePlacementFunctionCorrelation(
+  xValues: Array<number | null | undefined>,
+  yValues: Array<number | null | undefined>,
+) {
+  const pairs: Array<{ x: number; y: number }> = []
+  const pairCount = Math.min(xValues.length, yValues.length)
+  for (let index = 0; index < pairCount; index += 1) {
+    const x = xValues[index]
+    const y = yValues[index]
+    if (
+      typeof x === "number" &&
+      typeof y === "number" &&
+      Number.isFinite(x) &&
+      Number.isFinite(y)
+    ) {
+      pairs.push({ x, y })
+    }
+  }
+  if (pairs.length < 2) {
+    return null
+  }
+  const meanX = averageFiniteNumbers(pairs.map((pair) => pair.x)) ?? 0
+  const meanY = averageFiniteNumbers(pairs.map((pair) => pair.y)) ?? 0
+  const numerator = pairs.reduce((sum, pair) => sum + (pair.x - meanX) * (pair.y - meanY), 0)
+  const xVarianceSum = pairs.reduce((sum, pair) => sum + (pair.x - meanX) ** 2, 0)
+  const yVarianceSum = pairs.reduce((sum, pair) => sum + (pair.y - meanY) ** 2, 0)
+  const denominator = Math.sqrt(xVarianceSum * yVarianceSum)
+  if (!Number.isFinite(denominator) || denominator <= 1e-12) {
+    return null
+  }
+  return roundForState(numerator / denominator)
+}
+
 function formatPlacementScaleKey(value: number) {
   return Number.isFinite(value) ? Number(value.toFixed(6)).toString() : "invalid"
 }
@@ -10183,23 +10616,24 @@ function buildPlacementFunctionCandidate(samples: PlacementFunctionAnalysisSampl
   reason: string | null
 } {
   const usableSamples = samples.filter((sample) => sample.quality.usable)
-  if (usableSamples.length < 2) {
+  const fittingSamples = createPlacementFunctionConditionMeanFittingSamples(usableSamples)
+  if (fittingSamples.length < 2) {
     return { candidate: null, reason: "usable sample count too small" }
   }
   const targetCenterImageXModel = fitSimpleLinearModel(
-    usableSamples.map((sample) => ({
+    fittingSamples.map((sample) => ({
       x: sample.matrixFeatures.txOverNegTz,
       y: sample.targetPlacement.centerImageX,
     })),
   )
   const targetCenterImageYModel = fitSimpleLinearModel(
-    usableSamples.map((sample) => ({
+    fittingSamples.map((sample) => ({
       x: sample.matrixFeatures.tyOverNegTz,
       y: sample.targetPlacement.centerImageY,
     })),
   )
   const scaleRatioModel = fitSimpleLinearModel(
-    usableSamples.map((sample) => ({
+    fittingSamples.map((sample) => ({
       x: sample.matrixFeatures.invNegTz,
       y: sample.knownTransform.scaleRatio,
     })),
@@ -10208,7 +10642,7 @@ function buildPlacementFunctionCandidate(samples: PlacementFunctionAnalysisSampl
     return { candidate: null, reason: "singular matrix" }
   }
   const metrics = calculatePlacementFunctionCandidateMetrics(
-    usableSamples,
+    fittingSamples,
     targetCenterImageXModel,
     targetCenterImageYModel,
     scaleRatioModel,
@@ -10222,6 +10656,9 @@ function buildPlacementFunctionCandidate(samples: PlacementFunctionAnalysisSampl
         tool: "ideal-obj-render-warp-lab",
         sampleCount: samples.length,
         usableSampleCount: usableSamples.length,
+        uniqueConditionCount: countUniquePlacementFunctionConditions(samples),
+        fittingSampleCount: fittingSamples.length,
+        fittingAggregation: "condition_mean",
       },
       targetCoordinateSpace: "image_normalized_coordinate",
       transformOrder: "scale_then_translate",
@@ -10261,13 +10698,53 @@ function buildPlacementFunctionCandidate(samples: PlacementFunctionAnalysisSampl
         },
       },
       metrics,
-      trainingDataSummary: buildPlacementFunctionCandidateTrainingDataSummary(usableSamples),
+      trainingDataSummary: buildPlacementFunctionCandidateTrainingDataSummary(fittingSamples),
     },
   }
 }
 
+function createPlacementFunctionConditionMeanFittingSamples(
+  usableSamples: PlacementFunctionAnalysisSampleState[],
+): PlacementFunctionCandidateTrainingSample[] {
+  return Array.from(groupPlacementFunctionSamplesByCondition(usableSamples).entries())
+    .map(([conditionKey, conditionSamples]) => {
+      const first = conditionSamples[0]
+      return {
+        conditionKey,
+        knownPlacement: first.knownPlacement,
+        basePlacement: first.basePlacement,
+        targetPlacement: first.targetPlacement,
+        knownTransform: first.knownTransform,
+        matrixFeatures: averagePlacementFunctionMatrixFeatures(
+          conditionSamples.map((sample) => sample.matrixFeatures),
+        ),
+      }
+    })
+    .sort((a, b) => a.conditionKey.localeCompare(b.conditionKey))
+}
+
+function averagePlacementFunctionMatrixFeatures(
+  features: PlacementFunctionMatrixFeatures[],
+): PlacementFunctionMatrixFeatures {
+  return {
+    tx: averagePlacementFunctionNullableFeature(features.map((feature) => feature.tx)),
+    ty: averagePlacementFunctionNullableFeature(features.map((feature) => feature.ty)),
+    tz: averagePlacementFunctionNullableFeature(features.map((feature) => feature.tz)),
+    negTz: averagePlacementFunctionNullableFeature(features.map((feature) => feature.negTz)),
+    invNegTz: averagePlacementFunctionNullableFeature(features.map((feature) => feature.invNegTz)),
+    txOverNegTz: averagePlacementFunctionNullableFeature(features.map((feature) => feature.txOverNegTz)),
+    tyOverNegTz: averagePlacementFunctionNullableFeature(features.map((feature) => feature.tyOverNegTz)),
+    matrixUniformScale: averagePlacementFunctionNullableFeature(features.map((feature) => feature.matrixUniformScale)),
+  }
+}
+
+function averagePlacementFunctionNullableFeature(values: Array<number | null>) {
+  const finiteValues = values.filter((value): value is number => value !== null && Number.isFinite(value))
+  return roundForState(averageFiniteNumbers(finiteValues))
+}
+
 function buildPlacementFunctionCandidateTrainingDataSummary(
-  samples: PlacementFunctionAnalysisSampleState[],
+  samples: PlacementFunctionCandidateTrainingSample[],
 ): PlacementFunctionCandidate["trainingDataSummary"] {
   const sampleCountByScaleRatio: Record<string, number> = {}
   for (const sample of samples) {
@@ -10317,7 +10794,7 @@ function fitSimpleLinearModel(points: Array<{ x: number | null; y: number | null
 }
 
 function calculatePlacementFunctionCandidateMetrics(
-  samples: PlacementFunctionAnalysisSampleState[],
+  samples: PlacementFunctionCandidateTrainingSample[],
   targetCenterImageXModel: { intercept: number; slope: number },
   targetCenterImageYModel: { intercept: number; slope: number },
   scaleRatioModel: { intercept: number; slope: number },
@@ -10376,6 +10853,19 @@ function predictSimpleLinearModel(model: { intercept: number; slope: number }, v
   return model.intercept + model.slope * value
 }
 
+function predictPlacementFunctionCandidateScaleRatio(
+  candidate: PlacementFunctionCandidate,
+  sample: { matrixFeatures: PlacementFunctionMatrixFeatures },
+) {
+  return predictSimpleLinearModel(
+    {
+      intercept: candidate.models.scaleRatio.intercept,
+      slope: candidate.models.scaleRatio.coefficients.invNegTz,
+    },
+    sample.matrixFeatures.invNegTz,
+  )
+}
+
 function predictPlacementFunctionCandidateForSample(
   candidate: PlacementFunctionCandidate | null,
   sample: PlacementFunctionAnalysisSampleState,
@@ -10397,13 +10887,7 @@ function predictPlacementFunctionCandidateForSample(
     },
     sample.matrixFeatures.tyOverNegTz,
   )
-  const estimatedScaleRatio = predictSimpleLinearModel(
-    {
-      intercept: candidate.models.scaleRatio.intercept,
-      slope: candidate.models.scaleRatio.coefficients.invNegTz,
-    },
-    sample.matrixFeatures.invNegTz,
-  )
+  const estimatedScaleRatio = predictPlacementFunctionCandidateScaleRatio(candidate, sample)
   const estimatedTranslateAfterScaleImageX =
     estimatedTargetCenterImageX !== null && estimatedScaleRatio !== null
       ? estimatedTargetCenterImageX - sample.basePlacement.centerImageX * estimatedScaleRatio
@@ -16976,7 +17460,7 @@ function createDefaultPlacementFunctionAnalysisState(): PlacementFunctionAnalysi
     showBase478: true,
     showBaseBounds: true,
     showTargetBounds: true,
-    summary: createPlacementFunctionAnalysisSummary([]),
+    summary: createPlacementFunctionAnalysisSummary([], runOptions),
     candidate: null,
     candidateUnavailableReason: "usable sample count too small",
   }
@@ -16986,9 +17470,10 @@ function createDefaultPlacementFunctionAnalysisRunOptions(): PlacementFunctionAn
   const canvasWidth = PLACEMENT_ANALYSIS_DEFAULT_CANVAS_SIZE.width
   const canvasHeight = PLACEMENT_ANALYSIS_DEFAULT_CANVAS_SIZE.height
   return {
-    centerImageXValues: [...PLACEMENT_ANALYSIS_CENTER_VALUES],
-    centerImageYValues: [...PLACEMENT_ANALYSIS_CENTER_VALUES],
+    centerImageXValues: [...PLACEMENT_ANALYSIS_CENTER_IMAGE_X_VALUES],
+    centerImageYValues: [...PLACEMENT_ANALYSIS_CENTER_IMAGE_Y_VALUES],
     visualScaleInputValues: [...PLACEMENT_ANALYSIS_SCALE_VALUES],
+    repeatCount: PLACEMENT_ANALYSIS_DEFAULT_REPEAT_COUNT,
     poseSet: "front",
     renderAspectRatio: canvasWidth / canvasHeight,
     canvasWidth,
@@ -17975,6 +18460,18 @@ function renderPlacementFunctionAnalysisDebugTab() {
       ${renderPlacementTransformSummaryHtml(summary.transformSummary)}
     </section>
     <section class="review-card">
+      <h3>繰り返し要約</h3>
+      ${renderPlacementRepeatSummaryHtml(summary.repeatSummary)}
+    </section>
+    <section class="review-card">
+      <h3>位置相関</h3>
+      ${renderPlacementPositionCorrelationSummaryHtml(summary.positionCorrelationSummary)}
+    </section>
+    <section class="review-card">
+      <h3>縦位置別要約</h3>
+      ${renderPlacementVerticalPositionSummaryHtml(summary.verticalPositionSummary)}
+    </section>
+    <section class="review-card">
       <h3>スケール別検出要約</h3>
       ${renderPlacementScaleDetectionSummaryHtml(summary.scaleDetectionSummary)}
     </section>
@@ -17987,6 +18484,9 @@ function renderPlacementFunctionAnalysisDebugTab() {
       <dl class="review-grid">
         <div><dt>available</dt><dd>${String(Boolean(analysis.candidate))}</dd></div>
         <div><dt>modelType</dt><dd>${analysis.candidate?.modelType ?? "-"}</dd></div>
+        <div><dt>fittingAggregation</dt><dd>${analysis.candidate?.source.fittingAggregation ?? "-"}</dd></div>
+        <div><dt>fittingSampleCount</dt><dd>${analysis.candidate?.source.fittingSampleCount ?? "-"}</dd></div>
+        <div><dt>uniqueConditionCount</dt><dd>${analysis.candidate?.source.uniqueConditionCount ?? "-"}</dd></div>
         <div><dt>reason</dt><dd>${escapeHtml(analysis.candidate ? "-" : analysis.candidateUnavailableReason ?? "-")}</dd></div>
       </dl>
       ${renderPlacementFunctionCandidateMetricsHtml(analysis.candidate)}
@@ -18017,7 +18517,7 @@ function formatLatestPlacementAnalysisSamplePreview() {
   if (!sample) {
     return "-"
   }
-  return `#${sample.sampleIndex} ${formatKnownTransformShort(sample.knownTransform)} / ${formatKnownPlacementShort(sample.knownPlacement)} / detected=${String(sample.mediaPipeResult.detected)} / matrix=${String(sample.facialTransformationMatrix.available)}`
+  return `#${sample.sampleIndex} repeat=${sample.repeatIndex + 1}/${sample.repeatCount} / condition=${sample.conditionKey} / ${formatKnownTransformShort(sample.knownTransform)} / ${formatKnownPlacementShort(sample.knownPlacement)} / detected=${String(sample.mediaPipeResult.detected)} / matrix=${String(sample.facialTransformationMatrix.available)}`
 }
 
 function formatPlacementAnalysisRange(range: PlacementFunctionAnalysisRange | null) {
@@ -18038,6 +18538,107 @@ function renderPlacementTransformSummaryHtml(summary: PlacementFunctionTransform
       <div><dt>translateAfterScaleImageY range</dt><dd>${formatNullableNumber(summary.translateAfterScaleImageYMin)} .. ${formatNullableNumber(summary.translateAfterScaleImageYMax)}</dd></div>
       <div><dt>renderAspectRatio</dt><dd>${formatNullableNumber(summary.renderAspectRatio)}</dd></div>
     </dl>
+  `
+}
+
+function renderPlacementRepeatSummaryHtml(summary: PlacementFunctionRepeatSummary) {
+  return `
+    <dl class="review-grid">
+      <div><dt>repeatCount</dt><dd>${formatNullableCount(summary.repeatCount)}</dd></div>
+      <div><dt>uniqueConditionCount</dt><dd>${formatNullableCount(summary.uniqueConditionCount)}</dd></div>
+      <div><dt>sampleCount</dt><dd>${formatNullableCount(summary.sampleCount)}</dd></div>
+      <div><dt>usableSampleCount</dt><dd>${formatNullableCount(summary.usableSampleCount)}</dd></div>
+      <div><dt>negTz mean range</dt><dd>${formatNullableNumber(summary.negTzWithinCondition.meanRange)}</dd></div>
+      <div><dt>negTz max range</dt><dd>${formatNullableNumber(summary.negTzWithinCondition.maxRange)}</dd></div>
+      <div><dt>negTz mean stdDev</dt><dd>${formatNullableNumber(summary.negTzWithinCondition.meanStdDev)}</dd></div>
+      <div><dt>negTz max stdDev</dt><dd>${formatNullableNumber(summary.negTzWithinCondition.maxStdDev)}</dd></div>
+      <div><dt>invNegTz mean range</dt><dd>${formatNullableNumber(summary.invNegTzWithinCondition.meanRange)}</dd></div>
+      <div><dt>invNegTz max range</dt><dd>${formatNullableNumber(summary.invNegTzWithinCondition.maxRange)}</dd></div>
+      <div><dt>scaleRatio estimated mean range</dt><dd>${formatNullableNumber(summary.scaleRatioWithinCondition.meanEstimatedRange ?? null)}</dd></div>
+      <div><dt>scaleRatio estimated max range</dt><dd>${formatNullableNumber(summary.scaleRatioWithinCondition.maxEstimatedRange ?? null)}</dd></div>
+    </dl>
+  `
+}
+
+function renderPlacementPositionCorrelationSummaryHtml(
+  summary: PlacementFunctionPositionCorrelationSummary[],
+) {
+  if (summary.length === 0) {
+    return `<p class="placeholder-text">解析実行後に scaleRatio ごとの位置相関を表示します。</p>`
+  }
+  return `
+    <div class="table-scroll">
+      <table class="debug-table placement-analysis-summary-table">
+        <thead>
+          <tr>
+            <th>scaleRatio</th>
+            <th>usable</th>
+            <th>corr(centerImageY, -tz)</th>
+            <th>corr(centerImageX, -tz)</th>
+            <th>corr(centerImageY, invNegTz)</th>
+            <th>corr(centerImageX, invNegTz)</th>
+            <th>negTz mean</th>
+            <th>negTz range</th>
+            <th>negTz stdDev</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${summary.map((item) => `
+            <tr>
+              <td>${formatNullableNumber(item.scaleRatio)}</td>
+              <td>${formatNullableCount(item.usableSampleCount)}</td>
+              <td>${formatNullableNumber(item.corrCenterImageYNegTz)}</td>
+              <td>${formatNullableNumber(item.corrCenterImageXNegTz)}</td>
+              <td>${formatNullableNumber(item.corrCenterImageYInvNegTz)}</td>
+              <td>${formatNullableNumber(item.corrCenterImageXInvNegTz)}</td>
+              <td>${formatNullableNumber(item.negTzMean)}</td>
+              <td>${formatNullableNumber(item.negTzRange)}</td>
+              <td>${formatNullableNumber(item.negTzStdDev)}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+  `
+}
+
+function renderPlacementVerticalPositionSummaryHtml(
+  summary: PlacementFunctionVerticalPositionSummary[],
+) {
+  if (summary.length === 0) {
+    return `<p class="placeholder-text">解析実行後に scaleRatio + centerImageY ごとの -tz 平均を表示します。</p>`
+  }
+  return `
+    <div class="table-scroll">
+      <table class="debug-table placement-analysis-summary-table">
+        <thead>
+          <tr>
+            <th>scaleRatio</th>
+            <th>centerImageY</th>
+            <th>usable</th>
+            <th>mean -tz</th>
+            <th>range -tz</th>
+            <th>stdDev -tz</th>
+            <th>mean invNegTz</th>
+            <th>stdDev invNegTz</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${summary.map((item) => `
+            <tr>
+              <td>${formatNullableNumber(item.scaleRatio)}</td>
+              <td>${formatNullableNumber(item.centerImageY)}</td>
+              <td>${formatNullableCount(item.usableSampleCount)}</td>
+              <td>${formatNullableNumber(item.negTzMean)}</td>
+              <td>${formatNullableNumber(item.negTzRange)}</td>
+              <td>${formatNullableNumber(item.negTzStdDev)}</td>
+              <td>${formatNullableNumber(item.invNegTzMean)}</td>
+              <td>${formatNullableNumber(item.invNegTzStdDev)}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
   `
 }
 
@@ -18331,6 +18932,7 @@ function buildPlacementFunctionAnalysisExport(): PlacementFunctionAnalysisExport
       centerImageXValues: [...options.centerImageXValues],
       centerImageYValues: [...options.centerImageYValues],
       visualScaleInputValues: [...options.visualScaleInputValues],
+      repeatCount: options.repeatCount,
       poseSet: options.poseSet,
       renderAspectRatio: options.renderAspectRatio,
       canvasWidth: options.canvasWidth,
@@ -18345,6 +18947,9 @@ function buildPlacementFunctionAnalysisExport(): PlacementFunctionAnalysisExport
       scaleDetectionSummary: state.placementAnalysis.summary.scaleDetectionSummary,
       skippedReasonCounts: state.placementAnalysis.summary.skippedReasonCounts,
       transformSummary: state.placementAnalysis.summary.transformSummary,
+      repeatSummary: state.placementAnalysis.summary.repeatSummary,
+      positionCorrelationSummary: state.placementAnalysis.summary.positionCorrelationSummary,
+      verticalPositionSummary: state.placementAnalysis.summary.verticalPositionSummary,
     },
     samples: state.placementAnalysis.samples.map(stripPlacementFunctionAnalysisSampleState),
   }
@@ -18386,6 +18991,9 @@ function buildPlacementFunctionAnalysisCsv(
 ) {
   const headers = [
     "sampleIndex",
+    "repeatIndex",
+    "repeatCount",
+    "conditionKey",
     "qualityUsable",
     "skippedReason",
     "knownCenterImageX",
@@ -18438,6 +19046,14 @@ function buildPlacementFunctionAnalysisCsv(
     "tz",
     "negTz",
     "invNegTz",
+    "conditionNegTzMean",
+    "conditionNegTzStdDev",
+    "conditionNegTzRange",
+    "conditionInvNegTzMean",
+    "conditionInvNegTzStdDev",
+    "conditionInvNegTzRange",
+    "scalePositionCorrCenterYNegTz",
+    "scalePositionCorrCenterXNegTz",
     "txOverNegTz",
     "tyOverNegTz",
     "matrixUniformScale",
@@ -18450,10 +19066,24 @@ function buildPlacementFunctionAnalysisCsv(
     "canvasWidth",
     "canvasHeight",
   ]
+  const conditionStatsByKey = buildPlacementFunctionConditionStats(samples)
+  const positionCorrelationByScale = new Map(
+    buildPlacementFunctionPositionCorrelationSummary(samples).map((summary) => [
+      formatPlacementScaleKey(summary.scaleRatio),
+      summary,
+    ]),
+  )
   const rows = samples.map((sample) => {
     const prediction = predictPlacementFunctionCandidateForSample(candidate, sample)
+    const conditionStats = conditionStatsByKey.get(sample.conditionKey)
+    const positionCorrelation = positionCorrelationByScale.get(
+      formatPlacementScaleKey(sample.knownTransform.scaleRatio),
+    )
     return [
       sample.sampleIndex,
+      sample.repeatIndex,
+      sample.repeatCount,
+      sample.conditionKey,
       sample.quality.usable,
       sample.quality.skippedReason ?? "",
       sample.knownPlacement.centerImageX,
@@ -18506,6 +19136,14 @@ function buildPlacementFunctionAnalysisCsv(
       sample.matrixFeatures.tz ?? "",
       sample.matrixFeatures.negTz ?? "",
       sample.matrixFeatures.invNegTz ?? "",
+      conditionStats?.negTzMean ?? "",
+      conditionStats?.negTzStdDev ?? "",
+      conditionStats?.negTzRange ?? "",
+      conditionStats?.invNegTzMean ?? "",
+      conditionStats?.invNegTzStdDev ?? "",
+      conditionStats?.invNegTzRange ?? "",
+      positionCorrelation?.corrCenterImageYNegTz ?? "",
+      positionCorrelation?.corrCenterImageXNegTz ?? "",
       sample.matrixFeatures.txOverNegTz ?? "",
       sample.matrixFeatures.tyOverNegTz ?? "",
       sample.matrixFeatures.matrixUniformScale ?? "",
