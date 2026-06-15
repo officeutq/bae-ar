@@ -5,7 +5,7 @@ import {
 import type { Matrix, NormalizedLandmark } from "@mediapipe/tasks-vision"
 import "./style.css"
 
-type PreviewTab = "obj" | "renderedIdeal" | "live" | "placementAnalysis"
+type PreviewTab = "obj" | "renderedIdeal" | "liveCoordinates" | "displayOverlay" | "placementAnalysis"
 type DebugTab =
   | "summary"
   | "current"
@@ -3156,11 +3156,29 @@ type Rect = {
   height: number
 }
 
+type DataAvailability = {
+  available: boolean
+  reason: string
+}
+
 type LabState = {
   activePreviewTab: PreviewTab
   activeDebugTab: DebugTab
   poseMappingSettings: {
     hideIdealOverlayWhenRenderPoseNotApplied: boolean
+  }
+  renderedIdealOverlay: {
+    showRenderedIdealLandmarks478: boolean
+  }
+  liveCoordinatePreview: {
+    showCurrentLandmarks478: boolean
+    showAlignedIdealLandmarks478: boolean
+    showMeshSource: boolean
+    showMeshTarget: boolean
+    showMeshPairs: boolean
+    showExcludedLandmarks: boolean
+    showGridAnchors: boolean
+    showTriangleMesh: boolean
   }
   overlay: {
     showCurrentLandmarks478: boolean
@@ -3171,6 +3189,8 @@ type LabState = {
     showExcludedLandmarks: boolean
     showGridAnchors: boolean
     showTriangleMesh: boolean
+    showDisplayedContentRect: boolean
+    showSkippedReason: boolean
   }
   objFile: ObjFileState
   objSummary: ObjSummary
@@ -3591,10 +3611,11 @@ const MATCH_BLENDSHAPE_KEYS = [
 ] as const
 
 const previewTabs: TabOption<PreviewTab>[] = [
-  { label: "OBJ", value: "obj" },
-  { label: "レンダー理想", value: "renderedIdeal" },
-  { label: "ライブ", value: "live" },
-  { label: "配置関数解析プレビュー", value: "placementAnalysis" },
+  { label: "OBJ 3D（OBJ座標）", value: "obj" },
+  { label: "レンダー画像（render canvas座標）", value: "renderedIdeal" },
+  { label: "ライブ座標（live image-normalized座標）", value: "liveCoordinates" },
+  { label: "表示重ね描き（displayedContentRect pixel座標）", value: "displayOverlay" },
+  { label: "配置関数解析（placement analysis）", value: "placementAnalysis" },
 ]
 
 const debugTabs: TabOption<DebugTab>[] = [
@@ -3633,15 +3654,30 @@ const state: LabState = {
   activePreviewTab: "obj",
   activeDebugTab: "summary",
   poseMappingSettings: { ...DEFAULT_POSE_MAPPING_SETTINGS },
-  overlay: {
+  renderedIdealOverlay: {
+    showRenderedIdealLandmarks478: true,
+  },
+  liveCoordinatePreview: {
     showCurrentLandmarks478: true,
     showAlignedIdealLandmarks478: true,
     showMeshSource: true,
     showMeshTarget: true,
     showMeshPairs: false,
     showExcludedLandmarks: false,
-    showGridAnchors: true,
+    showGridAnchors: false,
     showTriangleMesh: false,
+  },
+  overlay: {
+    showCurrentLandmarks478: true,
+    showAlignedIdealLandmarks478: true,
+    showMeshSource: false,
+    showMeshTarget: false,
+    showMeshPairs: false,
+    showExcludedLandmarks: false,
+    showGridAnchors: false,
+    showTriangleMesh: false,
+    showDisplayedContentRect: true,
+    showSkippedReason: true,
   },
   objFile: {
     loaded: false,
@@ -3753,28 +3789,13 @@ app.innerHTML = `
           <p class="eyebrow">Preview</p>
           <h2>プレビュー</h2>
         </div>
-        <div class="overlay-toggles">
-          <fieldset class="overlay-toggle-group">
-            <legend>Live Overlay（ライブ重ね表示）</legend>
-            ${renderOverlayToggle("toggle-current-landmarks", "現在顔478点を表示")}
-            ${renderOverlayToggle("toggle-aligned-ideal-landmarks", "位置合わせ済み理想478点を表示")}
-            ${renderOverlayToggle("toggle-mesh-pairs", "対応線を表示")}
-            ${renderOverlayToggle("toggle-excluded-landmarks", "除外 / 固定 landmark を表示")}
-          </fieldset>
-          <fieldset class="overlay-toggle-group">
-            <legend>Mesh Debug（メッシュデバッグ）</legend>
-            ${renderOverlayToggle("toggle-mesh-source", "mesh sourceを表示")}
-            ${renderOverlayToggle("toggle-mesh-target", "mesh targetを表示")}
-            ${renderOverlayToggle("toggle-grid-anchors", "grid / anchorsを表示")}
-            ${renderOverlayToggle("toggle-triangle-mesh", "triangle meshを表示")}
-          </fieldset>
-        </div>
       </div>
       ${renderTabs("preview", previewTabs, state.activePreviewTab)}
       <div class="preview-stack">
         ${renderObjPreview()}
         ${renderRenderedIdealPreview()}
-        ${renderLivePreview()}
+        ${renderLiveCoordinatePreview()}
+        ${renderDisplayOverlayPreview()}
         ${renderPlacementAnalysisPreview()}
       </div>
     </section>
@@ -3800,6 +3821,7 @@ const liveOverlayCanvas = getElement<HTMLCanvasElement>("[data-overlay='live']")
 const objPreviewCanvas = getElement<HTMLCanvasElement>('[data-canvas="obj-preview"]')
 const renderedIdealCanvas = getElement<HTMLCanvasElement>('[data-canvas="rendered-ideal"]')
 const renderedIdealOverlayCanvas = getElement<HTMLCanvasElement>('[data-overlay="rendered-ideal"]')
+const liveCoordinateCanvas = getElement<HTMLCanvasElement>('[data-canvas="live-coordinate"]')
 const placementAnalysisRenderCanvas = getElement<HTMLCanvasElement>('[data-canvas="placement-analysis-render"]')
 const placementAnalysisOverlayCanvas = getElement<HTMLCanvasElement>('[data-overlay="placement-analysis"]')
 const liveObjPosePreviewCanvas = document.createElement("canvas")
@@ -3870,7 +3892,25 @@ function renderOverlayToggle(action: string, label: string) {
     <label class="overlay-toggle">
       <input type="checkbox" data-action="${action}" />
       <span>${label}</span>
+      <small class="toggle-reason" data-toggle-reason="${action}"></small>
     </label>
+  `
+}
+
+function renderCoordinateInfo(rows: Array<[string, string]>) {
+  return `
+    <section class="coordinate-info-card" aria-label="座標系情報">
+      <h3>座標系情報</h3>
+      <dl class="review-grid">
+        ${rows
+          .map(
+            ([label, value]) => `
+              <div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>
+            `,
+          )
+          .join("")}
+      </dl>
+    </section>
   `
 }
 
@@ -3904,6 +3944,11 @@ function renderTabs<TValue extends string>(
 function renderObjPreview() {
   return `
     <div class="preview-card" data-preview-panel="obj">
+      ${renderCoordinateInfo([
+        ["Coordinate system（座標系）", "OBJ coordinate（OBJ座標）"],
+        ["Data source（データ元）", "OBJ mesh / OBJ vertices / OBJ faces / raw OBJ bounds（OBJメッシュ / OBJ頂点 / OBJ面 / OBJ外枠）"],
+        ["Generated by（生成元）", "OBJ parser（OBJ解析）"],
+      ])}
       <div class="preview-stage obj-preview-stage" data-obj-stage data-preview-status="not_ready">
         <canvas class="obj-preview-canvas" data-canvas="obj-preview" aria-label="OBJ 3D preview"></canvas>
         <div class="preview-placeholder obj-preview-placeholder" data-obj-preview-placeholder>
@@ -3937,6 +3982,12 @@ function renderObjPreview() {
 function renderRenderedIdealPreview() {
   return `
     <div class="preview-card" data-preview-panel="renderedIdeal">
+      ${renderCoordinateInfo([
+        ["Coordinate system（座標系）", "render canvas image-normalized coordinate / render canvas pixel coordinate（レンダーcanvas画像正規化座標 / レンダーcanvasピクセル座標）"],
+        ["Data source（データ元）", "renderedIdeal478（レンダー理想478点）"],
+        ["Generated by（生成元）", "WebGL OBJ render + MediaPipe detect（WebGL OBJ描画 + MediaPipe再検出）"],
+        ["注意", "renderedIdeal478（レンダー理想478点）は render canvas 基準です。live video（ライブ映像）上に配置済みの点ではありません。"],
+      ])}
       <div class="preview-stage rendered-ideal-stage" data-rendered-ideal-stage data-render-status="not_ready">
         <canvas class="rendered-ideal-canvas" data-canvas="rendered-ideal" aria-label="レンダー理想 2D preview"></canvas>
         <canvas class="rendered-ideal-landmark-overlay" data-overlay="rendered-ideal" aria-label="レンダー理想478点 overlay"></canvas>
@@ -3949,6 +4000,10 @@ function renderRenderedIdealPreview() {
         <div class="button-row">
           <button class="small-button" type="button" data-action="rendered-ideal-refresh">レンダー更新</button>
         </div>
+        <fieldset class="overlay-toggle-group coordinate-toggle-group">
+          <legend>Render canvas overlay（レンダーcanvas重ね描き）</legend>
+          ${renderOverlayToggle("toggle-rendered-ideal-landmarks", "renderedIdeal478（レンダー理想478点）を表示")}
+        </fieldset>
         <label class="select-field">
           <span>Render Appearance（レンダー見た目）</span>
           <select data-control="render-appearance-profile">
@@ -3982,12 +4037,54 @@ function renderRenderedIdealPreview() {
   `
 }
 
-function renderLivePreview() {
+function renderLiveCoordinatePreview() {
   return `
-    <div class="preview-card live-preview-card" data-preview-panel="live">
+    <div class="preview-card live-coordinate-preview-card" data-preview-panel="liveCoordinates">
+      ${renderCoordinateInfo([
+        ["Coordinate system（座標系）", "live video image-normalized coordinate（ライブ映像の画像正規化座標）"],
+        ["Data source（データ元）", "current478 / alignedRenderedIdeal478 / meshSourceVertices / meshTargetVertices（現在顔478点 / 位置合わせ済み理想478点 / 変形元メッシュ頂点 / 変形先メッシュ頂点）"],
+        ["Generated by（生成元）", "MediaPipe current face + placement function（現在顔検出 + 配置関数）"],
+        ["placement function（配置関数）", DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE_ID],
+      ])}
+      <div class="preview-stage live-coordinate-stage" data-live-coordinate-stage>
+        <canvas class="live-coordinate-canvas" data-canvas="live-coordinate" aria-label="ライブ座標 normalized preview"></canvas>
+        <div class="preview-placeholder" data-live-coordinate-placeholder>
+          <h3>ライブ座標プレビュー</h3>
+          <p>current478（現在顔478点）または alignedRenderedIdeal478（位置合わせ済み理想478点）が生成されると、live image-normalized 座標で表示します。</p>
+        </div>
+      </div>
+      <div class="obj-preview-controls live-coordinate-controls" aria-label="ライブ座標 preview 操作">
+        <fieldset class="overlay-toggle-group coordinate-toggle-group">
+          <legend>Live image-normalized coordinate（ライブ画像正規化座標）</legend>
+          ${renderOverlayToggle("toggle-live-coordinate-current-landmarks", "current478（現在顔478点）を表示")}
+          ${renderOverlayToggle("toggle-live-coordinate-aligned-ideal-landmarks", "alignedRenderedIdeal478（位置合わせ済み理想478点）を表示")}
+          ${renderOverlayToggle("toggle-live-coordinate-mesh-pairs", "correspondence lines（対応線）を表示")}
+          ${renderOverlayToggle("toggle-live-coordinate-mesh-source", "meshSourceVertices（変形元メッシュ頂点）を表示")}
+          ${renderOverlayToggle("toggle-live-coordinate-mesh-target", "meshTargetVertices（変形先メッシュ頂点）を表示")}
+          ${renderOverlayToggle("toggle-live-coordinate-excluded-landmarks", "除外 / 固定 landmark（ランドマーク）を表示")}
+          ${renderOverlayToggle("toggle-live-coordinate-grid-anchors", "grid / anchors（グリッド / アンカー）を表示")}
+          ${renderOverlayToggle("toggle-live-coordinate-triangle-mesh", "triangle mesh（トライアングルメッシュ）を表示")}
+        </fieldset>
+      </div>
+      <div class="review-card" data-live-coordinate-summary>
+        <p>ライブ座標データはまだありません。</p>
+      </div>
+    </div>
+  `
+}
+
+function renderDisplayOverlayPreview() {
+  return `
+    <div class="preview-card live-preview-card" data-preview-panel="displayOverlay">
+      ${renderCoordinateInfo([
+        ["Coordinate system（座標系）", "displayedContentRect pixel coordinate / canvas pixel coordinate（表示領域ピクセル座標 / canvasピクセル座標）"],
+        ["Data source（データ元）", "live video + overlay canvas（ライブ映像 + 重ね描きcanvas）"],
+        ["Generated by（生成元）", "drawLiveOverlay() / displayedContentRect（重ね描き描画 / 動画の実表示領域）"],
+        ["注意", "未位置合わせの renderedIdeal478（レンダー理想478点）は live video（ライブ映像）上に直接表示しません。表示する理想点は alignedRenderedIdeal478（位置合わせ済み理想478点）だけです。"],
+      ])}
       <div class="live-preview-grid">
         <section class="live-column-panel" aria-label="ライブ現在顔">
-          <h3>ライブ現在顔</h3>
+          <h3>表示重ね描きプレビュー</h3>
           <div class="preview-stage live-face-stage" data-live-stage data-loaded="false">
             <video class="video-preview" data-video="live" preload="metadata" playsinline controls></video>
             <canvas class="landmark-overlay" data-overlay="live"></canvas>
@@ -3998,6 +4095,24 @@ function renderLivePreview() {
           </div>
           <div class="review-card live-input-source-card" data-live-input-source>
             <p>入力ソース: 未選択</p>
+          </div>
+          <div class="obj-preview-controls display-overlay-controls" aria-label="表示重ね描き 操作">
+            <fieldset class="overlay-toggle-group coordinate-toggle-group">
+              <legend>Displayed overlay（表示重ね描き）</legend>
+              ${renderOverlayToggle("toggle-current-landmarks", "current overlay（現在顔重ね表示）を表示")}
+              ${renderOverlayToggle("toggle-aligned-ideal-landmarks", "aligned ideal overlay（位置合わせ済み理想顔重ね表示）を表示")}
+              ${renderOverlayToggle("toggle-mesh-pairs", "correspondence lines（対応線）を表示")}
+              ${renderOverlayToggle("toggle-mesh-source", "mesh source overlay（変形元メッシュ重ね表示）を表示")}
+              ${renderOverlayToggle("toggle-mesh-target", "mesh target overlay（変形先メッシュ重ね表示）を表示")}
+              ${renderOverlayToggle("toggle-excluded-landmarks", "除外 / 固定 landmark（ランドマーク）を表示")}
+              ${renderOverlayToggle("toggle-displayed-content-rect", "displayedContentRect（表示領域）を表示")}
+              ${renderOverlayToggle("toggle-overlay-skipped-reason", "skipped reason（スキップ理由）を表示")}
+              ${renderOverlayToggle("toggle-grid-anchors", "grid / anchors（グリッド / アンカー）を表示")}
+              ${renderOverlayToggle("toggle-triangle-mesh", "triangle mesh（トライアングルメッシュ）を表示")}
+            </fieldset>
+          </div>
+          <div class="review-card" data-display-overlay-summary>
+            <p>重ね描き状態はまだありません。</p>
           </div>
           <div class="timeline-controls live-controls" aria-label="MP4再生操作">
             <button class="small-button" type="button" data-action="live-play">MP4再生</button>
@@ -4067,15 +4182,22 @@ function renderLivePreview() {
 function renderPlacementAnalysisPreview() {
   return `
     <div class="preview-card placement-analysis-preview-card" data-preview-panel="placementAnalysis">
+      ${renderCoordinateInfo([
+        ["Coordinate system（座標系）", "placement analysis image-normalized coordinate / analysis render canvas coordinate（配置関数解析用の画像正規化座標 / 解析レンダーcanvas座標）"],
+        ["Data source（データ元）", "placement samples / known target 478 / predicted roundtrip 478（配置サンプル / 既知target 478点 / 予測再レンダー478点）"],
+        ["Generated by（生成元）", "Placement Function Analysis（配置関数解析）"],
+        ["固定 candidate（候補）", "direct_piecewise_ty3_linear_normalized_v1（上下方向3分割・直接推定・一次関数モデル）"],
+        ["Runtime connection（実行時処理との接続）", "解析 candidate（候補）は live runtime（ライブ実行時処理）へ自動反映しません。"],
+      ])}
       <div class="preview-stage placement-analysis-stage" data-placement-analysis-stage data-analysis-status="empty">
         <canvas class="placement-analysis-render-canvas" data-canvas="placement-analysis-render" aria-label="配置関数解析 WebGL render image"></canvas>
         <canvas class="placement-analysis-overlay-canvas" data-overlay="placement-analysis" aria-label="配置関数解析 MediaPipe returned 478 overlay"></canvas>
         <div class="preview-placeholder" data-placement-analysis-placeholder>
-          <h3>配置関数解析プレビュー</h3>
+          <h3>配置関数解析</h3>
           <p>右ペインの配置関数解析タブで解析を実行すると、専用 canvas の WebGL レンダー画像と MediaPipe 返却478点 overlay を表示します。</p>
         </div>
       </div>
-      <div class="obj-preview-controls placement-analysis-preview-controls" aria-label="配置関数解析プレビュー操作">
+      <div class="obj-preview-controls placement-analysis-preview-controls" aria-label="配置関数解析操作">
         <div class="button-row">
           <button class="small-button" type="button" data-action="placement-analysis-prev-sample">前のサンプル</button>
           <button class="small-button" type="button" data-action="placement-analysis-next-sample">次のサンプル</button>
@@ -4653,12 +4775,25 @@ function bindEvents() {
     }
   })
 
+  bindRenderedIdealOverlayToggle("toggle-rendered-ideal-landmarks", "showRenderedIdealLandmarks478")
+
+  bindLiveCoordinatePreviewToggle("toggle-live-coordinate-current-landmarks", "showCurrentLandmarks478")
+  bindLiveCoordinatePreviewToggle("toggle-live-coordinate-aligned-ideal-landmarks", "showAlignedIdealLandmarks478")
+  bindLiveCoordinatePreviewToggle("toggle-live-coordinate-mesh-source", "showMeshSource")
+  bindLiveCoordinatePreviewToggle("toggle-live-coordinate-mesh-target", "showMeshTarget")
+  bindLiveCoordinatePreviewToggle("toggle-live-coordinate-mesh-pairs", "showMeshPairs")
+  bindLiveCoordinatePreviewToggle("toggle-live-coordinate-excluded-landmarks", "showExcludedLandmarks")
+  bindLiveCoordinatePreviewToggle("toggle-live-coordinate-grid-anchors", "showGridAnchors")
+  bindLiveCoordinatePreviewToggle("toggle-live-coordinate-triangle-mesh", "showTriangleMesh")
+
   bindOverlayToggle("toggle-current-landmarks", "showCurrentLandmarks478")
   bindOverlayToggle("toggle-aligned-ideal-landmarks", "showAlignedIdealLandmarks478")
   bindOverlayToggle("toggle-mesh-source", "showMeshSource")
   bindOverlayToggle("toggle-mesh-target", "showMeshTarget")
   bindOverlayToggle("toggle-mesh-pairs", "showMeshPairs")
   bindOverlayToggle("toggle-excluded-landmarks", "showExcludedLandmarks")
+  bindOverlayToggle("toggle-displayed-content-rect", "showDisplayedContentRect")
+  bindOverlayToggle("toggle-overlay-skipped-reason", "showSkippedReason")
   bindOverlayToggle("toggle-grid-anchors", "showGridAnchors")
   bindOverlayToggle("toggle-triangle-mesh", "showTriangleMesh")
 
@@ -4718,6 +4853,28 @@ function bindOverlayToggle(
 ) {
   getElement<HTMLInputElement>(`[data-action="${action}"]`).addEventListener("change", (event) => {
     state.overlay[key] = event.currentTarget.checked
+    addLog(`${event.currentTarget.nextElementSibling?.textContent ?? action}を${event.currentTarget.checked ? "ON" : "OFF"}にしました。`)
+    renderAll()
+  })
+}
+
+function bindRenderedIdealOverlayToggle(
+  action: string,
+  key: keyof LabState["renderedIdealOverlay"],
+) {
+  getElement<HTMLInputElement>(`[data-action="${action}"]`).addEventListener("change", (event) => {
+    state.renderedIdealOverlay[key] = event.currentTarget.checked
+    addLog(`${event.currentTarget.nextElementSibling?.textContent ?? action}を${event.currentTarget.checked ? "ON" : "OFF"}にしました。`)
+    renderAll()
+  })
+}
+
+function bindLiveCoordinatePreviewToggle(
+  action: string,
+  key: keyof LabState["liveCoordinatePreview"],
+) {
+  getElement<HTMLInputElement>(`[data-action="${action}"]`).addEventListener("change", (event) => {
+    state.liveCoordinatePreview[key] = event.currentTarget.checked
     addLog(`${event.currentTarget.nextElementSibling?.textContent ?? action}を${event.currentTarget.checked ? "ON" : "OFF"}にしました。`)
     renderAll()
   })
@@ -5254,7 +5411,7 @@ function loadLiveVideo(file: File) {
   liveVideoElement.srcObject = null
   liveVideoElement.src = objectUrl
   liveVideoElement.load()
-  state.activePreviewTab = "live"
+  state.activePreviewTab = "displayOverlay"
   addLog(`MP4ファイルを読み込みました: ${file.name}`)
   renderAll()
 }
@@ -5291,7 +5448,7 @@ async function startCameraInput() {
     sourceType: "camera",
     status: "starting",
   }
-  state.activePreviewTab = "live"
+  state.activePreviewTab = "displayOverlay"
   renderAll()
 
   try {
@@ -16683,7 +16840,7 @@ async function startModeComparison() {
     status: "running",
     startedAt: new Date().toISOString(),
   }
-  state.activePreviewTab = "live"
+  state.activePreviewTab = "displayOverlay"
   addLog("モード比較を開始しました。IMAGE mode（静止画モード）と VIDEO mode（動画モード）を同じ canvas frame で比較します。")
   renderAll()
 
@@ -17821,6 +17978,7 @@ function renderAll(options: { skipObjRender?: boolean } = {}): RenderUpdateTimin
   const debugUpdateMs = performance.now() - debugStartMs
 
   const overlayStartMs = performance.now()
+  drawLiveCoordinatePreview()
   drawLiveOverlay()
   drawRenderedIdealOverlay()
   const liveOverlayDrawMs = performance.now() - overlayStartMs
@@ -17846,6 +18004,7 @@ function renderPreviewPanels(options: { skipObjRender?: boolean } = {}) {
 
   const liveStage = getElement<HTMLElement>("[data-live-stage]")
   liveStage.dataset.loaded = String(state.liveVideo.loaded)
+  renderLiveCoordinatePreviewPanel()
 
   const objPreviewStatus = getObjPreviewStatus()
   const objStage = getElement<HTMLElement>("[data-obj-stage]")
@@ -17863,6 +18022,7 @@ function renderPreviewPanels(options: { skipObjRender?: boolean } = {}) {
 
   const poseMappingStatus = getPoseMappingPreviewStatus()
   renderPoseMappingLiveSummaryCard()
+  renderDisplayOverlaySummaryCard()
   if (poseMappingStatus !== "ready" && !options.skipObjRender) {
     clearPoseMappingPreviewCanvas()
   }
@@ -17870,33 +18030,225 @@ function renderPreviewPanels(options: { skipObjRender?: boolean } = {}) {
   renderPlacementAnalysisPreviewPanel()
 }
 
+function hasRequiredLandmarks(landmarks: ReferenceLandmark[] | null | undefined) {
+  return landmarks !== null && landmarks !== undefined && landmarks.length === REQUIRED_LANDMARK_COUNT
+}
+
+function unavailable(reason: string): DataAvailability {
+  return { available: false, reason }
+}
+
+function available(): DataAvailability {
+  return { available: true, reason: "available" }
+}
+
+function getRenderedIdeal478Availability(): DataAvailability {
+  const detection = state.renderedIdeal.detection
+  if (hasRequiredLandmarks(detection.landmarks478)) {
+    return available()
+  }
+  return unavailable(`renderedIdealStatus = ${getRenderedIdealStatusFromDetection(detection.status)}`)
+}
+
+function getCurrent478Availability(): DataAvailability {
+  if (state.currentAnalysis.landmarks478.length === REQUIRED_LANDMARK_COUNT) {
+    return available()
+  }
+  return unavailable(`currentFaceStatus = ${state.poseMappingRuntime.currentFaceStatus}`)
+}
+
+function getAlignedRenderedIdeal478Availability(): DataAvailability {
+  const runtime = state.poseMappingRuntime
+  if (hasRequiredLandmarks(runtime.alignedRenderedIdeal478)) {
+    return available()
+  }
+  return unavailable(`placementFunctionStatus = ${runtime.alignment.placementFunctionStatus}`)
+}
+
+function getMeshSourceAvailability(): DataAvailability {
+  const runtime = state.poseMappingRuntime
+  if (hasRequiredLandmarks(runtime.meshSourceVertices)) {
+    return available()
+  }
+  return unavailable(`currentFaceStatus = ${runtime.currentFaceStatus}`)
+}
+
+function getMeshTargetAvailability(): DataAvailability {
+  const runtime = state.poseMappingRuntime
+  if (hasRequiredLandmarks(runtime.meshTargetVertices)) {
+    return available()
+  }
+  return unavailable(
+    `alignmentStatus = ${runtime.alignmentStatus}; placementFunctionStatus = ${runtime.alignment.placementFunctionStatus}`,
+  )
+}
+
+function getCorrespondenceLinesAvailability(): DataAvailability {
+  const current = getCurrent478Availability()
+  if (!current.available) {
+    return current
+  }
+  const aligned = getAlignedRenderedIdeal478Availability()
+  if (!aligned.available) {
+    return aligned
+  }
+  return available()
+}
+
+function getExcludedLandmarksAvailability(): DataAvailability {
+  const current = getCurrent478Availability()
+  if (!current.available) {
+    return current
+  }
+  if (state.poseMappingRuntime.alignment.landmarkReasons.length === 0) {
+    return unavailable("landmarkReasons = not_generated")
+  }
+  return available()
+}
+
+function getDisplayOverlayAlignedIdealAvailability(): DataAvailability {
+  const lifecycle = createOverlayLifecycleFromRuntime(state.poseMappingRuntime)
+  if (canDrawPoseMappingAlignedIdealOverlay()) {
+    return available()
+  }
+  return unavailable(`overlayLifecycle.skippedReason = ${lifecycle.skippedReason}`)
+}
+
+function getDisplayOverlayVideoAvailability(): DataAvailability {
+  if (state.liveVideo.loaded) {
+    return available()
+  }
+  return unavailable(`liveVideo.status = ${state.liveVideo.status}`)
+}
+
+function getNotImplementedAvailability(): DataAvailability {
+  return unavailable("未実装（今回対象外）")
+}
+
 function renderControls() {
   const poseSearchRunning = isPoseCenterSearchRunning()
 
-  setChecked("toggle-current-landmarks", state.overlay.showCurrentLandmarks478)
-  setChecked("toggle-aligned-ideal-landmarks", state.overlay.showAlignedIdealLandmarks478)
-  setChecked("toggle-mesh-source", state.overlay.showMeshSource)
-  setChecked("toggle-mesh-target", state.overlay.showMeshTarget)
-  setChecked("toggle-mesh-pairs", state.overlay.showMeshPairs)
-  setChecked("toggle-excluded-landmarks", state.overlay.showExcludedLandmarks)
-  setChecked("toggle-grid-anchors", state.overlay.showGridAnchors)
-  setChecked("toggle-triangle-mesh", state.overlay.showTriangleMesh)
-  setDisabled(
-    '[data-action="toggle-mesh-source"]',
-    state.currentAnalysis.landmarks478.length !== REQUIRED_LANDMARK_COUNT,
+  const renderedIdeal478Availability = getRenderedIdeal478Availability()
+  const current478Availability = getCurrent478Availability()
+  const alignedRenderedIdeal478Availability = getAlignedRenderedIdeal478Availability()
+  const meshSourceAvailability = getMeshSourceAvailability()
+  const meshTargetAvailability = getMeshTargetAvailability()
+  const correspondenceLinesAvailability = getCorrespondenceLinesAvailability()
+  const excludedLandmarksAvailability = getExcludedLandmarksAvailability()
+  const displayOverlayVideoAvailability = getDisplayOverlayVideoAvailability()
+  const displayOverlayAlignedIdealAvailability = getDisplayOverlayAlignedIdealAvailability()
+  const notImplementedAvailability = getNotImplementedAvailability()
+
+  setToggleState(
+    "toggle-rendered-ideal-landmarks",
+    state.renderedIdealOverlay.showRenderedIdealLandmarks478,
+    !renderedIdeal478Availability.available,
+    renderedIdeal478Availability.reason,
   )
-  setDisabled(
-    '[data-action="toggle-mesh-target"]',
-    !state.poseMappingRuntime.meshTargetVertices ||
-      state.poseMappingRuntime.meshTargetVertices.length !== REQUIRED_LANDMARK_COUNT,
+
+  setToggleState(
+    "toggle-live-coordinate-current-landmarks",
+    state.liveCoordinatePreview.showCurrentLandmarks478,
+    !current478Availability.available,
+    current478Availability.reason,
   )
-  setDisabled(
-    '[data-action="toggle-grid-anchors"]',
-    !state.poseMappingRuntime.alignment.currentBoundsImage &&
-      !state.poseMappingRuntime.alignment.renderedIdealBoundsImage &&
-      !state.poseMappingRuntime.alignment.alignedRenderedIdealBoundsImage,
+  setToggleState(
+    "toggle-live-coordinate-aligned-ideal-landmarks",
+    state.liveCoordinatePreview.showAlignedIdealLandmarks478,
+    !alignedRenderedIdeal478Availability.available,
+    alignedRenderedIdeal478Availability.reason,
   )
-  setDisabled('[data-action="toggle-triangle-mesh"]', true)
+  setToggleState(
+    "toggle-live-coordinate-mesh-pairs",
+    state.liveCoordinatePreview.showMeshPairs,
+    !correspondenceLinesAvailability.available,
+    correspondenceLinesAvailability.reason,
+  )
+  setToggleState(
+    "toggle-live-coordinate-mesh-source",
+    state.liveCoordinatePreview.showMeshSource,
+    !meshSourceAvailability.available,
+    meshSourceAvailability.reason,
+  )
+  setToggleState(
+    "toggle-live-coordinate-mesh-target",
+    state.liveCoordinatePreview.showMeshTarget,
+    !meshTargetAvailability.available,
+    meshTargetAvailability.reason,
+  )
+  setToggleState(
+    "toggle-live-coordinate-excluded-landmarks",
+    state.liveCoordinatePreview.showExcludedLandmarks,
+    !excludedLandmarksAvailability.available,
+    excludedLandmarksAvailability.reason,
+  )
+  setToggleState(
+    "toggle-live-coordinate-grid-anchors",
+    state.liveCoordinatePreview.showGridAnchors,
+    true,
+    notImplementedAvailability.reason,
+  )
+  setToggleState(
+    "toggle-live-coordinate-triangle-mesh",
+    state.liveCoordinatePreview.showTriangleMesh,
+    true,
+    notImplementedAvailability.reason,
+  )
+
+  setToggleState(
+    "toggle-current-landmarks",
+    state.overlay.showCurrentLandmarks478,
+    !current478Availability.available,
+    current478Availability.reason,
+  )
+  setToggleState(
+    "toggle-aligned-ideal-landmarks",
+    state.overlay.showAlignedIdealLandmarks478,
+    !displayOverlayAlignedIdealAvailability.available,
+    displayOverlayAlignedIdealAvailability.reason,
+  )
+  setToggleState(
+    "toggle-mesh-pairs",
+    state.overlay.showMeshPairs,
+    !displayOverlayAlignedIdealAvailability.available || !correspondenceLinesAvailability.available,
+    !displayOverlayAlignedIdealAvailability.available
+      ? displayOverlayAlignedIdealAvailability.reason
+      : correspondenceLinesAvailability.reason,
+  )
+  setToggleState(
+    "toggle-mesh-source",
+    state.overlay.showMeshSource,
+    !meshSourceAvailability.available,
+    meshSourceAvailability.reason,
+  )
+  setToggleState(
+    "toggle-mesh-target",
+    state.overlay.showMeshTarget,
+    !displayOverlayAlignedIdealAvailability.available || !meshTargetAvailability.available,
+    !displayOverlayAlignedIdealAvailability.available
+      ? displayOverlayAlignedIdealAvailability.reason
+      : meshTargetAvailability.reason,
+  )
+  setToggleState(
+    "toggle-excluded-landmarks",
+    state.overlay.showExcludedLandmarks,
+    !excludedLandmarksAvailability.available,
+    excludedLandmarksAvailability.reason,
+  )
+  setToggleState(
+    "toggle-displayed-content-rect",
+    state.overlay.showDisplayedContentRect,
+    !displayOverlayVideoAvailability.available,
+    displayOverlayVideoAvailability.reason,
+  )
+  setToggleState(
+    "toggle-overlay-skipped-reason",
+    state.overlay.showSkippedReason,
+    !displayOverlayVideoAvailability.available,
+    displayOverlayVideoAvailability.reason,
+  )
+  setToggleState("toggle-grid-anchors", state.overlay.showGridAnchors, true, notImplementedAvailability.reason)
+  setToggleState("toggle-triangle-mesh", state.overlay.showTriangleMesh, true, notImplementedAvailability.reason)
 
   const duration = state.liveVideo.durationSec ?? 0
   const range = getElement<HTMLInputElement>("[data-range='live']")
@@ -18026,6 +18378,62 @@ function renderPoseMappingLiveSummaryCard() {
       <div><dt>Profile renderer match</dt><dd>${String(runtime.profileRendererMatch)}</dd></div>
     </dl>
   `
+}
+
+function renderLiveCoordinatePreviewPanel() {
+  const stage = getElement<HTMLElement>("[data-live-coordinate-stage]")
+  const summary = getElement<HTMLElement>("[data-live-coordinate-summary]")
+  const runtime = state.poseMappingRuntime
+  const currentAvailability = getCurrent478Availability()
+  const alignedAvailability = getAlignedRenderedIdeal478Availability()
+  const meshSourceAvailability = getMeshSourceAvailability()
+  const meshTargetAvailability = getMeshTargetAvailability()
+  const hasAnyData =
+    currentAvailability.available ||
+    alignedAvailability.available ||
+    meshSourceAvailability.available ||
+    meshTargetAvailability.available
+  stage.dataset.coordinateStatus = hasAnyData ? "ready" : "empty"
+  summary.innerHTML = `
+    <p>placement function（配置関数）の結果を live video image-normalized coordinate（ライブ映像の画像正規化座標）で確認します。</p>
+    <dl class="review-grid">
+      <div><dt>current478（現在顔478点）</dt><dd>${escapeHtml(formatAvailability(currentAvailability, state.currentAnalysis.landmarks478.length))}</dd></div>
+      <div><dt>alignedRenderedIdeal478（位置合わせ済み理想478点）</dt><dd>${escapeHtml(formatAvailability(alignedAvailability, runtime.alignedRenderedIdeal478?.length ?? null))}</dd></div>
+      <div><dt>meshSourceVertices（変形元メッシュ頂点）</dt><dd>${escapeHtml(formatAvailability(meshSourceAvailability, runtime.meshSourceVertices?.length ?? null))}</dd></div>
+      <div><dt>meshTargetVertices（変形先メッシュ頂点）</dt><dd>${escapeHtml(formatAvailability(meshTargetAvailability, runtime.meshTargetVertices?.length ?? null))}</dd></div>
+      <div><dt>placementFunctionStatus（配置関数状態）</dt><dd>${escapeHtml(runtime.alignment.placementFunctionStatus)}</dd></div>
+      <div><dt>alignmentStatus（位置合わせ状態）</dt><dd>${escapeHtml(runtime.alignmentStatus)}</dd></div>
+      <div><dt>renderedIdealStatus（レンダー理想状態）</dt><dd>${escapeHtml(runtime.renderedIdealStatus)}</dd></div>
+      <div><dt>scaleRatio</dt><dd>${formatRealtimeNullableNumber(runtime.alignment.placementScaleRatio)}</dd></div>
+      <div><dt>translateAfterScaleImageX</dt><dd>${formatRealtimeNullableNumber(runtime.alignment.translateAfterScaleImageX)}</dd></div>
+      <div><dt>translateAfterScaleImageY</dt><dd>${formatRealtimeNullableNumber(runtime.alignment.translateAfterScaleImageY)}</dd></div>
+    </dl>
+  `
+}
+
+function renderDisplayOverlaySummaryCard() {
+  const card = getElement<HTMLElement>("[data-display-overlay-summary]")
+  const runtime = state.poseMappingRuntime
+  const lifecycle = createOverlayLifecycleFromRuntime(runtime)
+  card.innerHTML = `
+    <p>displayedContentRect（動画の実表示領域）を使い、overlay canvas（重ね描きcanvas）上で表示ズレを確認します。</p>
+    <dl class="review-grid">
+      <div><dt>live video（ライブ映像）</dt><dd>${escapeHtml(state.liveVideo.loaded ? "loaded（読込済み）" : "not loaded（未読込）")}</dd></div>
+      <div><dt>displayedContentRect（表示領域）</dt><dd>${escapeHtml(formatRect(runtime.alignment.displayedContentRect))}</dd></div>
+      <div><dt>current overlay（現在顔重ね表示）</dt><dd>${escapeHtml(formatAvailability(getCurrent478Availability(), state.currentAnalysis.landmarks478.length))}</dd></div>
+      <div><dt>aligned ideal overlay（位置合わせ済み理想顔重ね表示）</dt><dd>${escapeHtml(formatAvailability(getDisplayOverlayAlignedIdealAvailability(), runtime.alignedRenderedIdeal478?.length ?? null))}</dd></div>
+      <div><dt>overlayLifecycle（重ね表示ライフサイクル）</dt><dd>visible ${String(lifecycle.alignedRenderedIdealVisible)} / gen ${String(lifecycle.generationMatch)} / token ${String(lifecycle.tokenMatch)} / renderPose ${String(lifecycle.renderPoseValid)}</dd></div>
+      <div><dt>overlay skipped reason（重ね表示スキップ理由）</dt><dd>${escapeHtml(lifecycle.skippedReason)}</dd></div>
+      <div><dt>renderedIdeal478（レンダー理想478点）</dt><dd>live video（ライブ映像）上には直接表示しません。</dd></div>
+    </dl>
+  `
+}
+
+function formatAvailability(availability: DataAvailability, count: number | null) {
+  if (availability.available) {
+    return `available（生成済み） / count = ${formatNullableCount(count)}`
+  }
+  return `not available（未生成） / count = ${formatNullableCount(count)} / reason: ${availability.reason}`
 }
 
 function renderPoseMappingDebugTab() {
@@ -19311,6 +19719,7 @@ function renderRenderedIdealSummaryCard() {
   const summary = state.renderedIdeal.summary
   const detection = state.renderedIdeal.detection
   const calibration = state.objPoseCalibration
+  const runtime = state.poseMappingRuntime
   const appearance = getAppliedObjRenderAppearanceProfile({
     width: summary.canvasWidth || getAppliedObjRenderAppearanceProfile().renderResolution.width,
     height: summary.canvasHeight || getAppliedObjRenderAppearanceProfile().renderResolution.height,
@@ -19332,6 +19741,10 @@ function renderRenderedIdealSummaryCard() {
       <div><dt>pose source</dt><dd>${state.objPoseSync.source}</dd></div>
       <div><dt>applied yaw / pitch / roll</dt><dd>${escapeHtml(formatAppliedObjPose())}</dd></div>
       <div><dt>rotation center</dt><dd>${escapeHtml(formatPoint(summary.rotationCenter))}</dd></div>
+      <div><dt>requestedPoseP（要求描画姿勢）</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.renderedIdealLifecycle.renderPose.requestedPoseP))}</dd></div>
+      <div><dt>actualRenderPoseP（実際に適用された描画姿勢）</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.renderedIdealLifecycle.renderPose.actualRenderPoseP))}</dd></div>
+      <div><dt>P_confirm（MediaPipe再検出後の確認姿勢）</dt><dd>${escapeHtml(formatPose(runtime.P_confirm))}</dd></div>
+      <div><dt>renderedIdealStatus（レンダー理想ステータス）</dt><dd>${escapeHtml(runtime.renderedIdealStatus)}</dd></div>
       <div><dt>レンダー理想検出状態</dt><dd>${detection.status}</dd></div>
       <div><dt>レンダー理想検出ms</dt><dd>${formatRealtimeNullableNumber(detection.detectMs)}</dd></div>
       <div><dt>レンダー理想ランドマーク数</dt><dd>${formatNullableCount(detection.landmarkCount)}</dd></div>
@@ -19554,6 +19967,107 @@ function rotateObjPoint(point: ObjVertex, previewState: ObjPreviewState): ObjVer
   }
 }
 
+function drawLiveCoordinatePreview() {
+  const context = liveCoordinateCanvas.getContext("2d")
+  if (!context) {
+    return
+  }
+
+  const rect = liveCoordinateCanvas.getBoundingClientRect()
+  const dpr = window.devicePixelRatio || 1
+  liveCoordinateCanvas.width = Math.max(1, Math.round(rect.width * dpr))
+  liveCoordinateCanvas.height = Math.max(1, Math.round(rect.height * dpr))
+  context.setTransform(dpr, 0, 0, dpr, 0, 0)
+  context.clearRect(0, 0, rect.width, rect.height)
+
+  if (state.activePreviewTab !== "liveCoordinates" || rect.width <= 0 || rect.height <= 0) {
+    return
+  }
+
+  const previewRect: Rect = {
+    x: 0,
+    y: 0,
+    width: rect.width,
+    height: rect.height,
+  }
+  drawNormalizedCoordinateFrame(context, previewRect)
+
+  const current478 = state.currentAnalysis.landmarks478.length === REQUIRED_LANDMARK_COUNT
+    ? state.currentAnalysis.landmarks478
+    : null
+  const alignedRenderedIdeal478 = state.poseMappingRuntime.alignedRenderedIdeal478
+  const meshSourceVertices = state.poseMappingRuntime.meshSourceVertices
+  const meshTargetVertices = state.poseMappingRuntime.meshTargetVertices
+
+  if (
+    state.liveCoordinatePreview.showMeshPairs &&
+    current478 &&
+    alignedRenderedIdeal478 &&
+    alignedRenderedIdeal478.length === REQUIRED_LANDMARK_COUNT
+  ) {
+    drawLandmarkPairLines(
+      context,
+      previewRect,
+      current478,
+      alignedRenderedIdeal478,
+      "rgba(48, 118, 92, 0.34)",
+    )
+  }
+
+  if (
+    state.liveCoordinatePreview.showMeshSource &&
+    meshSourceVertices &&
+    meshSourceVertices.length === REQUIRED_LANDMARK_COUNT
+  ) {
+    drawLandmarkPoints(context, previewRect, meshSourceVertices, "rgba(41, 92, 218, 0.55)", 1.1)
+  }
+
+  if (
+    state.liveCoordinatePreview.showMeshTarget &&
+    meshTargetVertices &&
+    meshTargetVertices.length === REQUIRED_LANDMARK_COUNT
+  ) {
+    drawLandmarkPoints(context, previewRect, meshTargetVertices, "rgba(238, 142, 52, 0.58)", 1.1)
+  }
+
+  if (
+    state.liveCoordinatePreview.showAlignedIdealLandmarks478 &&
+    alignedRenderedIdeal478 &&
+    alignedRenderedIdeal478.length === REQUIRED_LANDMARK_COUNT
+  ) {
+    drawLandmarkPoints(context, previewRect, alignedRenderedIdeal478, "rgba(220, 71, 94, 0.86)", 1.35)
+  }
+
+  if (state.liveCoordinatePreview.showCurrentLandmarks478 && current478) {
+    drawLandmarkPoints(context, previewRect, current478, "rgba(79, 128, 255, 0.9)", 1.45)
+  }
+
+  if (state.liveCoordinatePreview.showExcludedLandmarks && current478) {
+    drawExcludedLandmarks(
+      context,
+      previewRect,
+      current478,
+      state.poseMappingRuntime.alignment.landmarkReasons,
+    )
+  }
+}
+
+function drawNormalizedCoordinateFrame(context: CanvasRenderingContext2D, rect: Rect) {
+  context.save()
+  context.strokeStyle = "rgba(38, 49, 59, 0.4)"
+  context.lineWidth = 1
+  context.strokeRect(rect.x + 0.5, rect.y + 0.5, Math.max(0, rect.width - 1), Math.max(0, rect.height - 1))
+  context.fillStyle = "rgba(38, 49, 59, 0.78)"
+  context.font = "700 11px Inter, system-ui, sans-serif"
+  context.fillText("x 0..1", rect.x + 10, rect.y + 18)
+  context.save()
+  context.translate(rect.x + 14, rect.y + rect.height - 10)
+  context.rotate(-Math.PI / 2)
+  context.fillText("y 0..1", 0, 0)
+  context.restore()
+  context.restore()
+}
+
 function drawLiveOverlay() {
   const context = liveOverlayCanvas.getContext("2d")
   if (!context) {
@@ -19568,7 +20082,7 @@ function drawLiveOverlay() {
   context.clearRect(0, 0, rect.width, rect.height)
 
   if (
-    state.activePreviewTab !== "live" ||
+    state.activePreviewTab !== "displayOverlay" ||
     rect.width <= 0 ||
     rect.height <= 0
   ) {
@@ -19586,6 +20100,10 @@ function drawLiveOverlay() {
     displayedContentRect,
   }
 
+  if (state.overlay.showDisplayedContentRect) {
+    drawDisplayedContentRect(context, displayedContentRect)
+  }
+
   const current478 = state.currentAnalysis.landmarks478.length === REQUIRED_LANDMARK_COUNT
     ? state.currentAnalysis.landmarks478
     : null
@@ -19593,6 +20111,7 @@ function drawLiveOverlay() {
   const meshSourceVertices = state.poseMappingRuntime.meshSourceVertices
   const meshTargetVertices = state.poseMappingRuntime.meshTargetVertices
   const canDrawAlignedIdeal = canDrawPoseMappingAlignedIdealOverlay()
+  const overlayLifecycle = createOverlayLifecycleFromRuntime(state.poseMappingRuntime)
 
   if (
     canDrawAlignedIdeal &&
@@ -19678,6 +20197,43 @@ function drawLiveOverlay() {
       state.poseMappingRuntime.alignment.landmarkReasons,
     )
   }
+
+  if (state.overlay.showSkippedReason) {
+    drawOverlaySkippedReason(context, rect, overlayLifecycle.skippedReason)
+  }
+}
+
+function drawDisplayedContentRect(context: CanvasRenderingContext2D, displayedContentRect: Rect) {
+  context.save()
+  context.strokeStyle = "rgba(42, 121, 180, 0.82)"
+  context.lineWidth = 1.5
+  context.setLineDash([5, 4])
+  context.strokeRect(
+    displayedContentRect.x + 0.75,
+    displayedContentRect.y + 0.75,
+    Math.max(0, displayedContentRect.width - 1.5),
+    Math.max(0, displayedContentRect.height - 1.5),
+  )
+  context.setLineDash([])
+  context.fillStyle = "rgba(42, 121, 180, 0.9)"
+  context.font = "700 11px Inter, system-ui, sans-serif"
+  context.fillText("displayedContentRect", displayedContentRect.x + 8, displayedContentRect.y + 18)
+  context.restore()
+}
+
+function drawOverlaySkippedReason(context: CanvasRenderingContext2D, rect: DOMRect, skippedReason: string) {
+  const text = `overlay skipped reason: ${skippedReason}`
+  context.save()
+  context.font = "700 12px Inter, system-ui, sans-serif"
+  const metrics = context.measureText(text)
+  const boxWidth = Math.min(rect.width - 16, metrics.width + 18)
+  context.fillStyle = "rgba(255, 255, 255, 0.88)"
+  context.fillRect(8, 8, boxWidth, 26)
+  context.strokeStyle = "rgba(38, 49, 59, 0.22)"
+  context.strokeRect(8.5, 8.5, Math.max(0, boxWidth - 1), 25)
+  context.fillStyle = "rgba(38, 49, 59, 0.88)"
+  context.fillText(text, 17, 26)
+  context.restore()
 }
 
 function drawPoseMappingBoundsDebug(
@@ -19746,6 +20302,33 @@ function drawRenderedIdealOverlay() {
   renderedIdealOverlayCanvas.height = Math.max(1, Math.round(rect.height * dpr))
   context.setTransform(dpr, 0, 0, dpr, 0, 0)
   context.clearRect(0, 0, rect.width, rect.height)
+
+  if (
+    state.activePreviewTab !== "renderedIdeal" ||
+    !state.renderedIdealOverlay.showRenderedIdealLandmarks478 ||
+    rect.width <= 0 ||
+    rect.height <= 0
+  ) {
+    return
+  }
+
+  const renderedIdeal478 = state.renderedIdeal.detection.landmarks478
+  if (!renderedIdeal478 || renderedIdeal478.length !== REQUIRED_LANDMARK_COUNT) {
+    return
+  }
+
+  drawLandmarkPoints(
+    context,
+    {
+      x: 0,
+      y: 0,
+      width: rect.width,
+      height: rect.height,
+    },
+    renderedIdeal478,
+    "rgba(220, 71, 94, 0.86)",
+    1.35,
+  )
 }
 
 function canDrawPoseMappingAlignedIdealOverlay() {
@@ -25044,6 +25627,16 @@ function getSelectedFile(event: Event) {
 
 function setChecked(action: string, checked: boolean) {
   getElement<HTMLInputElement>(`[data-action="${action}"]`).checked = checked
+}
+
+function setToggleState(action: string, checked: boolean, disabled: boolean, reason: string | null = null) {
+  const input = getElement<HTMLInputElement>(`[data-action="${action}"]`)
+  input.checked = checked
+  input.disabled = disabled
+  const reasonElement = app.querySelector<HTMLElement>(`[data-toggle-reason="${action}"]`)
+  if (reasonElement) {
+    reasonElement.textContent = disabled && reason ? `disabled（無効） reason: ${reason}` : ""
+  }
 }
 
 function setNumberValue(control: string, value: number) {
