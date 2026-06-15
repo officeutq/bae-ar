@@ -66,6 +66,10 @@ placement function を評価できない場合は、旧 alignment へ fallback �
 
 `Placement Function Analysis（配置関数解析）` は、理想 OBJ 顔だけを使う debug-only の検証機能です。目的は、WebGL で既知配置に置いた理想 OBJ 顔を MediaPipe に通し、返ってきた `facialTransformationMatrix` から `scaleRatio + translateAfterScale` を復元する placement function を求めることです。
 
+詳細な検証履歴と候補選定の流れは
+[Placement Function Analysis History](ideal-obj-render-warp-lab-placement-function-analysis-history.md)
+に整理します。
+
 処理の流れ:
 
 ```text
