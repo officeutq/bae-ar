@@ -6187,6 +6187,21 @@ function updateObjPoseSyncFromCurrentAnalysis() {
   }
 }
 
+function shouldRecoverPoseMappingRuntimeAfterCurrentFaceReturn(previousRuntime: PoseMappingRuntimeState) {
+  if (!state.poseMappingProfile.profile || !canRenderRenderedIdealGeometry()) {
+    return false
+  }
+  if (getPoseMappingSkippedReasonForCurrentFace() !== "none") {
+    return false
+  }
+  return (
+    previousRuntime.poseMappingSkippedReason === "no_current_face" ||
+    previousRuntime.currentFaceStatus === "missing" ||
+    previousRuntime.renderedIdealStatus !== "detected" ||
+    !previousRuntime.renderedIdealImageDataUrl
+  )
+}
+
 async function updatePoseMappingRuntimeFromCurrentAnalysis(
   options: { skipFinalRender?: boolean } = {},
 ) {
@@ -18466,6 +18481,7 @@ async function runRealtimeTick(frameTick: RealtimeFrameTick) {
 
   try {
     state.realtimeDebug.realtimeTickAnalysisRequestCount += 1
+    const runtimeBeforeCurrentAnalysis = state.poseMappingRuntime
     state.realtimeDebug = {
       ...state.realtimeDebug,
       driveMode: frameTick.driveMode,
@@ -18484,7 +18500,10 @@ async function runRealtimeTick(frameTick: RealtimeFrameTick) {
       }) ??
       createEmptyCurrentAnalysisTimingBreakdown()
 
-    if (state.realtimeDebug.mode === "current_analysis_obj_render") {
+    const shouldRunRuntimeRender =
+      state.realtimeDebug.mode === "current_analysis_obj_render" ||
+      shouldRecoverPoseMappingRuntimeAfterCurrentFaceReturn(runtimeBeforeCurrentAnalysis)
+    if (shouldRunRuntimeRender) {
       await updatePoseMappingRuntimeFromCurrentAnalysis({ skipFinalRender: true })
       objRenderMs = state.poseMappingRuntime.renderMs
     }
@@ -18527,7 +18546,7 @@ async function runRealtimeTick(frameTick: RealtimeFrameTick) {
     currentAnalysisMs = currentAnalysisTimingBreakdown.currentAnalysisTotalMs
     const totalMs = sumNullableTimings(
       currentAnalysisMs,
-      state.realtimeDebug.mode === "current_analysis_obj_render"
+      shouldRunRuntimeRender
         ? state.poseMappingRuntime.totalMs
         : objRenderMs,
     )
