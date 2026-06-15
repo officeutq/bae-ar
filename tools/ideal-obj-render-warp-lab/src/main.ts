@@ -2383,6 +2383,7 @@ type PlacementFunctionAnalysisExport = {
     anchorLandmarkSummary: PlacementFunctionAnchorLandmarkSummary
     roundtripValidationSummary?: PlacementFunctionRoundtripValidationSummary
     roundtripComparisonSummary?: PlacementFunctionRoundtripComparisonSummary
+    conditionBatchRoundtripComparisonSummary?: PlacementFunctionConditionBatchRoundtripComparisonSummary
   }
   samples: PlacementFunctionAnalysisSample[]
 }
@@ -2594,6 +2595,7 @@ type PlacementFunctionRoundtripLandmarkDiffSummary = {
   mean2dDistance: number | null
   max2dDistance: number | null
   comparedCount: number
+  comparedTo?: "selected_sample_target478" | "representative_sample_target478"
 }
 
 type PlacementFunctionRoundtripMediaPipeResult = {
@@ -2671,6 +2673,112 @@ type PlacementFunctionRoundtripComparisonState = {
 type PlacementFunctionRoundtripComparisonSummary = Omit<
   PlacementFunctionRoundtripComparisonState,
   "previewPredictedLandmarks478" | "previewPredictedCandidateId"
+>
+
+type PlacementFunctionRoundtripInput = PlacementFunctionCandidateTrainingSample & {
+  requestedPoseP: ObjPoseMappingPose
+  mediaPipeResult: {
+    returnedPose?: {
+      yaw: number
+      pitch: number
+      roll: number
+    } | null
+  }
+  previewLandmarks478: ReferenceLandmark[] | null
+}
+
+type PlacementFunctionConditionRoundtripInput = PlacementFunctionRoundtripInput & {
+  representativeSampleIndex: number | null
+  repeatSampleCount: number
+  usableSampleCount: number
+}
+
+type PlacementFunctionConditionBatchStatus = "idle" | "running" | "completed" | "cancelled" | "error"
+
+type PlacementFunctionConditionBatchFullScoreStats = {
+  mean: number | null
+  p50: number | null
+  p90: number | null
+  p95: number | null
+  max: number | null
+}
+
+type PlacementFunctionConditionBatchCompactScoreStats = {
+  mean: number | null
+  p95: number | null
+  max: number | null
+}
+
+type PlacementFunctionConditionBatchCandidateSummary = {
+  candidateId: PlacementFunctionRoundtripCandidateId
+  completedCount: number
+  skippedCount: number
+  errorCount: number
+  detectedCount: number
+  noFaceCount: number
+  matrixNormalizedScore: PlacementFunctionConditionBatchFullScoreStats
+  roundtripScore: PlacementFunctionConditionBatchFullScoreStats
+  matrixRawTranslationScore: PlacementFunctionConditionBatchCompactScoreStats
+  poseScore: PlacementFunctionConditionBatchCompactScoreStats
+  landmarkScore: PlacementFunctionConditionBatchCompactScoreStats
+  winCounts: {
+    byRoundtripScore: number
+    byMatrixNormalizedScore: number
+  }
+}
+
+type PlacementFunctionConditionBatchResult = {
+  conditionKey: string
+  representativeSampleIndex: number | null
+  repeatSampleCount: number
+  usableSampleCount: number
+  bestByRoundtripScoreCandidateId: PlacementFunctionRoundtripCandidateId | null
+  bestByMatrixNormalizedScoreCandidateId: PlacementFunctionRoundtripCandidateId | null
+  results: PlacementFunctionRoundtripComparisonResult[]
+}
+
+type PlacementFunctionConditionBatchWorstCondition = {
+  conditionKey: string
+  representativeSampleIndex: number | null
+  candidateId: PlacementFunctionRoundtripCandidateId
+  matrixNormalizedScore: number | null
+  roundtripScore: number | null
+  matrixRawTranslationScore: number | null
+  poseScore: number | null
+  landmarkScore: number | null
+  matrixError: PlacementFunctionRoundtripMatrixError | null
+  poseError: PlacementFunctionRoundtripPoseError | null
+  estimatedTransform: PlacementFunctionRoundtripEstimatedTransform | null
+}
+
+type PlacementFunctionConditionBatchRoundtripComparisonState = {
+  status: PlacementFunctionConditionBatchStatus
+  startedAtMs: number | null
+  completedAtMs: number | null
+  elapsedMs: number | null
+  estimatedRemainingMs: number | null
+  totalConditionCount: number
+  processedConditionCount: number
+  totalRenderCount: number
+  processedRenderCount: number
+  candidateIds: PlacementFunctionRoundtripCandidateId[]
+  currentConditionKey: string | null
+  currentCandidateId: PlacementFunctionRoundtripCandidateId | null
+  bestByRoundtripScoreCandidateId: PlacementFunctionRoundtripCandidateId | null
+  bestByMatrixNormalizedScoreCandidateId: PlacementFunctionRoundtripCandidateId | null
+  candidateSummaries: PlacementFunctionConditionBatchCandidateSummary[]
+  worstConditions: PlacementFunctionConditionBatchWorstCondition[]
+  conditionResults: PlacementFunctionConditionBatchResult[]
+  previewConditionKey: string | null
+  previewCandidateId: PlacementFunctionRoundtripCandidateId | null
+  previewRepresentativeSampleIndex: number | null
+  previewPredictedLandmarks478: ReferenceLandmark[] | null
+  errorMessage: string | null
+}
+
+type PlacementFunctionConditionBatchRoundtripComparisonSummary = Omit<
+  PlacementFunctionConditionBatchRoundtripComparisonState,
+  "previewPredictedLandmarks478"
 >
 
 type PlacementFunctionAnalysisRange = {
@@ -2765,6 +2873,7 @@ type PlacementFunctionAnalysisState = {
   selectedRoundtripCandidateId: PlacementFunctionRoundtripCandidateId | null
   roundtripPreview: PlacementFunctionRoundtripPreviewState
   roundtripComparison: PlacementFunctionRoundtripComparisonState
+  conditionBatchRoundtripComparison: PlacementFunctionConditionBatchRoundtripComparisonState
   summary: PlacementFunctionAnalysisSummary
   candidate: PlacementFunctionCandidate | null
   candidateUnavailableReason: string | null
@@ -3492,6 +3601,7 @@ let renderDetectHandoffCancelRequested = false
 let webglObjBenchmarkCancelRequested = false
 let webglObjBenchmarkRenderer: WebglObjRenderer | null = null
 let placementAnalysisCancelRequested = false
+let placementFunctionConditionBatchRoundtripCancelRequested = false
 let placementAnalysisRenderer: WebglObjRenderer | null = null
 let webglRenderBufferGenerationId = 0
 let webglDetectCanvasGenerationId = 0
@@ -3763,7 +3873,7 @@ function renderPlacementAnalysisPreview() {
         </label>
         <label class="overlay-toggle">
           <input type="checkbox" data-control="placement-analysis-show-best-comparison-roundtrip-478" checked />
-          <span>比較 best candidate の再レンダー478を表示</span>
+          <span>比較 / batch best candidate の再レンダー478を表示</span>
         </label>
         <label class="overlay-toggle">
           <input type="checkbox" data-control="placement-analysis-show-target-bounds" checked />
@@ -4296,6 +4406,12 @@ function bindEvents() {
     }
     if (action === "placement-analysis-run-roundtrip-comparison") {
       void runSelectedPlacementFunctionRoundtripComparison()
+    }
+    if (action === "placement-analysis-run-condition-batch-roundtrip-comparison") {
+      void runPlacementFunctionConditionBatchRoundtripComparison()
+    }
+    if (action === "placement-analysis-stop-condition-batch-roundtrip-comparison") {
+      stopPlacementFunctionConditionBatchRoundtripComparison()
     }
     if (action === "placement-analysis-prev-sample") {
       selectPlacementAnalysisSample((state.placementAnalysis.selectedSampleIndex ?? 0) - 1)
@@ -9683,7 +9799,10 @@ function addRenderedIdealDetectionTimingSample(detectMs: number) {
 }
 
 async function startPlacementFunctionAnalysis() {
-  if (state.placementAnalysis.status === "running") {
+  if (
+    state.placementAnalysis.status === "running" ||
+    state.placementAnalysis.conditionBatchRoundtripComparison.status === "running"
+  ) {
     return
   }
 
@@ -9791,10 +9910,11 @@ function stopPlacementFunctionAnalysis() {
 }
 
 function runPlacementFunctionRoundtripRenderDetect(
-  sample: PlacementFunctionAnalysisSampleState,
+  sample: PlacementFunctionRoundtripInput,
   estimatedTransform: PlacementFunctionRoundtripEstimatedTransform,
   detector: FaceLandmarker,
   renderer: WebglObjRenderer,
+  landmarkComparedTo: PlacementFunctionRoundtripLandmarkDiffSummary["comparedTo"] = "selected_sample_target478",
 ): PlacementFunctionRoundtripExecutionResult {
   resizeWebglObjBenchmarkRenderer(renderer, sample.knownPlacement.canvasWidth, sample.knownPlacement.canvasHeight)
   const estimatedKnownPlacement = createKnownPlacementFromPlacementFunctionEstimatedTransform(sample, estimatedTransform)
@@ -9845,6 +9965,7 @@ function runPlacementFunctionRoundtripRenderDetect(
     landmarkDiffSummary: calculatePlacementFunctionRoundtripLandmarkDiffSummary(
       sample.previewLandmarks478,
       predictedLandmarks,
+      landmarkComparedTo,
     ),
     predictedLandmarks478ForPreview: predictedLandmarks.length > 0 ? predictedLandmarks : null,
   }
@@ -9853,7 +9974,8 @@ function runPlacementFunctionRoundtripRenderDetect(
 async function runSelectedPlacementFunctionRoundtripValidation() {
   if (
     state.placementAnalysis.roundtripPreview.status === "running" ||
-    state.placementAnalysis.roundtripComparison.status === "running"
+    state.placementAnalysis.roundtripComparison.status === "running" ||
+    state.placementAnalysis.conditionBatchRoundtripComparison.status === "running"
   ) {
     return
   }
@@ -9965,7 +10087,8 @@ async function runSelectedPlacementFunctionRoundtripValidation() {
 async function runSelectedPlacementFunctionRoundtripComparison() {
   if (
     state.placementAnalysis.roundtripComparison.status === "running" ||
-    state.placementAnalysis.roundtripPreview.status === "running"
+    state.placementAnalysis.roundtripPreview.status === "running" ||
+    state.placementAnalysis.conditionBatchRoundtripComparison.status === "running"
   ) {
     return
   }
@@ -10123,6 +10246,522 @@ async function runSelectedPlacementFunctionRoundtripComparison() {
   } finally {
     renderAll()
   }
+}
+
+async function runPlacementFunctionConditionBatchRoundtripComparison() {
+  const batch = state.placementAnalysis.conditionBatchRoundtripComparison
+  if (
+    batch.status === "running" ||
+    state.placementAnalysis.status === "running" ||
+    state.placementAnalysis.roundtripComparison.status === "running" ||
+    state.placementAnalysis.roundtripPreview.status === "running"
+  ) {
+    return
+  }
+
+  const candidate = state.placementAnalysis.candidate
+  const candidateIds = [...PLACEMENT_FUNCTION_ROUNDTRIP_COMPARISON_CANDIDATE_IDS]
+  const inputs = createPlacementFunctionConditionBatchRoundtripInputs(state.placementAnalysis.samples)
+  if (!candidate || inputs.length === 0) {
+    state.placementAnalysis = {
+      ...state.placementAnalysis,
+      conditionBatchRoundtripComparison: {
+        ...createDefaultPlacementFunctionConditionBatchRoundtripComparisonState(),
+        status: "error",
+        candidateIds,
+        totalConditionCount: inputs.length,
+        totalRenderCount: inputs.length * candidateIds.length,
+        errorMessage: candidate
+          ? "条件単位の usable sample がありません。先に配置関数解析を完了してください。"
+          : "配置関数候補がありません。先に配置関数解析を完了してください。",
+      },
+    }
+    renderAll()
+    return
+  }
+  if (!canRenderRenderedIdealGeometry()) {
+    state.placementAnalysis = {
+      ...state.placementAnalysis,
+      conditionBatchRoundtripComparison: {
+        ...createDefaultPlacementFunctionConditionBatchRoundtripComparisonState(),
+        status: "error",
+        candidateIds,
+        totalConditionCount: inputs.length,
+        totalRenderCount: inputs.length * candidateIds.length,
+        errorMessage: "OBJ読込を完了してから条件単位まとめ再レンダー比較を実行してください。",
+      },
+    }
+    renderAll()
+    return
+  }
+
+  const startedAtMs = Date.now()
+  const startedAtPerformanceMs = performance.now()
+  placementFunctionConditionBatchRoundtripCancelRequested = false
+  state.placementAnalysis = {
+    ...state.placementAnalysis,
+    conditionBatchRoundtripComparison: {
+      ...createDefaultPlacementFunctionConditionBatchRoundtripComparisonState(),
+      status: "running",
+      startedAtMs,
+      totalConditionCount: inputs.length,
+      totalRenderCount: inputs.length * candidateIds.length,
+      candidateIds,
+    },
+  }
+  state.activePreviewTab = "placementAnalysis"
+  state.activeDebugTab = "placementAnalysis"
+  addLog(`条件単位まとめ再レンダー比較を開始しました: ${inputs.length} conditions / ${candidateIds.length} candidates`)
+  renderAll()
+
+  const conditionResults: PlacementFunctionConditionBatchResult[] = []
+  let processedConditionCount = 0
+  let processedRenderCount = 0
+
+  try {
+    const detector = await getRenderedIdealFaceLandmarker()
+    const renderer = getOrCreatePlacementAnalysisRenderer()
+    const availableCandidateIds = new Set(getPlacementFunctionRoundtripCandidateIds(candidate))
+
+    for (const input of inputs) {
+      if (placementFunctionConditionBatchRoundtripCancelRequested) {
+        break
+      }
+
+      const conditionCandidateResults: PlacementFunctionRoundtripComparisonResult[] = []
+      const previewLandmarksByCandidateId = new Map<PlacementFunctionRoundtripCandidateId, ReferenceLandmark[]>()
+      let completedWholeCondition = true
+
+      for (const candidateId of candidateIds) {
+        if (placementFunctionConditionBatchRoundtripCancelRequested) {
+          completedWholeCondition = false
+          break
+        }
+
+        updatePlacementFunctionConditionBatchRoundtripState({
+          status: "running",
+          startedAtMs,
+          startedAtPerformanceMs,
+          processedConditionCount,
+          processedRenderCount,
+          totalConditionCount: inputs.length,
+          totalRenderCount: inputs.length * candidateIds.length,
+          candidateIds,
+          currentConditionKey: input.conditionKey,
+          currentCandidateId: candidateId,
+          conditionResults: [
+            ...conditionResults,
+            createPlacementFunctionConditionBatchResult(input, conditionCandidateResults),
+          ],
+        })
+        renderDebugContent()
+
+        let comparisonResult: PlacementFunctionRoundtripComparisonResult
+        if (!availableCandidateIds.has(candidateId)) {
+          comparisonResult = createPlacementFunctionRoundtripComparisonResult({
+            candidateId,
+            status: "skipped",
+            skippedReason: "candidate JSON に存在しません。",
+          })
+        } else {
+          const estimatedTransform = estimatePlacementFunctionRoundtripTransform(candidate, candidateId, input)
+          if (!estimatedTransform) {
+            comparisonResult = createPlacementFunctionRoundtripComparisonResult({
+              candidateId,
+              status: "error",
+              errorMessage: "candidate から estimatedTransform を生成できませんでした。",
+            })
+          } else {
+            try {
+              const roundtripResult = runPlacementFunctionRoundtripRenderDetect(
+                input,
+                estimatedTransform,
+                detector,
+                renderer,
+                "representative_sample_target478",
+              )
+              comparisonResult = createPlacementFunctionRoundtripComparisonResult({
+                candidateId,
+                status: "completed",
+                estimatedTransform,
+                ...roundtripResult,
+              })
+              if (roundtripResult.predictedLandmarks478ForPreview) {
+                previewLandmarksByCandidateId.set(candidateId, roundtripResult.predictedLandmarks478ForPreview)
+              }
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error)
+              comparisonResult = createPlacementFunctionRoundtripComparisonResult({
+                candidateId,
+                status: "error",
+                estimatedTransform,
+                errorMessage: message,
+              })
+            }
+          }
+        }
+
+        conditionCandidateResults.push(comparisonResult)
+        processedRenderCount += 1
+        updatePlacementFunctionConditionBatchRoundtripState({
+          status: "running",
+          startedAtMs,
+          startedAtPerformanceMs,
+          processedConditionCount,
+          processedRenderCount,
+          totalConditionCount: inputs.length,
+          totalRenderCount: inputs.length * candidateIds.length,
+          candidateIds,
+          currentConditionKey: input.conditionKey,
+          currentCandidateId: candidateId,
+          conditionResults: [
+            ...conditionResults,
+            createPlacementFunctionConditionBatchResult(input, conditionCandidateResults),
+          ],
+        })
+        renderDebugContent()
+        await waitForNextFrame()
+      }
+
+      if (conditionCandidateResults.length > 0) {
+        const conditionResult = createPlacementFunctionConditionBatchResult(input, conditionCandidateResults)
+        conditionResults.push(conditionResult)
+        if (completedWholeCondition) {
+          processedConditionCount += 1
+        }
+        updatePlacementFunctionConditionBatchPreview(input, conditionResult, previewLandmarksByCandidateId)
+        updatePlacementFunctionConditionBatchRoundtripState({
+          status: "running",
+          startedAtMs,
+          startedAtPerformanceMs,
+          processedConditionCount,
+          processedRenderCount,
+          totalConditionCount: inputs.length,
+          totalRenderCount: inputs.length * candidateIds.length,
+          candidateIds,
+          currentConditionKey: input.conditionKey,
+          currentCandidateId: null,
+          conditionResults,
+        })
+        renderPlacementAnalysisPreviewPanel()
+        renderDebugContent()
+      }
+
+      if (!completedWholeCondition) {
+        break
+      }
+    }
+
+    const completedAtMs = Date.now()
+    const finalStatus: PlacementFunctionConditionBatchStatus = placementFunctionConditionBatchRoundtripCancelRequested
+      ? "cancelled"
+      : "completed"
+    updatePlacementFunctionConditionBatchRoundtripState({
+      status: finalStatus,
+      startedAtMs,
+      startedAtPerformanceMs,
+      completedAtMs,
+      processedConditionCount,
+      processedRenderCount,
+      totalConditionCount: inputs.length,
+      totalRenderCount: inputs.length * candidateIds.length,
+      candidateIds,
+      currentConditionKey: null,
+      currentCandidateId: null,
+      conditionResults,
+    })
+    addLog(
+      finalStatus === "completed"
+        ? `条件単位まとめ再レンダー比較が完了しました: ${processedConditionCount} conditions / ${processedRenderCount} render slots`
+        : `条件単位まとめ再レンダー比較を中断しました: ${processedConditionCount} conditions / ${processedRenderCount} render slots`,
+    )
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    console.error("Condition batch roundtrip comparison failed", error)
+    updatePlacementFunctionConditionBatchRoundtripState({
+      status: "error",
+      startedAtMs,
+      startedAtPerformanceMs,
+      completedAtMs: Date.now(),
+      processedConditionCount,
+      processedRenderCount,
+      totalConditionCount: inputs.length,
+      totalRenderCount: inputs.length * candidateIds.length,
+      candidateIds,
+      currentConditionKey: null,
+      currentCandidateId: null,
+      conditionResults,
+      errorMessage: message,
+    })
+    addLog(`条件単位まとめ再レンダー比較でエラーが発生しました: ${message}`)
+  } finally {
+    placementFunctionConditionBatchRoundtripCancelRequested = false
+    renderAll()
+  }
+}
+
+function stopPlacementFunctionConditionBatchRoundtripComparison() {
+  if (state.placementAnalysis.conditionBatchRoundtripComparison.status !== "running") {
+    return
+  }
+  placementFunctionConditionBatchRoundtripCancelRequested = true
+}
+
+function updatePlacementFunctionConditionBatchRoundtripState(input: {
+  status: PlacementFunctionConditionBatchStatus
+  startedAtMs: number
+  startedAtPerformanceMs: number
+  completedAtMs?: number | null
+  processedConditionCount: number
+  processedRenderCount: number
+  totalConditionCount: number
+  totalRenderCount: number
+  candidateIds: PlacementFunctionRoundtripCandidateId[]
+  currentConditionKey: string | null
+  currentCandidateId: PlacementFunctionRoundtripCandidateId | null
+  conditionResults: PlacementFunctionConditionBatchResult[]
+  errorMessage?: string | null
+}) {
+  const elapsedMs = performance.now() - input.startedAtPerformanceMs
+  const remainingRenderCount = Math.max(0, input.totalRenderCount - input.processedRenderCount)
+  const averageRenderMs = input.processedRenderCount > 0 ? elapsedMs / input.processedRenderCount : null
+  const aggregate = buildPlacementFunctionConditionBatchRoundtripAggregate(
+    input.candidateIds,
+    input.conditionResults,
+  )
+  state.placementAnalysis = {
+    ...state.placementAnalysis,
+    conditionBatchRoundtripComparison: {
+      ...state.placementAnalysis.conditionBatchRoundtripComparison,
+      status: input.status,
+      startedAtMs: input.startedAtMs,
+      completedAtMs: input.completedAtMs ?? null,
+      elapsedMs: roundForState(elapsedMs),
+      estimatedRemainingMs:
+        input.status === "running" && averageRenderMs !== null
+          ? roundForState(averageRenderMs * remainingRenderCount)
+          : 0,
+      totalConditionCount: input.totalConditionCount,
+      processedConditionCount: input.processedConditionCount,
+      totalRenderCount: input.totalRenderCount,
+      processedRenderCount: input.processedRenderCount,
+      candidateIds: [...input.candidateIds],
+      currentConditionKey: input.currentConditionKey,
+      currentCandidateId: input.currentCandidateId,
+      bestByRoundtripScoreCandidateId: aggregate.bestByRoundtripScoreCandidateId,
+      bestByMatrixNormalizedScoreCandidateId: aggregate.bestByMatrixNormalizedScoreCandidateId,
+      candidateSummaries: aggregate.candidateSummaries,
+      worstConditions: aggregate.worstConditions,
+      conditionResults: input.conditionResults,
+      errorMessage: input.errorMessage ?? null,
+    },
+  }
+}
+
+function updatePlacementFunctionConditionBatchPreview(
+  input: PlacementFunctionConditionRoundtripInput,
+  conditionResult: PlacementFunctionConditionBatchResult,
+  previewLandmarksByCandidateId: Map<PlacementFunctionRoundtripCandidateId, ReferenceLandmark[]>,
+) {
+  const previewCandidateId =
+    conditionResult.bestByRoundtripScoreCandidateId ?? conditionResult.bestByMatrixNormalizedScoreCandidateId
+  const previewPredictedLandmarks478 = previewCandidateId
+    ? previewLandmarksByCandidateId.get(previewCandidateId) ?? null
+    : null
+  state.placementAnalysis = {
+    ...state.placementAnalysis,
+    selectedSampleIndex: input.representativeSampleIndex,
+    conditionBatchRoundtripComparison: {
+      ...state.placementAnalysis.conditionBatchRoundtripComparison,
+      previewConditionKey: input.conditionKey,
+      previewCandidateId,
+      previewRepresentativeSampleIndex: input.representativeSampleIndex,
+      previewPredictedLandmarks478,
+    },
+  }
+
+  const bestResult = conditionResult.results.find((result) => result.candidateId === previewCandidateId)
+  if (bestResult?.estimatedTransform) {
+    const knownPlacement = createKnownPlacementFromPlacementFunctionEstimatedTransform(
+      input,
+      bestResult.estimatedTransform,
+    )
+    renderPlacementAnalysisKnownPlacementToCanvas(knownPlacement, input.requestedPoseP)
+  }
+}
+
+function createPlacementFunctionConditionBatchResult(
+  input: PlacementFunctionConditionRoundtripInput,
+  results: PlacementFunctionRoundtripComparisonResult[],
+): PlacementFunctionConditionBatchResult {
+  return {
+    conditionKey: input.conditionKey,
+    representativeSampleIndex: input.representativeSampleIndex,
+    repeatSampleCount: input.repeatSampleCount,
+    usableSampleCount: input.usableSampleCount,
+    bestByRoundtripScoreCandidateId: getBestPlacementFunctionRoundtripComparisonCandidateId(
+      results,
+      "roundtripScore",
+    ),
+    bestByMatrixNormalizedScoreCandidateId: getBestPlacementFunctionRoundtripComparisonCandidateId(
+      results,
+      "matrixNormalizedScore",
+    ),
+    results: [...results],
+  }
+}
+
+function buildPlacementFunctionConditionBatchRoundtripAggregate(
+  candidateIds: PlacementFunctionRoundtripCandidateId[],
+  conditionResults: PlacementFunctionConditionBatchResult[],
+) {
+  const winCountsByCandidate = new Map<
+    PlacementFunctionRoundtripCandidateId,
+    { byRoundtripScore: number; byMatrixNormalizedScore: number }
+  >()
+  for (const candidateId of candidateIds) {
+    winCountsByCandidate.set(candidateId, {
+      byRoundtripScore: 0,
+      byMatrixNormalizedScore: 0,
+    })
+  }
+  for (const conditionResult of conditionResults) {
+    const roundtripWinner = conditionResult.bestByRoundtripScoreCandidateId
+    const matrixWinner = conditionResult.bestByMatrixNormalizedScoreCandidateId
+    if (roundtripWinner) {
+      const counts = winCountsByCandidate.get(roundtripWinner)
+      if (counts) {
+        counts.byRoundtripScore += 1
+      }
+    }
+    if (matrixWinner) {
+      const counts = winCountsByCandidate.get(matrixWinner)
+      if (counts) {
+        counts.byMatrixNormalizedScore += 1
+      }
+    }
+  }
+
+  const candidateSummaries = candidateIds.map((candidateId) => {
+    const results = conditionResults.flatMap((conditionResult) =>
+      conditionResult.results.filter((result) => result.candidateId === candidateId),
+    )
+    const wins = winCountsByCandidate.get(candidateId) ?? {
+      byRoundtripScore: 0,
+      byMatrixNormalizedScore: 0,
+    }
+    return {
+      candidateId,
+      completedCount: results.filter((result) => result.status === "completed").length,
+      skippedCount: results.filter((result) => result.status === "skipped").length,
+      errorCount: results.filter((result) => result.status === "error").length,
+      detectedCount: results.filter((result) => result.predictedMediaPipeResult?.detected === true).length,
+      noFaceCount: results.filter((result) => result.status === "completed" && result.predictedMediaPipeResult?.detected === false).length,
+      matrixNormalizedScore: summarizePlacementFunctionConditionBatchFullScores(
+        results.map((result) => result.scores.matrixNormalizedScore),
+      ),
+      roundtripScore: summarizePlacementFunctionConditionBatchFullScores(
+        results.map((result) => result.scores.roundtripScore),
+      ),
+      matrixRawTranslationScore: summarizePlacementFunctionConditionBatchCompactScores(
+        results.map((result) => result.scores.matrixRawTranslationScore),
+      ),
+      poseScore: summarizePlacementFunctionConditionBatchCompactScores(
+        results.map((result) => result.scores.poseScore),
+      ),
+      landmarkScore: summarizePlacementFunctionConditionBatchCompactScores(
+        results.map((result) => result.scores.landmarkScore),
+      ),
+      winCounts: wins,
+    }
+  })
+
+  const worstConditions = conditionResults
+    .flatMap((conditionResult) =>
+      conditionResult.results.map((result) => ({
+        conditionKey: conditionResult.conditionKey,
+        representativeSampleIndex: conditionResult.representativeSampleIndex,
+        candidateId: result.candidateId,
+        matrixNormalizedScore: result.scores.matrixNormalizedScore,
+        roundtripScore: result.scores.roundtripScore,
+        matrixRawTranslationScore: result.scores.matrixRawTranslationScore,
+        poseScore: result.scores.poseScore,
+        landmarkScore: result.scores.landmarkScore,
+        matrixError: result.matrixError,
+        poseError: result.poseError,
+        estimatedTransform: result.estimatedTransform,
+      })),
+    )
+    .filter((item) => isFiniteNumber(item.roundtripScore))
+    .sort((a, b) => (b.roundtripScore ?? Number.NEGATIVE_INFINITY) - (a.roundtripScore ?? Number.NEGATIVE_INFINITY))
+    .slice(0, 20)
+
+  return {
+    candidateSummaries,
+    worstConditions,
+    bestByRoundtripScoreCandidateId: getBestPlacementFunctionConditionBatchSummaryCandidateId(
+      candidateSummaries,
+      "roundtripScore",
+    ),
+    bestByMatrixNormalizedScoreCandidateId: getBestPlacementFunctionConditionBatchSummaryCandidateId(
+      candidateSummaries,
+      "matrixNormalizedScore",
+    ),
+  }
+}
+
+function getBestPlacementFunctionConditionBatchSummaryCandidateId(
+  summaries: PlacementFunctionConditionBatchCandidateSummary[],
+  scoreKey: "matrixNormalizedScore" | "roundtripScore",
+): PlacementFunctionRoundtripCandidateId | null {
+  const rankedSummaries = [...summaries]
+    .filter((summary) => isFiniteNumber(summary[scoreKey].mean))
+    .sort((a, b) => (a[scoreKey].mean ?? Number.POSITIVE_INFINITY) - (b[scoreKey].mean ?? Number.POSITIVE_INFINITY))
+  return rankedSummaries[0]?.candidateId ?? null
+}
+
+function summarizePlacementFunctionConditionBatchFullScores(
+  values: Array<number | null>,
+): PlacementFunctionConditionBatchFullScoreStats {
+  const finiteValues = values
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value))
+    .sort((a, b) => a - b)
+  if (finiteValues.length === 0) {
+    return {
+      mean: null,
+      p50: null,
+      p90: null,
+      p95: null,
+      max: null,
+    }
+  }
+  return {
+    mean: roundForState(averageFiniteNumbers(finiteValues)),
+    p50: calculatePlacementFunctionConditionBatchPercentile(finiteValues, 0.5),
+    p90: calculatePlacementFunctionConditionBatchPercentile(finiteValues, 0.9),
+    p95: calculatePlacementFunctionConditionBatchPercentile(finiteValues, 0.95),
+    max: roundForState(finiteValues[finiteValues.length - 1]),
+  }
+}
+
+function summarizePlacementFunctionConditionBatchCompactScores(
+  values: Array<number | null>,
+): PlacementFunctionConditionBatchCompactScoreStats {
+  const fullStats = summarizePlacementFunctionConditionBatchFullScores(values)
+  return {
+    mean: fullStats.mean,
+    p95: fullStats.p95,
+    max: fullStats.max,
+  }
+}
+
+function calculatePlacementFunctionConditionBatchPercentile(values: number[], percentile: number) {
+  if (values.length === 0) {
+    return null
+  }
+  const clamped = clamp(percentile, 0, 1)
+  const index = Math.min(values.length - 1, Math.max(0, Math.ceil(clamped * values.length) - 1))
+  return roundForState(values[index])
 }
 
 function createPlacementFunctionAnalysisPlans(options: PlacementFunctionAnalysisRunOptions) {
@@ -11953,6 +12592,53 @@ function createPlacementFunctionConditionMeanFittingSamples(
     .sort((a, b) => a.conditionKey.localeCompare(b.conditionKey))
 }
 
+function createPlacementFunctionConditionBatchRoundtripInputs(
+  samples: PlacementFunctionAnalysisSampleState[],
+): PlacementFunctionConditionRoundtripInput[] {
+  return Array.from(groupPlacementFunctionSamplesByCondition(getUsablePlacementFunctionAnalysisSamples(samples)).entries())
+    .map(([conditionKey, conditionSamples]) => {
+      const first = conditionSamples[0]
+      return {
+        conditionKey,
+        representativeSampleIndex: first.sampleIndex,
+        repeatSampleCount: first.repeatCount,
+        usableSampleCount: conditionSamples.length,
+        knownPlacement: first.knownPlacement,
+        basePlacement: first.basePlacement,
+        targetPlacement: first.targetPlacement,
+        knownTransform: averagePlacementFunctionKnownTransform(
+          conditionSamples.map((sample) => sample.knownTransform),
+        ),
+        matrixFeatures: averagePlacementFunctionMatrixFeatures(
+          conditionSamples.map((sample) => sample.matrixFeatures),
+        ),
+        requestedPoseP: cloneObjPoseMappingPose(first.requestedPoseP),
+        mediaPipeResult: {
+          returnedPose: averagePlacementFunctionReturnedPose(
+            conditionSamples.map((sample) => sample.mediaPipeResult.returnedPose ?? null),
+          ),
+        },
+        previewLandmarks478: first.previewLandmarks478,
+      }
+    })
+    .sort((a, b) => a.conditionKey.localeCompare(b.conditionKey))
+}
+
+function averagePlacementFunctionReturnedPose(
+  poses: Array<PlacementFunctionAnalysisSample["mediaPipeResult"]["returnedPose"] | null>,
+) {
+  const yaw = averagePlacementFunctionNullableFeature(poses.map((pose) => pose?.yaw ?? null))
+  const pitch = averagePlacementFunctionNullableFeature(poses.map((pose) => pose?.pitch ?? null))
+  const roll = averagePlacementFunctionNullableFeature(poses.map((pose) => pose?.roll ?? null))
+  return yaw === null || pitch === null || roll === null
+    ? null
+    : {
+        yaw,
+        pitch,
+        roll,
+      }
+}
+
 function averagePlacementFunctionKnownTransform(transforms: KnownTransform[]): KnownTransform {
   const first = transforms[0]
   return {
@@ -12120,7 +12806,7 @@ function predictPlacementFunctionCandidateScaleRatio(
 
 function predictPlacementFunctionCandidateForSample(
   candidate: PlacementFunctionCandidate | null,
-  sample: PlacementFunctionAnalysisSampleState,
+  sample: PlacementFunctionCandidateTrainingSample,
 ) {
   if (!candidate) {
     return null
@@ -12171,7 +12857,7 @@ function predictPlacementFunctionCandidateForSample(
 
 function predictPlacementFunctionDirectCandidateForSample(
   candidate: Omit<PlacementFunctionDirectTransformCandidate, "metrics"> | PlacementFunctionDirectTransformCandidate,
-  sample: PlacementFunctionCandidateTrainingSample | PlacementFunctionAnalysisSampleState,
+  sample: PlacementFunctionCandidateTrainingSample,
 ) {
   const estimatedScaleRatio = predictPlacementFunctionDirectOutput(
     candidate.models.scaleRatio,
@@ -12262,10 +12948,21 @@ function hasPlacementFunctionRoundtripComparisonPreviewForSample(
   )
 }
 
+function hasPlacementFunctionConditionBatchRoundtripPreviewForSample(
+  sample: PlacementFunctionAnalysisSampleState | null,
+) {
+  const batch = state.placementAnalysis.conditionBatchRoundtripComparison
+  return (
+    sample !== null &&
+    batch.previewRepresentativeSampleIndex === sample.sampleIndex &&
+    batch.previewPredictedLandmarks478 !== null
+  )
+}
+
 function estimatePlacementFunctionRoundtripTransform(
   candidate: PlacementFunctionCandidate,
   candidateId: PlacementFunctionRoundtripCandidateId,
-  sample: PlacementFunctionAnalysisSampleState,
+  sample: PlacementFunctionRoundtripInput,
 ): PlacementFunctionRoundtripEstimatedTransform | null {
   if (candidateId === "center_derived_linear_v1") {
     const prediction = predictPlacementFunctionCandidateForSample(candidate, sample)
@@ -12322,7 +13019,7 @@ function roundPlacementFunctionRoundtripEstimatedTransform(
 }
 
 function createKnownPlacementFromPlacementFunctionEstimatedTransform(
-  sample: PlacementFunctionAnalysisSampleState,
+  sample: Pick<PlacementFunctionRoundtripInput, "basePlacement" | "knownPlacement">,
   transform: PlacementFunctionRoundtripEstimatedTransform,
 ): KnownPlacement {
   const centerImageX =
@@ -12422,6 +13119,7 @@ function calculatePlacementFunctionRoundtripPoseError(
 function calculatePlacementFunctionRoundtripLandmarkDiffSummary(
   knownTargetLandmarks: ReferenceLandmark[] | null,
   predictedLandmarks: ReferenceLandmark[],
+  comparedTo?: PlacementFunctionRoundtripLandmarkDiffSummary["comparedTo"],
 ): PlacementFunctionRoundtripLandmarkDiffSummary | null {
   if (!knownTargetLandmarks || knownTargetLandmarks.length === 0 || predictedLandmarks.length === 0) {
     return null
@@ -12442,6 +13140,7 @@ function calculatePlacementFunctionRoundtripLandmarkDiffSummary(
     mean2dDistance: roundForState(averageFiniteNumbers(distances)),
     max2dDistance: roundForState(maxNumbers(distances)),
     comparedCount: distances.length,
+    comparedTo,
   }
 }
 
@@ -17966,6 +18665,10 @@ function getPlacementFunctionAnalysisRawSummary() {
     candidateUnavailableReason: state.placementAnalysis.candidateUnavailableReason,
     selectedRoundtripCandidateId: state.placementAnalysis.selectedRoundtripCandidateId,
     roundtripPreview: stripPlacementFunctionRoundtripPreviewState(state.placementAnalysis.roundtripPreview),
+    roundtripComparison: stripPlacementFunctionRoundtripComparisonState(state.placementAnalysis.roundtripComparison),
+    conditionBatchRoundtripComparison: stripPlacementFunctionConditionBatchRoundtripComparisonState(
+      state.placementAnalysis.conditionBatchRoundtripComparison,
+    ),
   }
 }
 
@@ -19125,6 +19828,7 @@ function createDefaultPlacementFunctionAnalysisState(): PlacementFunctionAnalysi
     selectedRoundtripCandidateId: null,
     roundtripPreview: createDefaultPlacementFunctionRoundtripPreviewState(),
     roundtripComparison: createDefaultPlacementFunctionRoundtripComparisonState(),
+    conditionBatchRoundtripComparison: createDefaultPlacementFunctionConditionBatchRoundtripComparisonState(),
     summary: createPlacementFunctionAnalysisSummary([], runOptions),
     candidate: null,
     candidateUnavailableReason: "usable sample count too small",
@@ -19156,6 +19860,33 @@ function createDefaultPlacementFunctionRoundtripComparisonState(): PlacementFunc
     bestByRoundtripScoreCandidateId: null,
     bestByMatrixNormalizedScoreCandidateId: null,
     previewPredictedCandidateId: null,
+    previewPredictedLandmarks478: null,
+    errorMessage: null,
+  }
+}
+
+function createDefaultPlacementFunctionConditionBatchRoundtripComparisonState(): PlacementFunctionConditionBatchRoundtripComparisonState {
+  return {
+    status: "idle",
+    startedAtMs: null,
+    completedAtMs: null,
+    elapsedMs: null,
+    estimatedRemainingMs: null,
+    totalConditionCount: 0,
+    processedConditionCount: 0,
+    totalRenderCount: 0,
+    processedRenderCount: 0,
+    candidateIds: [...PLACEMENT_FUNCTION_ROUNDTRIP_COMPARISON_CANDIDATE_IDS],
+    currentConditionKey: null,
+    currentCandidateId: null,
+    bestByRoundtripScoreCandidateId: null,
+    bestByMatrixNormalizedScoreCandidateId: null,
+    candidateSummaries: [],
+    worstConditions: [],
+    conditionResults: [],
+    previewConditionKey: null,
+    previewCandidateId: null,
+    previewRepresentativeSampleIndex: null,
     previewPredictedLandmarks478: null,
     errorMessage: null,
   }
@@ -19889,6 +20620,7 @@ function renderPlacementAnalysisPreviewPanel() {
   const hasSamples = state.placementAnalysis.samples.length > 0
   const hasSelectedRoundtrip = hasPlacementFunctionRoundtripPreviewForSample(selectedSample)
   const hasSelectedBestComparison = hasPlacementFunctionRoundtripComparisonPreviewForSample(selectedSample)
+  const hasSelectedBatchPreview = hasPlacementFunctionConditionBatchRoundtripPreviewForSample(selectedSample)
   const previewPredictedCandidateId = hasSelectedBestComparison
     ? state.placementAnalysis.roundtripComparison.previewPredictedCandidateId
     : null
@@ -19912,7 +20644,7 @@ function renderPlacementAnalysisPreviewPanel() {
   sampleIndexInput.disabled = !hasSamples
   showTarget478Input.disabled = !hasSamples
   showPredictedRoundtrip478Input.disabled = !hasSelectedRoundtrip
-  showBestComparisonRoundtrip478Input.disabled = !hasSelectedBestComparison
+  showBestComparisonRoundtrip478Input.disabled = !hasSelectedBestComparison && !hasSelectedBatchPreview
   showPredictedRoundtripBoundsInput.disabled = !hasSelectedRoundtrip
   showBase478Input.disabled = !hasSamples
   showBaseBoundsInput.disabled = !hasSamples
@@ -19942,6 +20674,8 @@ function renderPlacementAnalysisPreviewPanel() {
       <div><dt>knownTransform</dt><dd>${escapeHtml(formatKnownTransformShort(transform))}</dd></div>
       <div><dt>Base 478 source</dt><dd>${escapeHtml(formatPlacementPreviewLandmarkSummary(selectedSample.previewLandmarkSummary))}</dd></div>
       <div><dt>previewPredictedCandidateId</dt><dd>${previewPredictedCandidateId ?? "-"}</dd></div>
+      <div><dt>Batch preview conditionKey</dt><dd>${escapeHtml(hasSelectedBatchPreview ? state.placementAnalysis.conditionBatchRoundtripComparison.previewConditionKey ?? "-" : "-")}</dd></div>
+      <div><dt>Batch preview candidateId</dt><dd>${escapeHtml(hasSelectedBatchPreview ? state.placementAnalysis.conditionBatchRoundtripComparison.previewCandidateId ?? "-" : "-")}</dd></div>
       <div><dt>targetAnchorImage</dt><dd>${formatPlacementAnchorImagePoint(anchor.target.imageX, anchor.target.imageY)}</dd></div>
       <div><dt>baseAnchorImage</dt><dd>${formatPlacementAnchorImagePoint(anchor.base.imageX, anchor.base.imageY)}</dd></div>
       <div><dt>baseAnchorSource</dt><dd>${escapeHtml(anchor.base.source)}</dd></div>
@@ -19983,8 +20717,16 @@ function renderPlacementAnalysisSamplePreview(sample: PlacementFunctionAnalysisS
   const roundtrip = hasPlacementFunctionRoundtripPreviewForSample(sample)
     ? state.placementAnalysis.roundtripPreview
     : null
+  const batch = hasPlacementFunctionConditionBatchRoundtripPreviewForSample(sample)
+    ? state.placementAnalysis.conditionBatchRoundtripComparison
+    : null
+  const batchResult = batch?.conditionResults
+    .find((conditionResult) => conditionResult.conditionKey === batch.previewConditionKey)
+    ?.results.find((result) => result.candidateId === batch.previewCandidateId) ?? null
   const knownPlacement = roundtrip?.estimatedTransform
     ? createKnownPlacementFromPlacementFunctionEstimatedTransform(sample, roundtrip.estimatedTransform)
+    : batchResult?.estimatedTransform
+      ? createKnownPlacementFromPlacementFunctionEstimatedTransform(sample, batchResult.estimatedTransform)
     : sample.knownPlacement
   renderPlacementAnalysisKnownPlacementToCanvas(knownPlacement, sample.requestedPoseP)
   drawPlacementAnalysisOverlay(sample)
@@ -20063,6 +20805,9 @@ function drawPlacementAnalysisOverlay(sample: PlacementFunctionAnalysisSampleSta
   const bestComparisonPredictedLandmarks = hasPlacementFunctionRoundtripComparisonPreviewForSample(sample)
     ? state.placementAnalysis.roundtripComparison.previewPredictedLandmarks478
     : null
+  const batchPredictedLandmarks = hasPlacementFunctionConditionBatchRoundtripPreviewForSample(sample)
+    ? state.placementAnalysis.conditionBatchRoundtripComparison.previewPredictedLandmarks478
+    : null
   if (state.placementAnalysis.showBaseBounds) {
     drawPlacementFunctionPlacementBounds(
       context,
@@ -20125,6 +20870,15 @@ function drawPlacementAnalysisOverlay(sample: PlacementFunctionAnalysisSampleSta
       1.45,
     )
   }
+  if (state.placementAnalysis.showBestComparisonRoundtrip478 && batchPredictedLandmarks) {
+    drawLandmarkPoints(
+      context,
+      contentRect,
+      batchPredictedLandmarks,
+      "rgba(22, 163, 74, 0.92)",
+      1.45,
+    )
+  }
   context.restore()
 }
 
@@ -20175,12 +20929,22 @@ function renderPlacementFunctionAnalysisDebugTab() {
     analysis.selectedSampleIndex !== null &&
     analysis.roundtripPreview.status !== "running" &&
     analysis.roundtripComparison.status !== "running" &&
+    analysis.conditionBatchRoundtripComparison.status !== "running" &&
     canRenderRenderedIdealGeometry()
   const canRunRoundtripComparison =
     Boolean(analysis.candidate) &&
     analysis.selectedSampleIndex !== null &&
     analysis.roundtripPreview.status !== "running" &&
     analysis.roundtripComparison.status !== "running" &&
+    analysis.conditionBatchRoundtripComparison.status !== "running" &&
+    canRenderRenderedIdealGeometry()
+  const canRunConditionBatchRoundtripComparison =
+    Boolean(analysis.candidate) &&
+    analysis.samples.length > 0 &&
+    analysis.status !== "running" &&
+    analysis.roundtripPreview.status !== "running" &&
+    analysis.roundtripComparison.status !== "running" &&
+    analysis.conditionBatchRoundtripComparison.status !== "running" &&
     canRenderRenderedIdealGeometry()
   const selectedRoundtripCandidateId = resolvePlacementFunctionSelectedRoundtripCandidateId(
     analysis.candidate,
@@ -20199,6 +20963,8 @@ function renderPlacementFunctionAnalysisDebugTab() {
         <button class="small-button" type="button" data-action="placement-analysis-download-candidate-json" ${canDownloadCandidate ? "" : "disabled"}>配置関数候補JSONをダウンロード</button>
         <button class="small-button" type="button" data-action="placement-analysis-run-selected-roundtrip" ${canRunRoundtrip ? "" : "disabled"}>選択サンプルを再レンダー検証</button>
         <button class="small-button" type="button" data-action="placement-analysis-run-roundtrip-comparison" ${canRunRoundtripComparison ? "" : "disabled"}>候補をまとめて再レンダー比較</button>
+        <button class="small-button" type="button" data-action="placement-analysis-run-condition-batch-roundtrip-comparison" ${canRunConditionBatchRoundtripComparison ? "" : "disabled"}>条件単位で候補をまとめて再レンダー比較</button>
+        <button class="small-button" type="button" data-action="placement-analysis-stop-condition-batch-roundtrip-comparison" ${analysis.conditionBatchRoundtripComparison.status === "running" ? "" : "disabled"}>比較を中断</button>
       </div>
       ${!canRenderRenderedIdealGeometry() ? `<p class="control-note">OBJ読込を完了してから解析を実行してください。</p>` : ""}
     </section>
@@ -20288,6 +21054,10 @@ function renderPlacementFunctionAnalysisDebugTab() {
     <section class="review-card">
       <h3>Roundtrip Candidate Comparison（再レンダー候補比較）</h3>
       ${renderPlacementFunctionRoundtripComparisonHtml(analysis.roundtripComparison)}
+    </section>
+    <section class="review-card">
+      <h3>Condition Batch Roundtrip Comparison（条件単位まとめ再レンダー比較）</h3>
+      ${renderPlacementFunctionConditionBatchRoundtripComparisonHtml(analysis.conditionBatchRoundtripComparison)}
     </section>
   `
   return container
@@ -20669,6 +21439,109 @@ function renderPlacementFunctionRoundtripComparisonHtml(comparison: PlacementFun
   `
 }
 
+function renderPlacementFunctionConditionBatchRoundtripComparisonHtml(
+  batch: PlacementFunctionConditionBatchRoundtripComparisonState,
+) {
+  const sortedSummaries = [...batch.candidateSummaries].sort((a, b) => {
+    const scoreCompare = comparePlacementFunctionRoundtripScore(
+      a.roundtripScore.mean,
+      b.roundtripScore.mean,
+    )
+    if (scoreCompare !== 0) {
+      return scoreCompare
+    }
+    return batch.candidateIds.indexOf(a.candidateId) - batch.candidateIds.indexOf(b.candidateId)
+  })
+  return `
+    <dl class="review-grid">
+      <div><dt>status</dt><dd>${batch.status}</dd></div>
+      <div><dt>condition progress</dt><dd>${formatNullableCount(batch.processedConditionCount)} / ${formatNullableCount(batch.totalConditionCount)}</dd></div>
+      <div><dt>render detect progress</dt><dd>${formatNullableCount(batch.processedRenderCount)} / ${formatNullableCount(batch.totalRenderCount)}</dd></div>
+      <div><dt>currentConditionKey</dt><dd>${escapeHtml(batch.currentConditionKey ?? "-")}</dd></div>
+      <div><dt>currentCandidateId</dt><dd>${batch.currentCandidateId ?? "-"}</dd></div>
+      <div><dt>elapsedMs</dt><dd>${formatNullableNumber(batch.elapsedMs)}</dd></div>
+      <div><dt>estimatedRemainingMs</dt><dd>${formatNullableNumber(batch.estimatedRemainingMs)}</dd></div>
+      <div><dt>bestByRoundtripScoreCandidateId</dt><dd>${batch.bestByRoundtripScoreCandidateId ?? "-"}</dd></div>
+      <div><dt>bestByMatrixNormalizedScoreCandidateId</dt><dd>${batch.bestByMatrixNormalizedScoreCandidateId ?? "-"}</dd></div>
+      <div><dt>Batch preview conditionKey</dt><dd>${escapeHtml(batch.previewConditionKey ?? "-")}</dd></div>
+      <div><dt>Batch preview candidateId</dt><dd>${batch.previewCandidateId ?? "-"}</dd></div>
+      <div><dt>error</dt><dd>${escapeHtml(batch.errorMessage ?? "-")}</dd></div>
+    </dl>
+    <h4>Candidate Summary（候補要約）</h4>
+    ${sortedSummaries.length === 0 ? `<p class="placeholder-text">条件単位まとめ再レンダー比較を実行すると candidate summary を表示します。</p>` : `
+      <div class="table-scroll">
+        <table class="debug-table placement-condition-batch-summary-table">
+          <thead>
+            <tr>
+              <th>candidateId</th>
+              <th>completed / detected / noFace</th>
+              <th>skipped / error</th>
+              <th>matrixNormalized mean / p95 / max</th>
+              <th>roundtrip mean / p95 / max</th>
+              <th>matrixRaw mean / p95 / max</th>
+              <th>pose mean / p95 / max</th>
+              <th>landmark mean / p95 / max</th>
+              <th>win roundtrip / matrix</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${sortedSummaries.map((summary) => `
+              <tr>
+                <td>${escapeHtml(summary.candidateId)}</td>
+                <td>${formatNullableCount(summary.completedCount)} / ${formatNullableCount(summary.detectedCount)} / ${formatNullableCount(summary.noFaceCount)}</td>
+                <td>${formatNullableCount(summary.skippedCount)} / ${formatNullableCount(summary.errorCount)}</td>
+                <td>${formatNullableNumber(summary.matrixNormalizedScore.mean)} / ${formatNullableNumber(summary.matrixNormalizedScore.p95)} / ${formatNullableNumber(summary.matrixNormalizedScore.max)}</td>
+                <td>${formatNullableNumber(summary.roundtripScore.mean)} / ${formatNullableNumber(summary.roundtripScore.p95)} / ${formatNullableNumber(summary.roundtripScore.max)}</td>
+                <td>${formatNullableNumber(summary.matrixRawTranslationScore.mean)} / ${formatNullableNumber(summary.matrixRawTranslationScore.p95)} / ${formatNullableNumber(summary.matrixRawTranslationScore.max)}</td>
+                <td>${formatNullableNumber(summary.poseScore.mean)} / ${formatNullableNumber(summary.poseScore.p95)} / ${formatNullableNumber(summary.poseScore.max)}</td>
+                <td>${formatNullableNumber(summary.landmarkScore.mean)} / ${formatNullableNumber(summary.landmarkScore.p95)} / ${formatNullableNumber(summary.landmarkScore.max)}</td>
+                <td>${formatNullableCount(summary.winCounts.byRoundtripScore)} / ${formatNullableCount(summary.winCounts.byMatrixNormalizedScore)}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    `}
+    <h4>Worst Conditions（悪い条件）</h4>
+    ${batch.worstConditions.length === 0 ? `<p class="placeholder-text">roundtripScore を計算できた条件がある場合、worst conditions を表示します。</p>` : `
+      <div class="table-scroll">
+        <table class="debug-table placement-condition-batch-worst-table">
+          <thead>
+            <tr>
+              <th>conditionKey</th>
+              <th>representativeSampleIndex</th>
+              <th>candidateId</th>
+              <th>matrixNormalizedScore</th>
+              <th>roundtripScore</th>
+              <th>poseScore</th>
+              <th>landmarkScore</th>
+              <th>abs txOverNegTz / tyOverNegTz / invNegTz</th>
+              <th>estimated scale</th>
+              <th>estimated translate X / Y</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${batch.worstConditions.map((condition) => `
+              <tr>
+                <td>${escapeHtml(condition.conditionKey)}</td>
+                <td>${condition.representativeSampleIndex ?? "-"}</td>
+                <td>${escapeHtml(condition.candidateId)}</td>
+                <td>${formatNullableNumber(condition.matrixNormalizedScore)}</td>
+                <td>${formatNullableNumber(condition.roundtripScore)}</td>
+                <td>${formatNullableNumber(condition.poseScore)}</td>
+                <td>${formatNullableNumber(condition.landmarkScore)}</td>
+                <td>${formatNullableNumber(condition.matrixError?.absTxOverNegTzError ?? null)} / ${formatNullableNumber(condition.matrixError?.absTyOverNegTzError ?? null)} / ${formatNullableNumber(condition.matrixError?.absInvNegTzError ?? null)}</td>
+                <td>${formatNullableNumber(condition.estimatedTransform?.scaleRatio ?? null)}</td>
+                <td>${formatNullableNumber(condition.estimatedTransform?.translateAfterScaleImageX ?? null)} / ${formatNullableNumber(condition.estimatedTransform?.translateAfterScaleImageY ?? null)}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    `}
+  `
+}
+
 function comparePlacementFunctionRoundtripScore(a: number | null, b: number | null) {
   const aFinite = isFiniteNumber(a)
   const bFinite = isFiniteNumber(b)
@@ -20740,6 +21613,7 @@ function renderPlacementFunctionRoundtripLandmarkDiffHtml(
       <div><dt>mean2dDistance</dt><dd>${formatNullableNumber(summary.mean2dDistance)}</dd></div>
       <div><dt>max2dDistance</dt><dd>${formatNullableNumber(summary.max2dDistance)}</dd></div>
       <div><dt>comparedCount</dt><dd>${formatNullableCount(summary.comparedCount)}</dd></div>
+      <div><dt>comparedTo</dt><dd>${summary.comparedTo ?? "-"}</dd></div>
     </dl>
   `
 }
@@ -20993,6 +21867,9 @@ function buildPlacementFunctionAnalysisExport(): PlacementFunctionAnalysisExport
       roundtripComparisonSummary: stripPlacementFunctionRoundtripComparisonState(
         state.placementAnalysis.roundtripComparison,
       ),
+      conditionBatchRoundtripComparisonSummary: stripPlacementFunctionConditionBatchRoundtripComparisonState(
+        state.placementAnalysis.conditionBatchRoundtripComparison,
+      ),
     },
     samples: state.placementAnalysis.samples.map(stripPlacementFunctionAnalysisSampleState),
   }
@@ -21014,6 +21891,16 @@ function stripPlacementFunctionRoundtripComparisonState(
   const {
     previewPredictedLandmarks478: _previewPredictedLandmarks478,
     previewPredictedCandidateId: _previewPredictedCandidateId,
+    ...summary
+  } = comparison
+  return summary
+}
+
+function stripPlacementFunctionConditionBatchRoundtripComparisonState(
+  comparison: PlacementFunctionConditionBatchRoundtripComparisonState,
+): PlacementFunctionConditionBatchRoundtripComparisonSummary {
+  const {
+    previewPredictedLandmarks478: _previewPredictedLandmarks478,
     ...summary
   } = comparison
   return summary

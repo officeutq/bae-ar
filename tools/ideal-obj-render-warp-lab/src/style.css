@@ -766,6 +766,14 @@ h3 {
   min-width: 1480px;
 }
 
+.placement-condition-batch-summary-table {
+  min-width: 1520px;
+}
+
+.placement-condition-batch-worst-table {
+  min-width: 1500px;
+}
+
 .pose-sync-button {
   justify-self: start;
 }
