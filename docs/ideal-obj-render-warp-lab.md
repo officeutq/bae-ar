@@ -72,15 +72,15 @@ live runtime（ライブ実行時処理）は `state.placementAnalysis.candidate
 
 - `OBJ 3D（OBJ座標）`: OBJ coordinate（OBJ座標）で OBJ mesh / vertices / faces / raw OBJ bounds を確認する。`current478`、`renderedIdeal478`、`alignedRenderedIdeal478`、`meshSourceVertices`、`meshTargetVertices` は表示しない。
 - `レンダー画像（render canvas座標）`: poseMapping runtime render（姿勢対応実行時レンダー）の WebGL render result（WebGL描画結果）を、runtime render canvas image-normalized coordinate / runtime render canvas pixel coordinate（実行時レンダーcanvas画像正規化座標 / 実行時レンダーcanvasピクセル座標）で確認する。ここでは `P_camera`（カメラ顔姿勢） -> `poseMappingProfile`（姿勢対応プロファイル） -> `pFromProfile`（プロファイル出力姿勢） -> `pForWebglRender`（WebGL描画用姿勢） -> WebGL OBJ render（WebGL OBJ描画） -> MediaPipe detect（MediaPipe検出）で生成された runtime rendered ideal image（実行時レンダー理想画像）、`renderedIdeal478`（レンダー理想478点）、`P_confirm`（確認姿勢）を確認する。
-- `ライブ座標（live image-normalized座標）`: MediaPipe が返した image-normalized coordinate（画像正規化座標）で `current478`、`renderedIdeal478`、`meshSourceVertices` を確認する。青点の `current478` は `detectForVideo(liveVideoElement, timestampMs) -> buildCurrentFrameAnalysis() -> mapLandmarks()`、赤点の `renderedIdeal478` は `detect(renderer.canvas) -> buildRenderedIdealDetectionState() -> mapLandmarks()` の経路で、MediaPipe 後は同じ 0..1 点群として描画する。この tab の赤点には placement function 適用後の `alignedRenderedIdeal478` を使わない。
+- `ライブ座標（live image-normalized座標）`: MediaPipe が返した image-normalized coordinate（画像正規化座標）で `current478`、live video aspect（ライブ映像アスペクト比）に補正した `renderedIdeal478`、`meshSourceVertices` を確認する。青点の `current478` は `detectForVideo(liveVideoElement, timestampMs) -> buildCurrentFrameAnalysis() -> mapLandmarks()`、赤点の `renderedIdeal478` は `detect(renderer.canvas) -> buildRenderedIdealDetectionState() -> mapLandmarks() -> live video aspect adjust` の経路で描画する。この tab の赤点には placement function 適用後の `alignedRenderedIdeal478` を使わない。
 - `表示重ね描き（displayedContentRect pixel座標）`: `normalizedIdeal478` に placement function（配置関数）の `scaleRatio` / `translateAfterScaleImageX` / `translateAfterScaleImageY` を適用した `alignedRenderedIdeal478` を、displayedContentRect pixel coordinate / canvas pixel coordinate（表示領域ピクセル座標 / canvasピクセル座標）へ変換して live video 上に表示する。
 - `配置関数解析（placement analysis）`: placement analysis image-normalized coordinate / analysis render canvas coordinate（配置関数解析用の画像正規化座標 / 解析レンダーcanvas座標）で placement samples、candidate comparison、roundtrip validation を確認する。placement analysis の candidate は live runtime へ自動反映しない。
 
-`renderedIdeal478`（レンダー理想478点）は MediaPipe `detect(renderer.canvas)` が返した image-normalized coordinate（0..1）の点であり、live coordinate tab（ライブ座標タブ）では `current478` と同じ描画経路で比較用に表示する。live video（ライブ映像）上の重ね描きに使う理想点は、`normalizedIdeal478` に placement function（配置関数）を適用した `alignedRenderedIdeal478` とする。
+`renderedIdeal478`（レンダー理想478点）は MediaPipe `detect(renderer.canvas)` が返した render canvas image-normalized coordinate（0..1）の点であり、live coordinate tab（ライブ座標タブ）では render canvas aspect から live video aspect へ `x = 0.5 + (x - 0.5) * (renderAspectRatio / liveAspectRatio)` で中心基準補正して比較用に表示する。live video（ライブ映像）上の重ね描きに使う理想点は、`normalizedIdeal478` に placement function（配置関数）を適用した `alignedRenderedIdeal478` とする。
 
 `レンダー画像（render canvas座標）` tab は standalone preview（独立プレビュー）ではなく、poseMapping runtime render（姿勢対応実行時レンダー）の結果を主表示とする。旧 standalone preview 経路は debug / benchmark 用に残す場合でも、中央 tab の主表示ソースには使わない。runtime render result（実行時レンダー結果）が未生成の場合は空の standalone preview を出さず、`poseMappingStatus`（姿勢対応状態）や `renderedIdealStatus`（レンダー理想状態）を reason（理由）として表示する。
 
-`renderedIdeal478`（レンダー理想478点）は render canvas image-normalized coordinate（0..1）の点であり、live video（ライブ映像）上に配置済みの点ではない。`ライブ座標（live image-normalized座標）` tab では MediaPipe 戻り値の比較として直接表示し、`表示重ね描き（displayedContentRect pixel座標）` tab では placement function 適用後の `alignedRenderedIdeal478` を表示する。
+`renderedIdeal478`（レンダー理想478点）は render canvas image-normalized coordinate（0..1）の点であり、live video（ライブ映像）上に配置済みの点ではない。`ライブ座標（live image-normalized座標）` tab では MediaPipe 戻り値に live video aspect 補正だけを加えて表示し、`表示重ね描き（displayedContentRect pixel座標）` tab では placement function 適用後の `alignedRenderedIdeal478` を表示する。
 
 overlay（重ね表示）は displayedContentRect pixel coordinate（表示領域ピクセル座標）で扱う。live video の letterbox / pillarbox を含む表示領域は `displayedContentRect` で確認し、render canvas coordinate や OBJ coordinate を overlay canvas に混ぜない。
 
@@ -559,7 +559,7 @@ Live overlay の描画は必ず `displayedContentRect` を使い、動画の let
 この段階ではまだ WebGL mesh warp（変形加工）は行いません。
 
 overlay controls は中央ペイン上部の共通領域には置かず、対象 coordinate tab（座標系タブ）内に置きます。
-`ライブ座標（live image-normalized座標）` では `current478` / `renderedIdeal478` / `meshSourceVertices` を確認します。
+`ライブ座標（live image-normalized座標）` では `current478` / live video aspect 補正後の `renderedIdeal478` / `meshSourceVertices` を確認します。
 `表示重ね描き（displayedContentRect pixel座標）` では、`alignedRenderedIdeal478` を displayedContentRect pixel coordinate（表示領域ピクセル座標）へ変換した点を確認します。実体がまだない no-op checkbox は残さず、
 未対応のものは disabled または非表示にします。現時点では triangle mesh と grid / anchors は未生成なので
 disabled とします。
@@ -610,7 +610,7 @@ alignedRenderedIdeal478:
 bounds、center、uniform scale、distance、large displacement は aspect-corrected image coordinate で計算します。
 ただし、alignment 計算用の aspect-corrected coordinate を overlay に直接使いません。
 alignment 後の点は必ず live video image-normalized coordinate として扱い、
-live overlay / mesh target 入力へ戻します。live coordinate tab（ライブ座標タブ）には MediaPipe から戻った `renderedIdeal478` を、青点の `current478` と同じ post-detect / mapLandmarks 後の点群として描画します。`alignedRenderedIdeal478` は displayedContentRect pixel coordinate（表示領域ピクセル座標）への overlay 表示と mesh target 入力に使います。
+live overlay / mesh target 入力へ戻します。live coordinate tab（ライブ座標タブ）には MediaPipe から戻った `renderedIdeal478` を、青点の `current478` と同じ post-detect / mapLandmarks 後の点群にしたうえで、render canvas aspect から live video aspect へ中心基準で `x` 補正して描画します。`alignedRenderedIdeal478` は displayedContentRect pixel coordinate（表示領域ピクセル座標）への overlay 表示と mesh target 入力に使います。
 
 overlay は以下の変換で行います。
 
@@ -619,7 +619,7 @@ image-normalized coordinate
   -> displayedContentRect pixel
 ```
 
-pixel coordinate、OBJ vertex coordinate、WebGL clip space は、MediaPipe returned landmarks 取得後の alignment / mesh pair 処理には混ぜません。render image の pixel coordinate は MediaPipe 入力用に閉じ込めます。MediaPipe から戻ってきた `renderedIdeal478` は render canvas image-normalized coordinate（0..1）として扱い、live coordinate tab では比較用に直接表示します。ライブ映像上には placement function（配置関数）適用後の `alignedRenderedIdeal478` だけを表示します。
+pixel coordinate、OBJ vertex coordinate、WebGL clip space は、MediaPipe returned landmarks 取得後の alignment / mesh pair 処理には混ぜません。render image の pixel coordinate は MediaPipe 入力用に閉じ込めます。MediaPipe から戻ってきた `renderedIdeal478` は render canvas image-normalized coordinate（0..1）として保持し、live coordinate tab では live video aspect 補正後の比較用プレビューとして表示します。ライブ映像上には placement function（配置関数）適用後の `alignedRenderedIdeal478` だけを表示します。
 
 ## 既存ラボから踏襲するもの
 
