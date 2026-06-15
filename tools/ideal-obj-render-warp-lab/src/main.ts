@@ -6374,6 +6374,12 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
     const renderResult = renderWebglObjToCanvas(renderer, renderContext)
     const renderMs = performance.now() - renderStartMs
     const renderedIdealImageDataUrl = renderer.canvas.toDataURL("image/png")
+    storeRuntimeRenderedIdealPreviewSnapshot(
+      renderedIdealImageDataUrl,
+      renderer.canvas.width,
+      renderer.canvas.height,
+      null,
+    )
     recoveryDebug = buildPoseRecoveryDebug({
       previousRuntime,
       frameGeneration,
@@ -6459,6 +6465,14 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
       ...renderedIdealLifecycle,
       detectSucceeded: detection.status === "detected",
       renderPose: finalizeRenderPoseLifecycleDebug(renderPoseLifecycle, detection.pose),
+    }
+    if (detection.status === "detected") {
+      storeRuntimeRenderedIdealPreviewSnapshot(
+        renderedIdealImageDataUrl,
+        renderer.canvas.width,
+        renderer.canvas.height,
+        detection.landmarks478,
+      )
     }
     const renderPoseWarning = renderedIdealLifecycle.renderPose.renderPoseMismatchReason
     const poseDiff = calculatePoseMappingPoseDiff(P_camera, detection.pose)
@@ -9000,14 +9014,6 @@ function cloneRequiredLandmarks(landmarks: ReferenceLandmark[] | null | undefine
     : null
 }
 
-function getLastGoodRenderedIdeal478ForDisplay(): ReferenceLandmark[] | null {
-  return cloneRequiredLandmarks(state.poseMappingRuntime.lastGood.renderedIdeal478)
-}
-
-function getLastGoodAlignedRenderedIdeal478ForDisplay(): ReferenceLandmark[] | null {
-  return cloneRequiredLandmarks(state.poseMappingRuntime.lastGood.alignedRenderedIdeal478)
-}
-
 function applyPlacementTransformToLandmarks(
   landmarks: ReferenceLandmark[] | null,
   transform: {
@@ -9035,11 +9041,21 @@ function applyPlacementTransformToLandmarks(
 
 function getRenderedIdeal478ForLiveCoordinatePreview(): ReferenceLandmark[] | null {
   const runtime = state.poseMappingRuntime
-  return (
-    cloneRenderedIdeal478WithoutAspectConversion(runtime.renderedIdeal478) ??
-    getLastGoodRenderedIdeal478ForDisplay() ??
-    cloneRequiredLandmarks(lastRuntimeRenderedIdealPreviewSnapshot?.renderedIdeal478)
-  )
+  return cloneRenderedIdeal478WithoutAspectConversion(runtime.renderedIdeal478)
+}
+
+function storeRuntimeRenderedIdealPreviewSnapshot(
+  dataUrl: string,
+  canvasWidth: number,
+  canvasHeight: number,
+  renderedIdeal478: ReferenceLandmark[] | null | undefined,
+) {
+  lastRuntimeRenderedIdealPreviewSnapshot = {
+    dataUrl,
+    canvasWidth,
+    canvasHeight,
+    renderedIdeal478: cloneRequiredLandmarks(renderedIdeal478),
+  }
 }
 
 function getPoseMappingRuntimeRenderAspectRatio() {
@@ -18832,12 +18848,6 @@ function getRenderedIdeal478Availability(): DataAvailability {
   if (hasRequiredLandmarks(runtime.renderedIdeal478)) {
     return available()
   }
-  if (
-    hasRequiredLandmarks(runtime.lastGood.renderedIdeal478) ||
-    hasRequiredLandmarks(lastRuntimeRenderedIdealPreviewSnapshot?.renderedIdeal478)
-  ) {
-    return available()
-  }
   return unavailable(
     `renderedIdealStatus = ${runtime.renderedIdealStatus}; poseMappingStatus = ${runtime.poseMappingStatus}`,
   )
@@ -20348,16 +20358,12 @@ function renderRenderedIdealCanvas() {
   const imageAvailability = getRuntimeRenderedIdealImageAvailability()
   const currentRuntimeImageAvailable = imageAvailability.available && Boolean(runtime.renderedIdealImageDataUrl)
   if (currentRuntimeImageAvailable && runtime.renderedIdealImageDataUrl) {
-    const renderedIdeal478ForSnapshot =
-      cloneRequiredLandmarks(runtime.renderedIdeal478) ??
-      getLastGoodRenderedIdeal478ForDisplay() ??
-      cloneRequiredLandmarks(lastRuntimeRenderedIdealPreviewSnapshot?.renderedIdeal478)
-    lastRuntimeRenderedIdealPreviewSnapshot = {
-      dataUrl: runtime.renderedIdealImageDataUrl,
-      canvasWidth: runtime.canvasWidth,
-      canvasHeight: runtime.canvasHeight,
-      renderedIdeal478: renderedIdeal478ForSnapshot,
-    }
+    storeRuntimeRenderedIdealPreviewSnapshot(
+      runtime.renderedIdealImageDataUrl,
+      runtime.canvasWidth,
+      runtime.canvasHeight,
+      runtime.renderedIdeal478,
+    )
   }
   const previewSnapshot = lastRuntimeRenderedIdealPreviewSnapshot
   const canDisplayRuntimeImage = previewSnapshot !== null
@@ -21032,10 +21038,8 @@ function drawNormalizedCoordinateFrame(context: CanvasRenderingContext2D, rect: 
 
 function createDisplayOverlayAlignedRenderedIdeal478FromRenderedIdeal(): ReferenceLandmark[] | null {
   const runtime = state.poseMappingRuntime
-  const alignedRenderedIdeal478 =
-    cloneRequiredLandmarks(runtime.alignedRenderedIdeal478) ??
-    getLastGoodAlignedRenderedIdeal478ForDisplay()
-  if (alignedRenderedIdeal478) {
+  const alignedRenderedIdeal478 = cloneRequiredLandmarks(runtime.alignedRenderedIdeal478)
+  if (alignedRenderedIdeal478 && runtime.renderedIdealStatus === "detected") {
     return alignedRenderedIdeal478
   }
 
@@ -21140,7 +21144,7 @@ function drawLiveOverlay(reason: DisplayOverlayRedrawReason = "manual_render") {
     createDisplayOverlayAlignedRenderedIdeal478FromRenderedIdeal()
   const meshSourceVertices = state.poseMappingRuntime.meshSourceVertices
   const meshTargetVertices = state.poseMappingRuntime.meshTargetVertices
-  const canDrawAlignedIdeal = canDrawPoseMappingAlignedIdealOverlay(displayOverlayAlignedRenderedIdeal478)
+  const canDrawAlignedIdeal = canDrawPoseMappingAlignedIdealOverlay()
   const overlayLifecycle = createOverlayLifecycleFromRuntime(state.poseMappingRuntime)
 
   if (
@@ -21371,24 +21375,14 @@ function drawRenderedIdealOverlay() {
   )
 }
 
-function canDrawPoseMappingAlignedIdealOverlay(
-  alignedRenderedIdeal478ForDisplay: ReferenceLandmark[] | null = null,
-) {
+function canDrawPoseMappingAlignedIdealOverlay() {
   const runtime = state.poseMappingRuntime
   const overlayLifecycle = createOverlayLifecycleFromRuntime(runtime)
   return (
-    (
-      overlayLifecycle.alignedRenderedIdealVisible &&
-      runtime.overlayLifecycle.alignedRenderedIdealVisible &&
-      runtime.overlayLifecycle.generationMatch &&
-      runtime.overlayLifecycle.tokenMatch
-    ) ||
-    (
-      getObjAssetStatus() === "ready" &&
-      getProfileAssetStatus() === "ready" &&
-      hasRequiredLandmarks(alignedRenderedIdeal478ForDisplay) &&
-      runtime.lastGood.hasLastGood
-    )
+    overlayLifecycle.alignedRenderedIdealVisible &&
+    runtime.overlayLifecycle.alignedRenderedIdealVisible &&
+    runtime.overlayLifecycle.generationMatch &&
+    runtime.overlayLifecycle.tokenMatch
   )
 }
 
