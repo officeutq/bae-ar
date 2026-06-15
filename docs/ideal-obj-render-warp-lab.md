@@ -72,7 +72,7 @@ live runtime（ライブ実行時処理）は `state.placementAnalysis.candidate
 
 - `OBJ 3D（OBJ座標）`: OBJ coordinate（OBJ座標）で OBJ mesh / vertices / faces / raw OBJ bounds を確認する。`current478`、`renderedIdeal478`、`alignedRenderedIdeal478`、`meshSourceVertices`、`meshTargetVertices` は表示しない。
 - `レンダー画像（render canvas座標）`: poseMapping runtime render（姿勢対応実行時レンダー）の WebGL render result（WebGL描画結果）を、runtime render canvas image-normalized coordinate / runtime render canvas pixel coordinate（実行時レンダーcanvas画像正規化座標 / 実行時レンダーcanvasピクセル座標）で確認する。ここでは `P_camera`（カメラ顔姿勢） -> `poseMappingProfile`（姿勢対応プロファイル） -> `pFromProfile`（プロファイル出力姿勢） -> `pForWebglRender`（WebGL描画用姿勢） -> WebGL OBJ render（WebGL OBJ描画） -> MediaPipe detect（MediaPipe検出）で生成された runtime rendered ideal image（実行時レンダー理想画像）、`renderedIdeal478`（レンダー理想478点）、`P_confirm`（確認姿勢）を確認する。
-- `ライブ座標（live image-normalized座標）`: live video image-normalized coordinate（ライブ映像の画像正規化座標）で `current478`、`normalizedIdeal478`、`meshSourceVertices` を確認する。`normalizedIdeal478` は `レンダー画像（render canvas座標）` tab の `renderedIdeal478` を MediaPipe image-normalized coordinate（0..1）として clone した点であり、placement function 適用前の理想478点である。確認用 canvas では live video の `videoWidth / videoHeight` から作る `displayedContentRect` 相当の表示枠に 0..1 座標を描画し、任意サイズの UI canvas 全体へ引き伸ばさない。
+- `ライブ座標（live image-normalized座標）`: live video image-normalized coordinate（ライブ映像の画像正規化座標）で `current478`、`normalizedIdeal478`、`meshSourceVertices` を確認する。`normalizedIdeal478` は `レンダー画像（render canvas座標）` tab の `renderedIdeal478` を MediaPipe image-normalized coordinate（0..1）として clone した点であり、placement function 適用前の理想478点である。確認用 canvas は 0..1 座標をそのまま描くため、live video aspect や `displayedContentRect` は掛けない。
 - `表示重ね描き（displayedContentRect pixel座標）`: `normalizedIdeal478` に placement function（配置関数）の `scaleRatio` / `translateAfterScaleImageX` / `translateAfterScaleImageY` を適用した点を、displayedContentRect pixel coordinate / canvas pixel coordinate（表示領域ピクセル座標 / canvasピクセル座標）へ変換して live video 上に表示する。
 - `配置関数解析（placement analysis）`: placement analysis image-normalized coordinate / analysis render canvas coordinate（配置関数解析用の画像正規化座標 / 解析レンダーcanvas座標）で placement samples、candidate comparison、roundtrip validation を確認する。placement analysis の candidate は live runtime へ自動反映しない。
 
@@ -610,7 +610,7 @@ alignedRenderedIdeal478:
 bounds、center、uniform scale、distance、large displacement は aspect-corrected image coordinate で計算します。
 ただし、alignment 計算用の aspect-corrected coordinate を overlay に直接使いません。
 alignment 後の点は必ず live video image-normalized coordinate として扱い、
-live overlay / mesh target 入力へ戻します。live coordinate tab（ライブ座標タブ）には placement function 適用前の `normalizedIdeal478` を描画します。live coordinate tab の表示枠は live video aspect の `displayedContentRect` 相当を使い、数値座標は変えずに見た目だけ live video image-normalized coordinate の確認に合わせます。
+live overlay / mesh target 入力へ戻します。live coordinate tab（ライブ座標タブ）には placement function 適用前の `normalizedIdeal478` を描画します。live coordinate tab は 0..1 座標確認用なので、ここでは aspect-corrected coordinate や `displayedContentRect` を使いません。
 
 overlay は以下の変換で行います。
 
