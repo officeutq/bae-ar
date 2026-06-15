@@ -83,7 +83,9 @@ centerWorkY = centerImageY
 
 初期 canvas は 16:9 の `960 x 540` です。解析用 canvas には letterbox を作らず、canvas 全体を MediaPipe 入力画像全体、かつ `knownPlacement` の 0..1 座標範囲として扱います。
 
-初期 sweep は正面 pose のみで、`centerImageX` / `centerImageY` を `0.42, 0.46, 0.50, 0.54, 0.58`、`visualScaleInput` を `1.10, 1.15, 1.20, 1.25, 1.30` とします。角度は既存の pose mapping の責務であり、この解析では placement（中心・大きさ）だけを扱います。
+初期 sweep は正面 pose のみで、`centerImageX` を `0.42, 0.46, 0.50, 0.54, 0.58`、`centerImageY` を `0.40, 0.42, 0.44, 0.46, 0.48, 0.50, 0.52, 0.54, 0.56, 0.58, 0.60`、`visualScaleInput` を `1.10, 1.15, 1.20, 1.25, 1.30` とします。角度は既存の pose mapping の責務であり、この解析では placement（中心・大きさ）だけを扱います。
+
+同一条件の再現性を見るため、`repeatCount` を run option に持たせ、default は `2` とします。標準サンプル数は `5 x 11 x 5 x 2 = 550` です。各 sample には `repeatIndex`、`repeatCount`、`conditionKey` を保存し、`conditionKey` は `x=0.500_y=0.540_scale=1.200_pose=front` のように、同一 `centerImageX` / `centerImageY` / `visualScaleInput` / pose をグルーピングできる文字列にします。目的は、`centerImageY` による `tz` / `invNegTz` の系統的な動きと、同一条件を複数回実行したときのランダムな揺れを分けて見ることです。
 
 現状の WebGL レンダー条件では、`visualScaleInput` が `0.80` / `0.90` の小さい顔サイズになると MediaPipe が `no_face` になりやすいことが分かっています。そのため、初期 sweep から `0.80` / `0.90` を外し、検出できる顔サイズ寄りの `1.10` 以上を中心にします。`1.00` 付近は将来の boundary check（境界確認）用として別扱いにします。
 
@@ -113,11 +115,27 @@ UI は以下の分担です。
 - 中央ペインに `配置関数解析プレビュー` tab を追加します。最新または選択中 sample の WebGL render image と MediaPipe returned 478 overlay を表示します。プレビューでは変換後の `target478` に加えて、位置・スケール変換前の `base478` も表示できます。`base478` は current478 ではなく、理想 OBJ 由来の変換前478点です。優先的には base render image を MediaPipe に通した `Base 478（pre-transform MediaPipe）` を使い、取得できない場合だけ `Base 478（inverse known transform）` として target478 を既知逆変換で戻した点を使います。
 - 右ペインに `配置関数解析` tab を追加します。解析実行、停止、サンプル JSON / CSV download、candidate JSON download、compact debug summary を置きます。
 
-sample には `knownPlacement`、`basePlacement`、`targetPlacement`、`knownTransform`、front の `requestedPoseP`、MediaPipe の detected / returned pose / `facialTransformationMatrix`、matrix features、補助 debug としての `observedRenderedBounds`、`quality.usable` と `skippedReason` を保存します。JSON export には returned478 配列そのものは含めません。returned478 は中央プレビュー overlay 用の state としてのみ保持します。
+sample には `repeatIndex`、`repeatCount`、`conditionKey`、`knownPlacement`、`basePlacement`、`targetPlacement`、`knownTransform`、front の `requestedPoseP`、MediaPipe の detected / returned pose / `facialTransformationMatrix`、matrix features、補助 debug としての `observedRenderedBounds`、`quality.usable` と `skippedReason` を保存します。JSON export には returned478 配列そのものは含めません。returned478 は中央プレビュー overlay 用の state としてのみ保持します。
 
 右ペインの debug summary と JSON export には、`scaleDetectionSummary`（スケール別検出要約）と `skippedReasonCounts`（除外理由別件数）を含めます。これにより、失敗が小さすぎる顔サイズによる `no_face` なのか、`facialTransformationMatrix` 欠落や matrix feature 不正なのかを切り分けます。
 
-placement function candidate は、まず image-normalized coordinate の `targetCenter` と `scaleRatio` を推定し、`translateAfterScaleImage` を導出します。candidate 内では fixed aspect ratio を混ぜず、work coordinate は candidate の外側で必要に応じて `imageX * aspectRatio` として計算します。
+JSON export の summary には、同一条件内の安定性を見る `repeatSummary`、scaleRatio ごとの `centerImageX` / `centerImageY` と `negTz = -tz` / `invNegTz` の相関を見る `positionCorrelationSummary`、`scaleRatio + centerImageY` ごとの `negTz` 平均・範囲を見る `verticalPositionSummary` を含めます。右ペインにも compact summary として、繰り返し要約、位置相関、縦位置別要約を表示します。
+
+後続の anchor-based transform model（基準点ベース変換モデル）検証のため、配置関数解析 sample には `anchorLandmark` として index `0` の target / base 座標を保存します。`targetAnchor` は target render を MediaPipe に通して得た `returnedLandmarks[0]`、`baseAnchor` は base478 の `landmarks[0]` です。`baseAnchorSource` は `pre_transform_mediapipe` または `inverse_known_transform`、取得できない場合は `unavailable` とします。
+
+`knownTransformDerived` では、既知の `scaleRatio` を使って anchor 由来の `translateAfterScaleImageX/Y` を計算します。
+
+```text
+anchorTranslateAfterScaleImageX =
+  targetAnchorImageX - baseAnchorImageX * knownTransform.scaleRatio
+
+anchorTranslateAfterScaleImageY =
+  targetAnchorImageY - baseAnchorImageY * knownTransform.scaleRatio
+```
+
+この値と既存の `knownTransform.translateAfterScaleImageX/Y` の差を sample / JSON summary / CSV / UI に出します。`baseAnchorSource = inverse_known_transform` の場合は target478 を既知逆変換で戻しているため、anchor 由来の translate error がほぼ 0 になることがあります。これは正常であり、今回の変更では candidate function 自体は変更しません。
+
+placement function candidate は、まず image-normalized coordinate の `targetCenter` と `scaleRatio` を推定し、`translateAfterScaleImage` を導出します。candidate 内では fixed aspect ratio を混ぜず、work coordinate は candidate の外側で必要に応じて `imageX * aspectRatio` として計算します。repeat sample が同一条件を過重にしないように、usable samples を `conditionKey` ごとに平均してから fitting する `condition_mean` を使います。candidate JSON の `source` には `sampleCount`、`usableSampleCount`、`uniqueConditionCount`、`fittingSampleCount`、`fittingAggregation` を含めます。
 
 ```text
 estimatedTargetCenterImageX = a0 + a1 * txOverNegTz
@@ -134,6 +152,8 @@ estimatedTranslateAfterScaleImageY =
 使える sample 数が足りない、特徴量が単一値で回帰が特異になる、matrix features が不正な場合は candidate を作らず、右ペインに理由を表示します。
 
 candidate metrics は `Target Center Image`、`Scale Ratio`、`Derived Translate After Scale Image` に分けて表示します。candidate JSON の `schemaVersion` は `matrix_to_known_image_transform_function_candidate_v1`、`targetCoordinateSpace` は `image_normalized_coordinate` です。candidate JSON には optional field として `trainingDataSummary` を含め、学習に使った `scaleRatio` の範囲、値、scale 別 sample 数を記録します。
+
+CSV export には既存の image coordinate 系の列を維持したうえで、`repeatIndex`、`repeatCount`、`conditionKey`、`conditionNegTzMean` / `StdDev` / `Range`、`conditionInvNegTzMean` / `StdDev` / `Range`、`scalePositionCorrCenterYNegTz`、`scalePositionCorrCenterXNegTz` を含めます。さらに anchor 検証用として `anchorLandmarkIndex`、target/base anchor の image / work coordinate、`baseAnchorSource`、anchor 由来の `translateAfterScale` と knownTransform との差分を出します。
 
 この解析では `current478`、`current478 bounds`、current face、live video、live overlay を一切使いません。`current478 bounds` は teacher data や reference placement として扱いません。通常の live overlay、`alignedRenderedIdeal478`、`bounds_center_scale_v1`、stale / fallback / token mismatch guards、render pose debug、mesh warp、production Shape Warp へは接続しません。
 
