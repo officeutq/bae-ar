@@ -1,55 +1,66 @@
 # Ideal OBJ Render Warp Lab
 
-## placement source debug
+## Live Alignment
 
-Pose Mapping の本格的な placement alignment に進む前に、`FaceLandmarkerResult.facialTransformationMatrixes[0]` の実体を debug JSON と UI で確認する。
+MP4 再生中の Pose Mapping runtime は、live alignment を `direct_piecewise_ty3_linear_normalized_v1` に一本化する。
+UI から alignment mode は選ばせず、debug には固定値として `alignmentMethod: direct_piecewise_ty3_linear_normalized_v1` を表示する。
 
-- JS 版 `Matrix` object の `constructorName`、`keys`、`rows`、`columns`、`data` / `values`、`rawObjectPreview` を出す。
-- 16 個の matrix values が取得できた場合は、column-major と row-major の両方で translation / scale 候補を算出する。
-- bounds-based placement は本線の alignment には使わず、`current478` / `renderedIdeal478` の外枠から作る debug-only の比較基準として扱う。
-- matrix translation と bounds center、matrix scale と bounds height の差分を比較して、matrix placement が実際の顔位置・大きさと連動しているか確認する。
-- matrix raw 16 値を取得できない場合、または matrix placement が identity のまま bounds center / size と明確に合わない場合は `alignmentStatus = skipped_invalid_placement` とし、`alignedRenderedIdealVisible`、correspondence lines、mesh target を表示しない。
-- overlay の lifecycle gate は従来どおり `generationMatch`、`tokenMatch`、`renderSucceeded`、`detectSucceeded`、`fallbackRenderedIdealUsed === false`、`staleCanvasDetected === false` を通す。
-
-## center + scale only alignment
-
-`Pose Mapping` の alignment mode に `bounds_center_scale_v1` を追加した。これは debug / prototype 用の位置合わせであり、`facialTransformationMatrix` の translation を live video の image-normalized center として使わない。既存の `mediapipe_placement_center_scale` と matrix placement debug は、後で `matrix -> center / scale` 関数を作るための比較情報として残す。
-
-`bounds_center_scale_v1` は、current 478 と renderedIdeal478 から外枠を作り、以下の変換だけで renderedIdeal478 全体を live video image-normalized coordinate へ戻す。
+現在の live alignment は以下の流れで行う。
 
 ```text
-alignedIdeal = (renderedIdeal - idealCenter) * scaleRatio + currentCenter
+currentMatrix
+  -> buildPlacementFunctionMatrixFeatures(currentMatrix)
+  -> direct_piecewise_ty3_linear_normalized_v1
+  -> scaleRatio
+  -> translateAfterScaleImageX
+  -> translateAfterScaleImageY
+  -> renderedIdeal478 を live video image-normalized coordinate へ配置
+  -> alignedRenderedIdeal478
+  -> meshTargetVertices
 ```
 
-点ごとの 478 点一致は目的にしない。顔形状差は残してよく、合わせるのは顔全体の center と uniform scale のみとする。rotation は `P_camera -> p -> render -> P_confirm` 側で扱うため、alignment では使わない。
-
-計算は aspect-corrected work coordinate で行う。
+placement function の適用対象は `renderedIdeal478` であり、OBJ coordinate、render canvas pixel coordinate、displayedContentRect pixel coordinate、aspect-corrected work coordinate はここに混ぜない。
 
 ```text
-currentWork.x = current.x * videoAspectRatio
-currentWork.y = current.y
-
-idealWork.x = renderedIdeal.x * renderAspectRatio
-idealWork.y = renderedIdeal.y
-
-aligned.x = alignedWork.x / videoAspectRatio
-aligned.y = alignedWork.y
+aligned.x = renderedIdeal.x * scaleRatio + translateAfterScaleImageX
+aligned.y = renderedIdeal.y * scaleRatio + translateAfterScaleImageY
 aligned.z = renderedIdeal.z
 ```
 
-外枠計算の landmark set は `all_non_iris` と `stable_non_expression` を選べる。初期値は `all_non_iris`。`all_non_iris` は iris landmarks `468..477` を除外し、`stable_non_expression` はさらに `expressionSensitive` landmarks を除外する。これは center / scale 計算だけに使い、点ごとの対応位置合わせには使わない。
+`facialTransformationMatrix` は、直接 center / scale として使わず、`matrixFeatures` を作るための入力として使う。matrix raw、column-major / row-major translation、bounds center との比較は debug-only の確認情報として残す。
 
-scale basis は `height`、`width`、`diag` を選べる。初期値は `diag`。`diag` は以下で計算する。
+placement function を評価できない場合は、旧 alignment へ fallback しない。`alignmentStatus = skipped_invalid_placement_function` とし、`placementFunctionStatus` に以下のいずれかを出す。
 
-```text
-diag = sqrt(width * width + height * height)
-```
+- `skipped_missing_matrix`
+- `skipped_invalid_matrix_features`
+- `skipped_invalid_candidate`
+- `skipped_invalid_transform`
+- `skipped_invalid_aligned_landmarks`
 
-debug には `BoundsCenterScaleAlignmentDebug` を出す。主な内容は `placementLandmarkSet`、`scaleBasis`、`currentBoundsWork`、`idealBoundsWork`、`currentScale`、`idealScale`、`scaleRatio`、`translationWork`、image coordinate の current / rendered ideal / aligned rendered ideal bounds、`alignedLandmarkCount` である。
+成功時は `placementFunctionStatus = applied` とし、debug / Copy Debug / JSON summary には以下を出す。
 
-live overlay には `bounds_center_scale_v1` で変換済みの `alignedRenderedIdeal478` だけを表示する。raw `renderedIdeal478`、stale / fallback / generation mismatch の rendered ideal、old preview の結果は表示しない。`grid / anchors` overlay が有効な場合は、current bounds、raw ideal bounds、aligned ideal bounds と center point も debug 表示できる。
+- `placementFunctionCandidateId`
+- `placementFunctionStatus`
+- `scaleRatio`
+- `translateAfterScaleImageX`
+- `translateAfterScaleImageY`
+- `matrixFeatures`
+- `currentBoundsImage`
+- `renderedIdealBoundsImage`
+- `alignedRenderedIdealBoundsImage`
+- `alignedLandmarkCount`
+- `invalidAlignedLandmarkCount`
 
-`placement mapping samples` は session memory に frame ごとの small summary として保存し、JSON / CSV で export できる。sample には `frameId`、`mediaTimeSec`、`P_camera`、`p`、`P_confirm`、`poseDiffMagnitude`、matrix column-major translation / scale、image / work bounds、`boundsScaleBasis`、`boundsScaleRatio`、aspect ratio、`qualityUsable`、`skippedReason` を含める。
+`placement mapping samples` は session memory に frame ごとの small summary として保存し、JSON / CSV で export できる。sample には `frameId`、`mediaTimeSec`、`P_camera`、`p`、`P_confirm`、`poseDiffMagnitude`、matrix column-major translation / scale、current / rendered / aligned bounds、placement function candidate id / status、scale / translate、`matrixFeatures`、aspect ratio、`qualityUsable`、`skippedReason` を含める。
+
+## Removed Legacy Alignment
+
+以下の旧 live alignment mode は廃止済みであり、fallback / 比較用としても runtime には残さない。
+
+- `bounds_center_scale_v1`
+- `mediapipe_placement_center_scale`
+
+旧 `bounds_center_scale_v1` は current / rendered ideal bounds から center + scale を作る prototype だった。旧 `mediapipe_placement_center_scale` は `facialTransformationMatrix` の translation / scale をそのまま live alignment として扱う prototype だった。現在はどちらも `alignedRenderedIdeal478` / `meshTargetVertices` の生成には使わない。
 
 ## Placement Function Analysis（配置関数解析）
 
@@ -198,7 +209,7 @@ candidate metrics は `Target Center Image`、`Scale Ratio`、`Derived Translate
 
 CSV export には既存の image coordinate 系の列を維持したうえで、`repeatIndex`、`repeatCount`、`conditionKey`、`conditionNegTzMean` / `StdDev` / `Range`、`conditionInvNegTzMean` / `StdDev` / `Range`、`scalePositionCorrCenterYNegTz`、`scalePositionCorrCenterXNegTz` を含めます。さらに anchor 検証用として `anchorLandmarkIndex`、target/base anchor の image / work coordinate、`baseAnchorSource`、anchor 由来の `translateAfterScale` と knownTransform の差分を出します。direct model については列の肥大化を避けるため、best direct candidate の推定値と誤差のみを追加します。
 
-この解析では `current478`、`current478 bounds`、current face、live video、live overlay を一切使いません。`current478 bounds` は teacher data や reference placement として扱いません。通常の live overlay、`alignedRenderedIdeal478`、`bounds_center_scale_v1`、stale / fallback / token mismatch guards、render pose debug、mesh warp、production Shape Warp へは接続しません。
+この解析では `current478`、`current478 bounds`、current face、live video、live overlay を一切使いません。`current478 bounds` は teacher data や reference placement として扱いません。通常の live overlay、`alignedRenderedIdeal478`、live alignment、stale / fallback / token mismatch guards、render pose debug、mesh warp、production Shape Warp へは接続しません。
 
 ## 目的
 
@@ -873,7 +884,7 @@ WebGL renderer は通常 runtime と p,P dataset 生成の本線です。MediaPi
 
 ## Render pose lifecycle debug
 
-`bounds_center_scale_v1` は position / scale の alignment だけを行います。rendered ideal の向きは alignment では補正せず、`P_camera -> poseMappingProfile -> p -> WebGL render -> MediaPipe detect -> P_confirm` の render generation 側で `p` が反映されている必要があります。
+Live alignment は position / scale の配置だけを行います。rendered ideal の向きは alignment では補正せず、`P_camera -> poseMappingProfile -> p -> WebGL render -> MediaPipe detect -> P_confirm` の render generation 側で `p` が反映されている必要があります。
 
 Pose Mapping runtime の `renderedIdealLifecycle.renderPose` では、`renderToken.p` 由来の `requestedPoseP` と、WebGL renderer が実際に使った `actualRenderPoseP` を別々に記録します。`renderPoseMatchesToken` は token と WebGL 適用値の一致確認、`renderPoseAppliedToWebGL` は token 一致に加えて `P_confirm` が requested pose に対して front 固定に見えないことを確認する debug flag です。
 

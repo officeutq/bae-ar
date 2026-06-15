@@ -945,16 +945,14 @@ type PoseMappingPoseDiff = {
 }
 
 type PoseMappingCurrentFaceStatus = "detected" | "missing" | "invalid"
-type PoseMappingAlignmentMode =
-  | "mediapipe_placement_center_scale"
-  | "bounds_center_scale_v1"
-type PlacementLandmarkSet =
-  | "all_non_iris"
-  | "stable_non_expression"
-type BoundsScaleBasis =
-  | "height"
-  | "width"
-  | "diag"
+type LivePlacementFunctionCandidateId = "direct_piecewise_ty3_linear_normalized_v1"
+type PlacementFunctionLiveStatus =
+  | "applied"
+  | "skipped_missing_matrix"
+  | "skipped_invalid_matrix_features"
+  | "skipped_invalid_candidate"
+  | "skipped_invalid_transform"
+  | "skipped_invalid_aligned_landmarks"
 type PoseMappingAlignmentStatus =
   | "completed"
   | "skipped_no_current_face"
@@ -963,11 +961,7 @@ type PoseMappingAlignmentStatus =
   | "skipped_missing_profile"
   | "skipped_profile_mismatch"
   | "skipped_generation_mismatch"
-  | "skipped_missing_current_placement"
-  | "skipped_missing_ideal_placement"
-  | "skipped_invalid_placement"
-  | "skipped_invalid_bounds"
-  | "skipped_invalid_scale"
+  | "skipped_invalid_placement_function"
   | "stale"
   | "error"
 type PoseMappingAlignmentSkippedReason =
@@ -978,11 +972,7 @@ type PoseMappingAlignmentSkippedReason =
   | "missing_profile"
   | "profile_mismatch"
   | "generation_mismatch"
-  | "missing_current_placement"
-  | "missing_ideal_placement"
-  | "invalid_placement"
-  | "invalid_bounds"
-  | "invalid_scale"
+  | "invalid_placement_function"
   | "stale"
   | "error"
 type PoseMappingStatus =
@@ -1171,27 +1161,6 @@ type BoundsPlacement = {
   scaleByWidth: number
   scaleByDiag: number
 }
-type BoundsCenterScaleAlignmentDebug = {
-  mode: "bounds_center_scale_v1"
-  placementLandmarkSet: PlacementLandmarkSet
-  scaleBasis: BoundsScaleBasis
-  rotationApplied: false
-  currentBoundsWork: BoundsPlacement
-  idealBoundsWork: BoundsPlacement
-  currentCenterWork: { x: number; y: number }
-  idealCenterWork: { x: number; y: number }
-  currentScale: number
-  idealScale: number
-  scaleRatio: number
-  translationWork: {
-    x: number
-    y: number
-  }
-  currentBoundsImage: BoundsPlacement
-  renderedIdealBoundsImage: BoundsPlacement
-  alignedRenderedIdealBoundsImage: BoundsPlacement
-  alignedLandmarkCount: number
-}
 type PlacementDebugSide = {
   matrixRaw: MatrixRawDebug
   matrixColumnMajor: MatrixPlacementCandidate
@@ -1223,49 +1192,42 @@ type PlacementDebugState = {
   ideal: PlacementDebugSide
   comparison: PlacementDebugComparison
 }
-type MediaPipeFacePlacement = {
-  status: "detected" | "missing" | "invalid"
-  source: "facialTransformationMatrix" | "faceDetectorBoundingBox" | "landmarkBounds" | "unknown"
-  center: { x: number; y: number } | null
-  scale: number | null
-  raw?: {
-    matrixTranslation?: { x: number; y: number; z: number } | null
-    matrixScale?: { x: number; y: number; z: number; uniform: number } | null
-    matrixRotationDeg?: ReferencePose
-    boundsImage?: PoseMappingBounds | null
-  }
-  warnings: string[]
+type PlacementFunctionAlignmentDebug = {
+  candidateId: LivePlacementFunctionCandidateId
+  status: PlacementFunctionLiveStatus
+  matrixFeatures: PlacementFunctionMatrixFeatures
+  scaleRatio: number | null
+  translateAfterScaleImageX: number | null
+  translateAfterScaleImageY: number | null
+  alignedLandmarkCount: number
+  invalidAlignedLandmarkCount: number
+  evaluationDebug: PlacementFunctionCandidateEvaluationDebug | null
+  errorMessage: string | null
 }
 type PoseMappingAlignmentState = {
   status: PoseMappingAlignmentStatus
-  mode: PoseMappingAlignmentMode
+  alignmentMethod: LivePlacementFunctionCandidateId
   rotationApplied: false
-  placementLandmarkSet: PlacementLandmarkSet
-  scaleBasis: BoundsScaleBasis
-  placementSource: MediaPipeFacePlacement["source"]
   alignmentSkippedReason: PoseMappingAlignmentSkippedReason
-  currentPlacement: MediaPipeFacePlacement
-  idealPlacement: MediaPipeFacePlacement
+  placementFunctionCandidateId: LivePlacementFunctionCandidateId
+  placementFunctionStatus: PlacementFunctionLiveStatus
   placementScaleRatio: number | null
   renderedIdealStatus: RenderedIdealStatus
-  anchorCount: number
-  currentCenter: { x: number; y: number } | null
-  idealCenter: { x: number; y: number } | null
-  scale: number | null
+  alignedLandmarkCount: number
+  invalidAlignedLandmarkCount: number
+  translateAfterScaleImageX: number | null
+  translateAfterScaleImageY: number | null
   videoAspectRatio: number | null
   renderAspectRatio: number | null
   currentBoundsImage: PoseMappingBounds | null
   renderedIdealBoundsImage: PoseMappingBounds | null
-  currentBoundsAspectWork: PoseMappingBounds | null
-  renderedIdealBoundsAspectWork: PoseMappingBounds | null
-  alignedIdealBoundsAspectWork: PoseMappingBounds | null
   alignedRenderedIdealBoundsImage: PoseMappingBounds | null
   displayedContentRect: Rect | null
+  matrixFeatures: PlacementFunctionMatrixFeatures
+  placementFunctionDebug: PlacementFunctionAlignmentDebug
   placementDebug: PlacementDebugState
-  boundsCenterScaleDebug: BoundsCenterScaleAlignmentDebug | null
   excludedReasonCounts: PoseMappingExcludedReasonCounts
   displacementSummary: PoseMappingDisplacementSummary
-  anchorIndices: number[]
   landmarkReasons: Array<PoseMappingExcludedReason[]>
 }
 
@@ -2086,10 +2048,15 @@ type PlacementMappingSample = {
   idealMatrixColumnMajorScale: { x: number; y: number; z: number; uniform: number } | null
   currentBoundsImage: BoundsPlacement | null
   idealBoundsImage: BoundsPlacement | null
-  currentBoundsWork: BoundsPlacement | null
-  idealBoundsWork: BoundsPlacement | null
-  boundsScaleBasis: BoundsScaleBasis
-  boundsScaleRatio: number | null
+  alignedIdealBoundsImage: BoundsPlacement | null
+  placementFunctionCandidateId: LivePlacementFunctionCandidateId
+  placementFunctionStatus: PlacementFunctionLiveStatus
+  scaleRatio: number | null
+  translateAfterScaleImageX: number | null
+  translateAfterScaleImageY: number | null
+  matrixFeatures: PlacementFunctionMatrixFeatures
+  alignedLandmarkCount: number
+  invalidAlignedLandmarkCount: number
   videoAspectRatio: number | null
   renderAspectRatio: number | null
   qualityUsable: boolean
@@ -3193,9 +3160,6 @@ type LabState = {
   activePreviewTab: PreviewTab
   activeDebugTab: DebugTab
   poseMappingSettings: {
-    alignmentMode: PoseMappingAlignmentMode
-    placementLandmarkSet: PlacementLandmarkSet
-    boundsScaleBasis: BoundsScaleBasis
     hideIdealOverlayWhenRenderPoseNotApplied: boolean
   }
   overlay: {
@@ -3273,12 +3237,9 @@ const EXPRESSION_SENSITIVE_LANDMARK_INDICES = new Set([
   317, 318, 321, 324, 362, 373, 374, 375, 380, 381, 382, 384, 385, 386, 387,
   388, 390, 398, 402, 405, 409, 415, 466,
 ])
-const ALIGNMENT_MIN_ANCHOR_COUNT = 24
 const ALIGNMENT_UNSAFE_MIN = -0.25
 const ALIGNMENT_UNSAFE_MAX = 1.25
 const ALIGNMENT_LARGE_DISPLACEMENT_THRESHOLD = 0.18
-const PLACEMENT_MATRIX_BOUNDS_CENTER_MISMATCH_THRESHOLD = 0.05
-const PLACEMENT_IDENTITY_EPSILON = 1e-6
 const MEDIAPIPE_TIMESTAMP_STEP_MS = 1000 / 30
 const LIVE_AUTO_ANALYSIS_INTERVAL_SEC = 0.35
 const DETECT_PERFORMANCE_DEFAULT_OPTIONS: DetectPerformanceOptions = {
@@ -3661,10 +3622,10 @@ const realtimeDriveModeLabels: Record<RealtimeDriveMode, string> = {
   interval_legacy: "旧setInterval 一定間隔タイマー",
 }
 
+const DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE_ID: LivePlacementFunctionCandidateId =
+  "direct_piecewise_ty3_linear_normalized_v1"
+
 const DEFAULT_POSE_MAPPING_SETTINGS: LabState["poseMappingSettings"] = {
-  alignmentMode: "bounds_center_scale_v1",
-  placementLandmarkSet: "all_non_iris",
-  boundsScaleBasis: "diag",
   hideIdealOverlayWhenRenderPoseNotApplied: true,
 }
 
@@ -3778,28 +3739,7 @@ app.innerHTML = `
       </div>
       <p class="export-status" data-debug-export-status></p>
             <div class="review-card pose-mapping-controls" aria-label="Pose Mapping alignment controls">
-              <label class="select-field">
-                <span>Alignment mode（位置合わせ）</span>
-                <select data-control="pose-mapping-alignment-mode">
-                  <option value="mediapipe_placement_center_scale">Matrix placement（行列配置）</option>
-                  <option value="bounds_center_scale_v1">Bounds center + scale（外枠中心と拡大率）</option>
-                </select>
-              </label>
-              <label class="select-field">
-                <span>Bounds landmarks（外枠計算点）</span>
-                <select data-control="pose-mapping-placement-landmark-set">
-                  <option value="all_non_iris">all_non_iris</option>
-                  <option value="stable_non_expression">stable_non_expression</option>
-                </select>
-              </label>
-              <label class="select-field">
-                <span>Scale basis（拡大率基準）</span>
-                <select data-control="pose-mapping-bounds-scale-basis">
-                  <option value="height">height</option>
-                  <option value="width">width</option>
-                  <option value="diag">diag</option>
-                </select>
-              </label>
+              <p class="control-note">alignmentMethod: ${DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE_ID}</p>
               <label class="overlay-toggle">
                 <input type="checkbox" data-control="pose-mapping-hide-overlay-on-render-pose-not-applied" />
                 <span>Hide ideal overlay when render pose not applied</span>
@@ -4406,33 +4346,6 @@ function bindEvents() {
         ...state.objPoseMapping,
         poseSamplingPreset: value,
       }
-      renderAll()
-    }
-  })
-
-  getElement<HTMLSelectElement>('[data-control="pose-mapping-alignment-mode"]').addEventListener("change", (event) => {
-    const value = event.currentTarget.value
-    if (isPoseMappingAlignmentMode(value)) {
-      state.poseMappingSettings.alignmentMode = value
-      clearRuntimeRenderArtifacts("alignment_settings_changed")
-      renderAll()
-    }
-  })
-
-  getElement<HTMLSelectElement>('[data-control="pose-mapping-placement-landmark-set"]').addEventListener("change", (event) => {
-    const value = event.currentTarget.value
-    if (isPlacementLandmarkSet(value)) {
-      state.poseMappingSettings.placementLandmarkSet = value
-      clearRuntimeRenderArtifacts("alignment_settings_changed")
-      renderAll()
-    }
-  })
-
-  getElement<HTMLSelectElement>('[data-control="pose-mapping-bounds-scale-basis"]').addEventListener("change", (event) => {
-    const value = event.currentTarget.value
-    if (isBoundsScaleBasis(value)) {
-      state.poseMappingSettings.boundsScaleBasis = value
-      clearRuntimeRenderArtifacts("alignment_settings_changed")
       renderAll()
     }
   })
@@ -8498,6 +8411,7 @@ function buildPoseMappingAlignment(
   alignment: PoseMappingAlignmentState
 } {
   const videoAspectRatio = getLiveVideoAspectRatio()
+  const matrixFeatures = buildPlacementFunctionMatrixFeatures(currentMatrix)
   const emptyPlacementDebug = buildPlacementDebugState(currentMatrix, null, idealMatrix, null)
   if (!currentLandmarksImage || currentLandmarksImage.length !== REQUIRED_LANDMARK_COUNT) {
     return {
@@ -8506,12 +8420,16 @@ function buildPoseMappingAlignment(
       meshTargetVertices: null,
       alignment: {
         ...createEmptyPoseMappingAlignmentState("skipped_no_current_face", "no_current_face"),
-        mode: state.poseMappingSettings.alignmentMode,
-        placementLandmarkSet: state.poseMappingSettings.placementLandmarkSet,
-        scaleBasis: state.poseMappingSettings.boundsScaleBasis,
         videoAspectRatio,
         renderAspectRatio,
+        matrixFeatures,
         renderedIdealStatus: getRenderedIdealStatusFromLandmarks(renderedIdealLandmarksImage),
+        placementFunctionStatus: currentMatrix ? "skipped_invalid_aligned_landmarks" : "skipped_missing_matrix",
+        placementFunctionDebug: createPlacementFunctionAlignmentDebug({
+          status: currentMatrix ? "skipped_invalid_aligned_landmarks" : "skipped_missing_matrix",
+          matrixFeatures,
+          errorMessage: "current_landmarks_missing_or_invalid",
+        }),
         placementDebug: emptyPlacementDebug,
       },
     }
@@ -8525,22 +8443,23 @@ function buildPoseMappingAlignment(
       meshTargetVertices: null,
       alignment: {
         ...createEmptyPoseMappingAlignmentState("skipped_no_rendered_ideal", "no_rendered_ideal"),
-        mode: state.poseMappingSettings.alignmentMode,
-        placementLandmarkSet: state.poseMappingSettings.placementLandmarkSet,
-        scaleBasis: state.poseMappingSettings.boundsScaleBasis,
         videoAspectRatio,
         renderAspectRatio,
         currentBoundsImage,
-        currentPlacement: buildMediaPipePlacementFromMatrix(currentMatrix, currentBoundsImage),
+        matrixFeatures,
         renderedIdealStatus: getRenderedIdealStatusFromLandmarks(renderedIdealLandmarksImage),
+        placementFunctionStatus: "skipped_invalid_aligned_landmarks",
+        placementFunctionDebug: createPlacementFunctionAlignmentDebug({
+          status: "skipped_invalid_aligned_landmarks",
+          matrixFeatures,
+          errorMessage: "rendered_ideal_landmarks_missing_or_invalid",
+        }),
         placementDebug: currentOnlyPlacementDebug,
       },
     }
   }
 
   const renderedIdealBoundsImage = calculateLandmarkBounds(renderedIdealLandmarksImage)
-  const currentPlacement = buildMediaPipePlacementFromMatrix(currentMatrix, currentBoundsImage)
-  const idealPlacement = buildMediaPipePlacementFromMatrix(idealMatrix, renderedIdealBoundsImage)
   const placementDebug = buildPlacementDebugState(
     currentMatrix,
     currentBoundsImage,
@@ -8560,38 +8479,35 @@ function buildPoseMappingAlignment(
     }
   }
 
-  if (state.poseMappingSettings.alignmentMode === "bounds_center_scale_v1") {
-    return buildBoundsCenterScalePoseMappingAlignment({
-      currentLandmarksImage,
-      renderedIdealLandmarksImage,
-      currentMatrix,
-      idealMatrix,
-      videoAspectRatio,
-      renderAspectRatio,
-      placementDebug,
-      reasons,
-      reasonCounts,
-    })
-  }
-
-  const skipPlacementResult = getPlacementAlignmentSkip(currentPlacement, idealPlacement)
-  if (skipPlacementResult) {
+  const failPlacementFunction = (
+    placementFunctionStatus: PlacementFunctionLiveStatus,
+    errorMessage: string,
+  ): {
+    alignedRenderedIdeal478: ReferenceLandmark[] | null
+    meshSourceVertices: ReferenceLandmark[] | null
+    meshTargetVertices: ReferenceLandmark[] | null
+    alignment: PoseMappingAlignmentState
+  } => {
     return {
       alignedRenderedIdeal478: null,
       meshSourceVertices: currentLandmarksImage.map(cloneReferenceLandmark),
       meshTargetVertices: null,
       alignment: {
-        ...createEmptyPoseMappingAlignmentState(skipPlacementResult.status, skipPlacementResult.reason),
-        mode: "mediapipe_placement_center_scale",
-        placementLandmarkSet: state.poseMappingSettings.placementLandmarkSet,
-        scaleBasis: state.poseMappingSettings.boundsScaleBasis,
-        placementSource: currentPlacement.source !== "unknown" ? currentPlacement.source : idealPlacement.source,
-        currentPlacement,
-        idealPlacement,
+        ...createEmptyPoseMappingAlignmentState(
+          "skipped_invalid_placement_function",
+          "invalid_placement_function",
+        ),
+        placementFunctionStatus,
         videoAspectRatio,
         renderAspectRatio,
         currentBoundsImage,
         renderedIdealBoundsImage,
+        matrixFeatures,
+        placementFunctionDebug: createPlacementFunctionAlignmentDebug({
+          status: placementFunctionStatus,
+          matrixFeatures,
+          errorMessage,
+        }),
         placementDebug,
         excludedReasonCounts: reasonCounts,
         landmarkReasons: reasons,
@@ -8600,27 +8516,49 @@ function buildPoseMappingAlignment(
     }
   }
 
-  const placementScaleRatio = currentPlacement.scale! / idealPlacement.scale!
+  if (!currentMatrix) {
+    return failPlacementFunction("skipped_missing_matrix", "current_facial_transformation_matrix_missing")
+  }
+  if (!isValidLivePlacementFunctionMatrixFeatures(matrixFeatures)) {
+    return failPlacementFunction("skipped_invalid_matrix_features", "current_matrix_features_invalid")
+  }
+
+  const liveTransform = evaluateLivePlacementFunctionCandidate(matrixFeatures)
+  if (!liveTransform) {
+    return failPlacementFunction("skipped_invalid_candidate", "live_placement_function_candidate_unavailable")
+  }
+  if (!isValidLivePlacementFunctionTransform(liveTransform)) {
+    return failPlacementFunction("skipped_invalid_transform", "live_placement_function_transform_invalid")
+  }
+
+  const { scaleRatio, translateAfterScaleImageX, translateAfterScaleImageY } = liveTransform
   const alignedRenderedIdealLandmarksImage = renderedIdealLandmarksImage.map((landmark) => {
-    const alignedX =
-      (landmark.x - idealPlacement.center!.x) * placementScaleRatio +
-      currentPlacement.center!.x
-    const alignedY =
-      (landmark.y - idealPlacement.center!.y) * placementScaleRatio +
-      currentPlacement.center!.y
     return {
       index: landmark.index,
-      x: alignedX,
-      y: alignedY,
+      x: landmark.x * scaleRatio + translateAfterScaleImageX,
+      y: landmark.y * scaleRatio + translateAfterScaleImageY,
       z: landmark.z,
     }
   })
 
   const displacementValues: number[] = []
+  let invalidAlignedLandmarkCount = 0
   for (let index = 0; index < REQUIRED_LANDMARK_COUNT; index += 1) {
     const current = currentLandmarksImage[index]
     const aligned = alignedRenderedIdealLandmarksImage[index]
-    if (!isFiniteLandmark(current) || !isFiniteLandmark(aligned)) {
+    if (!isFiniteLandmark(aligned)) {
+      invalidAlignedLandmarkCount += 1
+      if (!reasons[index].includes("invalid")) {
+        reasons[index].push("invalid")
+        reasonCounts.invalid += 1
+      }
+      continue
+    }
+    if (isUnsafeImageLandmark(aligned) && !reasons[index].includes("unsafe")) {
+      reasons[index].push("unsafe")
+      reasonCounts.unsafe += 1
+    }
+    if (!isFiniteLandmark(current)) {
       continue
     }
     const distance = calculateAspectCorrectedDistance(current, aligned, videoAspectRatio)
@@ -8631,6 +8569,45 @@ function buildPoseMappingAlignment(
     ) {
       reasons[index].push("largeDisplacement")
       reasonCounts.largeDisplacement += 1
+    }
+  }
+  if (invalidAlignedLandmarkCount > 0) {
+    return {
+      alignedRenderedIdeal478: null,
+      meshSourceVertices: currentLandmarksImage.map(cloneReferenceLandmark),
+      meshTargetVertices: null,
+      alignment: {
+        ...createEmptyPoseMappingAlignmentState(
+          "skipped_invalid_placement_function",
+          "invalid_placement_function",
+        ),
+        placementFunctionStatus: "skipped_invalid_aligned_landmarks",
+        placementScaleRatio: scaleRatio,
+        translateAfterScaleImageX,
+        translateAfterScaleImageY,
+        videoAspectRatio,
+        renderAspectRatio,
+        currentBoundsImage,
+        renderedIdealBoundsImage,
+        alignedLandmarkCount: alignedRenderedIdealLandmarksImage.length - invalidAlignedLandmarkCount,
+        invalidAlignedLandmarkCount,
+        matrixFeatures,
+        placementFunctionDebug: createPlacementFunctionAlignmentDebug({
+          status: "skipped_invalid_aligned_landmarks",
+          matrixFeatures,
+          scaleRatio,
+          translateAfterScaleImageX,
+          translateAfterScaleImageY,
+          alignedLandmarkCount: alignedRenderedIdealLandmarksImage.length - invalidAlignedLandmarkCount,
+          invalidAlignedLandmarkCount,
+          evaluationDebug: liveTransform.evaluationDebug,
+          errorMessage: "aligned_landmarks_contain_non_finite_values",
+        }),
+        placementDebug,
+        excludedReasonCounts: reasonCounts,
+        landmarkReasons: reasons,
+        renderedIdealStatus: "detected",
+      },
     }
   }
 
@@ -8648,36 +8625,134 @@ function buildPoseMappingAlignment(
     meshTargetVertices,
     alignment: {
       status: "completed",
-      mode: "mediapipe_placement_center_scale",
+      alignmentMethod: DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE_ID,
       rotationApplied: false,
-      placementLandmarkSet: state.poseMappingSettings.placementLandmarkSet,
-      scaleBasis: state.poseMappingSettings.boundsScaleBasis,
-      placementSource: currentPlacement.source,
       alignmentSkippedReason: "none",
-      currentPlacement,
-      idealPlacement,
-      placementScaleRatio,
+      placementFunctionCandidateId: DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE_ID,
+      placementFunctionStatus: "applied",
+      placementScaleRatio: scaleRatio,
       renderedIdealStatus: "detected",
-      anchorCount: 0,
-      currentCenter: currentPlacement.center,
-      idealCenter: idealPlacement.center,
-      scale: placementScaleRatio,
+      alignedLandmarkCount: alignedRenderedIdealLandmarksImage.length,
+      invalidAlignedLandmarkCount,
+      translateAfterScaleImageX,
+      translateAfterScaleImageY,
       videoAspectRatio,
       renderAspectRatio,
       currentBoundsImage,
       renderedIdealBoundsImage,
-      currentBoundsAspectWork: null,
-      renderedIdealBoundsAspectWork: null,
-      alignedIdealBoundsAspectWork: null,
       alignedRenderedIdealBoundsImage: calculateLandmarkBounds(alignedRenderedIdealLandmarksImage),
       displayedContentRect: null,
+      matrixFeatures,
+      placementFunctionDebug: createPlacementFunctionAlignmentDebug({
+        status: "applied",
+        matrixFeatures,
+        scaleRatio,
+        translateAfterScaleImageX,
+        translateAfterScaleImageY,
+        alignedLandmarkCount: alignedRenderedIdealLandmarksImage.length,
+        invalidAlignedLandmarkCount,
+        evaluationDebug: liveTransform.evaluationDebug,
+      }),
       placementDebug,
-      boundsCenterScaleDebug: null,
       excludedReasonCounts: reasonCounts,
       displacementSummary: summarizeDisplacements(displacementValues),
-      anchorIndices: [],
       landmarkReasons: reasons,
     },
+  }
+}
+
+function isValidLivePlacementFunctionMatrixFeatures(features: PlacementFunctionMatrixFeatures) {
+  return (
+    isFiniteNumber(features.tx) &&
+    isFiniteNumber(features.ty) &&
+    isFiniteNumber(features.tz) &&
+    isFiniteNumber(features.negTz) &&
+    isFiniteNumber(features.invNegTz) &&
+    isFiniteNumber(features.txOverNegTz) &&
+    isFiniteNumber(features.tyOverNegTz) &&
+    isFiniteNumber(features.matrixUniformScale)
+  )
+}
+
+function evaluateLivePlacementFunctionCandidate(
+  matrixFeatures: PlacementFunctionMatrixFeatures,
+): {
+  scaleRatio: number | null
+  translateAfterScaleImageX: number | null
+  translateAfterScaleImageY: number | null
+  evaluationDebug: PlacementFunctionCandidateEvaluationDebug | null
+} | null {
+  const candidateSet = state.placementAnalysis.candidate
+  const candidate = candidateSet?.piecewiseTransformCandidates.find(
+    (item) => item.id === DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE_ID,
+  ) ?? null
+  if (!candidateSet || !candidate) {
+    return null
+  }
+  const directFallbackCandidate = candidateSet.directTransformCandidates.find(
+    (item) => item.id === "direct_linear_normalized_v1",
+  ) ?? null
+  const prediction = predictPlacementFunctionPiecewiseCandidateForSample(
+    candidate,
+    { matrixFeatures } as PlacementFunctionCandidateTrainingSample,
+    directFallbackCandidate,
+    null,
+  )
+  if (!prediction) {
+    return null
+  }
+  const evaluationDebug = "evaluationDebug" in prediction ? prediction.evaluationDebug ?? null : null
+  return {
+    scaleRatio: prediction.estimatedScaleRatio,
+    translateAfterScaleImageX: prediction.estimatedTranslateAfterScaleImageX,
+    translateAfterScaleImageY: prediction.estimatedTranslateAfterScaleImageY,
+    evaluationDebug: evaluationDebug ?? {
+      candidateId: DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE_ID,
+      family: candidate.family,
+      modelType: candidate.modelType,
+    },
+  }
+}
+
+function isValidLivePlacementFunctionTransform(transform: {
+  scaleRatio: number | null
+  translateAfterScaleImageX: number | null
+  translateAfterScaleImageY: number | null
+}): transform is {
+  scaleRatio: number
+  translateAfterScaleImageX: number
+  translateAfterScaleImageY: number
+} {
+  return (
+    isFiniteNumber(transform.scaleRatio) &&
+    transform.scaleRatio > 0 &&
+    isFiniteNumber(transform.translateAfterScaleImageX) &&
+    isFiniteNumber(transform.translateAfterScaleImageY)
+  )
+}
+
+function createPlacementFunctionAlignmentDebug(input: {
+  status: PlacementFunctionLiveStatus
+  matrixFeatures?: PlacementFunctionMatrixFeatures
+  scaleRatio?: number | null
+  translateAfterScaleImageX?: number | null
+  translateAfterScaleImageY?: number | null
+  alignedLandmarkCount?: number
+  invalidAlignedLandmarkCount?: number
+  evaluationDebug?: PlacementFunctionCandidateEvaluationDebug | null
+  errorMessage?: string | null
+}): PlacementFunctionAlignmentDebug {
+  return {
+    candidateId: DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE_ID,
+    status: input.status,
+    matrixFeatures: input.matrixFeatures ?? createEmptyPlacementFunctionMatrixFeatures(),
+    scaleRatio: input.scaleRatio ?? null,
+    translateAfterScaleImageX: input.translateAfterScaleImageX ?? null,
+    translateAfterScaleImageY: input.translateAfterScaleImageY ?? null,
+    alignedLandmarkCount: input.alignedLandmarkCount ?? 0,
+    invalidAlignedLandmarkCount: input.invalidAlignedLandmarkCount ?? 0,
+    evaluationDebug: input.evaluationDebug ?? null,
+    errorMessage: input.errorMessage ?? null,
   }
 }
 
@@ -8694,242 +8769,6 @@ function cloneObjPoseMappingPose(pose: ObjPoseMappingPose): ObjPoseMappingPose {
     yaw: pose.yaw,
     pitch: pose.pitch,
     roll: pose.roll,
-  }
-}
-
-function buildBoundsCenterScalePoseMappingAlignment(params: {
-  currentLandmarksImage: ReferenceLandmark[]
-  renderedIdealLandmarksImage: ReferenceLandmark[]
-  currentMatrix: MatrixDebugSummary | null
-  idealMatrix: MatrixDebugSummary | null
-  videoAspectRatio: number
-  renderAspectRatio: number
-  placementDebug: PlacementDebugState
-  reasons: Array<PoseMappingExcludedReason[]>
-  reasonCounts: PoseMappingExcludedReasonCounts
-}): {
-  alignedRenderedIdeal478: ReferenceLandmark[] | null
-  meshSourceVertices: ReferenceLandmark[] | null
-  meshTargetVertices: ReferenceLandmark[] | null
-  alignment: PoseMappingAlignmentState
-} {
-  const placementLandmarkSet = state.poseMappingSettings.placementLandmarkSet
-  const scaleBasis = state.poseMappingSettings.boundsScaleBasis
-  const placementIndices = getPlacementLandmarkIndices(placementLandmarkSet)
-  const currentPlacementLandmarksImage = getLandmarksByIndices(params.currentLandmarksImage, placementIndices)
-  const idealPlacementLandmarksImage = getLandmarksByIndices(params.renderedIdealLandmarksImage, placementIndices)
-  const currentBoundsImage = calculateLandmarkBounds(currentPlacementLandmarksImage)
-  const renderedIdealBoundsImage = calculateLandmarkBounds(idealPlacementLandmarksImage)
-  const currentBoundsImagePlacement = buildBoundsPlacement(currentBoundsImage)
-  const renderedIdealBoundsImagePlacement = buildBoundsPlacement(renderedIdealBoundsImage)
-  const currentLandmarksWork = currentPlacementLandmarksImage.map((landmark) =>
-    toAspectWorkLandmark(landmark, params.videoAspectRatio),
-  )
-  const idealLandmarksWork = idealPlacementLandmarksImage.map((landmark) =>
-    toAspectWorkLandmark(landmark, params.renderAspectRatio),
-  )
-  const currentBoundsWork = calculateLandmarkBounds(currentLandmarksWork)
-  const idealBoundsWork = calculateLandmarkBounds(idealLandmarksWork)
-  const currentBoundsWorkPlacement = buildBoundsPlacement(currentBoundsWork)
-  const idealBoundsWorkPlacement = buildBoundsPlacement(idealBoundsWork)
-  const currentPlacement = buildBoundsMediaPipePlacement(currentBoundsImage, "current")
-  const idealPlacement = buildBoundsMediaPipePlacement(renderedIdealBoundsImage, "ideal")
-
-  if (
-    !currentBoundsImage ||
-    !renderedIdealBoundsImage ||
-    !currentBoundsImagePlacement ||
-    !renderedIdealBoundsImagePlacement ||
-    !currentBoundsWork ||
-    !idealBoundsWork ||
-    !currentBoundsWorkPlacement ||
-    !idealBoundsWorkPlacement
-  ) {
-    return {
-      alignedRenderedIdeal478: null,
-      meshSourceVertices: params.currentLandmarksImage.map(cloneReferenceLandmark),
-      meshTargetVertices: null,
-      alignment: {
-        ...createEmptyPoseMappingAlignmentState("skipped_invalid_bounds", "invalid_bounds"),
-        mode: "bounds_center_scale_v1",
-        placementLandmarkSet,
-        scaleBasis,
-        placementSource: "landmarkBounds",
-        currentPlacement,
-        idealPlacement,
-        videoAspectRatio: params.videoAspectRatio,
-        renderAspectRatio: params.renderAspectRatio,
-        currentBoundsImage,
-        renderedIdealBoundsImage,
-        currentBoundsAspectWork: currentBoundsWork,
-        renderedIdealBoundsAspectWork: idealBoundsWork,
-        placementDebug: params.placementDebug,
-        excludedReasonCounts: params.reasonCounts,
-        landmarkReasons: params.reasons,
-        renderedIdealStatus: "detected",
-      },
-    }
-  }
-
-  const currentScale = getBoundsPlacementScale(currentBoundsWorkPlacement, scaleBasis)
-  const idealScale = getBoundsPlacementScale(idealBoundsWorkPlacement, scaleBasis)
-  const scaleRatio = currentScale / idealScale
-  if (!Number.isFinite(currentScale) || !Number.isFinite(idealScale) || !Number.isFinite(scaleRatio) || scaleRatio <= 0) {
-    return {
-      alignedRenderedIdeal478: null,
-      meshSourceVertices: params.currentLandmarksImage.map(cloneReferenceLandmark),
-      meshTargetVertices: null,
-      alignment: {
-        ...createEmptyPoseMappingAlignmentState("skipped_invalid_scale", "invalid_scale"),
-        mode: "bounds_center_scale_v1",
-        placementLandmarkSet,
-        scaleBasis,
-        placementSource: "landmarkBounds",
-        currentPlacement,
-        idealPlacement,
-        videoAspectRatio: params.videoAspectRatio,
-        renderAspectRatio: params.renderAspectRatio,
-        currentBoundsImage,
-        renderedIdealBoundsImage,
-        currentBoundsAspectWork: currentBoundsWork,
-        renderedIdealBoundsAspectWork: idealBoundsWork,
-        placementDebug: params.placementDebug,
-        excludedReasonCounts: params.reasonCounts,
-        landmarkReasons: params.reasons,
-        renderedIdealStatus: "detected",
-      },
-    }
-  }
-
-  const alignedRenderedIdealLandmarksImage = params.renderedIdealLandmarksImage.map((landmark) => {
-    const idealWork = toAspectWorkLandmark(landmark, params.renderAspectRatio)
-    const alignedWork = {
-      index: landmark.index,
-      x: (idealWork.x - idealBoundsWorkPlacement.center.x) * scaleRatio + currentBoundsWorkPlacement.center.x,
-      y: (idealWork.y - idealBoundsWorkPlacement.center.y) * scaleRatio + currentBoundsWorkPlacement.center.y,
-      z: landmark.z,
-    }
-    return fromAspectWorkLandmark(alignedWork, params.videoAspectRatio)
-  })
-  const alignedPlacementLandmarksImage = getLandmarksByIndices(alignedRenderedIdealLandmarksImage, placementIndices)
-  const alignedRenderedIdealBoundsImage = calculateLandmarkBounds(alignedPlacementLandmarksImage)
-  const alignedRenderedIdealBoundsImagePlacement = buildBoundsPlacement(alignedRenderedIdealBoundsImage)
-  const alignedIdealBoundsAspectWork = calculateLandmarkBounds(
-    alignedPlacementLandmarksImage.map((landmark) => toAspectWorkLandmark(landmark, params.videoAspectRatio)),
-  )
-  const alignedIdealBoundsAspectWorkPlacement = buildBoundsPlacement(alignedIdealBoundsAspectWork)
-
-  if (!alignedRenderedIdealBoundsImage || !alignedRenderedIdealBoundsImagePlacement || !alignedIdealBoundsAspectWork || !alignedIdealBoundsAspectWorkPlacement) {
-    return {
-      alignedRenderedIdeal478: null,
-      meshSourceVertices: params.currentLandmarksImage.map(cloneReferenceLandmark),
-      meshTargetVertices: null,
-      alignment: {
-        ...createEmptyPoseMappingAlignmentState("skipped_invalid_bounds", "invalid_bounds"),
-        mode: "bounds_center_scale_v1",
-        placementLandmarkSet,
-        scaleBasis,
-        placementSource: "landmarkBounds",
-        currentPlacement,
-        idealPlacement,
-        videoAspectRatio: params.videoAspectRatio,
-        renderAspectRatio: params.renderAspectRatio,
-        currentBoundsImage,
-        renderedIdealBoundsImage,
-        currentBoundsAspectWork: currentBoundsWork,
-        renderedIdealBoundsAspectWork: idealBoundsWork,
-        placementDebug: params.placementDebug,
-        excludedReasonCounts: params.reasonCounts,
-        landmarkReasons: params.reasons,
-        renderedIdealStatus: "detected",
-      },
-    }
-  }
-
-  const displacementValues: number[] = []
-  for (let index = 0; index < REQUIRED_LANDMARK_COUNT; index += 1) {
-    const current = params.currentLandmarksImage[index]
-    const aligned = alignedRenderedIdealLandmarksImage[index]
-    if (!isFiniteLandmark(current) || !isFiniteLandmark(aligned)) {
-      continue
-    }
-    const distance = calculateAspectCorrectedDistance(current, aligned, params.videoAspectRatio)
-    displacementValues.push(distance)
-    if (
-      distance > ALIGNMENT_LARGE_DISPLACEMENT_THRESHOLD &&
-      !params.reasons[index].includes("largeDisplacement")
-    ) {
-      params.reasons[index].push("largeDisplacement")
-      params.reasonCounts.largeDisplacement += 1
-    }
-  }
-
-  const meshSourceVertices = params.currentLandmarksImage.map(cloneReferenceLandmark)
-  const meshTargetVertices = params.currentLandmarksImage.map((current, index) => {
-    const aligned = alignedRenderedIdealLandmarksImage[index]
-    return params.reasons[index].length > 0 || !isFiniteLandmark(aligned)
-      ? cloneReferenceLandmark(current)
-      : cloneReferenceLandmark(aligned)
-  })
-
-  const translationWork = {
-    x: currentBoundsWorkPlacement.center.x - idealBoundsWorkPlacement.center.x * scaleRatio,
-    y: currentBoundsWorkPlacement.center.y - idealBoundsWorkPlacement.center.y * scaleRatio,
-  }
-
-  return {
-    alignedRenderedIdeal478: alignedRenderedIdealLandmarksImage,
-    meshSourceVertices,
-    meshTargetVertices,
-    alignment: {
-      status: "completed",
-      mode: "bounds_center_scale_v1",
-      rotationApplied: false,
-      placementLandmarkSet,
-      scaleBasis,
-      placementSource: "landmarkBounds",
-      alignmentSkippedReason: "none",
-      currentPlacement,
-      idealPlacement,
-      placementScaleRatio: scaleRatio,
-      renderedIdealStatus: "detected",
-      anchorCount: placementIndices.length,
-      currentCenter: currentBoundsWorkPlacement.center,
-      idealCenter: idealBoundsWorkPlacement.center,
-      scale: scaleRatio,
-      videoAspectRatio: params.videoAspectRatio,
-      renderAspectRatio: params.renderAspectRatio,
-      currentBoundsImage,
-      renderedIdealBoundsImage,
-      currentBoundsAspectWork: currentBoundsWork,
-      renderedIdealBoundsAspectWork: idealBoundsWork,
-      alignedIdealBoundsAspectWork,
-      alignedRenderedIdealBoundsImage,
-      displayedContentRect: null,
-      placementDebug: params.placementDebug,
-      boundsCenterScaleDebug: {
-        mode: "bounds_center_scale_v1",
-        placementLandmarkSet,
-        scaleBasis,
-        rotationApplied: false,
-        currentBoundsWork: currentBoundsWorkPlacement,
-        idealBoundsWork: idealBoundsWorkPlacement,
-        currentCenterWork: currentBoundsWorkPlacement.center,
-        idealCenterWork: idealBoundsWorkPlacement.center,
-        currentScale,
-        idealScale,
-        scaleRatio,
-        translationWork,
-        currentBoundsImage: currentBoundsImagePlacement,
-        renderedIdealBoundsImage: renderedIdealBoundsImagePlacement,
-        alignedRenderedIdealBoundsImage: alignedRenderedIdealBoundsImagePlacement,
-        alignedLandmarkCount: alignedRenderedIdealLandmarksImage.length,
-      },
-      excludedReasonCounts: params.reasonCounts,
-      displacementSummary: summarizeDisplacements(displacementValues),
-      anchorIndices: placementIndices,
-      landmarkReasons: params.reasons,
-    },
   }
 }
 
@@ -8950,99 +8789,6 @@ function getRenderedIdealStatusFromDetection(status: RenderedIdealDetectionStatu
     return "invalid"
   }
   return "missing"
-}
-
-function buildMediaPipePlacementFromMatrix(
-  matrix: MatrixDebugSummary | null,
-  boundsImage: PoseMappingBounds | null,
-): MediaPipeFacePlacement {
-  if (!matrix) {
-    return createMissingMediaPipeFacePlacement("facialTransformationMatrix", "matrix_missing")
-  }
-
-  const raw = {
-    matrixTranslation: matrix.translation,
-    matrixScale: matrix.scale,
-    matrixRotationDeg: matrix.rotationDeg,
-    boundsImage,
-  }
-  if (!matrix.raw.values || matrix.raw.values.length < 16) {
-    return createInvalidMediaPipeFacePlacement(
-      "facialTransformationMatrix",
-      "matrix_raw_16_values_missing",
-      raw,
-    )
-  }
-  if (!matrix.translation || !matrix.scale) {
-    return createInvalidMediaPipeFacePlacement(
-      "facialTransformationMatrix",
-      "matrix_translation_or_scale_missing",
-      raw,
-    )
-  }
-
-  const center = {
-    x: matrix.translation.x,
-    y: matrix.translation.y,
-  }
-  const scale = matrix.scale.uniform
-  const warnings: string[] = []
-  if (!isImageNormalizedPoint(center)) {
-    warnings.push("matrix_translation_is_not_image_normalized")
-  }
-  if (!Number.isFinite(scale) || scale <= 0) {
-    warnings.push("matrix_uniform_scale_invalid")
-  }
-  if (isIdentityMatrixPlacement(matrix.rowMajor) && hasMatrixBoundsCenterMismatch(matrix.rowMajor, boundsImage)) {
-    warnings.push("matrix_identity_placement_mismatches_bounds")
-  }
-  if (warnings.length > 0) {
-    return {
-      status: "invalid",
-      source: "facialTransformationMatrix",
-      center,
-      scale,
-      raw,
-      warnings,
-    }
-  }
-
-  return {
-    status: "detected",
-    source: "facialTransformationMatrix",
-    center,
-    scale,
-    raw,
-    warnings: [],
-  }
-}
-
-function isIdentityMatrixPlacement(candidate: MatrixPlacementCandidate) {
-  const translation = candidate.translation
-  const scale = candidate.scale
-  return Boolean(
-    translation &&
-      scale &&
-      Math.abs(translation.x) <= PLACEMENT_IDENTITY_EPSILON &&
-      Math.abs(translation.y) <= PLACEMENT_IDENTITY_EPSILON &&
-      Math.abs(translation.z) <= PLACEMENT_IDENTITY_EPSILON &&
-      Math.abs(scale.x - 1) <= PLACEMENT_IDENTITY_EPSILON &&
-      Math.abs(scale.y - 1) <= PLACEMENT_IDENTITY_EPSILON &&
-      Math.abs(scale.z - 1) <= PLACEMENT_IDENTITY_EPSILON,
-  )
-}
-
-function hasMatrixBoundsCenterMismatch(
-  candidate: MatrixPlacementCandidate,
-  boundsImage: PoseMappingBounds | null,
-) {
-  const boundsPlacement = buildBoundsPlacement(boundsImage)
-  if (!candidate.translation || !boundsPlacement) {
-    return false
-  }
-  const dx = candidate.translation.x - boundsPlacement.center.x
-  const dy = candidate.translation.y - boundsPlacement.center.y
-  return Math.hypot(dx, dy) > PLACEMENT_MATRIX_BOUNDS_CENTER_MISMATCH_THRESHOLD
 }
 
 function buildPlacementDebugState(
@@ -9120,68 +8866,6 @@ function buildBoundsPlacement(bounds: PoseMappingBounds | null): BoundsPlacement
   }
 }
 
-function getBoundsPlacementScale(placement: BoundsPlacement, scaleBasis: BoundsScaleBasis) {
-  if (scaleBasis === "height") {
-    return placement.scaleByHeight
-  }
-  if (scaleBasis === "width") {
-    return placement.scaleByWidth
-  }
-  return placement.scaleByDiag
-}
-
-function buildBoundsMediaPipePlacement(
-  boundsImage: PoseMappingBounds | null,
-  label: "current" | "ideal",
-): MediaPipeFacePlacement {
-  const boundsPlacement = buildBoundsPlacement(boundsImage)
-  if (!boundsPlacement) {
-    return createInvalidMediaPipeFacePlacement("landmarkBounds", `${label}_bounds_invalid`, {
-      matrixTranslation: null,
-      matrixScale: null,
-      boundsImage,
-    })
-  }
-  const scale = getBoundsPlacementScale(boundsPlacement, state.poseMappingSettings.boundsScaleBasis)
-  const warnings: string[] = []
-  if (!isImageNormalizedPoint(boundsPlacement.center)) {
-    warnings.push(`${label}_bounds_center_is_not_image_normalized`)
-  }
-  if (!Number.isFinite(scale) || scale <= 0) {
-    warnings.push(`${label}_bounds_scale_invalid`)
-  }
-  return {
-    status: warnings.length === 0 ? "detected" : "invalid",
-    source: "landmarkBounds",
-    center: boundsPlacement.center,
-    scale,
-    raw: {
-      matrixTranslation: null,
-      matrixScale: null,
-      boundsImage,
-    },
-    warnings,
-  }
-}
-
-function getPlacementLandmarkIndices(placementLandmarkSet: PlacementLandmarkSet) {
-  return Array.from({ length: REQUIRED_LANDMARK_COUNT }, (_, index) => index).filter((index) => {
-    if (isIrisLandmarkIndex(index)) {
-      return false
-    }
-    if (placementLandmarkSet === "stable_non_expression" && EXPRESSION_SENSITIVE_LANDMARK_INDICES.has(index)) {
-      return false
-    }
-    return true
-  })
-}
-
-function getLandmarksByIndices(landmarks: ReferenceLandmark[], indices: number[]) {
-  return indices
-    .map((index) => landmarks[index])
-    .filter(isFiniteLandmark)
-}
-
 function createEmptyMatrixRawDebug(): MatrixRawDebug {
   return {
     exists: false,
@@ -9223,42 +8907,6 @@ function calculateMatrixScaleToBoundsHeight(
     : null
 }
 
-function isImageNormalizedPoint(point: { x: number; y: number }) {
-  return (
-    Number.isFinite(point.x) &&
-    Number.isFinite(point.y) &&
-    point.x >= 0 &&
-    point.x <= 1 &&
-    point.y >= 0 &&
-    point.y <= 1
-  )
-}
-
-function getPlacementAlignmentSkip(
-  currentPlacement: MediaPipeFacePlacement,
-  idealPlacement: MediaPipeFacePlacement,
-): { status: PoseMappingAlignmentStatus; reason: PoseMappingAlignmentSkippedReason } | null {
-  if (currentPlacement.status === "missing") {
-    return {
-      status: "skipped_missing_current_placement",
-      reason: "missing_current_placement",
-    }
-  }
-  if (idealPlacement.status === "missing") {
-    return {
-      status: "skipped_missing_ideal_placement",
-      reason: "missing_ideal_placement",
-    }
-  }
-  if (currentPlacement.status === "invalid" || idealPlacement.status === "invalid") {
-    return {
-      status: "skipped_invalid_placement",
-      reason: "invalid_placement",
-    }
-  }
-  return null
-}
-
 function getInitialAlignmentExcludedReasons(
   current: ReferenceLandmark | undefined,
   ideal: ReferenceLandmark | undefined,
@@ -9292,30 +8940,6 @@ function cloneReferenceLandmark(landmark: ReferenceLandmark): ReferenceLandmark 
   return {
     index: landmark.index,
     x: landmark.x,
-    y: landmark.y,
-    z: landmark.z,
-  }
-}
-
-function toAspectWorkLandmark(
-  landmark: ReferenceLandmark,
-  aspectRatio: number,
-): ReferenceLandmark {
-  return {
-    index: landmark.index,
-    x: landmark.x * aspectRatio,
-    y: landmark.y,
-    z: landmark.z,
-  }
-}
-
-function fromAspectWorkLandmark(
-  landmark: ReferenceLandmark,
-  aspectRatio: number,
-): ReferenceLandmark {
-  return {
-    index: landmark.index,
-    x: landmark.x / aspectRatio,
     y: landmark.y,
     z: landmark.z,
   }
@@ -14892,6 +14516,7 @@ function evaluatePlacementFunctionCandidate(
     return null
   }
   const definition = getPlacementFunctionCandidateDefinition(candidate, candidateId)
+  const evaluationDebug = "evaluationDebug" in prediction ? prediction.evaluationDebug ?? null : null
   return {
     estimatedTransform: roundPlacementFunctionRoundtripEstimatedTransform({
       scaleRatio: prediction.estimatedScaleRatio,
@@ -14901,7 +14526,7 @@ function evaluatePlacementFunctionCandidate(
         prediction.estimatedTranslateAfterScaleImageX * sample.knownPlacement.renderAspectRatio,
       translateAfterScaleWorkY: prediction.estimatedTranslateAfterScaleImageY,
     }),
-    evaluationDebug: prediction.evaluationDebug ?? {
+    evaluationDebug: evaluationDebug ?? {
       candidateId,
       family: definition?.family ?? "direct_linear",
       modelType: definition?.modelType ?? "-",
@@ -18267,7 +17892,9 @@ function renderControls() {
   )
   setDisabled(
     '[data-action="toggle-grid-anchors"]',
-    state.poseMappingRuntime.alignment.anchorCount <= 0,
+    !state.poseMappingRuntime.alignment.currentBoundsImage &&
+      !state.poseMappingRuntime.alignment.renderedIdealBoundsImage &&
+      !state.poseMappingRuntime.alignment.alignedRenderedIdealBoundsImage,
   )
   setDisabled('[data-action="toggle-triangle-mesh"]', true)
 
@@ -18294,12 +17921,6 @@ function renderControls() {
   )
   getElement<HTMLSelectElement>('[data-control="obj-pose-sampling-preset"]').value = state.objPoseMapping.poseSamplingPreset
   setDisabled('[data-control="obj-pose-sampling-preset"]', poseSearchRunning || isObjPoseCalibrationRunning())
-  getElement<HTMLSelectElement>('[data-control="pose-mapping-alignment-mode"]').value =
-    state.poseMappingSettings.alignmentMode
-  getElement<HTMLSelectElement>('[data-control="pose-mapping-placement-landmark-set"]').value =
-    state.poseMappingSettings.placementLandmarkSet
-  getElement<HTMLSelectElement>('[data-control="pose-mapping-bounds-scale-basis"]').value =
-    state.poseMappingSettings.boundsScaleBasis
   getElement<HTMLInputElement>('[data-control="pose-mapping-hide-overlay-on-render-pose-not-applied"]').checked =
     state.poseMappingSettings.hideIdealOverlayWhenRenderPoseNotApplied
   objFileInput.disabled = poseSearchRunning
@@ -18394,8 +18015,8 @@ function renderPoseMappingLiveSummaryCard() {
       <div><dt>pose diff</dt><dd>${escapeHtml(formatPoseMappingDiff(runtime.poseDiff))}</dd></div>
       <div><dt>renderedIdeal478</dt><dd>${runtime.renderedIdealDetected ? "detected" : "not detected"} / ${formatNullableCount(runtime.renderedIdealLandmarkCount)}</dd></div>
       <div><dt>alignedRenderedIdeal478</dt><dd>${formatNullableCount(runtime.alignedRenderedIdeal478?.length ?? null)}</dd></div>
-      <div><dt>alignment</dt><dd>${escapeHtml(runtime.alignment.status)} / ${escapeHtml(runtime.alignment.mode)} / scale ${formatRealtimeNullableNumber(runtime.alignment.placementScaleRatio)}</dd></div>
-      <div><dt>bounds settings</dt><dd>${escapeHtml(runtime.alignment.placementLandmarkSet)} / ${escapeHtml(runtime.alignment.scaleBasis)}</dd></div>
+      <div><dt>alignment</dt><dd>${escapeHtml(runtime.alignment.status)} / ${escapeHtml(runtime.alignment.alignmentMethod)} / ${escapeHtml(runtime.alignment.placementFunctionStatus)}</dd></div>
+      <div><dt>placement transform</dt><dd>scale ${formatRealtimeNullableNumber(runtime.alignment.placementScaleRatio)} / tx ${formatRealtimeNullableNumber(runtime.alignment.translateAfterScaleImageX)} / ty ${formatRealtimeNullableNumber(runtime.alignment.translateAfterScaleImageY)}</dd></div>
       <div><dt>Placement source debug（位置・大きさ取得元デバッグ）</dt><dd>current raw ${String(runtime.alignment.placementDebug.current.matrixRaw.exists)} / ideal raw ${String(runtime.alignment.placementDebug.ideal.matrixRaw.exists)}</dd></div>
       <div><dt>Current matrix column-major（現在顔の列優先候補）</dt><dd>${escapeHtml(formatMatrixPlacementCandidate(runtime.alignment.placementDebug.current.matrixColumnMajor))}</dd></div>
       <div><dt>Current bounds center / size（現在顔の外枠）</dt><dd>${escapeHtml(formatBoundsPlacement(runtime.alignment.placementDebug.current.boundsPlacement))}</dd></div>
@@ -18593,32 +18214,27 @@ function renderPoseMappingDebugTab() {
       <h3>Alignment coordinate debug（位置合わせ座標デバッグ）</h3>
       <dl class="summary-list">
         <div><dt>status</dt><dd>${escapeHtml(runtime.alignment.status)}</dd></div>
-        <div><dt>Alignment mode（位置合わせ方式）</dt><dd>${escapeHtml(runtime.alignment.mode)}</dd></div>
-        <div><dt>Placement landmark set</dt><dd>${escapeHtml(runtime.alignment.placementLandmarkSet)}</dd></div>
-        <div><dt>Scale basis</dt><dd>${escapeHtml(runtime.alignment.scaleBasis)}</dd></div>
-        <div><dt>Placement source（位置・大きさ取得元）</dt><dd>${escapeHtml(runtime.alignment.placementSource)}</dd></div>
+        <div><dt>alignmentMethod</dt><dd>${escapeHtml(runtime.alignment.alignmentMethod)}</dd></div>
+        <div><dt>placementFunctionCandidateId</dt><dd>${escapeHtml(runtime.alignment.placementFunctionCandidateId)}</dd></div>
+        <div><dt>placementFunctionStatus</dt><dd>${escapeHtml(runtime.alignment.placementFunctionStatus)}</dd></div>
         <div><dt>Rotation applied（回転適用有無）</dt><dd>${String(runtime.alignment.rotationApplied)}</dd></div>
         <div><dt>alignmentSkippedReason</dt><dd>${escapeHtml(runtime.alignment.alignmentSkippedReason)}</dd></div>
-        <div><dt>Current placement center / scale（現在顔の位置・大きさ）</dt><dd>${escapeHtml(formatPlacement(runtime.alignment.currentPlacement))}</dd></div>
-        <div><dt>Ideal placement center / scale（理想顔の位置・大きさ）</dt><dd>${escapeHtml(formatPlacement(runtime.alignment.idealPlacement))}</dd></div>
         <div><dt>Placement scale ratio（大きさ比率）</dt><dd>${formatRealtimeNullableNumber(runtime.alignment.placementScaleRatio)}</dd></div>
-        <div><dt>anchorCount</dt><dd>${formatNullableCount(runtime.alignment.anchorCount)}</dd></div>
+        <div><dt>translateAfterScaleImageX</dt><dd>${formatRealtimeNullableNumber(runtime.alignment.translateAfterScaleImageX)}</dd></div>
+        <div><dt>translateAfterScaleImageY</dt><dd>${formatRealtimeNullableNumber(runtime.alignment.translateAfterScaleImageY)}</dd></div>
+        <div><dt>alignedLandmarkCount</dt><dd>${formatNullableCount(runtime.alignment.alignedLandmarkCount)}</dd></div>
+        <div><dt>invalidAlignedLandmarkCount</dt><dd>${formatNullableCount(runtime.alignment.invalidAlignedLandmarkCount)}</dd></div>
         <div><dt>videoAspectRatio</dt><dd>${formatRealtimeNullableNumber(runtime.alignment.videoAspectRatio)}</dd></div>
         <div><dt>renderAspectRatio</dt><dd>${formatRealtimeNullableNumber(runtime.alignment.renderAspectRatio)}</dd></div>
-        <div><dt>currentCenter</dt><dd>${escapeHtml(formatPoint2(runtime.alignment.currentCenter))}</dd></div>
-        <div><dt>idealCenter</dt><dd>${escapeHtml(formatPoint2(runtime.alignment.idealCenter))}</dd></div>
-        <div><dt>scale</dt><dd>${formatRealtimeNullableNumber(runtime.alignment.scale)}</dd></div>
+        <div><dt>matrixFeatures</dt><dd>${escapeHtml(JSON.stringify(roundPlacementFunctionMatrixFeatures(runtime.alignment.matrixFeatures)))}</dd></div>
+        <div><dt>placementFunctionDebug</dt><dd>${escapeHtml(JSON.stringify(roundPlacementFunctionAlignmentDebugForState(runtime.alignment.placementFunctionDebug)))}</dd></div>
         <div><dt>current bounds image</dt><dd>${escapeHtml(formatPoseMappingBounds(runtime.alignment.currentBoundsImage))}</dd></div>
         <div><dt>rendered ideal bounds image</dt><dd>${escapeHtml(formatPoseMappingBounds(runtime.alignment.renderedIdealBoundsImage))}</dd></div>
-        <div><dt>current bounds aspect work</dt><dd>${escapeHtml(formatPoseMappingBounds(runtime.alignment.currentBoundsAspectWork))}</dd></div>
-        <div><dt>rendered ideal bounds aspect work</dt><dd>${escapeHtml(formatPoseMappingBounds(runtime.alignment.renderedIdealBoundsAspectWork))}</dd></div>
-        <div><dt>aligned ideal bounds aspect work</dt><dd>${escapeHtml(formatPoseMappingBounds(runtime.alignment.alignedIdealBoundsAspectWork))}</dd></div>
         <div><dt>aligned ideal bounds image</dt><dd>${escapeHtml(formatPoseMappingBounds(runtime.alignment.alignedRenderedIdealBoundsImage))}</dd></div>
         <div><dt>aligned ideal image bounds width / height</dt><dd>${formatRealtimeNullableNumber(runtime.alignment.alignedRenderedIdealBoundsImage?.width ?? null)} / ${formatRealtimeNullableNumber(runtime.alignment.alignedRenderedIdealBoundsImage?.height ?? null)}</dd></div>
         <div><dt>displayedContentRect</dt><dd>${escapeHtml(formatRect(runtime.alignment.displayedContentRect))}</dd></div>
         <div><dt>excludedReasonCounts</dt><dd>${escapeHtml(JSON.stringify(runtime.alignment.excludedReasonCounts))}</dd></div>
         <div><dt>displacementSummary</dt><dd>${escapeHtml(JSON.stringify(roundDisplacementSummary(runtime.alignment.displacementSummary)))}</dd></div>
-        <div><dt>boundsCenterScaleDebug</dt><dd>${escapeHtml(JSON.stringify(roundBoundsCenterScaleDebugForState(runtime.alignment.boundsCenterScaleDebug)))}</dd></div>
         <div><dt>alignedRenderedIdeal478</dt><dd>${formatNullableCount(runtime.alignedRenderedIdeal478?.length ?? null)}</dd></div>
         <div><dt>meshSourceVertices</dt><dd>${formatNullableCount(runtime.meshSourceVertices?.length ?? null)}</dd></div>
         <div><dt>meshTargetVertices</dt><dd>${formatNullableCount(runtime.meshTargetVertices?.length ?? null)}</dd></div>
@@ -20052,12 +19668,6 @@ function drawLiveOverlay() {
     if (canDrawAlignedIdeal) {
       drawPoseMappingBoundsDebug(context, displayedContentRect, state.poseMappingRuntime.alignment)
     }
-    drawAlignmentAnchors(
-      context,
-      displayedContentRect,
-      current478,
-      state.poseMappingRuntime.alignment.anchorIndices,
-    )
   }
 
   if (state.overlay.showExcludedLandmarks && current478) {
@@ -20075,9 +19685,6 @@ function drawPoseMappingBoundsDebug(
   displayedContentRect: Rect,
   alignment: PoseMappingAlignmentState,
 ) {
-  if (alignment.mode !== "bounds_center_scale_v1") {
-    return
-  }
   drawNormalizedBounds(context, displayedContentRect, alignment.currentBoundsImage, "rgba(79, 128, 255, 0.72)")
   drawNormalizedBounds(context, displayedContentRect, alignment.renderedIdealBoundsImage, "rgba(220, 71, 94, 0.62)")
   drawNormalizedBounds(context, displayedContentRect, alignment.alignedRenderedIdealBoundsImage, "rgba(238, 142, 52, 0.72)")
@@ -20186,31 +19793,6 @@ function drawLandmarkPairLines(
     context.lineTo(targetPoint.x, targetPoint.y)
   }
   context.stroke()
-  context.restore()
-}
-
-function drawAlignmentAnchors(
-  context: CanvasRenderingContext2D,
-  displayedContentRect: Rect,
-  landmarks: ReferenceLandmark[],
-  anchorIndices: number[],
-) {
-  if (anchorIndices.length === 0) {
-    return
-  }
-  context.save()
-  context.strokeStyle = "rgba(26, 132, 150, 0.82)"
-  context.lineWidth = 1.1
-  for (const index of anchorIndices) {
-    const landmark = landmarks[index]
-    if (!landmark) {
-      continue
-    }
-    const point = normalizedLandmarkToPreviewPixel(landmark, displayedContentRect)
-    context.beginPath()
-    context.arc(point.x, point.y, 2.5, 0, Math.PI * 2)
-    context.stroke()
-  }
   context.restore()
 }
 
@@ -21710,68 +21292,39 @@ function createEmptyPoseMappingDisplacementSummary(): PoseMappingDisplacementSum
   }
 }
 
-function createMissingMediaPipeFacePlacement(
-  source: MediaPipeFacePlacement["source"],
-  reason: string,
-): MediaPipeFacePlacement {
-  return {
-    status: "missing",
-    source,
-    center: null,
-    scale: null,
-    warnings: [reason],
-  }
-}
-
-function createInvalidMediaPipeFacePlacement(
-  source: MediaPipeFacePlacement["source"],
-  reason: string,
-  raw?: MediaPipeFacePlacement["raw"],
-): MediaPipeFacePlacement {
-  return {
-    status: "invalid",
-    source,
-    center: null,
-    scale: null,
-    raw,
-    warnings: [reason],
-  }
-}
-
 function createEmptyPoseMappingAlignmentState(
   status: PoseMappingAlignmentStatus = "skipped_no_current_face",
   alignmentSkippedReason: PoseMappingAlignmentSkippedReason = "no_current_face",
 ): PoseMappingAlignmentState {
+  const matrixFeatures = createEmptyPlacementFunctionMatrixFeatures()
   return {
     status,
-    mode: DEFAULT_POSE_MAPPING_SETTINGS.alignmentMode,
+    alignmentMethod: DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE_ID,
     rotationApplied: false,
-    placementLandmarkSet: DEFAULT_POSE_MAPPING_SETTINGS.placementLandmarkSet,
-    scaleBasis: DEFAULT_POSE_MAPPING_SETTINGS.boundsScaleBasis,
-    placementSource: "unknown",
     alignmentSkippedReason,
-    currentPlacement: createMissingMediaPipeFacePlacement("unknown", "not_ready"),
-    idealPlacement: createMissingMediaPipeFacePlacement("unknown", "not_ready"),
+    placementFunctionCandidateId: DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE_ID,
+    placementFunctionStatus: "skipped_missing_matrix",
     placementScaleRatio: null,
     renderedIdealStatus: "missing",
-    anchorCount: 0,
-    currentCenter: null,
-    idealCenter: null,
-    scale: null,
+    alignedLandmarkCount: 0,
+    invalidAlignedLandmarkCount: 0,
+    translateAfterScaleImageX: null,
+    translateAfterScaleImageY: null,
     videoAspectRatio: null,
     renderAspectRatio: null,
     currentBoundsImage: null,
     renderedIdealBoundsImage: null,
-    currentBoundsAspectWork: null,
-    renderedIdealBoundsAspectWork: null,
-    alignedIdealBoundsAspectWork: null,
     alignedRenderedIdealBoundsImage: null,
     displayedContentRect: null,
+    matrixFeatures,
+    placementFunctionDebug: createPlacementFunctionAlignmentDebug({
+      status: "skipped_missing_matrix",
+      matrixFeatures,
+      errorMessage: "not_ready",
+    }),
     placementDebug: buildPlacementDebugState(null, null, null, null),
-    boundsCenterScaleDebug: null,
     excludedReasonCounts: createEmptyPoseMappingExcludedReasonCounts(),
     displacementSummary: createEmptyPoseMappingDisplacementSummary(),
-    anchorIndices: [],
     landmarkReasons: [],
   }
 }
@@ -24507,7 +24060,6 @@ function buildPlacementMappingSample(runtime: PoseMappingRuntimeState): Placemen
     return null
   }
   const alignment = runtime.alignment
-  const boundsDebug = alignment.boundsCenterScaleDebug
   return {
     frameId: frameLifecycle.frameId,
     mediaTimeSec: roundForState(frameLifecycle.mediaTimeSec),
@@ -24527,20 +24079,17 @@ function buildPlacementMappingSample(runtime: PoseMappingRuntimeState): Placemen
     idealMatrixColumnMajorScale: roundMatrixScaleForState(
       alignment.placementDebug.ideal.matrixColumnMajor.scale,
     ),
-    currentBoundsImage: boundsDebug?.currentBoundsImage
-      ? roundBoundsPlacementForState(boundsDebug.currentBoundsImage)
-      : roundBoundsPlacementForState(alignment.placementDebug.current.boundsPlacement),
-    idealBoundsImage: boundsDebug?.renderedIdealBoundsImage
-      ? roundBoundsPlacementForState(boundsDebug.renderedIdealBoundsImage)
-      : roundBoundsPlacementForState(alignment.placementDebug.ideal.boundsPlacement),
-    currentBoundsWork: boundsDebug?.currentBoundsWork
-      ? roundBoundsPlacementForState(boundsDebug.currentBoundsWork)
-      : null,
-    idealBoundsWork: boundsDebug?.idealBoundsWork
-      ? roundBoundsPlacementForState(boundsDebug.idealBoundsWork)
-      : null,
-    boundsScaleBasis: alignment.scaleBasis,
-    boundsScaleRatio: roundForState(alignment.placementScaleRatio),
+    currentBoundsImage: roundBoundsPlacementForState(alignment.placementDebug.current.boundsPlacement),
+    idealBoundsImage: roundBoundsPlacementForState(alignment.placementDebug.ideal.boundsPlacement),
+    alignedIdealBoundsImage: roundBoundsPlacementForState(buildBoundsPlacement(alignment.alignedRenderedIdealBoundsImage)),
+    placementFunctionCandidateId: alignment.placementFunctionCandidateId,
+    placementFunctionStatus: alignment.placementFunctionStatus,
+    scaleRatio: roundForState(alignment.placementScaleRatio),
+    translateAfterScaleImageX: roundForState(alignment.translateAfterScaleImageX),
+    translateAfterScaleImageY: roundForState(alignment.translateAfterScaleImageY),
+    matrixFeatures: roundPlacementFunctionMatrixFeatures(alignment.matrixFeatures),
+    alignedLandmarkCount: alignment.alignedLandmarkCount,
+    invalidAlignedLandmarkCount: alignment.invalidAlignedLandmarkCount,
     videoAspectRatio: roundForState(alignment.videoAspectRatio),
     renderAspectRatio: roundForState(alignment.renderAspectRatio),
     qualityUsable: runtime.qualityGate.usable,
@@ -24573,10 +24122,15 @@ function buildPlacementMappingSamplesCsv(samples: PlacementMappingSample[]) {
     "idealMatrixColumnMajorScale",
     "currentBoundsImage",
     "idealBoundsImage",
-    "currentBoundsWork",
-    "idealBoundsWork",
-    "boundsScaleBasis",
-    "boundsScaleRatio",
+    "alignedIdealBoundsImage",
+    "placementFunctionCandidateId",
+    "placementFunctionStatus",
+    "scaleRatio",
+    "translateAfterScaleImageX",
+    "translateAfterScaleImageY",
+    "matrixFeatures",
+    "alignedLandmarkCount",
+    "invalidAlignedLandmarkCount",
     "videoAspectRatio",
     "renderAspectRatio",
     "qualityUsable",
@@ -24601,10 +24155,15 @@ function buildPlacementMappingSamplesCsv(samples: PlacementMappingSample[]) {
     formatCsvJson(sample.idealMatrixColumnMajorScale),
     formatCsvJson(sample.currentBoundsImage),
     formatCsvJson(sample.idealBoundsImage),
-    formatCsvJson(sample.currentBoundsWork),
-    formatCsvJson(sample.idealBoundsWork),
-    sample.boundsScaleBasis,
-    sample.boundsScaleRatio ?? "",
+    formatCsvJson(sample.alignedIdealBoundsImage),
+    sample.placementFunctionCandidateId,
+    sample.placementFunctionStatus,
+    sample.scaleRatio ?? "",
+    sample.translateAfterScaleImageX ?? "",
+    sample.translateAfterScaleImageY ?? "",
+    formatCsvJson(sample.matrixFeatures),
+    sample.alignedLandmarkCount,
+    sample.invalidAlignedLandmarkCount,
     sample.videoAspectRatio ?? "",
     sample.renderAspectRatio ?? "",
     sample.qualityUsable,
@@ -25511,18 +25070,6 @@ function isObjPoseSamplingPresetName(value: string): value is ObjPoseSamplingPre
   return value === "quick" || value === "standard" || value === "dense"
 }
 
-function isPoseMappingAlignmentMode(value: string): value is PoseMappingAlignmentMode {
-  return value === "mediapipe_placement_center_scale" || value === "bounds_center_scale_v1"
-}
-
-function isPlacementLandmarkSet(value: string): value is PlacementLandmarkSet {
-  return value === "all_non_iris" || value === "stable_non_expression"
-}
-
-function isBoundsScaleBasis(value: string): value is BoundsScaleBasis {
-  return value === "height" || value === "width" || value === "diag"
-}
-
 function isObjRenderAppearanceProfileId(value: string): value is ObjRenderAppearanceProfileId {
   return value in OBJ_RENDER_APPEARANCE_PROFILES
 }
@@ -25678,13 +25225,6 @@ function formatRect(rect: Rect | null) {
     return "-"
   }
   return `x ${formatNullableNumber(rect.x)} / y ${formatNullableNumber(rect.y)} / width ${formatNullableNumber(rect.width)} / height ${formatNullableNumber(rect.height)}`
-}
-
-function formatPlacement(placement: MediaPipeFacePlacement) {
-  const center = placement.center
-    ? `center x ${formatNullableNumber(placement.center.x)} / y ${formatNullableNumber(placement.center.y)}`
-    : "center -"
-  return `${placement.status} / ${placement.source} / ${center} / scale ${formatNullableNumber(placement.scale)} / warnings ${placement.warnings.join(", ") || "-"}`
 }
 
 function formatMatrixPlacementCandidate(candidate: MatrixPlacementCandidate) {
@@ -26350,31 +25890,26 @@ function getPoseMappingLoopDebugSummary() {
 function getPoseMappingAlignmentDebugSummary(alignment: PoseMappingAlignmentState) {
   return {
     status: alignment.status,
-    mode: alignment.mode,
+    alignmentMethod: alignment.alignmentMethod,
     rotationApplied: alignment.rotationApplied,
-    placementLandmarkSet: alignment.placementLandmarkSet,
-    scaleBasis: alignment.scaleBasis,
-    placementSource: alignment.placementSource,
     alignmentSkippedReason: alignment.alignmentSkippedReason,
-    currentPlacement: roundPlacementForState(alignment.currentPlacement),
-    idealPlacement: roundPlacementForState(alignment.idealPlacement),
+    placementFunctionCandidateId: alignment.placementFunctionCandidateId,
+    placementFunctionStatus: alignment.placementFunctionStatus,
     placementScaleRatio: roundForState(alignment.placementScaleRatio),
+    translateAfterScaleImageX: roundForState(alignment.translateAfterScaleImageX),
+    translateAfterScaleImageY: roundForState(alignment.translateAfterScaleImageY),
     renderedIdealStatus: alignment.renderedIdealStatus,
-    anchorCount: alignment.anchorCount,
-    currentCenter: roundPoint2ForState(alignment.currentCenter),
-    idealCenter: roundPoint2ForState(alignment.idealCenter),
-    scale: roundForState(alignment.scale),
+    alignedLandmarkCount: alignment.alignedLandmarkCount,
+    invalidAlignedLandmarkCount: alignment.invalidAlignedLandmarkCount,
     videoAspectRatio: roundForState(alignment.videoAspectRatio),
     renderAspectRatio: roundForState(alignment.renderAspectRatio),
     currentBoundsImage: roundBoundsForState(alignment.currentBoundsImage),
     renderedIdealBoundsImage: roundBoundsForState(alignment.renderedIdealBoundsImage),
-    currentBoundsAspectWork: roundBoundsForState(alignment.currentBoundsAspectWork),
-    renderedIdealBoundsAspectWork: roundBoundsForState(alignment.renderedIdealBoundsAspectWork),
-    alignedIdealBoundsAspectWork: roundBoundsForState(alignment.alignedIdealBoundsAspectWork),
     alignedRenderedIdealBoundsImage: roundBoundsForState(alignment.alignedRenderedIdealBoundsImage),
     displayedContentRect: roundRectForState(alignment.displayedContentRect),
+    matrixFeatures: roundPlacementFunctionMatrixFeatures(alignment.matrixFeatures),
+    placementFunctionDebug: roundPlacementFunctionAlignmentDebugForState(alignment.placementFunctionDebug),
     placementDebug: roundPlacementDebugForState(alignment.placementDebug),
-    boundsCenterScaleDebug: roundBoundsCenterScaleDebugForState(alignment.boundsCenterScaleDebug),
     excludedReasonCounts: alignment.excludedReasonCounts,
     displacementSummary: roundDisplacementSummary(alignment.displacementSummary),
   }
@@ -26803,26 +26338,6 @@ function roundRectForState(rect: Rect | null): Rect | null {
     : null
 }
 
-function roundPlacementForState(placement: MediaPipeFacePlacement): MediaPipeFacePlacement {
-  return {
-    status: placement.status,
-    source: placement.source,
-    center: roundPoint2ForState(placement.center),
-    scale: roundForState(placement.scale),
-    raw: placement.raw
-      ? {
-          matrixTranslation: roundPoint3ForState(placement.raw.matrixTranslation ?? null),
-          matrixScale: roundMatrixScaleForState(placement.raw.matrixScale ?? null),
-          matrixRotationDeg: placement.raw.matrixRotationDeg
-            ? roundPoseForState(placement.raw.matrixRotationDeg)
-            : undefined,
-          boundsImage: roundBoundsForState(placement.raw.boundsImage ?? null),
-        }
-      : undefined,
-    warnings: placement.warnings,
-  }
-}
-
 function roundMatrixDebugSummaryForState(summary: MatrixDebugSummary | null): MatrixDebugSummary | null {
   return summary
     ? {
@@ -26915,35 +26430,21 @@ function roundBoundsPlacementForState(boundsPlacement: BoundsPlacement | null): 
     : null
 }
 
-function roundBoundsCenterScaleDebugForState(
-  debug: BoundsCenterScaleAlignmentDebug | null,
-): BoundsCenterScaleAlignmentDebug | null {
-  return debug
-    ? {
-        mode: debug.mode,
-        placementLandmarkSet: debug.placementLandmarkSet,
-        scaleBasis: debug.scaleBasis,
-        rotationApplied: false,
-        currentBoundsWork: roundBoundsPlacementForState(debug.currentBoundsWork) ?? debug.currentBoundsWork,
-        idealBoundsWork: roundBoundsPlacementForState(debug.idealBoundsWork) ?? debug.idealBoundsWork,
-        currentCenterWork: roundPoint2ForState(debug.currentCenterWork) ?? debug.currentCenterWork,
-        idealCenterWork: roundPoint2ForState(debug.idealCenterWork) ?? debug.idealCenterWork,
-        currentScale: roundForState(debug.currentScale) ?? 0,
-        idealScale: roundForState(debug.idealScale) ?? 0,
-        scaleRatio: roundForState(debug.scaleRatio) ?? 0,
-        translationWork: {
-          x: roundForState(debug.translationWork.x) ?? 0,
-          y: roundForState(debug.translationWork.y) ?? 0,
-        },
-        currentBoundsImage: roundBoundsPlacementForState(debug.currentBoundsImage) ?? debug.currentBoundsImage,
-        renderedIdealBoundsImage:
-          roundBoundsPlacementForState(debug.renderedIdealBoundsImage) ?? debug.renderedIdealBoundsImage,
-        alignedRenderedIdealBoundsImage:
-          roundBoundsPlacementForState(debug.alignedRenderedIdealBoundsImage) ??
-          debug.alignedRenderedIdealBoundsImage,
-        alignedLandmarkCount: debug.alignedLandmarkCount,
-      }
-    : null
+function roundPlacementFunctionAlignmentDebugForState(
+  debug: PlacementFunctionAlignmentDebug,
+): PlacementFunctionAlignmentDebug {
+  return {
+    candidateId: debug.candidateId,
+    status: debug.status,
+    matrixFeatures: roundPlacementFunctionMatrixFeatures(debug.matrixFeatures),
+    scaleRatio: roundForState(debug.scaleRatio),
+    translateAfterScaleImageX: roundForState(debug.translateAfterScaleImageX),
+    translateAfterScaleImageY: roundForState(debug.translateAfterScaleImageY),
+    alignedLandmarkCount: debug.alignedLandmarkCount,
+    invalidAlignedLandmarkCount: debug.invalidAlignedLandmarkCount,
+    evaluationDebug: debug.evaluationDebug,
+    errorMessage: debug.errorMessage,
+  }
 }
 
 function roundPoint3ForState(point: { x: number; y: number; z: number } | null) {
