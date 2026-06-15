@@ -510,7 +510,7 @@ OBJ を canvas にレンダーした静止画に対して `detect()` / IMAGE mod
 - Profile info: loaded、filename、schemaVersion、modelType、modelName、datasetKind、inputFeatures、target、errorSummary、outlierFilterSummary、poseRangeAfter
 - Runtime input: `P_camera`、範囲制限後の `P_camera`、clampApplied、quality gate
 - Profile output: `pFromProfile（プロファイル出力姿勢）`、selectedLeaf、used expert、usedFallback、evaluator warnings
-- Render pose: `pForWebglRender（WebGL描画用姿勢）`、`poseSignConvention（姿勢符号規約）`、`renderPoseConversion（描画姿勢変換）`
+- Render pose: `pForWebglRender（WebGL描画用姿勢）`、`runtimeRenderPoseSign（実行時描画姿勢符号）`、`poseSignConvention（姿勢符号規約）`、`renderPoseConversion（描画姿勢変換）`
 - Render confirm: detectCanvasWidth / detectCanvasHeight、previewCanvasWidth / previewCanvasHeight、renderResolutionSource、detectCanvasMatchesProfile、profileCanvasWidth / profileCanvasHeight、適用 renderAppearance、notAppliedRenderAppearanceFields、`P_confirm`、`P_confirm - P_camera` の pose diff、renderedIdeal478 status、profileEvaluateMs、renderMs、detectMs、totalMs
 - Alignment: status、mode、rotationApplied、anchorCount、currentCenter、idealCenter、scale、videoAspectRatio、renderAspectRatio、座標系別 bounds、displayedContentRect、excludedReasonCounts、displacementSummary、alignedRenderedIdeal478 count、mesh source / target count
 - Download: `pose_mapping_runtime_debug_v1` JSON download
@@ -926,9 +926,9 @@ Live alignment は position / scale の配置だけを行います。rendered id
 
 Pose Mapping runtime では、`pFromProfile（プロファイル出力姿勢）` と `pForWebglRender（WebGL描画用姿勢）` を分けて扱います。`pFromProfile` は `poseMappingProfile（姿勢対応プロファイル）` が返した生の姿勢で、`pForWebglRender` は WebGL render（WebGL描画）へ実際に渡す姿勢です。
 
-`poseSignConvention（姿勢符号規約）` は、profile 出力をどの符号系として解釈するかを明示します。`profile_output_is_webgl_render_pose` は profile 出力をそのまま WebGL render に渡す規約、`profile_output_is_mediapipe_returned_pose` は profile 出力が MediaPipe returned pose（MediaPipe返却姿勢）寄りであるため、WebGL render 前に `OBJ_POSE_COMPARISON_SIGN` 相当の `renderPoseConversion（描画姿勢変換）` を適用する規約です。
+`runtimeRenderPoseSign（実行時描画姿勢符号）` は、poseMappingProfile の出力を runtime の WebGL render（WebGL描画）へ渡す前に必ず適用する固定符号です。現在は yaw / pitch / roll すべて `-1` で、`pForWebglRender.yaw = -pFromProfile.yaw`、`pForWebglRender.pitch = -pFromProfile.pitch`、`pForWebglRender.roll = -pFromProfile.roll` として決めます。
 
-現在の runtime 既定は `poseSignConvention: profile_output_is_mediapipe_returned_pose`、`renderPoseConversion: applyObjPoseComparisonSign` です。これにより `pForWebglRender.yaw / pitch / roll` は `pFromProfile.yaw / pitch / roll` に OBJ render pose（OBJ描画姿勢）と MediaPipe returned pose（MediaPipe返却姿勢）の比較符号を適用して決めます。評価では見た目だけでなく、`P_confirm（確認姿勢） - P_camera（カメラ顔姿勢）` の yaw / pitch / roll / magnitude が小さくなることを主に確認します。
+`poseSignConvention（姿勢符号規約）` は、profile 出力を MediaPipe returned pose（MediaPipe返却姿勢）寄りとして扱う既存 debug 情報として残します。runtime 本線の render pose conversion（描画姿勢変換）は固定で `renderPoseConversion: apply_runtime_render_pose_sign` です。評価では見た目だけでなく、`P_confirm（確認姿勢） - P_camera（カメラ顔姿勢）` の yaw / pitch / roll / magnitude が小さくなることを主に確認します。
 
 Pose Mapping runtime の `renderedIdealLifecycle.renderPose` では、`renderToken.p` 由来の `requestedPoseP` を `pForWebglRender（WebGL描画用姿勢）` として扱い、WebGL renderer が実際に使った `actualRenderPoseP` と別々に記録します。`renderPoseMatchesToken` は token と WebGL 適用値の一致確認、`renderPoseAppliedToWebGL` は token 一致に加えて `P_confirm` が requested pose に対して front 固定に見えないことを確認する debug flag です。
 
