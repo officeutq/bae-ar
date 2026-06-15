@@ -1094,6 +1094,19 @@ type OverlayLifecycle = {
   renderPoseValid: boolean
   skippedReason: string
 }
+type CurrentOverlayStatus =
+  | "visible"
+  | "hidden_no_current_face"
+  | "hidden_checkbox_off"
+type CurrentOverlayDebugState = {
+  status: CurrentOverlayStatus
+  recoveredFromNoFace: boolean
+  lastVisibleFrameId: number | null
+  currentFrameId: number
+  currentLandmarkCount: number
+  checkboxEnabled: boolean
+  current478Available: boolean
+}
 type AssetLifecycle = AssetGeneration & {
   objStatus: AssetStatus
   profileStatus: AssetStatus
@@ -3726,6 +3739,12 @@ const state: LabState = {
   modeComparison: createDefaultModeComparisonState(),
   logs: ["ラボを初期化しました。renderedIdeal478 を current478 に位置合わせし、ライブ映像上の overlay で確認します。"],
 }
+
+let currentOverlayDebugFrameId = 0
+let currentOverlayLastFrameKey = ""
+let currentOverlaySawNoFaceFrame = false
+let currentOverlayLastVisibleFrameId: number | null = null
+let currentOverlayDebugState: CurrentOverlayDebugState = createEmptyCurrentOverlayDebugState()
 
 const app = document.querySelector<HTMLDivElement>("#app")
 
@@ -18034,6 +18053,84 @@ function hasRequiredLandmarks(landmarks: ReferenceLandmark[] | null | undefined)
   return landmarks !== null && landmarks !== undefined && landmarks.length === REQUIRED_LANDMARK_COUNT
 }
 
+function getCurrent478ForCurrentFrame(): ReferenceLandmark[] | null {
+  return state.currentAnalysis.landmarks478.length === REQUIRED_LANDMARK_COUNT
+    ? state.currentAnalysis.landmarks478
+    : null
+}
+
+function hasCurrent478ForCurrentFrame() {
+  return getCurrent478ForCurrentFrame() !== null
+}
+
+function getCurrentOverlayStatus(): CurrentOverlayStatus {
+  if (!state.overlay.showCurrentLandmarks478) {
+    return "hidden_checkbox_off"
+  }
+  return hasCurrent478ForCurrentFrame() ? "visible" : "hidden_no_current_face"
+}
+
+function canShowCurrentOverlay() {
+  return getCurrentOverlayStatus() === "visible"
+}
+
+function createEmptyCurrentOverlayDebugState(): CurrentOverlayDebugState {
+  return {
+    status: "hidden_no_current_face",
+    recoveredFromNoFace: false,
+    lastVisibleFrameId: null,
+    currentFrameId: 0,
+    currentLandmarkCount: 0,
+    checkboxEnabled: true,
+    current478Available: false,
+  }
+}
+
+function resetCurrentOverlayDebugState() {
+  currentOverlayDebugFrameId = 0
+  currentOverlayLastFrameKey = ""
+  currentOverlaySawNoFaceFrame = false
+  currentOverlayLastVisibleFrameId = null
+  currentOverlayDebugState = createEmptyCurrentOverlayDebugState()
+}
+
+function getCurrentOverlayFrameKey() {
+  return [
+    state.currentAnalysis.status,
+    state.currentAnalysis.analyzedTimeSec ?? "none",
+    state.currentAnalysis.landmarks478.length,
+    state.overlay.showCurrentLandmarks478 ? "on" : "off",
+    state.liveMediaPipe.liveTimestampMs,
+  ].join(":")
+}
+
+function getCurrentOverlayDebugState(): CurrentOverlayDebugState {
+  const frameKey = getCurrentOverlayFrameKey()
+  if (frameKey !== currentOverlayLastFrameKey) {
+    const status = getCurrentOverlayStatus()
+    currentOverlayDebugFrameId += 1
+    currentOverlayLastFrameKey = frameKey
+    const recoveredFromNoFace = status === "visible" && currentOverlaySawNoFaceFrame
+    if (status === "hidden_no_current_face" && state.currentAnalysis.status === "no_face") {
+      currentOverlaySawNoFaceFrame = true
+    }
+    if (status === "visible") {
+      currentOverlayLastVisibleFrameId = currentOverlayDebugFrameId
+      currentOverlaySawNoFaceFrame = false
+    }
+    currentOverlayDebugState = {
+      status,
+      recoveredFromNoFace,
+      lastVisibleFrameId: currentOverlayLastVisibleFrameId,
+      currentFrameId: currentOverlayDebugFrameId,
+      currentLandmarkCount: state.currentAnalysis.landmarks478.length,
+      checkboxEnabled: true,
+      current478Available: hasCurrent478ForCurrentFrame(),
+    }
+  }
+  return currentOverlayDebugState
+}
+
 function unavailable(reason: string): DataAvailability {
   return { available: false, reason }
 }
@@ -18051,7 +18148,7 @@ function getRenderedIdeal478Availability(): DataAvailability {
 }
 
 function getCurrent478Availability(): DataAvailability {
-  if (state.currentAnalysis.landmarks478.length === REQUIRED_LANDMARK_COUNT) {
+  if (hasCurrent478ForCurrentFrame()) {
     return available()
   }
   return unavailable(`currentFaceStatus = ${state.poseMappingRuntime.currentFaceStatus}`)
@@ -18198,8 +18295,8 @@ function renderControls() {
   setToggleState(
     "toggle-current-landmarks",
     state.overlay.showCurrentLandmarks478,
-    !current478Availability.available,
-    current478Availability.reason,
+    false,
+    null,
   )
   setToggleState(
     "toggle-aligned-ideal-landmarks",
@@ -18415,12 +18512,17 @@ function renderDisplayOverlaySummaryCard() {
   const card = getElement<HTMLElement>("[data-display-overlay-summary]")
   const runtime = state.poseMappingRuntime
   const lifecycle = createOverlayLifecycleFromRuntime(runtime)
+  const currentOverlayDebug = getCurrentOverlayDebugState()
   card.innerHTML = `
     <p>displayedContentRect（動画の実表示領域）を使い、overlay canvas（重ね描きcanvas）上で表示ズレを確認します。</p>
     <dl class="review-grid">
       <div><dt>live video（ライブ映像）</dt><dd>${escapeHtml(state.liveVideo.loaded ? "loaded（読込済み）" : "not loaded（未読込）")}</dd></div>
       <div><dt>displayedContentRect（表示領域）</dt><dd>${escapeHtml(formatRect(runtime.alignment.displayedContentRect))}</dd></div>
       <div><dt>current overlay（現在顔重ね表示）</dt><dd>${escapeHtml(formatAvailability(getCurrent478Availability(), state.currentAnalysis.landmarks478.length))}</dd></div>
+      <div><dt>currentOverlayStatus（現在顔重ね表示状態）</dt><dd>${escapeHtml(currentOverlayDebug.status)}</dd></div>
+      <div><dt>currentOverlayRecoveredFromNoFace（現在顔なしからの復帰）</dt><dd>${String(currentOverlayDebug.recoveredFromNoFace)}</dd></div>
+      <div><dt>currentOverlayLastVisibleFrameId（最後に表示したフレームID）</dt><dd>${formatNullableCount(currentOverlayDebug.lastVisibleFrameId)}</dd></div>
+      <div><dt>currentOverlayCurrentFrameId（現在フレームID）</dt><dd>${formatNullableCount(currentOverlayDebug.currentFrameId)}</dd></div>
       <div><dt>aligned ideal overlay（位置合わせ済み理想顔重ね表示）</dt><dd>${escapeHtml(formatAvailability(getDisplayOverlayAlignedIdealAvailability(), runtime.alignedRenderedIdeal478?.length ?? null))}</dd></div>
       <div><dt>overlayLifecycle（重ね表示ライフサイクル）</dt><dd>visible ${String(lifecycle.alignedRenderedIdealVisible)} / gen ${String(lifecycle.generationMatch)} / token ${String(lifecycle.tokenMatch)} / renderPose ${String(lifecycle.renderPoseValid)}</dd></div>
       <div><dt>overlay skipped reason（重ね表示スキップ理由）</dt><dd>${escapeHtml(lifecycle.skippedReason)}</dd></div>
@@ -19992,9 +20094,7 @@ function drawLiveCoordinatePreview() {
   }
   drawNormalizedCoordinateFrame(context, previewRect)
 
-  const current478 = state.currentAnalysis.landmarks478.length === REQUIRED_LANDMARK_COUNT
-    ? state.currentAnalysis.landmarks478
-    : null
+  const current478 = getCurrent478ForCurrentFrame()
   const alignedRenderedIdeal478 = state.poseMappingRuntime.alignedRenderedIdeal478
   const meshSourceVertices = state.poseMappingRuntime.meshSourceVertices
   const meshTargetVertices = state.poseMappingRuntime.meshTargetVertices
@@ -20104,14 +20204,13 @@ function drawLiveOverlay() {
     drawDisplayedContentRect(context, displayedContentRect)
   }
 
-  const current478 = state.currentAnalysis.landmarks478.length === REQUIRED_LANDMARK_COUNT
-    ? state.currentAnalysis.landmarks478
-    : null
+  const current478 = getCurrent478ForCurrentFrame()
   const alignedRenderedIdeal478 = state.poseMappingRuntime.alignedRenderedIdeal478
   const meshSourceVertices = state.poseMappingRuntime.meshSourceVertices
   const meshTargetVertices = state.poseMappingRuntime.meshTargetVertices
   const canDrawAlignedIdeal = canDrawPoseMappingAlignedIdealOverlay()
   const overlayLifecycle = createOverlayLifecycleFromRuntime(state.poseMappingRuntime)
+  const currentOverlayDebug = getCurrentOverlayDebugState()
 
   if (
     canDrawAlignedIdeal &&
@@ -20173,7 +20272,7 @@ function drawLiveOverlay() {
     )
   }
 
-  if (state.overlay.showCurrentLandmarks478 && current478) {
+  if (currentOverlayDebug.status === "visible" && current478) {
     drawLandmarkPoints(
       context,
       displayedContentRect,
@@ -20869,6 +20968,7 @@ function getRawState() {
     activePreviewTab: state.activePreviewTab,
     activeDebugTab: state.activeDebugTab,
     overlay: state.overlay,
+    currentOverlayDebug: getCurrentOverlayDebugState(),
     objFile: state.objFile,
     objSummary: state.objSummary,
     objPreviewState: getRoundedObjPreviewState(),
@@ -21707,7 +21807,7 @@ function createInitialOverlayLifecycle(): OverlayLifecycle {
 
 function createOverlayLifecycle(visible: boolean, skippedReason: string): OverlayLifecycle {
   return {
-    current478Visible: state.currentAnalysis.status === "detected",
+    current478Visible: canShowCurrentOverlay(),
     alignedRenderedIdealVisible: visible,
     correspondenceLinesVisible: visible && state.overlay.showMeshPairs,
     meshTargetVisible: visible && state.overlay.showMeshTarget,
@@ -21758,7 +21858,7 @@ function createOverlayLifecycleFromRuntime(
     tokenMatch &&
     renderPoseValid
   return {
-    current478Visible: runtime.currentFaceStatus === "detected",
+    current478Visible: canShowCurrentOverlay(),
     alignedRenderedIdealVisible: visible,
     correspondenceLinesVisible: visible && state.overlay.showMeshPairs,
     meshTargetVisible: visible && state.overlay.showMeshTarget,
@@ -25345,6 +25445,7 @@ function resetLiveAnalysisResults() {
   disposeLiveFaceLandmarker("uninitialized")
   resetLiveTimestamp()
   state.currentAnalysis = createEmptyCurrentAnalysis()
+  resetCurrentOverlayDebugState()
   updateObjPoseSyncFromCurrentAnalysis()
   liveAnalysisRequestId += 1
   liveAnalysisInProgress = false

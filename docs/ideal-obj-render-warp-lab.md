@@ -942,6 +942,10 @@ Live overlay では、古い rendered ideal や fallback frontal face を表示�
 - `renderedIdealLifecycle`: OBJ render の成功 token、detect 実行有無、detect token 一致、stale canvas 検出を記録します。
 - `overlayLifecycle`: current478 / aligned rendered ideal / correspondence line / mesh target の表示可否と skipped reason を記録します。
 
+Live overlay の current overlay（現在顔重ね表示）は、最新 frame の `current478`（現在顔478点）の有無だけに依存します。`noFace`（顔未検出）や `no_current_face`（現在顔なし）は frame-local（一時状態）として扱い、次の detected frame（検出成功フレーム）で `current478` が戻ったら current overlay も復帰します。current overlay checkbox（現在顔重ね表示チェックボックス）は一時的な `noFace` では disabled（無効）にせず、ON のまま保持します。
+
+aligned ideal overlay（位置合わせ済み理想顔重ね表示）の `placementFunctionStatus` / `alignmentStatus` / `renderedIdealStatus` / token match / render pose gate の失敗は、current overlay（現在顔重ね表示）の表示可否には影響させません。これらの gate は aligned ideal overlay、correspondence line、mesh target の表示可否にだけ使います。
+
 OBJ、poseMappingProfile、render appearance、renderer が変わった場合は generation を進めます。rendered ideal の render 成功後に `RenderedIdealFrameToken` を作り、同じ token が current generation と一致する場合だけ MediaPipe detect 結果と alignment 結果を採用します。WebGL canvas は detect 前に clear し、render 成功 token がない canvas に対して detect を進めません。
 
 Live overlay の aligned rendered ideal は、以下をすべて満たす場合だけ表示します。
