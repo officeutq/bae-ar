@@ -4080,6 +4080,7 @@ let currentOverlayLastFrameKey = ""
 let currentOverlaySawNoFaceFrame = false
 let currentOverlayLastVisibleFrameId: number | null = null
 let currentOverlayDebugState: CurrentOverlayDebugState = createEmptyCurrentOverlayDebugState()
+let previewTabRedrawAnimationFrameId: number | null = null
 let displayOverlayRedrawAnimationFrameId: number | null = null
 let displayOverlayRedrawDebugState: DisplayOverlayRedrawDebugState = {
   displayOverlayPreviewStatus: "waiting_for_redraw",
@@ -5028,6 +5029,7 @@ function bindEvents() {
 
   window.addEventListener("resize", () => {
     renderObjPreviewCanvas()
+    drawLiveCoordinatePreview()
     renderRenderedIdealCanvas()
     scheduleDisplayOverlayRedraw("resize_observed")
     drawRenderedIdealOverlay()
@@ -18593,10 +18595,34 @@ function activatePreviewTab(nextTab: PreviewTab) {
   renderAll({
     displayOverlayRedrawReason: nextTab === "displayOverlay" ? "tab_activated" : "manual_render",
   })
+  scheduleActivePreviewTabRedraw()
 
   if (nextTab === "displayOverlay" && previousTab !== "displayOverlay") {
     scheduleDisplayOverlayRedraw("tab_activated")
   }
+}
+
+function scheduleActivePreviewTabRedraw() {
+  if (previewTabRedrawAnimationFrameId !== null) {
+    window.cancelAnimationFrame(previewTabRedrawAnimationFrameId)
+  }
+
+  previewTabRedrawAnimationFrameId = window.requestAnimationFrame(() => {
+    previewTabRedrawAnimationFrameId = null
+    if (state.activePreviewTab === "renderedIdeal") {
+      renderRenderedIdealCanvas()
+      drawRenderedIdealOverlay()
+      return
+    }
+    if (state.activePreviewTab === "liveCoordinates") {
+      drawLiveCoordinatePreview()
+      return
+    }
+    if (state.activePreviewTab === "displayOverlay") {
+      drawLiveOverlay("tab_activated")
+      renderDisplayOverlaySummaryCard()
+    }
+  })
 }
 
 function scheduleDisplayOverlayRedraw(reason: DisplayOverlayRedrawReason) {
@@ -20304,6 +20330,7 @@ function renderRenderedIdealCanvas() {
   const stage = getElement<HTMLElement>("[data-rendered-ideal-stage]")
   const message = getElement<HTMLElement>("[data-rendered-ideal-message]")
   const runtime = state.poseMappingRuntime
+  const isActiveRenderedIdealTab = state.activePreviewTab === "renderedIdeal"
   const imageAvailability = getRuntimeRenderedIdealImageAvailability()
   const currentRuntimeImageAvailable = imageAvailability.available && Boolean(runtime.renderedIdealImageDataUrl)
   if (currentRuntimeImageAvailable && runtime.renderedIdealImageDataUrl) {
@@ -20348,6 +20375,10 @@ function renderRenderedIdealCanvas() {
 
   stage.dataset.renderStatus = canDisplayRuntimeImage ? "rendered" : "not_ready"
   message.textContent = getRuntimeRenderedIdealMessage(imageAvailability, usingPreviousRuntimeImage)
+
+  if (!isActiveRenderedIdealTab) {
+    return
+  }
 
   if (!canDisplayRuntimeImage || !previewSnapshot) {
     clearRenderedIdealRuntimeCanvas()
@@ -20875,21 +20906,25 @@ function rotateObjPoint(point: ObjVertex, previewState: ObjPreviewState): ObjVer
 }
 
 function drawLiveCoordinatePreview() {
+  if (state.activePreviewTab !== "liveCoordinates") {
+    return
+  }
+
   const context = liveCoordinateCanvas.getContext("2d")
   if (!context) {
     return
   }
 
   const rect = liveCoordinateCanvas.getBoundingClientRect()
+  if (rect.width <= 0 || rect.height <= 0) {
+    return
+  }
+
   const dpr = window.devicePixelRatio || 1
   liveCoordinateCanvas.width = Math.max(1, Math.round(rect.width * dpr))
   liveCoordinateCanvas.height = Math.max(1, Math.round(rect.height * dpr))
   context.setTransform(dpr, 0, 0, dpr, 0, 0)
   context.clearRect(0, 0, rect.width, rect.height)
-
-  if (state.activePreviewTab !== "liveCoordinates" || rect.width <= 0 || rect.height <= 0) {
-    return
-  }
 
   const previewRect: Rect = {
     x: 0,
@@ -20960,21 +20995,9 @@ function createDisplayOverlayAlignedRenderedIdeal478FromRenderedIdeal(): Referen
 }
 
 function drawLiveOverlay(reason: DisplayOverlayRedrawReason = "manual_render") {
-  const context = liveOverlayCanvas.getContext("2d")
-  if (!context) {
-    return
-  }
-
-  const rect = liveOverlayCanvas.getBoundingClientRect()
-  const dpr = window.devicePixelRatio || 1
-  liveOverlayCanvas.width = Math.max(1, Math.round(rect.width * dpr))
-  liveOverlayCanvas.height = Math.max(1, Math.round(rect.height * dpr))
-  context.setTransform(dpr, 0, 0, dpr, 0, 0)
-  context.clearRect(0, 0, rect.width, rect.height)
-
   const currentOverlayDebug = getCurrentOverlayDebugState()
-
   if (state.activePreviewTab !== "displayOverlay") {
+    const rect = liveOverlayCanvas.getBoundingClientRect()
     displayOverlayRedrawDebugState = {
       ...displayOverlayRedrawDebugState,
       displayOverlayPreviewStatus: "hidden_inactive_tab",
@@ -20990,6 +21013,12 @@ function drawLiveOverlay(reason: DisplayOverlayRedrawReason = "manual_render") {
     return
   }
 
+  const context = liveOverlayCanvas.getContext("2d")
+  if (!context) {
+    return
+  }
+
+  const rect = liveOverlayCanvas.getBoundingClientRect()
   if (rect.width <= 0 || rect.height <= 0) {
     state.poseMappingRuntime.alignment = {
       ...state.poseMappingRuntime.alignment,
@@ -21009,6 +21038,12 @@ function drawLiveOverlay(reason: DisplayOverlayRedrawReason = "manual_render") {
     }
     return
   }
+
+  const dpr = window.devicePixelRatio || 1
+  liveOverlayCanvas.width = Math.max(1, Math.round(rect.width * dpr))
+  liveOverlayCanvas.height = Math.max(1, Math.round(rect.height * dpr))
+  context.setTransform(dpr, 0, 0, dpr, 0, 0)
+  context.clearRect(0, 0, rect.width, rect.height)
 
   const displayedContentRect = getDisplayedContentRect(
     state.liveVideo,
@@ -21232,12 +21267,20 @@ function drawNormalizedCenter(
 }
 
 function drawRenderedIdealOverlay() {
+  if (state.activePreviewTab !== "renderedIdeal") {
+    return
+  }
+
   const context = renderedIdealOverlayCanvas.getContext("2d")
   if (!context) {
     return
   }
 
   const rect = renderedIdealOverlayCanvas.getBoundingClientRect()
+  if (rect.width <= 0 || rect.height <= 0) {
+    return
+  }
+
   const dpr = window.devicePixelRatio || 1
   renderedIdealOverlayCanvas.width = Math.max(1, Math.round(rect.width * dpr))
   renderedIdealOverlayCanvas.height = Math.max(1, Math.round(rect.height * dpr))
@@ -21245,10 +21288,7 @@ function drawRenderedIdealOverlay() {
   context.clearRect(0, 0, rect.width, rect.height)
 
   if (
-    state.activePreviewTab !== "renderedIdeal" ||
-    !state.renderedIdealOverlay.showRenderedIdealLandmarks478 ||
-    rect.width <= 0 ||
-    rect.height <= 0
+    !state.renderedIdealOverlay.showRenderedIdealLandmarks478
   ) {
     return
   }
@@ -26399,6 +26439,14 @@ function cleanup() {
   cancelModeComparison()
   stopRealtimeValidation("stopped")
   stopCameraInput()
+  if (previewTabRedrawAnimationFrameId !== null) {
+    window.cancelAnimationFrame(previewTabRedrawAnimationFrameId)
+    previewTabRedrawAnimationFrameId = null
+  }
+  if (displayOverlayRedrawAnimationFrameId !== null) {
+    window.cancelAnimationFrame(displayOverlayRedrawAnimationFrameId)
+    displayOverlayRedrawAnimationFrameId = null
+  }
   if (state.liveVideo.objectUrl) {
     URL.revokeObjectURL(state.liveVideo.objectUrl)
     state.liveVideo.objectUrl = null
