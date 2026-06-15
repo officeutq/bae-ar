@@ -944,6 +944,13 @@ type PoseMappingPoseDiff = {
   magnitude: number | null
 }
 
+type PoseSignConvention =
+  | "profile_output_is_webgl_render_pose"
+  | "profile_output_is_mediapipe_returned_pose"
+type RenderPoseConversion =
+  | "none"
+  | "applyObjPoseComparisonSign"
+
 type PoseMappingCurrentFaceStatus = "detected" | "missing" | "invalid"
 type LivePlacementFunctionCandidateId = "direct_piecewise_ty3_linear_normalized_v1"
 type PlacementFunctionLiveStatus =
@@ -1003,6 +1010,7 @@ type RenderedIdealFrameToken = AssetGeneration & {
   frameId: number
   mediaTimeSec: number | null
   p: ObjPoseMappingPose
+  pFromProfile: ObjPoseMappingPose | null
 }
 type RenderPoseSource =
   | "pose_mapping_profile"
@@ -1153,6 +1161,8 @@ type PoseMappingLastGoodState = {
   hasLastGood: boolean
   P_camera: ObjPoseMappingPose | null
   p: ObjPoseMappingPose | null
+  pFromProfile: ObjPoseMappingPose | null
+  pForWebglRender: ObjPoseMappingPose | null
   P_confirm: ReferencePose
   renderedIdeal478: ReferenceLandmark[] | null
   alignedRenderedIdeal478: ReferenceLandmark[] | null
@@ -1290,6 +1300,12 @@ type PoseMappingRuntimeState = {
   P_cameraClamped: ObjPoseMappingPose | null
   qualityGate: PoseMappingQualityGate
   p: ObjPoseMappingPose | null
+  pFromProfile: ObjPoseMappingPose | null
+  pForWebglRender: ObjPoseMappingPose | null
+  poseSignConvention: PoseSignConvention
+  renderPoseConversion: RenderPoseConversion
+  poseDiffBeforeConversionSummary: PoseMappingPoseDiff
+  poseDiffAfterConversionSummary: PoseMappingPoseDiff
   selectedLeaf: number | null
   usedExpert: string | null
   usedFallback: boolean
@@ -1412,6 +1428,10 @@ type DetectPerformanceExport = {
   runtime: {
     P_camera: ObjPoseMappingPose | null
     p: ObjPoseMappingPose | null
+    pFromProfile: ObjPoseMappingPose | null
+    pForWebglRender: ObjPoseMappingPose | null
+    poseSignConvention: PoseSignConvention
+    renderPoseConversion: RenderPoseConversion
     P_confirm: ReferencePose
     poseDiff: PoseMappingPoseDiff
   }
@@ -1597,6 +1617,10 @@ type WebglObjBenchmarkExport = {
   runtime: {
     P_camera: ObjPoseMappingPose | null
     p: ObjPoseMappingPose | null
+    pFromProfile: ObjPoseMappingPose | null
+    pForWebglRender: ObjPoseMappingPose | null
+    poseSignConvention: PoseSignConvention
+    renderPoseConversion: RenderPoseConversion
     canvas2dConfirm: {
       P_confirm: ReferencePose
       poseDiff: PoseMappingPoseDiff
@@ -2081,6 +2105,10 @@ type PlacementMappingSample = {
   mediaTimeSec: number | null
   P_camera: { yaw: number; pitch: number; roll: number } | null
   p: { yaw: number; pitch: number; roll: number } | null
+  pFromProfile: { yaw: number; pitch: number; roll: number } | null
+  pForWebglRender: { yaw: number; pitch: number; roll: number } | null
+  poseSignConvention: PoseSignConvention
+  renderPoseConversion: RenderPoseConversion
   P_confirm: { yaw: number | null; pitch: number | null; roll: number | null } | null
   poseDiffMagnitude: number | null
   currentMatrixColumnMajorTranslation: { x: number; y: number; z: number } | null
@@ -3572,6 +3600,8 @@ const OBJ_POSE_COMPARISON_SIGN = {
   pitch: -1,
   roll: -1,
 } as const
+const DEFAULT_POSE_SIGN_CONVENTION: PoseSignConvention = "profile_output_is_mediapipe_returned_pose"
+const DEFAULT_RENDER_POSE_CONVERSION: RenderPoseConversion = "applyObjPoseComparisonSign"
 const OBJ_POSE_CALIBRATION_POSES: ObjPoseCalibrationPose[] = [
   { id: "front", label: "正面", yawDeg: 0, pitchDeg: 0, rollDeg: 0 },
   { id: "yaw_negative_15", label: "yaw負方向 15度", yawDeg: -15, pitchDeg: 0, rollDeg: 0 },
@@ -5963,6 +5993,12 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
     const evaluateStartMs = performance.now()
     const evaluateResult = evaluatePoseMappingProfile(profile, P_camera)
     const profileEvaluateMs = performance.now() - evaluateStartMs
+    const pFromProfile = evaluateResult.p
+    const poseSignConvention = getRuntimePoseSignConvention()
+    const renderPoseConversion = getRenderPoseConversionForPoseSignConvention(poseSignConvention)
+    const pForWebglRender = convertProfilePoseToWebglRenderPose(pFromProfile, poseSignConvention)
+    const poseDiffBeforeConversionSummary = calculatePoseMappingPoseToPoseDiff(P_camera, pFromProfile)
+    const poseDiffAfterConversionSummary = calculatePoseMappingPoseToPoseDiff(P_camera, pForWebglRender)
 
     const renderSettings = resolvePoseMappingRenderSettings(profile, liveObjPosePreviewCanvas)
     const { appearance, debug: renderAppearanceApplied } = createPoseMappingRenderAppearance(
@@ -5973,19 +6009,19 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
     const renderer = getOrCreateWebglObjBenchmarkRenderer()
     const rendererWasReinitialized = state.assetGeneration.rendererGenerationId !== rendererGenerationBefore
     const rendererMetadata = buildWebglObjRendererMetadata(renderer, appearance)
-    const renderToken = createRenderedIdealFrameToken(frameGeneration, evaluateResult.p)
+    const renderToken = createRenderedIdealFrameToken(frameGeneration, pForWebglRender, pFromProfile)
     let detectCanvasPoseState = createEmptyDetectCanvasPoseState()
     let recoveryDebug = buildPoseRecoveryDebug({
       previousRuntime,
       frameGeneration,
-      poseAfterRecovery: evaluateResult.p,
+      poseAfterRecovery: pForWebglRender,
       rendererWasReinitialized,
       webglContextWasRecreated: rendererWasReinitialized,
       buffersWereRebuiltAfterRecovery: false,
       uniformsWereResetAfterRecovery: false,
     })
     let renderPoseLifecycle = createRenderPoseLifecycleDebug({
-      requestedPoseP: evaluateResult.p,
+      requestedPoseP: pForWebglRender,
       renderResult: null,
       renderPoseSource: "pose_mapping_profile",
       renderToken,
@@ -6004,6 +6040,15 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
         profileRendererMatch: false,
         profileMismatchError: profileRendererMatch.errorMessage,
         assetLifecycle: createAssetLifecycle(false),
+        P_camera: evaluateResult.P_camera,
+        P_cameraClamped: evaluateResult.P_cameraClamped,
+        p: pFromProfile,
+        pFromProfile,
+        pForWebglRender,
+        poseSignConvention,
+        renderPoseConversion,
+        poseDiffBeforeConversionSummary,
+        poseDiffAfterConversionSummary,
         renderedIdealLifecycle: {
           ...createEmptyRenderedIdealLifecycle(),
           renderToken,
@@ -6034,7 +6079,7 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
     const renderContext: WebglObjRenderContext = {
       renderSettings,
       appearance,
-      p: evaluateResult.p,
+      p: pForWebglRender,
       rotationCenter: getObjPoseSyncRotationCenter(),
     }
     const renderStartMs = performance.now()
@@ -6043,7 +6088,7 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
     recoveryDebug = buildPoseRecoveryDebug({
       previousRuntime,
       frameGeneration,
-      poseAfterRecovery: evaluateResult.p,
+      poseAfterRecovery: pForWebglRender,
       rendererWasReinitialized,
       webglContextWasRecreated: rendererWasReinitialized,
       buffersWereRebuiltAfterRecovery: renderResult.buffer.bufferPoseMode === "baked_vertices",
@@ -6051,7 +6096,7 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
     })
     detectCanvasPoseState = createDetectCanvasPoseState(renderToken, renderResult, true, true)
     renderPoseLifecycle = createRenderPoseLifecycleDebug({
-      requestedPoseP: evaluateResult.p,
+      requestedPoseP: pForWebglRender,
       renderResult,
       renderPoseSource: "pose_mapping_profile",
       renderToken,
@@ -6177,7 +6222,13 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
       P_camera: evaluateResult.P_camera,
       P_cameraClamped: evaluateResult.P_cameraClamped,
       qualityGate,
-      p: evaluateResult.p,
+      p: pFromProfile,
+      pFromProfile,
+      pForWebglRender,
+      poseSignConvention,
+      renderPoseConversion,
+      poseDiffBeforeConversionSummary,
+      poseDiffAfterConversionSummary,
       selectedLeaf: evaluateResult.selectedLeaf,
       usedExpert: evaluateResult.usedExpert,
       usedFallback: evaluateResult.usedFallback,
@@ -6438,7 +6489,7 @@ function waitForBenchmarkUiTick() {
 async function prepareDetectPerformanceBenchmarkContext() {
   const profile = state.poseMappingProfile.profile
   const runtime = state.poseMappingRuntime
-  if (!profile || runtime.status !== "completed" || !runtime.P_camera || !runtime.p) {
+  if (!profile || runtime.status !== "completed" || !runtime.P_camera || !runtime.pForWebglRender) {
     throw new Error("先にOBJ、poseMappingProfile、MP4を読み込み、Liveタブで位置合わせ済み理想478点 overlay を生成してください。")
   }
 
@@ -6448,7 +6499,7 @@ async function prepareDetectPerformanceBenchmarkContext() {
   const renderSummary = renderRenderedIdealCanvasTo(
     detectCanvas,
     getObjPoseSyncRotationCenter(),
-    runtime.p,
+    runtime.pForWebglRender,
     {
       directPose: true,
       appearanceOverride: appearance,
@@ -6473,7 +6524,11 @@ async function prepareDetectPerformanceBenchmarkContext() {
     renderSettings,
     appearance,
     P_camera: runtime.P_camera,
-    p: runtime.p,
+    p: runtime.pForWebglRender,
+    pFromProfile: runtime.pFromProfile,
+    pForWebglRender: runtime.pForWebglRender,
+    poseSignConvention: runtime.poseSignConvention,
+    renderPoseConversion: runtime.renderPoseConversion,
     rotationCenter: getObjPoseSyncRotationCenter(),
     P_confirm: detection.pose,
     poseDiff,
@@ -6891,6 +6946,10 @@ function buildDetectPerformanceExport(
     runtime: {
       P_camera: roundPoseMappingPose(context.P_camera),
       p: roundPoseMappingPose(context.p),
+      pFromProfile: roundPoseMappingPose(context.pFromProfile),
+      pForWebglRender: roundPoseMappingPose(context.pForWebglRender),
+      poseSignConvention: context.poseSignConvention,
+      renderPoseConversion: context.renderPoseConversion,
       P_confirm: roundPoseForState(context.P_confirm),
       poseDiff: roundPoseMappingDiff(context.poseDiff),
     },
@@ -7374,6 +7433,10 @@ function buildRenderDetectHandoffExport(
     runtime: {
       P_camera: roundPoseMappingPose(context.P_camera),
       p: roundPoseMappingPose(context.p),
+      pFromProfile: roundPoseMappingPose(context.pFromProfile),
+      pForWebglRender: roundPoseMappingPose(context.pForWebglRender),
+      poseSignConvention: context.poseSignConvention,
+      renderPoseConversion: context.renderPoseConversion,
       P_confirm: roundPoseForState(context.P_confirm),
       poseDiff: roundPoseMappingDiff(context.poseDiff),
     },
@@ -8045,6 +8108,10 @@ function buildWebglObjBenchmarkExport(
     runtime: {
       P_camera: roundPoseMappingPose(context.P_camera),
       p: roundPoseMappingPose(context.p),
+      pFromProfile: roundPoseMappingPose(context.pFromProfile),
+      pForWebglRender: roundPoseMappingPose(context.pForWebglRender),
+      poseSignConvention: context.poseSignConvention,
+      renderPoseConversion: context.renderPoseConversion,
       canvas2dConfirm: {
         P_confirm: roundPoseForState(state.poseMappingRuntime.P_confirm),
         poseDiff: roundPoseMappingDiff(state.poseMappingRuntime.poseDiff),
@@ -9323,6 +9390,8 @@ function createPoseMappingLastGoodState(
     hasLastGood: true,
     P_camera: runtime.P_camera ? { ...runtime.P_camera } : null,
     p: runtime.p ? { ...runtime.p } : null,
+    pFromProfile: runtime.pFromProfile ? { ...runtime.pFromProfile } : null,
+    pForWebglRender: runtime.pForWebglRender ? { ...runtime.pForWebglRender } : null,
     P_confirm: { ...runtime.P_confirm },
     renderedIdeal478: runtime.renderedIdeal478 ? runtime.renderedIdeal478.map((landmark) => ({ ...landmark })) : null,
     alignedRenderedIdeal478: runtime.alignedRenderedIdeal478
@@ -9429,6 +9498,21 @@ function calculatePoseMappingPoseDiff(
     magnitude: values.every((value) => value === null)
       ? null
       : roundForState(Math.hypot(...values.map((value) => value ?? 0))),
+  }
+}
+
+function calculatePoseMappingPoseToPoseDiff(
+  P_camera: ObjPoseMappingPose,
+  pose: ObjPoseMappingPose,
+): PoseMappingPoseDiff {
+  const yaw = pose.yaw - P_camera.yaw
+  const pitch = pose.pitch - P_camera.pitch
+  const roll = pose.roll - P_camera.roll
+  return {
+    yaw: roundForState(yaw),
+    pitch: roundForState(pitch),
+    roll: roundForState(roll),
+    magnitude: roundForState(Math.hypot(yaw, pitch, roll)),
   }
 }
 
@@ -16061,6 +16145,34 @@ function applyObjPoseComparisonSign(pose: { yaw: number; pitch: number; roll: nu
   }
 }
 
+function getRuntimePoseSignConvention(): PoseSignConvention {
+  return DEFAULT_POSE_SIGN_CONVENTION
+}
+
+function getRenderPoseConversionForPoseSignConvention(
+  convention: PoseSignConvention,
+): RenderPoseConversion {
+  return convention === "profile_output_is_mediapipe_returned_pose"
+    ? "applyObjPoseComparisonSign"
+    : "none"
+}
+
+function convertProfilePoseToWebglRenderPose(
+  pFromProfile: ObjPoseMappingPose,
+  convention: PoseSignConvention,
+): ObjPoseMappingPose {
+  if (convention === "profile_output_is_webgl_render_pose") {
+    return cloneObjPoseMappingPose(pFromProfile)
+  }
+  return applyObjPoseComparisonSignToProfileOutputPose(pFromProfile)
+}
+
+function applyObjPoseComparisonSignToProfileOutputPose(
+  pFromProfile: ObjPoseMappingPose,
+): ObjPoseMappingPose {
+  return applyObjPoseComparisonSign(pFromProfile)
+}
+
 function addCurrentPoseSearchFrame() {
   if (isPoseCenterSearchRunning()) {
     return
@@ -18574,7 +18686,10 @@ function renderPoseMappingLiveSummaryCard() {
       <div><dt>stale</dt><dd>${String(runtime.stale.isStale)} / ${escapeHtml(runtime.stale.staleReason ?? "-")} / ${formatRealtimeNullableNumber(runtime.stale.staleMs)}ms</dd></div>
       <div><dt>loop busy</dt><dd>${String(poseMappingRuntimeInProgress)}</dd></div>
       <div><dt>P_camera</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.P_camera))}</dd></div>
-      <div><dt>p</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.p))}</dd></div>
+      <div><dt>pFromProfile（プロファイル出力姿勢）</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.pFromProfile))}</dd></div>
+      <div><dt>pForWebglRender（WebGL描画用姿勢）</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.pForWebglRender))}</dd></div>
+      <div><dt>poseSignConvention（姿勢符号規約）</dt><dd>${escapeHtml(runtime.poseSignConvention)}</dd></div>
+      <div><dt>renderPoseConversion（描画姿勢変換）</dt><dd>${escapeHtml(runtime.renderPoseConversion)}</dd></div>
       <div><dt>P_confirm</dt><dd>${escapeHtml(formatPose(runtime.P_confirm))}</dd></div>
       <div><dt>pose diff</dt><dd>${escapeHtml(formatPoseMappingDiff(runtime.poseDiff))}</dd></div>
       <div><dt>renderedIdeal478</dt><dd>${runtime.renderedIdealDetected ? "detected" : "not detected"} / ${formatNullableCount(runtime.renderedIdealLandmarkCount)}</dd></div>
@@ -18688,7 +18803,7 @@ function renderPoseMappingDebugTab() {
     profileState.loaded &&
     runtime.status === "completed" &&
     runtime.poseMappingStatus === "completed" &&
-    runtime.p !== null
+    runtime.pForWebglRender !== null
   const canDownloadDetectPerformance = detectPerformance.result !== null
   const canRunHandoff =
     handoff.status !== "running" &&
@@ -18698,7 +18813,7 @@ function renderPoseMappingDebugTab() {
     profileState.loaded &&
     runtime.status === "completed" &&
     runtime.poseMappingStatus === "completed" &&
-    runtime.p !== null
+    runtime.pForWebglRender !== null
   const canDownloadHandoff = handoff.result !== null
   const canRunWebglBenchmark =
     webglBenchmark.status !== "running" &&
@@ -18708,7 +18823,7 @@ function renderPoseMappingDebugTab() {
     profileState.loaded &&
     runtime.status === "completed" &&
     runtime.poseMappingStatus === "completed" &&
-    runtime.p !== null
+    runtime.pForWebglRender !== null
   const canDownloadWebglBenchmark = webglBenchmark.result !== null
   const canRunRenderPoseProbe =
     renderPoseProbe.status !== "running" &&
@@ -18718,7 +18833,7 @@ function renderPoseMappingDebugTab() {
     profileState.loaded &&
     runtime.status === "completed" &&
     runtime.poseMappingStatus === "completed" &&
-    runtime.p !== null
+    runtime.pForWebglRender !== null
   const canArmRenderPoseProbeAfterRecovery =
     renderPoseProbe.status !== "running" &&
     webglBenchmark.status !== "running" &&
@@ -18785,7 +18900,8 @@ function renderPoseMappingDebugTab() {
     <section class="debug-section">
       <h3>Profile output（関数出力）</h3>
       <dl class="summary-list">
-        <div><dt>p</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.p))}</dd></div>
+        <div><dt>pFromProfile（プロファイル出力姿勢）</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.pFromProfile))}</dd></div>
+        <div><dt>legacy p（旧p表示）</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.p))}</dd></div>
         <div><dt>selectedLeaf</dt><dd>${formatNullableCount(runtime.selectedLeaf)}</dd></div>
         <div><dt>used expert</dt><dd>${escapeHtml(runtime.usedExpert ?? "-")}</dd></div>
         <div><dt>usedFallback</dt><dd>${String(runtime.usedFallback)}</dd></div>
@@ -18804,6 +18920,12 @@ function renderPoseMappingDebugTab() {
         <div><dt>Render resolution</dt><dd>${formatNullableCount(runtime.renderSettings?.detectCanvasWidth ?? runtime.detectCanvasWidth)} x ${formatNullableCount(runtime.renderSettings?.detectCanvasHeight ?? runtime.detectCanvasHeight)}</dd></div>
         <div><dt>Profile renderer match</dt><dd>${String(runtime.profileRendererMatch)}</dd></div>
         <div><dt>Profile mismatch error</dt><dd>${escapeHtml(runtime.profileMismatchError ?? "-")}</dd></div>
+        <div><dt>pFromProfile（プロファイル出力姿勢）</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.pFromProfile))}</dd></div>
+        <div><dt>pForWebglRender（WebGL描画用姿勢）</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.pForWebglRender))}</dd></div>
+        <div><dt>poseSignConvention（姿勢符号規約）</dt><dd>${escapeHtml(runtime.poseSignConvention)}</dd></div>
+        <div><dt>renderPoseConversion（描画姿勢変換）</dt><dd>${escapeHtml(runtime.renderPoseConversion)}</dd></div>
+        <div><dt>poseDiffBeforeConversionSummary（変換前: pFromProfile - P_camera）</dt><dd>${escapeHtml(formatPoseMappingDiff(runtime.poseDiffBeforeConversionSummary))}</dd></div>
+        <div><dt>poseDiffAfterConversionSummary（変換後: pForWebglRender - P_camera）</dt><dd>${escapeHtml(formatPoseMappingDiff(runtime.poseDiffAfterConversionSummary))}</dd></div>
         <div><dt>requestedPoseP</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.renderedIdealLifecycle.renderPose.requestedPoseP))}</dd></div>
         <div><dt>renderCallPoseP</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.renderedIdealLifecycle.renderPose.renderCallPoseP))}</dd></div>
         <div><dt>previewStatePoseP</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.renderedIdealLifecycle.renderPose.previewStatePoseP))}</dd></div>
@@ -19007,7 +19129,11 @@ function renderDetectPerformanceSummaryHtml() {
   const result = perf.result
   const runtime = result?.runtime ?? {
     P_camera: roundPoseMappingPose(state.poseMappingRuntime.P_camera),
-    p: roundPoseMappingPose(state.poseMappingRuntime.p),
+    p: roundPoseMappingPose(state.poseMappingRuntime.pForWebglRender),
+    pFromProfile: roundPoseMappingPose(state.poseMappingRuntime.pFromProfile),
+    pForWebglRender: roundPoseMappingPose(state.poseMappingRuntime.pForWebglRender),
+    poseSignConvention: state.poseMappingRuntime.poseSignConvention,
+    renderPoseConversion: state.poseMappingRuntime.renderPoseConversion,
     P_confirm: roundPoseForState(state.poseMappingRuntime.P_confirm),
     poseDiff: roundPoseMappingDiff(state.poseMappingRuntime.poseDiff),
   }
@@ -19040,7 +19166,8 @@ function renderDetectPerformanceSummaryHtml() {
       <div><dt>renderResolutionSource</dt><dd>${escapeHtml(renderSettings.renderResolutionSource ?? "-")}</dd></div>
       <div><dt>detectCanvasMatchesProfile</dt><dd>${String(renderSettings.detectCanvasMatchesProfile)}</dd></div>
       <div><dt>P_camera</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.P_camera))}</dd></div>
-      <div><dt>p</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.p))}</dd></div>
+      <div><dt>pFromProfile（プロファイル出力姿勢）</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.pFromProfile))}</dd></div>
+      <div><dt>pForWebglRender（WebGL描画用姿勢）</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.pForWebglRender))}</dd></div>
       <div><dt>P_confirm</dt><dd>${escapeHtml(formatPose(runtime.P_confirm))}</dd></div>
       <div><dt>poseDiff magnitude</dt><dd>${formatRealtimeNullableNumber(runtime.poseDiff.magnitude)}</dd></div>
     </dl>
@@ -19085,7 +19212,11 @@ function renderRenderDetectHandoffSummaryHtml() {
   const result = handoff.result
   const runtime = result?.runtime ?? {
     P_camera: roundPoseMappingPose(state.poseMappingRuntime.P_camera),
-    p: roundPoseMappingPose(state.poseMappingRuntime.p),
+    p: roundPoseMappingPose(state.poseMappingRuntime.pForWebglRender),
+    pFromProfile: roundPoseMappingPose(state.poseMappingRuntime.pFromProfile),
+    pForWebglRender: roundPoseMappingPose(state.poseMappingRuntime.pForWebglRender),
+    poseSignConvention: state.poseMappingRuntime.poseSignConvention,
+    renderPoseConversion: state.poseMappingRuntime.renderPoseConversion,
     P_confirm: roundPoseForState(state.poseMappingRuntime.P_confirm),
     poseDiff: roundPoseMappingDiff(state.poseMappingRuntime.poseDiff),
   }
@@ -19116,7 +19247,8 @@ function renderRenderDetectHandoffSummaryHtml() {
       <div><dt>instanceReused</dt><dd>${String(landmarker.instanceReused)}</dd></div>
       <div><dt>createCount</dt><dd>${formatNullableCount(landmarker.createCount)}</dd></div>
       <div><dt>P_camera</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.P_camera))}</dd></div>
-      <div><dt>p</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.p))}</dd></div>
+      <div><dt>pFromProfile（プロファイル出力姿勢）</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.pFromProfile))}</dd></div>
+      <div><dt>pForWebglRender（WebGL描画用姿勢）</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.pForWebglRender))}</dd></div>
       <div><dt>P_confirm</dt><dd>${escapeHtml(formatPose(runtime.P_confirm))}</dd></div>
       <div><dt>poseDiff magnitude</dt><dd>${formatRealtimeNullableNumber(runtime.poseDiff.magnitude)}</dd></div>
       <div><dt>error</dt><dd>${escapeHtml(handoff.errorMessage ?? "-")}</dd></div>
@@ -19177,7 +19309,11 @@ function renderWebglObjBenchmarkSummaryHtml() {
   const result = benchmark.result
   const runtime = result?.runtime ?? {
     P_camera: roundPoseMappingPose(state.poseMappingRuntime.P_camera),
-    p: roundPoseMappingPose(state.poseMappingRuntime.p),
+    p: roundPoseMappingPose(state.poseMappingRuntime.pForWebglRender),
+    pFromProfile: roundPoseMappingPose(state.poseMappingRuntime.pFromProfile),
+    pForWebglRender: roundPoseMappingPose(state.poseMappingRuntime.pForWebglRender),
+    poseSignConvention: state.poseMappingRuntime.poseSignConvention,
+    renderPoseConversion: state.poseMappingRuntime.renderPoseConversion,
     canvas2dConfirm: {
       P_confirm: roundPoseForState(state.poseMappingRuntime.P_confirm),
       poseDiff: roundPoseMappingDiff(state.poseMappingRuntime.poseDiff),
@@ -19220,7 +19356,8 @@ function renderWebglObjBenchmarkSummaryHtml() {
       <div><dt>instanceReused</dt><dd>${String(landmarker.instanceReused)}</dd></div>
       <div><dt>createCount</dt><dd>${formatNullableCount(landmarker.createCount)}</dd></div>
       <div><dt>P_camera</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.P_camera))}</dd></div>
-      <div><dt>p</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.p))}</dd></div>
+      <div><dt>pFromProfile（プロファイル出力姿勢）</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.pFromProfile))}</dd></div>
+      <div><dt>pForWebglRender（WebGL描画用姿勢）</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.pForWebglRender))}</dd></div>
       <div><dt>Canvas2D P_confirm</dt><dd>${escapeHtml(formatPose(runtime.canvas2dConfirm.P_confirm))}</dd></div>
       <div><dt>Canvas2D poseDiff</dt><dd>${escapeHtml(formatPoseMappingDiff(runtime.canvas2dConfirm.poseDiff))}</dd></div>
       <div><dt>WebGL P_confirm</dt><dd>${escapeHtml(formatPose(latestWebglSample?.P_confirm ?? { yaw: null, pitch: null, roll: null }))}</dd></div>
@@ -21555,6 +21692,22 @@ function createDefaultPoseMappingRuntimeState(): PoseMappingRuntimeState {
       reasons: [],
     },
     p: null,
+    pFromProfile: null,
+    pForWebglRender: null,
+    poseSignConvention: DEFAULT_POSE_SIGN_CONVENTION,
+    renderPoseConversion: DEFAULT_RENDER_POSE_CONVERSION,
+    poseDiffBeforeConversionSummary: {
+      yaw: null,
+      pitch: null,
+      roll: null,
+      magnitude: null,
+    },
+    poseDiffAfterConversionSummary: {
+      yaw: null,
+      pitch: null,
+      roll: null,
+      magnitude: null,
+    },
     selectedLeaf: null,
     usedExpert: null,
     usedFallback: false,
@@ -21610,6 +21763,8 @@ function createEmptyPoseMappingLastGoodState(): PoseMappingLastGoodState {
     hasLastGood: false,
     P_camera: null,
     p: null,
+    pFromProfile: null,
+    pForWebglRender: null,
     P_confirm: {
       yaw: null,
       pitch: null,
@@ -21668,12 +21823,14 @@ function createFrameGeneration(): FrameGeneration {
 function createRenderedIdealFrameToken(
   frame: FrameGeneration,
   p: ObjPoseMappingPose,
+  pFromProfile: ObjPoseMappingPose | null = null,
 ): RenderedIdealFrameToken {
   return {
     ...state.assetGeneration,
     frameId: frame.frameId,
     mediaTimeSec: frame.mediaTimeSec,
     p: { ...p },
+    pFromProfile: pFromProfile ? { ...pFromProfile } : null,
   }
 }
 
@@ -21943,7 +22100,7 @@ function buildPoseRecoveryDebug(input: {
     recoveredFromAlignmentSkip,
     recoveryFrameId: recovered ? input.frameGeneration?.frameId ?? null : null,
     recoveryMediaTimeSec: recovered ? input.frameGeneration?.mediaTimeSec ?? null : null,
-    poseBeforeSkip: roundPoseMappingPose(previous.p),
+    poseBeforeSkip: roundPoseMappingPose(previous.pForWebglRender ?? previous.p),
     poseAfterRecovery: roundPoseMappingPose(input.poseAfterRecovery),
     rendererWasReinitialized: input.rendererWasReinitialized,
     webglContextWasRecreated: input.webglContextWasRecreated,
@@ -24948,6 +25105,10 @@ function buildPlacementMappingSample(runtime: PoseMappingRuntimeState): Placemen
     mediaTimeSec: roundForState(frameLifecycle.mediaTimeSec),
     P_camera: roundPoseMappingPose(runtime.P_camera),
     p: roundPoseMappingPose(runtime.p),
+    pFromProfile: roundPoseMappingPose(runtime.pFromProfile),
+    pForWebglRender: roundPoseMappingPose(runtime.pForWebglRender),
+    poseSignConvention: runtime.poseSignConvention,
+    renderPoseConversion: runtime.renderPoseConversion,
     P_confirm: runtime.P_confirm ? roundPoseForState(runtime.P_confirm) : null,
     poseDiffMagnitude: roundForState(runtime.poseDiff.magnitude),
     currentMatrixColumnMajorTranslation: roundPoint3ForState(
@@ -26202,7 +26363,8 @@ function formatPoseMappingPreviewNote() {
     `detect result: ${state.poseMappingRuntime.renderedIdealDetected ? "detected" : "not detected"}`,
     `errorMessage: ${state.poseMappingRuntime.errorMessage ?? "-"}`,
     `P_camera: ${formatPoseMappingPose(state.poseMappingRuntime.P_camera)}`,
-    `p: ${formatPoseMappingPose(state.poseMappingRuntime.p)}`,
+    `pFromProfile: ${formatPoseMappingPose(state.poseMappingRuntime.pFromProfile)}`,
+    `pForWebglRender: ${formatPoseMappingPose(state.poseMappingRuntime.pForWebglRender)}`,
     `P_confirm: ${formatPose(state.poseMappingRuntime.P_confirm)}`,
     `pose diff: ${formatPoseMappingDiff(state.poseMappingRuntime.poseDiff)}`,
   ].join(" / ")
@@ -26765,6 +26927,8 @@ function getPoseMappingLastGoodDebugSummary(lastGood: PoseMappingLastGoodState) 
     frameIndex: lastGood.frameIndex,
     P_camera: roundPoseMappingPose(lastGood.P_camera),
     p: roundPoseMappingPose(lastGood.p),
+    pFromProfile: roundPoseMappingPose(lastGood.pFromProfile),
+    pForWebglRender: roundPoseMappingPose(lastGood.pForWebglRender),
     P_confirm: roundPoseForState(lastGood.P_confirm),
     renderedIdealLandmarkCount: lastGood.renderedIdeal478?.length ?? null,
     alignedRenderedIdealLandmarkCount: lastGood.alignedRenderedIdeal478?.length ?? null,
@@ -26834,6 +26998,12 @@ function getPoseMappingRuntimeRawSummary() {
     P_cameraClamped: roundPoseMappingPose(runtime.P_cameraClamped),
     qualityGate: runtime.qualityGate,
     p: roundPoseMappingPose(runtime.p),
+    pFromProfile: roundPoseMappingPose(runtime.pFromProfile),
+    pForWebglRender: roundPoseMappingPose(runtime.pForWebglRender),
+    poseSignConvention: runtime.poseSignConvention,
+    renderPoseConversion: runtime.renderPoseConversion,
+    poseDiffBeforeConversionSummary: roundPoseMappingDiff(runtime.poseDiffBeforeConversionSummary),
+    poseDiffAfterConversionSummary: roundPoseMappingDiff(runtime.poseDiffAfterConversionSummary),
     selectedLeaf: runtime.selectedLeaf,
     usedExpert: runtime.usedExpert,
     usedFallback: runtime.usedFallback,
@@ -26929,6 +27099,12 @@ function getPoseMappingRuntimeDebugExport() {
         !posesEqual(runtime.P_camera, runtime.P_cameraClamped),
       qualityGate: runtime.qualityGate,
       p: roundPoseMappingPose(runtime.p),
+      pFromProfile: roundPoseMappingPose(runtime.pFromProfile),
+      pForWebglRender: roundPoseMappingPose(runtime.pForWebglRender),
+      poseSignConvention: runtime.poseSignConvention,
+      renderPoseConversion: runtime.renderPoseConversion,
+      poseDiffBeforeConversionSummary: roundPoseMappingDiff(runtime.poseDiffBeforeConversionSummary),
+      poseDiffAfterConversionSummary: roundPoseMappingDiff(runtime.poseDiffAfterConversionSummary),
       P_confirm: roundPoseForState(runtime.P_confirm),
       poseDiff: roundPoseMappingDiff(runtime.poseDiff),
       selectedLeaf: runtime.selectedLeaf,
