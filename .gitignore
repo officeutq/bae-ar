@@ -145,3 +145,4 @@ vite.config.ts.timestamp-*
 tools/ideal-face-authoring/sample-videos/*.mp4
 
 docs/メモ.md
+tools/ideal-obj-render-warp-lab/data/sample.mp4
