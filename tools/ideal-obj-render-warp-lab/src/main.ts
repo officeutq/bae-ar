@@ -2165,6 +2165,52 @@ type PlacementFunctionVerticalPositionSummary = {
   invNegTzStdDev: number
 }
 
+type PlacementFunctionAnchorLandmark = {
+  index: 0
+  target: {
+    available: boolean
+    source: "target_mediapipe_returned_landmark" | "unavailable"
+    imageX: number | null
+    imageY: number | null
+    workX: number | null
+    workY: number | null
+  }
+  base: {
+    available: boolean
+    source: PlacementFunctionBase478Source
+    imageX: number | null
+    imageY: number | null
+    workX: number | null
+    workY: number | null
+  }
+  knownTransformDerived: {
+    available: boolean
+    translateAfterScaleImageX: number | null
+    translateAfterScaleImageY: number | null
+    translateAfterScaleWorkX: number | null
+    translateAfterScaleWorkY: number | null
+    errorToKnownTranslateImageX: number | null
+    errorToKnownTranslateImageY: number | null
+    absErrorToKnownTranslateImageX: number | null
+    absErrorToKnownTranslateImageY: number | null
+  }
+}
+
+type PlacementFunctionAnchorLandmarkSummary = {
+  index: 0
+  sampleCount: number
+  usableSampleCount: number
+  targetAvailableCount: number
+  baseAvailableCount: number
+  baseSourceCounts: Record<PlacementFunctionBase478Source, number>
+  knownTransformDerivedError: {
+    meanAbsImageX: number | null
+    meanAbsImageY: number | null
+    maxAbsImageX: number | null
+    maxAbsImageY: number | null
+  }
+}
+
 type KnownPlacement = {
   centerImageX: number
   centerImageY: number
@@ -2286,6 +2332,7 @@ type PlacementFunctionAnalysisSample = {
   }
   matrixFeatures: PlacementFunctionMatrixFeatures
   observedRenderedBounds?: PlacementFunctionObservedBounds | null
+  anchorLandmark: PlacementFunctionAnchorLandmark
   previewLandmarkSummary: PlacementFunctionPreviewLandmarkSummary
   preview?: {
     hasSnapshot: boolean
@@ -2333,6 +2380,7 @@ type PlacementFunctionAnalysisExport = {
     repeatSummary: PlacementFunctionRepeatSummary
     positionCorrelationSummary: PlacementFunctionPositionCorrelationSummary[]
     verticalPositionSummary: PlacementFunctionVerticalPositionSummary[]
+    anchorLandmarkSummary: PlacementFunctionAnchorLandmarkSummary
   }
   samples: PlacementFunctionAnalysisSample[]
 }
@@ -2473,6 +2521,7 @@ type PlacementFunctionAnalysisSummary = {
   repeatSummary: PlacementFunctionRepeatSummary
   positionCorrelationSummary: PlacementFunctionPositionCorrelationSummary[]
   verticalPositionSummary: PlacementFunctionVerticalPositionSummary[]
+  anchorLandmarkSummary: PlacementFunctionAnchorLandmarkSummary
 }
 
 type PlacementFunctionAnalysisState = {
@@ -2643,6 +2692,7 @@ const PLACEMENT_ANALYSIS_CENTER_IMAGE_Y_VALUES = [
 ] as const
 const PLACEMENT_ANALYSIS_SCALE_VALUES = [1.1, 1.15, 1.2, 1.25, 1.3] as const
 const PLACEMENT_ANALYSIS_DEFAULT_REPEAT_COUNT = 2
+const PLACEMENT_ANALYSIS_ANCHOR_LANDMARK_INDEX = 0
 const PLACEMENT_ANALYSIS_FRONT_POSE: ObjPoseMappingPose = { yaw: 0, pitch: 0, roll: 0 }
 const PLACEMENT_ANALYSIS_SKIPPED_REASONS: PlacementFunctionAnalysisSkippedReason[] = [
   "no_face",
@@ -9702,6 +9752,13 @@ function buildPlacementFunctionAnalysisSample(input: {
     previewBase,
     returnedLandmarks.length,
   )
+  const anchorLandmark = createPlacementFunctionAnchorLandmark({
+    targetLandmarks: returnedLandmarks,
+    baseLandmarks: previewBase.landmarks,
+    baseSource: previewBase.source,
+    knownTransform,
+    renderAspectRatio: input.knownPlacement.renderAspectRatio,
+  })
   const skippedReason = getPlacementFunctionAnalysisSkippedReason({
     detected,
     returnedLandmarkCount: landmarks.length,
@@ -9748,6 +9805,7 @@ function buildPlacementFunctionAnalysisSample(input: {
     facialTransformationMatrix,
     matrixFeatures: roundPlacementFunctionMatrixFeatures(matrixFeatures),
     observedRenderedBounds,
+    anchorLandmark,
     previewLandmarkSummary,
     preview: {
       hasSnapshot: true,
@@ -9786,6 +9844,13 @@ function createPlacementFunctionAnalysisFailureSample(input: {
     basePreviewReference: input.basePreviewReference,
   })
   const previewLandmarkSummary = createPlacementFunctionPreviewLandmarkSummary(previewBase, 0)
+  const anchorLandmark = createPlacementFunctionAnchorLandmark({
+    targetLandmarks: [],
+    baseLandmarks: previewBase.landmarks,
+    baseSource: previewBase.source,
+    knownTransform,
+    renderAspectRatio: input.knownPlacement.renderAspectRatio,
+  })
   return {
     schemaVersion: "ideal_obj_render_warp_placement_function_sample_v1",
     sampleId: input.sampleId,
@@ -9815,6 +9880,7 @@ function createPlacementFunctionAnalysisFailureSample(input: {
     },
     matrixFeatures: createEmptyPlacementFunctionMatrixFeatures(),
     observedRenderedBounds: null,
+    anchorLandmark,
     previewLandmarkSummary,
     preview: {
       hasSnapshot: false,
@@ -10029,6 +10095,138 @@ function roundPlacementFunctionKnownTransform(transform: KnownTransform): KnownT
     translateAfterScaleImageY: roundForState(transform.translateAfterScaleImageY) ?? 0,
     translateAfterScaleWorkX: roundForState(transform.translateAfterScaleWorkX) ?? 0,
     translateAfterScaleWorkY: roundForState(transform.translateAfterScaleWorkY) ?? 0,
+  }
+}
+
+function createPlacementFunctionAnchorLandmark(input: {
+  targetLandmarks: ReferenceLandmark[]
+  baseLandmarks: ReferenceLandmark[] | null
+  baseSource: PlacementFunctionBase478Source
+  knownTransform: KnownTransform
+  renderAspectRatio: number
+}): PlacementFunctionAnchorLandmark {
+  const targetPoint = createPlacementFunctionAnchorPoint(
+    input.targetLandmarks[PLACEMENT_ANALYSIS_ANCHOR_LANDMARK_INDEX],
+    input.renderAspectRatio,
+  )
+  const basePoint = createPlacementFunctionAnchorPoint(
+    input.baseLandmarks?.[PLACEMENT_ANALYSIS_ANCHOR_LANDMARK_INDEX] ?? null,
+    input.renderAspectRatio,
+  )
+  const target = {
+    available: targetPoint.available,
+    source: targetPoint.available
+      ? "target_mediapipe_returned_landmark"
+      : "unavailable",
+    imageX: targetPoint.imageX,
+    imageY: targetPoint.imageY,
+    workX: targetPoint.workX,
+    workY: targetPoint.workY,
+  } satisfies PlacementFunctionAnchorLandmark["target"]
+  const base = {
+    available: basePoint.available,
+    source: basePoint.available ? input.baseSource : "unavailable",
+    imageX: basePoint.imageX,
+    imageY: basePoint.imageY,
+    workX: basePoint.workX,
+    workY: basePoint.workY,
+  } satisfies PlacementFunctionAnchorLandmark["base"]
+  const knownTransformDerived = createPlacementFunctionAnchorKnownTransformDerived({
+    target,
+    base,
+    knownTransform: input.knownTransform,
+    renderAspectRatio: input.renderAspectRatio,
+  })
+  return {
+    index: PLACEMENT_ANALYSIS_ANCHOR_LANDMARK_INDEX,
+    target,
+    base,
+    knownTransformDerived,
+  }
+}
+
+function createPlacementFunctionAnchorPoint(
+  landmark: ReferenceLandmark | null | undefined,
+  renderAspectRatio: number,
+) {
+  const imageX = landmark?.x ?? null
+  const imageY = landmark?.y ?? null
+  const available =
+    typeof imageX === "number" &&
+    typeof imageY === "number" &&
+    Number.isFinite(imageX) &&
+    Number.isFinite(imageY)
+  if (!available) {
+    return {
+      available: false,
+      imageX: null,
+      imageY: null,
+      workX: null,
+      workY: null,
+    }
+  }
+  return {
+    available: true,
+    imageX: roundForState(imageX),
+    imageY: roundForState(imageY),
+    workX: roundForState(imageX * renderAspectRatio),
+    workY: roundForState(imageY),
+  }
+}
+
+function createPlacementFunctionAnchorKnownTransformDerived(input: {
+  target: PlacementFunctionAnchorLandmark["target"]
+  base: PlacementFunctionAnchorLandmark["base"]
+  knownTransform: KnownTransform
+  renderAspectRatio: number
+}): PlacementFunctionAnchorLandmark["knownTransformDerived"] {
+  if (
+    !input.target.available ||
+    !input.base.available ||
+    input.target.imageX === null ||
+    input.target.imageY === null ||
+    input.base.imageX === null ||
+    input.base.imageY === null ||
+    !Number.isFinite(input.knownTransform.scaleRatio)
+  ) {
+    return createEmptyPlacementFunctionAnchorKnownTransformDerived()
+  }
+
+  const translateAfterScaleImageX =
+    input.target.imageX - input.base.imageX * input.knownTransform.scaleRatio
+  const translateAfterScaleImageY =
+    input.target.imageY - input.base.imageY * input.knownTransform.scaleRatio
+  const translateAfterScaleWorkX = translateAfterScaleImageX * input.renderAspectRatio
+  const translateAfterScaleWorkY = translateAfterScaleImageY
+  const errorToKnownTranslateImageX =
+    translateAfterScaleImageX - input.knownTransform.translateAfterScaleImageX
+  const errorToKnownTranslateImageY =
+    translateAfterScaleImageY - input.knownTransform.translateAfterScaleImageY
+
+  return {
+    available: true,
+    translateAfterScaleImageX: roundForState(translateAfterScaleImageX),
+    translateAfterScaleImageY: roundForState(translateAfterScaleImageY),
+    translateAfterScaleWorkX: roundForState(translateAfterScaleWorkX),
+    translateAfterScaleWorkY: roundForState(translateAfterScaleWorkY),
+    errorToKnownTranslateImageX: roundForState(errorToKnownTranslateImageX),
+    errorToKnownTranslateImageY: roundForState(errorToKnownTranslateImageY),
+    absErrorToKnownTranslateImageX: roundForState(Math.abs(errorToKnownTranslateImageX)),
+    absErrorToKnownTranslateImageY: roundForState(Math.abs(errorToKnownTranslateImageY)),
+  }
+}
+
+function createEmptyPlacementFunctionAnchorKnownTransformDerived(): PlacementFunctionAnchorLandmark["knownTransformDerived"] {
+  return {
+    available: false,
+    translateAfterScaleImageX: null,
+    translateAfterScaleImageY: null,
+    translateAfterScaleWorkX: null,
+    translateAfterScaleWorkY: null,
+    errorToKnownTranslateImageX: null,
+    errorToKnownTranslateImageY: null,
+    absErrorToKnownTranslateImageX: null,
+    absErrorToKnownTranslateImageY: null,
   }
 }
 
@@ -10254,6 +10452,7 @@ function createPlacementFunctionAnalysisSummary(
     repeatSummary: buildPlacementFunctionRepeatSummary(samples, options, candidate),
     positionCorrelationSummary: buildPlacementFunctionPositionCorrelationSummary(samples),
     verticalPositionSummary: buildPlacementFunctionVerticalPositionSummary(samples),
+    anchorLandmarkSummary: buildPlacementFunctionAnchorLandmarkSummary(samples),
   }
 }
 
@@ -10343,6 +10542,42 @@ function buildPlacementFunctionTransformSummary(
     translateAfterScaleImageYMin: translateYRange.min,
     translateAfterScaleImageYMax: translateYRange.max,
     renderAspectRatio: renderAspectRatioRange?.min ?? samples[0]?.knownPlacement.renderAspectRatio ?? 0,
+  }
+}
+
+function buildPlacementFunctionAnchorLandmarkSummary(
+  samples: PlacementFunctionAnalysisSampleState[],
+): PlacementFunctionAnchorLandmarkSummary {
+  const usableSamples = getUsablePlacementFunctionAnalysisSamples(samples)
+  const absErrorImageX = usableSamples.map(
+    (sample) => sample.anchorLandmark.knownTransformDerived.absErrorToKnownTranslateImageX,
+  )
+  const absErrorImageY = usableSamples.map(
+    (sample) => sample.anchorLandmark.knownTransformDerived.absErrorToKnownTranslateImageY,
+  )
+  return {
+    index: PLACEMENT_ANALYSIS_ANCHOR_LANDMARK_INDEX,
+    sampleCount: samples.length,
+    usableSampleCount: usableSamples.length,
+    targetAvailableCount: usableSamples.filter((sample) => sample.anchorLandmark.target.available).length,
+    baseAvailableCount: usableSamples.filter((sample) => sample.anchorLandmark.base.available).length,
+    baseSourceCounts: {
+      pre_transform_mediapipe: usableSamples.filter(
+        (sample) => sample.anchorLandmark.base.source === "pre_transform_mediapipe",
+      ).length,
+      inverse_known_transform: usableSamples.filter(
+        (sample) => sample.anchorLandmark.base.source === "inverse_known_transform",
+      ).length,
+      unavailable: usableSamples.filter(
+        (sample) => sample.anchorLandmark.base.source === "unavailable",
+      ).length,
+    },
+    knownTransformDerivedError: {
+      meanAbsImageX: roundForState(averageFiniteNumbersFromNullable(absErrorImageX)),
+      meanAbsImageY: roundForState(averageFiniteNumbersFromNullable(absErrorImageY)),
+      maxAbsImageX: roundForState(maxNullableNumbers(absErrorImageX)),
+      maxAbsImageY: roundForState(maxNullableNumbers(absErrorImageY)),
+    },
   }
 }
 
@@ -10923,6 +11158,18 @@ function averageFiniteNumbers(values: number[]) {
     return null
   }
   return finiteValues.reduce((sum, value) => sum + value, 0) / finiteValues.length
+}
+
+function averageFiniteNumbersFromNullable(values: Array<number | null | undefined>) {
+  return averageFiniteNumbers(
+    values.filter((value): value is number => typeof value === "number" && Number.isFinite(value)),
+  )
+}
+
+function maxNullableNumbers(values: Array<number | null | undefined>) {
+  return maxNumbers(
+    values.filter((value): value is number => typeof value === "number" && Number.isFinite(value)),
+  )
 }
 
 async function startObjPoseCalibration() {
@@ -18219,12 +18466,18 @@ function renderPlacementAnalysisPreviewPanel() {
 
   const known = selectedSample.knownPlacement
   const transform = selectedSample.knownTransform
+  const anchor = selectedSample.anchorLandmark
   summary.innerHTML = `
     <dl class="obj-preview-list placement-analysis-preview-list">
       <div><dt>sampleIndex</dt><dd>${selectedSample.sampleIndex}</dd></div>
       <div><dt>knownPlacement</dt><dd>${escapeHtml(formatKnownPlacementShort(known))}</dd></div>
       <div><dt>knownTransform</dt><dd>${escapeHtml(formatKnownTransformShort(transform))}</dd></div>
       <div><dt>Base 478 source</dt><dd>${escapeHtml(formatPlacementPreviewLandmarkSummary(selectedSample.previewLandmarkSummary))}</dd></div>
+      <div><dt>targetAnchorImage</dt><dd>${formatPlacementAnchorImagePoint(anchor.target.imageX, anchor.target.imageY)}</dd></div>
+      <div><dt>baseAnchorImage</dt><dd>${formatPlacementAnchorImagePoint(anchor.base.imageX, anchor.base.imageY)}</dd></div>
+      <div><dt>baseAnchorSource</dt><dd>${escapeHtml(anchor.base.source)}</dd></div>
+      <div><dt>anchorKnownTranslateAfterScaleImage</dt><dd>${formatPlacementAnchorImagePoint(anchor.knownTransformDerived.translateAfterScaleImageX, anchor.knownTransformDerived.translateAfterScaleImageY)}</dd></div>
+      <div><dt>anchorKnownTranslateErrorImage</dt><dd>${formatPlacementAnchorImagePoint(anchor.knownTransformDerived.errorToKnownTranslateImageX, anchor.knownTransformDerived.errorToKnownTranslateImageY)}</dd></div>
       <div><dt>detected</dt><dd>${String(selectedSample.mediaPipeResult.detected)}</dd></div>
       <div><dt>matrixAvailable</dt><dd>${String(selectedSample.facialTransformationMatrix.available)}</dd></div>
       <div><dt>quality</dt><dd>${selectedSample.quality.usable ? "usable" : `skipped: ${escapeHtml(selectedSample.quality.skippedReason ?? "-")}`}</dd></div>
@@ -18460,6 +18713,10 @@ function renderPlacementFunctionAnalysisDebugTab() {
       ${renderPlacementTransformSummaryHtml(summary.transformSummary)}
     </section>
     <section class="review-card">
+      <h3>基準ランドマーク要約</h3>
+      ${renderPlacementAnchorLandmarkSummaryHtml(summary.anchorLandmarkSummary)}
+    </section>
+    <section class="review-card">
       <h3>繰り返し要約</h3>
       ${renderPlacementRepeatSummaryHtml(summary.repeatSummary)}
     </section>
@@ -18524,6 +18781,10 @@ function formatPlacementAnalysisRange(range: PlacementFunctionAnalysisRange | nu
   return range ? `${formatNullableNumber(range.min)} .. ${formatNullableNumber(range.max)}` : "-"
 }
 
+function formatPlacementAnchorImagePoint(x: number | null, y: number | null) {
+  return `(${formatNullableNumber(x)}, ${formatNullableNumber(y)})`
+}
+
 function renderPlacementTransformSummaryHtml(summary: PlacementFunctionTransformSummary | null) {
   if (!summary) {
     return `<p class="placeholder-text">解析実行後に knownTransform の範囲を表示します。</p>`
@@ -18537,6 +18798,21 @@ function renderPlacementTransformSummaryHtml(summary: PlacementFunctionTransform
       <div><dt>translateAfterScaleImageX range</dt><dd>${formatNullableNumber(summary.translateAfterScaleImageXMin)} .. ${formatNullableNumber(summary.translateAfterScaleImageXMax)}</dd></div>
       <div><dt>translateAfterScaleImageY range</dt><dd>${formatNullableNumber(summary.translateAfterScaleImageYMin)} .. ${formatNullableNumber(summary.translateAfterScaleImageYMax)}</dd></div>
       <div><dt>renderAspectRatio</dt><dd>${formatNullableNumber(summary.renderAspectRatio)}</dd></div>
+    </dl>
+  `
+}
+
+function renderPlacementAnchorLandmarkSummaryHtml(summary: PlacementFunctionAnchorLandmarkSummary) {
+  return `
+    <dl class="review-grid">
+      <div><dt>index</dt><dd>${formatNullableCount(summary.index)}</dd></div>
+      <div><dt>target available</dt><dd>${formatNullableCount(summary.targetAvailableCount)} / ${formatNullableCount(summary.usableSampleCount)}</dd></div>
+      <div><dt>base available</dt><dd>${formatNullableCount(summary.baseAvailableCount)} / ${formatNullableCount(summary.usableSampleCount)}</dd></div>
+      <div><dt>base pre_transform_mediapipe</dt><dd>${formatNullableCount(summary.baseSourceCounts.pre_transform_mediapipe)}</dd></div>
+      <div><dt>base inverse_known_transform</dt><dd>${formatNullableCount(summary.baseSourceCounts.inverse_known_transform)}</dd></div>
+      <div><dt>base unavailable</dt><dd>${formatNullableCount(summary.baseSourceCounts.unavailable)}</dd></div>
+      <div><dt>anchor-derived mean abs error X / Y</dt><dd>${formatNullableNumber(summary.knownTransformDerivedError.meanAbsImageX)} / ${formatNullableNumber(summary.knownTransformDerivedError.meanAbsImageY)}</dd></div>
+      <div><dt>anchor-derived max abs error X / Y</dt><dd>${formatNullableNumber(summary.knownTransformDerivedError.maxAbsImageX)} / ${formatNullableNumber(summary.knownTransformDerivedError.maxAbsImageY)}</dd></div>
     </dl>
   `
 }
@@ -18950,6 +19226,7 @@ function buildPlacementFunctionAnalysisExport(): PlacementFunctionAnalysisExport
       repeatSummary: state.placementAnalysis.summary.repeatSummary,
       positionCorrelationSummary: state.placementAnalysis.summary.positionCorrelationSummary,
       verticalPositionSummary: state.placementAnalysis.summary.verticalPositionSummary,
+      anchorLandmarkSummary: state.placementAnalysis.summary.anchorLandmarkSummary,
     },
     samples: state.placementAnalysis.samples.map(stripPlacementFunctionAnalysisSampleState),
   }
@@ -18994,6 +19271,27 @@ function buildPlacementFunctionAnalysisCsv(
     "repeatIndex",
     "repeatCount",
     "conditionKey",
+    "anchorLandmarkIndex",
+    "targetAnchorAvailable",
+    "targetAnchorSource",
+    "targetAnchorImageX",
+    "targetAnchorImageY",
+    "targetAnchorWorkX",
+    "targetAnchorWorkY",
+    "baseAnchorAvailable",
+    "baseAnchorSource",
+    "baseAnchorImageX",
+    "baseAnchorImageY",
+    "baseAnchorWorkX",
+    "baseAnchorWorkY",
+    "anchorKnownTranslateAfterScaleImageX",
+    "anchorKnownTranslateAfterScaleImageY",
+    "anchorKnownTranslateAfterScaleWorkX",
+    "anchorKnownTranslateAfterScaleWorkY",
+    "anchorKnownTranslateErrorImageX",
+    "anchorKnownTranslateErrorImageY",
+    "anchorKnownTranslateAbsErrorImageX",
+    "anchorKnownTranslateAbsErrorImageY",
     "qualityUsable",
     "skippedReason",
     "knownCenterImageX",
@@ -19079,11 +19377,33 @@ function buildPlacementFunctionAnalysisCsv(
     const positionCorrelation = positionCorrelationByScale.get(
       formatPlacementScaleKey(sample.knownTransform.scaleRatio),
     )
+    const anchor = sample.anchorLandmark
     return [
       sample.sampleIndex,
       sample.repeatIndex,
       sample.repeatCount,
       sample.conditionKey,
+      anchor.index,
+      anchor.target.available,
+      anchor.target.source,
+      anchor.target.imageX ?? "",
+      anchor.target.imageY ?? "",
+      anchor.target.workX ?? "",
+      anchor.target.workY ?? "",
+      anchor.base.available,
+      anchor.base.source,
+      anchor.base.imageX ?? "",
+      anchor.base.imageY ?? "",
+      anchor.base.workX ?? "",
+      anchor.base.workY ?? "",
+      anchor.knownTransformDerived.translateAfterScaleImageX ?? "",
+      anchor.knownTransformDerived.translateAfterScaleImageY ?? "",
+      anchor.knownTransformDerived.translateAfterScaleWorkX ?? "",
+      anchor.knownTransformDerived.translateAfterScaleWorkY ?? "",
+      anchor.knownTransformDerived.errorToKnownTranslateImageX ?? "",
+      anchor.knownTransformDerived.errorToKnownTranslateImageY ?? "",
+      anchor.knownTransformDerived.absErrorToKnownTranslateImageX ?? "",
+      anchor.knownTransformDerived.absErrorToKnownTranslateImageY ?? "",
       sample.quality.usable,
       sample.quality.skippedReason ?? "",
       sample.knownPlacement.centerImageX,

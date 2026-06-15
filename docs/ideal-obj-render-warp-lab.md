@@ -121,6 +121,20 @@ sample には `repeatIndex`、`repeatCount`、`conditionKey`、`knownPlacement`�
 
 JSON export の summary には、同一条件内の安定性を見る `repeatSummary`、scaleRatio ごとの `centerImageX` / `centerImageY` と `negTz = -tz` / `invNegTz` の相関を見る `positionCorrelationSummary`、`scaleRatio + centerImageY` ごとの `negTz` 平均・範囲を見る `verticalPositionSummary` を含めます。右ペインにも compact summary として、繰り返し要約、位置相関、縦位置別要約を表示します。
 
+後続の anchor-based transform model（基準点ベース変換モデル）検証のため、配置関数解析 sample には `anchorLandmark` として index `0` の target / base 座標を保存します。`targetAnchor` は target render を MediaPipe に通して得た `returnedLandmarks[0]`、`baseAnchor` は base478 の `landmarks[0]` です。`baseAnchorSource` は `pre_transform_mediapipe` または `inverse_known_transform`、取得できない場合は `unavailable` とします。
+
+`knownTransformDerived` では、既知の `scaleRatio` を使って anchor 由来の `translateAfterScaleImageX/Y` を計算します。
+
+```text
+anchorTranslateAfterScaleImageX =
+  targetAnchorImageX - baseAnchorImageX * knownTransform.scaleRatio
+
+anchorTranslateAfterScaleImageY =
+  targetAnchorImageY - baseAnchorImageY * knownTransform.scaleRatio
+```
+
+この値と既存の `knownTransform.translateAfterScaleImageX/Y` の差を sample / JSON summary / CSV / UI に出します。`baseAnchorSource = inverse_known_transform` の場合は target478 を既知逆変換で戻しているため、anchor 由来の translate error がほぼ 0 になることがあります。これは正常であり、今回の変更では candidate function 自体は変更しません。
+
 placement function candidate は、まず image-normalized coordinate の `targetCenter` と `scaleRatio` を推定し、`translateAfterScaleImage` を導出します。candidate 内では fixed aspect ratio を混ぜず、work coordinate は candidate の外側で必要に応じて `imageX * aspectRatio` として計算します。repeat sample が同一条件を過重にしないように、usable samples を `conditionKey` ごとに平均してから fitting する `condition_mean` を使います。candidate JSON の `source` には `sampleCount`、`usableSampleCount`、`uniqueConditionCount`、`fittingSampleCount`、`fittingAggregation` を含めます。
 
 ```text
@@ -139,7 +153,7 @@ estimatedTranslateAfterScaleImageY =
 
 candidate metrics は `Target Center Image`、`Scale Ratio`、`Derived Translate After Scale Image` に分けて表示します。candidate JSON の `schemaVersion` は `matrix_to_known_image_transform_function_candidate_v1`、`targetCoordinateSpace` は `image_normalized_coordinate` です。candidate JSON には optional field として `trainingDataSummary` を含め、学習に使った `scaleRatio` の範囲、値、scale 別 sample 数を記録します。
 
-CSV export には既存の image coordinate 系の列を維持したうえで、`repeatIndex`、`repeatCount`、`conditionKey`、`conditionNegTzMean` / `StdDev` / `Range`、`conditionInvNegTzMean` / `StdDev` / `Range`、`scalePositionCorrCenterYNegTz`、`scalePositionCorrCenterXNegTz` を含めます。
+CSV export には既存の image coordinate 系の列を維持したうえで、`repeatIndex`、`repeatCount`、`conditionKey`、`conditionNegTzMean` / `StdDev` / `Range`、`conditionInvNegTzMean` / `StdDev` / `Range`、`scalePositionCorrCenterYNegTz`、`scalePositionCorrCenterXNegTz` を含めます。さらに anchor 検証用として `anchorLandmarkIndex`、target/base anchor の image / work coordinate、`baseAnchorSource`、anchor 由来の `translateAfterScale` と knownTransform との差分を出します。
 
 この解析では `current478`、`current478 bounds`、current face、live video、live overlay を一切使いません。`current478 bounds` は teacher data や reference placement として扱いません。通常の live overlay、`alignedRenderedIdeal478`、`bounds_center_scale_v1`、stale / fallback / token mismatch guards、render pose debug、mesh warp、production Shape Warp へは接続しません。
 
