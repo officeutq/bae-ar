@@ -3256,10 +3256,8 @@ type LabState = {
   }
   liveCoordinatePreview: {
     showCurrentLandmarks478: boolean
-    showAlignedIdealLandmarks478: boolean
+    showRenderedIdealLandmarks478: boolean
     showMeshSource: boolean
-    showMeshTarget: boolean
-    showMeshPairs: boolean
     showExcludedLandmarks: boolean
     showGridAnchors: boolean
     showTriangleMesh: boolean
@@ -3741,6 +3739,262 @@ const realtimeDriveModeLabels: Record<RealtimeDriveMode, string> = {
 
 const DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE_ID: LivePlacementFunctionCandidateId =
   "direct_piecewise_ty3_linear_normalized_v1"
+const DEFAULT_LIVE_PLACEMENT_FUNCTION_DIRECT_FALLBACK_CANDIDATE: PlacementFunctionDirectTransformCandidate = {
+  id: "direct_linear_normalized_v1",
+  modelType: "linear_v1",
+  targetCoordinateSpace: "image_normalized_coordinate",
+  transformOrder: "scale_then_translate",
+  fittingAggregation: "condition_mean",
+  features: {
+    scaleRatio: ["intercept", "txOverNegTz", "tyOverNegTz", "invNegTz"],
+    translateAfterScaleImageX: ["intercept", "txOverNegTz", "tyOverNegTz", "invNegTz"],
+    translateAfterScaleImageY: ["intercept", "txOverNegTz", "tyOverNegTz", "invNegTz"],
+  },
+  models: {
+    scaleRatio: {
+      intercept: -0.217236,
+      coefficients: {
+        txOverNegTz: 0.011313,
+        tyOverNegTz: 0.101563,
+        invNegTz: 87.348055,
+      },
+    },
+    translateAfterScaleImageX: {
+      intercept: 0.608787,
+      coefficients: {
+        txOverNegTz: 0.475756,
+        tyOverNegTz: -0.05069,
+        invNegTz: -43.369023,
+      },
+    },
+    translateAfterScaleImageY: {
+      intercept: 0.61998,
+      coefficients: {
+        txOverNegTz: -0.004392,
+        tyOverNegTz: -0.902063,
+        invNegTz: -42.013636,
+      },
+    },
+  },
+  metrics: {
+    maeScaleRatio: 0.014701,
+    maxScaleRatio: 0.09211,
+    rmseScaleRatio: 0.020548,
+    maeTranslateAfterScaleImageX: 0.007378,
+    maxTranslateAfterScaleImageX: 0.046075,
+    rmseTranslateAfterScaleImageX: 0.010342,
+    maeTranslateAfterScaleImageY: 0.007742,
+    maxTranslateAfterScaleImageY: 0.05197,
+    rmseTranslateAfterScaleImageY: 0.010953,
+    meanTranslateAfterScaleImageEuclidean: 0.010758,
+    maxTranslateAfterScaleImageEuclidean: 0.069454,
+    weightedScore: 0.025459,
+  },
+}
+const DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE: PlacementFunctionPiecewiseTransformCandidate = {
+  id: DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE_ID,
+  family: "direct_piecewise_linear",
+  modelType: "piecewise_linear_v1",
+  targetCoordinateSpace: "image_normalized_coordinate",
+  transformOrder: "scale_then_translate",
+  fittingAggregation: "condition_mean",
+  gate: {
+    type: "single_feature_quantile",
+    features: ["tyOverNegTz"],
+    thresholds: {
+      tyOverNegTz: [-0.000898, 0.091875],
+    },
+    segmentCount: 3,
+    minSegmentSampleCount: 12,
+    fallbackCandidateId: "direct_linear_normalized_v1",
+  },
+  features: {
+    scaleRatio: ["intercept", "txOverNegTz", "tyOverNegTz", "invNegTz"],
+    translateAfterScaleImageX: ["intercept", "txOverNegTz", "tyOverNegTz", "invNegTz"],
+    translateAfterScaleImageY: ["intercept", "txOverNegTz", "tyOverNegTz", "invNegTz"],
+  },
+  segments: [
+    {
+      segmentId: "tyOverNegTz_s1",
+      gateRange: [
+        {
+          featureName: "tyOverNegTz",
+          min: null,
+          max: -0.000898,
+          lowerInclusive: true,
+          upperInclusive: true,
+        },
+      ],
+      sampleCount: 92,
+      usableForFit: true,
+      skippedReason: null,
+      models: {
+        scaleRatio: {
+          intercept: -0.201182,
+          coefficients: {
+            txOverNegTz: 0.0055,
+            tyOverNegTz: 0.097443,
+            invNegTz: 86.323258,
+          },
+        },
+        translateAfterScaleImageX: {
+          intercept: 0.601019,
+          coefficients: {
+            txOverNegTz: 0.478697,
+            tyOverNegTz: -0.045332,
+            invNegTz: -42.862295,
+          },
+        },
+        translateAfterScaleImageY: {
+          intercept: 0.612546,
+          coefficients: {
+            txOverNegTz: -0.001455,
+            tyOverNegTz: -0.880709,
+            invNegTz: -41.476995,
+          },
+        },
+      },
+      metrics: {
+        maeScaleRatio: 0.015447,
+        maxScaleRatio: 0.074957,
+        rmseScaleRatio: 0.020934,
+        maeTranslateAfterScaleImageX: 0.007771,
+        maxTranslateAfterScaleImageX: 0.037221,
+        rmseTranslateAfterScaleImageX: 0.010581,
+        maeTranslateAfterScaleImageY: 0.008341,
+        maxTranslateAfterScaleImageY: 0.043637,
+        rmseTranslateAfterScaleImageY: 0.011596,
+        meanTranslateAfterScaleImageEuclidean: 0.011447,
+        maxTranslateAfterScaleImageEuclidean: 0.057355,
+        weightedScore: 0.026894,
+      },
+    },
+    {
+      segmentId: "tyOverNegTz_s2",
+      gateRange: [
+        {
+          featureName: "tyOverNegTz",
+          min: -0.000898,
+          max: 0.091875,
+          lowerInclusive: false,
+          upperInclusive: true,
+        },
+      ],
+      sampleCount: 91,
+      usableForFit: true,
+      skippedReason: null,
+      models: {
+        scaleRatio: {
+          intercept: -0.246333,
+          coefficients: {
+            txOverNegTz: 0.01025,
+            tyOverNegTz: 0.125799,
+            invNegTz: 89.07997,
+          },
+        },
+        translateAfterScaleImageX: {
+          intercept: 0.622717,
+          coefficients: {
+            txOverNegTz: 0.476301,
+            tyOverNegTz: -0.062766,
+            invNegTz: -44.201289,
+          },
+        },
+        translateAfterScaleImageY: {
+          intercept: 0.628112,
+          coefficients: {
+            txOverNegTz: -0.005457,
+            tyOverNegTz: -0.916538,
+            invNegTz: -42.504644,
+          },
+        },
+      },
+      metrics: {
+        maeScaleRatio: 0.013423,
+        maxScaleRatio: 0.074907,
+        rmseScaleRatio: 0.018389,
+        maeTranslateAfterScaleImageX: 0.006662,
+        maxTranslateAfterScaleImageX: 0.037876,
+        rmseTranslateAfterScaleImageX: 0.009135,
+        maeTranslateAfterScaleImageY: 0.006799,
+        maxTranslateAfterScaleImageY: 0.039641,
+        rmseTranslateAfterScaleImageY: 0.009369,
+        meanTranslateAfterScaleImageEuclidean: 0.009573,
+        maxTranslateAfterScaleImageEuclidean: 0.054827,
+        weightedScore: 0.022996,
+      },
+    },
+    {
+      segmentId: "tyOverNegTz_s3",
+      gateRange: [
+        {
+          featureName: "tyOverNegTz",
+          min: 0.091875,
+          max: null,
+          lowerInclusive: false,
+          upperInclusive: true,
+        },
+      ],
+      sampleCount: 91,
+      usableForFit: true,
+      skippedReason: null,
+      models: {
+        scaleRatio: {
+          intercept: -0.190025,
+          coefficients: {
+            txOverNegTz: 0.019042,
+            tyOverNegTz: -0.01798,
+            invNegTz: 86.65503,
+          },
+        },
+        translateAfterScaleImageX: {
+          intercept: 0.596097,
+          coefficients: {
+            txOverNegTz: 0.47183,
+            tyOverNegTz: 0.005057,
+            invNegTz: -43.04443,
+          },
+        },
+        translateAfterScaleImageY: {
+          intercept: 0.614869,
+          coefficients: {
+            txOverNegTz: -0.00674,
+            tyOverNegTz: -0.86003,
+            invNegTz: -42.036121,
+          },
+        },
+      },
+      metrics: {
+        maeScaleRatio: 0.015339,
+        maxScaleRatio: 0.088647,
+        rmseScaleRatio: 0.021848,
+        maeTranslateAfterScaleImageX: 0.007735,
+        maxTranslateAfterScaleImageX: 0.044461,
+        rmseTranslateAfterScaleImageX: 0.011068,
+        maeTranslateAfterScaleImageY: 0.008141,
+        maxTranslateAfterScaleImageY: 0.050509,
+        rmseTranslateAfterScaleImageY: 0.011628,
+        meanTranslateAfterScaleImageEuclidean: 0.011292,
+        maxTranslateAfterScaleImageEuclidean: 0.06729,
+        weightedScore: 0.026631,
+      },
+    },
+  ],
+  metrics: {
+    maeScaleRatio: 0.014739,
+    maxScaleRatio: 0.088647,
+    rmseScaleRatio: 0.020445,
+    maeTranslateAfterScaleImageX: 0.007391,
+    maxTranslateAfterScaleImageX: 0.044461,
+    rmseTranslateAfterScaleImageX: 0.010295,
+    maeTranslateAfterScaleImageY: 0.007762,
+    maxTranslateAfterScaleImageY: 0.050509,
+    rmseTranslateAfterScaleImageY: 0.010918,
+    meanTranslateAfterScaleImageEuclidean: 0.010773,
+    maxTranslateAfterScaleImageEuclidean: 0.06729,
+    weightedScore: 0.025512,
+  },
+}
 
 const DEFAULT_POSE_MAPPING_SETTINGS: LabState["poseMappingSettings"] = {
   hideIdealOverlayWhenRenderPoseNotApplied: true,
@@ -3755,10 +4009,8 @@ const state: LabState = {
   },
   liveCoordinatePreview: {
     showCurrentLandmarks478: true,
-    showAlignedIdealLandmarks478: true,
+    showRenderedIdealLandmarks478: true,
     showMeshSource: true,
-    showMeshTarget: true,
-    showMeshPairs: false,
     showExcludedLandmarks: false,
     showGridAnchors: false,
     showTriangleMesh: false,
@@ -3828,6 +4080,7 @@ let currentOverlayLastFrameKey = ""
 let currentOverlaySawNoFaceFrame = false
 let currentOverlayLastVisibleFrameId: number | null = null
 let currentOverlayDebugState: CurrentOverlayDebugState = createEmptyCurrentOverlayDebugState()
+let previewTabRedrawAnimationFrameId: number | null = null
 let displayOverlayRedrawAnimationFrameId: number | null = null
 let displayOverlayRedrawDebugState: DisplayOverlayRedrawDebugState = {
   displayOverlayPreviewStatus: "waiting_for_redraw",
@@ -3942,6 +4195,12 @@ const placementAnalysisOverlayCanvas = getElement<HTMLCanvasElement>('[data-over
 const liveObjPosePreviewCanvas = document.createElement("canvas")
 let renderedIdealRuntimeImageRequestId = 0
 let renderedIdealRuntimeImageDataUrlDrawn: string | null = null
+let lastRuntimeRenderedIdealPreviewSnapshot: {
+  dataUrl: string
+  canvasWidth: number
+  canvasHeight: number
+  renderedIdeal478: ReferenceLandmark[] | null
+} | null = null
 let liveFaceLandmarker: FaceLandmarker | null = null
 let liveFaceLandmarkerPromise: Promise<FaceLandmarker> | null = null
 let renderedIdealFaceLandmarker: FaceLandmarker | null = null
@@ -4103,7 +4362,7 @@ function renderRenderedIdealPreview() {
         ["Coordinate system（座標系）", "runtime render canvas image-normalized coordinate / runtime render canvas pixel coordinate（実行時レンダーcanvas画像正規化座標 / 実行時レンダーcanvasピクセル座標）"],
         ["Data source（データ元）", "poseMappingRuntime rendered ideal WebGL canvas（姿勢対応実行時のレンダー理想WebGL canvas）"],
         ["Generated by（生成元）", "P_camera（カメラ顔姿勢） -> poseMappingProfile（姿勢対応プロファイル） -> pFromProfile（プロファイル出力姿勢） -> pForWebglRender（WebGL描画用姿勢） -> WebGL OBJ render（WebGL OBJ描画） -> MediaPipe detect（MediaPipe検出）"],
-        ["注意", "renderedIdeal478（レンダー理想478点）は runtime render canvas 基準です。live video（ライブ映像）上に配置済みの点ではありません。live video 上に表示する理想点は alignedRenderedIdeal478（位置合わせ済み理想478点）だけです。"],
+        ["注意", "renderedIdeal478（レンダー理想478点）は MediaPipe detect(renderer.canvas) が返した image-normalized 0..1 座標です。live video（ライブ映像）上へ重ねる場合だけ、placement function（配置関数）適用後の alignedRenderedIdeal478（位置合わせ済み理想478点）を使います。"],
       ])}
       <div class="preview-stage rendered-ideal-stage" data-rendered-ideal-stage data-render-status="not_ready">
         <canvas class="rendered-ideal-canvas" data-canvas="rendered-ideal" aria-label="レンダー理想 2D preview"></canvas>
@@ -4159,25 +4418,22 @@ function renderLiveCoordinatePreview() {
     <div class="preview-card live-coordinate-preview-card" data-preview-panel="liveCoordinates">
       ${renderCoordinateInfo([
         ["Coordinate system（座標系）", "live video image-normalized coordinate（ライブ映像の画像正規化座標）"],
-        ["Data source（データ元）", "current478 / alignedRenderedIdeal478 / meshSourceVertices / meshTargetVertices（現在顔478点 / 位置合わせ済み理想478点 / 変形元メッシュ頂点 / 変形先メッシュ頂点）"],
-        ["Generated by（生成元）", "MediaPipe current face + placement function（現在顔検出 + 配置関数）"],
-        ["placement function（配置関数）", DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE_ID],
+        ["Data source（データ元）", "current478 / normalizedIdeal478 / meshSourceVertices（現在顔478点 / 正規化理想478点 / 変形元メッシュ頂点）"],
+        ["Generated by（生成元）", "青: detectForVideo(liveVideoElement, timestampMs) -> buildCurrentFrameAnalysis() -> mapLandmarks() / 赤: detect(renderer.canvas) -> buildRenderedIdealDetectionState() -> mapLandmarks() -> normalizeRenderedIdeal478ToLiveImageCoordinate()"],
       ])}
       <div class="preview-stage live-coordinate-stage" data-live-coordinate-stage>
         <canvas class="live-coordinate-canvas" data-canvas="live-coordinate" aria-label="ライブ座標 normalized preview"></canvas>
         <div class="preview-placeholder" data-live-coordinate-placeholder>
           <h3>ライブ座標プレビュー</h3>
-          <p>current478（現在顔478点）または alignedRenderedIdeal478（位置合わせ済み理想478点）が生成されると、live image-normalized 座標で表示します。</p>
+          <p>current478（現在顔478点）または normalizedIdeal478（正規化理想478点）が生成されると、MediaPipe image-normalized 座標で表示します。</p>
         </div>
       </div>
       <div class="obj-preview-controls live-coordinate-controls" aria-label="ライブ座標 preview 操作">
         <fieldset class="overlay-toggle-group coordinate-toggle-group">
           <legend>Live image-normalized coordinate（ライブ画像正規化座標）</legend>
           ${renderOverlayToggle("toggle-live-coordinate-current-landmarks", "current478（現在顔478点）を表示")}
-          ${renderOverlayToggle("toggle-live-coordinate-aligned-ideal-landmarks", "alignedRenderedIdeal478（位置合わせ済み理想478点）を表示")}
-          ${renderOverlayToggle("toggle-live-coordinate-mesh-pairs", "correspondence lines（対応線）を表示")}
+          ${renderOverlayToggle("toggle-live-coordinate-rendered-ideal-landmarks", "normalizedIdeal478（正規化理想478点）を表示")}
           ${renderOverlayToggle("toggle-live-coordinate-mesh-source", "meshSourceVertices（変形元メッシュ頂点）を表示")}
-          ${renderOverlayToggle("toggle-live-coordinate-mesh-target", "meshTargetVertices（変形先メッシュ頂点）を表示")}
           ${renderOverlayToggle("toggle-live-coordinate-excluded-landmarks", "除外 / 固定 landmark（ランドマーク）を表示")}
           ${renderOverlayToggle("toggle-live-coordinate-grid-anchors", "grid / anchors（グリッド / アンカー）を表示")}
           ${renderOverlayToggle("toggle-live-coordinate-triangle-mesh", "triangle mesh（トライアングルメッシュ）を表示")}
@@ -4195,9 +4451,9 @@ function renderDisplayOverlayPreview() {
     <div class="preview-card live-preview-card" data-preview-panel="displayOverlay">
       ${renderCoordinateInfo([
         ["Coordinate system（座標系）", "displayedContentRect pixel coordinate / canvas pixel coordinate（表示領域ピクセル座標 / canvasピクセル座標）"],
-        ["Data source（データ元）", "live video + overlay canvas（ライブ映像 + 重ね描きcanvas）"],
-        ["Generated by（生成元）", "drawLiveOverlay() / displayedContentRect（重ね描き描画 / 動画の実表示領域）"],
-        ["注意", "未位置合わせの renderedIdeal478（レンダー理想478点）は live video（ライブ映像）上に直接表示しません。表示する理想点は alignedRenderedIdeal478（位置合わせ済み理想478点）だけです。"],
+        ["Data source（データ元）", "live video + alignedRenderedIdeal478（ライブ映像 + 位置合わせ済み理想478点）"],
+        ["Generated by（生成元）", "drawLiveOverlay() / renderedIdeal478 -> normalizedIdeal478 -> placement function -> displayedContentRect（重ね描き描画 / レンダー理想478点から表示領域）"],
+        ["注意", "未配置の renderedIdeal478（レンダー理想478点）は live video（ライブ映像）上に直接表示せず、placement function（配置関数）適用後の alignedRenderedIdeal478（位置合わせ済み理想478点）だけを表示します。"],
       ])}
       <div class="live-preview-grid">
         <section class="live-column-panel" aria-label="ライブ現在顔">
@@ -4773,6 +5029,7 @@ function bindEvents() {
 
   window.addEventListener("resize", () => {
     renderObjPreviewCanvas()
+    drawLiveCoordinatePreview()
     renderRenderedIdealCanvas()
     scheduleDisplayOverlayRedraw("resize_observed")
     drawRenderedIdealOverlay()
@@ -4894,10 +5151,8 @@ function bindEvents() {
   bindRenderedIdealOverlayToggle("toggle-rendered-ideal-landmarks", "showRenderedIdealLandmarks478")
 
   bindLiveCoordinatePreviewToggle("toggle-live-coordinate-current-landmarks", "showCurrentLandmarks478")
-  bindLiveCoordinatePreviewToggle("toggle-live-coordinate-aligned-ideal-landmarks", "showAlignedIdealLandmarks478")
+  bindLiveCoordinatePreviewToggle("toggle-live-coordinate-rendered-ideal-landmarks", "showRenderedIdealLandmarks478")
   bindLiveCoordinatePreviewToggle("toggle-live-coordinate-mesh-source", "showMeshSource")
-  bindLiveCoordinatePreviewToggle("toggle-live-coordinate-mesh-target", "showMeshTarget")
-  bindLiveCoordinatePreviewToggle("toggle-live-coordinate-mesh-pairs", "showMeshPairs")
   bindLiveCoordinatePreviewToggle("toggle-live-coordinate-excluded-landmarks", "showExcludedLandmarks")
   bindLiveCoordinatePreviewToggle("toggle-live-coordinate-grid-anchors", "showGridAnchors")
   bindLiveCoordinatePreviewToggle("toggle-live-coordinate-triangle-mesh", "showTriangleMesh")
@@ -8721,6 +8976,87 @@ function getPoseMappingSkippedStatus(reason: PoseMappingSkippedReason): PoseMapp
   return "ready"
 }
 
+function normalizeRenderedIdeal478ToLiveImageCoordinate(
+  renderedIdeal478: ReferenceLandmark[] | null,
+  renderAspectRatio: number | null,
+): ReferenceLandmark[] | null {
+  return convertRenderedIdeal478ToLiveVideoAspect(renderedIdeal478, renderAspectRatio)
+}
+
+function applyPlacementTransformToLandmarks(
+  landmarks: ReferenceLandmark[] | null,
+  transform: {
+    scaleRatio: number | null
+    translateAfterScaleImageX: number | null
+    translateAfterScaleImageY: number | null
+  },
+): ReferenceLandmark[] | null {
+  if (
+    !landmarks ||
+    landmarks.length !== REQUIRED_LANDMARK_COUNT ||
+    !isValidLivePlacementFunctionTransform(transform)
+  ) {
+    return null
+  }
+
+  const { scaleRatio, translateAfterScaleImageX, translateAfterScaleImageY } = transform
+  return landmarks.map((landmark) => ({
+    index: landmark.index,
+    x: landmark.x * scaleRatio + translateAfterScaleImageX,
+    y: landmark.y * scaleRatio + translateAfterScaleImageY,
+    z: landmark.z,
+  }))
+}
+
+function getNormalizedIdeal478ForLiveCoordinatePreview(): ReferenceLandmark[] | null {
+  const runtime = state.poseMappingRuntime
+  return normalizeRenderedIdeal478ToLiveImageCoordinate(
+    runtime.renderedIdeal478,
+    getPoseMappingRuntimeRenderAspectRatio(),
+  )
+}
+
+function convertRenderedIdeal478ToLiveVideoAspect(
+  renderedIdeal478: ReferenceLandmark[] | null,
+  renderAspectRatio: number | null,
+): ReferenceLandmark[] | null {
+  if (
+    !renderedIdeal478 ||
+    renderedIdeal478.length !== REQUIRED_LANDMARK_COUNT
+  ) {
+    return null
+  }
+
+  const liveAspectRatio = getLiveVideoAspectRatio()
+  if (
+    !Number.isFinite(liveAspectRatio) ||
+    renderAspectRatio === null ||
+    !Number.isFinite(renderAspectRatio) ||
+    liveAspectRatio <= 0 ||
+    renderAspectRatio <= 0
+  ) {
+    return renderedIdeal478.map(cloneReferenceLandmark)
+  }
+
+  const aspectScaleX = renderAspectRatio / liveAspectRatio
+  return renderedIdeal478.map((landmark) => ({
+    index: landmark.index,
+    x: 0.5 + (landmark.x - 0.5) * aspectScaleX,
+    y: landmark.y,
+    z: landmark.z,
+  }))
+}
+
+function getPoseMappingRuntimeRenderAspectRatio() {
+  const runtime = state.poseMappingRuntime
+  const width = runtime.renderSettings?.detectCanvasWidth ?? runtime.detectCanvasWidth
+  const height = runtime.renderSettings?.detectCanvasHeight ?? runtime.detectCanvasHeight
+  if (width > 0 && height > 0) {
+    return width / height
+  }
+  return runtime.alignment.renderAspectRatio ?? 1
+}
+
 function buildPoseMappingAlignment(
   currentLandmarksImage: ReferenceLandmark[] | null,
   currentMatrix: MatrixDebugSummary | null,
@@ -8782,25 +9118,22 @@ function buildPoseMappingAlignment(
     }
   }
 
-  const renderedIdealBoundsImage = calculateLandmarkBounds(renderedIdealLandmarksImage)
+  const rawRenderedIdealBoundsImage = calculateLandmarkBounds(renderedIdealLandmarksImage)
+  const normalizedRenderedIdealLandmarksImage = normalizeRenderedIdeal478ToLiveImageCoordinate(
+    renderedIdealLandmarksImage,
+    renderAspectRatio,
+  )
+  const renderedIdealBoundsImage = normalizedRenderedIdealLandmarksImage
+    ? calculateLandmarkBounds(normalizedRenderedIdealLandmarksImage)
+    : rawRenderedIdealBoundsImage
   const placementDebug = buildPlacementDebugState(
     currentMatrix,
     currentBoundsImage,
     idealMatrix,
-    renderedIdealBoundsImage,
+    rawRenderedIdealBoundsImage,
   )
   const reasons = Array.from({ length: REQUIRED_LANDMARK_COUNT }, () => [] as PoseMappingExcludedReason[])
   const reasonCounts = createEmptyPoseMappingExcludedReasonCounts()
-
-  for (let index = 0; index < REQUIRED_LANDMARK_COUNT; index += 1) {
-    const current = currentLandmarksImage[index]
-    const ideal = renderedIdealLandmarksImage[index]
-    const landmarkReasons = getInitialAlignmentExcludedReasons(current, ideal, index)
-    reasons[index].push(...landmarkReasons)
-    for (const reason of landmarkReasons) {
-      reasonCounts[reason] += 1
-    }
-  }
 
   const failPlacementFunction = (
     placementFunctionStatus: PlacementFunctionLiveStatus,
@@ -8839,6 +9172,23 @@ function buildPoseMappingAlignment(
     }
   }
 
+  if (!normalizedRenderedIdealLandmarksImage) {
+    return failPlacementFunction(
+      "skipped_invalid_aligned_landmarks",
+      "rendered_ideal_landmarks_normalization_failed",
+    )
+  }
+
+  for (let index = 0; index < REQUIRED_LANDMARK_COUNT; index += 1) {
+    const current = currentLandmarksImage[index]
+    const ideal = normalizedRenderedIdealLandmarksImage[index]
+    const landmarkReasons = getInitialAlignmentExcludedReasons(current, ideal, index)
+    reasons[index].push(...landmarkReasons)
+    for (const reason of landmarkReasons) {
+      reasonCounts[reason] += 1
+    }
+  }
+
   if (!currentMatrix) {
     return failPlacementFunction("skipped_missing_matrix", "current_facial_transformation_matrix_missing")
   }
@@ -8855,14 +9205,13 @@ function buildPoseMappingAlignment(
   }
 
   const { scaleRatio, translateAfterScaleImageX, translateAfterScaleImageY } = liveTransform
-  const alignedRenderedIdealLandmarksImage = renderedIdealLandmarksImage.map((landmark) => {
-    return {
-      index: landmark.index,
-      x: landmark.x * scaleRatio + translateAfterScaleImageX,
-      y: landmark.y * scaleRatio + translateAfterScaleImageY,
-      z: landmark.z,
-    }
-  })
+  const alignedRenderedIdealLandmarksImage = applyPlacementTransformToLandmarks(
+    normalizedRenderedIdealLandmarksImage,
+    { scaleRatio, translateAfterScaleImageX, translateAfterScaleImageY },
+  )
+  if (!alignedRenderedIdealLandmarksImage) {
+    return failPlacementFunction("skipped_invalid_transform", "normalized_ideal_placement_transform_failed")
+  }
 
   const displacementValues: number[] = []
   let invalidAlignedLandmarkCount = 0
@@ -9005,20 +9354,11 @@ function evaluateLivePlacementFunctionCandidate(
   translateAfterScaleImageY: number | null
   evaluationDebug: PlacementFunctionCandidateEvaluationDebug | null
 } | null {
-  const candidateSet = state.placementAnalysis.candidate
-  const candidate = candidateSet?.piecewiseTransformCandidates.find(
-    (item) => item.id === DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE_ID,
-  ) ?? null
-  if (!candidateSet || !candidate) {
-    return null
-  }
-  const directFallbackCandidate = candidateSet.directTransformCandidates.find(
-    (item) => item.id === "direct_linear_normalized_v1",
-  ) ?? null
+  const sample = createLivePlacementFunctionCandidateTrainingSample(matrixFeatures)
   const prediction = predictPlacementFunctionPiecewiseCandidateForSample(
-    candidate,
-    { matrixFeatures } as PlacementFunctionCandidateTrainingSample,
-    directFallbackCandidate,
+    DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE,
+    sample,
+    DEFAULT_LIVE_PLACEMENT_FUNCTION_DIRECT_FALLBACK_CANDIDATE,
     null,
   )
   if (!prediction) {
@@ -9031,9 +9371,34 @@ function evaluateLivePlacementFunctionCandidate(
     translateAfterScaleImageY: prediction.estimatedTranslateAfterScaleImageY,
     evaluationDebug: evaluationDebug ?? {
       candidateId: DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE_ID,
-      family: candidate.family,
-      modelType: candidate.modelType,
+      family: DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE.family,
+      modelType: DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE.modelType,
     },
+  }
+}
+
+function createLivePlacementFunctionCandidateTrainingSample(
+  matrixFeatures: PlacementFunctionMatrixFeatures,
+): PlacementFunctionCandidateTrainingSample {
+  const knownPlacement: KnownPlacement = {
+    centerImageX: 0.5,
+    centerImageY: 0.5,
+    centerWorkX: 0.5,
+    centerWorkY: 0.5,
+    visualScaleInput: 1,
+    renderAspectRatio: 1,
+    canvasWidth: 1,
+    canvasHeight: 1,
+  }
+  const basePlacement = createPlacementFunctionBasePlacement(knownPlacement, null)
+  const targetPlacement = createPlacementFunctionTargetPlacement(knownPlacement, basePlacement)
+  return {
+    conditionKey: "live_runtime",
+    knownPlacement,
+    basePlacement,
+    targetPlacement,
+    knownTransform: createPlacementFunctionKnownTransform(basePlacement, targetPlacement),
+    matrixFeatures,
   }
 }
 
@@ -18230,10 +18595,34 @@ function activatePreviewTab(nextTab: PreviewTab) {
   renderAll({
     displayOverlayRedrawReason: nextTab === "displayOverlay" ? "tab_activated" : "manual_render",
   })
+  scheduleActivePreviewTabRedraw()
 
   if (nextTab === "displayOverlay" && previousTab !== "displayOverlay") {
     scheduleDisplayOverlayRedraw("tab_activated")
   }
+}
+
+function scheduleActivePreviewTabRedraw() {
+  if (previewTabRedrawAnimationFrameId !== null) {
+    window.cancelAnimationFrame(previewTabRedrawAnimationFrameId)
+  }
+
+  previewTabRedrawAnimationFrameId = window.requestAnimationFrame(() => {
+    previewTabRedrawAnimationFrameId = null
+    if (state.activePreviewTab === "renderedIdeal") {
+      renderRenderedIdealCanvas()
+      drawRenderedIdealOverlay()
+      return
+    }
+    if (state.activePreviewTab === "liveCoordinates") {
+      drawLiveCoordinatePreview()
+      return
+    }
+    if (state.activePreviewTab === "displayOverlay") {
+      drawLiveOverlay("tab_activated")
+      renderDisplayOverlaySummaryCard()
+    }
+  })
 }
 
 function scheduleDisplayOverlayRedraw(reason: DisplayOverlayRedrawReason) {
@@ -18543,7 +18932,6 @@ function renderControls() {
 
   const renderedIdeal478Availability = getRenderedIdeal478Availability()
   const current478Availability = getCurrent478Availability()
-  const alignedRenderedIdeal478Availability = getAlignedRenderedIdeal478Availability()
   const meshSourceAvailability = getMeshSourceAvailability()
   const meshTargetAvailability = getMeshTargetAvailability()
   const correspondenceLinesAvailability = getCorrespondenceLinesAvailability()
@@ -18566,28 +18954,16 @@ function renderControls() {
     current478Availability.reason,
   )
   setToggleState(
-    "toggle-live-coordinate-aligned-ideal-landmarks",
-    state.liveCoordinatePreview.showAlignedIdealLandmarks478,
-    !alignedRenderedIdeal478Availability.available,
-    alignedRenderedIdeal478Availability.reason,
-  )
-  setToggleState(
-    "toggle-live-coordinate-mesh-pairs",
-    state.liveCoordinatePreview.showMeshPairs,
-    !correspondenceLinesAvailability.available,
-    correspondenceLinesAvailability.reason,
+    "toggle-live-coordinate-rendered-ideal-landmarks",
+    state.liveCoordinatePreview.showRenderedIdealLandmarks478,
+    !renderedIdeal478Availability.available,
+    renderedIdeal478Availability.reason,
   )
   setToggleState(
     "toggle-live-coordinate-mesh-source",
     state.liveCoordinatePreview.showMeshSource,
     !meshSourceAvailability.available,
     meshSourceAvailability.reason,
-  )
-  setToggleState(
-    "toggle-live-coordinate-mesh-target",
-    state.liveCoordinatePreview.showMeshTarget,
-    !meshTargetAvailability.available,
-    meshTargetAvailability.reason,
   )
   setToggleState(
     "toggle-live-coordinate-excluded-landmarks",
@@ -18808,22 +19184,27 @@ function renderLiveCoordinatePreviewPanel() {
   const summary = getElement<HTMLElement>("[data-live-coordinate-summary]")
   const runtime = state.poseMappingRuntime
   const currentAvailability = getCurrent478Availability()
-  const alignedAvailability = getAlignedRenderedIdeal478Availability()
+  const renderedIdealAvailability = getRenderedIdeal478Availability()
   const meshSourceAvailability = getMeshSourceAvailability()
-  const meshTargetAvailability = getMeshTargetAvailability()
+  const renderAspectRatio = getPoseMappingRuntimeRenderAspectRatio()
+  const liveAspectRatio = getLiveVideoAspectRatio()
+  const renderedIdealLiveAspectScaleX = liveAspectRatio > 0
+    ? renderAspectRatio / liveAspectRatio
+    : null
   const hasAnyData =
     currentAvailability.available ||
-    alignedAvailability.available ||
-    meshSourceAvailability.available ||
-    meshTargetAvailability.available
+    renderedIdealAvailability.available ||
+    meshSourceAvailability.available
   stage.dataset.coordinateStatus = hasAnyData ? "ready" : "empty"
   summary.innerHTML = `
-    <p>placement function（配置関数）の結果を live video image-normalized coordinate（ライブ映像の画像正規化座標）で確認します。</p>
+    <p>current478（現在顔478点）と normalizedIdeal478（正規化理想478点）を、MediaPipe image-normalized 0..1 座標として同じ描画経路で確認します。</p>
     <dl class="review-grid">
       <div><dt>current478（現在顔478点）</dt><dd>${escapeHtml(formatAvailability(currentAvailability, state.currentAnalysis.landmarks478.length))}</dd></div>
-      <div><dt>alignedRenderedIdeal478（位置合わせ済み理想478点）</dt><dd>${escapeHtml(formatAvailability(alignedAvailability, runtime.alignedRenderedIdeal478?.length ?? null))}</dd></div>
+      <div><dt>normalizedIdeal478（正規化理想478点）</dt><dd>${escapeHtml(formatAvailability(renderedIdealAvailability, runtime.renderedIdeal478?.length ?? null))}</dd></div>
       <div><dt>meshSourceVertices（変形元メッシュ頂点）</dt><dd>${escapeHtml(formatAvailability(meshSourceAvailability, runtime.meshSourceVertices?.length ?? null))}</dd></div>
-      <div><dt>meshTargetVertices（変形先メッシュ頂点）</dt><dd>${escapeHtml(formatAvailability(meshTargetAvailability, runtime.meshTargetVertices?.length ?? null))}</dd></div>
+      <div><dt>alignedRenderedIdeal478（位置合わせ済み理想478点）</dt><dd>displayedContentRect pixel 座標の重ね描き用に生成します。この tab の赤点には使いません。</dd></div>
+      <div><dt>normalizedIdeal aspect scaleX</dt><dd>${formatRealtimeNullableNumber(renderedIdealLiveAspectScaleX)}</dd></div>
+      <div><dt>renderAspectRatio / liveAspectRatio</dt><dd>${formatRealtimeNullableNumber(renderAspectRatio)} / ${formatRealtimeNullableNumber(liveAspectRatio)}</dd></div>
       <div><dt>placementFunctionStatus（配置関数状態）</dt><dd>${escapeHtml(runtime.alignment.placementFunctionStatus)}</dd></div>
       <div><dt>alignmentStatus（位置合わせ状態）</dt><dd>${escapeHtml(runtime.alignmentStatus)}</dd></div>
       <div><dt>renderedIdealStatus（レンダー理想状態）</dt><dd>${escapeHtml(runtime.renderedIdealStatus)}</dd></div>
@@ -19949,18 +20330,33 @@ function renderRenderedIdealCanvas() {
   const stage = getElement<HTMLElement>("[data-rendered-ideal-stage]")
   const message = getElement<HTMLElement>("[data-rendered-ideal-message]")
   const runtime = state.poseMappingRuntime
+  const isActiveRenderedIdealTab = state.activePreviewTab === "renderedIdeal"
   const imageAvailability = getRuntimeRenderedIdealImageAvailability()
+  const currentRuntimeImageAvailable = imageAvailability.available && Boolean(runtime.renderedIdealImageDataUrl)
+  if (currentRuntimeImageAvailable && runtime.renderedIdealImageDataUrl) {
+    lastRuntimeRenderedIdealPreviewSnapshot = {
+      dataUrl: runtime.renderedIdealImageDataUrl,
+      canvasWidth: runtime.canvasWidth,
+      canvasHeight: runtime.canvasHeight,
+      renderedIdeal478: runtime.renderedIdeal478
+        ? runtime.renderedIdeal478.map(cloneReferenceLandmark)
+        : null,
+    }
+  }
+  const previewSnapshot = lastRuntimeRenderedIdealPreviewSnapshot
+  const canDisplayRuntimeImage = previewSnapshot !== null
+  const usingPreviousRuntimeImage = !currentRuntimeImageAvailable && canDisplayRuntimeImage
   const renderPose = runtime.renderedIdealLifecycle.renderPose.actualRenderPoseP
 
   state.renderedIdeal.summary = createRenderedIdealRenderSummary(
-    imageAvailability.available ? "rendered" : "not_ready",
+    canDisplayRuntimeImage ? "rendered" : "not_ready",
     {
-      canvasWidth: runtime.canvasWidth,
-      canvasHeight: runtime.canvasHeight,
+      canvasWidth: previewSnapshot?.canvasWidth ?? runtime.canvasWidth,
+      canvasHeight: previewSnapshot?.canvasHeight ?? runtime.canvasHeight,
       appliedYawDeg: renderPose?.yaw ?? runtime.pForWebglRender?.yaw ?? null,
       appliedPitchDeg: renderPose?.pitch ?? runtime.pForWebglRender?.pitch ?? null,
       appliedRollDeg: renderPose?.roll ?? runtime.pForWebglRender?.roll ?? null,
-      errorMessage: imageAvailability.available ? null : imageAvailability.reason,
+      errorMessage: currentRuntimeImageAvailable ? null : imageAvailability.reason,
     },
   )
   state.renderedIdeal.detection = {
@@ -19977,16 +20373,24 @@ function renderRenderedIdealCanvas() {
     errorMessage: runtime.errorMessage,
   }
 
-  stage.dataset.renderStatus = imageAvailability.available ? "rendered" : "not_ready"
-  message.textContent = getRuntimeRenderedIdealMessage(imageAvailability)
+  stage.dataset.renderStatus = canDisplayRuntimeImage ? "rendered" : "not_ready"
+  message.textContent = getRuntimeRenderedIdealMessage(imageAvailability, usingPreviousRuntimeImage)
 
-  if (!imageAvailability.available || !runtime.renderedIdealImageDataUrl) {
+  if (!isActiveRenderedIdealTab) {
+    return
+  }
+
+  if (!canDisplayRuntimeImage || !previewSnapshot) {
     clearRenderedIdealRuntimeCanvas()
     drawRenderedIdealOverlay()
     return
   }
 
-  drawRuntimeRenderedIdealImage(runtime.renderedIdealImageDataUrl, runtime.canvasWidth, runtime.canvasHeight)
+  drawRuntimeRenderedIdealImage(
+    previewSnapshot.dataUrl,
+    previewSnapshot.canvasWidth,
+    previewSnapshot.canvasHeight,
+  )
 }
 
 function clearRenderedIdealRuntimeCanvas() {
@@ -20061,9 +20465,12 @@ function drawRuntimeRenderedIdealImage(dataUrl: string, canvasWidth: number, can
   image.src = dataUrl
 }
 
-function getRuntimeRenderedIdealMessage(imageAvailability: DataAvailability) {
+function getRuntimeRenderedIdealMessage(imageAvailability: DataAvailability, usingPreviousRuntimeImage = false) {
   if (imageAvailability.available) {
     return "poseMappingRuntime（姿勢対応実行時状態）の WebGL render result（WebGL描画結果）を表示しています。"
+  }
+  if (usingPreviousRuntimeImage) {
+    return `最新の runtime rendered ideal image（実行時レンダー理想画像）は未生成です。前回成功した runtime render を表示しています。reason: ${imageAvailability.reason}`
   }
   return `runtime rendered ideal image（実行時レンダー理想画像）は未生成です。reason: ${imageAvailability.reason}`
 }
@@ -20267,11 +20674,14 @@ function renderRenderedIdealSummaryCard() {
   const renderToken = runtime.renderedIdealLifecycle.renderToken
   const imageAvailability = getRuntimeRenderedIdealImageAvailability()
   const renderedIdeal478Availability = getRenderedIdeal478Availability()
+  const currentRuntimeImageAvailable = imageAvailability.available && Boolean(runtime.renderedIdealImageDataUrl)
+  const usingPreviousRuntimeImage = !currentRuntimeImageAvailable && lastRuntimeRenderedIdealPreviewSnapshot !== null
   card.innerHTML = `
-    <p>${escapeHtml(getRuntimeRenderedIdealMessage(imageAvailability))}</p>
+    <p>${escapeHtml(getRuntimeRenderedIdealMessage(imageAvailability, usingPreviousRuntimeImage))}</p>
     <dl class="review-grid">
       <div><dt>Runtime render frame（実行時レンダーフレーム）</dt><dd>frameId ${formatNullableCount(renderToken?.frameId ?? null)} / mediaTimeSec ${formatRealtimeNullableNumber(renderToken?.mediaTimeSec ?? null)}</dd></div>
       <div><dt>runtime rendered ideal image（実行時レンダー理想画像）</dt><dd>${escapeHtml(formatAvailability(imageAvailability, runtime.renderedIdealImageDataUrl ? 1 : null))}</dd></div>
+      <div><dt>displayed runtime render snapshot（表示中runtimeレンダースナップショット）</dt><dd>${escapeHtml(lastRuntimeRenderedIdealPreviewSnapshot ? `${lastRuntimeRenderedIdealPreviewSnapshot.canvasWidth} x ${lastRuntimeRenderedIdealPreviewSnapshot.canvasHeight}` : "none")}</dd></div>
       <div><dt>renderedIdeal478（レンダー理想478点）</dt><dd>${escapeHtml(formatAvailability(renderedIdeal478Availability, runtime.renderedIdeal478?.length ?? null))}</dd></div>
       <div><dt>P_camera（カメラ顔姿勢）</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.P_camera))}</dd></div>
       <div><dt>pFromProfile（プロファイル出力姿勢）</dt><dd>${escapeHtml(formatPoseMappingPose(runtime.pFromProfile))}</dd></div>
@@ -20496,21 +20906,25 @@ function rotateObjPoint(point: ObjVertex, previewState: ObjPreviewState): ObjVer
 }
 
 function drawLiveCoordinatePreview() {
+  if (state.activePreviewTab !== "liveCoordinates") {
+    return
+  }
+
   const context = liveCoordinateCanvas.getContext("2d")
   if (!context) {
     return
   }
 
   const rect = liveCoordinateCanvas.getBoundingClientRect()
+  if (rect.width <= 0 || rect.height <= 0) {
+    return
+  }
+
   const dpr = window.devicePixelRatio || 1
   liveCoordinateCanvas.width = Math.max(1, Math.round(rect.width * dpr))
   liveCoordinateCanvas.height = Math.max(1, Math.round(rect.height * dpr))
   context.setTransform(dpr, 0, 0, dpr, 0, 0)
   context.clearRect(0, 0, rect.width, rect.height)
-
-  if (state.activePreviewTab !== "liveCoordinates" || rect.width <= 0 || rect.height <= 0) {
-    return
-  }
 
   const previewRect: Rect = {
     x: 0,
@@ -20521,24 +20935,8 @@ function drawLiveCoordinatePreview() {
   drawNormalizedCoordinateFrame(context, previewRect)
 
   const current478 = getCurrent478ForCurrentFrame()
-  const alignedRenderedIdeal478 = state.poseMappingRuntime.alignedRenderedIdeal478
+  const normalizedIdeal478 = getNormalizedIdeal478ForLiveCoordinatePreview()
   const meshSourceVertices = state.poseMappingRuntime.meshSourceVertices
-  const meshTargetVertices = state.poseMappingRuntime.meshTargetVertices
-
-  if (
-    state.liveCoordinatePreview.showMeshPairs &&
-    current478 &&
-    alignedRenderedIdeal478 &&
-    alignedRenderedIdeal478.length === REQUIRED_LANDMARK_COUNT
-  ) {
-    drawLandmarkPairLines(
-      context,
-      previewRect,
-      current478,
-      alignedRenderedIdeal478,
-      "rgba(48, 118, 92, 0.34)",
-    )
-  }
 
   if (
     state.liveCoordinatePreview.showMeshSource &&
@@ -20549,19 +20947,11 @@ function drawLiveCoordinatePreview() {
   }
 
   if (
-    state.liveCoordinatePreview.showMeshTarget &&
-    meshTargetVertices &&
-    meshTargetVertices.length === REQUIRED_LANDMARK_COUNT
+    state.liveCoordinatePreview.showRenderedIdealLandmarks478 &&
+    normalizedIdeal478 &&
+    normalizedIdeal478.length === REQUIRED_LANDMARK_COUNT
   ) {
-    drawLandmarkPoints(context, previewRect, meshTargetVertices, "rgba(238, 142, 52, 0.58)", 1.1)
-  }
-
-  if (
-    state.liveCoordinatePreview.showAlignedIdealLandmarks478 &&
-    alignedRenderedIdeal478 &&
-    alignedRenderedIdeal478.length === REQUIRED_LANDMARK_COUNT
-  ) {
-    drawLandmarkPoints(context, previewRect, alignedRenderedIdeal478, "rgba(220, 71, 94, 0.86)", 1.35)
+    drawLandmarkPoints(context, previewRect, normalizedIdeal478, "rgba(220, 71, 94, 0.72)", 1.25)
   }
 
   if (state.liveCoordinatePreview.showCurrentLandmarks478 && current478) {
@@ -20594,22 +20984,20 @@ function drawNormalizedCoordinateFrame(context: CanvasRenderingContext2D, rect: 
   context.restore()
 }
 
+function createDisplayOverlayAlignedRenderedIdeal478FromRenderedIdeal(): ReferenceLandmark[] | null {
+  const runtime = state.poseMappingRuntime
+  const normalizedIdeal478 = getNormalizedIdeal478ForLiveCoordinatePreview()
+  return applyPlacementTransformToLandmarks(normalizedIdeal478, {
+    scaleRatio: runtime.alignment.placementScaleRatio,
+    translateAfterScaleImageX: runtime.alignment.translateAfterScaleImageX,
+    translateAfterScaleImageY: runtime.alignment.translateAfterScaleImageY,
+  })
+}
+
 function drawLiveOverlay(reason: DisplayOverlayRedrawReason = "manual_render") {
-  const context = liveOverlayCanvas.getContext("2d")
-  if (!context) {
-    return
-  }
-
-  const rect = liveOverlayCanvas.getBoundingClientRect()
-  const dpr = window.devicePixelRatio || 1
-  liveOverlayCanvas.width = Math.max(1, Math.round(rect.width * dpr))
-  liveOverlayCanvas.height = Math.max(1, Math.round(rect.height * dpr))
-  context.setTransform(dpr, 0, 0, dpr, 0, 0)
-  context.clearRect(0, 0, rect.width, rect.height)
-
   const currentOverlayDebug = getCurrentOverlayDebugState()
-
   if (state.activePreviewTab !== "displayOverlay") {
+    const rect = liveOverlayCanvas.getBoundingClientRect()
     displayOverlayRedrawDebugState = {
       ...displayOverlayRedrawDebugState,
       displayOverlayPreviewStatus: "hidden_inactive_tab",
@@ -20625,6 +21013,12 @@ function drawLiveOverlay(reason: DisplayOverlayRedrawReason = "manual_render") {
     return
   }
 
+  const context = liveOverlayCanvas.getContext("2d")
+  if (!context) {
+    return
+  }
+
+  const rect = liveOverlayCanvas.getBoundingClientRect()
   if (rect.width <= 0 || rect.height <= 0) {
     state.poseMappingRuntime.alignment = {
       ...state.poseMappingRuntime.alignment,
@@ -20644,6 +21038,12 @@ function drawLiveOverlay(reason: DisplayOverlayRedrawReason = "manual_render") {
     }
     return
   }
+
+  const dpr = window.devicePixelRatio || 1
+  liveOverlayCanvas.width = Math.max(1, Math.round(rect.width * dpr))
+  liveOverlayCanvas.height = Math.max(1, Math.round(rect.height * dpr))
+  context.setTransform(dpr, 0, 0, dpr, 0, 0)
+  context.clearRect(0, 0, rect.width, rect.height)
 
   const displayedContentRect = getDisplayedContentRect(
     state.liveVideo,
@@ -20682,7 +21082,8 @@ function drawLiveOverlay(reason: DisplayOverlayRedrawReason = "manual_render") {
   }
 
   const current478 = getCurrent478ForCurrentFrame()
-  const alignedRenderedIdeal478 = state.poseMappingRuntime.alignedRenderedIdeal478
+  const displayOverlayAlignedRenderedIdeal478 =
+    createDisplayOverlayAlignedRenderedIdeal478FromRenderedIdeal()
   const meshSourceVertices = state.poseMappingRuntime.meshSourceVertices
   const meshTargetVertices = state.poseMappingRuntime.meshTargetVertices
   const canDrawAlignedIdeal = canDrawPoseMappingAlignedIdealOverlay()
@@ -20692,14 +21093,14 @@ function drawLiveOverlay(reason: DisplayOverlayRedrawReason = "manual_render") {
     canDrawAlignedIdeal &&
     state.overlay.showMeshPairs &&
     current478 &&
-    alignedRenderedIdeal478 &&
-    alignedRenderedIdeal478.length === REQUIRED_LANDMARK_COUNT
+    displayOverlayAlignedRenderedIdeal478 &&
+    displayOverlayAlignedRenderedIdeal478.length === REQUIRED_LANDMARK_COUNT
   ) {
     drawLandmarkPairLines(
       context,
       displayedContentRect,
       current478,
-      alignedRenderedIdeal478,
+      displayOverlayAlignedRenderedIdeal478,
       "rgba(48, 118, 92, 0.34)",
     )
   }
@@ -20736,13 +21137,13 @@ function drawLiveOverlay(reason: DisplayOverlayRedrawReason = "manual_render") {
   if (
     canDrawAlignedIdeal &&
     state.overlay.showAlignedIdealLandmarks478 &&
-    alignedRenderedIdeal478 &&
-    alignedRenderedIdeal478.length === REQUIRED_LANDMARK_COUNT
+    displayOverlayAlignedRenderedIdeal478 &&
+    displayOverlayAlignedRenderedIdeal478.length === REQUIRED_LANDMARK_COUNT
   ) {
     drawLandmarkPoints(
       context,
       displayedContentRect,
-      alignedRenderedIdeal478,
+      displayOverlayAlignedRenderedIdeal478,
       "rgba(220, 71, 94, 0.86)",
       1.35,
     )
@@ -20866,12 +21267,20 @@ function drawNormalizedCenter(
 }
 
 function drawRenderedIdealOverlay() {
+  if (state.activePreviewTab !== "renderedIdeal") {
+    return
+  }
+
   const context = renderedIdealOverlayCanvas.getContext("2d")
   if (!context) {
     return
   }
 
   const rect = renderedIdealOverlayCanvas.getBoundingClientRect()
+  if (rect.width <= 0 || rect.height <= 0) {
+    return
+  }
+
   const dpr = window.devicePixelRatio || 1
   renderedIdealOverlayCanvas.width = Math.max(1, Math.round(rect.width * dpr))
   renderedIdealOverlayCanvas.height = Math.max(1, Math.round(rect.height * dpr))
@@ -20879,15 +21288,15 @@ function drawRenderedIdealOverlay() {
   context.clearRect(0, 0, rect.width, rect.height)
 
   if (
-    state.activePreviewTab !== "renderedIdeal" ||
-    !state.renderedIdealOverlay.showRenderedIdealLandmarks478 ||
-    rect.width <= 0 ||
-    rect.height <= 0
+    !state.renderedIdealOverlay.showRenderedIdealLandmarks478
   ) {
     return
   }
 
-  const renderedIdeal478 = state.poseMappingRuntime.renderedIdeal478
+  const renderedIdeal478 =
+    state.poseMappingRuntime.renderedIdeal478 ??
+    lastRuntimeRenderedIdealPreviewSnapshot?.renderedIdeal478 ??
+    null
   if (!renderedIdeal478 || renderedIdeal478.length !== REQUIRED_LANDMARK_COUNT) {
     return
   }
@@ -22450,6 +22859,8 @@ function clearWebglRendererCanvas(renderer: WebglObjRenderer) {
 }
 
 function clearRuntimeRenderArtifacts(reason: string) {
+  lastRuntimeRenderedIdealPreviewSnapshot = null
+  renderedIdealRuntimeImageDataUrlDrawn = null
   state.poseMappingRuntime = {
     ...state.poseMappingRuntime,
     renderedIdealStatus: "missing",
@@ -26028,6 +26439,14 @@ function cleanup() {
   cancelModeComparison()
   stopRealtimeValidation("stopped")
   stopCameraInput()
+  if (previewTabRedrawAnimationFrameId !== null) {
+    window.cancelAnimationFrame(previewTabRedrawAnimationFrameId)
+    previewTabRedrawAnimationFrameId = null
+  }
+  if (displayOverlayRedrawAnimationFrameId !== null) {
+    window.cancelAnimationFrame(displayOverlayRedrawAnimationFrameId)
+    displayOverlayRedrawAnimationFrameId = null
+  }
   if (state.liveVideo.objectUrl) {
     URL.revokeObjectURL(state.liveVideo.objectUrl)
     state.liveVideo.objectUrl = null
