@@ -758,6 +758,14 @@ h3 {
   min-width: 860px;
 }
 
+.placement-candidate-comparison-table {
+  min-width: 1080px;
+}
+
+.placement-roundtrip-comparison-table {
+  min-width: 1480px;
+}
+
 .pose-sync-button {
   justify-self: start;
 }

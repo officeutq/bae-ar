@@ -2381,6 +2381,8 @@ type PlacementFunctionAnalysisExport = {
     positionCorrelationSummary: PlacementFunctionPositionCorrelationSummary[]
     verticalPositionSummary: PlacementFunctionVerticalPositionSummary[]
     anchorLandmarkSummary: PlacementFunctionAnchorLandmarkSummary
+    roundtripValidationSummary?: PlacementFunctionRoundtripValidationSummary
+    roundtripComparisonSummary?: PlacementFunctionRoundtripComparisonSummary
   }
   samples: PlacementFunctionAnalysisSample[]
 }
@@ -2448,7 +2450,228 @@ type PlacementFunctionCandidate = {
     scaleRatioValues: number[]
     sampleCountByScaleRatio: Record<string, number>
   }
+  directTransformCandidates: PlacementFunctionDirectTransformCandidate[]
+  candidateComparison: PlacementFunctionCandidateComparison
 }
+
+type PlacementFunctionDirectCandidateId =
+  | "direct_linear_normalized_v1"
+  | "direct_linear_raw_matrix_v1"
+  | "direct_linear_split_v1"
+  | "direct_quadratic_normalized_v1"
+
+type PlacementFunctionDirectOutputKey =
+  | "scaleRatio"
+  | "translateAfterScaleImageX"
+  | "translateAfterScaleImageY"
+
+type PlacementFunctionDirectFeatureName =
+  | "tx"
+  | "ty"
+  | "tz"
+  | "txOverNegTz"
+  | "tyOverNegTz"
+  | "invNegTz"
+  | "txOverNegTz^2"
+  | "tyOverNegTz^2"
+  | "invNegTz^2"
+  | "txOverNegTz*tyOverNegTz"
+  | "txOverNegTz*invNegTz"
+  | "tyOverNegTz*invNegTz"
+
+type PlacementFunctionDirectJsonFeatureName = "intercept" | PlacementFunctionDirectFeatureName
+
+type PlacementFunctionDirectCandidateDefinition = {
+  id: PlacementFunctionDirectCandidateId
+  modelType: "linear_v1" | "quadratic_v1"
+  featureNamesByOutput: Record<PlacementFunctionDirectOutputKey, PlacementFunctionDirectFeatureName[]>
+}
+
+type PlacementFunctionDirectRegressionModel = {
+  intercept: number
+  coefficients: Record<string, number>
+}
+
+type PlacementFunctionDirectTransformCandidateMetrics = {
+  maeScaleRatio: number
+  maxScaleRatio: number
+  rmseScaleRatio: number
+  maeTranslateAfterScaleImageX: number
+  maxTranslateAfterScaleImageX: number
+  rmseTranslateAfterScaleImageX: number
+  maeTranslateAfterScaleImageY: number
+  maxTranslateAfterScaleImageY: number
+  rmseTranslateAfterScaleImageY: number
+  meanTranslateAfterScaleImageEuclidean: number
+  maxTranslateAfterScaleImageEuclidean: number
+  weightedScore: number
+}
+
+type PlacementFunctionDirectTransformCandidate = {
+  id: PlacementFunctionDirectCandidateId
+  modelType: "linear_v1" | "quadratic_v1"
+  targetCoordinateSpace: "image_normalized_coordinate"
+  transformOrder: "scale_then_translate"
+  fittingAggregation: "condition_mean"
+  features: Record<PlacementFunctionDirectOutputKey, PlacementFunctionDirectJsonFeatureName[]>
+  models: Record<PlacementFunctionDirectOutputKey, PlacementFunctionDirectRegressionModel>
+  metrics: PlacementFunctionDirectTransformCandidateMetrics
+}
+
+type PlacementFunctionCandidateComparison = {
+  baselineCenterDerived: {
+    id: "center_derived_linear_v1"
+    metrics: {
+      maeScaleRatio: number
+      maxScaleRatio: number
+      meanTranslateAfterScaleImageEuclidean: number
+      maxTranslateAfterScaleImageEuclidean: number
+      weightedScore: number
+    }
+  }
+  directCandidates: Array<{
+    id: PlacementFunctionDirectCandidateId
+    metrics: PlacementFunctionDirectTransformCandidateMetrics
+    rankByWeightedScore: number
+  }>
+  bestDirectCandidateId: PlacementFunctionDirectCandidateId | null
+}
+
+type PlacementFunctionRoundtripCandidateId = "center_derived_linear_v1" | PlacementFunctionDirectCandidateId
+
+const PLACEMENT_FUNCTION_ROUNDTRIP_COMPARISON_CANDIDATE_IDS: PlacementFunctionRoundtripCandidateId[] = [
+  "center_derived_linear_v1",
+  "direct_linear_normalized_v1",
+  "direct_linear_raw_matrix_v1",
+  "direct_linear_split_v1",
+  "direct_quadratic_normalized_v1",
+]
+
+type PlacementFunctionRoundtripEstimatedTransform = {
+  scaleRatio: number
+  translateAfterScaleImageX: number
+  translateAfterScaleImageY: number
+  translateAfterScaleWorkX: number
+  translateAfterScaleWorkY: number
+}
+
+type PlacementFunctionRoundtripMatrixFeatures = {
+  tx: number
+  ty: number
+  tz: number
+  negTz: number
+  invNegTz: number
+  txOverNegTz: number
+  tyOverNegTz: number
+  matrixUniformScale: number
+}
+
+type PlacementFunctionRoundtripMatrixError = {
+  txError: number | null
+  tyError: number | null
+  tzError: number | null
+  negTzError: number | null
+  invNegTzError: number | null
+  txOverNegTzError: number | null
+  tyOverNegTzError: number | null
+  absTxError: number | null
+  absTyError: number | null
+  absTzError: number | null
+  absNegTzError: number | null
+  absInvNegTzError: number | null
+  absTxOverNegTzError: number | null
+  absTyOverNegTzError: number | null
+}
+
+type PlacementFunctionRoundtripPoseError = {
+  yawError: number | null
+  pitchError: number | null
+  rollError: number | null
+  poseDiffMagnitude: number | null
+}
+
+type PlacementFunctionRoundtripLandmarkDiffSummary = {
+  mean2dDistance: number | null
+  max2dDistance: number | null
+  comparedCount: number
+}
+
+type PlacementFunctionRoundtripMediaPipeResult = {
+  detected: boolean
+  returnedLandmarkCount: number
+  returnedPose: {
+    yaw: number
+    pitch: number
+    roll: number
+  } | null
+}
+
+type PlacementFunctionRoundtripPreviewState = {
+  status: "idle" | "running" | "completed" | "error"
+  sampleIndex: number | null
+  candidateId: PlacementFunctionRoundtripCandidateId | null
+  estimatedTransform: PlacementFunctionRoundtripEstimatedTransform | null
+  predictedMediaPipeResult: PlacementFunctionRoundtripMediaPipeResult | null
+  predictedMatrixFeatures: PlacementFunctionRoundtripMatrixFeatures | null
+  matrixError: PlacementFunctionRoundtripMatrixError | null
+  poseError: PlacementFunctionRoundtripPoseError | null
+  landmarkDiffSummary: PlacementFunctionRoundtripLandmarkDiffSummary | null
+  predictedLandmarks478ForPreview: ReferenceLandmark[] | null
+  errorMessage?: string | null
+}
+
+type PlacementFunctionRoundtripValidationSummary = Omit<
+  PlacementFunctionRoundtripPreviewState,
+  "predictedLandmarks478ForPreview"
+>
+
+type PlacementFunctionRoundtripExecutionResult = {
+  predictedMediaPipeResult: PlacementFunctionRoundtripMediaPipeResult
+  predictedMatrixFeatures: PlacementFunctionRoundtripMatrixFeatures | null
+  matrixError: PlacementFunctionRoundtripMatrixError | null
+  poseError: PlacementFunctionRoundtripPoseError | null
+  landmarkDiffSummary: PlacementFunctionRoundtripLandmarkDiffSummary | null
+  predictedLandmarks478ForPreview: ReferenceLandmark[] | null
+}
+
+type PlacementFunctionRoundtripComparisonScores = {
+  matrixNormalizedScore: number | null
+  matrixRawTranslationScore: number | null
+  poseScore: number | null
+  landmarkScore: number | null
+  roundtripScore: number | null
+}
+
+type PlacementFunctionRoundtripComparisonResult = {
+  candidateId: PlacementFunctionRoundtripCandidateId
+  status: "completed" | "skipped" | "error"
+  skippedReason?: string | null
+  errorMessage?: string | null
+  estimatedTransform: PlacementFunctionRoundtripEstimatedTransform | null
+  predictedMediaPipeResult: PlacementFunctionRoundtripMediaPipeResult | null
+  predictedMatrixFeatures: PlacementFunctionRoundtripMatrixFeatures | null
+  matrixError: PlacementFunctionRoundtripMatrixError | null
+  poseError: PlacementFunctionRoundtripPoseError | null
+  landmarkDiffSummary: PlacementFunctionRoundtripLandmarkDiffSummary | null
+  scores: PlacementFunctionRoundtripComparisonScores
+}
+
+type PlacementFunctionRoundtripComparisonState = {
+  status: "idle" | "running" | "completed" | "error"
+  sampleIndex: number | null
+  candidateIds: PlacementFunctionRoundtripCandidateId[]
+  results: PlacementFunctionRoundtripComparisonResult[]
+  bestByRoundtripScoreCandidateId: PlacementFunctionRoundtripCandidateId | null
+  bestByMatrixNormalizedScoreCandidateId: PlacementFunctionRoundtripCandidateId | null
+  previewPredictedCandidateId: PlacementFunctionRoundtripCandidateId | null
+  previewPredictedLandmarks478: ReferenceLandmark[] | null
+  errorMessage?: string | null
+}
+
+type PlacementFunctionRoundtripComparisonSummary = Omit<
+  PlacementFunctionRoundtripComparisonState,
+  "previewPredictedLandmarks478" | "previewPredictedCandidateId"
+>
 
 type PlacementFunctionAnalysisRange = {
   min: number
@@ -2536,6 +2759,12 @@ type PlacementFunctionAnalysisState = {
   showBase478: boolean
   showBaseBounds: boolean
   showTargetBounds: boolean
+  showPredictedRoundtrip478: boolean
+  showPredictedRoundtripBounds: boolean
+  showBestComparisonRoundtrip478: boolean
+  selectedRoundtripCandidateId: PlacementFunctionRoundtripCandidateId | null
+  roundtripPreview: PlacementFunctionRoundtripPreviewState
+  roundtripComparison: PlacementFunctionRoundtripComparisonState
   summary: PlacementFunctionAnalysisSummary
   candidate: PlacementFunctionCandidate | null
   candidateUnavailableReason: string | null
@@ -3526,19 +3755,31 @@ function renderPlacementAnalysisPreview() {
         </label>
         <label class="overlay-toggle">
           <input type="checkbox" data-control="placement-analysis-show-target-478" checked />
-          <span>Show target 478（変換後478）</span>
+          <span>既知 target 478 を表示</span>
         </label>
         <label class="overlay-toggle">
-          <input type="checkbox" data-control="placement-analysis-show-base-478" checked />
-          <span>Show base 478（変換前478）</span>
+          <input type="checkbox" data-control="placement-analysis-show-predicted-roundtrip-478" checked />
+          <span>再レンダー後 478 を表示</span>
         </label>
         <label class="overlay-toggle">
-          <input type="checkbox" data-control="placement-analysis-show-base-bounds" checked />
-          <span>Show base bounds（変換前外接範囲）</span>
+          <input type="checkbox" data-control="placement-analysis-show-best-comparison-roundtrip-478" checked />
+          <span>比較 best candidate の再レンダー478を表示</span>
         </label>
         <label class="overlay-toggle">
           <input type="checkbox" data-control="placement-analysis-show-target-bounds" checked />
-          <span>Show target bounds（変換後外接範囲）</span>
+          <span>既知 target bounds を表示</span>
+        </label>
+        <label class="overlay-toggle">
+          <input type="checkbox" data-control="placement-analysis-show-predicted-roundtrip-bounds" checked />
+          <span>再レンダー後 bounds を表示</span>
+        </label>
+        <label class="overlay-toggle">
+          <input type="checkbox" data-control="placement-analysis-show-base-478" />
+          <span>base 478 を表示</span>
+        </label>
+        <label class="overlay-toggle">
+          <input type="checkbox" data-control="placement-analysis-show-base-bounds" />
+          <span>base bounds を表示</span>
         </label>
       </div>
       <div class="review-card" data-placement-analysis-preview-summary>
@@ -3851,6 +4092,13 @@ function bindEvents() {
 
   app.addEventListener("change", (event) => {
     const target = event.target
+    if (target instanceof HTMLSelectElement) {
+      if (target.dataset.control === "placement-analysis-roundtrip-candidate") {
+        state.placementAnalysis.selectedRoundtripCandidateId = target.value as PlacementFunctionRoundtripCandidateId
+        renderDebugContent()
+      }
+      return
+    }
     if (!(target instanceof HTMLInputElement)) {
       return
     }
@@ -4043,6 +4291,12 @@ function bindEvents() {
     if (action === "placement-analysis-download-candidate-json") {
       exportPlacementFunctionCandidateJson()
     }
+    if (action === "placement-analysis-run-selected-roundtrip") {
+      void runSelectedPlacementFunctionRoundtripValidation()
+    }
+    if (action === "placement-analysis-run-roundtrip-comparison") {
+      void runSelectedPlacementFunctionRoundtripComparison()
+    }
     if (action === "placement-analysis-prev-sample") {
       selectPlacementAnalysisSample((state.placementAnalysis.selectedSampleIndex ?? 0) - 1)
     }
@@ -4061,6 +4315,12 @@ function bindEvents() {
   bindOverlayToggle("toggle-triangle-mesh", "showTriangleMesh")
 
   bindPlacementAnalysisPreviewToggle("placement-analysis-show-target-478", "showTarget478")
+  bindPlacementAnalysisPreviewToggle("placement-analysis-show-predicted-roundtrip-478", "showPredictedRoundtrip478")
+  bindPlacementAnalysisPreviewToggle("placement-analysis-show-predicted-roundtrip-bounds", "showPredictedRoundtripBounds")
+  bindPlacementAnalysisPreviewToggle(
+    "placement-analysis-show-best-comparison-roundtrip-478",
+    "showBestComparisonRoundtrip478",
+  )
   bindPlacementAnalysisPreviewToggle("placement-analysis-show-base-478", "showBase478")
   bindPlacementAnalysisPreviewToggle("placement-analysis-show-base-bounds", "showBaseBounds")
   bindPlacementAnalysisPreviewToggle("placement-analysis-show-target-bounds", "showTargetBounds")
@@ -4074,7 +4334,13 @@ function bindPlacementAnalysisPreviewToggle(
   control: string,
   key: keyof Pick<
     PlacementFunctionAnalysisState,
-    "showTarget478" | "showBase478" | "showBaseBounds" | "showTargetBounds"
+    | "showTarget478"
+    | "showBase478"
+    | "showBaseBounds"
+    | "showTargetBounds"
+    | "showPredictedRoundtrip478"
+    | "showPredictedRoundtripBounds"
+    | "showBestComparisonRoundtrip478"
   >,
 ) {
   getElement<HTMLInputElement>(`[data-control="${control}"]`).addEventListener("change", (event) => {
@@ -9524,6 +9790,341 @@ function stopPlacementFunctionAnalysis() {
   placementAnalysisCancelRequested = true
 }
 
+function runPlacementFunctionRoundtripRenderDetect(
+  sample: PlacementFunctionAnalysisSampleState,
+  estimatedTransform: PlacementFunctionRoundtripEstimatedTransform,
+  detector: FaceLandmarker,
+  renderer: WebglObjRenderer,
+): PlacementFunctionRoundtripExecutionResult {
+  resizeWebglObjBenchmarkRenderer(renderer, sample.knownPlacement.canvasWidth, sample.knownPlacement.canvasHeight)
+  const estimatedKnownPlacement = createKnownPlacementFromPlacementFunctionEstimatedTransform(sample, estimatedTransform)
+  const appearance = getAppliedWebglObjRenderAppearanceProfile({
+    width: sample.knownPlacement.canvasWidth,
+    height: sample.knownPlacement.canvasHeight,
+  })
+  renderWebglObjToCanvas(renderer, {
+    renderSettings: {
+      detectCanvasWidth: sample.knownPlacement.canvasWidth,
+      detectCanvasHeight: sample.knownPlacement.canvasHeight,
+    },
+    appearance,
+    p: sample.requestedPoseP,
+    rotationCenter: getObjPoseSyncRotationCenter(),
+    clipPlacementTransform: createPlacementAnalysisClipTransform(estimatedKnownPlacement),
+  })
+
+  const result = detector.detect(renderer.canvas)
+  const predictedLandmarks = mapLandmarks(result.faceLandmarks[0] ?? []).map((landmark) => ({
+    index: landmark.index,
+    x: roundForState(landmark.x) ?? 0,
+    y: roundForState(landmark.y) ?? 0,
+    z: roundForState(landmark.z) ?? 0,
+  }))
+  const matrix = summarizeFaceMatrix(result.facialTransformationMatrixes[0])
+  const predictedPose = matrix?.rotationDeg ?? estimateNullablePose(result.facialTransformationMatrixes[0])
+  const predictedMatrixFeatures = createPlacementFunctionRoundtripMatrixFeatures(
+    buildPlacementFunctionMatrixFeatures(matrix),
+  )
+  return {
+    predictedMediaPipeResult: {
+      detected: result.faceLandmarks.length > 0,
+      returnedLandmarkCount: predictedLandmarks.length,
+      returnedPose: hasFullPose(predictedPose)
+        ? {
+            yaw: predictedPose.yaw!,
+            pitch: predictedPose.pitch!,
+            roll: predictedPose.roll!,
+          }
+        : null,
+    },
+    predictedMatrixFeatures,
+    matrixError: predictedMatrixFeatures
+      ? calculatePlacementFunctionRoundtripMatrixError(sample.matrixFeatures, predictedMatrixFeatures)
+      : null,
+    poseError: calculatePlacementFunctionRoundtripPoseError(sample.mediaPipeResult.returnedPose ?? null, predictedPose),
+    landmarkDiffSummary: calculatePlacementFunctionRoundtripLandmarkDiffSummary(
+      sample.previewLandmarks478,
+      predictedLandmarks,
+    ),
+    predictedLandmarks478ForPreview: predictedLandmarks.length > 0 ? predictedLandmarks : null,
+  }
+}
+
+async function runSelectedPlacementFunctionRoundtripValidation() {
+  if (
+    state.placementAnalysis.roundtripPreview.status === "running" ||
+    state.placementAnalysis.roundtripComparison.status === "running"
+  ) {
+    return
+  }
+
+  const sample = getSelectedPlacementAnalysisSample()
+  const candidate = state.placementAnalysis.candidate
+  const candidateId = resolvePlacementFunctionSelectedRoundtripCandidateId(
+    candidate,
+    state.placementAnalysis.selectedRoundtripCandidateId,
+  )
+  if (!sample || !candidate || !candidateId) {
+    state.placementAnalysis = {
+      ...state.placementAnalysis,
+      roundtripPreview: {
+        ...createDefaultPlacementFunctionRoundtripPreviewState(),
+        status: "error",
+        sampleIndex: sample?.sampleIndex ?? null,
+        candidateId,
+        errorMessage: "選択中サンプルまたは配置関数候補がありません。",
+      },
+    }
+    renderAll()
+    return
+  }
+  if (!canRenderRenderedIdealGeometry()) {
+    state.placementAnalysis = {
+      ...state.placementAnalysis,
+      roundtripPreview: {
+        ...createDefaultPlacementFunctionRoundtripPreviewState(),
+        status: "error",
+        sampleIndex: sample.sampleIndex,
+        candidateId,
+        errorMessage: "OBJ読込を完了してから再レンダー検証を実行してください。",
+      },
+    }
+    renderAll()
+    return
+  }
+
+  const estimatedTransform = estimatePlacementFunctionRoundtripTransform(candidate, candidateId, sample)
+  if (!estimatedTransform) {
+    state.placementAnalysis = {
+      ...state.placementAnalysis,
+      roundtripPreview: {
+        ...createDefaultPlacementFunctionRoundtripPreviewState(),
+        status: "error",
+        sampleIndex: sample.sampleIndex,
+        candidateId,
+        errorMessage: "candidate から estimatedTransform を生成できませんでした。",
+      },
+    }
+    renderAll()
+    return
+  }
+
+  state.placementAnalysis = {
+    ...state.placementAnalysis,
+    selectedRoundtripCandidateId: candidateId,
+    roundtripPreview: {
+      ...createDefaultPlacementFunctionRoundtripPreviewState(),
+      status: "running",
+      sampleIndex: sample.sampleIndex,
+      candidateId,
+      estimatedTransform,
+    },
+  }
+  renderAll()
+
+  try {
+    const detector = await getRenderedIdealFaceLandmarker()
+    const renderer = getOrCreatePlacementAnalysisRenderer()
+    const roundtripResult = runPlacementFunctionRoundtripRenderDetect(
+      sample,
+      estimatedTransform,
+      detector,
+      renderer,
+    )
+    state.placementAnalysis = {
+      ...state.placementAnalysis,
+      roundtripPreview: {
+        status: "completed",
+        sampleIndex: sample.sampleIndex,
+        candidateId,
+        estimatedTransform,
+        ...roundtripResult,
+        errorMessage: null,
+      },
+    }
+    addLog(`再レンダー検証が完了しました: sample=${sample.sampleIndex} / candidate=${candidateId}`)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    state.placementAnalysis = {
+      ...state.placementAnalysis,
+      roundtripPreview: {
+        ...createDefaultPlacementFunctionRoundtripPreviewState(),
+        status: "error",
+        sampleIndex: sample.sampleIndex,
+        candidateId,
+        estimatedTransform,
+        errorMessage: message,
+      },
+    }
+    addLog(`再レンダー検証でエラーが発生しました: ${message}`)
+  } finally {
+    renderAll()
+  }
+}
+
+async function runSelectedPlacementFunctionRoundtripComparison() {
+  if (
+    state.placementAnalysis.roundtripComparison.status === "running" ||
+    state.placementAnalysis.roundtripPreview.status === "running"
+  ) {
+    return
+  }
+
+  const sample = getSelectedPlacementAnalysisSample()
+  const candidate = state.placementAnalysis.candidate
+  const candidateIds = [...PLACEMENT_FUNCTION_ROUNDTRIP_COMPARISON_CANDIDATE_IDS]
+  if (!sample || !candidate) {
+    state.placementAnalysis = {
+      ...state.placementAnalysis,
+      roundtripComparison: {
+        ...createDefaultPlacementFunctionRoundtripComparisonState(),
+        status: "error",
+        sampleIndex: sample?.sampleIndex ?? null,
+        candidateIds,
+        errorMessage: "選択中サンプルまたは配置関数候補がありません。",
+      },
+    }
+    renderAll()
+    return
+  }
+  if (!canRenderRenderedIdealGeometry()) {
+    state.placementAnalysis = {
+      ...state.placementAnalysis,
+      roundtripComparison: {
+        ...createDefaultPlacementFunctionRoundtripComparisonState(),
+        status: "error",
+        sampleIndex: sample.sampleIndex,
+        candidateIds,
+        errorMessage: "OBJ読込を完了してから再レンダー候補比較を実行してください。",
+      },
+    }
+    renderAll()
+    return
+  }
+
+  state.placementAnalysis = {
+    ...state.placementAnalysis,
+    roundtripComparison: {
+      ...createDefaultPlacementFunctionRoundtripComparisonState(),
+      status: "running",
+      sampleIndex: sample.sampleIndex,
+      candidateIds,
+    },
+  }
+  renderAll()
+
+  const results: PlacementFunctionRoundtripComparisonResult[] = []
+  const previewLandmarksByCandidateId = new Map<PlacementFunctionRoundtripCandidateId, ReferenceLandmark[]>()
+  try {
+    const detector = await getRenderedIdealFaceLandmarker()
+    const renderer = getOrCreatePlacementAnalysisRenderer()
+    const availableCandidateIds = new Set(getPlacementFunctionRoundtripCandidateIds(candidate))
+
+    for (const candidateId of candidateIds) {
+      let comparisonResult: PlacementFunctionRoundtripComparisonResult
+      if (!availableCandidateIds.has(candidateId)) {
+        comparisonResult = createPlacementFunctionRoundtripComparisonResult({
+          candidateId,
+          status: "skipped",
+          skippedReason: "candidate JSON に存在しません。",
+        })
+      } else {
+        const estimatedTransform = estimatePlacementFunctionRoundtripTransform(candidate, candidateId, sample)
+        if (!estimatedTransform) {
+          comparisonResult = createPlacementFunctionRoundtripComparisonResult({
+            candidateId,
+            status: "error",
+            errorMessage: "candidate から estimatedTransform を生成できませんでした。",
+          })
+        } else {
+          try {
+            const roundtripResult = runPlacementFunctionRoundtripRenderDetect(
+              sample,
+              estimatedTransform,
+              detector,
+              renderer,
+            )
+            comparisonResult = createPlacementFunctionRoundtripComparisonResult({
+              candidateId,
+              status: "completed",
+              estimatedTransform,
+              ...roundtripResult,
+            })
+            if (roundtripResult.predictedLandmarks478ForPreview) {
+              previewLandmarksByCandidateId.set(candidateId, roundtripResult.predictedLandmarks478ForPreview)
+            }
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            comparisonResult = createPlacementFunctionRoundtripComparisonResult({
+              candidateId,
+              status: "error",
+              estimatedTransform,
+              errorMessage: message,
+            })
+          }
+        }
+      }
+
+      results.push(comparisonResult)
+      state.placementAnalysis = {
+        ...state.placementAnalysis,
+        roundtripComparison: {
+          ...state.placementAnalysis.roundtripComparison,
+          results: [...results],
+        },
+      }
+      renderDebugContent()
+    }
+
+    const bestByRoundtripScoreCandidateId = getBestPlacementFunctionRoundtripComparisonCandidateId(
+      results,
+      "roundtripScore",
+    )
+    const bestByMatrixNormalizedScoreCandidateId = getBestPlacementFunctionRoundtripComparisonCandidateId(
+      results,
+      "matrixNormalizedScore",
+    )
+    const previewPredictedCandidateId = bestByRoundtripScoreCandidateId ?? bestByMatrixNormalizedScoreCandidateId
+    state.placementAnalysis = {
+      ...state.placementAnalysis,
+      roundtripComparison: {
+        status: "completed",
+        sampleIndex: sample.sampleIndex,
+        candidateIds,
+        results,
+        bestByRoundtripScoreCandidateId,
+        bestByMatrixNormalizedScoreCandidateId,
+        previewPredictedCandidateId,
+        previewPredictedLandmarks478: previewPredictedCandidateId
+          ? previewLandmarksByCandidateId.get(previewPredictedCandidateId) ?? null
+          : null,
+        errorMessage: null,
+      },
+    }
+    addLog(`再レンダー候補比較が完了しました: sample=${sample.sampleIndex}`)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    state.placementAnalysis = {
+      ...state.placementAnalysis,
+      roundtripComparison: {
+        ...state.placementAnalysis.roundtripComparison,
+        status: "error",
+        sampleIndex: sample.sampleIndex,
+        candidateIds,
+        results,
+        bestByRoundtripScoreCandidateId: null,
+        bestByMatrixNormalizedScoreCandidateId: null,
+        previewPredictedCandidateId: null,
+        previewPredictedLandmarks478: null,
+        errorMessage: message,
+      },
+    }
+    addLog(`再レンダー候補比較でエラーが発生しました: ${message}`)
+  } finally {
+    renderAll()
+  }
+}
+
 function createPlacementFunctionAnalysisPlans(options: PlacementFunctionAnalysisRunOptions) {
   const plans: Array<{
     sampleIndex: number
@@ -9909,6 +10510,10 @@ function appendPlacementFunctionAnalysisSample(sample: PlacementFunctionAnalysis
     summary,
     candidate: candidateResult.candidate,
     candidateUnavailableReason: candidateResult.reason,
+    selectedRoundtripCandidateId: resolvePlacementFunctionSelectedRoundtripCandidateId(
+      candidateResult.candidate,
+      state.placementAnalysis.candidate ? state.placementAnalysis.selectedRoundtripCandidateId : null,
+    ),
   }
 }
 
@@ -10882,6 +11487,7 @@ function buildPlacementFunctionCandidate(samples: PlacementFunctionAnalysisSampl
     targetCenterImageYModel,
     scaleRatioModel,
   )
+  const directTransformCandidates = buildPlacementFunctionDirectTransformCandidates(fittingSamples)
   return {
     reason: null,
     candidate: {
@@ -10934,7 +11540,394 @@ function buildPlacementFunctionCandidate(samples: PlacementFunctionAnalysisSampl
       },
       metrics,
       trainingDataSummary: buildPlacementFunctionCandidateTrainingDataSummary(fittingSamples),
+      directTransformCandidates,
+      candidateComparison: buildPlacementFunctionCandidateComparison(metrics, directTransformCandidates),
     },
+  }
+}
+
+function buildPlacementFunctionDirectTransformCandidates(
+  fittingSamples: PlacementFunctionCandidateTrainingSample[],
+): PlacementFunctionDirectTransformCandidate[] {
+  return getPlacementFunctionDirectCandidateDefinitions()
+    .map((definition) => buildPlacementFunctionDirectTransformCandidate(definition, fittingSamples))
+    .filter((candidate): candidate is PlacementFunctionDirectTransformCandidate => candidate !== null)
+}
+
+function getPlacementFunctionDirectCandidateDefinitions(): PlacementFunctionDirectCandidateDefinition[] {
+  const normalizedLinearFeatures: PlacementFunctionDirectFeatureName[] = [
+    "txOverNegTz",
+    "tyOverNegTz",
+    "invNegTz",
+  ]
+  const rawMatrixLinearFeatures: PlacementFunctionDirectFeatureName[] = ["tx", "ty", "tz"]
+  const normalizedQuadraticFeatures: PlacementFunctionDirectFeatureName[] = [
+    "txOverNegTz",
+    "tyOverNegTz",
+    "invNegTz",
+    "txOverNegTz^2",
+    "tyOverNegTz^2",
+    "invNegTz^2",
+    "txOverNegTz*tyOverNegTz",
+    "txOverNegTz*invNegTz",
+    "tyOverNegTz*invNegTz",
+  ]
+  return [
+    {
+      id: "direct_linear_normalized_v1",
+      modelType: "linear_v1",
+      featureNamesByOutput: {
+        scaleRatio: normalizedLinearFeatures,
+        translateAfterScaleImageX: normalizedLinearFeatures,
+        translateAfterScaleImageY: normalizedLinearFeatures,
+      },
+    },
+    {
+      id: "direct_linear_raw_matrix_v1",
+      modelType: "linear_v1",
+      featureNamesByOutput: {
+        scaleRatio: rawMatrixLinearFeatures,
+        translateAfterScaleImageX: rawMatrixLinearFeatures,
+        translateAfterScaleImageY: rawMatrixLinearFeatures,
+      },
+    },
+    {
+      id: "direct_linear_split_v1",
+      modelType: "linear_v1",
+      featureNamesByOutput: {
+        scaleRatio: ["ty", "tz"],
+        translateAfterScaleImageX: ["tx", "tz"],
+        translateAfterScaleImageY: ["ty", "tz"],
+      },
+    },
+    {
+      id: "direct_quadratic_normalized_v1",
+      modelType: "quadratic_v1",
+      featureNamesByOutput: {
+        scaleRatio: normalizedQuadraticFeatures,
+        translateAfterScaleImageX: normalizedQuadraticFeatures,
+        translateAfterScaleImageY: normalizedQuadraticFeatures,
+      },
+    },
+  ]
+}
+
+function buildPlacementFunctionDirectTransformCandidate(
+  definition: PlacementFunctionDirectCandidateDefinition,
+  fittingSamples: PlacementFunctionCandidateTrainingSample[],
+): PlacementFunctionDirectTransformCandidate | null {
+  const scaleRatioModel = fitPlacementFunctionDirectRegressionModel(
+    fittingSamples,
+    definition.featureNamesByOutput.scaleRatio,
+    (sample) => sample.knownTransform.scaleRatio,
+  )
+  const translateXModel = fitPlacementFunctionDirectRegressionModel(
+    fittingSamples,
+    definition.featureNamesByOutput.translateAfterScaleImageX,
+    (sample) => sample.knownTransform.translateAfterScaleImageX,
+  )
+  const translateYModel = fitPlacementFunctionDirectRegressionModel(
+    fittingSamples,
+    definition.featureNamesByOutput.translateAfterScaleImageY,
+    (sample) => sample.knownTransform.translateAfterScaleImageY,
+  )
+  if (!scaleRatioModel || !translateXModel || !translateYModel) {
+    return null
+  }
+
+  const candidateWithoutMetrics = {
+    id: definition.id,
+    modelType: definition.modelType,
+    targetCoordinateSpace: "image_normalized_coordinate",
+    transformOrder: "scale_then_translate",
+    fittingAggregation: "condition_mean",
+    features: {
+      scaleRatio: createPlacementFunctionDirectJsonFeatures(definition.featureNamesByOutput.scaleRatio),
+      translateAfterScaleImageX: createPlacementFunctionDirectJsonFeatures(
+        definition.featureNamesByOutput.translateAfterScaleImageX,
+      ),
+      translateAfterScaleImageY: createPlacementFunctionDirectJsonFeatures(
+        definition.featureNamesByOutput.translateAfterScaleImageY,
+      ),
+    },
+    models: {
+      scaleRatio: roundPlacementFunctionDirectRegressionModel(scaleRatioModel),
+      translateAfterScaleImageX: roundPlacementFunctionDirectRegressionModel(translateXModel),
+      translateAfterScaleImageY: roundPlacementFunctionDirectRegressionModel(translateYModel),
+    },
+  } satisfies Omit<PlacementFunctionDirectTransformCandidate, "metrics">
+
+  return {
+    ...candidateWithoutMetrics,
+    metrics: calculatePlacementFunctionDirectTransformCandidateMetrics(
+      fittingSamples,
+      candidateWithoutMetrics,
+    ),
+  }
+}
+
+function createPlacementFunctionDirectJsonFeatures(
+  featureNames: PlacementFunctionDirectFeatureName[],
+): PlacementFunctionDirectJsonFeatureName[] {
+  return ["intercept", ...featureNames]
+}
+
+function fitPlacementFunctionDirectRegressionModel(
+  samples: PlacementFunctionCandidateTrainingSample[],
+  featureNames: PlacementFunctionDirectFeatureName[],
+  getTarget: (sample: PlacementFunctionCandidateTrainingSample) => number,
+): PlacementFunctionDirectRegressionModel | null {
+  const rows: Array<{ x: number[]; y: number }> = []
+  for (const sample of samples) {
+    const featureValues = createPlacementFunctionDirectFeatureVector(sample, featureNames)
+    const y = getTarget(sample)
+    if (!featureValues || !Number.isFinite(y)) {
+      continue
+    }
+    rows.push({ x: [1, ...featureValues], y })
+  }
+  const parameterCount = featureNames.length + 1
+  if (rows.length < parameterCount) {
+    return null
+  }
+
+  const normalMatrix: number[][] = Array.from(
+    { length: parameterCount },
+    () => Array<number>(parameterCount).fill(0),
+  )
+  const normalVector = Array<number>(parameterCount).fill(0)
+  for (const row of rows) {
+    for (let rowIndex = 0; rowIndex < parameterCount; rowIndex += 1) {
+      normalVector[rowIndex] += row.x[rowIndex] * row.y
+      for (let columnIndex = 0; columnIndex < parameterCount; columnIndex += 1) {
+        normalMatrix[rowIndex][columnIndex] += row.x[rowIndex] * row.x[columnIndex]
+      }
+    }
+  }
+
+  const coefficients = solvePlacementFunctionLinearSystem(normalMatrix, normalVector)
+  if (!coefficients) {
+    return null
+  }
+  const featureCoefficients: Record<string, number> = {}
+  for (const [index, featureName] of featureNames.entries()) {
+    const coefficient = coefficients[index + 1]
+    if (!Number.isFinite(coefficient)) {
+      return null
+    }
+    featureCoefficients[featureName] = coefficient
+  }
+  return Number.isFinite(coefficients[0])
+    ? {
+        intercept: coefficients[0],
+        coefficients: featureCoefficients,
+      }
+    : null
+}
+
+function solvePlacementFunctionLinearSystem(matrix: number[][], vector: number[]) {
+  const size = vector.length
+  const augmented = matrix.map((row, index) => [...row, vector[index]])
+  for (let pivotIndex = 0; pivotIndex < size; pivotIndex += 1) {
+    let bestRowIndex = pivotIndex
+    for (let rowIndex = pivotIndex + 1; rowIndex < size; rowIndex += 1) {
+      if (Math.abs(augmented[rowIndex][pivotIndex]) > Math.abs(augmented[bestRowIndex][pivotIndex])) {
+        bestRowIndex = rowIndex
+      }
+    }
+    const pivot = augmented[bestRowIndex][pivotIndex]
+    if (!Number.isFinite(pivot) || Math.abs(pivot) <= 1e-12) {
+      return null
+    }
+    if (bestRowIndex !== pivotIndex) {
+      const currentRow = augmented[pivotIndex]
+      augmented[pivotIndex] = augmented[bestRowIndex]
+      augmented[bestRowIndex] = currentRow
+    }
+
+    const normalizedPivot = augmented[pivotIndex][pivotIndex]
+    for (let columnIndex = pivotIndex; columnIndex <= size; columnIndex += 1) {
+      augmented[pivotIndex][columnIndex] /= normalizedPivot
+    }
+    for (let rowIndex = 0; rowIndex < size; rowIndex += 1) {
+      if (rowIndex === pivotIndex) {
+        continue
+      }
+      const factor = augmented[rowIndex][pivotIndex]
+      for (let columnIndex = pivotIndex; columnIndex <= size; columnIndex += 1) {
+        augmented[rowIndex][columnIndex] -= factor * augmented[pivotIndex][columnIndex]
+      }
+    }
+  }
+  const solution = augmented.map((row) => row[size])
+  return solution.every((value) => Number.isFinite(value)) ? solution : null
+}
+
+function createPlacementFunctionDirectFeatureVector(
+  sample: PlacementFunctionCandidateTrainingSample,
+  featureNames: PlacementFunctionDirectFeatureName[],
+) {
+  const values: number[] = []
+  for (const featureName of featureNames) {
+    const value = getPlacementFunctionDirectFeatureValue(sample, featureName)
+    if (value === null || !Number.isFinite(value)) {
+      return null
+    }
+    values.push(value)
+  }
+  return values
+}
+
+function getPlacementFunctionDirectFeatureValue(
+  sample: { matrixFeatures: PlacementFunctionMatrixFeatures },
+  featureName: PlacementFunctionDirectFeatureName,
+) {
+  const features = sample.matrixFeatures
+  switch (featureName) {
+    case "tx":
+      return features.tx
+    case "ty":
+      return features.ty
+    case "tz":
+      return features.tz
+    case "txOverNegTz":
+      return features.txOverNegTz
+    case "tyOverNegTz":
+      return features.tyOverNegTz
+    case "invNegTz":
+      return features.invNegTz
+    case "txOverNegTz^2":
+      return features.txOverNegTz === null ? null : features.txOverNegTz ** 2
+    case "tyOverNegTz^2":
+      return features.tyOverNegTz === null ? null : features.tyOverNegTz ** 2
+    case "invNegTz^2":
+      return features.invNegTz === null ? null : features.invNegTz ** 2
+    case "txOverNegTz*tyOverNegTz":
+      return features.txOverNegTz === null || features.tyOverNegTz === null
+        ? null
+        : features.txOverNegTz * features.tyOverNegTz
+    case "txOverNegTz*invNegTz":
+      return features.txOverNegTz === null || features.invNegTz === null
+        ? null
+        : features.txOverNegTz * features.invNegTz
+    case "tyOverNegTz*invNegTz":
+      return features.tyOverNegTz === null || features.invNegTz === null
+        ? null
+        : features.tyOverNegTz * features.invNegTz
+  }
+}
+
+function roundPlacementFunctionDirectRegressionModel(
+  model: PlacementFunctionDirectRegressionModel,
+): PlacementFunctionDirectRegressionModel {
+  return {
+    intercept: roundForState(model.intercept) ?? 0,
+    coefficients: Object.fromEntries(
+      Object.entries(model.coefficients).map(([featureName, coefficient]) => [
+        featureName,
+        roundForState(coefficient) ?? 0,
+      ]),
+    ),
+  }
+}
+
+function calculatePlacementFunctionDirectTransformCandidateMetrics(
+  samples: PlacementFunctionCandidateTrainingSample[],
+  candidate: Omit<PlacementFunctionDirectTransformCandidate, "metrics">,
+): PlacementFunctionDirectTransformCandidateMetrics {
+  const scaleErrors: number[] = []
+  const translateXErrors: number[] = []
+  const translateYErrors: number[] = []
+  const translateEuclideanErrors: number[] = []
+  for (const sample of samples) {
+    const prediction = predictPlacementFunctionDirectCandidateForSample(candidate, sample)
+    if (prediction.estimatedScaleRatio !== null) {
+      scaleErrors.push(prediction.estimatedScaleRatio - sample.knownTransform.scaleRatio)
+    }
+    if (prediction.estimatedTranslateAfterScaleImageX !== null) {
+      translateXErrors.push(
+        prediction.estimatedTranslateAfterScaleImageX - sample.knownTransform.translateAfterScaleImageX,
+      )
+    }
+    if (prediction.estimatedTranslateAfterScaleImageY !== null) {
+      translateYErrors.push(
+        prediction.estimatedTranslateAfterScaleImageY - sample.knownTransform.translateAfterScaleImageY,
+      )
+    }
+    if (
+      prediction.estimatedTranslateAfterScaleImageX !== null &&
+      prediction.estimatedTranslateAfterScaleImageY !== null
+    ) {
+      translateEuclideanErrors.push(Math.hypot(
+        prediction.estimatedTranslateAfterScaleImageX - sample.knownTransform.translateAfterScaleImageX,
+        prediction.estimatedTranslateAfterScaleImageY - sample.knownTransform.translateAfterScaleImageY,
+      ))
+    }
+  }
+  const scaleStats = calculatePlacementFunctionErrorStats(scaleErrors)
+  const translateXStats = calculatePlacementFunctionErrorStats(translateXErrors)
+  const translateYStats = calculatePlacementFunctionErrorStats(translateYErrors)
+  const meanTranslateAfterScaleImageEuclidean = averageFiniteNumbers(translateEuclideanErrors) ?? 0
+  return {
+    maeScaleRatio: scaleStats.mae,
+    maxScaleRatio: scaleStats.maxAbsError,
+    rmseScaleRatio: scaleStats.rmse,
+    maeTranslateAfterScaleImageX: translateXStats.mae,
+    maxTranslateAfterScaleImageX: translateXStats.maxAbsError,
+    rmseTranslateAfterScaleImageX: translateXStats.rmse,
+    maeTranslateAfterScaleImageY: translateYStats.mae,
+    maxTranslateAfterScaleImageY: translateYStats.maxAbsError,
+    rmseTranslateAfterScaleImageY: translateYStats.rmse,
+    meanTranslateAfterScaleImageEuclidean: roundForState(meanTranslateAfterScaleImageEuclidean) ?? 0,
+    maxTranslateAfterScaleImageEuclidean: roundForState(maxNumbers(translateEuclideanErrors) ?? 0) ?? 0,
+    weightedScore: roundForState(scaleStats.mae + meanTranslateAfterScaleImageEuclidean) ?? 0,
+  }
+}
+
+function calculatePlacementFunctionErrorStats(errors: number[]) {
+  const finiteErrors = errors.filter((value) => Number.isFinite(value))
+  if (finiteErrors.length === 0) {
+    return {
+      mae: 0,
+      maxAbsError: 0,
+      rmse: 0,
+    }
+  }
+  const absErrors = finiteErrors.map((value) => Math.abs(value))
+  const meanSquaredError = averageFiniteNumbers(finiteErrors.map((value) => value ** 2)) ?? 0
+  return {
+    mae: roundForState(averageFiniteNumbers(absErrors) ?? 0) ?? 0,
+    maxAbsError: roundForState(maxNumbers(absErrors) ?? 0) ?? 0,
+    rmse: roundForState(Math.sqrt(meanSquaredError)) ?? 0,
+  }
+}
+
+function buildPlacementFunctionCandidateComparison(
+  baselineMetrics: PlacementFunctionCandidate["metrics"],
+  directTransformCandidates: PlacementFunctionDirectTransformCandidate[],
+): PlacementFunctionCandidateComparison {
+  const directCandidates = [...directTransformCandidates]
+    .sort((a, b) => a.metrics.weightedScore - b.metrics.weightedScore)
+    .map((candidate, index) => ({
+      id: candidate.id,
+      metrics: candidate.metrics,
+      rankByWeightedScore: index + 1,
+    }))
+  return {
+    baselineCenterDerived: {
+      id: "center_derived_linear_v1",
+      metrics: {
+        maeScaleRatio: baselineMetrics.maeScaleRatio,
+        maxScaleRatio: baselineMetrics.maxScaleRatio,
+        meanTranslateAfterScaleImageEuclidean: baselineMetrics.maeDerivedTranslateAfterScaleImage,
+        maxTranslateAfterScaleImageEuclidean: baselineMetrics.maxDerivedTranslateAfterScaleImage,
+        weightedScore: roundForState(
+          baselineMetrics.maeScaleRatio + baselineMetrics.maeDerivedTranslateAfterScaleImage,
+        ) ?? 0,
+      },
+    },
+    directCandidates,
+    bestDirectCandidateId: directCandidates[0]?.id ?? null,
   }
 }
 
@@ -10949,13 +11942,37 @@ function createPlacementFunctionConditionMeanFittingSamples(
         knownPlacement: first.knownPlacement,
         basePlacement: first.basePlacement,
         targetPlacement: first.targetPlacement,
-        knownTransform: first.knownTransform,
+        knownTransform: averagePlacementFunctionKnownTransform(
+          conditionSamples.map((sample) => sample.knownTransform),
+        ),
         matrixFeatures: averagePlacementFunctionMatrixFeatures(
           conditionSamples.map((sample) => sample.matrixFeatures),
         ),
       }
     })
     .sort((a, b) => a.conditionKey.localeCompare(b.conditionKey))
+}
+
+function averagePlacementFunctionKnownTransform(transforms: KnownTransform[]): KnownTransform {
+  const first = transforms[0]
+  return {
+    transformOrder: "scale_then_translate",
+    coordinateSpace: "image_normalized_coordinate",
+    scaleBasis: "width",
+    scaleRatio: averagePlacementFunctionNullableFeature(transforms.map((transform) => transform.scaleRatio)) ?? first.scaleRatio,
+    translateAfterScaleImageX:
+      averagePlacementFunctionNullableFeature(transforms.map((transform) => transform.translateAfterScaleImageX)) ??
+      first.translateAfterScaleImageX,
+    translateAfterScaleImageY:
+      averagePlacementFunctionNullableFeature(transforms.map((transform) => transform.translateAfterScaleImageY)) ??
+      first.translateAfterScaleImageY,
+    translateAfterScaleWorkX:
+      averagePlacementFunctionNullableFeature(transforms.map((transform) => transform.translateAfterScaleWorkX)) ??
+      first.translateAfterScaleWorkX,
+    translateAfterScaleWorkY:
+      averagePlacementFunctionNullableFeature(transforms.map((transform) => transform.translateAfterScaleWorkY)) ??
+      first.translateAfterScaleWorkY,
+  }
 }
 
 function averagePlacementFunctionMatrixFeatures(
@@ -11150,6 +12167,399 @@ function predictPlacementFunctionCandidateForSample(
       ? estimatedTranslateAfterScaleImageY - sample.knownTransform.translateAfterScaleImageY
       : null,
   }
+}
+
+function predictPlacementFunctionDirectCandidateForSample(
+  candidate: Omit<PlacementFunctionDirectTransformCandidate, "metrics"> | PlacementFunctionDirectTransformCandidate,
+  sample: PlacementFunctionCandidateTrainingSample | PlacementFunctionAnalysisSampleState,
+) {
+  const estimatedScaleRatio = predictPlacementFunctionDirectOutput(
+    candidate.models.scaleRatio,
+    candidate.features.scaleRatio,
+    sample,
+  )
+  const estimatedTranslateAfterScaleImageX = predictPlacementFunctionDirectOutput(
+    candidate.models.translateAfterScaleImageX,
+    candidate.features.translateAfterScaleImageX,
+    sample,
+  )
+  const estimatedTranslateAfterScaleImageY = predictPlacementFunctionDirectOutput(
+    candidate.models.translateAfterScaleImageY,
+    candidate.features.translateAfterScaleImageY,
+    sample,
+  )
+  const scaleRatioError = estimatedScaleRatio !== null
+    ? estimatedScaleRatio - sample.knownTransform.scaleRatio
+    : null
+  const translateAfterScaleImageXError = estimatedTranslateAfterScaleImageX !== null
+    ? estimatedTranslateAfterScaleImageX - sample.knownTransform.translateAfterScaleImageX
+    : null
+  const translateAfterScaleImageYError = estimatedTranslateAfterScaleImageY !== null
+    ? estimatedTranslateAfterScaleImageY - sample.knownTransform.translateAfterScaleImageY
+    : null
+  return {
+    estimatedScaleRatio,
+    estimatedTranslateAfterScaleImageX,
+    estimatedTranslateAfterScaleImageY,
+    scaleRatioError,
+    translateAfterScaleImageXError,
+    translateAfterScaleImageYError,
+    translateAfterScaleImageEuclideanError:
+      translateAfterScaleImageXError !== null && translateAfterScaleImageYError !== null
+        ? Math.hypot(translateAfterScaleImageXError, translateAfterScaleImageYError)
+        : null,
+  }
+}
+
+function getPlacementFunctionBestDirectCandidate(candidate: PlacementFunctionCandidate | null) {
+  const bestDirectCandidateId = candidate?.candidateComparison.bestDirectCandidateId ?? null
+  return bestDirectCandidateId
+    ? candidate?.directTransformCandidates.find((directCandidate) => directCandidate.id === bestDirectCandidateId) ?? null
+    : null
+}
+
+function getPlacementFunctionRoundtripCandidateIds(
+  candidate: PlacementFunctionCandidate | null,
+): PlacementFunctionRoundtripCandidateId[] {
+  return [
+    "center_derived_linear_v1",
+    ...(candidate?.directTransformCandidates.map((directCandidate) => directCandidate.id) ?? []),
+  ]
+}
+
+function resolvePlacementFunctionSelectedRoundtripCandidateId(
+  candidate: PlacementFunctionCandidate | null,
+  selectedCandidateId: PlacementFunctionRoundtripCandidateId | null,
+): PlacementFunctionRoundtripCandidateId | null {
+  const candidateIds = getPlacementFunctionRoundtripCandidateIds(candidate)
+  if (selectedCandidateId && candidateIds.includes(selectedCandidateId)) {
+    return selectedCandidateId
+  }
+  return candidate?.candidateComparison.bestDirectCandidateId ?? candidateIds[0] ?? null
+}
+
+function hasPlacementFunctionRoundtripPreviewForSample(
+  sample: PlacementFunctionAnalysisSampleState | null,
+) {
+  const roundtrip = state.placementAnalysis.roundtripPreview
+  return (
+    sample !== null &&
+    roundtrip.status === "completed" &&
+    roundtrip.sampleIndex === sample.sampleIndex &&
+    roundtrip.predictedLandmarks478ForPreview !== null
+  )
+}
+
+function hasPlacementFunctionRoundtripComparisonPreviewForSample(
+  sample: PlacementFunctionAnalysisSampleState | null,
+) {
+  const comparison = state.placementAnalysis.roundtripComparison
+  return (
+    sample !== null &&
+    comparison.status === "completed" &&
+    comparison.sampleIndex === sample.sampleIndex &&
+    comparison.previewPredictedLandmarks478 !== null
+  )
+}
+
+function estimatePlacementFunctionRoundtripTransform(
+  candidate: PlacementFunctionCandidate,
+  candidateId: PlacementFunctionRoundtripCandidateId,
+  sample: PlacementFunctionAnalysisSampleState,
+): PlacementFunctionRoundtripEstimatedTransform | null {
+  if (candidateId === "center_derived_linear_v1") {
+    const prediction = predictPlacementFunctionCandidateForSample(candidate, sample)
+    if (
+      !prediction ||
+      prediction.estimatedScaleRatio === null ||
+      prediction.estimatedTranslateAfterScaleImageX === null ||
+      prediction.estimatedTranslateAfterScaleImageY === null
+    ) {
+      return null
+    }
+    return roundPlacementFunctionRoundtripEstimatedTransform({
+      scaleRatio: prediction.estimatedScaleRatio,
+      translateAfterScaleImageX: prediction.estimatedTranslateAfterScaleImageX,
+      translateAfterScaleImageY: prediction.estimatedTranslateAfterScaleImageY,
+      translateAfterScaleWorkX:
+        prediction.estimatedTranslateAfterScaleImageX * sample.knownPlacement.renderAspectRatio,
+      translateAfterScaleWorkY: prediction.estimatedTranslateAfterScaleImageY,
+    })
+  }
+
+  const directCandidate = candidate.directTransformCandidates.find((item) => item.id === candidateId)
+  if (!directCandidate) {
+    return null
+  }
+  const prediction = predictPlacementFunctionDirectCandidateForSample(directCandidate, sample)
+  if (
+    prediction.estimatedScaleRatio === null ||
+    prediction.estimatedTranslateAfterScaleImageX === null ||
+    prediction.estimatedTranslateAfterScaleImageY === null
+  ) {
+    return null
+  }
+  return roundPlacementFunctionRoundtripEstimatedTransform({
+    scaleRatio: prediction.estimatedScaleRatio,
+    translateAfterScaleImageX: prediction.estimatedTranslateAfterScaleImageX,
+    translateAfterScaleImageY: prediction.estimatedTranslateAfterScaleImageY,
+    translateAfterScaleWorkX:
+      prediction.estimatedTranslateAfterScaleImageX * sample.knownPlacement.renderAspectRatio,
+    translateAfterScaleWorkY: prediction.estimatedTranslateAfterScaleImageY,
+  })
+}
+
+function roundPlacementFunctionRoundtripEstimatedTransform(
+  transform: PlacementFunctionRoundtripEstimatedTransform,
+): PlacementFunctionRoundtripEstimatedTransform {
+  return {
+    scaleRatio: roundForState(transform.scaleRatio) ?? 0,
+    translateAfterScaleImageX: roundForState(transform.translateAfterScaleImageX) ?? 0,
+    translateAfterScaleImageY: roundForState(transform.translateAfterScaleImageY) ?? 0,
+    translateAfterScaleWorkX: roundForState(transform.translateAfterScaleWorkX) ?? 0,
+    translateAfterScaleWorkY: roundForState(transform.translateAfterScaleWorkY) ?? 0,
+  }
+}
+
+function createKnownPlacementFromPlacementFunctionEstimatedTransform(
+  sample: PlacementFunctionAnalysisSampleState,
+  transform: PlacementFunctionRoundtripEstimatedTransform,
+): KnownPlacement {
+  const centerImageX =
+    sample.basePlacement.centerImageX * transform.scaleRatio + transform.translateAfterScaleImageX
+  const centerImageY =
+    sample.basePlacement.centerImageY * transform.scaleRatio + transform.translateAfterScaleImageY
+  return {
+    centerImageX,
+    centerImageY,
+    centerWorkX: centerImageX * sample.knownPlacement.renderAspectRatio,
+    centerWorkY: centerImageY,
+    visualScaleInput: transform.scaleRatio,
+    renderAspectRatio: sample.knownPlacement.renderAspectRatio,
+    canvasWidth: sample.knownPlacement.canvasWidth,
+    canvasHeight: sample.knownPlacement.canvasHeight,
+  }
+}
+
+function createPlacementFunctionRoundtripMatrixFeatures(
+  features: PlacementFunctionMatrixFeatures,
+): PlacementFunctionRoundtripMatrixFeatures | null {
+  const values = {
+    tx: features.tx,
+    ty: features.ty,
+    tz: features.tz,
+    negTz: features.negTz,
+    invNegTz: features.invNegTz,
+    txOverNegTz: features.txOverNegTz,
+    tyOverNegTz: features.tyOverNegTz,
+    matrixUniformScale: features.matrixUniformScale,
+  }
+  if (Object.values(values).some((value) => value === null || !Number.isFinite(value))) {
+    return null
+  }
+  return {
+    tx: roundForState(values.tx) ?? 0,
+    ty: roundForState(values.ty) ?? 0,
+    tz: roundForState(values.tz) ?? 0,
+    negTz: roundForState(values.negTz) ?? 0,
+    invNegTz: roundForState(values.invNegTz) ?? 0,
+    txOverNegTz: roundForState(values.txOverNegTz) ?? 0,
+    tyOverNegTz: roundForState(values.tyOverNegTz) ?? 0,
+    matrixUniformScale: roundForState(values.matrixUniformScale) ?? 0,
+  }
+}
+
+function calculatePlacementFunctionRoundtripMatrixError(
+  original: PlacementFunctionMatrixFeatures,
+  predicted: PlacementFunctionRoundtripMatrixFeatures,
+): PlacementFunctionRoundtripMatrixError {
+  const txError = subtractNullable(predicted.tx, original.tx)
+  const tyError = subtractNullable(predicted.ty, original.ty)
+  const tzError = subtractNullable(predicted.tz, original.tz)
+  const negTzError = subtractNullable(predicted.negTz, original.negTz)
+  const invNegTzError = subtractNullable(predicted.invNegTz, original.invNegTz)
+  const txOverNegTzError = subtractNullable(predicted.txOverNegTz, original.txOverNegTz)
+  const tyOverNegTzError = subtractNullable(predicted.tyOverNegTz, original.tyOverNegTz)
+  return {
+    txError,
+    tyError,
+    tzError,
+    negTzError,
+    invNegTzError,
+    txOverNegTzError,
+    tyOverNegTzError,
+    absTxError: absNullable(txError),
+    absTyError: absNullable(tyError),
+    absTzError: absNullable(tzError),
+    absNegTzError: absNullable(negTzError),
+    absInvNegTzError: absNullable(invNegTzError),
+    absTxOverNegTzError: absNullable(txOverNegTzError),
+    absTyOverNegTzError: absNullable(tyOverNegTzError),
+  }
+}
+
+function calculatePlacementFunctionRoundtripPoseError(
+  originalPose: PlacementFunctionAnalysisSample["mediaPipeResult"]["returnedPose"],
+  predictedPose: ReferencePose,
+): PlacementFunctionRoundtripPoseError | null {
+  if (!originalPose) {
+    return null
+  }
+  const yawError = subtractNullable(predictedPose.yaw, originalPose.yaw)
+  const pitchError = subtractNullable(predictedPose.pitch, originalPose.pitch)
+  const rollError = subtractNullable(predictedPose.roll, originalPose.roll)
+  const values = [yawError, pitchError, rollError]
+  return {
+    yawError,
+    pitchError,
+    rollError,
+    poseDiffMagnitude: values.every((value) => value === null)
+      ? null
+      : roundForState(Math.hypot(...values.map((value) => value ?? 0))),
+  }
+}
+
+function calculatePlacementFunctionRoundtripLandmarkDiffSummary(
+  knownTargetLandmarks: ReferenceLandmark[] | null,
+  predictedLandmarks: ReferenceLandmark[],
+): PlacementFunctionRoundtripLandmarkDiffSummary | null {
+  if (!knownTargetLandmarks || knownTargetLandmarks.length === 0 || predictedLandmarks.length === 0) {
+    return null
+  }
+  const predictedByIndex = new Map(predictedLandmarks.map((landmark) => [landmark.index, landmark]))
+  const distances: number[] = []
+  for (const landmark of knownTargetLandmarks) {
+    const predicted = predictedByIndex.get(landmark.index)
+    if (!predicted) {
+      continue
+    }
+    distances.push(Math.hypot(predicted.x - landmark.x, predicted.y - landmark.y))
+  }
+  if (distances.length === 0) {
+    return null
+  }
+  return {
+    mean2dDistance: roundForState(averageFiniteNumbers(distances)),
+    max2dDistance: roundForState(maxNumbers(distances)),
+    comparedCount: distances.length,
+  }
+}
+
+function absNullable(value: number | null) {
+  return value === null ? null : roundForState(Math.abs(value))
+}
+
+function createPlacementFunctionRoundtripComparisonResult(
+  input: {
+    candidateId: PlacementFunctionRoundtripCandidateId
+    status: PlacementFunctionRoundtripComparisonResult["status"]
+    skippedReason?: string | null
+    errorMessage?: string | null
+    estimatedTransform?: PlacementFunctionRoundtripEstimatedTransform | null
+    predictedMediaPipeResult?: PlacementFunctionRoundtripMediaPipeResult | null
+    predictedMatrixFeatures?: PlacementFunctionRoundtripMatrixFeatures | null
+    matrixError?: PlacementFunctionRoundtripMatrixError | null
+    poseError?: PlacementFunctionRoundtripPoseError | null
+    landmarkDiffSummary?: PlacementFunctionRoundtripLandmarkDiffSummary | null
+  },
+): PlacementFunctionRoundtripComparisonResult {
+  const matrixError = input.matrixError ?? null
+  const poseError = input.poseError ?? null
+  const landmarkDiffSummary = input.landmarkDiffSummary ?? null
+  return {
+    candidateId: input.candidateId,
+    status: input.status,
+    skippedReason: input.skippedReason ?? null,
+    errorMessage: input.errorMessage ?? null,
+    estimatedTransform: input.estimatedTransform ?? null,
+    predictedMediaPipeResult: input.predictedMediaPipeResult ?? null,
+    predictedMatrixFeatures: input.predictedMatrixFeatures ?? null,
+    matrixError,
+    poseError,
+    landmarkDiffSummary,
+    scores: calculatePlacementFunctionRoundtripComparisonScores(matrixError, poseError, landmarkDiffSummary),
+  }
+}
+
+function calculatePlacementFunctionRoundtripComparisonScores(
+  matrixError: PlacementFunctionRoundtripMatrixError | null,
+  poseError: PlacementFunctionRoundtripPoseError | null,
+  landmarkDiffSummary: PlacementFunctionRoundtripLandmarkDiffSummary | null,
+): PlacementFunctionRoundtripComparisonScores {
+  const matrixNormalizedScore = sumNullableNumbers(
+    matrixError?.absTxOverNegTzError ?? null,
+    matrixError?.absTyOverNegTzError ?? null,
+    multiplyNullable(matrixError?.absInvNegTzError ?? null, 100),
+  )
+  const matrixRawTranslationScore = sumNullableNumbers(
+    matrixError?.absTxError ?? null,
+    matrixError?.absTyError ?? null,
+    matrixError?.absTzError ?? null,
+  )
+  const poseScore = poseError?.poseDiffMagnitude ?? null
+  const landmarkScore = landmarkDiffSummary?.mean2dDistance ?? null
+  return {
+    matrixNormalizedScore,
+    matrixRawTranslationScore,
+    poseScore,
+    landmarkScore,
+    roundtripScore: matrixNormalizedScore === null
+      ? null
+      : roundForState(matrixNormalizedScore + (poseScore ?? 0) * 0.01 + (landmarkScore ?? 0)),
+  }
+}
+
+function sumNullableNumbers(...values: Array<number | null>) {
+  if (values.some((value) => value === null || !Number.isFinite(value))) {
+    return null
+  }
+  return roundForState(values.reduce((sum, value) => sum + (value ?? 0), 0))
+}
+
+function multiplyNullable(value: number | null, factor: number) {
+  return value === null || !Number.isFinite(value) ? null : roundForState(value * factor)
+}
+
+function isFiniteNumber(value: number | null | undefined): value is number {
+  return typeof value === "number" && Number.isFinite(value)
+}
+
+function getBestPlacementFunctionRoundtripComparisonCandidateId(
+  results: PlacementFunctionRoundtripComparisonResult[],
+  scoreKey: keyof Pick<
+    PlacementFunctionRoundtripComparisonScores,
+    "matrixNormalizedScore" | "roundtripScore"
+  >,
+): PlacementFunctionRoundtripCandidateId | null {
+  const rankedResults = [...results]
+    .filter((result) => result.status === "completed" && isFiniteNumber(result.scores[scoreKey]))
+    .sort((a, b) => (a.scores[scoreKey] ?? Number.POSITIVE_INFINITY) - (b.scores[scoreKey] ?? Number.POSITIVE_INFINITY))
+  return rankedResults[0]?.candidateId ?? null
+}
+
+function predictPlacementFunctionDirectOutput(
+  model: PlacementFunctionDirectRegressionModel,
+  features: PlacementFunctionDirectJsonFeatureName[],
+  sample: PlacementFunctionCandidateTrainingSample | PlacementFunctionAnalysisSampleState,
+) {
+  let result = model.intercept
+  for (const featureName of features) {
+    if (featureName === "intercept") {
+      continue
+    }
+    const coefficient = model.coefficients[featureName]
+    const value = getPlacementFunctionDirectFeatureValue(sample, featureName)
+    if (
+      coefficient === undefined ||
+      value === null ||
+      !Number.isFinite(coefficient) ||
+      !Number.isFinite(value)
+    ) {
+      return null
+    }
+    result += coefficient * value
+  }
+  return Number.isFinite(result) ? result : null
 }
 
 function averageFiniteNumbers(values: number[]) {
@@ -16554,6 +17964,8 @@ function getPlacementFunctionAnalysisRawSummary() {
     candidateAvailable: Boolean(state.placementAnalysis.candidate),
     candidateMetrics: state.placementAnalysis.candidate?.metrics ?? null,
     candidateUnavailableReason: state.placementAnalysis.candidateUnavailableReason,
+    selectedRoundtripCandidateId: state.placementAnalysis.selectedRoundtripCandidateId,
+    roundtripPreview: stripPlacementFunctionRoundtripPreviewState(state.placementAnalysis.roundtripPreview),
   }
 }
 
@@ -17704,12 +19116,48 @@ function createDefaultPlacementFunctionAnalysisState(): PlacementFunctionAnalysi
     samples: [],
     selectedSampleIndex: null,
     showTarget478: true,
-    showBase478: true,
-    showBaseBounds: true,
+    showBase478: false,
+    showBaseBounds: false,
     showTargetBounds: true,
+    showPredictedRoundtrip478: true,
+    showPredictedRoundtripBounds: true,
+    showBestComparisonRoundtrip478: true,
+    selectedRoundtripCandidateId: null,
+    roundtripPreview: createDefaultPlacementFunctionRoundtripPreviewState(),
+    roundtripComparison: createDefaultPlacementFunctionRoundtripComparisonState(),
     summary: createPlacementFunctionAnalysisSummary([], runOptions),
     candidate: null,
     candidateUnavailableReason: "usable sample count too small",
+  }
+}
+
+function createDefaultPlacementFunctionRoundtripPreviewState(): PlacementFunctionRoundtripPreviewState {
+  return {
+    status: "idle",
+    sampleIndex: null,
+    candidateId: null,
+    estimatedTransform: null,
+    predictedMediaPipeResult: null,
+    predictedMatrixFeatures: null,
+    matrixError: null,
+    poseError: null,
+    landmarkDiffSummary: null,
+    predictedLandmarks478ForPreview: null,
+    errorMessage: null,
+  }
+}
+
+function createDefaultPlacementFunctionRoundtripComparisonState(): PlacementFunctionRoundtripComparisonState {
+  return {
+    status: "idle",
+    sampleIndex: null,
+    candidateIds: [...PLACEMENT_FUNCTION_ROUNDTRIP_COMPARISON_CANDIDATE_IDS],
+    results: [],
+    bestByRoundtripScoreCandidateId: null,
+    bestByMatrixNormalizedScoreCandidateId: null,
+    previewPredictedCandidateId: null,
+    previewPredictedLandmarks478: null,
+    errorMessage: null,
   }
 }
 
@@ -18425,14 +19873,31 @@ function renderPlacementAnalysisPreviewPanel() {
   const summary = getElement<HTMLElement>("[data-placement-analysis-preview-summary]")
   const sampleIndexInput = getElement<HTMLInputElement>('[data-control="placement-analysis-sample-index"]')
   const showTarget478Input = getElement<HTMLInputElement>('[data-control="placement-analysis-show-target-478"]')
+  const showPredictedRoundtrip478Input = getElement<HTMLInputElement>(
+    '[data-control="placement-analysis-show-predicted-roundtrip-478"]',
+  )
+  const showBestComparisonRoundtrip478Input = getElement<HTMLInputElement>(
+    '[data-control="placement-analysis-show-best-comparison-roundtrip-478"]',
+  )
+  const showPredictedRoundtripBoundsInput = getElement<HTMLInputElement>(
+    '[data-control="placement-analysis-show-predicted-roundtrip-bounds"]',
+  )
   const showBase478Input = getElement<HTMLInputElement>('[data-control="placement-analysis-show-base-478"]')
   const showBaseBoundsInput = getElement<HTMLInputElement>('[data-control="placement-analysis-show-base-bounds"]')
   const showTargetBoundsInput = getElement<HTMLInputElement>('[data-control="placement-analysis-show-target-bounds"]')
   const selectedSample = getSelectedPlacementAnalysisSample()
   const hasSamples = state.placementAnalysis.samples.length > 0
+  const hasSelectedRoundtrip = hasPlacementFunctionRoundtripPreviewForSample(selectedSample)
+  const hasSelectedBestComparison = hasPlacementFunctionRoundtripComparisonPreviewForSample(selectedSample)
+  const previewPredictedCandidateId = hasSelectedBestComparison
+    ? state.placementAnalysis.roundtripComparison.previewPredictedCandidateId
+    : null
 
   stage.dataset.analysisStatus = selectedSample ? "ready" : "empty"
   showTarget478Input.checked = state.placementAnalysis.showTarget478
+  showPredictedRoundtrip478Input.checked = state.placementAnalysis.showPredictedRoundtrip478
+  showBestComparisonRoundtrip478Input.checked = state.placementAnalysis.showBestComparisonRoundtrip478
+  showPredictedRoundtripBoundsInput.checked = state.placementAnalysis.showPredictedRoundtripBounds
   showBase478Input.checked = state.placementAnalysis.showBase478
   showBaseBoundsInput.checked = state.placementAnalysis.showBaseBounds
   showTargetBoundsInput.checked = state.placementAnalysis.showTargetBounds
@@ -18446,6 +19911,9 @@ function renderPlacementAnalysisPreviewPanel() {
   )
   sampleIndexInput.disabled = !hasSamples
   showTarget478Input.disabled = !hasSamples
+  showPredictedRoundtrip478Input.disabled = !hasSelectedRoundtrip
+  showBestComparisonRoundtrip478Input.disabled = !hasSelectedBestComparison
+  showPredictedRoundtripBoundsInput.disabled = !hasSelectedRoundtrip
   showBase478Input.disabled = !hasSamples
   showBaseBoundsInput.disabled = !hasSamples
   showTargetBoundsInput.disabled = !hasSamples
@@ -18473,6 +19941,7 @@ function renderPlacementAnalysisPreviewPanel() {
       <div><dt>knownPlacement</dt><dd>${escapeHtml(formatKnownPlacementShort(known))}</dd></div>
       <div><dt>knownTransform</dt><dd>${escapeHtml(formatKnownTransformShort(transform))}</dd></div>
       <div><dt>Base 478 source</dt><dd>${escapeHtml(formatPlacementPreviewLandmarkSummary(selectedSample.previewLandmarkSummary))}</dd></div>
+      <div><dt>previewPredictedCandidateId</dt><dd>${previewPredictedCandidateId ?? "-"}</dd></div>
       <div><dt>targetAnchorImage</dt><dd>${formatPlacementAnchorImagePoint(anchor.target.imageX, anchor.target.imageY)}</dd></div>
       <div><dt>baseAnchorImage</dt><dd>${formatPlacementAnchorImagePoint(anchor.base.imageX, anchor.base.imageY)}</dd></div>
       <div><dt>baseAnchorSource</dt><dd>${escapeHtml(anchor.base.source)}</dd></div>
@@ -18511,7 +19980,13 @@ function selectPlacementAnalysisSample(index: number) {
 }
 
 function renderPlacementAnalysisSamplePreview(sample: PlacementFunctionAnalysisSampleState) {
-  renderPlacementAnalysisKnownPlacementToCanvas(sample.knownPlacement, sample.requestedPoseP)
+  const roundtrip = hasPlacementFunctionRoundtripPreviewForSample(sample)
+    ? state.placementAnalysis.roundtripPreview
+    : null
+  const knownPlacement = roundtrip?.estimatedTransform
+    ? createKnownPlacementFromPlacementFunctionEstimatedTransform(sample, roundtrip.estimatedTransform)
+    : sample.knownPlacement
+  renderPlacementAnalysisKnownPlacementToCanvas(knownPlacement, sample.requestedPoseP)
   drawPlacementAnalysisOverlay(sample)
 }
 
@@ -18581,6 +20056,13 @@ function drawPlacementAnalysisOverlay(sample: PlacementFunctionAnalysisSampleSta
     width: placementAnalysisOverlayCanvas.width,
     height: placementAnalysisOverlayCanvas.height,
   }
+  const roundtrip = hasPlacementFunctionRoundtripPreviewForSample(sample)
+    ? state.placementAnalysis.roundtripPreview
+    : null
+  const predictedLandmarks = roundtrip?.predictedLandmarks478ForPreview ?? null
+  const bestComparisonPredictedLandmarks = hasPlacementFunctionRoundtripComparisonPreviewForSample(sample)
+    ? state.placementAnalysis.roundtripComparison.previewPredictedLandmarks478
+    : null
   if (state.placementAnalysis.showBaseBounds) {
     drawPlacementFunctionPlacementBounds(
       context,
@@ -18599,6 +20081,14 @@ function drawPlacementAnalysisOverlay(sample: PlacementFunctionAnalysisSampleSta
       false,
     )
   }
+  if (state.placementAnalysis.showPredictedRoundtripBounds && predictedLandmarks) {
+    drawNormalizedBounds(
+      context,
+      contentRect,
+      calculateLandmarkBounds(predictedLandmarks),
+      "rgba(234, 88, 12, 0.9)",
+    )
+  }
   if (state.placementAnalysis.showBase478 && sample.previewBaseLandmarks478) {
     drawLandmarkPoints(
       context,
@@ -18615,6 +20105,24 @@ function drawPlacementAnalysisOverlay(sample: PlacementFunctionAnalysisSampleSta
       sample.previewLandmarks478,
       "rgba(14, 116, 144, 0.9)",
       1.6,
+    )
+  }
+  if (state.placementAnalysis.showPredictedRoundtrip478 && predictedLandmarks) {
+    drawLandmarkPoints(
+      context,
+      contentRect,
+      predictedLandmarks,
+      "rgba(234, 88, 12, 0.92)",
+      1.45,
+    )
+  }
+  if (state.placementAnalysis.showBestComparisonRoundtrip478 && bestComparisonPredictedLandmarks) {
+    drawLandmarkPoints(
+      context,
+      contentRect,
+      bestComparisonPredictedLandmarks,
+      "rgba(219, 39, 119, 0.92)",
+      1.45,
     )
   }
   context.restore()
@@ -18662,6 +20170,22 @@ function renderPlacementFunctionAnalysisDebugTab() {
   const summary = analysis.summary
   const canDownloadSamples = analysis.samples.length > 0
   const canDownloadCandidate = analysis.candidate !== null
+  const canRunRoundtrip =
+    Boolean(analysis.candidate) &&
+    analysis.selectedSampleIndex !== null &&
+    analysis.roundtripPreview.status !== "running" &&
+    analysis.roundtripComparison.status !== "running" &&
+    canRenderRenderedIdealGeometry()
+  const canRunRoundtripComparison =
+    Boolean(analysis.candidate) &&
+    analysis.selectedSampleIndex !== null &&
+    analysis.roundtripPreview.status !== "running" &&
+    analysis.roundtripComparison.status !== "running" &&
+    canRenderRenderedIdealGeometry()
+  const selectedRoundtripCandidateId = resolvePlacementFunctionSelectedRoundtripCandidateId(
+    analysis.candidate,
+    analysis.selectedRoundtripCandidateId,
+  )
   const container = document.createElement("div")
   container.className = "placement-analysis-debug-tab"
   container.innerHTML = `
@@ -18673,6 +20197,8 @@ function renderPlacementFunctionAnalysisDebugTab() {
         <button class="small-button" type="button" data-action="placement-analysis-download-json" ${canDownloadSamples ? "" : "disabled"}>サンプルJSONをダウンロード</button>
         <button class="small-button" type="button" data-action="placement-analysis-download-csv" ${canDownloadSamples ? "" : "disabled"}>サンプルCSVをダウンロード</button>
         <button class="small-button" type="button" data-action="placement-analysis-download-candidate-json" ${canDownloadCandidate ? "" : "disabled"}>配置関数候補JSONをダウンロード</button>
+        <button class="small-button" type="button" data-action="placement-analysis-run-selected-roundtrip" ${canRunRoundtrip ? "" : "disabled"}>選択サンプルを再レンダー検証</button>
+        <button class="small-button" type="button" data-action="placement-analysis-run-roundtrip-comparison" ${canRunRoundtripComparison ? "" : "disabled"}>候補をまとめて再レンダー比較</button>
       </div>
       ${!canRenderRenderedIdealGeometry() ? `<p class="control-note">OBJ読込を完了してから解析を実行してください。</p>` : ""}
     </section>
@@ -18747,6 +20273,21 @@ function renderPlacementFunctionAnalysisDebugTab() {
         <div><dt>reason</dt><dd>${escapeHtml(analysis.candidate ? "-" : analysis.candidateUnavailableReason ?? "-")}</dd></div>
       </dl>
       ${renderPlacementFunctionCandidateMetricsHtml(analysis.candidate)}
+      ${renderPlacementFunctionCandidateComparisonHtml(analysis.candidate)}
+    </section>
+    <section class="review-card">
+      <h3>再レンダー検証</h3>
+      <label class="select-field">
+        <span>candidate</span>
+        <select data-control="placement-analysis-roundtrip-candidate" ${analysis.candidate ? "" : "disabled"}>
+          ${renderPlacementFunctionRoundtripCandidateOptions(analysis.candidate, selectedRoundtripCandidateId)}
+        </select>
+      </label>
+      ${renderPlacementFunctionRoundtripValidationHtml(analysis.roundtripPreview)}
+    </section>
+    <section class="review-card">
+      <h3>Roundtrip Candidate Comparison（再レンダー候補比較）</h3>
+      ${renderPlacementFunctionRoundtripComparisonHtml(analysis.roundtripComparison)}
     </section>
   `
   return container
@@ -18981,6 +20522,225 @@ function renderPlacementFunctionCandidateMetricsHtml(candidate: PlacementFunctio
         <div><dt>Derived Translate After Scale Image Max</dt><dd>${formatNullableNumber(metrics.maxDerivedTranslateAfterScaleImage)}</dd></div>
       </dl>
     </div>
+  `
+}
+
+function renderPlacementFunctionCandidateComparisonHtml(candidate: PlacementFunctionCandidate | null) {
+  if (!candidate) {
+    return `<p class="placeholder-text">候補生成後に direct transform candidate の比較を表示します。</p>`
+  }
+  const comparison = candidate.candidateComparison
+  const baselineMetrics = comparison.baselineCenterDerived.metrics
+  return `
+    <div class="placement-candidate-comparison">
+      <h4>候補比較</h4>
+      <dl class="review-grid">
+        <div><dt>baseline</dt><dd>${comparison.baselineCenterDerived.id}</dd></div>
+        <div><dt>bestDirectCandidateId</dt><dd>${comparison.bestDirectCandidateId ?? "-"}</dd></div>
+        <div><dt>directCandidateCount</dt><dd>${formatNullableCount(comparison.directCandidates.length)}</dd></div>
+        <div><dt>baseline scale MAE / max</dt><dd>${formatNullableNumber(baselineMetrics.maeScaleRatio)} / ${formatNullableNumber(baselineMetrics.maxScaleRatio)}</dd></div>
+        <div><dt>baseline translate mean / max</dt><dd>${formatNullableNumber(baselineMetrics.meanTranslateAfterScaleImageEuclidean)} / ${formatNullableNumber(baselineMetrics.maxTranslateAfterScaleImageEuclidean)}</dd></div>
+      </dl>
+      ${comparison.directCandidates.length === 0 ? `<p class="placeholder-text">direct transform candidate を生成できませんでした。</p>` : `
+        <div class="table-scroll">
+          <table class="debug-table placement-candidate-comparison-table">
+            <thead>
+              <tr>
+                <th>rank</th>
+                <th>candidate</th>
+                <th>scale MAE / max / RMSE</th>
+                <th>translate X MAE / max / RMSE</th>
+                <th>translate Y MAE / max / RMSE</th>
+                <th>translate euclidean mean / max</th>
+                <th>weightedScore</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${comparison.directCandidates.map((item) => `
+                <tr>
+                  <td>${item.rankByWeightedScore}</td>
+                  <td>${escapeHtml(item.id)}</td>
+                  <td>${formatNullableNumber(item.metrics.maeScaleRatio)} / ${formatNullableNumber(item.metrics.maxScaleRatio)} / ${formatNullableNumber(item.metrics.rmseScaleRatio)}</td>
+                  <td>${formatNullableNumber(item.metrics.maeTranslateAfterScaleImageX)} / ${formatNullableNumber(item.metrics.maxTranslateAfterScaleImageX)} / ${formatNullableNumber(item.metrics.rmseTranslateAfterScaleImageX)}</td>
+                  <td>${formatNullableNumber(item.metrics.maeTranslateAfterScaleImageY)} / ${formatNullableNumber(item.metrics.maxTranslateAfterScaleImageY)} / ${formatNullableNumber(item.metrics.rmseTranslateAfterScaleImageY)}</td>
+                  <td>${formatNullableNumber(item.metrics.meanTranslateAfterScaleImageEuclidean)} / ${formatNullableNumber(item.metrics.maxTranslateAfterScaleImageEuclidean)}</td>
+                  <td>${formatNullableNumber(item.metrics.weightedScore)}</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        </div>
+      `}
+    </div>
+  `
+}
+
+function renderPlacementFunctionRoundtripCandidateOptions(
+  candidate: PlacementFunctionCandidate | null,
+  selectedCandidateId: PlacementFunctionRoundtripCandidateId | null,
+) {
+  const candidateIds = getPlacementFunctionRoundtripCandidateIds(candidate)
+  if (candidateIds.length === 0) {
+    return `<option value="center_derived_linear_v1">center_derived_linear_v1</option>`
+  }
+  return candidateIds.map((candidateId) => `
+    <option value="${escapeHtml(candidateId)}" ${candidateId === selectedCandidateId ? "selected" : ""}>${escapeHtml(candidateId)}</option>
+  `).join("")
+}
+
+function renderPlacementFunctionRoundtripValidationHtml(roundtrip: PlacementFunctionRoundtripPreviewState) {
+  return `
+    <dl class="review-grid">
+      <div><dt>status</dt><dd>${roundtrip.status}</dd></div>
+      <div><dt>sampleIndex</dt><dd>${roundtrip.sampleIndex ?? "-"}</dd></div>
+      <div><dt>candidateId</dt><dd>${roundtrip.candidateId ?? "-"}</dd></div>
+      <div><dt>error</dt><dd>${escapeHtml(roundtrip.errorMessage ?? "-")}</dd></div>
+    </dl>
+    <h4>estimatedTransform</h4>
+    ${renderPlacementFunctionRoundtripEstimatedTransformHtml(roundtrip.estimatedTransform)}
+    <h4>matrix error</h4>
+    ${renderPlacementFunctionRoundtripMatrixErrorHtml(roundtrip.matrixError)}
+    <h4>pose error</h4>
+    ${renderPlacementFunctionRoundtripPoseErrorHtml(roundtrip.poseError)}
+    <h4>landmark diff</h4>
+    ${renderPlacementFunctionRoundtripLandmarkDiffHtml(roundtrip.landmarkDiffSummary)}
+  `
+}
+
+function renderPlacementFunctionRoundtripComparisonHtml(comparison: PlacementFunctionRoundtripComparisonState) {
+  const orderByCandidateId = new Map(comparison.candidateIds.map((candidateId, index) => [candidateId, index]))
+  const sortedResults = [...comparison.results].sort((a, b) => {
+    const scoreCompare = comparePlacementFunctionRoundtripScore(a.scores.roundtripScore, b.scores.roundtripScore)
+    if (scoreCompare !== 0) {
+      return scoreCompare
+    }
+    return (orderByCandidateId.get(a.candidateId) ?? 0) - (orderByCandidateId.get(b.candidateId) ?? 0)
+  })
+  return `
+    <dl class="review-grid">
+      <div><dt>status</dt><dd>${comparison.status}</dd></div>
+      <div><dt>sampleIndex</dt><dd>${comparison.sampleIndex ?? "-"}</dd></div>
+      <div><dt>candidateIds</dt><dd>${comparison.candidateIds.map((candidateId) => escapeHtml(candidateId)).join(", ")}</dd></div>
+      <div><dt>bestByRoundtripScoreCandidateId</dt><dd>${comparison.bestByRoundtripScoreCandidateId ?? "-"}</dd></div>
+      <div><dt>bestByMatrixNormalizedScoreCandidateId</dt><dd>${comparison.bestByMatrixNormalizedScoreCandidateId ?? "-"}</dd></div>
+      <div><dt>previewPredictedCandidateId</dt><dd>${comparison.previewPredictedCandidateId ?? "-"}</dd></div>
+      <div><dt>error</dt><dd>${escapeHtml(comparison.errorMessage ?? "-")}</dd></div>
+    </dl>
+    ${sortedResults.length === 0 ? `<p class="placeholder-text">候補をまとめて再レンダー比較すると結果を表示します。</p>` : `
+      <div class="table-scroll">
+        <table class="debug-table placement-roundtrip-comparison-table">
+          <thead>
+            <tr>
+              <th>candidateId</th>
+              <th>status</th>
+              <th>estimated scale</th>
+              <th>estimated translate X / Y</th>
+              <th>abs tx / ty / tz</th>
+              <th>abs txOverNegTz / tyOverNegTz / invNegTz</th>
+              <th>poseDiffMagnitude</th>
+              <th>landmark mean / max</th>
+              <th>matrixNormalizedScore</th>
+              <th>matrixRawTranslationScore</th>
+              <th>roundtripScore</th>
+              <th>reason</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${sortedResults.map((result) => `
+              <tr>
+                <td>${escapeHtml(result.candidateId)}</td>
+                <td>${escapeHtml(result.status)}</td>
+                <td>${formatNullableNumber(result.estimatedTransform?.scaleRatio ?? null)}</td>
+                <td>${formatNullableNumber(result.estimatedTransform?.translateAfterScaleImageX ?? null)} / ${formatNullableNumber(result.estimatedTransform?.translateAfterScaleImageY ?? null)}</td>
+                <td>${formatNullableNumber(result.matrixError?.absTxError ?? null)} / ${formatNullableNumber(result.matrixError?.absTyError ?? null)} / ${formatNullableNumber(result.matrixError?.absTzError ?? null)}</td>
+                <td>${formatNullableNumber(result.matrixError?.absTxOverNegTzError ?? null)} / ${formatNullableNumber(result.matrixError?.absTyOverNegTzError ?? null)} / ${formatNullableNumber(result.matrixError?.absInvNegTzError ?? null)}</td>
+                <td>${formatNullableNumber(result.poseError?.poseDiffMagnitude ?? null)}</td>
+                <td>${formatNullableNumber(result.landmarkDiffSummary?.mean2dDistance ?? null)} / ${formatNullableNumber(result.landmarkDiffSummary?.max2dDistance ?? null)}</td>
+                <td>${formatNullableNumber(result.scores.matrixNormalizedScore)}</td>
+                <td>${formatNullableNumber(result.scores.matrixRawTranslationScore)}</td>
+                <td>${formatNullableNumber(result.scores.roundtripScore)}</td>
+                <td>${escapeHtml(result.skippedReason ?? result.errorMessage ?? "-")}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    `}
+  `
+}
+
+function comparePlacementFunctionRoundtripScore(a: number | null, b: number | null) {
+  const aFinite = isFiniteNumber(a)
+  const bFinite = isFiniteNumber(b)
+  if (aFinite && bFinite) {
+    return a - b
+  }
+  if (aFinite) {
+    return -1
+  }
+  if (bFinite) {
+    return 1
+  }
+  return 0
+}
+
+function renderPlacementFunctionRoundtripEstimatedTransformHtml(
+  transform: PlacementFunctionRoundtripEstimatedTransform | null,
+) {
+  if (!transform) {
+    return `<p class="placeholder-text">再レンダー検証後に estimatedTransform を表示します。</p>`
+  }
+  return `
+    <dl class="review-grid">
+      <div><dt>scaleRatio</dt><dd>${formatNullableNumber(transform.scaleRatio)}</dd></div>
+      <div><dt>translateAfterScaleImageX</dt><dd>${formatNullableNumber(transform.translateAfterScaleImageX)}</dd></div>
+      <div><dt>translateAfterScaleImageY</dt><dd>${formatNullableNumber(transform.translateAfterScaleImageY)}</dd></div>
+      <div><dt>translateAfterScaleWorkX</dt><dd>${formatNullableNumber(transform.translateAfterScaleWorkX)}</dd></div>
+      <div><dt>translateAfterScaleWorkY</dt><dd>${formatNullableNumber(transform.translateAfterScaleWorkY)}</dd></div>
+    </dl>
+  `
+}
+
+function renderPlacementFunctionRoundtripMatrixErrorHtml(error: PlacementFunctionRoundtripMatrixError | null) {
+  if (!error) {
+    return `<p class="placeholder-text">再レンダー検証後に original / predicted matrixFeatures の差分を表示します。</p>`
+  }
+  return `
+    <dl class="review-grid">
+      <div><dt>tx / ty / tz</dt><dd>${formatNullableNumber(error.txError)} / ${formatNullableNumber(error.tyError)} / ${formatNullableNumber(error.tzError)}</dd></div>
+      <div><dt>abs tx / ty / tz</dt><dd>${formatNullableNumber(error.absTxError)} / ${formatNullableNumber(error.absTyError)} / ${formatNullableNumber(error.absTzError)}</dd></div>
+      <div><dt>negTz</dt><dd>${formatNullableNumber(error.negTzError)} / abs ${formatNullableNumber(error.absNegTzError)}</dd></div>
+      <div><dt>invNegTz</dt><dd>${formatNullableNumber(error.invNegTzError)} / abs ${formatNullableNumber(error.absInvNegTzError)}</dd></div>
+      <div><dt>txOverNegTz</dt><dd>${formatNullableNumber(error.txOverNegTzError)} / abs ${formatNullableNumber(error.absTxOverNegTzError)}</dd></div>
+      <div><dt>tyOverNegTz</dt><dd>${formatNullableNumber(error.tyOverNegTzError)} / abs ${formatNullableNumber(error.absTyOverNegTzError)}</dd></div>
+    </dl>
+  `
+}
+
+function renderPlacementFunctionRoundtripPoseErrorHtml(error: PlacementFunctionRoundtripPoseError | null) {
+  if (!error) {
+    return `<p class="placeholder-text">再レンダー検証後に returnedPose の yaw / pitch / roll 差分を表示します。</p>`
+  }
+  return `
+    <dl class="review-grid">
+      <div><dt>yaw / pitch / roll</dt><dd>${formatNullableNumber(error.yawError)} / ${formatNullableNumber(error.pitchError)} / ${formatNullableNumber(error.rollError)}</dd></div>
+      <div><dt>poseDiffMagnitude</dt><dd>${formatNullableNumber(error.poseDiffMagnitude)}</dd></div>
+    </dl>
+  `
+}
+
+function renderPlacementFunctionRoundtripLandmarkDiffHtml(
+  summary: PlacementFunctionRoundtripLandmarkDiffSummary | null,
+) {
+  if (!summary) {
+    return `<p class="placeholder-text">known target478 と predicted478 を比較できる場合だけ表示します。</p>`
+  }
+  return `
+    <dl class="review-grid">
+      <div><dt>mean2dDistance</dt><dd>${formatNullableNumber(summary.mean2dDistance)}</dd></div>
+      <div><dt>max2dDistance</dt><dd>${formatNullableNumber(summary.max2dDistance)}</dd></div>
+      <div><dt>comparedCount</dt><dd>${formatNullableCount(summary.comparedCount)}</dd></div>
+    </dl>
   `
 }
 
@@ -19227,9 +20987,36 @@ function buildPlacementFunctionAnalysisExport(): PlacementFunctionAnalysisExport
       positionCorrelationSummary: state.placementAnalysis.summary.positionCorrelationSummary,
       verticalPositionSummary: state.placementAnalysis.summary.verticalPositionSummary,
       anchorLandmarkSummary: state.placementAnalysis.summary.anchorLandmarkSummary,
+      roundtripValidationSummary: stripPlacementFunctionRoundtripPreviewState(
+        state.placementAnalysis.roundtripPreview,
+      ),
+      roundtripComparisonSummary: stripPlacementFunctionRoundtripComparisonState(
+        state.placementAnalysis.roundtripComparison,
+      ),
     },
     samples: state.placementAnalysis.samples.map(stripPlacementFunctionAnalysisSampleState),
   }
+}
+
+function stripPlacementFunctionRoundtripPreviewState(
+  roundtrip: PlacementFunctionRoundtripPreviewState,
+): PlacementFunctionRoundtripValidationSummary {
+  const {
+    predictedLandmarks478ForPreview: _predictedLandmarks478ForPreview,
+    ...summary
+  } = roundtrip
+  return summary
+}
+
+function stripPlacementFunctionRoundtripComparisonState(
+  comparison: PlacementFunctionRoundtripComparisonState,
+): PlacementFunctionRoundtripComparisonSummary {
+  const {
+    previewPredictedLandmarks478: _previewPredictedLandmarks478,
+    previewPredictedCandidateId: _previewPredictedCandidateId,
+    ...summary
+  } = comparison
+  return summary
 }
 
 function stripPlacementFunctionAnalysisSampleState(
@@ -19321,6 +21108,14 @@ function buildPlacementFunctionAnalysisCsv(
     "targetCenterImageErrorY",
     "translateAfterScaleImageErrorX",
     "translateAfterScaleImageErrorY",
+    "bestDirectCandidateId",
+    "bestDirectEstimatedScaleRatio",
+    "bestDirectEstimatedTranslateAfterScaleImageX",
+    "bestDirectEstimatedTranslateAfterScaleImageY",
+    "bestDirectScaleRatioError",
+    "bestDirectTranslateAfterScaleImageXError",
+    "bestDirectTranslateAfterScaleImageYError",
+    "bestDirectTranslateAfterScaleImageEuclideanError",
     "baseCenterWorkX",
     "baseCenterWorkY",
     "baseWidthWork",
@@ -19371,8 +21166,12 @@ function buildPlacementFunctionAnalysisCsv(
       summary,
     ]),
   )
+  const bestDirectCandidate = getPlacementFunctionBestDirectCandidate(candidate)
   const rows = samples.map((sample) => {
     const prediction = predictPlacementFunctionCandidateForSample(candidate, sample)
+    const bestDirectPrediction = bestDirectCandidate
+      ? predictPlacementFunctionDirectCandidateForSample(bestDirectCandidate, sample)
+      : null
     const conditionStats = conditionStatsByKey.get(sample.conditionKey)
     const positionCorrelation = positionCorrelationByScale.get(
       formatPlacementScaleKey(sample.knownTransform.scaleRatio),
@@ -19433,6 +21232,14 @@ function buildPlacementFunctionAnalysisCsv(
       prediction?.targetCenterImageErrorY ?? "",
       prediction?.translateAfterScaleImageErrorX ?? "",
       prediction?.translateAfterScaleImageErrorY ?? "",
+      bestDirectCandidate?.id ?? "",
+      bestDirectPrediction?.estimatedScaleRatio ?? "",
+      bestDirectPrediction?.estimatedTranslateAfterScaleImageX ?? "",
+      bestDirectPrediction?.estimatedTranslateAfterScaleImageY ?? "",
+      bestDirectPrediction?.scaleRatioError ?? "",
+      bestDirectPrediction?.translateAfterScaleImageXError ?? "",
+      bestDirectPrediction?.translateAfterScaleImageYError ?? "",
+      bestDirectPrediction?.translateAfterScaleImageEuclideanError ?? "",
       sample.basePlacement.centerWorkX,
       sample.basePlacement.centerWorkY,
       sample.basePlacement.widthWork,

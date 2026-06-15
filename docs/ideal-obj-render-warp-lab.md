@@ -149,11 +149,34 @@ estimatedTranslateAfterScaleImageY =
   estimatedTargetCenterImageY - basePlacement.centerImageY * estimatedScaleRatio
 ```
 
+matrix-to-knownTransform direct model（行列から既知変換を直接推定するモデル）も candidate JSON / UI の比較対象として出力します。目的は、currentMatrix と同じ `facialTransformationMatrix` を返すように、理想 OBJ 顔を image-normalized coordinate 上でどの `scaleRatio` / `translateAfterScaleImageX` / `translateAfterScaleImageY` に置くべきかを推定することです。
+
+現行の center-derived model は比較基準として残します。追加 direct model では `targetCenter` を経由せず、`matrixFeatures` から `knownTransform.scaleRatio` / `knownTransform.translateAfterScaleImageX` / `knownTransform.translateAfterScaleImageY` を直接推定します。direct model の fitting も repeat sample が同一条件を過重にしないよう、usable samples を `conditionKey` ごとに平均する `condition_mean` を使います。
+
+追加比較モデルは以下です。
+
+- `direct_linear_normalized_v1`: `txOverNegTz` / `tyOverNegTz` / `invNegTz` を使う一次モデル
+- `direct_linear_raw_matrix_v1`: `tx` / `ty` / `tz` を使う一次モデル
+- `direct_linear_split_v1`: 出力ごとに `ty, tz`、`tx, tz`、`ty, tz` を使い分ける一次モデル
+- `direct_quadratic_normalized_v1`: 正規化特徴量と二次・交差項を使う過学習確認用モデル
+
+candidate JSON には既存 top-level の `features` / `models` / `metrics` を center-derived model のまま残し、追加 field として `directTransformCandidates` と `candidateComparison` を含めます。右ペインの配置関数解析にも候補比較 table を表示します。`candidateComparison.bestDirectCandidateId` は `weightedScore = maeScaleRatio + meanTranslateAfterScaleImageEuclidean` が最小の direct candidate を指します。
+
+`anchorLandmark` は補助 debug として残しますが、`baseAnchorSource = inverse_known_transform` の場合は knownTransform と一致して当然です。そのため、anchor 由来の translate error は direct model の主評価には使いません。
+
+Placement Function Analysis（配置関数解析）では、transform error（既知変換との差分）だけでなく、selected sample に対する roundtrip validation（再レンダー検証）も行います。roundtrip validation では、candidate が推定した `scaleRatio` / `translateAfterScaleImageX` / `translateAfterScaleImageY` で理想 OBJ 顔を再レンダーし、MediaPipe に再入力します。目的は、再入力で得た `predictedMatrix` / `predictedMatrixFeatures` が、元 sample の `facialTransformationMatrix` / `matrixFeatures` とどれくらい一致するかを確認することです。
+
+roundtrip validation の初期 candidate は `candidateComparison.bestDirectCandidateId` があればそれを使い、なければ `center_derived_linear_v1` に fallback します。右ペインでは selected sample のみを対象に実行し、全サンプル一括 validation は扱いません。結果 summary には estimated transform、matrix feature error、returnedPose error、可能な場合の 2D landmark diff を表示します。
+
+selected sample に対する roundtrip candidate comparison（再レンダー候補比較）では、`center_derived_linear_v1` と direct candidates を同じ sample の `matrixFeatures` からそれぞれ `estimatedTransform` に変換し、同じ render / MediaPipe detect 経路へ順番に通します。目的は `knownTransform` の数値一致だけを見ることではなく、再レンダー後に得られる `predictedMatrixFeatures` が元 sample の `matrixFeatures` にどれだけ近いかを比較することです。主な比較指標は `tx` / `ty` / `tz`、`txOverNegTz` / `tyOverNegTz` / `invNegTz`、returnedPose の yaw / pitch / roll、可能な場合の 478点 landmark diff です。
+
+配置関数解析プレビューでは、known target 478 と predicted roundtrip 478 を重ねて比較します。roundtrip candidate comparison 後は、best candidate の predicted 478 だけを preview state に保持し、追加 toggle で表示できます。各 candidate の predicted 478 配列は JSON export には含めません。`base478` / `base bounds` は変換前478点の補助 debug であり、roundtrip validation / roundtrip candidate comparison の主対象ではないため、toggle は残しますがデフォルト非表示にします。
+
 使える sample 数が足りない、特徴量が単一値で回帰が特異になる、matrix features が不正な場合は candidate を作らず、右ペインに理由を表示します。
 
 candidate metrics は `Target Center Image`、`Scale Ratio`、`Derived Translate After Scale Image` に分けて表示します。candidate JSON の `schemaVersion` は `matrix_to_known_image_transform_function_candidate_v1`、`targetCoordinateSpace` は `image_normalized_coordinate` です。candidate JSON には optional field として `trainingDataSummary` を含め、学習に使った `scaleRatio` の範囲、値、scale 別 sample 数を記録します。
 
-CSV export には既存の image coordinate 系の列を維持したうえで、`repeatIndex`、`repeatCount`、`conditionKey`、`conditionNegTzMean` / `StdDev` / `Range`、`conditionInvNegTzMean` / `StdDev` / `Range`、`scalePositionCorrCenterYNegTz`、`scalePositionCorrCenterXNegTz` を含めます。さらに anchor 検証用として `anchorLandmarkIndex`、target/base anchor の image / work coordinate、`baseAnchorSource`、anchor 由来の `translateAfterScale` と knownTransform との差分を出します。
+CSV export には既存の image coordinate 系の列を維持したうえで、`repeatIndex`、`repeatCount`、`conditionKey`、`conditionNegTzMean` / `StdDev` / `Range`、`conditionInvNegTzMean` / `StdDev` / `Range`、`scalePositionCorrCenterYNegTz`、`scalePositionCorrCenterXNegTz` を含めます。さらに anchor 検証用として `anchorLandmarkIndex`、target/base anchor の image / work coordinate、`baseAnchorSource`、anchor 由来の `translateAfterScale` と knownTransform の差分を出します。direct model については列の肥大化を避けるため、best direct candidate の推定値と誤差のみを追加します。
 
 この解析では `current478`、`current478 bounds`、current face、live video、live overlay を一切使いません。`current478 bounds` は teacher data や reference placement として扱いません。通常の live overlay、`alignedRenderedIdeal478`、`bounds_center_scale_v1`、stale / fallback / token mismatch guards、render pose debug、mesh warp、production Shape Warp へは接続しません。
 
