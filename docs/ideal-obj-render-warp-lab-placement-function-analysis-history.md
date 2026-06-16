@@ -4,6 +4,8 @@ Ideal OBJ Render Warp Lab 配置関数解析の検証履歴
 
 このドキュメントは、`tools/ideal-obj-render-warp-lab` で進めてきた Placement Function Analysis（配置関数解析）の検証履歴、判断理由、現時点の結論を後から読み返すためのメモです。実装仕様を固定するものではなく、今後の実装判断に使えるように候補名、式、評価指標、暫定判断を整理します。
 
+現在の扱い: `direct_piecewise_ty3_linear_normalized_v1` は live runtime では deprecated / failed experiment として廃止済みです。正面 pose の matrix-based placement function としては過去検証に残しますが、yaw / pitch / roll を含む live alignment の主導線にはしません。live runtime は matrix-based placement を使わず、次に `semantic_5pt_center_scale_v1` 方向へ移行します。
+
 ## 1. この検証で解こうとしている問題
 
 Placement Function Analysis（配置関数解析）の目的は、理想 OBJ（理想 3D 顔形状ファイル）を MediaPipe（顔検出ライブラリ）に通して得た `facialTransformationMatrix`（顔変換行列）から、理想 OBJ 顔をカメラ画像上に置くための transform（変換）を推定することです。
@@ -445,7 +447,7 @@ direct_piecewise_inv3_linear_normalized_v1:
 
 ## 13. 現時点の結論
 
-現時点の recommended placement function（推奨配置関数）は以下です。
+当時の Placement Function Analysis 内での recommended placement function（推奨配置関数）は以下です。
 
 ```text
 recommended placement function:
@@ -464,7 +466,7 @@ recommended placement function:
 ```text
 - Placement Function Analysis の recommended candidate にする
 - roundtrip validation の初期選択 candidate にする
-- 次の alignment 実験で最初に使う candidate にする
+- 次の alignment 実験で最初に使う candidate にする（現在は live runtime から廃止済み）
 - ただし他候補は削除しない
 - max / worst conditions の監視は続ける
 ```
@@ -479,11 +481,11 @@ direct_linear_normalized_v1
 center_derived_linear_v1
 ```
 
-これは本番確定ではなく、Placement Function Analysis（配置関数解析）内での recommended candidate（推奨候補）としての暫定採用です。
+これは本番確定ではなく、Placement Function Analysis（配置関数解析）内での recommended candidate（推奨候補）としての暫定採用でした。live runtime では姿勢変化時の scale / translate がズレるため、現在は deprecated / failed experiment として扱います。
 
 ## 14. まだ残っている注意点
 
-`direct_piecewise_ty3_linear_normalized_v1` は mean（平均）と p95（95 パーセンタイル）で強い一方、max roundtripScore（最大再レンダースコア）は最良ではありません。
+`direct_piecewise_ty3_linear_normalized_v1` は正面 pose の analysis では mean（平均）と p95（95 パーセンタイル）で強い一方、max roundtripScore（最大再レンダースコア）は最良ではありませんでした。さらに live runtime の yaw / pitch / roll を含む姿勢では scale / translate が大きくズレたため、live alignment には使いません。
 
 `tyOverNegTz` の一部 segment（分割区間）では、まだ worst condition（最悪条件）が残ります。そのため、本番確定ではなく、現時点の recommended / default candidate（推奨・既定候補）として扱います。
 
@@ -501,12 +503,12 @@ center_derived_linear_v1
 次のステップは以下です。
 
 ```text
-1. direct_piecewise_ty3_linear_normalized_v1 を recommended candidate として UI / export に明示する
+1. direct_piecewise_ty3_linear_normalized_v1 は過去検証 candidate として UI / export に残す
 
 2. selected sample roundtrip validation の default candidate を recommended candidate に寄せる
 
-3. alignment 実験で direct_piecewise_ty3 を使い、
-   actual current matrix から idealTarget478_image を作れるか検証する
+3. live alignment は matrix-based placement を廃止し、
+   semantic landmark based placement へ移行する
 
 4. worst conditions の segment を確認し、
    必要なら tyOverNegTz_s1 など特定 segment の改善を行う
@@ -558,40 +560,36 @@ segment（分割区間）:
 gate feature（分割条件に使う特徴量）によって分けられた区間。各 segment（分割区間）ごとに別の一次関数を持つ。
 
 recommended candidate（推奨候補）:
-現時点で最初に使う候補。今回の結論では `direct_piecewise_ty3_linear_normalized_v1` を指す。ただし、本番確定ではなく、比較候補や worst conditions（最悪条件）の監視は継続する。
+Placement Function Analysis 内で最初に使う候補。当時の結論では `direct_piecewise_ty3_linear_normalized_v1` を指していました。ただし、本番確定ではなく、現在の live runtime では deprecated / failed experiment として扱います。
 
-## 17. 2026-06 Live Alignment Unification
+## 17. 2026-06 Live Alignment Cleanup
 
-MP4 再生中の Pose Mapping runtime の live alignment は、`direct_piecewise_ty3_linear_normalized_v1` 固定に一本化した。
+MP4 再生中の Pose Mapping runtime から、`direct_piecewise_ty3_linear_normalized_v1` 固定の live alignment を削除しました。
 
-現在の runtime は `currentMatrix` から `buildPlacementFunctionMatrixFeatures()` で `matrixFeatures` を作り、placement function candidate から以下を推定する。
+削除した live runtime 経路:
 
-- `scaleRatio`
-- `translateAfterScaleImageX`
-- `translateAfterScaleImageY`
+- `currentMatrix -> matrixFeatures -> placement function -> scaleRatio / translateAfterScaleImageX/Y`
+- `direct_piecewise_ty3_linear_normalized_v1`
+- `direct_linear_normalized_v1` fallback
+- `DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE`
+- `DEFAULT_LIVE_PLACEMENT_FUNCTION_DIRECT_FALLBACK_CANDIDATE`
 
-推定値は `renderedIdeal478` に image-normalized coordinate のまま適用する。
+現在の runtime は旧 mode に fallback しません。
 
-```text
-aligned.x = renderedIdeal.x * scaleRatio + translateAfterScaleImageX
-aligned.y = renderedIdeal.y * scaleRatio + translateAfterScaleImageY
-aligned.z = renderedIdeal.z
-```
+- `bounds_center_scale_v1` に戻さない
+- `mediapipe_placement_center_scale` に戻さない
+- `direct_linear_normalized_v1` fallback に戻さない
+- `state.placementAnalysis.candidate` を live runtime に接続しない
 
-以下の legacy alignment は removed legacy として廃止した。fallback / 比較用としても live runtime には残さない。
-
-- `bounds_center_scale_v1`
-- `mediapipe_placement_center_scale`
-
-placement function を評価できない場合は旧 mode に戻さず、`alignmentStatus = skipped_invalid_placement_function` と `placementFunctionStatus` で可視化する。
+semantic placement 実装まで、live alignment は以下で skip します。
 
 ```text
-applied
-skipped_missing_matrix
-skipped_invalid_matrix_features
-skipped_invalid_candidate
-skipped_invalid_transform
-skipped_invalid_aligned_landmarks
+alignmentStatus = skipped_no_live_alignment_method
+alignmentSkippedReason = no_live_alignment_method
+alignmentMethod = none
+liveAlignmentStatus = skipped_no_live_alignment_method
+alignedRenderedIdeal478 = null
+meshTargetVertices = null
 ```
 
-今回の到達点は `alignedRenderedIdeal478` / `meshTargetVertices` の生成までであり、WebGL mesh warp の画像変形本線化は別作業とする。
+次の live alignment 方針は、`current478` と `renderedIdeal478` の同じ固定ランドマークから center / scale line を作る `semantic_5pt_center_scale_v1` です。WebGL mesh warp の画像変形本線化は別作業とします。

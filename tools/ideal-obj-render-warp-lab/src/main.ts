@@ -958,18 +958,16 @@ type RuntimeRenderPoseSign = {
 }
 
 type PoseMappingCurrentFaceStatus = "detected" | "missing" | "invalid"
-type LivePlacementFunctionCandidateId = "direct_piecewise_ty3_linear_normalized_v1"
-type PlacementFunctionLiveStatus =
-  | "applied"
-  | "skipped_missing_matrix"
-  | "skipped_invalid_matrix_features"
-  | "skipped_invalid_candidate"
-  | "skipped_invalid_transform"
-  | "skipped_invalid_aligned_landmarks"
+type LiveAlignmentMethod =
+  | "none"
+  | "semantic_5pt_center_scale_v1"
+type LiveAlignmentStatus =
+  | "skipped_no_live_alignment_method"
 type PoseMappingAlignmentStatus =
   | "completed"
   | "skipped_no_current_face"
   | "skipped_no_rendered_ideal"
+  | "skipped_no_live_alignment_method"
   | "skipped_missing_obj"
   | "skipped_missing_profile"
   | "skipped_profile_mismatch"
@@ -981,6 +979,7 @@ type PoseMappingAlignmentSkippedReason =
   | "none"
   | "no_current_face"
   | "no_rendered_ideal"
+  | "no_live_alignment_method"
   | "missing_obj"
   | "missing_profile"
   | "profile_mismatch"
@@ -1249,25 +1248,12 @@ type PlacementDebugState = {
   ideal: PlacementDebugSide
   comparison: PlacementDebugComparison
 }
-type PlacementFunctionAlignmentDebug = {
-  candidateId: LivePlacementFunctionCandidateId
-  status: PlacementFunctionLiveStatus
-  matrixFeatures: PlacementFunctionMatrixFeatures
-  scaleRatio: number | null
-  translateAfterScaleImageX: number | null
-  translateAfterScaleImageY: number | null
-  alignedLandmarkCount: number
-  invalidAlignedLandmarkCount: number
-  evaluationDebug: PlacementFunctionCandidateEvaluationDebug | null
-  errorMessage: string | null
-}
 type PoseMappingAlignmentState = {
   status: PoseMappingAlignmentStatus
-  alignmentMethod: LivePlacementFunctionCandidateId
+  alignmentMethod: LiveAlignmentMethod
+  liveAlignmentStatus: LiveAlignmentStatus
   rotationApplied: false
   alignmentSkippedReason: PoseMappingAlignmentSkippedReason
-  placementFunctionCandidateId: LivePlacementFunctionCandidateId
-  placementFunctionStatus: PlacementFunctionLiveStatus
   placementScaleRatio: number | null
   renderedIdealStatus: RenderedIdealStatus
   alignedLandmarkCount: number
@@ -1280,8 +1266,6 @@ type PoseMappingAlignmentState = {
   renderedIdealBoundsImage: PoseMappingBounds | null
   alignedRenderedIdealBoundsImage: PoseMappingBounds | null
   displayedContentRect: Rect | null
-  matrixFeatures: PlacementFunctionMatrixFeatures
-  placementFunctionDebug: PlacementFunctionAlignmentDebug
   placementDebug: PlacementDebugState
   excludedReasonCounts: PoseMappingExcludedReasonCounts
   displacementSummary: PoseMappingDisplacementSummary
@@ -2129,12 +2113,11 @@ type PlacementMappingSample = {
   currentBoundsImage: BoundsPlacement | null
   idealBoundsImage: BoundsPlacement | null
   alignedIdealBoundsImage: BoundsPlacement | null
-  placementFunctionCandidateId: LivePlacementFunctionCandidateId
-  placementFunctionStatus: PlacementFunctionLiveStatus
+  alignmentMethod: LiveAlignmentMethod
+  liveAlignmentStatus: LiveAlignmentStatus
   scaleRatio: number | null
   translateAfterScaleImageX: number | null
   translateAfterScaleImageY: number | null
-  matrixFeatures: PlacementFunctionMatrixFeatures
   alignedLandmarkCount: number
   invalidAlignedLandmarkCount: number
   videoAspectRatio: number | null
@@ -3737,265 +3720,6 @@ const realtimeDriveModeLabels: Record<RealtimeDriveMode, string> = {
   interval_legacy: "旧setInterval 一定間隔タイマー",
 }
 
-const DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE_ID: LivePlacementFunctionCandidateId =
-  "direct_piecewise_ty3_linear_normalized_v1"
-const DEFAULT_LIVE_PLACEMENT_FUNCTION_DIRECT_FALLBACK_CANDIDATE: PlacementFunctionDirectTransformCandidate = {
-  id: "direct_linear_normalized_v1",
-  modelType: "linear_v1",
-  targetCoordinateSpace: "image_normalized_coordinate",
-  transformOrder: "scale_then_translate",
-  fittingAggregation: "condition_mean",
-  features: {
-    scaleRatio: ["intercept", "txOverNegTz", "tyOverNegTz", "invNegTz"],
-    translateAfterScaleImageX: ["intercept", "txOverNegTz", "tyOverNegTz", "invNegTz"],
-    translateAfterScaleImageY: ["intercept", "txOverNegTz", "tyOverNegTz", "invNegTz"],
-  },
-  models: {
-    scaleRatio: {
-      intercept: -0.217236,
-      coefficients: {
-        txOverNegTz: 0.011313,
-        tyOverNegTz: 0.101563,
-        invNegTz: 87.348055,
-      },
-    },
-    translateAfterScaleImageX: {
-      intercept: 0.608787,
-      coefficients: {
-        txOverNegTz: 0.475756,
-        tyOverNegTz: -0.05069,
-        invNegTz: -43.369023,
-      },
-    },
-    translateAfterScaleImageY: {
-      intercept: 0.61998,
-      coefficients: {
-        txOverNegTz: -0.004392,
-        tyOverNegTz: -0.902063,
-        invNegTz: -42.013636,
-      },
-    },
-  },
-  metrics: {
-    maeScaleRatio: 0.014701,
-    maxScaleRatio: 0.09211,
-    rmseScaleRatio: 0.020548,
-    maeTranslateAfterScaleImageX: 0.007378,
-    maxTranslateAfterScaleImageX: 0.046075,
-    rmseTranslateAfterScaleImageX: 0.010342,
-    maeTranslateAfterScaleImageY: 0.007742,
-    maxTranslateAfterScaleImageY: 0.05197,
-    rmseTranslateAfterScaleImageY: 0.010953,
-    meanTranslateAfterScaleImageEuclidean: 0.010758,
-    maxTranslateAfterScaleImageEuclidean: 0.069454,
-    weightedScore: 0.025459,
-  },
-}
-const DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE: PlacementFunctionPiecewiseTransformCandidate = {
-  id: DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE_ID,
-  family: "direct_piecewise_linear",
-  modelType: "piecewise_linear_v1",
-  targetCoordinateSpace: "image_normalized_coordinate",
-  transformOrder: "scale_then_translate",
-  fittingAggregation: "condition_mean",
-  gate: {
-    type: "single_feature_quantile",
-    features: ["tyOverNegTz"],
-    thresholds: {
-      tyOverNegTz: [-0.000898, 0.091875],
-    },
-    segmentCount: 3,
-    minSegmentSampleCount: 12,
-    fallbackCandidateId: "direct_linear_normalized_v1",
-  },
-  features: {
-    scaleRatio: ["intercept", "txOverNegTz", "tyOverNegTz", "invNegTz"],
-    translateAfterScaleImageX: ["intercept", "txOverNegTz", "tyOverNegTz", "invNegTz"],
-    translateAfterScaleImageY: ["intercept", "txOverNegTz", "tyOverNegTz", "invNegTz"],
-  },
-  segments: [
-    {
-      segmentId: "tyOverNegTz_s1",
-      gateRange: [
-        {
-          featureName: "tyOverNegTz",
-          min: null,
-          max: -0.000898,
-          lowerInclusive: true,
-          upperInclusive: true,
-        },
-      ],
-      sampleCount: 92,
-      usableForFit: true,
-      skippedReason: null,
-      models: {
-        scaleRatio: {
-          intercept: -0.201182,
-          coefficients: {
-            txOverNegTz: 0.0055,
-            tyOverNegTz: 0.097443,
-            invNegTz: 86.323258,
-          },
-        },
-        translateAfterScaleImageX: {
-          intercept: 0.601019,
-          coefficients: {
-            txOverNegTz: 0.478697,
-            tyOverNegTz: -0.045332,
-            invNegTz: -42.862295,
-          },
-        },
-        translateAfterScaleImageY: {
-          intercept: 0.612546,
-          coefficients: {
-            txOverNegTz: -0.001455,
-            tyOverNegTz: -0.880709,
-            invNegTz: -41.476995,
-          },
-        },
-      },
-      metrics: {
-        maeScaleRatio: 0.015447,
-        maxScaleRatio: 0.074957,
-        rmseScaleRatio: 0.020934,
-        maeTranslateAfterScaleImageX: 0.007771,
-        maxTranslateAfterScaleImageX: 0.037221,
-        rmseTranslateAfterScaleImageX: 0.010581,
-        maeTranslateAfterScaleImageY: 0.008341,
-        maxTranslateAfterScaleImageY: 0.043637,
-        rmseTranslateAfterScaleImageY: 0.011596,
-        meanTranslateAfterScaleImageEuclidean: 0.011447,
-        maxTranslateAfterScaleImageEuclidean: 0.057355,
-        weightedScore: 0.026894,
-      },
-    },
-    {
-      segmentId: "tyOverNegTz_s2",
-      gateRange: [
-        {
-          featureName: "tyOverNegTz",
-          min: -0.000898,
-          max: 0.091875,
-          lowerInclusive: false,
-          upperInclusive: true,
-        },
-      ],
-      sampleCount: 91,
-      usableForFit: true,
-      skippedReason: null,
-      models: {
-        scaleRatio: {
-          intercept: -0.246333,
-          coefficients: {
-            txOverNegTz: 0.01025,
-            tyOverNegTz: 0.125799,
-            invNegTz: 89.07997,
-          },
-        },
-        translateAfterScaleImageX: {
-          intercept: 0.622717,
-          coefficients: {
-            txOverNegTz: 0.476301,
-            tyOverNegTz: -0.062766,
-            invNegTz: -44.201289,
-          },
-        },
-        translateAfterScaleImageY: {
-          intercept: 0.628112,
-          coefficients: {
-            txOverNegTz: -0.005457,
-            tyOverNegTz: -0.916538,
-            invNegTz: -42.504644,
-          },
-        },
-      },
-      metrics: {
-        maeScaleRatio: 0.013423,
-        maxScaleRatio: 0.074907,
-        rmseScaleRatio: 0.018389,
-        maeTranslateAfterScaleImageX: 0.006662,
-        maxTranslateAfterScaleImageX: 0.037876,
-        rmseTranslateAfterScaleImageX: 0.009135,
-        maeTranslateAfterScaleImageY: 0.006799,
-        maxTranslateAfterScaleImageY: 0.039641,
-        rmseTranslateAfterScaleImageY: 0.009369,
-        meanTranslateAfterScaleImageEuclidean: 0.009573,
-        maxTranslateAfterScaleImageEuclidean: 0.054827,
-        weightedScore: 0.022996,
-      },
-    },
-    {
-      segmentId: "tyOverNegTz_s3",
-      gateRange: [
-        {
-          featureName: "tyOverNegTz",
-          min: 0.091875,
-          max: null,
-          lowerInclusive: false,
-          upperInclusive: true,
-        },
-      ],
-      sampleCount: 91,
-      usableForFit: true,
-      skippedReason: null,
-      models: {
-        scaleRatio: {
-          intercept: -0.190025,
-          coefficients: {
-            txOverNegTz: 0.019042,
-            tyOverNegTz: -0.01798,
-            invNegTz: 86.65503,
-          },
-        },
-        translateAfterScaleImageX: {
-          intercept: 0.596097,
-          coefficients: {
-            txOverNegTz: 0.47183,
-            tyOverNegTz: 0.005057,
-            invNegTz: -43.04443,
-          },
-        },
-        translateAfterScaleImageY: {
-          intercept: 0.614869,
-          coefficients: {
-            txOverNegTz: -0.00674,
-            tyOverNegTz: -0.86003,
-            invNegTz: -42.036121,
-          },
-        },
-      },
-      metrics: {
-        maeScaleRatio: 0.015339,
-        maxScaleRatio: 0.088647,
-        rmseScaleRatio: 0.021848,
-        maeTranslateAfterScaleImageX: 0.007735,
-        maxTranslateAfterScaleImageX: 0.044461,
-        rmseTranslateAfterScaleImageX: 0.011068,
-        maeTranslateAfterScaleImageY: 0.008141,
-        maxTranslateAfterScaleImageY: 0.050509,
-        rmseTranslateAfterScaleImageY: 0.011628,
-        meanTranslateAfterScaleImageEuclidean: 0.011292,
-        maxTranslateAfterScaleImageEuclidean: 0.06729,
-        weightedScore: 0.026631,
-      },
-    },
-  ],
-  metrics: {
-    maeScaleRatio: 0.014739,
-    maxScaleRatio: 0.088647,
-    rmseScaleRatio: 0.020445,
-    maeTranslateAfterScaleImageX: 0.007391,
-    maxTranslateAfterScaleImageX: 0.044461,
-    rmseTranslateAfterScaleImageX: 0.010295,
-    maeTranslateAfterScaleImageY: 0.007762,
-    maxTranslateAfterScaleImageY: 0.050509,
-    rmseTranslateAfterScaleImageY: 0.010918,
-    meanTranslateAfterScaleImageEuclidean: 0.010773,
-    maxTranslateAfterScaleImageEuclidean: 0.06729,
-    weightedScore: 0.025512,
-  },
-}
-
 const DEFAULT_POSE_MAPPING_SETTINGS: LabState["poseMappingSettings"] = {
   hideIdealOverlayWhenRenderPoseNotApplied: true,
 }
@@ -4143,7 +3867,7 @@ app.innerHTML = `
       </div>
       <p class="export-status" data-debug-export-status></p>
             <div class="review-card pose-mapping-controls" aria-label="Pose Mapping alignment controls">
-              <p class="control-note">alignmentMethod: ${DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE_ID}</p>
+              <p class="control-note">live alignment: skipped_no_live_alignment_method / semantic_5pt_center_scale_v1 planned</p>
               <label class="overlay-toggle">
                 <input type="checkbox" data-control="pose-mapping-hide-overlay-on-render-pose-not-applied" />
                 <span>Hide ideal overlay when render pose not applied</span>
@@ -4368,7 +4092,7 @@ function renderRenderedIdealPreview() {
         ["Coordinate system（座標系）", "runtime render canvas image-normalized coordinate / runtime render canvas pixel coordinate（実行時レンダーcanvas画像正規化座標 / 実行時レンダーcanvasピクセル座標）"],
         ["Data source（データ元）", "poseMappingRuntime rendered ideal WebGL canvas（姿勢対応実行時のレンダー理想WebGL canvas）"],
         ["Generated by（生成元）", "P_camera（カメラ顔姿勢） -> poseMappingProfile（姿勢対応プロファイル） -> pFromProfile（プロファイル出力姿勢） -> pForWebglRender（WebGL描画用姿勢） -> WebGL OBJ render（WebGL OBJ描画） -> MediaPipe detect（MediaPipe検出）"],
-        ["注意", "renderedIdeal478（レンダー理想478点）は MediaPipe detect(renderer.canvas) が返した image-normalized 0..1 座標です。live video（ライブ映像）上へ重ねる場合だけ、placement function（配置関数）適用後の alignedRenderedIdeal478（位置合わせ済み理想478点）を使います。"],
+        ["注意", "renderedIdeal478（レンダー理想478点）は MediaPipe detect(renderer.canvas) が返した image-normalized 0..1 座標です。live alignment は現在未実装のため、alignedRenderedIdeal478 は生成しません。"],
       ])}
       <div class="preview-stage rendered-ideal-stage" data-rendered-ideal-stage data-render-status="not_ready">
         <canvas class="rendered-ideal-canvas" data-canvas="rendered-ideal" aria-label="レンダー理想 2D preview"></canvas>
@@ -4458,8 +4182,8 @@ function renderDisplayOverlayPreview() {
       ${renderCoordinateInfo([
         ["Coordinate system（座標系）", "current: displayedContentRect pixel / ideal: equal-axis pixel inside displayedContentRect（理想は等倍軸）"],
         ["Data source（データ元）", "live video + alignedRenderedIdeal478（ライブ映像 + 位置合わせ済み理想478点）"],
-        ["Generated by（生成元）", "drawLiveOverlay() / renderedIdeal478（aspect変換なし） -> placement function -> ideal equal-axis rect（理想等倍軸矩形）"],
-        ["注意", "未配置の renderedIdeal478（レンダー理想478点）は live video（ライブ映像）上に直接表示せず、placement function（配置関数）適用後の alignedRenderedIdeal478（位置合わせ済み理想478点）だけを表示します。"],
+        ["Generated by（生成元）", "drawLiveOverlay() / alignedRenderedIdeal478 が生成済みの場合のみ ideal equal-axis rect（理想等倍軸矩形）へ描画"],
+        ["注意", "未配置の renderedIdeal478（レンダー理想478点）は live video（ライブ映像）上に直接表示しません。live alignment は現在 skipped_no_live_alignment_method です。"],
       ])}
       <div class="live-preview-grid">
         <section class="live-column-panel" aria-label="ライブ現在顔">
@@ -4565,7 +4289,7 @@ function renderPlacementAnalysisPreview() {
         ["Coordinate system（座標系）", "placement analysis image-normalized coordinate / analysis render canvas coordinate（配置関数解析用の画像正規化座標 / 解析レンダーcanvas座標）"],
         ["Data source（データ元）", "placement samples / known target 478 / predicted roundtrip 478（配置サンプル / 既知target 478点 / 予測再レンダー478点）"],
         ["Generated by（生成元）", "Placement Function Analysis（配置関数解析）"],
-        ["固定 candidate（候補）", "direct_piecewise_ty3_linear_normalized_v1（上下方向3分割・直接推定・一次関数モデル）"],
+        ["Historical candidate", "direct_piecewise_ty3_linear_normalized_v1 / deprecated / live runtime disconnected"],
         ["Runtime connection（実行時処理との接続）", "解析 candidate（候補）は live runtime（ライブ実行時処理）へ自動反映しません。"],
       ])}
       <div class="preview-stage placement-analysis-stage" data-placement-analysis-stage data-analysis-status="empty">
@@ -9029,31 +8753,6 @@ function cloneRequiredLandmarks(landmarks: ReferenceLandmark[] | null | undefine
     : null
 }
 
-function applyPlacementTransformToLandmarks(
-  landmarks: ReferenceLandmark[] | null,
-  transform: {
-    scaleRatio: number | null
-    translateAfterScaleImageX: number | null
-    translateAfterScaleImageY: number | null
-  },
-): ReferenceLandmark[] | null {
-  if (
-    !landmarks ||
-    landmarks.length !== REQUIRED_LANDMARK_COUNT ||
-    !isValidLivePlacementFunctionTransform(transform)
-  ) {
-    return null
-  }
-
-  const { scaleRatio, translateAfterScaleImageX, translateAfterScaleImageY } = transform
-  return landmarks.map((landmark) => ({
-    index: landmark.index,
-    x: landmark.x * scaleRatio + translateAfterScaleImageX,
-    y: landmark.y * scaleRatio + translateAfterScaleImageY,
-    z: landmark.z,
-  }))
-}
-
 function getRenderedIdeal478ForLiveCoordinatePreview(): ReferenceLandmark[] | null {
   const runtime = state.poseMappingRuntime
   return cloneRenderedIdeal478WithoutAspectConversion(runtime.renderedIdeal478)
@@ -9096,7 +8795,6 @@ function buildPoseMappingAlignment(
   alignment: PoseMappingAlignmentState
 } {
   const videoAspectRatio = getLiveVideoAspectRatio()
-  const matrixFeatures = buildPlacementFunctionMatrixFeatures(currentMatrix)
   const emptyPlacementDebug = buildPlacementDebugState(currentMatrix, null, idealMatrix, null)
   if (!currentLandmarksImage || currentLandmarksImage.length !== REQUIRED_LANDMARK_COUNT) {
     return {
@@ -9107,14 +8805,7 @@ function buildPoseMappingAlignment(
         ...createEmptyPoseMappingAlignmentState("skipped_no_current_face", "no_current_face"),
         videoAspectRatio,
         renderAspectRatio,
-        matrixFeatures,
         renderedIdealStatus: getRenderedIdealStatusFromLandmarks(renderedIdealLandmarksImage),
-        placementFunctionStatus: currentMatrix ? "skipped_invalid_aligned_landmarks" : "skipped_missing_matrix",
-        placementFunctionDebug: createPlacementFunctionAlignmentDebug({
-          status: currentMatrix ? "skipped_invalid_aligned_landmarks" : "skipped_missing_matrix",
-          matrixFeatures,
-          errorMessage: "current_landmarks_missing_or_invalid",
-        }),
         placementDebug: emptyPlacementDebug,
       },
     }
@@ -9131,14 +8822,7 @@ function buildPoseMappingAlignment(
         videoAspectRatio,
         renderAspectRatio,
         currentBoundsImage,
-        matrixFeatures,
         renderedIdealStatus: getRenderedIdealStatusFromLandmarks(renderedIdealLandmarksImage),
-        placementFunctionStatus: "skipped_invalid_aligned_landmarks",
-        placementFunctionDebug: createPlacementFunctionAlignmentDebug({
-          status: "skipped_invalid_aligned_landmarks",
-          matrixFeatures,
-          errorMessage: "rendered_ideal_landmarks_missing_or_invalid",
-        }),
         placementDebug: currentOnlyPlacementDebug,
       },
     }
@@ -9158,48 +8842,23 @@ function buildPoseMappingAlignment(
   const reasons = Array.from({ length: REQUIRED_LANDMARK_COUNT }, () => [] as PoseMappingExcludedReason[])
   const reasonCounts = createEmptyPoseMappingExcludedReasonCounts()
 
-  const failPlacementFunction = (
-    placementFunctionStatus: PlacementFunctionLiveStatus,
-    errorMessage: string,
-  ): {
-    alignedRenderedIdeal478: ReferenceLandmark[] | null
-    meshSourceVertices: ReferenceLandmark[] | null
-    meshTargetVertices: ReferenceLandmark[] | null
-    alignment: PoseMappingAlignmentState
-  } => {
+  if (!renderedIdealLandmarksForPlacement) {
     return {
       alignedRenderedIdeal478: null,
       meshSourceVertices: currentLandmarksImage.map(cloneReferenceLandmark),
       meshTargetVertices: null,
       alignment: {
-        ...createEmptyPoseMappingAlignmentState(
-          "skipped_invalid_placement_function",
-          "invalid_placement_function",
-        ),
-        placementFunctionStatus,
+        ...createEmptyPoseMappingAlignmentState("skipped_no_rendered_ideal", "no_rendered_ideal"),
         videoAspectRatio,
         renderAspectRatio,
         currentBoundsImage,
         renderedIdealBoundsImage,
-        matrixFeatures,
-        placementFunctionDebug: createPlacementFunctionAlignmentDebug({
-          status: placementFunctionStatus,
-          matrixFeatures,
-          errorMessage,
-        }),
         placementDebug,
         excludedReasonCounts: reasonCounts,
         landmarkReasons: reasons,
-        renderedIdealStatus: "detected",
+        renderedIdealStatus: "invalid",
       },
     }
-  }
-
-  if (!renderedIdealLandmarksForPlacement) {
-    return failPlacementFunction(
-      "skipped_invalid_aligned_landmarks",
-      "rendered_ideal_landmarks_clone_failed",
-    )
   }
 
   for (let index = 0; index < REQUIRED_LANDMARK_COUNT; index += 1) {
@@ -9212,258 +8871,24 @@ function buildPoseMappingAlignment(
     }
   }
 
-  if (!currentMatrix) {
-    return failPlacementFunction("skipped_missing_matrix", "current_facial_transformation_matrix_missing")
-  }
-  if (!isValidLivePlacementFunctionMatrixFeatures(matrixFeatures)) {
-    return failPlacementFunction("skipped_invalid_matrix_features", "current_matrix_features_invalid")
-  }
-
-  const liveTransform = evaluateLivePlacementFunctionCandidate(matrixFeatures)
-  if (!liveTransform) {
-    return failPlacementFunction("skipped_invalid_candidate", "live_placement_function_candidate_unavailable")
-  }
-  if (!isValidLivePlacementFunctionTransform(liveTransform)) {
-    return failPlacementFunction("skipped_invalid_transform", "live_placement_function_transform_invalid")
-  }
-
-  const { scaleRatio, translateAfterScaleImageX, translateAfterScaleImageY } = liveTransform
-  const alignedRenderedIdealLandmarksImage = applyPlacementTransformToLandmarks(
-    renderedIdealLandmarksForPlacement,
-    { scaleRatio, translateAfterScaleImageX, translateAfterScaleImageY },
-  )
-  if (!alignedRenderedIdealLandmarksImage) {
-    return failPlacementFunction("skipped_invalid_transform", "rendered_ideal_placement_transform_failed")
-  }
-
-  const displacementValues: number[] = []
-  let invalidAlignedLandmarkCount = 0
-  for (let index = 0; index < REQUIRED_LANDMARK_COUNT; index += 1) {
-    const current = currentLandmarksImage[index]
-    const aligned = alignedRenderedIdealLandmarksImage[index]
-    if (!isFiniteLandmark(aligned)) {
-      invalidAlignedLandmarkCount += 1
-      if (!reasons[index].includes("invalid")) {
-        reasons[index].push("invalid")
-        reasonCounts.invalid += 1
-      }
-      continue
-    }
-    if (isUnsafeImageLandmark(aligned) && !reasons[index].includes("unsafe")) {
-      reasons[index].push("unsafe")
-      reasonCounts.unsafe += 1
-    }
-    if (!isFiniteLandmark(current)) {
-      continue
-    }
-    const distance = calculateAspectCorrectedDistance(current, aligned, videoAspectRatio)
-    displacementValues.push(distance)
-    if (
-      distance > ALIGNMENT_LARGE_DISPLACEMENT_THRESHOLD &&
-      !reasons[index].includes("largeDisplacement")
-    ) {
-      reasons[index].push("largeDisplacement")
-      reasonCounts.largeDisplacement += 1
-    }
-  }
-  if (invalidAlignedLandmarkCount > 0) {
-    return {
-      alignedRenderedIdeal478: null,
-      meshSourceVertices: currentLandmarksImage.map(cloneReferenceLandmark),
-      meshTargetVertices: null,
-      alignment: {
-        ...createEmptyPoseMappingAlignmentState(
-          "skipped_invalid_placement_function",
-          "invalid_placement_function",
-        ),
-        placementFunctionStatus: "skipped_invalid_aligned_landmarks",
-        placementScaleRatio: scaleRatio,
-        translateAfterScaleImageX,
-        translateAfterScaleImageY,
-        videoAspectRatio,
-        renderAspectRatio,
-        currentBoundsImage,
-        renderedIdealBoundsImage,
-        alignedLandmarkCount: alignedRenderedIdealLandmarksImage.length - invalidAlignedLandmarkCount,
-        invalidAlignedLandmarkCount,
-        matrixFeatures,
-        placementFunctionDebug: createPlacementFunctionAlignmentDebug({
-          status: "skipped_invalid_aligned_landmarks",
-          matrixFeatures,
-          scaleRatio,
-          translateAfterScaleImageX,
-          translateAfterScaleImageY,
-          alignedLandmarkCount: alignedRenderedIdealLandmarksImage.length - invalidAlignedLandmarkCount,
-          invalidAlignedLandmarkCount,
-          evaluationDebug: liveTransform.evaluationDebug,
-          errorMessage: "aligned_landmarks_contain_non_finite_values",
-        }),
-        placementDebug,
-        excludedReasonCounts: reasonCounts,
-        landmarkReasons: reasons,
-        renderedIdealStatus: "detected",
-      },
-    }
-  }
-
-  const meshSourceVertices = currentLandmarksImage.map(cloneReferenceLandmark)
-  const meshTargetVertices = currentLandmarksImage.map((current, index) => {
-    const aligned = alignedRenderedIdealLandmarksImage[index]
-    return reasons[index].length > 0 || !isFiniteLandmark(aligned)
-      ? cloneReferenceLandmark(current)
-      : cloneReferenceLandmark(aligned)
-  })
-
   return {
-    alignedRenderedIdeal478: alignedRenderedIdealLandmarksImage,
-    meshSourceVertices,
-    meshTargetVertices,
+    alignedRenderedIdeal478: null,
+    meshSourceVertices: currentLandmarksImage.map(cloneReferenceLandmark),
+    meshTargetVertices: null,
     alignment: {
-      status: "completed",
-      alignmentMethod: DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE_ID,
-      rotationApplied: false,
-      alignmentSkippedReason: "none",
-      placementFunctionCandidateId: DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE_ID,
-      placementFunctionStatus: "applied",
-      placementScaleRatio: scaleRatio,
-      renderedIdealStatus: "detected",
-      alignedLandmarkCount: alignedRenderedIdealLandmarksImage.length,
-      invalidAlignedLandmarkCount,
-      translateAfterScaleImageX,
-      translateAfterScaleImageY,
+      ...createEmptyPoseMappingAlignmentState(
+        "skipped_no_live_alignment_method",
+        "no_live_alignment_method",
+      ),
       videoAspectRatio,
       renderAspectRatio,
       currentBoundsImage,
       renderedIdealBoundsImage,
-      alignedRenderedIdealBoundsImage: calculateLandmarkBounds(alignedRenderedIdealLandmarksImage),
-      displayedContentRect: null,
-      matrixFeatures,
-      placementFunctionDebug: createPlacementFunctionAlignmentDebug({
-        status: "applied",
-        matrixFeatures,
-        scaleRatio,
-        translateAfterScaleImageX,
-        translateAfterScaleImageY,
-        alignedLandmarkCount: alignedRenderedIdealLandmarksImage.length,
-        invalidAlignedLandmarkCount,
-        evaluationDebug: liveTransform.evaluationDebug,
-      }),
       placementDebug,
       excludedReasonCounts: reasonCounts,
-      displacementSummary: summarizeDisplacements(displacementValues),
       landmarkReasons: reasons,
+      renderedIdealStatus: "detected",
     },
-  }
-}
-
-function isValidLivePlacementFunctionMatrixFeatures(features: PlacementFunctionMatrixFeatures) {
-  return (
-    isFiniteNumber(features.tx) &&
-    isFiniteNumber(features.ty) &&
-    isFiniteNumber(features.tz) &&
-    isFiniteNumber(features.negTz) &&
-    isFiniteNumber(features.invNegTz) &&
-    isFiniteNumber(features.txOverNegTz) &&
-    isFiniteNumber(features.tyOverNegTz) &&
-    isFiniteNumber(features.matrixUniformScale)
-  )
-}
-
-function evaluateLivePlacementFunctionCandidate(
-  matrixFeatures: PlacementFunctionMatrixFeatures,
-): {
-  scaleRatio: number | null
-  translateAfterScaleImageX: number | null
-  translateAfterScaleImageY: number | null
-  evaluationDebug: PlacementFunctionCandidateEvaluationDebug | null
-} | null {
-  const sample = createLivePlacementFunctionCandidateTrainingSample(matrixFeatures)
-  const prediction = predictPlacementFunctionPiecewiseCandidateForSample(
-    DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE,
-    sample,
-    DEFAULT_LIVE_PLACEMENT_FUNCTION_DIRECT_FALLBACK_CANDIDATE,
-    null,
-  )
-  if (!prediction) {
-    return null
-  }
-  const evaluationDebug = "evaluationDebug" in prediction ? prediction.evaluationDebug ?? null : null
-  return {
-    scaleRatio: prediction.estimatedScaleRatio,
-    translateAfterScaleImageX: prediction.estimatedTranslateAfterScaleImageX,
-    translateAfterScaleImageY: prediction.estimatedTranslateAfterScaleImageY,
-    evaluationDebug: evaluationDebug ?? {
-      candidateId: DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE_ID,
-      family: DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE.family,
-      modelType: DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE.modelType,
-    },
-  }
-}
-
-function createLivePlacementFunctionCandidateTrainingSample(
-  matrixFeatures: PlacementFunctionMatrixFeatures,
-): PlacementFunctionCandidateTrainingSample {
-  const knownPlacement: KnownPlacement = {
-    centerImageX: 0.5,
-    centerImageY: 0.5,
-    centerWorkX: 0.5,
-    centerWorkY: 0.5,
-    visualScaleInput: 1,
-    renderAspectRatio: 1,
-    canvasWidth: 1,
-    canvasHeight: 1,
-  }
-  const basePlacement = createPlacementFunctionBasePlacement(knownPlacement, null)
-  const targetPlacement = createPlacementFunctionTargetPlacement(knownPlacement, basePlacement)
-  return {
-    conditionKey: "live_runtime",
-    knownPlacement,
-    basePlacement,
-    targetPlacement,
-    knownTransform: createPlacementFunctionKnownTransform(basePlacement, targetPlacement),
-    matrixFeatures,
-  }
-}
-
-function isValidLivePlacementFunctionTransform(transform: {
-  scaleRatio: number | null
-  translateAfterScaleImageX: number | null
-  translateAfterScaleImageY: number | null
-}): transform is {
-  scaleRatio: number
-  translateAfterScaleImageX: number
-  translateAfterScaleImageY: number
-} {
-  return (
-    isFiniteNumber(transform.scaleRatio) &&
-    transform.scaleRatio > 0 &&
-    isFiniteNumber(transform.translateAfterScaleImageX) &&
-    isFiniteNumber(transform.translateAfterScaleImageY)
-  )
-}
-
-function createPlacementFunctionAlignmentDebug(input: {
-  status: PlacementFunctionLiveStatus
-  matrixFeatures?: PlacementFunctionMatrixFeatures
-  scaleRatio?: number | null
-  translateAfterScaleImageX?: number | null
-  translateAfterScaleImageY?: number | null
-  alignedLandmarkCount?: number
-  invalidAlignedLandmarkCount?: number
-  evaluationDebug?: PlacementFunctionCandidateEvaluationDebug | null
-  errorMessage?: string | null
-}): PlacementFunctionAlignmentDebug {
-  return {
-    candidateId: DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE_ID,
-    status: input.status,
-    matrixFeatures: input.matrixFeatures ?? createEmptyPlacementFunctionMatrixFeatures(),
-    scaleRatio: input.scaleRatio ?? null,
-    translateAfterScaleImageX: input.translateAfterScaleImageX ?? null,
-    translateAfterScaleImageY: input.translateAfterScaleImageY ?? null,
-    alignedLandmarkCount: input.alignedLandmarkCount ?? 0,
-    invalidAlignedLandmarkCount: input.invalidAlignedLandmarkCount ?? 0,
-    evaluationDebug: input.evaluationDebug ?? null,
-    errorMessage: input.errorMessage ?? null,
   }
 }
 
@@ -18911,7 +18336,9 @@ function getAlignedRenderedIdeal478Availability(): DataAvailability {
   if (hasRequiredLandmarks(runtime.alignedRenderedIdeal478)) {
     return available()
   }
-  return unavailable(`placementFunctionStatus = ${runtime.alignment.placementFunctionStatus}`)
+  return unavailable(
+    `alignmentStatus = ${runtime.alignmentStatus}; liveAlignmentStatus = ${runtime.alignment.liveAlignmentStatus}`,
+  )
 }
 
 function getMeshSourceAvailability(): DataAvailability {
@@ -18928,7 +18355,7 @@ function getMeshTargetAvailability(): DataAvailability {
     return available()
   }
   return unavailable(
-    `alignmentStatus = ${runtime.alignmentStatus}; placementFunctionStatus = ${runtime.alignment.placementFunctionStatus}`,
+    `alignmentStatus = ${runtime.alignmentStatus}; liveAlignmentStatus = ${runtime.alignment.liveAlignmentStatus}`,
   )
 }
 
@@ -19213,7 +18640,7 @@ function renderPoseMappingLiveSummaryCard() {
       <div><dt>pose diff</dt><dd>${escapeHtml(formatPoseMappingDiff(runtime.poseDiff))}</dd></div>
       <div><dt>renderedIdeal478</dt><dd>${runtime.renderedIdealDetected ? "detected" : "not detected"} / ${formatNullableCount(runtime.renderedIdealLandmarkCount)}</dd></div>
       <div><dt>alignedRenderedIdeal478</dt><dd>${formatNullableCount(runtime.alignedRenderedIdeal478?.length ?? null)}</dd></div>
-      <div><dt>alignment</dt><dd>${escapeHtml(runtime.alignment.status)} / ${escapeHtml(runtime.alignment.alignmentMethod)} / ${escapeHtml(runtime.alignment.placementFunctionStatus)}</dd></div>
+      <div><dt>alignment</dt><dd>${escapeHtml(runtime.alignment.status)} / ${escapeHtml(runtime.alignment.alignmentMethod)} / ${escapeHtml(runtime.alignment.liveAlignmentStatus)}</dd></div>
       <div><dt>placement transform</dt><dd>scale ${formatRealtimeNullableNumber(runtime.alignment.placementScaleRatio)} / tx ${formatRealtimeNullableNumber(runtime.alignment.translateAfterScaleImageX)} / ty ${formatRealtimeNullableNumber(runtime.alignment.translateAfterScaleImageY)}</dd></div>
       <div><dt>Placement source debug（位置・大きさ取得元デバッグ）</dt><dd>current raw ${String(runtime.alignment.placementDebug.current.matrixRaw.exists)} / ideal raw ${String(runtime.alignment.placementDebug.ideal.matrixRaw.exists)}</dd></div>
       <div><dt>Current matrix column-major（現在顔の列優先候補）</dt><dd>${escapeHtml(formatMatrixPlacementCandidate(runtime.alignment.placementDebug.current.matrixColumnMajor))}</dd></div>
@@ -19247,7 +18674,7 @@ function renderLiveCoordinatePreviewPanel() {
       <div><dt>alignedRenderedIdeal478（位置合わせ済み理想478点）</dt><dd>displayedContentRect pixel 座標の重ね描き用に生成します。この tab の赤点には使いません。</dd></div>
       <div><dt>red ideal aspect conversion（赤点aspect変換）</dt><dd>none（なし）</dd></div>
       <div><dt>preview plot（プレビュー描画）</dt><dd>square 0..1 equal-axis（正方形・等倍軸）</dd></div>
-      <div><dt>placementFunctionStatus（配置関数状態）</dt><dd>${escapeHtml(runtime.alignment.placementFunctionStatus)}</dd></div>
+      <div><dt>liveAlignmentStatus</dt><dd>${escapeHtml(runtime.alignment.liveAlignmentStatus)}</dd></div>
       <div><dt>alignmentStatus（位置合わせ状態）</dt><dd>${escapeHtml(runtime.alignmentStatus)}</dd></div>
       <div><dt>renderedIdealStatus（レンダー理想状態）</dt><dd>${escapeHtml(runtime.renderedIdealStatus)}</dd></div>
       <div><dt>scaleRatio</dt><dd>${formatRealtimeNullableNumber(runtime.alignment.placementScaleRatio)}</dd></div>
@@ -19499,8 +18926,7 @@ function renderPoseMappingDebugTab() {
       <dl class="summary-list">
         <div><dt>status</dt><dd>${escapeHtml(runtime.alignment.status)}</dd></div>
         <div><dt>alignmentMethod</dt><dd>${escapeHtml(runtime.alignment.alignmentMethod)}</dd></div>
-        <div><dt>placementFunctionCandidateId</dt><dd>${escapeHtml(runtime.alignment.placementFunctionCandidateId)}</dd></div>
-        <div><dt>placementFunctionStatus</dt><dd>${escapeHtml(runtime.alignment.placementFunctionStatus)}</dd></div>
+        <div><dt>liveAlignmentStatus</dt><dd>${escapeHtml(runtime.alignment.liveAlignmentStatus)}</dd></div>
         <div><dt>Rotation applied（回転適用有無）</dt><dd>${String(runtime.alignment.rotationApplied)}</dd></div>
         <div><dt>alignmentSkippedReason</dt><dd>${escapeHtml(runtime.alignment.alignmentSkippedReason)}</dd></div>
         <div><dt>Placement scale ratio（大きさ比率）</dt><dd>${formatRealtimeNullableNumber(runtime.alignment.placementScaleRatio)}</dd></div>
@@ -19510,8 +18936,6 @@ function renderPoseMappingDebugTab() {
         <div><dt>invalidAlignedLandmarkCount</dt><dd>${formatNullableCount(runtime.alignment.invalidAlignedLandmarkCount)}</dd></div>
         <div><dt>videoAspectRatio</dt><dd>${formatRealtimeNullableNumber(runtime.alignment.videoAspectRatio)}</dd></div>
         <div><dt>renderAspectRatio</dt><dd>${formatRealtimeNullableNumber(runtime.alignment.renderAspectRatio)}</dd></div>
-        <div><dt>matrixFeatures</dt><dd>${escapeHtml(JSON.stringify(roundPlacementFunctionMatrixFeatures(runtime.alignment.matrixFeatures)))}</dd></div>
-        <div><dt>placementFunctionDebug</dt><dd>${escapeHtml(JSON.stringify(roundPlacementFunctionAlignmentDebugForState(runtime.alignment.placementFunctionDebug)))}</dd></div>
         <div><dt>current bounds image</dt><dd>${escapeHtml(formatPoseMappingBounds(runtime.alignment.currentBoundsImage))}</dd></div>
         <div><dt>rendered ideal bounds image</dt><dd>${escapeHtml(formatPoseMappingBounds(runtime.alignment.renderedIdealBoundsImage))}</dd></div>
         <div><dt>aligned ideal bounds image</dt><dd>${escapeHtml(formatPoseMappingBounds(runtime.alignment.alignedRenderedIdealBoundsImage))}</dd></div>
@@ -21057,17 +20481,9 @@ function drawNormalizedCoordinateFrame(context: CanvasRenderingContext2D, rect: 
 
 function createDisplayOverlayAlignedRenderedIdeal478FromRenderedIdeal(): ReferenceLandmark[] | null {
   const runtime = state.poseMappingRuntime
-  const alignedRenderedIdeal478 = cloneRequiredLandmarks(runtime.alignedRenderedIdeal478)
-  if (alignedRenderedIdeal478 && runtime.renderedIdealStatus === "detected") {
-    return alignedRenderedIdeal478
-  }
-
-  const renderedIdeal478 = getRenderedIdeal478ForLiveCoordinatePreview()
-  return applyPlacementTransformToLandmarks(renderedIdeal478, {
-    scaleRatio: runtime.alignment.placementScaleRatio,
-    translateAfterScaleImageX: runtime.alignment.translateAfterScaleImageX,
-    translateAfterScaleImageY: runtime.alignment.translateAfterScaleImageY,
-  })
+  return runtime.renderedIdealStatus === "detected"
+    ? cloneRequiredLandmarks(runtime.alignedRenderedIdeal478)
+    : null
 }
 
 function drawLiveOverlay(reason: DisplayOverlayRedrawReason = "manual_render") {
@@ -22991,14 +22407,12 @@ function createEmptyPoseMappingAlignmentState(
   status: PoseMappingAlignmentStatus = "skipped_no_current_face",
   alignmentSkippedReason: PoseMappingAlignmentSkippedReason = "no_current_face",
 ): PoseMappingAlignmentState {
-  const matrixFeatures = createEmptyPlacementFunctionMatrixFeatures()
   return {
     status,
-    alignmentMethod: DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE_ID,
+    alignmentMethod: "none",
+    liveAlignmentStatus: "skipped_no_live_alignment_method",
     rotationApplied: false,
     alignmentSkippedReason,
-    placementFunctionCandidateId: DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE_ID,
-    placementFunctionStatus: "skipped_missing_matrix",
     placementScaleRatio: null,
     renderedIdealStatus: "missing",
     alignedLandmarkCount: 0,
@@ -23011,12 +22425,6 @@ function createEmptyPoseMappingAlignmentState(
     renderedIdealBoundsImage: null,
     alignedRenderedIdealBoundsImage: null,
     displayedContentRect: null,
-    matrixFeatures,
-    placementFunctionDebug: createPlacementFunctionAlignmentDebug({
-      status: "skipped_missing_matrix",
-      matrixFeatures,
-      errorMessage: "not_ready",
-    }),
     placementDebug: buildPlacementDebugState(null, null, null, null),
     excludedReasonCounts: createEmptyPoseMappingExcludedReasonCounts(),
     displacementSummary: createEmptyPoseMappingDisplacementSummary(),
@@ -25782,12 +25190,11 @@ function buildPlacementMappingSample(runtime: PoseMappingRuntimeState): Placemen
     currentBoundsImage: roundBoundsPlacementForState(alignment.placementDebug.current.boundsPlacement),
     idealBoundsImage: roundBoundsPlacementForState(alignment.placementDebug.ideal.boundsPlacement),
     alignedIdealBoundsImage: roundBoundsPlacementForState(buildBoundsPlacement(alignment.alignedRenderedIdealBoundsImage)),
-    placementFunctionCandidateId: alignment.placementFunctionCandidateId,
-    placementFunctionStatus: alignment.placementFunctionStatus,
+    alignmentMethod: alignment.alignmentMethod,
+    liveAlignmentStatus: alignment.liveAlignmentStatus,
     scaleRatio: roundForState(alignment.placementScaleRatio),
     translateAfterScaleImageX: roundForState(alignment.translateAfterScaleImageX),
     translateAfterScaleImageY: roundForState(alignment.translateAfterScaleImageY),
-    matrixFeatures: roundPlacementFunctionMatrixFeatures(alignment.matrixFeatures),
     alignedLandmarkCount: alignment.alignedLandmarkCount,
     invalidAlignedLandmarkCount: alignment.invalidAlignedLandmarkCount,
     videoAspectRatio: roundForState(alignment.videoAspectRatio),
@@ -25823,12 +25230,11 @@ function buildPlacementMappingSamplesCsv(samples: PlacementMappingSample[]) {
     "currentBoundsImage",
     "idealBoundsImage",
     "alignedIdealBoundsImage",
-    "placementFunctionCandidateId",
-    "placementFunctionStatus",
+    "alignmentMethod",
+    "liveAlignmentStatus",
     "scaleRatio",
     "translateAfterScaleImageX",
     "translateAfterScaleImageY",
-    "matrixFeatures",
     "alignedLandmarkCount",
     "invalidAlignedLandmarkCount",
     "videoAspectRatio",
@@ -25856,12 +25262,11 @@ function buildPlacementMappingSamplesCsv(samples: PlacementMappingSample[]) {
     formatCsvJson(sample.currentBoundsImage),
     formatCsvJson(sample.idealBoundsImage),
     formatCsvJson(sample.alignedIdealBoundsImage),
-    sample.placementFunctionCandidateId,
-    sample.placementFunctionStatus,
+    sample.alignmentMethod,
+    sample.liveAlignmentStatus,
     sample.scaleRatio ?? "",
     sample.translateAfterScaleImageX ?? "",
     sample.translateAfterScaleImageY ?? "",
-    formatCsvJson(sample.matrixFeatures),
     sample.alignedLandmarkCount,
     sample.invalidAlignedLandmarkCount,
     sample.videoAspectRatio ?? "",
@@ -27618,10 +27023,9 @@ function getPoseMappingAlignmentDebugSummary(alignment: PoseMappingAlignmentStat
   return {
     status: alignment.status,
     alignmentMethod: alignment.alignmentMethod,
+    liveAlignmentStatus: alignment.liveAlignmentStatus,
     rotationApplied: alignment.rotationApplied,
     alignmentSkippedReason: alignment.alignmentSkippedReason,
-    placementFunctionCandidateId: alignment.placementFunctionCandidateId,
-    placementFunctionStatus: alignment.placementFunctionStatus,
     placementScaleRatio: roundForState(alignment.placementScaleRatio),
     translateAfterScaleImageX: roundForState(alignment.translateAfterScaleImageX),
     translateAfterScaleImageY: roundForState(alignment.translateAfterScaleImageY),
@@ -27634,8 +27038,6 @@ function getPoseMappingAlignmentDebugSummary(alignment: PoseMappingAlignmentStat
     renderedIdealBoundsImage: roundBoundsForState(alignment.renderedIdealBoundsImage),
     alignedRenderedIdealBoundsImage: roundBoundsForState(alignment.alignedRenderedIdealBoundsImage),
     displayedContentRect: roundRectForState(alignment.displayedContentRect),
-    matrixFeatures: roundPlacementFunctionMatrixFeatures(alignment.matrixFeatures),
-    placementFunctionDebug: roundPlacementFunctionAlignmentDebugForState(alignment.placementFunctionDebug),
     placementDebug: roundPlacementDebugForState(alignment.placementDebug),
     excludedReasonCounts: alignment.excludedReasonCounts,
     displacementSummary: roundDisplacementSummary(alignment.displacementSummary),
@@ -28169,23 +27571,6 @@ function roundBoundsPlacementForState(boundsPlacement: BoundsPlacement | null): 
         scaleByDiag: roundForState(boundsPlacement.scaleByDiag) ?? 0,
       }
     : null
-}
-
-function roundPlacementFunctionAlignmentDebugForState(
-  debug: PlacementFunctionAlignmentDebug,
-): PlacementFunctionAlignmentDebug {
-  return {
-    candidateId: debug.candidateId,
-    status: debug.status,
-    matrixFeatures: roundPlacementFunctionMatrixFeatures(debug.matrixFeatures),
-    scaleRatio: roundForState(debug.scaleRatio),
-    translateAfterScaleImageX: roundForState(debug.translateAfterScaleImageX),
-    translateAfterScaleImageY: roundForState(debug.translateAfterScaleImageY),
-    alignedLandmarkCount: debug.alignedLandmarkCount,
-    invalidAlignedLandmarkCount: debug.invalidAlignedLandmarkCount,
-    evaluationDebug: debug.evaluationDebug,
-    errorMessage: debug.errorMessage,
-  }
 }
 
 function roundPoint3ForState(point: { x: number; y: number; z: number } | null) {

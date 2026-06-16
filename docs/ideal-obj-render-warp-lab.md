@@ -2,65 +2,26 @@
 
 ## Live Alignment
 
-MP4 再生中の Pose Mapping runtime は、live alignment を `direct_piecewise_ty3_linear_normalized_v1` に一本化する。
-UI から alignment mode は選ばせず、debug には固定値として `alignmentMethod: direct_piecewise_ty3_linear_normalized_v1` を表示する。
+MP4 再生中の Pose Mapping runtime では、matrix-based placement function による live alignment を廃止する。
+`direct_piecewise_ty3_linear_normalized_v1` は正面 pose の Placement Function Analysis で作った検証候補だったが、yaw / pitch / roll を含む live runtime では scale / translate が大きくズレるため、failed experiment / deprecated として扱う。
 
-現在の live alignment は以下の流れで行う。
+現在の live runtime は `state.placementAnalysis.candidate` を参照せず、`DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE` や `direct_linear_normalized_v1` fallback も持たない。旧方式へ fallback しない。
 
-```text
-currentMatrix
-  -> buildPlacementFunctionMatrixFeatures(currentMatrix)
-  -> direct_piecewise_ty3_linear_normalized_v1
-  -> scaleRatio
-  -> translateAfterScaleImageX
-  -> translateAfterScaleImageY
-  -> renderedIdeal478 を render canvas image-normalized 0..1 座標として保持
-  -> renderedIdeal478 に aspect 変換を適用しない
-  -> renderedIdeal478 に placement function を適用
-  -> alignedRenderedIdeal478
-  -> meshTargetVertices
-```
-
-placement function の適用対象は、MediaPipe が `detect(renderer.canvas)` から返した render canvas image-normalized coordinate（0..1）の `renderedIdeal478` であり、live video aspect への x 補正は行わない。OBJ coordinate、render canvas pixel coordinate、displayedContentRect pixel coordinate はここに混ぜない。
+semantic landmark based placement が未実装の間、live alignment は以下で skip する。
 
 ```text
-aligned.x = renderedIdeal.x * scaleRatio + translateAfterScaleImageX
-aligned.y = renderedIdeal.y * scaleRatio + translateAfterScaleImageY
-aligned.z = renderedIdeal.z
+renderedIdeal478 = MediaPipe detect(renderer.canvas) の結果を保持
+alignmentStatus = skipped_no_live_alignment_method
+alignmentSkippedReason = no_live_alignment_method
+alignmentMethod = none
+liveAlignmentStatus = skipped_no_live_alignment_method
+alignedRenderedIdeal478 = null
+meshTargetVertices = null
 ```
 
-`facialTransformationMatrix` は、直接 center / scale として使わず、`matrixFeatures` を作るための入力として使う。matrix raw、column-major / row-major translation、bounds center との比較は debug-only の確認情報として残す。
+次の live alignment 方針は、matrix から scale / translate を推定するのではなく、`current478` と `renderedIdeal478` の同じ固定ランドマークから center / scale line を作る `semantic_5pt_center_scale_v1` へ移行すること。
 
-placement function を評価できない場合は、旧 alignment へ fallback しない。`alignmentStatus = skipped_invalid_placement_function` とし、`placementFunctionStatus` に以下のいずれかを出す。
-
-- `skipped_missing_matrix`
-- `skipped_invalid_matrix_features`
-- `skipped_invalid_candidate`
-- `skipped_invalid_transform`
-- `skipped_invalid_aligned_landmarks`
-
-成功時は `placementFunctionStatus = applied` とし、debug / Copy Debug / JSON summary には以下を出す。
-
-- `placementFunctionCandidateId`
-- `placementFunctionStatus`
-- `scaleRatio`
-- `translateAfterScaleImageX`
-- `translateAfterScaleImageY`
-- `matrixFeatures`
-- `currentBoundsImage`
-- `renderedIdealBoundsImage`
-- `alignedRenderedIdealBoundsImage`
-- `alignedLandmarkCount`
-- `invalidAlignedLandmarkCount`
-
-live runtime（ライブ実行時処理）は `state.placementAnalysis.candidate`（配置関数解析 state の候補）を参照しない。
-既定候補は `tools/ideal-obj-render-warp-lab/src/main.ts` の `DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE` と
-`DEFAULT_LIVE_PLACEMENT_FUNCTION_DIRECT_FALLBACK_CANDIDATE` に固定定義する。
-この係数は Placement Function Analysis（配置関数解析）で `sampleCount = 550`、`usableSampleCount = 548`、
-`fittingSampleCount = 274` から生成した `matrix_to_known_image_transform_function_candidate_v1` の
-`direct_piecewise_ty3_linear_normalized_v1` と `direct_linear_normalized_v1` を埋め込んだものとする。
-
-`placement mapping samples` は session memory に frame ごとの small summary として保存し、JSON / CSV で export できる。sample には `frameId`、`mediaTimeSec`、`P_camera`、`p`、`P_confirm`、`poseDiffMagnitude`、matrix column-major translation / scale、current / rendered / aligned bounds、placement function candidate id / status、scale / translate、`matrixFeatures`、aspect ratio、`qualityUsable`、`skippedReason` を含める。
+`placement mapping samples` は session memory に frame ごとの small summary として保存し、JSON / CSV で export できる。sample には `frameId`、`mediaTimeSec`、`P_camera`、`p`、`P_confirm`、`poseDiffMagnitude`、matrix column-major translation / scale、current / rendered / aligned bounds、`alignmentMethod`、`liveAlignmentStatus`、scale / translate、aspect ratio、`qualityUsable`、`skippedReason` を含める。live runtime sample には placement function candidate id / status や `matrixFeatures` は含めない。
 
 ## Central Pane Coordinate Tabs（中央ペイン座標系タブ）
 
@@ -68,15 +29,15 @@ live runtime（ライブ実行時処理）は `state.placementAnalysis.candidate
 
 - `OBJ 3D（OBJ座標）`: OBJ coordinate（OBJ座標）で OBJ mesh / vertices / faces / raw OBJ bounds を確認する。`current478`、`renderedIdeal478`、`alignedRenderedIdeal478`、`meshSourceVertices`、`meshTargetVertices` は表示しない。
 - `レンダー画像（render canvas座標）`: poseMapping runtime render（姿勢対応実行時レンダー）の WebGL render result（WebGL描画結果）を、runtime render canvas image-normalized coordinate / runtime render canvas pixel coordinate（実行時レンダーcanvas画像正規化座標 / 実行時レンダーcanvasピクセル座標）で確認する。ここでは `P_camera`（カメラ顔姿勢） -> `poseMappingProfile`（姿勢対応プロファイル） -> `pFromProfile`（プロファイル出力姿勢） -> `pForWebglRender`（WebGL描画用姿勢） -> WebGL OBJ render（WebGL OBJ描画） -> MediaPipe detect（MediaPipe検出）で生成された runtime rendered ideal image（実行時レンダー理想画像）、`renderedIdeal478`（レンダー理想478点）、`P_confirm`（確認姿勢）を確認する。
-- `ライブ座標（live image-normalized座標）`: MediaPipe が返した image-normalized coordinate（画像正規化座標）で `current478`、`renderedIdeal478`、`meshSourceVertices` を確認する。青点の `current478` は `detectForVideo(liveVideoElement, timestampMs) -> buildCurrentFrameAnalysis() -> mapLandmarks()`、赤点の `renderedIdeal478` は `detect(renderer.canvas) -> buildRenderedIdealDetectionState() -> mapLandmarks()` の経路で描画し、aspect 変換は適用しない。この tab の赤点には placement function 適用後の `alignedRenderedIdeal478` を使わない。
-- `表示重ね描き（displayedContentRect pixel座標）`: `current478` は displayedContentRect pixel coordinate（表示領域ピクセル座標）へ変換して live video 上に表示する。`renderedIdeal478` に placement function（配置関数）の `scaleRatio` / `translateAfterScaleImageX` / `translateAfterScaleImageY` を適用した `alignedRenderedIdeal478` は、理想側だけ aspect 変換を避けるため、displayedContentRect 内の正方形 0..1 equal-axis pixel coordinate（等倍軸ピクセル座標）へ変換して表示する。
+- `ライブ座標（live image-normalized座標）`: MediaPipe が返した image-normalized coordinate（画像正規化座標）で `current478`、`renderedIdeal478`、`meshSourceVertices` を確認する。青点の `current478` は `detectForVideo(liveVideoElement, timestampMs) -> buildCurrentFrameAnalysis() -> mapLandmarks()`、赤点の `renderedIdeal478` は `detect(renderer.canvas) -> buildRenderedIdealDetectionState() -> mapLandmarks()` の経路で描画し、aspect 変換は適用しない。この tab の赤点には `alignedRenderedIdeal478` を使わない。
+- `表示重ね描き（displayedContentRect pixel座標）`: `current478` は displayedContentRect pixel coordinate（表示領域ピクセル座標）へ変換して live video 上に表示する。`alignedRenderedIdeal478` が生成済みの場合だけ、理想側を displayedContentRect 内の正方形 0..1 equal-axis pixel coordinate（等倍軸ピクセル座標）へ変換して表示する。現在は live alignment 未実装のため、`alignedRenderedIdeal478` は生成せず、この overlay は `skipped_no_live_alignment_method` で表示しない。
 - `配置関数解析（placement analysis）`: placement analysis image-normalized coordinate / analysis render canvas coordinate（配置関数解析用の画像正規化座標 / 解析レンダーcanvas座標）で placement samples、candidate comparison、roundtrip validation を確認する。placement analysis の candidate は live runtime へ自動反映しない。
 
-`renderedIdeal478`（レンダー理想478点）は MediaPipe `detect(renderer.canvas)` が返した render canvas image-normalized coordinate（0..1）の点であり、live coordinate tab（ライブ座標タブ）でも aspect 変換せずに比較用として表示する。live coordinate tab は横長 canvas 全体へ引き伸ばさず、中央の正方形 0..1 equal-axis preview（等倍軸プレビュー）に描画する。live video（ライブ映像）上の重ね描きに使う理想点は、`renderedIdeal478` に placement function（配置関数）を適用した `alignedRenderedIdeal478` とする。
+`renderedIdeal478`（レンダー理想478点）は MediaPipe `detect(renderer.canvas)` が返した render canvas image-normalized coordinate（0..1）の点であり、live coordinate tab（ライブ座標タブ）でも aspect 変換せずに比較用として表示する。live coordinate tab は横長 canvas 全体へ引き伸ばさず、中央の正方形 0..1 equal-axis preview（等倍軸プレビュー）に描画する。live video（ライブ映像）上の重ね描きに使う理想点は、次の semantic landmark based placement 実装後に生成する `alignedRenderedIdeal478` とする。
 
 `レンダー画像（render canvas座標）` tab は standalone preview（独立プレビュー）ではなく、poseMapping runtime render（姿勢対応実行時レンダー）の結果を主表示とする。旧 standalone preview 経路は debug / benchmark 用に残す場合でも、中央 tab の主表示ソースには使わない。runtime render result（実行時レンダー結果）が未生成の場合は空の standalone preview を出さず、`poseMappingStatus`（姿勢対応状態）や `renderedIdealStatus`（レンダー理想状態）を reason（理由）として表示する。
 
-`renderedIdeal478`（レンダー理想478点）は render canvas image-normalized coordinate（0..1）の点であり、live video（ライブ映像）上に配置済みの点ではない。`ライブ座標（live image-normalized座標）` tab では aspect 変換なしの `renderedIdeal478` を表示し、`表示重ね描き（displayedContentRect pixel座標）` tab では placement function 適用後の `alignedRenderedIdeal478` を表示する。
+`renderedIdeal478`（レンダー理想478点）は render canvas image-normalized coordinate（0..1）の点であり、live video（ライブ映像）上に配置済みの点ではない。`ライブ座標（live image-normalized座標）` tab では aspect 変換なしの `renderedIdeal478` を表示し、`表示重ね描き（displayedContentRect pixel座標）` tab では `alignedRenderedIdeal478` が生成済みの場合だけ表示する。
 
 overlay（重ね表示）は canvas pixel coordinate（canvasピクセル座標）で扱う。current 側は displayedContentRect pixel coordinate（表示領域ピクセル座標）へ変換し、ideal 側は理想点に描画時 aspect 変換をかけないため displayedContentRect 内の正方形 0..1 equal-axis pixel coordinate（等倍軸ピクセル座標）へ変換する。live video の letterbox / pillarbox を含む表示領域は `displayedContentRect` で確認し、render canvas coordinate や OBJ coordinate を overlay canvas に混ぜない。
 
@@ -85,11 +46,11 @@ checkbox（チェックボックス）は各 coordinate tab（座標系タブ）
 ```text
 alignedRenderedIdeal478（位置合わせ済み理想478点）
   status: not available（未生成）
-  reason: placementFunctionStatus = skipped_invalid_candidate
+  reason: alignmentStatus = skipped_no_live_alignment_method; liveAlignmentStatus = skipped_no_live_alignment_method
 
 meshTargetVertices（変形先メッシュ頂点）
   status: not available（未生成）
-  reason: alignmentStatus = skipped_invalid_placement_function
+  reason: alignmentStatus = skipped_no_live_alignment_method; liveAlignmentStatus = skipped_no_live_alignment_method
 
 renderedIdeal478（レンダー理想478点）
   status: not available（未生成）
@@ -102,12 +63,14 @@ renderedIdeal478（レンダー理想478点）
 
 - `bounds_center_scale_v1`
 - `mediapipe_placement_center_scale`
+- `direct_piecewise_ty3_linear_normalized_v1`
+- `direct_linear_normalized_v1` fallback
 
-旧 `bounds_center_scale_v1` は current / rendered ideal bounds から center + scale を作る prototype だった。旧 `mediapipe_placement_center_scale` は `facialTransformationMatrix` の translation / scale をそのまま live alignment として扱う prototype だった。現在はどちらも `alignedRenderedIdeal478` / `meshTargetVertices` の生成には使わない。
+旧 `bounds_center_scale_v1` は current / rendered ideal bounds から center + scale を作る prototype だった。旧 `mediapipe_placement_center_scale` は `facialTransformationMatrix` の translation / scale をそのまま live alignment として扱う prototype だった。`direct_piecewise_ty3_linear_normalized_v1` は正面 pose の Placement Function Analysis で作った matrix-based candidate だったが、live runtime では failed experiment として廃止した。現在はいずれも `alignedRenderedIdeal478` / `meshTargetVertices` の生成には使わない。
 
 ## Placement Function Analysis（配置関数解析）
 
-`Placement Function Analysis（配置関数解析）` は、理想 OBJ 顔だけを使う debug-only の検証機能です。目的は、WebGL で既知配置に置いた理想 OBJ 顔を MediaPipe に通し、返ってきた `facialTransformationMatrix` から `scaleRatio + translateAfterScale` を復元する placement function を求めることです。
+`Placement Function Analysis（配置関数解析）` は、理想 OBJ 顔だけを使う debug-only の検証機能です。目的は、WebGL で既知配置に置いた理想 OBJ 顔を MediaPipe に通し、返ってきた `facialTransformationMatrix` から `scaleRatio + translateAfterScale` を復元する placement function を検証することです。ここで作った candidate は過去検証として残すが、live runtime の主導線にはしない。
 
 詳細な検証履歴と候補選定の流れは
 [Placement Function Analysis History](ideal-obj-render-warp-lab-placement-function-analysis-history.md)
@@ -573,15 +536,14 @@ alignment は landmark correspondence ではなく、MediaPipe placement ベー�
 `P_camera -> poseMappingProfile -> pFromProfile -> pForWebglRender -> WebGL render -> MediaPipe detect -> P_confirm` で合わせるため、
 alignment では回転を使いません。合わせるのは位置と大きさだけです。
 
-placement にはまず `facialTransformationMatrix` を debug-only で検証します。matrix translation が
-live video image-normalized coordinate の center として安全に扱えない場合は、alignment を
-`skipped_invalid_placement` として skip し、理想点 overlay を出しません。旧 `current478` /
-`renderedIdeal478` の対応点群から center / scale を推定する方式へ無言 fallback しません。
+placement は次に `current478` と `renderedIdeal478` の固定ランドマークから center / scale line を作る
+`semantic_5pt_center_scale_v1` へ移行します。`facialTransformationMatrix` から live runtime の
+scale / translate を推定する matrix-based placement は使いません。旧 `current478` /
+`renderedIdeal478` の対応点群から center / scale を推定する方式へ無言 fallback もしません。
 
 red ideal のデータ生成では、live video aspect への変換を行いません。`renderedIdeal478` は
-MediaPipe から返った image-normalized coordinate のまま、placement function の scale/translate を
-適用します。距離や large displacement の debug 判定で aspect-corrected distance を使う場合でも、
-`renderedIdeal478` / `alignedRenderedIdeal478` のデータそのものは aspect 変換しません。
+MediaPipe から返った image-normalized coordinate のまま保持します。semantic placement 実装まで
+`alignedRenderedIdeal478` は生成しません。
 
 ```text
 current478:
@@ -592,7 +554,7 @@ renderedIdeal478:
   -> aspect 変換なし
 
 alignedRenderedIdeal478:
-  renderedIdeal478 に placement function の scale/translate を適用
+  semantic placement 実装まで null
 
 ```
 
@@ -600,7 +562,7 @@ bounds、center、uniform scale は image-normalized coordinate の bounds と�
 distance / large displacement は必要に応じて debug 用に aspect-corrected distance を使いますが、
 その補助座標を overlay に直接使いません。live coordinate tab（ライブ座標タブ）には MediaPipe から戻った
 `renderedIdeal478` を、青点の `current478` と同じ post-detect / mapLandmarks 後の点群として
-aspect 変換せず、正方形の 0..1 equal-axis preview（等倍軸プレビュー）に描画します。`alignedRenderedIdeal478` は表示重ね描き tab でも理想側だけ displayedContentRect 内の正方形 equal-axis pixel coordinate（等倍軸ピクセル座標）へ投影し、mesh target 入力に使います。
+aspect 変換せず、正方形の 0..1 equal-axis preview（等倍軸プレビュー）に描画します。`alignedRenderedIdeal478` は semantic placement 実装まで null とし、表示重ね描き tab や mesh target 入力には使いません。
 
 overlay は以下の変換で行います。
 
@@ -610,11 +572,11 @@ current478:
   -> displayedContentRect pixel
 
 alignedRenderedIdeal478:
-  aspect 変換なし image-normalized coordinate
-  -> equal-axis pixel inside displayedContentRect
+  semantic placement 実装まで null
+  -> 描画しない
 ```
 
-pixel coordinate、OBJ vertex coordinate、WebGL clip space は、MediaPipe returned landmarks 取得後の alignment / mesh pair 処理には混ぜません。render image の pixel coordinate は MediaPipe 入力用に閉じ込めます。MediaPipe から戻ってきた `renderedIdeal478` は render canvas image-normalized coordinate（0..1）として保持し、aspect 変換せずに live coordinate tab と placement function 入力に使います。ライブ映像上には placement function（配置関数）適用後の `alignedRenderedIdeal478` だけを表示します。
+pixel coordinate、OBJ vertex coordinate、WebGL clip space は、MediaPipe returned landmarks 取得後の alignment / mesh pair 処理には混ぜません。render image の pixel coordinate は MediaPipe 入力用に閉じ込めます。MediaPipe から戻ってきた `renderedIdeal478` は render canvas image-normalized coordinate（0..1）として保持し、aspect 変換せずに live coordinate tab に使います。semantic placement 実装まではライブ映像上に ideal overlay を表示しません。
 
 ## 既存ラボから踏襲するもの
 
@@ -961,7 +923,7 @@ Live overlay では、古い rendered ideal や fallback frontal face を表示�
 
 Live overlay の current overlay（現在顔重ね表示）は、最新 frame の `current478`（現在顔478点）の有無だけに依存します。`noFace`（顔未検出）や `no_current_face`（現在顔なし）は frame-local（一時状態）として扱い、次の detected frame（検出成功フレーム）で `current478` が戻ったら current overlay も復帰します。current overlay checkbox（現在顔重ね表示チェックボックス）は一時的な `noFace` では disabled（無効）にせず、ON のまま保持します。
 
-aligned ideal overlay（位置合わせ済み理想顔重ね表示）の `placementFunctionStatus` / `alignmentStatus` / `renderedIdealStatus` / token match / render pose gate の失敗は、current overlay（現在顔重ね表示）の表示可否には影響させません。これらの gate は aligned ideal overlay、correspondence line、mesh target の表示可否にだけ使います。
+aligned ideal overlay（位置合わせ済み理想顔重ね表示）の `alignmentStatus` / `liveAlignmentStatus` / `renderedIdealStatus` / token match / render pose gate の失敗は、current overlay（現在顔重ね表示）の表示可否には影響させません。これらの gate は aligned ideal overlay、correspondence line、mesh target の表示可否にだけ使います。
 
 `表示重ね描き（displayedContentRect pixel座標）` tab（タブ）は、active（有効）になったタイミングで最新 state（状態）から redraw（再描画）します。tab switch（タブ切替）で戻った直後は `requestAnimationFrame`（次描画フレーム待ち）後に overlay canvas（重ね描き canvas）の表示サイズを再計測し、`displayedContentRect`（表示領域矩形）を再計算してから描画します。hidden（非表示）状態の tab で計算した 0 size（ゼロサイズ）由来の `displayedContentRect` は使い回しません。
 
