@@ -4,7 +4,7 @@ Ideal OBJ Render Warp Lab 配置関数解析の検証履歴
 
 このドキュメントは、`tools/ideal-obj-render-warp-lab` で進めてきた Placement Function Analysis（配置関数解析）の検証履歴、判断理由、現時点の結論を後から読み返すためのメモです。実装仕様を固定するものではなく、今後の実装判断に使えるように候補名、式、評価指標、暫定判断を整理します。
 
-現在の扱い: `direct_piecewise_ty3_linear_normalized_v1` は live runtime では deprecated / failed experiment として廃止済みです。正面 pose の matrix-based placement function としては過去検証に残しますが、yaw / pitch / roll を含む live alignment の主導線にはしません。live runtime は matrix-based placement を使わず、次に `semantic_5pt_center_scale_v1` 方向へ移行します。
+現在の扱い: `direct_piecewise_ty3_linear_normalized_v1` は live runtime では deprecated / failed experiment として廃止済みです。正面 pose の matrix-based placement function としては過去検証に残しますが、yaw / pitch / roll を含む live alignment の主導線にはしません。live runtime は matrix-based placement を使わず、`semantic_5pt_center_scale_v1` で center / scale の配置補正だけを行います。
 
 ## 1. この検証で解こうとしている問題
 
@@ -581,7 +581,7 @@ MP4 再生中の Pose Mapping runtime から、`direct_piecewise_ty3_linear_norm
 - `direct_linear_normalized_v1` fallback に戻さない
 - `state.placementAnalysis.candidate` を live runtime に接続しない
 
-semantic placement 実装まで、live alignment は以下で skip します。
+この cleanup 直後は、semantic placement 実装まで live alignment を以下で skip していました。
 
 ```text
 alignmentStatus = skipped_no_live_alignment_method
@@ -592,4 +592,58 @@ alignedRenderedIdeal478 = null
 meshTargetVertices = null
 ```
 
-次の live alignment 方針は、`current478` と `renderedIdeal478` の同じ固定ランドマークから center / scale line を作る `semantic_5pt_center_scale_v1` です。WebGL mesh warp の画像変形本線化は別作業とします。
+次の live alignment 方針は、`current478` と `renderedIdeal478` の同じ固定ランドマークから center / scale line を作る `semantic_5pt_center_scale_v1` でした。WebGL mesh warp の画像変形本線化は別作業とします。
+
+## 18. 2026-06 Semantic 5pt Center Scale Live Alignment
+
+MP4 再生中の Pose Mapping runtime に、`semantic_5pt_center_scale_v1`（意味点5点中心スケール方式 v1）を追加しました。
+
+この方式は matrix-based placement ではありません。`currentMatrix` / `facialTransformationMatrix`、`state.placementAnalysis.candidate`、`direct_piecewise_ty3_linear_normalized_v1`、`direct_linear_normalized_v1` fallback、`bounds_center_scale_v1`、`mediapipe_placement_center_scale` は live runtime の scale / translate 推定に使いません。
+
+役割分担:
+
+```text
+poseMappingProfile:
+  yaw / pitch / roll など、顔の向きを合わせる
+
+semantic_5pt_center_scale_v1:
+  center と scale だけを合わせる
+```
+
+固定5点:
+
+```text
+topCenter = 10
+chinCenter = 152
+rightSideCenter = 454
+leftSideCenter = 234
+eyeMid = 6
+```
+
+`topCenter -> chinCenter` と `leftSideCenter -> rightSideCenter` の交点を semantic center とし、`semanticCenter -> eyeMid` を scale line とします。`scaleRatio = currentScaleLength / idealScaleLength` を作り、`renderedIdeal478` 全体へ scale then translate を適用して `alignedRenderedIdeal478` を生成します。
+
+2D rotation は適用しません。`center -> eyeMid` の角度差は `angleDiffDeg` として debug に出すだけです。
+
+成功時:
+
+```text
+alignmentStatus = completed
+alignmentSkippedReason = none
+alignmentMethod = semantic_5pt_center_scale_v1
+liveAlignmentStatus = completed
+alignedRenderedIdeal478 = transformed landmarks
+meshTargetVertices = null
+```
+
+guard 失敗時:
+
+```text
+alignmentStatus = skipped_invalid_semantic_5pt_center_scale
+alignmentSkippedReason = <specific reason>
+alignmentMethod = semantic_5pt_center_scale_v1
+liveAlignmentStatus = skipped_invalid_semantic_5pt_center_scale
+alignedRenderedIdeal478 = null
+meshTargetVertices = null
+```
+
+guard 失敗時は古い `alignedRenderedIdeal478` を表示しません。WebGL mesh warp はまだ未接続で、`meshTargetVertices` も生成しません。

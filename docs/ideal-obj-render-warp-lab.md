@@ -7,19 +7,43 @@ MP4 再生中の Pose Mapping runtime では、matrix-based placement function �
 
 現在の live runtime は `state.placementAnalysis.candidate` を参照せず、`DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE` や `direct_linear_normalized_v1` fallback も持たない。旧方式へ fallback しない。
 
-semantic landmark based placement が未実装の間、live alignment は以下で skip する。
+live alignment は `semantic_5pt_center_scale_v1`（意味点5点中心スケール方式 v1）へ移行済みです。`currentMatrix` / `facialTransformationMatrix` から scale / translate を推定せず、`current478` と `renderedIdeal478` の同じ固定ランドマークだけで center / scale line を作ります。
+
+役割分担は以下です。
 
 ```text
-renderedIdeal478 = MediaPipe detect(renderer.canvas) の結果を保持
-alignmentStatus = skipped_no_live_alignment_method
-alignmentSkippedReason = no_live_alignment_method
-alignmentMethod = none
-liveAlignmentStatus = skipped_no_live_alignment_method
+poseMappingProfile:
+  yaw / pitch / roll など、顔の向きを合わせる
+
+semantic_5pt_center_scale_v1:
+  center と scale だけを合わせる
+```
+
+`semantic_5pt_center_scale_v1` は姿勢補正ではなく配置補正です。2D rotation は適用せず、`center -> eyeMid` の角度差は debug 表示だけに使います。WebGL mesh warp はまだ未接続で、`meshTargetVertices` は生成しません。
+
+成功時は以下になります。
+
+```text
+alignmentStatus = completed
+alignmentSkippedReason = none
+alignmentMethod = semantic_5pt_center_scale_v1
+liveAlignmentStatus = completed
+alignedRenderedIdeal478 = transformed landmarks
+meshTargetVertices = null
+```
+
+guard に失敗した場合は古い位置合わせ結果を使わず、以下になります。
+
+```text
+alignmentStatus = skipped_invalid_semantic_5pt_center_scale
+alignmentSkippedReason = <specific reason>
+alignmentMethod = semantic_5pt_center_scale_v1
+liveAlignmentStatus = skipped_invalid_semantic_5pt_center_scale
 alignedRenderedIdeal478 = null
 meshTargetVertices = null
 ```
 
-次の live alignment 方針は、matrix から scale / translate を推定するのではなく、`current478` と `renderedIdeal478` の同じ固定ランドマークから center / scale line を作る `semantic_5pt_center_scale_v1` へ移行すること。
+主な guard は、478点不足、固定5点の欠損 / NaN / Infinity、center 交点不正、center bounds 外、scale line が短すぎる、scaleRatio 不正 / 範囲外、強い yaw / pitch / roll です。初期しきい値は `minScaleRatio = 0.5`、`maxScaleRatio = 2.0`、`maxYawDeg = 30`、`maxPitchDeg = 25`、`maxRollDeg = 25` として debug に出します。
 
 `placement mapping samples` は session memory に frame ごとの small summary として保存し、JSON / CSV で export できる。sample には `frameId`、`mediaTimeSec`、`P_camera`、`p`、`P_confirm`、`poseDiffMagnitude`、matrix column-major translation / scale、current / rendered / aligned bounds、`alignmentMethod`、`liveAlignmentStatus`、scale / translate、aspect ratio、`qualityUsable`、`skippedReason` を含める。live runtime sample には placement function candidate id / status や `matrixFeatures` は含めない。
 
@@ -30,10 +54,10 @@ meshTargetVertices = null
 - `OBJ 3D（OBJ座標）`: OBJ coordinate（OBJ座標）で OBJ mesh / vertices / faces / raw OBJ bounds を確認する。`current478`、`renderedIdeal478`、`alignedRenderedIdeal478`、`meshSourceVertices`、`meshTargetVertices` は表示しない。
 - `レンダー画像（render canvas座標）`: poseMapping runtime render（姿勢対応実行時レンダー）の WebGL render result（WebGL描画結果）を、runtime render canvas image-normalized coordinate / runtime render canvas pixel coordinate（実行時レンダーcanvas画像正規化座標 / 実行時レンダーcanvasピクセル座標）で確認する。ここでは `P_camera`（カメラ顔姿勢） -> `poseMappingProfile`（姿勢対応プロファイル） -> `pFromProfile`（プロファイル出力姿勢） -> `pForWebglRender`（WebGL描画用姿勢） -> WebGL OBJ render（WebGL OBJ描画） -> MediaPipe detect（MediaPipe検出）で生成された runtime rendered ideal image（実行時レンダー理想画像）、`renderedIdeal478`（レンダー理想478点）、`P_confirm`（確認姿勢）を確認する。
 - `ライブ座標（live image-normalized座標）`: MediaPipe が返した image-normalized coordinate（画像正規化座標）で `current478`、`renderedIdeal478`、`meshSourceVertices` を確認する。青点の `current478` は `detectForVideo(liveVideoElement, timestampMs) -> buildCurrentFrameAnalysis() -> mapLandmarks()`、赤点の `renderedIdeal478` は `detect(renderer.canvas) -> buildRenderedIdealDetectionState() -> mapLandmarks()` の経路で描画し、aspect 変換は適用しない。この tab の赤点には `alignedRenderedIdeal478` を使わない。
-- `表示重ね描き（displayedContentRect pixel座標）`: `current478` は displayedContentRect pixel coordinate（表示領域ピクセル座標）へ変換して live video 上に表示する。`alignedRenderedIdeal478` が生成済みの場合だけ、理想側を displayedContentRect 内の正方形 0..1 equal-axis pixel coordinate（等倍軸ピクセル座標）へ変換して表示する。現在は live alignment 未実装のため、`alignedRenderedIdeal478` は生成せず、この overlay は `skipped_no_live_alignment_method` で表示しない。
+- `表示重ね描き（displayedContentRect pixel座標）`: `current478` は displayedContentRect pixel coordinate（表示領域ピクセル座標）へ変換して live video 上に表示する。`semantic_5pt_center_scale_v1` が成功して `alignedRenderedIdeal478` が生成済みの場合だけ、理想側を displayedContentRect 内の正方形 0..1 equal-axis pixel coordinate（等倍軸ピクセル座標）へ変換して表示する。guard 失敗時は `alignedRenderedIdeal478 = null` とし、古い位置合わせ済み理想点は表示しない。
 - `配置関数解析（placement analysis）`: placement analysis image-normalized coordinate / analysis render canvas coordinate（配置関数解析用の画像正規化座標 / 解析レンダーcanvas座標）で placement samples、candidate comparison、roundtrip validation を確認する。placement analysis の candidate は live runtime へ自動反映しない。
 
-`renderedIdeal478`（レンダー理想478点）は MediaPipe `detect(renderer.canvas)` が返した render canvas image-normalized coordinate（0..1）の点であり、live coordinate tab（ライブ座標タブ）でも aspect 変換せずに比較用として表示する。live coordinate tab は横長 canvas 全体へ引き伸ばさず、中央の正方形 0..1 equal-axis preview（等倍軸プレビュー）に描画する。live video（ライブ映像）上の重ね描きに使う理想点は、次の semantic landmark based placement 実装後に生成する `alignedRenderedIdeal478` とする。
+`renderedIdeal478`（レンダー理想478点）は MediaPipe `detect(renderer.canvas)` が返した render canvas image-normalized coordinate（0..1）の点であり、live coordinate tab（ライブ座標タブ）でも aspect 変換せずに比較用として表示する。live coordinate tab は横長 canvas 全体へ引き伸ばさず、中央の正方形 0..1 equal-axis preview（等倍軸プレビュー）に描画する。live video（ライブ映像）上の重ね描きに使う理想点は、`semantic_5pt_center_scale_v1` 成功時に生成する `alignedRenderedIdeal478` とする。
 
 `レンダー画像（render canvas座標）` tab は standalone preview（独立プレビュー）ではなく、poseMapping runtime render（姿勢対応実行時レンダー）の結果を主表示とする。旧 standalone preview 経路は debug / benchmark 用に残す場合でも、中央 tab の主表示ソースには使わない。runtime render result（実行時レンダー結果）が未生成の場合は空の standalone preview を出さず、`poseMappingStatus`（姿勢対応状態）や `renderedIdealStatus`（レンダー理想状態）を reason（理由）として表示する。
 
@@ -45,12 +69,12 @@ checkbox（チェックボックス）は各 coordinate tab（座標系タブ）
 
 ```text
 alignedRenderedIdeal478（位置合わせ済み理想478点）
-  status: not available（未生成）
-  reason: alignmentStatus = skipped_no_live_alignment_method; liveAlignmentStatus = skipped_no_live_alignment_method
+  status: available（生成済み）
+  reason: alignmentStatus = completed; liveAlignmentStatus = completed
 
 meshTargetVertices（変形先メッシュ頂点）
   status: not available（未生成）
-  reason: alignmentStatus = skipped_no_live_alignment_method; liveAlignmentStatus = skipped_no_live_alignment_method
+  reason: meshTargetVertices = not_generated_for_semantic_5pt_center_scale_v1
 
 renderedIdeal478（レンダー理想478点）
   status: not available（未生成）
