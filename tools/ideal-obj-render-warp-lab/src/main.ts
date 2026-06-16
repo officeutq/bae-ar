@@ -988,6 +988,9 @@ type PoseMappingAlignmentSkippedReason =
   | "invalid_feature_landmark"
   | "invalid_center_intersection"
   | "center_out_of_bounds"
+  | "missing_scale_candidate_landmarks"
+  | "invalid_scale_candidate_landmark"
+  | "invalid_x_span_indices"
   | "scale_line_too_short"
   | "invalid_scale_ratio"
   | "scale_ratio_out_of_range"
@@ -1266,14 +1269,25 @@ type Semantic5ptFeatureKey =
   | "rightSideCenter"
   | "leftSideCenter"
   | "eyeMid"
-type Semantic5ptScaleBasis = "top_chin" | "left_right"
+type Semantic5ptScaleBasisMode = "current_x_span_same_indices"
+type Semantic5ptScaleBasis = "current_x_span"
 type Semantic5ptFeatureLandmarks = Record<Semantic5ptFeatureKey, ReferenceLandmark | null>
 type Semantic5ptFeatureLandmarkIndices = Record<Semantic5ptFeatureKey, number>
-type Semantic5ptScaleLandmarkIndices = {
+type Semantic5ptFixedScaleComparisonLandmarkIndices = {
   topChin: readonly [number, number]
   leftRight: readonly [number, number]
 }
+type Semantic5ptScaleLandmarkIndices = {
+  minXIndex: number | null
+  maxXIndex: number | null
+}
 type Semantic5ptDebugPoint = { x: number; y: number }
+type Semantic5ptScaleCandidateExcludedReason =
+  | "missingCurrent"
+  | "missingIdeal"
+  | "invalidCurrent"
+  | "invalidIdeal"
+type Semantic5ptScaleCandidateExcludedReasonCounts = Record<Semantic5ptScaleCandidateExcludedReason, number>
 type Semantic5ptDebugGuard = {
   minScaleRatio: number
   maxScaleRatio: number
@@ -1287,13 +1301,29 @@ type Semantic5ptDebugGuard = {
 }
 type Semantic5ptDebug = {
   featureLandmarkIndices: Semantic5ptFeatureLandmarkIndices
-  scaleBasisMode: "auto_longer_current_same_basis"
-  scaleBasisUsed: Semantic5ptScaleBasis | null
+  scaleBasisMode: Semantic5ptScaleBasisMode
+  scaleBasisUsed: Semantic5ptScaleBasis
+  scaleCandidateIndices: number[]
+  scaleCandidateCount: number
   scaleLandmarkIndices: Semantic5ptScaleLandmarkIndices
+  selectedScaleLandmarkIndices: Semantic5ptScaleLandmarkIndices
   currentFeatures: Semantic5ptFeatureLandmarks
   idealFeatures: Semantic5ptFeatureLandmarks
   currentCenter: Semantic5ptDebugPoint | null
   idealCenter: Semantic5ptDebugPoint | null
+  currentMinXPoint: ReferenceLandmark | null
+  currentMaxXPoint: ReferenceLandmark | null
+  idealMinXPoint: ReferenceLandmark | null
+  idealMaxXPoint: ReferenceLandmark | null
+  currentXSpanLength: number | null
+  idealSameIndexXSpanLength: number | null
+  excludedScaleCandidateReasonCounts: Semantic5ptScaleCandidateExcludedReasonCounts
+  fixedTopChinLengthCurrent: number | null
+  fixedTopChinLengthIdeal: number | null
+  fixedLeftRightLengthCurrent: number | null
+  fixedLeftRightLengthIdeal: number | null
+  fixedTopChinScaleRatio: number | null
+  fixedLeftRightScaleRatio: number | null
   currentVerticalScaleLength: number | null
   currentHorizontalScaleLength: number | null
   idealVerticalScaleLength: number | null
@@ -3395,7 +3425,7 @@ const SEMANTIC_5PT_FEATURE_LANDMARKS = {
   leftSideCenter: 234,
   eyeMid: 6,
 } as const satisfies Semantic5ptFeatureLandmarkIndices
-const SEMANTIC_5PT_SCALE_LANDMARK_INDICES = {
+const SEMANTIC_5PT_FIXED_SCALE_COMPARISON_LANDMARK_INDICES = {
   topChin: [
     SEMANTIC_5PT_FEATURE_LANDMARKS.topCenter,
     SEMANTIC_5PT_FEATURE_LANDMARKS.chinCenter,
@@ -3404,7 +3434,13 @@ const SEMANTIC_5PT_SCALE_LANDMARK_INDICES = {
     SEMANTIC_5PT_FEATURE_LANDMARKS.leftSideCenter,
     SEMANTIC_5PT_FEATURE_LANDMARKS.rightSideCenter,
   ],
-} as const satisfies Semantic5ptScaleLandmarkIndices
+} as const satisfies Semantic5ptFixedScaleComparisonLandmarkIndices
+const SEMANTIC_SCALE_X_SPAN_CANDIDATE_INDICES = [
+  10, 338, 297, 332, 284, 251, 389, 356, 454,
+  323, 361, 288, 397, 365, 379, 378, 400, 377,
+  152, 148, 176, 149, 150, 136, 172, 58, 132,
+  93, 234, 127, 162, 21, 54, 103, 67, 109,
+] as const
 const SEMANTIC_5PT_MIN_SCALE_RATIO = 0.5
 const SEMANTIC_5PT_MAX_SCALE_RATIO = 2
 const SEMANTIC_5PT_MIN_SCALE_LINE_LENGTH = 0.005
@@ -9105,15 +9141,6 @@ function buildPoseMappingAlignment(
     semantic5ptDebug.idealFeatures.leftSideCenter,
     semantic5ptDebug.idealFeatures.rightSideCenter,
   )
-  const scaleBasisUsed: Semantic5ptScaleBasis =
-    currentVerticalScaleLength >= currentHorizontalScaleLength ? "top_chin" : "left_right"
-  const currentScaleLength =
-    scaleBasisUsed === "top_chin" ? currentVerticalScaleLength : currentHorizontalScaleLength
-  const idealScaleLength =
-    scaleBasisUsed === "top_chin" ? idealVerticalScaleLength : idealHorizontalScaleLength
-  semantic5ptDebug.scaleBasisUsed = scaleBasisUsed
-  semantic5ptDebug.scaleBasisSwitchedFromPreviousFrame =
-    consumeSemantic5ptScaleBasisSwitchedFromPreviousFrame(scaleBasisUsed)
   semantic5ptDebug.currentVerticalScaleLength = currentVerticalScaleLength
   semantic5ptDebug.currentHorizontalScaleLength = currentHorizontalScaleLength
   semantic5ptDebug.idealVerticalScaleLength = idealVerticalScaleLength
@@ -9126,14 +9153,121 @@ function buildPoseMappingAlignment(
     currentHorizontalScaleLength,
     idealHorizontalScaleLength,
   )
-  semantic5ptDebug.currentScaleLength = currentScaleLength
-  semantic5ptDebug.idealScaleLength = idealScaleLength
+  semantic5ptDebug.fixedTopChinLengthCurrent = currentVerticalScaleLength
+  semantic5ptDebug.fixedTopChinLengthIdeal = idealVerticalScaleLength
+  semantic5ptDebug.fixedLeftRightLengthCurrent = currentHorizontalScaleLength
+  semantic5ptDebug.fixedLeftRightLengthIdeal = idealHorizontalScaleLength
+  semantic5ptDebug.fixedTopChinScaleRatio = semantic5ptDebug.verticalScaleRatio
+  semantic5ptDebug.fixedLeftRightScaleRatio = semantic5ptDebug.horizontalScaleRatio
   semantic5ptDebug.angleDiffDeg = calculateSemantic5ptAngleDiffDeg(
     currentCenter,
     semantic5ptDebug.currentFeatures.eyeMid,
     idealCenter,
     semantic5ptDebug.idealFeatures.eyeMid,
   )
+  if (semantic5ptDebug.scaleCandidateIndices.length === 0) {
+    return {
+      alignedRenderedIdeal478: null,
+      meshSourceVertices: currentLandmarksImage.map(cloneReferenceLandmark),
+      meshTargetVertices: null,
+      alignment: createAlignmentState(
+        "skipped_invalid_semantic_5pt_center_scale",
+        "missing_scale_candidate_landmarks",
+        {
+          videoAspectRatio,
+          renderAspectRatio,
+          currentBoundsImage,
+          renderedIdealBoundsImage,
+          placementDebug,
+          excludedReasonCounts: reasonCounts,
+          landmarkReasons: reasons,
+          renderedIdealStatus: "detected",
+        },
+      ),
+    }
+  }
+
+  const xSpanSelection = selectSemantic5ptXSpanScaleLandmarks(
+    currentLandmarksImage,
+    renderedIdealLandmarksForPlacement,
+    semantic5ptDebug.scaleCandidateIndices,
+  )
+  semantic5ptDebug.excludedScaleCandidateReasonCounts = xSpanSelection.excludedReasonCounts
+  if (xSpanSelection.excludedCandidateCount > 0) {
+    return {
+      alignedRenderedIdeal478: null,
+      meshSourceVertices: currentLandmarksImage.map(cloneReferenceLandmark),
+      meshTargetVertices: null,
+      alignment: createAlignmentState(
+        "skipped_invalid_semantic_5pt_center_scale",
+        "invalid_scale_candidate_landmark",
+        {
+          videoAspectRatio,
+          renderAspectRatio,
+          currentBoundsImage,
+          renderedIdealBoundsImage,
+          placementDebug,
+          excludedReasonCounts: reasonCounts,
+          landmarkReasons: reasons,
+          renderedIdealStatus: "detected",
+        },
+      ),
+    }
+  }
+  const selectedScaleLandmarkIndices = {
+    minXIndex: xSpanSelection.minXIndex,
+    maxXIndex: xSpanSelection.maxXIndex,
+  }
+  semantic5ptDebug.scaleLandmarkIndices = selectedScaleLandmarkIndices
+  semantic5ptDebug.selectedScaleLandmarkIndices = selectedScaleLandmarkIndices
+  semantic5ptDebug.currentMinXPoint = xSpanSelection.currentMinXPoint
+  semantic5ptDebug.currentMaxXPoint = xSpanSelection.currentMaxXPoint
+  semantic5ptDebug.idealMinXPoint = xSpanSelection.idealMinXPoint
+  semantic5ptDebug.idealMaxXPoint = xSpanSelection.idealMaxXPoint
+  if (
+    xSpanSelection.minXIndex === null ||
+    xSpanSelection.maxXIndex === null ||
+    xSpanSelection.minXIndex === xSpanSelection.maxXIndex ||
+    !xSpanSelection.currentMinXPoint ||
+    !xSpanSelection.currentMaxXPoint ||
+    !xSpanSelection.idealMinXPoint ||
+    !xSpanSelection.idealMaxXPoint
+  ) {
+    return {
+      alignedRenderedIdeal478: null,
+      meshSourceVertices: currentLandmarksImage.map(cloneReferenceLandmark),
+      meshTargetVertices: null,
+      alignment: createAlignmentState(
+        "skipped_invalid_semantic_5pt_center_scale",
+        "invalid_x_span_indices",
+        {
+          videoAspectRatio,
+          renderAspectRatio,
+          currentBoundsImage,
+          renderedIdealBoundsImage,
+          placementDebug,
+          excludedReasonCounts: reasonCounts,
+          landmarkReasons: reasons,
+          renderedIdealStatus: "detected",
+        },
+      ),
+    }
+  }
+
+  const currentScaleLength = distance2d(
+    xSpanSelection.currentMinXPoint,
+    xSpanSelection.currentMaxXPoint,
+  )
+  const idealScaleLength = distance2d(
+    xSpanSelection.idealMinXPoint,
+    xSpanSelection.idealMaxXPoint,
+  )
+  semantic5ptDebug.scaleBasisSwitchedFromPreviousFrame =
+    consumeSemantic5ptScaleBasisSwitchedFromPreviousFrame(semantic5ptDebug.scaleBasisUsed)
+  semantic5ptDebug.currentScaleLength = currentScaleLength
+  semantic5ptDebug.idealScaleLength = idealScaleLength
+  semantic5ptDebug.currentXSpanLength = currentScaleLength
+  semantic5ptDebug.idealSameIndexXSpanLength = idealScaleLength
   if (
     currentScaleLength < SEMANTIC_5PT_MIN_SCALE_LINE_LENGTH ||
     idealScaleLength < SEMANTIC_5PT_MIN_SCALE_LINE_LENGTH
@@ -9293,13 +9427,29 @@ function buildPoseMappingAlignment(
 function createEmptySemantic5ptDebug(): Semantic5ptDebug {
   return {
     featureLandmarkIndices: { ...SEMANTIC_5PT_FEATURE_LANDMARKS },
-    scaleBasisMode: "auto_longer_current_same_basis",
-    scaleBasisUsed: null,
-    scaleLandmarkIndices: { ...SEMANTIC_5PT_SCALE_LANDMARK_INDICES },
+    scaleBasisMode: "current_x_span_same_indices",
+    scaleBasisUsed: "current_x_span",
+    scaleCandidateIndices: [...SEMANTIC_SCALE_X_SPAN_CANDIDATE_INDICES],
+    scaleCandidateCount: SEMANTIC_SCALE_X_SPAN_CANDIDATE_INDICES.length,
+    scaleLandmarkIndices: { minXIndex: null, maxXIndex: null },
+    selectedScaleLandmarkIndices: { minXIndex: null, maxXIndex: null },
     currentFeatures: createEmptySemantic5ptFeatureLandmarks(),
     idealFeatures: createEmptySemantic5ptFeatureLandmarks(),
     currentCenter: null,
     idealCenter: null,
+    currentMinXPoint: null,
+    currentMaxXPoint: null,
+    idealMinXPoint: null,
+    idealMaxXPoint: null,
+    currentXSpanLength: null,
+    idealSameIndexXSpanLength: null,
+    excludedScaleCandidateReasonCounts: createEmptySemantic5ptScaleCandidateExcludedReasonCounts(),
+    fixedTopChinLengthCurrent: null,
+    fixedTopChinLengthIdeal: null,
+    fixedLeftRightLengthCurrent: null,
+    fixedLeftRightLengthIdeal: null,
+    fixedTopChinScaleRatio: null,
+    fixedLeftRightScaleRatio: null,
     currentVerticalScaleLength: null,
     currentHorizontalScaleLength: null,
     idealVerticalScaleLength: null,
@@ -9338,6 +9488,15 @@ function createEmptySemantic5ptFeatureLandmarks(): Semantic5ptFeatureLandmarks {
   }
 }
 
+function createEmptySemantic5ptScaleCandidateExcludedReasonCounts(): Semantic5ptScaleCandidateExcludedReasonCounts {
+  return {
+    missingCurrent: 0,
+    missingIdeal: 0,
+    invalidCurrent: 0,
+    invalidIdeal: 0,
+  }
+}
+
 function getSemantic5ptFeatureKeys(): Semantic5ptFeatureKey[] {
   return Object.keys(SEMANTIC_5PT_FEATURE_LANDMARKS) as Semantic5ptFeatureKey[]
 }
@@ -9349,6 +9508,69 @@ function getSemantic5ptFeatureLandmarks(landmarks: ReferenceLandmark[]): Semanti
     features[key] = isFiniteLandmark(landmark) ? cloneReferenceLandmark(landmark) : null
   }
   return features
+}
+
+function selectSemantic5ptXSpanScaleLandmarks(
+  currentLandmarks: ReferenceLandmark[],
+  idealLandmarks: ReferenceLandmark[],
+  candidateIndices: readonly number[],
+) {
+  const excludedReasonCounts = createEmptySemantic5ptScaleCandidateExcludedReasonCounts()
+  let excludedCandidateCount = 0
+  let minXIndex: number | null = null
+  let maxXIndex: number | null = null
+  let currentMinXPoint: ReferenceLandmark | null = null
+  let currentMaxXPoint: ReferenceLandmark | null = null
+  let idealMinXPoint: ReferenceLandmark | null = null
+  let idealMaxXPoint: ReferenceLandmark | null = null
+
+  for (const index of candidateIndices) {
+    const current = currentLandmarks[index]
+    const ideal = idealLandmarks[index]
+    let excluded = false
+    if (!current) {
+      excludedReasonCounts.missingCurrent += 1
+      excluded = true
+    } else if (!isFiniteLandmark2d(current)) {
+      excludedReasonCounts.invalidCurrent += 1
+      excluded = true
+    }
+    if (!ideal) {
+      excludedReasonCounts.missingIdeal += 1
+      excluded = true
+    } else if (!isFiniteLandmark2d(ideal)) {
+      excludedReasonCounts.invalidIdeal += 1
+      excluded = true
+    }
+    if (excluded) {
+      excludedCandidateCount += 1
+      continue
+    }
+    if (!current || !ideal) {
+      continue
+    }
+    if (!currentMinXPoint || current.x < currentMinXPoint.x) {
+      minXIndex = index
+      currentMinXPoint = cloneReferenceLandmark(current)
+      idealMinXPoint = cloneReferenceLandmark(ideal)
+    }
+    if (!currentMaxXPoint || current.x > currentMaxXPoint.x) {
+      maxXIndex = index
+      currentMaxXPoint = cloneReferenceLandmark(current)
+      idealMaxXPoint = cloneReferenceLandmark(ideal)
+    }
+  }
+
+  return {
+    excludedReasonCounts,
+    excludedCandidateCount,
+    minXIndex,
+    maxXIndex,
+    currentMinXPoint,
+    currentMaxXPoint,
+    idealMinXPoint,
+    idealMaxXPoint,
+  }
 }
 
 function areSemantic5ptFeaturesValid(
@@ -9666,6 +9888,14 @@ function isFiniteLandmark(landmark: ReferenceLandmark | undefined): landmark is 
       Number.isFinite(landmark.x) &&
       Number.isFinite(landmark.y) &&
       Number.isFinite(landmark.z),
+  )
+}
+
+function isFiniteLandmark2d(landmark: ReferenceLandmark | undefined): landmark is ReferenceLandmark {
+  return Boolean(
+    landmark &&
+      Number.isFinite(landmark.x) &&
+      Number.isFinite(landmark.y),
   )
 }
 
@@ -21309,7 +21539,7 @@ function drawSemantic5ptOverlayDebug(
     idealOverlayRect,
     currentLandmarks,
     alignedIdealLandmarks,
-    SEMANTIC_5PT_SCALE_LANDMARK_INDICES.topChin,
+    SEMANTIC_5PT_FIXED_SCALE_COMPARISON_LANDMARK_INDICES.topChin,
     "rgba(91, 92, 214, 0.56)",
     1.1,
     [4, 4],
@@ -21320,17 +21550,12 @@ function drawSemantic5ptOverlayDebug(
     idealOverlayRect,
     currentLandmarks,
     alignedIdealLandmarks,
-    SEMANTIC_5PT_SCALE_LANDMARK_INDICES.leftRight,
+    SEMANTIC_5PT_FIXED_SCALE_COMPARISON_LANDMARK_INDICES.leftRight,
     "rgba(0, 143, 125, 0.56)",
     1.1,
     [4, 4],
   )
-  const scaleBasisIndices =
-    debug.scaleBasisUsed === "top_chin"
-      ? SEMANTIC_5PT_SCALE_LANDMARK_INDICES.topChin
-      : debug.scaleBasisUsed === "left_right"
-        ? SEMANTIC_5PT_SCALE_LANDMARK_INDICES.leftRight
-        : null
+  const scaleBasisIndices = getSemantic5ptSelectedScaleLineIndices(debug)
   if (!scaleBasisIndices) {
     return
   }
@@ -21345,6 +21570,112 @@ function drawSemantic5ptOverlayDebug(
     2.2,
     [],
   )
+  drawSemantic5ptSelectedScalePoints(
+    context,
+    displayedContentRect,
+    currentLandmarks,
+    scaleBasisIndices,
+    "rgba(255, 200, 89, 0.95)",
+    "current",
+  )
+  drawSemantic5ptSelectedScalePoints(
+    context,
+    idealOverlayRect,
+    alignedIdealLandmarks,
+    scaleBasisIndices,
+    "rgba(235, 132, 44, 0.95)",
+    "aligned",
+  )
+  drawSemantic5ptDebugPoint(
+    context,
+    displayedContentRect,
+    debug.currentCenter,
+    "rgba(30, 86, 185, 0.96)",
+    "current center",
+  )
+  drawSemantic5ptDebugPoint(
+    context,
+    idealOverlayRect,
+    getAlignedSemantic5ptIdealCenter(debug),
+    "rgba(204, 80, 28, 0.96)",
+    "ideal center",
+  )
+}
+
+function getSemantic5ptSelectedScaleLineIndices(debug: Semantic5ptDebug): readonly [number, number] | null {
+  const { minXIndex, maxXIndex } = debug.selectedScaleLandmarkIndices
+  return minXIndex !== null && maxXIndex !== null && minXIndex !== maxXIndex
+    ? [minXIndex, maxXIndex]
+    : null
+}
+
+function drawSemantic5ptSelectedScalePoints(
+  context: CanvasRenderingContext2D,
+  displayedContentRect: Rect,
+  landmarks: ReferenceLandmark[],
+  indices: readonly [number, number],
+  color: string,
+  labelPrefix: string,
+) {
+  drawSemantic5ptLandmarkMarker(context, displayedContentRect, landmarks, indices[0], color, `${labelPrefix} minX ${indices[0]}`)
+  drawSemantic5ptLandmarkMarker(context, displayedContentRect, landmarks, indices[1], color, `${labelPrefix} maxX ${indices[1]}`)
+}
+
+function drawSemantic5ptLandmarkMarker(
+  context: CanvasRenderingContext2D,
+  displayedContentRect: Rect,
+  landmarks: ReferenceLandmark[],
+  index: number,
+  color: string,
+  label: string,
+) {
+  const landmark = landmarks[index]
+  if (!isFiniteLandmark2d(landmark)) {
+    return
+  }
+  drawSemantic5ptDebugPoint(context, displayedContentRect, landmark, color, label)
+}
+
+function getAlignedSemantic5ptIdealCenter(debug: Semantic5ptDebug): Semantic5ptDebugPoint | null {
+  if (
+    !debug.idealCenter ||
+    debug.scaleRatio === null ||
+    debug.translateAfterScaleImageX === null ||
+    debug.translateAfterScaleImageY === null ||
+    !Number.isFinite(debug.scaleRatio) ||
+    !Number.isFinite(debug.translateAfterScaleImageX) ||
+    !Number.isFinite(debug.translateAfterScaleImageY)
+  ) {
+    return null
+  }
+  return {
+    x: debug.idealCenter.x * debug.scaleRatio + debug.translateAfterScaleImageX,
+    y: debug.idealCenter.y * debug.scaleRatio + debug.translateAfterScaleImageY,
+  }
+}
+
+function drawSemantic5ptDebugPoint(
+  context: CanvasRenderingContext2D,
+  displayedContentRect: Rect,
+  point: Semantic5ptDebugPoint | null,
+  color: string,
+  label: string,
+) {
+  if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) {
+    return
+  }
+  const previewPoint = normalizedLandmarkToPreviewPixel(point, displayedContentRect)
+  context.save()
+  context.fillStyle = color
+  context.strokeStyle = "rgba(255, 255, 255, 0.92)"
+  context.lineWidth = 1.4
+  context.beginPath()
+  context.arc(previewPoint.x, previewPoint.y, 4, 0, Math.PI * 2)
+  context.fill()
+  context.stroke()
+  context.font = "700 10px Inter, system-ui, sans-serif"
+  context.fillText(label, previewPoint.x + 6, previewPoint.y - 6)
+  context.restore()
 }
 
 function drawSemantic5ptLinePair(
@@ -28204,11 +28535,27 @@ function roundSemantic5ptDebugForState(debug: Semantic5ptDebug): Semantic5ptDebu
     featureLandmarkIndices: { ...debug.featureLandmarkIndices },
     scaleBasisMode: debug.scaleBasisMode,
     scaleBasisUsed: debug.scaleBasisUsed,
+    scaleCandidateIndices: [...debug.scaleCandidateIndices],
+    scaleCandidateCount: debug.scaleCandidateCount,
     scaleLandmarkIndices: { ...debug.scaleLandmarkIndices },
+    selectedScaleLandmarkIndices: { ...debug.selectedScaleLandmarkIndices },
     currentFeatures: roundSemantic5ptFeaturesForState(debug.currentFeatures),
     idealFeatures: roundSemantic5ptFeaturesForState(debug.idealFeatures),
     currentCenter: roundPoint2ForState(debug.currentCenter),
     idealCenter: roundPoint2ForState(debug.idealCenter),
+    currentMinXPoint: debug.currentMinXPoint ? roundLandmarkForState(debug.currentMinXPoint) : null,
+    currentMaxXPoint: debug.currentMaxXPoint ? roundLandmarkForState(debug.currentMaxXPoint) : null,
+    idealMinXPoint: debug.idealMinXPoint ? roundLandmarkForState(debug.idealMinXPoint) : null,
+    idealMaxXPoint: debug.idealMaxXPoint ? roundLandmarkForState(debug.idealMaxXPoint) : null,
+    currentXSpanLength: roundForState(debug.currentXSpanLength),
+    idealSameIndexXSpanLength: roundForState(debug.idealSameIndexXSpanLength),
+    excludedScaleCandidateReasonCounts: { ...debug.excludedScaleCandidateReasonCounts },
+    fixedTopChinLengthCurrent: roundForState(debug.fixedTopChinLengthCurrent),
+    fixedTopChinLengthIdeal: roundForState(debug.fixedTopChinLengthIdeal),
+    fixedLeftRightLengthCurrent: roundForState(debug.fixedLeftRightLengthCurrent),
+    fixedLeftRightLengthIdeal: roundForState(debug.fixedLeftRightLengthIdeal),
+    fixedTopChinScaleRatio: roundForState(debug.fixedTopChinScaleRatio),
+    fixedLeftRightScaleRatio: roundForState(debug.fixedLeftRightScaleRatio),
     currentVerticalScaleLength: roundForState(debug.currentVerticalScaleLength),
     currentHorizontalScaleLength: roundForState(debug.currentHorizontalScaleLength),
     idealVerticalScaleLength: roundForState(debug.idealVerticalScaleLength),

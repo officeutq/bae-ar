@@ -622,20 +622,21 @@ eyeMid = 6（角度差 debug 用。scale line には使わない）
 
 `topCenter -> chinCenter` と `leftSideCenter -> rightSideCenter` の交点を semantic center とします。center の作り方は従来通りです。
 
-scale line は `semanticCenter -> eyeMid` ではありません。current 側で `topCenter: 10 -> chinCenter: 152` の vertical scale line と、`leftSideCenter: 234 -> rightSideCenter: 454` の horizontal scale line の長さを比較し、長い方を `scaleBasis` として採用します。ideal 側では長い方を選び直さず、current 側で選んだ同じ `scaleBasis` の長さを使います。
+scale line は `semanticCenter -> eyeMid` ではありません。また、現行の live alignment では `topCenter: 10 -> chinCenter: 152` と `leftSideCenter: 234 -> rightSideCenter: 454` の長い方選択も scale basis として使いません。current 側の face boundary / scale candidate landmarks から x が最小の landmark index と x が最大の landmark index を選び、その 2 点を `current_x_span` の scale line とします。ideal 側では x 最小 / 最大を選び直さず、current 側で選ばれた同一 landmark index の 2 点を使います。固定 `10 -> 152` / `234 -> 454` の長さと scale ratio は比較用 debug として残します。
 
 ```text
-scaleBasis =
-  currentVerticalLength >= currentHorizontalLength
-    ? "top_chin"
-    : "left_right"
+scaleBasisMode = current_x_span_same_indices
+scaleBasisUsed = current_x_span
+
+minXIndex = current scale candidate landmarks のうち x が最小の index
+maxXIndex = current scale candidate landmarks のうち x が最大の index
 
 scaleRatio = currentScaleLength / idealScaleLength
 ```
 
 その後は従来通り、`renderedIdeal478` 全体へ scale then translate を適用して `alignedRenderedIdeal478` を生成します。
 
-2D rotation は適用しません。matrix-based placement も復活させません。`center -> eyeMid` の角度差は `angleDiffDeg` として debug に出すだけです。
+2D rotation は適用しません。matrix-based placement も復活させません。`center -> eyeMid` の角度差は `angleDiffDeg` として debug に出すだけです。WebGL mesh warp はまだ未接続で、`meshTargetVertices` も生成しません。
 
 成功時:
 
