@@ -658,3 +658,5 @@ meshTargetVertices = null
 ```
 
 guard 失敗時は古い `alignedRenderedIdeal478` を表示しません。WebGL mesh warp はまだ未接続で、`meshTargetVertices` も生成しません。
+
+一方で、レンダー画像 tab の runtime rendered ideal image（実行時レンダー理想画像）と、確認用の renderedIdeal478（レンダー理想478点）は alignment guard と分離します。current478 または renderedIdeal478 が一時的に取得できず live alignment が skip された場合でも、直近の render snapshot と直近の有効な renderedIdeal478 は保持し、レンダー画像確認が空白のままにならないようにします。古い `alignedRenderedIdeal478` は引き続き live overlay には使いません。

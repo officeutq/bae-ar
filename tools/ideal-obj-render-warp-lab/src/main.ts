@@ -6239,11 +6239,14 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
     const renderResult = renderWebglObjToCanvas(renderer, renderContext)
     const renderMs = performance.now() - renderStartMs
     const renderedIdealImageDataUrl = renderer.canvas.toDataURL("image/png")
+    const previousRenderedIdeal478ForPreview =
+      cloneRequiredLandmarks(previousRuntime.renderedIdeal478) ??
+      cloneRequiredLandmarks(lastRuntimeRenderedIdealPreviewSnapshot?.renderedIdeal478)
     storeRuntimeRenderedIdealPreviewSnapshot(
       renderedIdealImageDataUrl,
       renderer.canvas.width,
       renderer.canvas.height,
-      null,
+      previousRenderedIdeal478ForPreview,
     )
     recoveryDebug = buildPoseRecoveryDebug({
       previousRuntime,
@@ -6271,7 +6274,6 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
       detectCanvasWasClearedBeforeRender: true,
       renderPose: renderPoseLifecycle,
     }
-
     if (!detectCanvasPoseState.canvasPoseMatchesRenderToken || !detectCanvasPoseState.drawCompletedForToken) {
       renderedIdealLifecycle = {
         ...renderedIdealLifecycle,
@@ -6331,12 +6333,23 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
       detectSucceeded: detection.status === "detected",
       renderPose: finalizeRenderPoseLifecycleDebug(renderPoseLifecycle, detection.pose),
     }
+    const renderedIdeal478ForDisplay =
+      detection.status === "detected"
+        ? detection.landmarks478
+        : previousRenderedIdeal478ForPreview
     if (detection.status === "detected") {
       storeRuntimeRenderedIdealPreviewSnapshot(
         renderedIdealImageDataUrl,
         renderer.canvas.width,
         renderer.canvas.height,
         detection.landmarks478,
+      )
+    } else {
+      storeRuntimeRenderedIdealPreviewSnapshot(
+        renderedIdealImageDataUrl,
+        renderer.canvas.width,
+        renderer.canvas.height,
+        renderedIdeal478ForDisplay,
       )
     }
     const renderPoseWarning = renderedIdealLifecycle.renderPose.renderPoseMismatchReason
@@ -6411,7 +6424,7 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
       poseDiff: renderedIdealStatus === "detected" ? poseDiff : previousRuntime.poseDiff,
       renderedIdealDetected: detection.status === "detected",
       renderedIdealLandmarkCount: detection.landmarkCount,
-      renderedIdeal478: detection.landmarks478,
+      renderedIdeal478: renderedIdeal478ForDisplay,
       renderedIdealToken,
       alignedRenderedIdeal478: alignmentResult.alignedRenderedIdeal478,
       alignedRenderedIdealToken,
@@ -10136,11 +10149,25 @@ function createSkippedPoseMappingRuntimeState(params: {
   const lastGood = updatePoseMappingLastGoodAge(previousRuntime.lastGood)
   const staleMs = lastGood.updatedAtMs === null ? null : Math.max(0, performance.now() - lastGood.updatedAtMs)
   const noFaceSkipped = params.skippedReason === "no_current_face"
+  const retainedRenderedIdeal478 =
+    cloneRequiredLandmarks(previousRuntime.renderedIdeal478) ??
+    cloneRequiredLandmarks(lastRuntimeRenderedIdealPreviewSnapshot?.renderedIdeal478)
+  const retainedCurrent478 =
+    cloneRequiredLandmarks(state.currentAnalysis.landmarks478) ??
+    cloneRequiredLandmarks(previousRuntime.current478)
+  const retainedRenderedIdealImageDataUrl =
+    previousRuntime.renderedIdealImageDataUrl ??
+    lastRuntimeRenderedIdealPreviewSnapshot?.dataUrl ??
+    null
   return {
     ...previousRuntime,
-    status: previousRuntime.previewDataUrl ? "completed" : "idle",
+    status: retainedRenderedIdealImageDataUrl ? "completed" : "idle",
     currentFaceStatus: params.currentFaceStatus,
-    renderedIdealStatus: "stale",
+    renderedIdealStatus: retainedRenderedIdealImageDataUrl
+      ? previousRuntime.renderedIdealStatus === "detected"
+        ? "detected"
+        : "stale"
+      : "missing",
     alignmentStatus: "stale",
     alignmentSkippedReason: "stale",
     poseMappingStatus: getPoseMappingSkippedStatus(params.skippedReason),
@@ -10164,27 +10191,27 @@ function createSkippedPoseMappingRuntimeState(params: {
     },
     lastUpdatedAt: formatUpdatedAt(),
     qualityGate: params.qualityGate,
-    renderedIdealDetected: false,
-    renderedIdealLandmarkCount: null,
-    renderedIdeal478: null,
-    renderedIdealToken: null,
+    renderedIdealDetected: hasRequiredLandmarks(retainedRenderedIdeal478),
+    renderedIdealLandmarkCount: retainedRenderedIdeal478?.length ?? previousRuntime.renderedIdealLandmarkCount,
+    renderedIdeal478: retainedRenderedIdeal478,
+    renderedIdealToken: previousRuntime.renderedIdealToken,
     alignedRenderedIdeal478: null,
     alignedRenderedIdealToken: null,
-    current478: null,
-    meshSourceVertices: null,
+    current478: retainedCurrent478,
+    meshSourceVertices: retainedCurrent478,
     meshTargetVertices: null,
     assetLifecycle: createAssetLifecycle(previousRuntime.profileRendererMatch),
     frameLifecycle: null,
     renderedIdealLifecycle: {
-      ...createEmptyRenderedIdealLifecycle(),
-      staleCanvasDetected: lastGood.hasLastGood,
+      ...previousRuntime.renderedIdealLifecycle,
+      staleCanvasDetected: lastGood.hasLastGood || Boolean(retainedRenderedIdealImageDataUrl),
     },
     overlayLifecycle: createOverlayLifecycle(false, params.skippedReason),
     profileEvaluateMs: null,
     renderMs: null,
     detectMs: null,
     totalMs: null,
-    renderedIdealImageDataUrl: null,
+    renderedIdealImageDataUrl: retainedRenderedIdealImageDataUrl,
     errorMessage: params.skippedReason,
   }
 }

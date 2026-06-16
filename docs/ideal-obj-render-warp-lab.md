@@ -67,6 +67,8 @@ overlay（重ね表示）は canvas pixel coordinate（canvasピクセル座標�
 
 `semantic_5pt_center_scale_v1` の scale / translate は表示重ね描き view の pixel coordinate で計算します。ただし `alignedRenderedIdeal478` の保存形式は既存 overlay 実装に合わせ、`idealOverlayRect`（displayedContentRect 内の等倍軸矩形）基準の normalized coordinate（正規化座標）へ戻します。`drawLiveOverlay()` は `alignedRenderedIdeal478` を `idealOverlayRect` に渡し、`drawLandmarkPoints()` が既存通り normalized point を rect へ投影します。
 
+current478（現在顔478点）または renderedIdeal478（レンダー理想478点）が一時的に取得できない場合でも、レンダー画像 tab の runtime rendered ideal image（実行時レンダー理想画像）は消さず、直近の render snapshot を表示し続ける。renderedIdeal478 も直近の有効な 478 点を確認用に保持する。ただし、live video（ライブ映像）上の aligned ideal overlay（位置合わせ済み理想顔重ね表示）には古い `alignedRenderedIdeal478` を使わない。
+
 checkbox（チェックボックス）は各 coordinate tab（座標系タブ）内に置く。データがない checkbox は disabled（無効）にし、理由を表示する。例:
 
 ```text
