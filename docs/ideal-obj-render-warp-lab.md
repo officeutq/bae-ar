@@ -7,7 +7,7 @@ MP4 再生中の Pose Mapping runtime では、matrix-based placement function �
 
 現在の live runtime は `state.placementAnalysis.candidate` を参照せず、`DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE` や `direct_linear_normalized_v1` fallback も持たない。旧方式へ fallback しない。
 
-live alignment は `semantic_5pt_center_scale_v1`（意味点5点中心スケール方式 v1）へ移行済みです。`currentMatrix` / `facialTransformationMatrix` から scale / translate を推定せず、`current478` と `renderedIdeal478` の同じ固定ランドマークだけで center / scale line を作ります。
+live alignment は `semantic_5pt_center_scale_v1`（意味点5点中心スケール方式 v1）へ移行済みです。`currentMatrix` / `facialTransformationMatrix` から scale / translate を推定せず、`current478` と `renderedIdeal478` の同じ固定ランドマークだけで center / scale basis を作ります。
 
 役割分担は以下です。
 
@@ -19,7 +19,7 @@ semantic_5pt_center_scale_v1:
   center と scale だけを合わせる
 ```
 
-`semantic_5pt_center_scale_v1` は姿勢補正ではなく配置補正です。2D rotation は適用せず、`center -> eyeMid` の角度差は debug 表示だけに使います。WebGL mesh warp はまだ未接続で、`meshTargetVertices` は生成しません。
+`semantic_5pt_center_scale_v1` は姿勢補正ではなく配置補正です。center は従来通り `topCenter: 10 -> chinCenter: 152` と `leftSideCenter: 234 -> rightSideCenter: 454` の交点で作ります。scale line は `center -> eyeMid: 6` ではなく、current 側で `10 -> 152` と `234 -> 454` の長さを比較し、長い方を `scaleBasis` として採用します。ideal 側も current 側で選んだ同じ `scaleBasis` を使います。2D rotation は適用せず、`center -> eyeMid` の角度差は debug 表示だけに使います。WebGL mesh warp はまだ未接続で、`meshTargetVertices` は生成しません。
 
 成功時は以下になります。
 
@@ -43,7 +43,7 @@ alignedRenderedIdeal478 = null
 meshTargetVertices = null
 ```
 
-主な guard は、478点不足、固定5点の欠損 / NaN / Infinity、center 交点不正、center bounds 外、scale line が短すぎる、scaleRatio 不正 / 範囲外、強い yaw / pitch / roll です。初期しきい値は `minScaleRatio = 0.5`、`maxScaleRatio = 2.0`、`maxYawDeg = 30`、`maxPitchDeg = 25`、`maxRollDeg = 25` として debug に出します。
+主な guard は、478点不足、固定5点の欠損 / NaN / Infinity、center 交点不正、center bounds 外、選ばれた `scaleBasis` の scale line が短すぎる、scaleRatio 不正 / 範囲外、強い yaw / pitch / roll です。初期しきい値は `minScaleRatio = 0.5`、`maxScaleRatio = 2.0`、`maxYawDeg = 30`、`maxPitchDeg = 25`、`maxRollDeg = 25` として debug に出します。
 
 `placement mapping samples` は session memory に frame ごとの small summary として保存し、JSON / CSV で export できる。sample には `frameId`、`mediaTimeSec`、`P_camera`、`p`、`P_confirm`、`poseDiffMagnitude`、matrix column-major translation / scale、current / rendered / aligned bounds、`alignmentMethod`、`liveAlignmentStatus`、scale / translate、aspect ratio、`qualityUsable`、`skippedReason` を含める。live runtime sample には placement function candidate id / status や `matrixFeatures` は含めない。
 
