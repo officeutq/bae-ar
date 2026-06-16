@@ -620,22 +620,20 @@ leftSideCenter = 234
 eyeMid = 6（角度差 debug 用。scale line には使わない）
 ```
 
-`topCenter -> chinCenter` と `leftSideCenter -> rightSideCenter` の交点を semantic center とします。center の作り方は従来通りです。
+`topCenter -> chinCenter` と `leftSideCenter -> rightSideCenter` の交点を semantic center とします。center の作り方は従来通りですが、計算座標は表示重ね描き view の pixel coordinate（ピクセル座標）へそろえます。
 
-scale line は `semanticCenter -> eyeMid` ではありません。current 側で `topCenter: 10 -> chinCenter: 152` の vertical scale line と、`leftSideCenter: 234 -> rightSideCenter: 454` の horizontal scale line の長さを比較し、長い方を `scaleBasis` として採用します。ideal 側では長い方を選び直さず、current 側で選んだ同じ `scaleBasis` の長さを使います。
+scale line は `semanticCenter -> eyeMid` ではありません。現在の方式では、表示重ね描き view 上で実際に描かれる current478 の pixel coordinate から、x が最小の landmark と x が最大の landmark を選びます。現段階では face boundary candidate（顔外周候補）による絞り込みは入れず、NaN / Infinity / 欠損を除いた全478点を scale candidate とします。ideal 側では x 最小 / x 最大を選び直さず、current 側で選ばれた同一 index（同一ランドマーク番号）の点を使います。
 
 ```text
-scaleBasis =
-  currentVerticalLength >= currentHorizontalLength
-    ? "top_chin"
-    : "left_right"
+scaleBasisMode = displayed_current_x_span_same_indices
+scaleBasisUsed = displayed_current_x_span
 
 scaleRatio = currentScaleLength / idealScaleLength
 ```
 
-その後は従来通り、`renderedIdeal478` 全体へ scale then translate を適用して `alignedRenderedIdeal478` を生成します。
+その後は `renderedIdeal478` 全体を表示重ね描き view の ideal pixel coordinate へ変換し、pixel coordinate 上で scale then translate を適用します。ただし、`alignedRenderedIdeal478` の保存形式は既存 overlay 実装に合わせ、`idealOverlayRect` 基準の normalized coordinate（正規化座標）へ戻します。
 
-2D rotation は適用しません。matrix-based placement も復活させません。`center -> eyeMid` の角度差は `angleDiffDeg` として debug に出すだけです。
+2D rotation は適用しません。matrix-based placement も復活させません。`currentMatrix` / `facialTransformationMatrix` は scale / translate 推定に使いません。`center -> eyeMid` の角度差は `angleDiffDeg` として debug に出すだけです。WebGL mesh warp はまだ未接続です。
 
 成功時:
 
