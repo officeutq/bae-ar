@@ -1266,8 +1266,13 @@ type Semantic5ptFeatureKey =
   | "rightSideCenter"
   | "leftSideCenter"
   | "eyeMid"
+type Semantic5ptScaleBasis = "top_chin" | "left_right"
 type Semantic5ptFeatureLandmarks = Record<Semantic5ptFeatureKey, ReferenceLandmark | null>
 type Semantic5ptFeatureLandmarkIndices = Record<Semantic5ptFeatureKey, number>
+type Semantic5ptScaleLandmarkIndices = {
+  topChin: readonly [number, number]
+  leftRight: readonly [number, number]
+}
 type Semantic5ptDebugPoint = { x: number; y: number }
 type Semantic5ptDebugGuard = {
   minScaleRatio: number
@@ -1282,13 +1287,23 @@ type Semantic5ptDebugGuard = {
 }
 type Semantic5ptDebug = {
   featureLandmarkIndices: Semantic5ptFeatureLandmarkIndices
+  scaleBasisMode: "auto_longer_current_same_basis"
+  scaleBasisUsed: Semantic5ptScaleBasis | null
+  scaleLandmarkIndices: Semantic5ptScaleLandmarkIndices
   currentFeatures: Semantic5ptFeatureLandmarks
   idealFeatures: Semantic5ptFeatureLandmarks
   currentCenter: Semantic5ptDebugPoint | null
   idealCenter: Semantic5ptDebugPoint | null
+  currentVerticalScaleLength: number | null
+  currentHorizontalScaleLength: number | null
+  idealVerticalScaleLength: number | null
+  idealHorizontalScaleLength: number | null
+  verticalScaleRatio: number | null
+  horizontalScaleRatio: number | null
   currentScaleLength: number | null
   idealScaleLength: number | null
   scaleRatio: number | null
+  scaleBasisSwitchedFromPreviousFrame: boolean | null
   translateAfterScaleImageX: number | null
   translateAfterScaleImageY: number | null
   angleDiffDeg: number | null
@@ -3380,6 +3395,16 @@ const SEMANTIC_5PT_FEATURE_LANDMARKS = {
   leftSideCenter: 234,
   eyeMid: 6,
 } as const satisfies Semantic5ptFeatureLandmarkIndices
+const SEMANTIC_5PT_SCALE_LANDMARK_INDICES = {
+  topChin: [
+    SEMANTIC_5PT_FEATURE_LANDMARKS.topCenter,
+    SEMANTIC_5PT_FEATURE_LANDMARKS.chinCenter,
+  ],
+  leftRight: [
+    SEMANTIC_5PT_FEATURE_LANDMARKS.leftSideCenter,
+    SEMANTIC_5PT_FEATURE_LANDMARKS.rightSideCenter,
+  ],
+} as const satisfies Semantic5ptScaleLandmarkIndices
 const SEMANTIC_5PT_MIN_SCALE_RATIO = 0.5
 const SEMANTIC_5PT_MAX_SCALE_RATIO = 2
 const SEMANTIC_5PT_MIN_SCALE_LINE_LENGTH = 0.005
@@ -3387,6 +3412,7 @@ const SEMANTIC_5PT_MAX_YAW_DEG = 30
 const SEMANTIC_5PT_MAX_PITCH_DEG = 25
 const SEMANTIC_5PT_MAX_ROLL_DEG = 25
 const SEMANTIC_5PT_LINE_INTERSECTION_EPSILON = 0.000001
+let previousSemantic5ptScaleBasisUsed: Semantic5ptScaleBasis | null = null
 const MEDIAPIPE_TIMESTAMP_STEP_MS = 1000 / 30
 const LIVE_AUTO_ANALYSIS_INTERVAL_SEC = 0.35
 const DETECT_PERFORMANCE_DEFAULT_OPTIONS: DetectPerformanceOptions = {
@@ -9063,8 +9089,43 @@ function buildPoseMappingAlignment(
     }
   }
 
-  const currentScaleLength = distance2d(currentCenter, semantic5ptDebug.currentFeatures.eyeMid)
-  const idealScaleLength = distance2d(idealCenter, semantic5ptDebug.idealFeatures.eyeMid)
+  const currentVerticalScaleLength = distance2d(
+    semantic5ptDebug.currentFeatures.topCenter,
+    semantic5ptDebug.currentFeatures.chinCenter,
+  )
+  const currentHorizontalScaleLength = distance2d(
+    semantic5ptDebug.currentFeatures.leftSideCenter,
+    semantic5ptDebug.currentFeatures.rightSideCenter,
+  )
+  const idealVerticalScaleLength = distance2d(
+    semantic5ptDebug.idealFeatures.topCenter,
+    semantic5ptDebug.idealFeatures.chinCenter,
+  )
+  const idealHorizontalScaleLength = distance2d(
+    semantic5ptDebug.idealFeatures.leftSideCenter,
+    semantic5ptDebug.idealFeatures.rightSideCenter,
+  )
+  const scaleBasisUsed: Semantic5ptScaleBasis =
+    currentVerticalScaleLength >= currentHorizontalScaleLength ? "top_chin" : "left_right"
+  const currentScaleLength =
+    scaleBasisUsed === "top_chin" ? currentVerticalScaleLength : currentHorizontalScaleLength
+  const idealScaleLength =
+    scaleBasisUsed === "top_chin" ? idealVerticalScaleLength : idealHorizontalScaleLength
+  semantic5ptDebug.scaleBasisUsed = scaleBasisUsed
+  semantic5ptDebug.scaleBasisSwitchedFromPreviousFrame =
+    consumeSemantic5ptScaleBasisSwitchedFromPreviousFrame(scaleBasisUsed)
+  semantic5ptDebug.currentVerticalScaleLength = currentVerticalScaleLength
+  semantic5ptDebug.currentHorizontalScaleLength = currentHorizontalScaleLength
+  semantic5ptDebug.idealVerticalScaleLength = idealVerticalScaleLength
+  semantic5ptDebug.idealHorizontalScaleLength = idealHorizontalScaleLength
+  semantic5ptDebug.verticalScaleRatio = calculateFiniteScaleRatio(
+    currentVerticalScaleLength,
+    idealVerticalScaleLength,
+  )
+  semantic5ptDebug.horizontalScaleRatio = calculateFiniteScaleRatio(
+    currentHorizontalScaleLength,
+    idealHorizontalScaleLength,
+  )
   semantic5ptDebug.currentScaleLength = currentScaleLength
   semantic5ptDebug.idealScaleLength = idealScaleLength
   semantic5ptDebug.angleDiffDeg = calculateSemantic5ptAngleDiffDeg(
@@ -9232,13 +9293,23 @@ function buildPoseMappingAlignment(
 function createEmptySemantic5ptDebug(): Semantic5ptDebug {
   return {
     featureLandmarkIndices: { ...SEMANTIC_5PT_FEATURE_LANDMARKS },
+    scaleBasisMode: "auto_longer_current_same_basis",
+    scaleBasisUsed: null,
+    scaleLandmarkIndices: { ...SEMANTIC_5PT_SCALE_LANDMARK_INDICES },
     currentFeatures: createEmptySemantic5ptFeatureLandmarks(),
     idealFeatures: createEmptySemantic5ptFeatureLandmarks(),
     currentCenter: null,
     idealCenter: null,
+    currentVerticalScaleLength: null,
+    currentHorizontalScaleLength: null,
+    idealVerticalScaleLength: null,
+    idealHorizontalScaleLength: null,
+    verticalScaleRatio: null,
+    horizontalScaleRatio: null,
     currentScaleLength: null,
     idealScaleLength: null,
     scaleRatio: null,
+    scaleBasisSwitchedFromPreviousFrame: null,
     translateAfterScaleImageX: null,
     translateAfterScaleImageY: null,
     angleDiffDeg: null,
@@ -9343,6 +9414,21 @@ function distance2d(a: { x: number; y: number }, b: { x: number; y: number }) {
 
 function calculateImageDistance(a: ReferenceLandmark, b: ReferenceLandmark) {
   return distance2d(a, b)
+}
+
+function calculateFiniteScaleRatio(currentLength: number, idealLength: number) {
+  const ratio = currentLength / idealLength
+  return Number.isFinite(ratio) ? ratio : null
+}
+
+function consumeSemantic5ptScaleBasisSwitchedFromPreviousFrame(
+  scaleBasisUsed: Semantic5ptScaleBasis,
+) {
+  const previousScaleBasisUsed = previousSemantic5ptScaleBasisUsed
+  previousSemantic5ptScaleBasisUsed = scaleBasisUsed
+  return previousScaleBasisUsed === null
+    ? null
+    : previousScaleBasisUsed !== scaleBasisUsed
 }
 
 function calculateSemantic5ptAngleDiffDeg(
@@ -21133,6 +21219,19 @@ function drawLiveOverlay(reason: DisplayOverlayRedrawReason = "manual_render") {
   if (state.overlay.showGridAnchors && current478) {
     if (canDrawAlignedIdeal) {
       drawPoseMappingBoundsDebug(context, displayedContentRect, idealOverlayRect, state.poseMappingRuntime.alignment)
+      if (
+        displayOverlayAlignedRenderedIdeal478 &&
+        displayOverlayAlignedRenderedIdeal478.length === REQUIRED_LANDMARK_COUNT
+      ) {
+        drawSemantic5ptOverlayDebug(
+          context,
+          displayedContentRect,
+          idealOverlayRect,
+          current478,
+          displayOverlayAlignedRenderedIdeal478,
+          state.poseMappingRuntime.alignment.semantic5ptDebug,
+        )
+      }
     }
   }
 
@@ -21194,6 +21293,100 @@ function drawPoseMappingBoundsDebug(
   drawNormalizedBounds(context, idealOverlayRect, alignment.alignedRenderedIdealBoundsImage, "rgba(238, 142, 52, 0.72)")
   drawNormalizedCenter(context, displayedContentRect, alignment.currentBoundsImage, "rgba(79, 128, 255, 0.9)")
   drawNormalizedCenter(context, idealOverlayRect, alignment.alignedRenderedIdealBoundsImage, "rgba(238, 142, 52, 0.9)")
+}
+
+function drawSemantic5ptOverlayDebug(
+  context: CanvasRenderingContext2D,
+  displayedContentRect: Rect,
+  idealOverlayRect: Rect,
+  currentLandmarks: ReferenceLandmark[],
+  alignedIdealLandmarks: ReferenceLandmark[],
+  debug: Semantic5ptDebug,
+) {
+  drawSemantic5ptLinePair(
+    context,
+    displayedContentRect,
+    idealOverlayRect,
+    currentLandmarks,
+    alignedIdealLandmarks,
+    SEMANTIC_5PT_SCALE_LANDMARK_INDICES.topChin,
+    "rgba(91, 92, 214, 0.56)",
+    1.1,
+    [4, 4],
+  )
+  drawSemantic5ptLinePair(
+    context,
+    displayedContentRect,
+    idealOverlayRect,
+    currentLandmarks,
+    alignedIdealLandmarks,
+    SEMANTIC_5PT_SCALE_LANDMARK_INDICES.leftRight,
+    "rgba(0, 143, 125, 0.56)",
+    1.1,
+    [4, 4],
+  )
+  const scaleBasisIndices =
+    debug.scaleBasisUsed === "top_chin"
+      ? SEMANTIC_5PT_SCALE_LANDMARK_INDICES.topChin
+      : debug.scaleBasisUsed === "left_right"
+        ? SEMANTIC_5PT_SCALE_LANDMARK_INDICES.leftRight
+        : null
+  if (!scaleBasisIndices) {
+    return
+  }
+  drawSemantic5ptLinePair(
+    context,
+    displayedContentRect,
+    idealOverlayRect,
+    currentLandmarks,
+    alignedIdealLandmarks,
+    scaleBasisIndices,
+    "rgba(235, 132, 44, 0.9)",
+    2.2,
+    [],
+  )
+}
+
+function drawSemantic5ptLinePair(
+  context: CanvasRenderingContext2D,
+  displayedContentRect: Rect,
+  idealOverlayRect: Rect,
+  currentLandmarks: ReferenceLandmark[],
+  alignedIdealLandmarks: ReferenceLandmark[],
+  indices: readonly [number, number],
+  color: string,
+  lineWidth: number,
+  lineDash: number[],
+) {
+  drawNormalizedLandmarkLine(context, displayedContentRect, currentLandmarks, indices, color, lineWidth, lineDash)
+  drawNormalizedLandmarkLine(context, idealOverlayRect, alignedIdealLandmarks, indices, color, lineWidth, lineDash)
+}
+
+function drawNormalizedLandmarkLine(
+  context: CanvasRenderingContext2D,
+  displayedContentRect: Rect,
+  landmarks: ReferenceLandmark[],
+  indices: readonly [number, number],
+  color: string,
+  lineWidth: number,
+  lineDash: number[],
+) {
+  const start = landmarks[indices[0]]
+  const end = landmarks[indices[1]]
+  if (!isFiniteLandmark(start) || !isFiniteLandmark(end)) {
+    return
+  }
+  const startPoint = normalizedLandmarkToPreviewPixel(start, displayedContentRect)
+  const endPoint = normalizedLandmarkToPreviewPixel(end, displayedContentRect)
+  context.save()
+  context.strokeStyle = color
+  context.lineWidth = lineWidth
+  context.setLineDash(lineDash)
+  context.beginPath()
+  context.moveTo(startPoint.x, startPoint.y)
+  context.lineTo(endPoint.x, endPoint.y)
+  context.stroke()
+  context.restore()
 }
 
 function drawNormalizedBounds(
@@ -28009,13 +28202,23 @@ function roundPlacementDebugForState(debug: PlacementDebugState): PlacementDebug
 function roundSemantic5ptDebugForState(debug: Semantic5ptDebug): Semantic5ptDebug {
   return {
     featureLandmarkIndices: { ...debug.featureLandmarkIndices },
+    scaleBasisMode: debug.scaleBasisMode,
+    scaleBasisUsed: debug.scaleBasisUsed,
+    scaleLandmarkIndices: { ...debug.scaleLandmarkIndices },
     currentFeatures: roundSemantic5ptFeaturesForState(debug.currentFeatures),
     idealFeatures: roundSemantic5ptFeaturesForState(debug.idealFeatures),
     currentCenter: roundPoint2ForState(debug.currentCenter),
     idealCenter: roundPoint2ForState(debug.idealCenter),
+    currentVerticalScaleLength: roundForState(debug.currentVerticalScaleLength),
+    currentHorizontalScaleLength: roundForState(debug.currentHorizontalScaleLength),
+    idealVerticalScaleLength: roundForState(debug.idealVerticalScaleLength),
+    idealHorizontalScaleLength: roundForState(debug.idealHorizontalScaleLength),
+    verticalScaleRatio: roundForState(debug.verticalScaleRatio),
+    horizontalScaleRatio: roundForState(debug.horizontalScaleRatio),
     currentScaleLength: roundForState(debug.currentScaleLength),
     idealScaleLength: roundForState(debug.idealScaleLength),
     scaleRatio: roundForState(debug.scaleRatio),
+    scaleBasisSwitchedFromPreviousFrame: debug.scaleBasisSwitchedFromPreviousFrame,
     translateAfterScaleImageX: roundForState(debug.translateAfterScaleImageX),
     translateAfterScaleImageY: roundForState(debug.translateAfterScaleImageY),
     angleDiffDeg: roundForState(debug.angleDiffDeg),

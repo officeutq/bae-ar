@@ -617,12 +617,25 @@ topCenter = 10
 chinCenter = 152
 rightSideCenter = 454
 leftSideCenter = 234
-eyeMid = 6
+eyeMid = 6（角度差 debug 用。scale line には使わない）
 ```
 
-`topCenter -> chinCenter` と `leftSideCenter -> rightSideCenter` の交点を semantic center とし、`semanticCenter -> eyeMid` を scale line とします。`scaleRatio = currentScaleLength / idealScaleLength` を作り、`renderedIdeal478` 全体へ scale then translate を適用して `alignedRenderedIdeal478` を生成します。
+`topCenter -> chinCenter` と `leftSideCenter -> rightSideCenter` の交点を semantic center とします。center の作り方は従来通りです。
 
-2D rotation は適用しません。`center -> eyeMid` の角度差は `angleDiffDeg` として debug に出すだけです。
+scale line は `semanticCenter -> eyeMid` ではありません。current 側で `topCenter: 10 -> chinCenter: 152` の vertical scale line と、`leftSideCenter: 234 -> rightSideCenter: 454` の horizontal scale line の長さを比較し、長い方を `scaleBasis` として採用します。ideal 側では長い方を選び直さず、current 側で選んだ同じ `scaleBasis` の長さを使います。
+
+```text
+scaleBasis =
+  currentVerticalLength >= currentHorizontalLength
+    ? "top_chin"
+    : "left_right"
+
+scaleRatio = currentScaleLength / idealScaleLength
+```
+
+その後は従来通り、`renderedIdeal478` 全体へ scale then translate を適用して `alignedRenderedIdeal478` を生成します。
+
+2D rotation は適用しません。matrix-based placement も復活させません。`center -> eyeMid` の角度差は `angleDiffDeg` として debug に出すだけです。
 
 成功時:
 
