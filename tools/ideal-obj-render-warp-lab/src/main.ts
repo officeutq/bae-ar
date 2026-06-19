@@ -2099,6 +2099,7 @@ type WebglMeshWarpRenderer = {
   textureLocation: WebGLUniformLocation | null
   indexType: number
   lastIndexBufferKey: string | null
+  hasCompletedFrame: boolean
 }
 
 type WebglClipPlacementTransform = {
@@ -8931,12 +8932,17 @@ function getOrCreateWebglMeshWarpRenderer() {
 }
 
 function createWebglMeshWarpRenderer(canvas: HTMLCanvasElement): WebglMeshWarpRenderer {
-  let context = canvas.getContext("webgl", { alpha: true, premultipliedAlpha: false }) as WebGLRenderingContext | null
+  let context = canvas.getContext("webgl", {
+    alpha: true,
+    premultipliedAlpha: false,
+    preserveDrawingBuffer: true,
+  }) as WebGLRenderingContext | null
   let contextType: "webgl" | "experimental-webgl" = "webgl"
   if (!context) {
     context = canvas.getContext("experimental-webgl", {
       alpha: true,
       premultipliedAlpha: false,
+      preserveDrawingBuffer: true,
     }) as WebGLRenderingContext | null
     contextType = "experimental-webgl"
   }
@@ -9003,6 +9009,7 @@ function createWebglMeshWarpRenderer(canvas: HTMLCanvasElement): WebglMeshWarpRe
     textureLocation: gl.getUniformLocation(program, "u_texture"),
     indexType: gl.UNSIGNED_SHORT,
     lastIndexBufferKey: null,
+    hasCompletedFrame: false,
   }
 }
 
@@ -9026,9 +9033,12 @@ function setWebglWarpCanvasVisible(visible: boolean) {
   ensureWebglWarpPreviewCanvas().dataset.warpVisible = visible ? "true" : "false"
 }
 
-function clearWebglWarpCanvas() {
+function clearWebglWarpCanvas(options: { preserveCompletedFrame?: boolean } = {}) {
   const canvas = ensureWebglWarpPreviewCanvas()
   canvas.dataset.warpVisible = "true"
+  if (options.preserveCompletedFrame && webglMeshWarpRenderer?.hasCompletedFrame) {
+    return
+  }
   if (!webglMeshWarpRenderer) {
     return
   }
@@ -9099,7 +9109,7 @@ function renderWebglWarpPreviewFromCurrentState(displayedContentRect: Rect | nul
     return
   }
   if (!displayedContentRect || getDisplayedContentRectStatus(displayedContentRect) !== "valid") {
-    clearWebglWarpCanvas()
+    clearWebglWarpCanvas({ preserveCompletedFrame: true })
     updateWebglWarpDebug(createWebglWarpSkippedDebug("missing_displayed_content_rect", {
       canvasWidth,
       canvasHeight,
@@ -9113,7 +9123,7 @@ function renderWebglWarpPreviewFromCurrentState(displayedContentRect: Rect | nul
     alignment.combinedSourceVerticesPx.length === 0 ||
     alignment.combinedTargetVerticesPx.length === 0
   ) {
-    clearWebglWarpCanvas()
+    clearWebglWarpCanvas({ preserveCompletedFrame: true })
     updateWebglWarpDebug(createWebglWarpSkippedDebug("missing_combined_vertices", {
       canvasWidth,
       canvasHeight,
@@ -9126,7 +9136,7 @@ function renderWebglWarpPreviewFromCurrentState(displayedContentRect: Rect | nul
     !alignment.combinedMeshDebug.sourceTargetCountMatches ||
     !alignment.combinedMeshDebug.indexCorrespondenceValid
   ) {
-    clearWebglWarpCanvas()
+    clearWebglWarpCanvas({ preserveCompletedFrame: true })
     updateWebglWarpDebug(createWebglWarpSkippedDebug("source_target_count_mismatch", {
       canvasWidth,
       canvasHeight,
@@ -9135,7 +9145,7 @@ function renderWebglWarpPreviewFromCurrentState(displayedContentRect: Rect | nul
     return
   }
   if (alignment.triangleIndices.length === 0) {
-    clearWebglWarpCanvas()
+    clearWebglWarpCanvas({ preserveCompletedFrame: true })
     updateWebglWarpDebug(createWebglWarpSkippedDebug("missing_triangle_indices", {
       canvasWidth,
       canvasHeight,
@@ -9168,13 +9178,13 @@ function renderWebglWarpPreviewFromCurrentState(displayedContentRect: Rect | nul
     if (debug.status === "completed") {
       setWebglWarpCanvasVisible(true)
     } else {
-      clearWebglWarpCanvas()
+      clearWebglWarpCanvas({ preserveCompletedFrame: true })
     }
     updateWebglWarpDebug(debug)
   } catch (error) {
     const reason = error instanceof WebglWarpRenderError ? error.reason : "draw_failed"
     const message = error instanceof Error ? error.message : String(error)
-    clearWebglWarpCanvas()
+    clearWebglWarpCanvas({ preserveCompletedFrame: true })
     updateWebglWarpDebug({
       ...createWebglWarpSkippedDebug(reason, {
         canvasWidth,
@@ -9312,6 +9322,7 @@ function renderWebglMeshWarp(
   if (drawError !== gl.NO_ERROR) {
     throw new WebglWarpRenderError("draw_failed", `gl.drawElements error = ${drawError}`)
   }
+  renderer.hasCompletedFrame = true
   const drawMs = performance.now() - drawStartMs
 
   return {
