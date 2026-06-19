@@ -107,6 +107,26 @@ background grid boundary points（背景格子の境界点）は perimeter ancho
 
 triangle indices（三角形接続情報）と WebGL mesh warp（WebGLメッシュ変形）はまだ未接続とする。
 
+## Combined Vertices + Triangle Indices Preview（結合頂点 + 三角形接続プレビュー）
+
+`displayedContentRect_pixel_coordinate`（表示領域ピクセル座標）上で、combined vertices + triangle indices preview（結合頂点 + 三角形接続プレビュー）を追加する。
+
+`combinedSourceVerticesPx`（結合変形元頂点）は、actual visible current landmarks（実可視の現在顔ランドマーク）、background grid interior points（背景格子内部点）、background grid boundary points（背景格子境界点）から作る。
+
+`combinedTargetVerticesPx`（結合変形先頂点）は、同じ index の aligned rendered ideal landmarks（位置合わせ済み理想顔ランドマーク）、同じ background grid interior points（同じ背景格子内部点）、同じ background grid boundary points（同じ背景格子境界点）から作る。
+
+background grid boundary points（背景格子境界点）は perimeter anchors（外周固定点）を兼ねる。ただし、この段階では別機能としての screenEdgeAnchors（画面端固定アンカー）や表示領域外 padding anchors は追加しない。
+
+`combinedSourceVerticesPx[i]` と `combinedTargetVerticesPx[i]` は同じ意味の点として扱い、`combinedVertexMetadata` で `faceLandmark` / `backgroundGridInterior` / `backgroundGridBoundary`、MediaPipe landmark index、background grid index を追跡する。`sourceIndex` と `targetIndex` は一致させる。
+
+triangleIndices（三角形接続情報）は source 側の pixel coordinate（ピクセル座標）から生成し、target 側にも同じ triangleIndices を適用する。source と target で別々に triangulation（三角形分割）しない。
+
+source pixel coordinate（変形元ピクセル座標）で duplicate guard（重複点ガード）を行う。faceLandmark（顔ランドマーク）を優先し、background grid interior / boundary は後続点として扱う。重複または極端に近い source 点は Delaunay triangulation（ドロネー三角形分割）の入力から除外し、除外数を `combinedMeshDebug` に出す。`combinedSourceVerticesPx` / `combinedTargetVerticesPx` 自体の index correspondence（番号対応）は壊さない。
+
+target triangle inversion（変形先三角形反転）は、source triangle（変形元三角形）と target triangle（変形先三角形）の signed area（符号付き面積）の sign（符号）を比較して `potentialTargetInversionTriangleCount` として debug（デバッグ）で count（件数）する。初期版では反転候補があっても失敗扱いにしない。
+
+この段階では WebGL mesh warp（WebGLメッシュ変形）、画像の実変形、final warped image preview（最終変形画像プレビュー）には接続しない。overlay preview（重ね描きプレビュー）と `combinedMeshDebug` による確認までとする。
+
 ## Central Pane Coordinate Tabs（中央ペイン座標系タブ）
 
 中央ペインは処理名ではなく coordinate system（座標系）ごとに tab（タブ）を分ける。
