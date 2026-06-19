@@ -9021,9 +9021,17 @@ function setWebglWarpCanvasVisible(visible: boolean) {
   ensureWebglWarpPreviewCanvas().dataset.warpVisible = visible ? "true" : "false"
 }
 
+function shouldKeepWebglWarpCanvasVisibleWhenCleared() {
+  return (
+    state.overlay.showWebglWarpPreview &&
+    state.activePreviewTab === "displayOverlay" &&
+    state.liveVideo.loaded
+  )
+}
+
 function clearWebglWarpCanvas() {
   const canvas = ensureWebglWarpPreviewCanvas()
-  canvas.dataset.warpVisible = "false"
+  canvas.dataset.warpVisible = shouldKeepWebglWarpCanvasVisibleWhenCleared() ? "true" : "false"
   if (!webglMeshWarpRenderer) {
     return
   }
@@ -9150,6 +9158,7 @@ function renderWebglWarpPreviewFromCurrentState(displayedContentRect: Rect | nul
   try {
     const renderer = getOrCreateWebglMeshWarpRenderer()
     resizeWebglMeshWarpRenderer(renderer, canvasWidth, canvasHeight)
+    setWebglWarpCanvasVisible(true)
     updateWebglWarpDebug({
       ...createWebglWarpSkippedDebug("none", {
         canvasWidth,
