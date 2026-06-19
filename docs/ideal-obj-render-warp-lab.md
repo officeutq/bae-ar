@@ -19,7 +19,13 @@ semantic_5pt_center_scale_v1:
   center と scale だけを合わせる
 ```
 
-`semantic_5pt_center_scale_v1` は姿勢補正ではなく配置補正です。center は従来通り `topCenter: 10 -> chinCenter: 152` と `leftSideCenter: 234 -> rightSideCenter: 454` の交点で作ります。center 計算に使う座標は、scale と同じ表示重ね描き view の pixel coordinate（ピクセル座標）です。scale line は `center -> eyeMid: 6` ではなく、表示重ね描き view 上で実際に描かれる current478 の全478点から、x が最小の landmark と x が最大の landmark を選びます。現段階では face boundary candidate（顔外周候補）では絞り込まず、NaN / Infinity / 欠損を除いた全478点を対象にします。ideal 側は x 最小 / x 最大を選び直さず、current 側で選ばれた同一 index（同一ランドマーク番号）の点を使います。2D rotation は適用せず、matrix-based placement も復活させません。WebGL mesh warp はまだ未接続で、`meshTargetVertices` は生成しません。
+`semantic_5pt_center_scale_v1` は姿勢補正ではなく配置補正です。center は従来通り `topCenter: 10 -> chinCenter: 152` と `leftSideCenter: 234 -> rightSideCenter: 454` の交点で作ります。center 計算に使う座標は、scale と同じ表示重ね描き view の pixel coordinate（ピクセル座標）です。scale line は `center -> eyeMid: 6` ではなく、表示重ね描き view 上で実際に描かれる current478 のうち、visible / safe current landmarks（見えていて安全な現在顔ランドマーク）から、x が最小の landmark と x が最大の landmark を選びます。ideal 側は x 最小 / x 最大を選び直さず、current 側で選ばれた同一 index（同一ランドマーク番号）の点を使います。2D rotation は適用せず、matrix-based placement も復活させません。WebGL mesh warp はまだ未接続で、`meshTargetVertices` は生成しません。
+
+visible / safe current landmarks は、`tools/ideal-reference-mesh-warp-lab` の current mesh source prototype にある usage weight 方針を移植した debug-only の前段処理です。current 側では invalid / unsafe / iris landmarks を除外し、pose hidden side、face boundary、mouth / eyes の表情影響を weight で弱め、`usageWeight` がしきい値以下になった index を hidden とします。aligned ideal 側では独自に visibility を判定せず、current 側で visible / safe になった同じ index だけを overlay と scale candidate に使います。これにより source（変形元）と target（変形先）の index correspondence（番号対応）を保ちます。
+
+表示重ね描き view では、current overlay と aligned ideal overlay は visible / safe index のみを描画します。`alignedRenderedIdeal478` の保存形式は従来通り full 478 点の `idealOverlayRect` normalized coordinate（正規化座標）で維持し、overlay 表示時に visible / safe index へ絞ります。debug / JSON export には `visibilityDebug` として counts と sample のみを出し、full index array や full landmark array は無条件に出しません。
+
+今回の段階では background grid（背景格子）、gridStepPx、background grid points、face-only triangle indices（三角形内部判定）、finalSourceVertices / finalTargetVertices、triangle indices、WebGL mesh warp は実装しません。face-only triangle indices は次以降の grid 工程で扱います。
 
 成功時は以下になります。
 
@@ -43,7 +49,7 @@ alignedRenderedIdeal478 = null
 meshTargetVertices = null
 ```
 
-主な guard は、表示重ね描き view の `displayedContentRect` 不足、478点不足、固定5点の欠損 / NaN / Infinity、current 側 scale candidate 不正、x 最小 / x 最大 index 不正、center 交点不正、center bounds 外、scale line が短すぎる、scaleRatio 不正 / 範囲外、強い yaw / pitch / roll です。初期しきい値は `minScaleRatio = 0.5`、`maxScaleRatio = 2.0`、`maxYawDeg = 30`、`maxPitchDeg = 25`、`maxRollDeg = 25` として debug に出します。
+主な guard は、表示重ね描き view の `displayedContentRect` 不足、478点不足、固定5点の欠損 / NaN / Infinity、visible / safe index 不足、visible scale candidate 不足、visible x span 不正、center 交点不正、center bounds 外、scale line が短すぎる、scaleRatio 不正 / 範囲外、強い yaw / pitch / roll です。初期しきい値は `minScaleRatio = 0.5`、`maxScaleRatio = 2.0`、`maxYawDeg = 30`、`maxPitchDeg = 25`、`maxRollDeg = 25` として debug に出します。
 
 `placement mapping samples` は session memory に frame ごとの small summary として保存し、JSON / CSV で export できる。sample には `frameId`、`mediaTimeSec`、`P_camera`、`p`、`P_confirm`、`poseDiffMagnitude`、matrix column-major translation / scale、current / rendered / aligned bounds、`alignmentMethod`、`liveAlignmentStatus`、scale / translate、aspect ratio、`qualityUsable`、`skippedReason` を含める。live runtime sample には placement function candidate id / status や `matrixFeatures` は含めない。
 
