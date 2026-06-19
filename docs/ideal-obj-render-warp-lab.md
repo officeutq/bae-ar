@@ -69,6 +69,33 @@ overlay（重ね表示）は canvas pixel coordinate（canvasピクセル座標�
 
 current478（現在顔478点）または renderedIdeal478（レンダー理想478点）が一時的に取得できない場合でも、レンダー画像 tab の runtime rendered ideal image（実行時レンダー理想画像）は消さず、直近の render snapshot を表示し続ける。renderedIdeal478 も直近の有効な 478 点を確認用に保持する。ただし、live video（ライブ映像）上の aligned ideal overlay（位置合わせ済み理想顔重ね表示）には古い `alignedRenderedIdeal478` を使わない。
 
+## Background Grid Debug（背景格子デバッグ）
+
+表示重ね描き view（表示重ね描きビュー）に、将来の warp mesh（変形メッシュ）用の debug-only background grid（背景格子）初期版を追加する。これは WebGL mesh warp（WebGLメッシュ変形）にはまだ接続しない。`meshTargetVertices`、`finalSourceVertices` / `finalTargetVertices`、triangle indices（三角形接続情報）は生成しない。
+
+background grid（背景格子）の coordinateSpace（座標系）は `displayed_overlay_pixel_coordinate` とする。domain（領域）は既存 overlay と同じ `displayedContentRect` の pixel coordinate（ピクセル座標）で、render canvas coordinate や OBJ coordinate は混ぜない。
+
+`gridStepPx`（格子間隔ピクセル）は毎フレーム、current478（現在顔478点）を `displayedContentRect` pixel coordinate へ変換したうえで、current face contour（現在顔輪郭）の隣接 landmark distance（隣接ランドマーク距離）の median（中央値）から算出する。現時点では smoothing（平滑化）や quantization（段階丸め）は入れない。
+
+preview（プレビュー）全体には一様密度の grid point（格子点）を生成する。current face contour polygon（現在顔輪郭ポリゴン）の内部、または boundary（境界）上にある grid point は除外する。source background grid（変形元背景格子）と target background grid（変形先背景格子）は同じ point（点）を持ち、初期版では target position（変形先位置）は source position（変形元位置）と同一にする。
+
+debug state（デバッグ状態）は `backgroundGridDebug` とし、status / skipReason、domainRectPx、gridStepPx、contourMedianSpacingPx、faceContourPointCount、generatedGridPointCount、excludedInsideFacePointCount、keptBackgroundGridPointCount、source / target background grid point counts を確認できるようにする。点群配列は描画用 state として保持するが、debug panel（デバッグパネル）や JSON export（JSON書き出し）には巨大配列を無条件で出さず、summary（要約）と sample（サンプル）だけを出す。
+
+初期版では以下を行わない。
+
+```text
+smoothing（平滑化）
+quantization（段階丸め）
+density falloff（距離に応じた密度低下）
+triangle topology stabilization（三角形接続構造の安定化）
+WebGL mesh warp（WebGLメッシュ変形）接続
+meshTargetVertices（変形先メッシュ頂点）生成
+finalSourceVertices / finalTargetVertices（最終変形元・変形先頂点）生成
+triangle indices（三角形接続情報）生成
+semantic_5pt_center_scale_v1 の位置合わせ挙動変更
+alignedRenderedIdeal478 の保存形式変更
+```
+
 checkbox（チェックボックス）は各 coordinate tab（座標系タブ）内に置く。データがない checkbox は disabled（無効）にし、理由を表示する。例:
 
 ```text

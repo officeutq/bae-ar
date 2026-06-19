@@ -1163,6 +1163,33 @@ type DisplayOverlayRedrawDebugState = {
   overlayCanvasCssHeight: number | null
   displayedContentRect: Rect | null
 }
+type BackgroundGridStatus = "generated" | "skipped"
+type BackgroundGridSkipReason =
+  | "none"
+  | "missing_display_rect"
+  | "missing_current_landmarks"
+  | "invalid_face_contour"
+  | "invalid_grid_step"
+  | "grid_step_too_small"
+  | "grid_step_too_large"
+  | "too_many_grid_points"
+  | "empty_background_grid"
+type BackgroundGridCoordinateSpace = "displayed_overlay_pixel_coordinate"
+type BackgroundGridDebugState = {
+  status: BackgroundGridStatus
+  skipReason: BackgroundGridSkipReason
+  domainRectPx: Rect | null
+  gridStepPx: number | null
+  contourMedianSpacingPx: number | null
+  faceContourPointCount: number
+  generatedGridPointCount: number
+  excludedInsideFacePointCount: number
+  keptBackgroundGridPointCount: number
+  sourceBackgroundGridPointsPx: PixelPoint[]
+  targetBackgroundGridPointsPx: PixelPoint[]
+  faceContourPointsPx: PixelPoint[]
+  coordinateSpace: BackgroundGridCoordinateSpace
+}
 type AssetLifecycle = AssetGeneration & {
   objStatus: AssetStatus
   profileStatus: AssetStatus
@@ -3319,6 +3346,11 @@ type Rect = {
   height: number
 }
 
+type PixelPoint = {
+  x: number
+  y: number
+}
+
 type DisplayOverlayAlignmentRects = {
   displayedContentRect: Rect
   idealOverlayRect: Rect
@@ -3353,11 +3385,13 @@ type LabState = {
     showMeshTarget: boolean
     showMeshPairs: boolean
     showExcludedLandmarks: boolean
+    showBackgroundGrid: boolean
     showGridAnchors: boolean
     showTriangleMesh: boolean
     showDisplayedContentRect: boolean
     showSkippedReason: boolean
   }
+  backgroundGridDebug: BackgroundGridDebugState
   objFile: ObjFileState
   objSummary: ObjSummary
   objGeometry: ObjGeometryState
@@ -3450,6 +3484,17 @@ const SEMANTIC_5PT_MAX_YAW_DEG = 30
 const SEMANTIC_5PT_MAX_PITCH_DEG = 25
 const SEMANTIC_5PT_MAX_ROLL_DEG = 25
 const SEMANTIC_5PT_LINE_INTERSECTION_EPSILON = 0.000001
+const FACE_CONTOUR_INDICES = [
+  10, 338, 297, 332, 284, 251, 389, 356, 454,
+  323, 361, 288, 397, 365, 379, 378, 400, 377,
+  152, 148, 176, 149, 150, 136, 172, 58, 132,
+  93, 234, 127, 162, 21, 54, 103, 67, 109,
+] as const
+const BACKGROUND_GRID_COORDINATE_SPACE = "displayed_overlay_pixel_coordinate" as const satisfies BackgroundGridCoordinateSpace
+const BACKGROUND_GRID_MIN_STEP_PX = 2
+const BACKGROUND_GRID_MAX_POINT_COUNT = 20000
+const BACKGROUND_GRID_POINT_PREVIEW_COUNT = 12
+const BACKGROUND_GRID_BOUNDARY_EPSILON_PX = 0.001
 let previousSemantic5ptScaleBasisUsed: Semantic5ptScaleBasisUsed | null = null
 const MEDIAPIPE_TIMESTAMP_STEP_MS = 1000 / 30
 const LIVE_AUTO_ANALYSIS_INTERVAL_SEC = 0.35
@@ -3872,11 +3917,13 @@ const state: LabState = {
     showMeshTarget: false,
     showMeshPairs: false,
     showExcludedLandmarks: false,
+    showBackgroundGrid: true,
     showGridAnchors: false,
     showTriangleMesh: false,
     showDisplayedContentRect: true,
     showSkippedReason: true,
   },
+  backgroundGridDebug: createEmptyBackgroundGridDebug("missing_display_rect"),
   objFile: {
     loaded: false,
     fileName: null,
@@ -4334,6 +4381,7 @@ function renderDisplayOverlayPreview() {
               ${renderOverlayToggle("toggle-mesh-source", "mesh source overlay（変形元メッシュ重ね表示）を表示")}
               ${renderOverlayToggle("toggle-mesh-target", "mesh target overlay（変形先メッシュ重ね表示）を表示")}
               ${renderOverlayToggle("toggle-excluded-landmarks", "除外 / 固定 landmark（ランドマーク）を表示")}
+              ${renderOverlayToggle("toggle-background-grid", "background grid（背景格子）を表示")}
               ${renderOverlayToggle("toggle-displayed-content-rect", "displayedContentRect（表示領域）を表示")}
               ${renderOverlayToggle("toggle-overlay-skipped-reason", "skipped reason（スキップ理由）を表示")}
               ${renderOverlayToggle("toggle-grid-anchors", "grid / anchors（グリッド / アンカー）を表示")}
@@ -5019,6 +5067,7 @@ function bindEvents() {
   bindOverlayToggle("toggle-mesh-target", "showMeshTarget")
   bindOverlayToggle("toggle-mesh-pairs", "showMeshPairs")
   bindOverlayToggle("toggle-excluded-landmarks", "showExcludedLandmarks")
+  bindOverlayToggle("toggle-background-grid", "showBackgroundGrid")
   bindOverlayToggle("toggle-displayed-content-rect", "showDisplayedContentRect")
   bindOverlayToggle("toggle-overlay-skipped-reason", "showSkippedReason")
   bindOverlayToggle("toggle-grid-anchors", "showGridAnchors")
@@ -19165,6 +19214,222 @@ function resetCurrentOverlayDebugState() {
   currentOverlayDebugState = createEmptyCurrentOverlayDebugState()
 }
 
+function createEmptyBackgroundGridDebug(
+  skipReason: BackgroundGridSkipReason = "missing_display_rect",
+  overrides: Partial<BackgroundGridDebugState> = {},
+): BackgroundGridDebugState {
+  return {
+    status: skipReason === "none" ? "generated" : "skipped",
+    skipReason,
+    domainRectPx: null,
+    gridStepPx: null,
+    contourMedianSpacingPx: null,
+    faceContourPointCount: 0,
+    generatedGridPointCount: 0,
+    excludedInsideFacePointCount: 0,
+    keptBackgroundGridPointCount: 0,
+    sourceBackgroundGridPointsPx: [],
+    targetBackgroundGridPointsPx: [],
+    faceContourPointsPx: [],
+    coordinateSpace: BACKGROUND_GRID_COORDINATE_SPACE,
+    ...overrides,
+  }
+}
+
+function buildBackgroundGridDebug(
+  domainRectPx: Rect | null,
+  currentLandmarks: ReferenceLandmark[] | null,
+): BackgroundGridDebugState {
+  if (getDisplayedContentRectStatus(domainRectPx) !== "valid") {
+    return createEmptyBackgroundGridDebug("missing_display_rect")
+  }
+  const domain = cloneRect(domainRectPx)
+  if (!currentLandmarks || currentLandmarks.length !== REQUIRED_LANDMARK_COUNT) {
+    return createEmptyBackgroundGridDebug("missing_current_landmarks", {
+      domainRectPx: domain,
+    })
+  }
+
+  const faceContourPointsPx = createFaceContourPointsPx(currentLandmarks, domain)
+  if (faceContourPointsPx.length !== FACE_CONTOUR_INDICES.length || faceContourPointsPx.length < 3) {
+    return createEmptyBackgroundGridDebug("invalid_face_contour", {
+      domainRectPx: domain,
+      faceContourPointCount: faceContourPointsPx.length,
+      faceContourPointsPx,
+    })
+  }
+
+  const contourSpacingValues = calculateAdjacentPointDistances(faceContourPointsPx)
+  const contourMedianSpacingPx = medianFiniteNumbers(contourSpacingValues)
+  const gridStepPx = contourMedianSpacingPx
+  const baseDebug = {
+    domainRectPx: domain,
+    gridStepPx,
+    contourMedianSpacingPx,
+    faceContourPointCount: faceContourPointsPx.length,
+    faceContourPointsPx,
+  }
+  if (gridStepPx === null || !Number.isFinite(gridStepPx) || gridStepPx <= 0) {
+    return createEmptyBackgroundGridDebug("invalid_grid_step", baseDebug)
+  }
+  if (gridStepPx < BACKGROUND_GRID_MIN_STEP_PX) {
+    return createEmptyBackgroundGridDebug("grid_step_too_small", baseDebug)
+  }
+  if (gridStepPx > Math.max(domain.width, domain.height)) {
+    return createEmptyBackgroundGridDebug("grid_step_too_large", baseDebug)
+  }
+
+  const columnCount = Math.floor(domain.width / gridStepPx) + 1
+  const rowCount = Math.floor(domain.height / gridStepPx) + 1
+  const estimatedGridPointCount = columnCount * rowCount
+  if (
+    !Number.isFinite(estimatedGridPointCount) ||
+    estimatedGridPointCount > BACKGROUND_GRID_MAX_POINT_COUNT
+  ) {
+    return createEmptyBackgroundGridDebug("too_many_grid_points", {
+      ...baseDebug,
+      generatedGridPointCount: Number.isFinite(estimatedGridPointCount)
+        ? estimatedGridPointCount
+        : 0,
+    })
+  }
+
+  const sourceBackgroundGridPointsPx: PixelPoint[] = []
+  let generatedGridPointCount = 0
+  let excludedInsideFacePointCount = 0
+  for (let row = 0; row < rowCount; row += 1) {
+    for (let column = 0; column < columnCount; column += 1) {
+      const point = {
+        x: domain.x + column * gridStepPx,
+        y: domain.y + row * gridStepPx,
+      }
+      generatedGridPointCount += 1
+      if (isPointInsidePolygonInclusive(point, faceContourPointsPx)) {
+        excludedInsideFacePointCount += 1
+        continue
+      }
+      sourceBackgroundGridPointsPx.push(point)
+    }
+  }
+
+  if (sourceBackgroundGridPointsPx.length === 0) {
+    return createEmptyBackgroundGridDebug("empty_background_grid", {
+      ...baseDebug,
+      generatedGridPointCount,
+      excludedInsideFacePointCount,
+    })
+  }
+
+  return createEmptyBackgroundGridDebug("none", {
+    ...baseDebug,
+    generatedGridPointCount,
+    excludedInsideFacePointCount,
+    keptBackgroundGridPointCount: sourceBackgroundGridPointsPx.length,
+    sourceBackgroundGridPointsPx,
+    targetBackgroundGridPointsPx: sourceBackgroundGridPointsPx.map(clonePixelPoint),
+  })
+}
+
+function createFaceContourPointsPx(
+  currentLandmarks: ReferenceLandmark[],
+  displayedContentRect: Rect,
+): PixelPoint[] {
+  const points: PixelPoint[] = []
+  for (const index of FACE_CONTOUR_INDICES) {
+    const landmark = currentLandmarks[index]
+    if (!isFiniteLandmark(landmark)) {
+      continue
+    }
+    const point = normalizedLandmarkToPreviewPixel(landmark, displayedContentRect)
+    if (!isFinitePoint2(point)) {
+      continue
+    }
+    points.push(point)
+  }
+  return points
+}
+
+function calculateAdjacentPointDistances(points: PixelPoint[]) {
+  const distances: number[] = []
+  for (let index = 0; index < points.length; index += 1) {
+    const current = points[index]
+    const next = points[(index + 1) % points.length]
+    const distance = distance2d(current, next)
+    if (Number.isFinite(distance)) {
+      distances.push(distance)
+    }
+  }
+  return distances
+}
+
+function medianFiniteNumbers(values: number[]): number | null {
+  const finiteValues = values.filter(Number.isFinite).sort((a, b) => a - b)
+  return percentileSorted(finiteValues, 0.5)
+}
+
+function isPointInsidePolygonInclusive(point: PixelPoint, polygon: PixelPoint[]) {
+  if (polygon.length < 3) {
+    return false
+  }
+  for (let index = 0; index < polygon.length; index += 1) {
+    const start = polygon[index]
+    const end = polygon[(index + 1) % polygon.length]
+    if (isPointOnSegment(point, start, end, BACKGROUND_GRID_BOUNDARY_EPSILON_PX)) {
+      return true
+    }
+  }
+
+  let inside = false
+  for (let index = 0, previousIndex = polygon.length - 1; index < polygon.length; previousIndex = index, index += 1) {
+    const current = polygon[index]
+    const previous = polygon[previousIndex]
+    const crossesY = current.y > point.y !== previous.y > point.y
+    if (!crossesY) {
+      continue
+    }
+    const intersectionX =
+      ((previous.x - current.x) * (point.y - current.y)) / (previous.y - current.y) +
+      current.x
+    if (point.x < intersectionX) {
+      inside = !inside
+    }
+  }
+  return inside
+}
+
+function isPointOnSegment(point: PixelPoint, start: PixelPoint, end: PixelPoint, epsilon: number) {
+  const cross =
+    (point.y - start.y) * (end.x - start.x) -
+    (point.x - start.x) * (end.y - start.y)
+  if (Math.abs(cross) > epsilon) {
+    return false
+  }
+  const dot =
+    (point.x - start.x) * (end.x - start.x) +
+    (point.y - start.y) * (end.y - start.y)
+  if (dot < -epsilon) {
+    return false
+  }
+  const squaredLength = distance2d(start, end) ** 2
+  return dot <= squaredLength + epsilon
+}
+
+function clonePixelPoint(point: PixelPoint): PixelPoint {
+  return {
+    x: point.x,
+    y: point.y,
+  }
+}
+
+function cloneRect(rect: Rect): Rect {
+  return {
+    x: rect.x,
+    y: rect.y,
+    width: rect.width,
+    height: rect.height,
+  }
+}
+
 function getCurrentOverlayFrameKey() {
   return [
     state.currentAnalysis.status,
@@ -19428,6 +19693,12 @@ function renderControls() {
     excludedLandmarksAvailability.reason,
   )
   setToggleState(
+    "toggle-background-grid",
+    state.overlay.showBackgroundGrid,
+    false,
+    null,
+  )
+  setToggleState(
     "toggle-displayed-content-rect",
     state.overlay.showDisplayedContentRect,
     !displayOverlayVideoAvailability.available,
@@ -19619,6 +19890,7 @@ function renderDisplayOverlaySummaryCard() {
   const lifecycle = createOverlayLifecycleFromRuntime(runtime)
   const currentOverlayDebug = getCurrentOverlayDebugState()
   const displayOverlayRedrawDebug = displayOverlayRedrawDebugState
+  const backgroundGridDebug = state.backgroundGridDebug
   card.innerHTML = `
     <p>displayedContentRect（動画の実表示領域）を使い、overlay canvas（重ね描きcanvas）上で表示ズレを確認します。</p>
     <dl class="review-grid">
@@ -19626,6 +19898,10 @@ function renderDisplayOverlaySummaryCard() {
       <div><dt>displayedContentRect（表示領域）</dt><dd>${escapeHtml(formatRect(runtime.alignment.displayedContentRect))}</dd></div>
       <div><dt>ideal overlay plot（理想点描画）</dt><dd>equal-axis inside displayedContentRect（表示領域内の等倍軸）</dd></div>
       <div><dt>current overlay（現在顔重ね表示）</dt><dd>${escapeHtml(formatAvailability(getCurrent478Availability(), state.currentAnalysis.landmarks478.length))}</dd></div>
+      <div><dt>background grid（背景格子）</dt><dd>${escapeHtml(formatBackgroundGridStatus(backgroundGridDebug))}</dd></div>
+      <div><dt>background grid step（背景格子間隔）</dt><dd>gridStepPx ${formatRealtimeNullableNumber(backgroundGridDebug.gridStepPx)} / contourMedianSpacingPx ${formatRealtimeNullableNumber(backgroundGridDebug.contourMedianSpacingPx)}</dd></div>
+      <div><dt>background grid counts（背景格子点数）</dt><dd>contour ${formatNullableCount(backgroundGridDebug.faceContourPointCount)} / generated ${formatNullableCount(backgroundGridDebug.generatedGridPointCount)} / excludedInsideFace ${formatNullableCount(backgroundGridDebug.excludedInsideFacePointCount)} / kept ${formatNullableCount(backgroundGridDebug.keptBackgroundGridPointCount)}</dd></div>
+      <div><dt>background grid coordinateSpace（背景格子座標系）</dt><dd>${escapeHtml(backgroundGridDebug.coordinateSpace)}</dd></div>
       <div><dt>currentOverlayStatus（現在顔重ね表示状態）</dt><dd>${escapeHtml(currentOverlayDebug.status)}</dd></div>
       <div><dt>currentOverlayRecoveredFromNoFace（現在顔なしからの復帰）</dt><dd>${String(currentOverlayDebug.recoveredFromNoFace)}</dd></div>
       <div><dt>currentOverlayLastVisibleFrameId（最後に表示したフレームID）</dt><dd>${formatNullableCount(currentOverlayDebug.lastVisibleFrameId)}</dd></div>
@@ -19658,6 +19934,10 @@ function formatAvailability(availability: DataAvailability, count: number | null
     return `available（生成済み） / count = ${formatNullableCount(count)}`
   }
   return `not available（未生成） / count = ${formatNullableCount(count)} / reason: ${availability.reason}`
+}
+
+function formatBackgroundGridStatus(debug: BackgroundGridDebugState) {
+  return `${debug.status} / skipReason ${debug.skipReason} / source ${formatNullableCount(debug.sourceBackgroundGridPointsPx.length)} / target ${formatNullableCount(debug.targetBackgroundGridPointsPx.length)}`
 }
 
 function renderPoseMappingDebugTab() {
@@ -21432,6 +21712,7 @@ function drawLiveOverlay(reason: DisplayOverlayRedrawReason = "manual_render") {
       overlayCanvasCssHeight: rect.height,
       displayedContentRect: null,
     }
+    state.backgroundGridDebug = createEmptyBackgroundGridDebug("missing_display_rect")
     return
   }
 
@@ -21458,6 +21739,7 @@ function drawLiveOverlay(reason: DisplayOverlayRedrawReason = "manual_render") {
       overlayCanvasCssHeight: rect.height,
       displayedContentRect: null,
     }
+    state.backgroundGridDebug = createEmptyBackgroundGridDebug("missing_display_rect")
     return
   }
 
@@ -21496,6 +21778,7 @@ function drawLiveOverlay(reason: DisplayOverlayRedrawReason = "manual_render") {
   }
 
   if (displayedContentRectStatus !== "valid") {
+    state.backgroundGridDebug = createEmptyBackgroundGridDebug("missing_display_rect")
     return
   }
 
@@ -21511,6 +21794,12 @@ function drawLiveOverlay(reason: DisplayOverlayRedrawReason = "manual_render") {
   const meshTargetVertices = state.poseMappingRuntime.meshTargetVertices
   const canDrawAlignedIdeal = canDrawPoseMappingAlignedIdealOverlay()
   const overlayLifecycle = createOverlayLifecycleFromRuntime(state.poseMappingRuntime)
+  const backgroundGridDebug = buildBackgroundGridDebug(displayedContentRect, current478)
+  state.backgroundGridDebug = backgroundGridDebug
+
+  if (state.overlay.showBackgroundGrid) {
+    drawBackgroundGridOverlay(context, backgroundGridDebug)
+  }
 
   if (
     canDrawAlignedIdeal &&
@@ -21631,6 +21920,44 @@ function drawDisplayedContentRect(context: CanvasRenderingContext2D, displayedCo
   context.fillStyle = "rgba(42, 121, 180, 0.9)"
   context.font = "700 11px Inter, system-ui, sans-serif"
   context.fillText("displayedContentRect", displayedContentRect.x + 8, displayedContentRect.y + 18)
+  context.restore()
+}
+
+function drawBackgroundGridOverlay(
+  context: CanvasRenderingContext2D,
+  debug: BackgroundGridDebugState,
+) {
+  context.save()
+  if (debug.status === "generated") {
+    context.fillStyle = "rgba(28, 151, 162, 0.68)"
+    for (const point of debug.sourceBackgroundGridPointsPx) {
+      context.fillRect(point.x - 1, point.y - 1, 2, 2)
+    }
+  }
+  drawBackgroundGridFaceContour(context, debug.faceContourPointsPx)
+  context.restore()
+}
+
+function drawBackgroundGridFaceContour(
+  context: CanvasRenderingContext2D,
+  faceContourPointsPx: PixelPoint[],
+) {
+  if (faceContourPointsPx.length < 3) {
+    return
+  }
+  context.save()
+  context.fillStyle = "rgba(255, 212, 59, 0.06)"
+  context.strokeStyle = "rgba(255, 193, 7, 0.92)"
+  context.lineWidth = 1.6
+  context.setLineDash([6, 4])
+  context.beginPath()
+  context.moveTo(faceContourPointsPx[0].x, faceContourPointsPx[0].y)
+  for (const point of faceContourPointsPx.slice(1)) {
+    context.lineTo(point.x, point.y)
+  }
+  context.closePath()
+  context.fill()
+  context.stroke()
   context.restore()
 }
 
@@ -22141,6 +22468,10 @@ function getSummaryItems(): Array<[string, string]> {
     ["currentPosePitch", formatNullableNumber(state.currentAnalysis.pose.pitch)],
     ["currentPoseRoll", formatNullableNumber(state.currentAnalysis.pose.roll)],
     ["currentQualityScore", formatNullableNumber(state.currentAnalysis.qualityScore)],
+    ["backgroundGridStatus", state.backgroundGridDebug.status],
+    ["backgroundGridSkipReason", state.backgroundGridDebug.skipReason],
+    ["backgroundGridStepPx", formatNullableNumber(state.backgroundGridDebug.gridStepPx)],
+    ["backgroundGridKeptPointCount", formatNullableCount(state.backgroundGridDebug.keptBackgroundGridPointCount)],
     ["objFileStatus", objFileStatus],
     ["objVertexCount", formatNullableCount(state.objFile.loaded ? state.objSummary.vertexCount : null)],
     ["objFaceCount", formatNullableCount(state.objFile.loaded ? state.objSummary.faceCount : null)],
@@ -22423,6 +22754,14 @@ function getRealtimeItems(): Array<[string, string]> {
 
 function getWarpMeshItems(): Array<[string, string]> {
   return [
+    ["backgroundGridStatus", state.backgroundGridDebug.status],
+    ["backgroundGridSkipReason", state.backgroundGridDebug.skipReason],
+    ["backgroundGridCoordinateSpace", state.backgroundGridDebug.coordinateSpace],
+    ["backgroundGridStepPx", formatNullableNumber(state.backgroundGridDebug.gridStepPx)],
+    ["backgroundGridGeneratedPointCount", formatNullableCount(state.backgroundGridDebug.generatedGridPointCount)],
+    ["backgroundGridExcludedInsideFacePointCount", formatNullableCount(state.backgroundGridDebug.excludedInsideFacePointCount)],
+    ["backgroundGridKeptPointCount", formatNullableCount(state.backgroundGridDebug.keptBackgroundGridPointCount)],
+    ["backgroundGridWarpConnection", "debug_overlay_only_not_connected"],
     ["sourceVerticesStatus", "not_ready"],
     ["targetVerticesStatus", "not_ready"],
     ["triangleIndicesStatus", "not_ready"],
@@ -22471,6 +22810,32 @@ function getDisplayOverlayRedrawRawSummary() {
   }
 }
 
+function getBackgroundGridDebugSummary(debug: BackgroundGridDebugState = state.backgroundGridDebug) {
+  return {
+    status: debug.status,
+    skipReason: debug.skipReason,
+    domainRectPx: roundRectForState(debug.domainRectPx),
+    gridStepPx: roundForState(debug.gridStepPx),
+    contourMedianSpacingPx: roundForState(debug.contourMedianSpacingPx),
+    faceContourPointCount: debug.faceContourPointCount,
+    generatedGridPointCount: debug.generatedGridPointCount,
+    excludedInsideFacePointCount: debug.excludedInsideFacePointCount,
+    keptBackgroundGridPointCount: debug.keptBackgroundGridPointCount,
+    sourceBackgroundGridPointCount: debug.sourceBackgroundGridPointsPx.length,
+    targetBackgroundGridPointCount: debug.targetBackgroundGridPointsPx.length,
+    coordinateSpace: debug.coordinateSpace,
+    sourceBackgroundGridPointSample: debug.sourceBackgroundGridPointsPx
+      .slice(0, BACKGROUND_GRID_POINT_PREVIEW_COUNT)
+      .map(roundPoint2ForState),
+    targetBackgroundGridPointSample: debug.targetBackgroundGridPointsPx
+      .slice(0, BACKGROUND_GRID_POINT_PREVIEW_COUNT)
+      .map(roundPoint2ForState),
+    faceContourPointSample: debug.faceContourPointsPx
+      .slice(0, BACKGROUND_GRID_POINT_PREVIEW_COUNT)
+      .map(roundPoint2ForState),
+  }
+}
+
 function getRawState() {
   return {
     labName: LAB_NAME,
@@ -22480,6 +22845,7 @@ function getRawState() {
     overlay: state.overlay,
     currentOverlayDebug: getCurrentOverlayDebugState(),
     displayOverlayRedrawDebug: getDisplayOverlayRedrawRawSummary(),
+    backgroundGridDebug: getBackgroundGridDebugSummary(),
     objFile: state.objFile,
     objSummary: state.objSummary,
     objPreviewState: getRoundedObjPreviewState(),
@@ -26955,6 +27321,7 @@ function buildDebugExport() {
     modeComparison: getModeComparisonRawSummary(),
     renderedIdealDetection: getRenderedIdealDetectionDebugExport(),
     poseMapping: getPoseMappingRuntimeDebugExport(),
+    backgroundGridDebug: getBackgroundGridDebugSummary(),
     objPoseDatasetGeneration: getObjPoseCalibrationDebugExport(),
     objPoseMapping: getObjPoseMappingDebugExport(),
     placementAnalysis: getPlacementFunctionAnalysisRawSummary(),
@@ -26965,7 +27332,7 @@ function buildDebugExport() {
       modeComparisonVideoOptions: getModeComparisonVideoMediaPipeOptionsDebug(),
     },
     notes: [
-      "vertices/faces/current478/renderedIdeal478/MediaPipe result/canvas data URL/all pose result arrays/full objPoseMapping dataset samples are intentionally omitted.",
+      "vertices/faces/current478/renderedIdeal478/MediaPipe result/canvas data URL/all pose result arrays/full objPoseMapping dataset samples/full background grid point arrays are intentionally omitted.",
     ],
   }
 }
@@ -26979,6 +27346,7 @@ function resetLiveAnalysisResults() {
   disposeLiveFaceLandmarker("uninitialized")
   resetLiveTimestamp()
   state.currentAnalysis = createEmptyCurrentAnalysis()
+  state.backgroundGridDebug = createEmptyBackgroundGridDebug("missing_current_landmarks")
   resetCurrentOverlayDebugState()
   updateObjPoseSyncFromCurrentAnalysis()
   liveAnalysisRequestId += 1
