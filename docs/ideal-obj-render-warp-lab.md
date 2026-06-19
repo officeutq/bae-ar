@@ -101,6 +101,12 @@ debug には `backgroundGridDebug` として status、skipReason、coordinateSpa
 
 現時点では smoothing、density falloff、triangle topology stabilization（三角形接続構造の安定化）、nearFaceGrid（顔近傍格子）、screenEdgeAnchors（画面端固定アンカー）、WebGL mesh warp は未接続とする。
 
+background grid（背景格子）は、まず `displayedContentRect local coordinate`（表示領域ローカル座標）の `xPositions` / `yPositions` を作り、最後に `displayedContentRect_pixel_coordinate`（表示領域ピクセル座標）へ変換する。`xPositions` は 0 と width を必ず含み、`yPositions` は 0 と height を必ず含む。`gridStepPx`（格子間隔ピクセル）で割り切れない場合も、右端 width と下端 height を最後に追加する。
+
+background grid boundary points（背景格子の境界点）は perimeter anchors（外周固定点）の役割を兼ねる。boundary points（境界点）は source = target とし、顔内部除外では基本的に除外しない。顔内部の `faceInteriorTriangle` 除外は interior points（内部点）にだけ適用する。外側 padding anchors（表示領域外アンカー）は今回は入れない。
+
+triangle indices（三角形接続情報）と WebGL mesh warp（WebGLメッシュ変形）はまだ未接続とする。
+
 ## Central Pane Coordinate Tabs（中央ペイン座標系タブ）
 
 中央ペインは処理名ではなく coordinate system（座標系）ごとに tab（タブ）を分ける。
