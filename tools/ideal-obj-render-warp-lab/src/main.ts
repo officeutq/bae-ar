@@ -3805,6 +3805,7 @@ const FACE_CONTOUR_INDICES = buildOrderedLandmarkPathFromConnections(
 let previousSemantic5ptScaleBasisUsed: Semantic5ptScaleBasisUsed | null = null
 const MEDIAPIPE_TIMESTAMP_STEP_MS = 1000 / 30
 const LIVE_AUTO_ANALYSIS_INTERVAL_SEC = 0.35
+const WEBGL_WARP_RETRY_INTERVAL_MS = 250
 const DETECT_PERFORMANCE_DEFAULT_OPTIONS: DetectPerformanceOptions = {
   warmupRuns: 3,
   measuredRuns: 20,
@@ -4437,6 +4438,7 @@ let webglObjBenchmarkRenderer: WebglObjRenderer | null = null
 let webglMeshWarpRenderer: WebglMeshWarpRenderer | null = null
 let webglWarpAnimationFrameId: number | null = null
 let lastWebglWarpDebugDomUpdateAtMs = 0
+let lastWebglWarpRenderAttemptAtMs = 0
 let placementAnalysisCancelRequested = false
 let placementFunctionConditionBatchRoundtripCancelRequested = false
 let placementAnalysisRenderer: WebglObjRenderer | null = null
@@ -6317,7 +6319,7 @@ async function analyzeCurrentLiveFrame(
     analysisTiming.buildCurrentAnalysisMs = performance.now() - buildStartMs
     updateObjPoseSyncFromCurrentAnalysis()
     if (!options.skipFinalRender) {
-      void updatePoseMappingRuntimeFromCurrentAnalysis()
+      await updatePoseMappingRuntimeFromCurrentAnalysis()
     }
     lastAutoLiveAnalysisAtSec = timeSec
 
@@ -6454,6 +6456,14 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
   const skippedReason = getPoseMappingSkippedReasonForCurrentFace()
   const previousRuntime = state.poseMappingRuntime
   const assetLifecycle = createAssetLifecycle(previousRuntime.profileRendererMatch)
+  const renderRuntimeUpdate = () => {
+    if (!options.skipFinalRender) {
+      renderAll({ skipObjRender: true })
+      restartWebglWarpPreviewLoop()
+      return
+    }
+    renderPoseMappingLiveSummaryCard()
+  }
   if (profile && canRenderRenderedIdealGeometry() && skippedReason !== "none") {
     state.poseMappingRuntime = createSkippedPoseMappingRuntimeState({
       previousRuntime,
@@ -6461,10 +6471,7 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
       currentFaceStatus,
       skippedReason,
     })
-    renderPoseMappingLiveSummaryCard()
-    if (!options.skipFinalRender) {
-      renderDebugContent()
-    }
+    renderRuntimeUpdate()
     return null
   }
   if (!profile || !qualityGate.usable) {
@@ -6492,10 +6499,7 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
       errorMessage: qualityGate.reasons.join("; ") || null,
     }
     clearPoseMappingPreviewCanvas()
-    renderPoseMappingLiveSummaryCard()
-    if (!options.skipFinalRender) {
-      renderDebugContent()
-    }
+    renderRuntimeUpdate()
     return null
   }
 
@@ -6692,6 +6696,7 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
         },
         overlayLifecycle: createOverlayLifecycle(false, "generation_mismatch"),
       }
+      renderRuntimeUpdate()
       return null
     }
     const detectStartMs = performance.now()
@@ -6714,6 +6719,7 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
         },
         overlayLifecycle: createOverlayLifecycle(false, "generation_mismatch"),
       }
+      renderRuntimeUpdate()
       return null
     }
     const detection = buildRenderedIdealDetectionState(result, -1, detectMs, null)
@@ -6865,6 +6871,7 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
     recordPlacementMappingSample(state.poseMappingRuntime)
     if (!options.skipFinalRender) {
       renderAll({ skipObjRender: true })
+      restartWebglWarpPreviewLoop()
     }
     if (state.renderPoseProbe.runAfterNextRecovery && isPoseRecoveryFrame(recoveryDebug)) {
       void runRenderPoseProbe("after_next_recovery")
@@ -6903,6 +6910,7 @@ async function updatePoseMappingRuntimeFromCurrentAnalysis(
     addLog(`Pose Mapping確認でエラーが発生しました: ${message}`)
     if (!options.skipFinalRender) {
       renderAll({ skipObjRender: true })
+      restartWebglWarpPreviewLoop()
     }
     return null
   } finally {
@@ -8907,6 +8915,11 @@ function disposeWebglMeshWarpRenderer(renderer: WebglMeshWarpRenderer | null) {
   gl.deleteProgram(renderer.program)
 }
 
+function resetWebglMeshWarpRenderer() {
+  disposeWebglMeshWarpRenderer(webglMeshWarpRenderer)
+  webglMeshWarpRenderer = null
+}
+
 class WebglWarpRenderError extends Error {
   reason: WebglWarpSkippedReason
 
@@ -8926,7 +8939,7 @@ function getOrCreateWebglMeshWarpRenderer() {
   ) {
     return webglMeshWarpRenderer
   }
-  disposeWebglMeshWarpRenderer(webglMeshWarpRenderer)
+  resetWebglMeshWarpRenderer()
   webglMeshWarpRenderer = createWebglMeshWarpRenderer(canvas)
   return webglMeshWarpRenderer
 }
@@ -9043,8 +9056,7 @@ function clearWebglWarpCanvas(options: { preserveCompletedFrame?: boolean } = {}
     return
   }
   if (webglMeshWarpRenderer.canvas !== canvas || !webglMeshWarpRenderer.canvas.isConnected) {
-    disposeWebglMeshWarpRenderer(webglMeshWarpRenderer)
-    webglMeshWarpRenderer = null
+    resetWebglMeshWarpRenderer()
     return
   }
   const { gl, canvas: rendererCanvas } = webglMeshWarpRenderer
@@ -9185,6 +9197,13 @@ function renderWebglWarpPreviewFromCurrentState(displayedContentRect: Rect | nul
     const reason = error instanceof WebglWarpRenderError ? error.reason : "draw_failed"
     const message = error instanceof Error ? error.message : String(error)
     clearWebglWarpCanvas({ preserveCompletedFrame: true })
+    if (
+      reason === "draw_failed" ||
+      reason === "webgl_context_unavailable" ||
+      reason === "shader_compile_failed"
+    ) {
+      resetWebglMeshWarpRenderer()
+    }
     updateWebglWarpDebug({
       ...createWebglWarpSkippedDebug(reason, {
         canvasWidth,
@@ -9402,10 +9421,12 @@ function getLiveVideoMediaTimeSec() {
 }
 
 function shouldRunWebglWarpPreviewLoop() {
+  if (state.activePreviewTab !== "displayOverlay" || !state.liveVideo.loaded) {
+    return false
+  }
   return (
-    state.activePreviewTab === "displayOverlay" &&
-    state.liveVideo.loaded &&
-    state.liveVideo.playbackStatus === "playing"
+    state.liveVideo.playbackStatus === "playing" ||
+    state.poseMappingRuntime.alignment.webglWarpDebug.status !== "completed"
   )
 }
 
@@ -9429,15 +9450,21 @@ function scheduleWebglWarpPreviewLoop() {
   }
   webglWarpAnimationFrameId = window.requestAnimationFrame(() => {
     webglWarpAnimationFrameId = null
-    const rect = liveOverlayCanvas.getBoundingClientRect()
-    const displayedContentRect = state.poseMappingRuntime.alignment.displayedContentRect
-    renderWebglWarpPreviewFromCurrentState(displayedContentRect, rect)
     const now = performance.now()
-    if (now - lastWebglWarpDebugDomUpdateAtMs > 250) {
-      lastWebglWarpDebugDomUpdateAtMs = now
-      renderDisplayOverlaySummaryCard()
-      if (state.activeDebugTab === "warpMesh" || state.activeDebugTab === "raw") {
-        renderDebugContent()
+    const shouldAttemptRender =
+      state.liveVideo.playbackStatus === "playing" ||
+      now - lastWebglWarpRenderAttemptAtMs >= WEBGL_WARP_RETRY_INTERVAL_MS
+    if (shouldAttemptRender) {
+      lastWebglWarpRenderAttemptAtMs = now
+      const rect = liveOverlayCanvas.getBoundingClientRect()
+      const displayedContentRect = state.poseMappingRuntime.alignment.displayedContentRect
+      renderWebglWarpPreviewFromCurrentState(displayedContentRect, rect)
+      if (now - lastWebglWarpDebugDomUpdateAtMs > 250) {
+        lastWebglWarpDebugDomUpdateAtMs = now
+        renderDisplayOverlaySummaryCard()
+        if (state.activeDebugTab === "warpMesh" || state.activeDebugTab === "raw") {
+          renderDebugContent()
+        }
       }
     }
     scheduleWebglWarpPreviewLoop()
