@@ -1313,6 +1313,13 @@ type VisibilityUsageWeightSummary = {
   p50: number | null
 }
 type VisibilityHiddenSideSummary = {
+  currentYawDeg: number | null
+  hiddenSideDecision: string
+  hiddenSideDirection: "left" | "right" | "none"
+  hiddenSideYawThresholdDeg: number
+  hiddenSideCandidateCount: number
+  hiddenSideSuppressedCount: number
+  hiddenSideExcludedCount: number
   yawDeg: number | null
   yawThresholdDeg: number
   affectedCount: number
@@ -3555,7 +3562,7 @@ const ALIGNMENT_UNSAFE_MAX = 1.25
 const ALIGNMENT_LARGE_DISPLACEMENT_THRESHOLD = 0.18
 const HIDDEN_SIDE_YAW_THRESHOLD_DEG = 18
 const FACE_BOUNDARY_USAGE_MULTIPLIER = 0.55
-const HIDDEN_SIDE_USAGE_MULTIPLIER = 0.25
+const HIDDEN_SIDE_USAGE_MULTIPLIER = 0.1
 const EXPRESSION_REGION_USAGE_MULTIPLIER = 0.45
 const EXCLUDE_USAGE_WEIGHT_THRESHOLD = 0.15
 const VISIBILITY_DEBUG_SAMPLE_COUNT = 12
@@ -10097,6 +10104,13 @@ function createVisibilityDebugFromIndices(
     excludedReasonSamples: reasonBreakdown.samples,
     usageWeightSummary: createVisibilityUsageWeightSummary(details.usageWeights),
     hiddenSideSummary: {
+      currentYawDeg: details.currentPose?.yaw ?? null,
+      hiddenSideDecision: getHiddenSideDecision(details.currentPose),
+      hiddenSideDirection: getHiddenSideDirection(details.currentPose),
+      hiddenSideYawThresholdDeg: HIDDEN_SIDE_YAW_THRESHOLD_DEG,
+      hiddenSideCandidateCount: details.hiddenSideAffectedIndices.length,
+      hiddenSideSuppressedCount: details.hiddenSideAffectedIndices.length,
+      hiddenSideExcludedCount: details.hiddenSideExcludedIndices.length,
       yawDeg: details.currentPose?.yaw ?? null,
       yawThresholdDeg: HIDDEN_SIDE_YAW_THRESHOLD_DEG,
       affectedCount: details.hiddenSideAffectedIndices.length,
@@ -10189,6 +10203,13 @@ function createVisibilityUsageWeightSummary(values: number[]): VisibilityUsageWe
 
 function createEmptyVisibilityHiddenSideSummary(): VisibilityHiddenSideSummary {
   return {
+    currentYawDeg: null,
+    hiddenSideDecision: "inactive",
+    hiddenSideDirection: "none",
+    hiddenSideYawThresholdDeg: HIDDEN_SIDE_YAW_THRESHOLD_DEG,
+    hiddenSideCandidateCount: 0,
+    hiddenSideSuppressedCount: 0,
+    hiddenSideExcludedCount: 0,
     yawDeg: null,
     yawThresholdDeg: HIDDEN_SIDE_YAW_THRESHOLD_DEG,
     affectedCount: 0,
@@ -10275,6 +10296,20 @@ function isPoseHiddenSideLandmark(
   const leftSide = landmark.x < center.x - 0.08
   const rightSide = landmark.x > center.x + 0.08
   return pose.yaw > 0 ? leftSide : rightSide
+}
+
+function getHiddenSideDecision(pose: ObjPoseMappingPose | null) {
+  if (!pose || !Number.isFinite(pose.yaw)) {
+    return "missing_yaw"
+  }
+  return Math.abs(pose.yaw) >= HIDDEN_SIDE_YAW_THRESHOLD_DEG ? "active" : "inactive"
+}
+
+function getHiddenSideDirection(pose: ObjPoseMappingPose | null): "left" | "right" | "none" {
+  if (getHiddenSideDecision(pose) !== "active" || !pose) {
+    return "none"
+  }
+  return pose.yaw > 0 ? "left" : "right"
 }
 
 function uniquePoseMappingExcludedReasons(
@@ -20324,6 +20359,7 @@ function renderDisplayOverlaySummaryCard() {
       <div><dt>excludedReasonSamples（除外理由別sample）</dt><dd>${escapeHtml(JSON.stringify(visibilityDebug.excludedReasonSamples))}</dd></div>
       <div><dt>usageWeightThreshold（使用重みしきい値）</dt><dd>${formatRealtimeNullableNumber(visibilityDebug.usageWeightThreshold)}</dd></div>
       <div><dt>usageWeightSummary（使用重み要約）</dt><dd>${escapeHtml(JSON.stringify(visibilityDebug.usageWeightSummary))}</dd></div>
+      <div><dt>hiddenSideSummary（隠れ側判定要約）</dt><dd>${escapeHtml(JSON.stringify(visibilityDebug.hiddenSideSummary))}</dd></div>
       <div><dt>visible sample（表示対象sample）</dt><dd>${escapeHtml(JSON.stringify(visibilityDebug.visibleCurrentLandmarkIndicesSample))}</dd></div>
       <div><dt>hidden sample（非表示sample）</dt><dd>${escapeHtml(JSON.stringify(visibilityDebug.hiddenCurrentLandmarkIndicesSample))}</dd></div>
       <div><dt>overlayLifecycle（重ね表示ライフサイクル）</dt><dd>visible ${String(lifecycle.alignedRenderedIdealVisible)} / gen ${String(lifecycle.generationMatch)} / token ${String(lifecycle.tokenMatch)} / renderPose ${String(lifecycle.renderPoseValid)}</dd></div>

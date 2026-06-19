@@ -23,6 +23,8 @@ semantic_5pt_center_scale_v1:
 
 visible / safe current landmarks は、`tools/ideal-reference-mesh-warp-lab` の current mesh source prototype にある usage weight 方針を移植した debug-only の前段処理です。current 側では invalid / unsafe / iris landmarks を除外し、pose hidden side、face boundary、mouth / eyes の表情影響を weight で弱め、`usageWeight` がしきい値以下になった index を hidden とします。aligned ideal 側では独自に visibility を判定せず、current 側で visible / safe になった同じ index だけを overlay と scale candidate に使います。これにより source（変形元）と target（変形先）の index correspondence（番号対応）を保ちます。
 
+hidden side（隠れ側）は reference lab と同じ yaw sign rule（`yaw > 0` で left、`yaw < 0` で right）と yaw threshold を使います。Ideal OBJ Render Warp Lab の overlay / scale candidate 前段では、横向き frame で hidden side が実際に visible / safe から外れるよう、hidden side の usage weight が除外しきい値以下になる設定にします。正面に近い frame では yaw threshold 未満のため hidden side 除外は発火しません。
+
 表示重ね描き view では、current overlay と aligned ideal overlay は visible / safe index のみを描画します。`alignedRenderedIdeal478` の保存形式は従来通り full 478 点の `idealOverlayRect` normalized coordinate（正規化座標）で維持し、overlay 表示時に visible / safe index へ絞ります。debug / JSON export には `visibilityDebug` として counts と sample のみを出し、full index array や full landmark array は無条件に出しません。
 
 `visibilityDebug` は `inputLandmarkCount`、`usedLandmarkCount`、`excludedLandmarkCount`、overlay / scale candidate に実際に使った点数、`excludedReasonCounts`、`excludedReasonSamples`、`usageWeightSummary`、`usageWeightThreshold`、hidden side / expression sensitive / iris / invalid の summary を持ちます。除外理由は既存実装の reason name を優先し、sample は reason ごとに少数の index だけを出します。
