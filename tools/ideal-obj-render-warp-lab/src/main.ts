@@ -3664,7 +3664,6 @@ type LabState = {
     showSourceTriangleMesh: boolean
     showTargetTriangleMesh: boolean
     showSampleSourceTargetLines: boolean
-    showWebglWarpPreview: boolean
     showGridAnchors: boolean
     showTriangleMesh: boolean
     showDisplayedContentRect: boolean
@@ -4230,7 +4229,6 @@ const state: LabState = {
     showSourceTriangleMesh: false,
     showTargetTriangleMesh: false,
     showSampleSourceTargetLines: false,
-    showWebglWarpPreview: false,
     showGridAnchors: false,
     showTriangleMesh: false,
     showDisplayedContentRect: true,
@@ -4712,7 +4710,6 @@ function renderDisplayOverlayPreview() {
               ${renderOverlayToggle("toggle-source-triangle-mesh", "変形元三角形メッシュ（source triangle mesh）を表示")}
               ${renderOverlayToggle("toggle-target-triangle-mesh", "変形先三角形メッシュ（target triangle mesh）を表示")}
               ${renderOverlayToggle("toggle-sample-source-target-lines", "変形元・変形先サンプル対応線を表示")}
-              ${renderOverlayToggle("toggle-webgl-warp-preview", "WebGL warp preview（WebGL変形プレビュー）")}
             </fieldset>
           </div>
           <div class="review-card" data-display-overlay-summary>
@@ -5404,7 +5401,6 @@ function bindEvents() {
   bindOverlayToggle("toggle-source-triangle-mesh", "showSourceTriangleMesh")
   bindOverlayToggle("toggle-target-triangle-mesh", "showTargetTriangleMesh")
   bindOverlayToggle("toggle-sample-source-target-lines", "showSampleSourceTargetLines")
-  bindOverlayToggle("toggle-webgl-warp-preview", "showWebglWarpPreview")
   bindOverlayToggle("toggle-displayed-content-rect", "showDisplayedContentRect")
   bindOverlayToggle("toggle-overlay-skipped-reason", "showSkippedReason")
   bindOverlayToggle("toggle-grid-anchors", "showGridAnchors")
@@ -9023,7 +9019,6 @@ function setWebglWarpCanvasVisible(visible: boolean) {
 
 function shouldKeepWebglWarpCanvasVisibleWhenCleared() {
   return (
-    state.overlay.showWebglWarpPreview &&
     state.activePreviewTab === "displayOverlay" &&
     state.liveVideo.loaded
   )
@@ -9091,15 +9086,6 @@ function updateWebglWarpDebug(debug: WebglWarpDebug) {
 function renderWebglWarpPreviewFromCurrentState(displayedContentRect: Rect | null, canvasRect: DOMRect) {
   const canvasWidth = Math.max(1, Math.round(canvasRect.width))
   const canvasHeight = Math.max(1, Math.round(canvasRect.height))
-  if (!state.overlay.showWebglWarpPreview) {
-    clearWebglWarpCanvas()
-    updateWebglWarpDebug(createWebglWarpSkippedDebug("disabled", {
-      canvasWidth,
-      canvasHeight,
-      displayedContentRect,
-    }))
-    return
-  }
   if (!state.liveVideo.loaded || liveVideoElement.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
     clearWebglWarpCanvas()
     updateWebglWarpDebug(createWebglWarpSkippedDebug("missing_video", {
@@ -9403,7 +9389,6 @@ function getLiveVideoMediaTimeSec() {
 
 function shouldRunWebglWarpPreviewLoop() {
   return (
-    state.overlay.showWebglWarpPreview &&
     state.activePreviewTab === "displayOverlay" &&
     state.liveVideo.loaded &&
     state.liveVideo.playbackStatus === "playing"
@@ -9419,7 +9404,7 @@ function restartWebglWarpPreviewLoop() {
     scheduleWebglWarpPreviewLoop()
     return
   }
-  if (!state.overlay.showWebglWarpPreview) {
+  if (state.activePreviewTab !== "displayOverlay" || !state.liveVideo.loaded) {
     clearWebglWarpCanvas()
   }
 }
@@ -20447,33 +20432,6 @@ function getCombinedSampleLinesAvailability(): DataAvailability {
   return available()
 }
 
-function getWebglWarpAvailability(): DataAvailability {
-  const video = getDisplayOverlayVideoAvailability()
-  if (!video.available) {
-    return video
-  }
-  const alignment = state.poseMappingRuntime.alignment
-  if (!alignment.combinedMeshDebug.sourceTargetCountMatches) {
-    return unavailable("sourceTargetCountMatches = false")
-  }
-  if (!alignment.combinedMeshDebug.indexCorrespondenceValid) {
-    return unavailable("indexCorrespondenceValid = false")
-  }
-  const source = getCombinedSourceVerticesAvailability()
-  if (!source.available) {
-    return source
-  }
-  const target = getCombinedTargetVerticesAvailability()
-  if (!target.available) {
-    return target
-  }
-  const triangles = getCombinedTriangleIndicesAvailability()
-  if (!triangles.available) {
-    return triangles
-  }
-  return available()
-}
-
 function getNotImplementedAvailability(): DataAvailability {
   return unavailable("未実装（今回対象外）")
 }
@@ -20495,7 +20453,6 @@ function renderControls() {
   const combinedTargetVerticesAvailability = getCombinedTargetVerticesAvailability()
   const combinedTriangleIndicesAvailability = getCombinedTriangleIndicesAvailability()
   const combinedSampleLinesAvailability = getCombinedSampleLinesAvailability()
-  const webglWarpAvailability = getWebglWarpAvailability()
   const notImplementedAvailability = getNotImplementedAvailability()
 
   setToggleState(
@@ -20617,12 +20574,6 @@ function renderControls() {
     state.overlay.showSampleSourceTargetLines,
     !combinedSampleLinesAvailability.available,
     combinedSampleLinesAvailability.reason,
-  )
-  setToggleState(
-    "toggle-webgl-warp-preview",
-    state.overlay.showWebglWarpPreview,
-    !webglWarpAvailability.available,
-    webglWarpAvailability.reason,
   )
   setToggleState(
     "toggle-displayed-content-rect",
