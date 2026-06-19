@@ -141,6 +141,8 @@ triangle mesh overlay（三角形メッシュ線表示）は debug 用であり�
 
 この preview は Ideal OBJ Render Warp Lab 内の検証機能に限定する。production engine（本番エンジン）、Beauty Studio（美顔スタジオ）、final warped export（最終変形画像書き出し）にはまだ接続しない。
 
+WebGL mesh warp preview は img snapshot（画像スナップショット）ではなく persistent canvas（永続キャンバス）で表示する。skipped（スキップ）時は壊れた画像要素を出さず、canvas を clear（消去）または非表示にする。
+
 ## Central Pane Coordinate Tabs（中央ペイン座標系タブ）
 
 中央ペインは処理名ではなく coordinate system（座標系）ごとに tab（タブ）を分ける。

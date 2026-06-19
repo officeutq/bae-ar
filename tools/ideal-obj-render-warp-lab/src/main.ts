@@ -4395,7 +4395,7 @@ const poseMappingProfileFileInput = getElement<HTMLInputElement>("[data-input='p
 const liveFileInput = getElement<HTMLInputElement>("[data-input='live-video']")
 const liveVideoElement = getElement<HTMLVideoElement>("[data-video='live']")
 const liveOverlayCanvas = getElement<HTMLCanvasElement>("[data-overlay='live']")
-const webglWarpCanvas = getElement<HTMLCanvasElement>("[data-canvas='webgl-warp']")
+let webglWarpCanvas = getElement<HTMLCanvasElement>("canvas[data-canvas='webgl-warp']")
 const objPreviewCanvas = getElement<HTMLCanvasElement>('[data-canvas="obj-preview"]')
 const renderedIdealCanvas = getElement<HTMLCanvasElement>('[data-canvas="rendered-ideal"]')
 const renderedIdealOverlayCanvas = getElement<HTMLCanvasElement>('[data-overlay="rendered-ideal"]')
@@ -4479,6 +4479,7 @@ let objPreviewDrag:
     }
   | null = null
 
+ensureWebglWarpPreviewCanvas()
 bindEvents()
 renderAll()
 
@@ -8861,6 +8862,52 @@ function linkWebglProgram(gl: WebGLRenderingContext, vertexShader: WebGLShader, 
   return program
 }
 
+function ensureWebglWarpPreviewCanvas(): HTMLCanvasElement {
+  const stage = getElement<HTMLElement>("[data-live-stage]")
+  stage
+    .querySelectorAll<HTMLImageElement>(
+      'img.webgl-warp-preview, img[data-canvas="webgl-warp"], img[data-webgl-warp-snapshot]',
+    )
+    .forEach((element) => element.remove())
+
+  let canvas = stage.querySelector<HTMLCanvasElement>('canvas[data-canvas="webgl-warp"]')
+  if (!canvas) {
+    canvas = document.createElement("canvas")
+    const overlayCanvas = stage.querySelector<HTMLCanvasElement>("[data-overlay='live']")
+    if (overlayCanvas) {
+      stage.insertBefore(canvas, overlayCanvas)
+    } else {
+      stage.appendChild(canvas)
+    }
+  } else if (canvas.parentElement !== stage) {
+    const overlayCanvas = stage.querySelector<HTMLCanvasElement>("[data-overlay='live']")
+    if (overlayCanvas) {
+      stage.insertBefore(canvas, overlayCanvas)
+    } else {
+      stage.appendChild(canvas)
+    }
+  }
+
+  canvas.classList.add("webgl-warp-preview")
+  canvas.dataset.canvas = "webgl-warp"
+  canvas.dataset.warpVisible = canvas.dataset.warpVisible === "true" ? "true" : "false"
+  canvas.setAttribute("aria-label", "WebGL warp preview")
+  webglWarpCanvas = canvas
+  return canvas
+}
+
+function disposeWebglMeshWarpRenderer(renderer: WebglMeshWarpRenderer | null) {
+  if (!renderer) {
+    return
+  }
+  const { gl } = renderer
+  gl.deleteBuffer(renderer.positionBuffer)
+  gl.deleteBuffer(renderer.texCoordBuffer)
+  gl.deleteBuffer(renderer.indexBuffer)
+  gl.deleteTexture(renderer.texture)
+  gl.deleteProgram(renderer.program)
+}
+
 class WebglWarpRenderError extends Error {
   reason: WebglWarpSkippedReason
 
@@ -8872,10 +8919,16 @@ class WebglWarpRenderError extends Error {
 }
 
 function getOrCreateWebglMeshWarpRenderer() {
-  if (webglMeshWarpRenderer) {
+  const canvas = ensureWebglWarpPreviewCanvas()
+  if (
+    webglMeshWarpRenderer &&
+    webglMeshWarpRenderer.canvas === canvas &&
+    webglMeshWarpRenderer.canvas.isConnected
+  ) {
     return webglMeshWarpRenderer
   }
-  webglMeshWarpRenderer = createWebglMeshWarpRenderer(webglWarpCanvas)
+  disposeWebglMeshWarpRenderer(webglMeshWarpRenderer)
+  webglMeshWarpRenderer = createWebglMeshWarpRenderer(canvas)
   return webglMeshWarpRenderer
 }
 
@@ -8965,16 +9018,22 @@ function resizeWebglMeshWarpRenderer(renderer: WebglMeshWarpRenderer, width: num
 }
 
 function setWebglWarpCanvasVisible(visible: boolean) {
-  webglWarpCanvas.dataset.warpVisible = visible ? "true" : "false"
+  ensureWebglWarpPreviewCanvas().dataset.warpVisible = visible ? "true" : "false"
 }
 
 function clearWebglWarpCanvas() {
-  setWebglWarpCanvasVisible(false)
+  const canvas = ensureWebglWarpPreviewCanvas()
+  canvas.dataset.warpVisible = "false"
   if (!webglMeshWarpRenderer) {
     return
   }
-  const { gl, canvas } = webglMeshWarpRenderer
-  gl.viewport(0, 0, canvas.width, canvas.height)
+  if (webglMeshWarpRenderer.canvas !== canvas || !webglMeshWarpRenderer.canvas.isConnected) {
+    disposeWebglMeshWarpRenderer(webglMeshWarpRenderer)
+    webglMeshWarpRenderer = null
+    return
+  }
+  const { gl, canvas: rendererCanvas } = webglMeshWarpRenderer
+  gl.viewport(0, 0, rendererCanvas.width, rendererCanvas.height)
   gl.clearColor(0, 0, 0, 0)
   gl.clear(gl.COLOR_BUFFER_BIT)
 }
@@ -20048,6 +20107,7 @@ function renderPreviewPanels(options: RenderAllOptions = {}) {
 
   const liveStage = getElement<HTMLElement>("[data-live-stage]")
   liveStage.dataset.loaded = String(state.liveVideo.loaded)
+  ensureWebglWarpPreviewCanvas()
   renderLiveCoordinatePreviewPanel()
 
   const objPreviewStatus = getObjPreviewStatus()

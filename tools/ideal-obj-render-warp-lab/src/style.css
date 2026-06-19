@@ -426,7 +426,7 @@ h3 {
   z-index: 2;
 }
 
-.webgl-warp-preview {
+canvas.webgl-warp-preview {
   box-sizing: border-box;
   display: none;
   grid-area: 1 / 1;
@@ -440,11 +440,17 @@ h3 {
   z-index: 1;
 }
 
+img.webgl-warp-preview,
+img[data-canvas="webgl-warp"],
+img[data-webgl-warp-snapshot] {
+  display: none !important;
+}
+
 .preview-stage[data-loaded="true"] .video-preview {
   display: block;
 }
 
-.preview-stage[data-loaded="true"] .webgl-warp-preview[data-warp-visible="true"] {
+.preview-stage[data-loaded="true"] canvas.webgl-warp-preview[data-warp-visible="true"] {
   display: block;
 }
 
@@ -493,7 +499,7 @@ h3 {
 }
 
 .live-face-stage .video-preview,
-.live-face-stage .webgl-warp-preview,
+.live-face-stage canvas.webgl-warp-preview,
 .live-face-stage .landmark-overlay,
 .live-obj-preview-stage .obj-preview-canvas {
   min-height: 300px;
