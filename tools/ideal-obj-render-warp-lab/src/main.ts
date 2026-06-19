@@ -1216,6 +1216,65 @@ type PoseMappingDisplacementSummary = {
   p95: number | null
   max: number | null
 }
+type ActualVisibilityMethod = "actual_visible_triangle_normal_v1"
+type ActualVisibilityExcludedReason =
+  | "invalid"
+  | "iris"
+  | "backFacingSurface"
+  | "noAdjacentTriangle"
+  | "degenerateTriangleOnly"
+  | "other"
+type ActualVisibilityExcludedReasonCounts = Record<ActualVisibilityExcludedReason, number>
+type ActualVisibilityExcludedReasonSamples = Record<ActualVisibilityExcludedReason, number[]>
+type ActualVisibilityTriangleNormalSummary = {
+  totalTriangleCount: number
+  validTriangleCount: number
+  frontFacingTriangleCount: number
+  backFacingTriangleCount: number
+  degenerateTriangleCount: number
+  frontFacingSign: number | null
+  frontFacingSignSource: string
+  normalZMin: number | null
+  normalZMax: number | null
+  normalZMean: number | null
+  normalZMedian: number | null
+}
+type ActualVisibilityLandmarkVisibilitySummary = {
+  minFrontFacingRatio: number | null
+  maxFrontFacingRatio: number | null
+  meanFrontFacingRatio: number | null
+  p50FrontFacingRatio: number | null
+  minFrontFacingTriangleCount: number | null
+  maxFrontFacingTriangleCount: number | null
+}
+type ActualVisibilityThresholds = {
+  minFrontFacingTriangleCount: number
+  minFrontFacingRatio: number
+}
+type ActualVisibilityDebug = {
+  method: ActualVisibilityMethod
+  inputLandmarkCount: number
+  usedLandmarkCount: number
+  excludedLandmarkCount: number
+  currentOverlayPointCount: number
+  alignedIdealOverlayPointCount: number
+  usedForScaleCandidateCount: number
+  excludedReasonCounts: ActualVisibilityExcludedReasonCounts
+  excludedReasonSamples: ActualVisibilityExcludedReasonSamples
+  triangleNormalSummary: ActualVisibilityTriangleNormalSummary
+  landmarkVisibilitySummary: ActualVisibilityLandmarkVisibilitySummary
+  thresholds: ActualVisibilityThresholds
+  currentYawDeg: number | null
+  skippedReason: string | null
+}
+type ActualVisibleLandmarkSelection = {
+  actualVisibleCurrentLandmarkIndices: number[]
+  actualHiddenCurrentLandmarkIndices: number[]
+  actualVisibleCurrentLandmarks: ReferenceLandmark[]
+  actualVisibleAlignedIdealLandmarks: ReferenceLandmark[]
+  landmarkExcludedReasons: ActualVisibilityExcludedReason[][]
+  actualVisibilityDebug: ActualVisibilityDebug
+}
 type PoseMappingBounds = {
   minX: number
   maxX: number
@@ -1363,6 +1422,11 @@ type PoseMappingAlignmentState = {
   displayedContentRect: Rect | null
   placementDebug: PlacementDebugState
   semantic5ptDebug: Semantic5ptDebug
+  actualVisibleCurrentLandmarkIndices: number[]
+  actualHiddenCurrentLandmarkIndices: number[]
+  actualVisibleCurrentLandmarks: ReferenceLandmark[]
+  actualVisibleAlignedIdealLandmarks: ReferenceLandmark[]
+  actualVisibilityDebug: ActualVisibilityDebug
   excludedReasonCounts: PoseMappingExcludedReasonCounts
   displacementSummary: PoseMappingDisplacementSummary
   landmarkReasons: Array<PoseMappingExcludedReason[]>
@@ -3397,6 +3461,10 @@ type LabState = {
 
 type FaceLandmarkerResultLike = ReturnType<FaceLandmarker["detect"]>
 type FaceLandmarkerOptions = Parameters<typeof FaceLandmarker.createFromOptions>[1]
+type LandmarkConnection = {
+  start: number
+  end: number
+}
 type VideoFrameCallbackMetadataLike = {
   mediaTime?: number
   presentedFrames?: number
@@ -3413,6 +3481,7 @@ const MEDIAPIPE_WASM_PATH = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-visio
 const MEDIAPIPE_FACE_LANDMARKER_MODEL_ASSET_PATH =
   "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"
 const REQUIRED_LANDMARK_COUNT = 478
+const MEDIAPIPE_FACE_MESH_TOPOLOGY_LANDMARK_COUNT = 468
 const LANDMARK_PREVIEW_COUNT = 5
 const IRIS_LANDMARK_START = 468
 const IRIS_LANDMARK_END = 477
@@ -3450,6 +3519,21 @@ const SEMANTIC_5PT_MAX_YAW_DEG = 30
 const SEMANTIC_5PT_MAX_PITCH_DEG = 25
 const SEMANTIC_5PT_MAX_ROLL_DEG = 25
 const SEMANTIC_5PT_LINE_INTERSECTION_EPSILON = 0.000001
+const ACTUAL_VISIBLE_MIN_FRONT_FACING_TRIANGLE_COUNT = 1
+const ACTUAL_VISIBLE_MIN_FRONT_FACING_RATIO = 0.25
+const ACTUAL_VISIBLE_DEGENERATE_NORMAL_LENGTH_EPSILON = 0.000001
+const ACTUAL_VISIBLE_CENTER_LANDMARK_INDICES = new Set([
+  1, 4, 5, 6, 8, 9, 10, 151, 168, 195, 197,
+])
+const ACTUAL_VISIBLE_EXCLUDED_REASON_SAMPLE_LIMIT = 12
+const MEDIAPIPE_FACE_MESH_TRIANGLE_INDICES = buildTriangleIndicesFromTessellation(
+  FaceLandmarker.FACE_LANDMARKS_TESSELATION as readonly LandmarkConnection[],
+)
+const MEDIAPIPE_FACE_MESH_TRIANGLE_COUNT = MEDIAPIPE_FACE_MESH_TRIANGLE_INDICES.length / 3
+const MEDIAPIPE_FACE_MESH_TRIANGLE_ADJACENCY = buildTriangleAdjacency(
+  MEDIAPIPE_FACE_MESH_TRIANGLE_INDICES,
+  MEDIAPIPE_FACE_MESH_TOPOLOGY_LANDMARK_COUNT,
+)
 let previousSemantic5ptScaleBasisUsed: Semantic5ptScaleBasisUsed | null = null
 const MEDIAPIPE_TIMESTAMP_STEP_MS = 1000 / 30
 const LIVE_AUTO_ANALYSIS_INTERVAL_SEC = 0.35
@@ -4307,9 +4391,9 @@ function renderDisplayOverlayPreview() {
     <div class="preview-card live-preview-card" data-preview-panel="displayOverlay">
       ${renderCoordinateInfo([
         ["Coordinate system（座標系）", "current: displayedContentRect pixel / ideal: equal-axis pixel inside displayedContentRect（理想は等倍軸）"],
-        ["Data source（データ元）", "live video + alignedRenderedIdeal478（ライブ映像 + 位置合わせ済み理想478点）"],
+        ["Data source（データ元）", "live video + actualVisibleCurrentLandmarkIndices + alignedRenderedIdeal478（ライブ映像 + 実可視index + 位置合わせ済み理想478点）"],
         ["Generated by（生成元）", "drawLiveOverlay() / alignedRenderedIdeal478 が生成済みの場合のみ ideal equal-axis rect（理想等倍軸矩形）へ描画"],
-        ["注意", "未配置の renderedIdeal478（レンダー理想478点）は live video（ライブ映像）上に直接表示しません。semantic_5pt_center_scale_v1 の guard 成功時のみ alignedRenderedIdeal478 を表示します。"],
+        ["注意", "未配置の renderedIdeal478（レンダー理想478点）は live video（ライブ映像）上に直接表示しません。semantic_5pt_center_scale_v1 の guard 成功時のみ、current 側で actual visible（実可視）になった同じ index の alignedRenderedIdeal478 を表示します。"],
       ])}
       <div class="live-preview-grid">
         <section class="live-column-panel" aria-label="ライブ現在顔">
@@ -4328,12 +4412,12 @@ function renderDisplayOverlayPreview() {
           <div class="obj-preview-controls display-overlay-controls" aria-label="表示重ね描き 操作">
             <fieldset class="overlay-toggle-group coordinate-toggle-group">
               <legend>Displayed overlay（表示重ね描き）</legend>
-              ${renderOverlayToggle("toggle-current-landmarks", "current overlay（現在顔重ね表示）を表示")}
-              ${renderOverlayToggle("toggle-aligned-ideal-landmarks", "aligned ideal overlay（位置合わせ済み理想顔重ね表示）を表示")}
+              ${renderOverlayToggle("toggle-current-landmarks", "current overlay（現在顔・実可視点のみ）を表示")}
+              ${renderOverlayToggle("toggle-aligned-ideal-landmarks", "aligned ideal overlay（位置合わせ済み理想顔・同一実可視点のみ）を表示")}
               ${renderOverlayToggle("toggle-mesh-pairs", "correspondence lines（対応線）を表示")}
               ${renderOverlayToggle("toggle-mesh-source", "mesh source overlay（変形元メッシュ重ね表示）を表示")}
               ${renderOverlayToggle("toggle-mesh-target", "mesh target overlay（変形先メッシュ重ね表示）を表示")}
-              ${renderOverlayToggle("toggle-excluded-landmarks", "除外 / 固定 landmark（ランドマーク）を表示")}
+              ${renderOverlayToggle("toggle-excluded-landmarks", "actual hidden landmarks（非実可視ランドマーク）を表示")}
               ${renderOverlayToggle("toggle-displayed-content-rect", "displayedContentRect（表示領域）を表示")}
               ${renderOverlayToggle("toggle-overlay-skipped-reason", "skipped reason（スキップ理由）を表示")}
               ${renderOverlayToggle("toggle-grid-anchors", "grid / anchors（グリッド / アンカー）を表示")}
@@ -8940,6 +9024,7 @@ function buildPoseMappingAlignment(
 } {
   const videoAspectRatio = getLiveVideoAspectRatio()
   const semantic5ptDebug = createEmptySemantic5ptDebug()
+  let actualVisibilitySelection = createEmptyActualVisibleLandmarkSelection(0, currentPose?.yaw ?? null)
   const createAlignmentState = (
     status: PoseMappingAlignmentStatus,
     reason: PoseMappingAlignmentSkippedReason,
@@ -8960,6 +9045,11 @@ function buildPoseMappingAlignment(
         failedReason: reason,
       },
     },
+    actualVisibleCurrentLandmarkIndices: [...actualVisibilitySelection.actualVisibleCurrentLandmarkIndices],
+    actualHiddenCurrentLandmarkIndices: [...actualVisibilitySelection.actualHiddenCurrentLandmarkIndices],
+    actualVisibleCurrentLandmarks: actualVisibilitySelection.actualVisibleCurrentLandmarks.map(cloneReferenceLandmark),
+    actualVisibleAlignedIdealLandmarks: actualVisibilitySelection.actualVisibleAlignedIdealLandmarks.map(cloneReferenceLandmark),
+    actualVisibilityDebug: actualVisibilitySelection.actualVisibilityDebug,
     ...overrides,
   })
   const emptyPlacementDebug = buildPlacementDebugState(currentMatrix, null, idealMatrix, null)
@@ -9001,6 +9091,11 @@ function buildPoseMappingAlignment(
   }
   const currentBoundsImage = calculateLandmarkBounds(currentLandmarksImage)
   const currentOnlyPlacementDebug = buildPlacementDebugState(currentMatrix, currentBoundsImage, idealMatrix, null)
+  actualVisibilitySelection = buildActualVisibleLandmarkSelectionFromTriangleNormals(
+    currentLandmarksImage,
+    displayedContentRect,
+    currentPose?.yaw ?? null,
+  )
   if (!renderedIdealLandmarksImage || renderedIdealLandmarksImage.length !== REQUIRED_LANDMARK_COUNT) {
     return {
       alignedRenderedIdeal478: null,
@@ -9205,7 +9300,10 @@ function buildPoseMappingAlignment(
 
   const currentDisplayedPx = createDisplayedLandmarkPointsPx(currentLandmarksImage, displayedContentRect)
   const idealDisplayedPx = createDisplayedLandmarkPointsPx(renderedIdealLandmarksForPlacement, idealOverlayRect)
-  const selectedScaleLandmarkIndices = findDisplayedCurrentXSpanIndices(currentDisplayedPx)
+  const selectedScaleLandmarkIndices = findDisplayedCurrentXSpanIndices(
+    currentDisplayedPx,
+    actualVisibilitySelection.actualVisibleCurrentLandmarkIndices,
+  )
   if (!selectedScaleLandmarkIndices) {
     return {
       alignedRenderedIdeal478: null,
@@ -9471,6 +9569,10 @@ function buildPoseMappingAlignment(
       ),
     }
   }
+  actualVisibilitySelection = attachActualVisibleAlignedIdealLandmarks(
+    actualVisibilitySelection,
+    alignedRenderedIdeal478,
+  )
 
   const displacementValues: number[] = []
   const displacementNormalizeLength = Math.max(
@@ -9664,10 +9766,15 @@ function createDisplayedLandmarkPointsPx(
 
 function findDisplayedCurrentXSpanIndices(
   points: Array<Semantic5ptDebugPoint | null>,
+  allowedIndices?: readonly number[],
 ): Semantic5ptSelectedScaleLandmarkIndices | null {
   let minXIndex: number | null = null
   let maxXIndex: number | null = null
-  for (let index = 0; index < points.length; index += 1) {
+  const candidateIndices = allowedIndices ?? points.map((_, index) => index)
+  for (const index of candidateIndices) {
+    if (index < 0 || index >= points.length) {
+      continue
+    }
     const point = points[index]
     if (!isFinitePoint2(point)) {
       continue
@@ -19297,6 +19404,9 @@ function getCorrespondenceLinesAvailability(): DataAvailability {
   if (!aligned.available) {
     return aligned
   }
+  if (state.poseMappingRuntime.alignment.actualVisibleCurrentLandmarkIndices.length === 0) {
+    return unavailable("actualVisibleCurrentLandmarkIndices = empty")
+  }
   return available()
 }
 
@@ -19311,10 +19421,27 @@ function getExcludedLandmarksAvailability(): DataAvailability {
   return available()
 }
 
+function getActualHiddenLandmarksAvailability(): DataAvailability {
+  const current = getCurrent478Availability()
+  if (!current.available) {
+    return current
+  }
+  if (state.poseMappingRuntime.alignment.actualVisibilityDebug.inputLandmarkCount > 0) {
+    return available()
+  }
+  return unavailable("actualVisibilityDebug = not_generated")
+}
+
 function getDisplayOverlayAlignedIdealAvailability(): DataAvailability {
   const lifecycle = createOverlayLifecycleFromRuntime(state.poseMappingRuntime)
-  if (canDrawPoseMappingAlignedIdealOverlay()) {
+  if (
+    canDrawPoseMappingAlignedIdealOverlay() &&
+    state.poseMappingRuntime.alignment.actualVisibleCurrentLandmarkIndices.length > 0
+  ) {
     return available()
+  }
+  if (state.poseMappingRuntime.alignment.actualVisibleCurrentLandmarkIndices.length === 0) {
+    return unavailable("actualVisibleCurrentLandmarkIndices = empty")
   }
   return unavailable(`overlayLifecycle.skippedReason = ${lifecycle.skippedReason}`)
 }
@@ -19339,6 +19466,7 @@ function renderControls() {
   const meshTargetAvailability = getMeshTargetAvailability()
   const correspondenceLinesAvailability = getCorrespondenceLinesAvailability()
   const excludedLandmarksAvailability = getExcludedLandmarksAvailability()
+  const actualHiddenLandmarksAvailability = getActualHiddenLandmarksAvailability()
   const displayOverlayVideoAvailability = getDisplayOverlayVideoAvailability()
   const displayOverlayAlignedIdealAvailability = getDisplayOverlayAlignedIdealAvailability()
   const notImplementedAvailability = getNotImplementedAvailability()
@@ -19424,8 +19552,8 @@ function renderControls() {
   setToggleState(
     "toggle-excluded-landmarks",
     state.overlay.showExcludedLandmarks,
-    !excludedLandmarksAvailability.available,
-    excludedLandmarksAvailability.reason,
+    !actualHiddenLandmarksAvailability.available,
+    actualHiddenLandmarksAvailability.reason,
   )
   setToggleState(
     "toggle-displayed-content-rect",
@@ -19619,18 +19747,23 @@ function renderDisplayOverlaySummaryCard() {
   const lifecycle = createOverlayLifecycleFromRuntime(runtime)
   const currentOverlayDebug = getCurrentOverlayDebugState()
   const displayOverlayRedrawDebug = displayOverlayRedrawDebugState
+  const actualVisibilityDebug = runtime.alignment.actualVisibilityDebug
   card.innerHTML = `
     <p>displayedContentRect（動画の実表示領域）を使い、overlay canvas（重ね描きcanvas）上で表示ズレを確認します。</p>
     <dl class="review-grid">
       <div><dt>live video（ライブ映像）</dt><dd>${escapeHtml(state.liveVideo.loaded ? "loaded（読込済み）" : "not loaded（未読込）")}</dd></div>
       <div><dt>displayedContentRect（表示領域）</dt><dd>${escapeHtml(formatRect(runtime.alignment.displayedContentRect))}</dd></div>
       <div><dt>ideal overlay plot（理想点描画）</dt><dd>equal-axis inside displayedContentRect（表示領域内の等倍軸）</dd></div>
-      <div><dt>current overlay（現在顔重ね表示）</dt><dd>${escapeHtml(formatAvailability(getCurrent478Availability(), state.currentAnalysis.landmarks478.length))}</dd></div>
+      <div><dt>actual visibility method（実可視方式）</dt><dd>${escapeHtml(actualVisibilityDebug.method)} / triangle normal（三角形法線）</dd></div>
+      <div><dt>actual visible landmarks（実可視ランドマーク）</dt><dd>used ${formatNullableCount(actualVisibilityDebug.usedLandmarkCount)} / excluded ${formatNullableCount(actualVisibilityDebug.excludedLandmarkCount)}</dd></div>
+      <div><dt>current overlay（現在顔・実可視点のみ）</dt><dd>${escapeHtml(formatAvailability(getCurrent478Availability(), actualVisibilityDebug.currentOverlayPointCount))}</dd></div>
       <div><dt>currentOverlayStatus（現在顔重ね表示状態）</dt><dd>${escapeHtml(currentOverlayDebug.status)}</dd></div>
       <div><dt>currentOverlayRecoveredFromNoFace（現在顔なしからの復帰）</dt><dd>${String(currentOverlayDebug.recoveredFromNoFace)}</dd></div>
       <div><dt>currentOverlayLastVisibleFrameId（最後に表示したフレームID）</dt><dd>${formatNullableCount(currentOverlayDebug.lastVisibleFrameId)}</dd></div>
       <div><dt>currentOverlayCurrentFrameId（現在フレームID）</dt><dd>${formatNullableCount(currentOverlayDebug.currentFrameId)}</dd></div>
-      <div><dt>aligned ideal overlay（位置合わせ済み理想顔重ね表示）</dt><dd>${escapeHtml(formatAvailability(getDisplayOverlayAlignedIdealAvailability(), runtime.alignedRenderedIdeal478?.length ?? null))}</dd></div>
+      <div><dt>aligned ideal overlay（位置合わせ済み理想顔・同一実可視点のみ）</dt><dd>${escapeHtml(formatAvailability(getDisplayOverlayAlignedIdealAvailability(), actualVisibilityDebug.alignedIdealOverlayPointCount))}</dd></div>
+      <div><dt>usedForScaleCandidateCount（スケール候補使用点数）</dt><dd>${formatNullableCount(actualVisibilityDebug.usedForScaleCandidateCount)}</dd></div>
+      <div><dt>actual hidden reason counts（非実可視理由別件数）</dt><dd>${escapeHtml(JSON.stringify(actualVisibilityDebug.excludedReasonCounts))}</dd></div>
       <div><dt>overlayLifecycle（重ね表示ライフサイクル）</dt><dd>visible ${String(lifecycle.alignedRenderedIdealVisible)} / gen ${String(lifecycle.generationMatch)} / token ${String(lifecycle.tokenMatch)} / renderPose ${String(lifecycle.renderPoseValid)}</dd></div>
       <div><dt>overlay skipped reason（重ね表示スキップ理由）</dt><dd>${escapeHtml(lifecycle.skippedReason)}</dd></div>
       <div><dt>renderedIdeal478（レンダー理想478点）</dt><dd>live video（ライブ映像）上には直接表示しません。</dd></div>
@@ -19871,6 +20004,7 @@ function renderPoseMappingDebugTab() {
         <div><dt>aligned ideal image bounds width / height</dt><dd>${formatRealtimeNullableNumber(runtime.alignment.alignedRenderedIdealBoundsImage?.width ?? null)} / ${formatRealtimeNullableNumber(runtime.alignment.alignedRenderedIdealBoundsImage?.height ?? null)}</dd></div>
         <div><dt>displayedContentRect</dt><dd>${escapeHtml(formatRect(runtime.alignment.displayedContentRect))}</dd></div>
         <div><dt>excludedReasonCounts</dt><dd>${escapeHtml(JSON.stringify(runtime.alignment.excludedReasonCounts))}</dd></div>
+        <div><dt>actualVisibilityDebug</dt><dd>${escapeHtml(JSON.stringify(roundActualVisibilityDebugForState(runtime.alignment.actualVisibilityDebug)))}</dd></div>
         <div><dt>displacementSummary</dt><dd>${escapeHtml(JSON.stringify(roundDisplacementSummary(runtime.alignment.displacementSummary)))}</dd></div>
         <div><dt>semantic5ptDebug</dt><dd>${escapeHtml(JSON.stringify(roundSemantic5ptDebugForState(runtime.alignment.semantic5ptDebug)))}</dd></div>
         <div><dt>alignedRenderedIdeal478</dt><dd>${formatNullableCount(runtime.alignedRenderedIdeal478?.length ?? null)}</dd></div>
@@ -21507,6 +21641,14 @@ function drawLiveOverlay(reason: DisplayOverlayRedrawReason = "manual_render") {
   const current478 = getCurrent478ForCurrentFrame()
   const displayOverlayAlignedRenderedIdeal478 =
     createDisplayOverlayAlignedRenderedIdeal478FromRenderedIdeal()
+  const actualVisibleCurrentLandmarkIndices =
+    state.poseMappingRuntime.alignment.actualVisibleCurrentLandmarkIndices
+  const actualVisibleCurrent478 = current478
+    ? selectLandmarksByIndices(current478, actualVisibleCurrentLandmarkIndices)
+    : []
+  const actualVisibleAlignedRenderedIdeal478 = displayOverlayAlignedRenderedIdeal478
+    ? selectLandmarksByIndices(displayOverlayAlignedRenderedIdeal478, actualVisibleCurrentLandmarkIndices)
+    : []
   const meshSourceVertices = state.poseMappingRuntime.meshSourceVertices
   const meshTargetVertices = state.poseMappingRuntime.meshTargetVertices
   const canDrawAlignedIdeal = canDrawPoseMappingAlignedIdealOverlay()
@@ -21515,16 +21657,15 @@ function drawLiveOverlay(reason: DisplayOverlayRedrawReason = "manual_render") {
   if (
     canDrawAlignedIdeal &&
     state.overlay.showMeshPairs &&
-    current478 &&
-    displayOverlayAlignedRenderedIdeal478 &&
-    displayOverlayAlignedRenderedIdeal478.length === REQUIRED_LANDMARK_COUNT
+    actualVisibleCurrent478.length > 0 &&
+    actualVisibleAlignedRenderedIdeal478.length === actualVisibleCurrent478.length
   ) {
     drawLandmarkPairLines(
       context,
       displayedContentRect,
       idealOverlayRect,
-      current478,
-      displayOverlayAlignedRenderedIdeal478,
+      actualVisibleCurrent478,
+      actualVisibleAlignedRenderedIdeal478,
       "rgba(48, 118, 92, 0.34)",
     )
   }
@@ -21561,23 +21702,22 @@ function drawLiveOverlay(reason: DisplayOverlayRedrawReason = "manual_render") {
   if (
     canDrawAlignedIdeal &&
     state.overlay.showAlignedIdealLandmarks478 &&
-    displayOverlayAlignedRenderedIdeal478 &&
-    displayOverlayAlignedRenderedIdeal478.length === REQUIRED_LANDMARK_COUNT
+    actualVisibleAlignedRenderedIdeal478.length > 0
   ) {
     drawLandmarkPoints(
       context,
       idealOverlayRect,
-      displayOverlayAlignedRenderedIdeal478,
+      actualVisibleAlignedRenderedIdeal478,
       "rgba(220, 71, 94, 0.86)",
       1.35,
     )
   }
 
-  if (currentOverlayDebug.status === "visible" && current478) {
+  if (currentOverlayDebug.status === "visible" && actualVisibleCurrent478.length > 0) {
     drawLandmarkPoints(
       context,
       displayedContentRect,
-      current478,
+      actualVisibleCurrent478,
       "rgba(79, 128, 255, 0.9)",
       1.45,
     )
@@ -21603,11 +21743,11 @@ function drawLiveOverlay(reason: DisplayOverlayRedrawReason = "manual_render") {
   }
 
   if (state.overlay.showExcludedLandmarks && current478) {
-    drawExcludedLandmarks(
+    drawActualHiddenLandmarks(
       context,
       displayedContentRect,
       current478,
-      state.poseMappingRuntime.alignment.landmarkReasons,
+      state.poseMappingRuntime.alignment.actualHiddenCurrentLandmarkIndices,
     )
   }
 
@@ -21988,6 +22128,33 @@ function drawExcludedLandmarks(
       continue
     }
     const point = normalizedLandmarkToPreviewPixel(landmarks[index], displayedContentRect)
+    context.beginPath()
+    context.arc(point.x, point.y, 2.2, 0, Math.PI * 2)
+    context.fill()
+    context.stroke()
+  }
+  context.restore()
+}
+
+function drawActualHiddenLandmarks(
+  context: CanvasRenderingContext2D,
+  displayedContentRect: Rect,
+  landmarks: ReferenceLandmark[],
+  hiddenLandmarkIndices: readonly number[],
+) {
+  if (hiddenLandmarkIndices.length === 0) {
+    return
+  }
+  context.save()
+  context.fillStyle = "rgba(153, 80, 180, 0.9)"
+  context.strokeStyle = "rgba(255, 255, 255, 0.9)"
+  context.lineWidth = 0.8
+  for (const index of hiddenLandmarkIndices) {
+    const landmark = landmarks[index]
+    if (!isFiniteLandmark(landmark)) {
+      continue
+    }
+    const point = normalizedLandmarkToPreviewPixel(landmark, displayedContentRect)
     context.beginPath()
     context.arc(point.x, point.y, 2.2, 0, Math.PI * 2)
     context.fill()
@@ -23514,6 +23681,478 @@ function createEmptyPoseMappingDisplacementSummary(): PoseMappingDisplacementSum
   }
 }
 
+function buildTriangleIndicesFromTessellation(
+  connections: readonly LandmarkConnection[],
+): number[] {
+  const triangleIndices: number[] = []
+
+  for (let index = 0; index + 2 < connections.length; index += 3) {
+    const first = connections[index]
+    const second = connections[index + 1]
+    const third = connections[index + 2]
+
+    if (
+      first.end !== second.start ||
+      second.end !== third.start ||
+      third.end !== first.start
+    ) {
+      continue
+    }
+
+    if (
+      first.start >= MEDIAPIPE_FACE_MESH_TOPOLOGY_LANDMARK_COUNT ||
+      first.end >= MEDIAPIPE_FACE_MESH_TOPOLOGY_LANDMARK_COUNT ||
+      second.end >= MEDIAPIPE_FACE_MESH_TOPOLOGY_LANDMARK_COUNT
+    ) {
+      continue
+    }
+
+    triangleIndices.push(first.start, first.end, second.end)
+  }
+
+  return triangleIndices
+}
+
+function buildTriangleAdjacency(
+  triangleIndices: readonly number[],
+  landmarkCount: number,
+): number[][] {
+  const adjacency = Array.from({ length: landmarkCount }, () => [] as number[])
+  for (let offset = 0; offset + 2 < triangleIndices.length; offset += 3) {
+    const triangleIndex = offset / 3
+    for (const landmarkIndex of [
+      triangleIndices[offset],
+      triangleIndices[offset + 1],
+      triangleIndices[offset + 2],
+    ]) {
+      if (landmarkIndex >= 0 && landmarkIndex < landmarkCount) {
+        adjacency[landmarkIndex].push(triangleIndex)
+      }
+    }
+  }
+  return adjacency
+}
+
+function createEmptyActualVisibilityExcludedReasonCounts(): ActualVisibilityExcludedReasonCounts {
+  return {
+    invalid: 0,
+    iris: 0,
+    backFacingSurface: 0,
+    noAdjacentTriangle: 0,
+    degenerateTriangleOnly: 0,
+    other: 0,
+  }
+}
+
+function createEmptyActualVisibilityExcludedReasonSamples(): ActualVisibilityExcludedReasonSamples {
+  return {
+    invalid: [],
+    iris: [],
+    backFacingSurface: [],
+    noAdjacentTriangle: [],
+    degenerateTriangleOnly: [],
+    other: [],
+  }
+}
+
+function createEmptyActualVisibilityTriangleNormalSummary(): ActualVisibilityTriangleNormalSummary {
+  return {
+    totalTriangleCount: MEDIAPIPE_FACE_MESH_TRIANGLE_COUNT,
+    validTriangleCount: 0,
+    frontFacingTriangleCount: 0,
+    backFacingTriangleCount: 0,
+    degenerateTriangleCount: 0,
+    frontFacingSign: null,
+    frontFacingSignSource: "not_computed",
+    normalZMin: null,
+    normalZMax: null,
+    normalZMean: null,
+    normalZMedian: null,
+  }
+}
+
+function createEmptyActualVisibilityLandmarkVisibilitySummary(): ActualVisibilityLandmarkVisibilitySummary {
+  return {
+    minFrontFacingRatio: null,
+    maxFrontFacingRatio: null,
+    meanFrontFacingRatio: null,
+    p50FrontFacingRatio: null,
+    minFrontFacingTriangleCount: null,
+    maxFrontFacingTriangleCount: null,
+  }
+}
+
+function createEmptyActualVisibilityDebug(
+  inputLandmarkCount = 0,
+  currentYawDeg: number | null = null,
+): ActualVisibilityDebug {
+  return {
+    method: "actual_visible_triangle_normal_v1",
+    inputLandmarkCount,
+    usedLandmarkCount: 0,
+    excludedLandmarkCount: inputLandmarkCount,
+    currentOverlayPointCount: 0,
+    alignedIdealOverlayPointCount: 0,
+    usedForScaleCandidateCount: 0,
+    excludedReasonCounts: createEmptyActualVisibilityExcludedReasonCounts(),
+    excludedReasonSamples: createEmptyActualVisibilityExcludedReasonSamples(),
+    triangleNormalSummary: createEmptyActualVisibilityTriangleNormalSummary(),
+    landmarkVisibilitySummary: createEmptyActualVisibilityLandmarkVisibilitySummary(),
+    thresholds: {
+      minFrontFacingTriangleCount: ACTUAL_VISIBLE_MIN_FRONT_FACING_TRIANGLE_COUNT,
+      minFrontFacingRatio: ACTUAL_VISIBLE_MIN_FRONT_FACING_RATIO,
+    },
+    currentYawDeg,
+    skippedReason: null,
+  }
+}
+
+function createEmptyActualVisibleLandmarkSelection(
+  inputLandmarkCount = 0,
+  currentYawDeg: number | null = null,
+): ActualVisibleLandmarkSelection {
+  return {
+    actualVisibleCurrentLandmarkIndices: [],
+    actualHiddenCurrentLandmarkIndices: [],
+    actualVisibleCurrentLandmarks: [],
+    actualVisibleAlignedIdealLandmarks: [],
+    landmarkExcludedReasons: Array.from(
+      { length: Math.max(0, inputLandmarkCount) },
+      () => [] as ActualVisibilityExcludedReason[],
+    ),
+    actualVisibilityDebug: createEmptyActualVisibilityDebug(inputLandmarkCount, currentYawDeg),
+  }
+}
+
+function buildActualVisibleLandmarkSelectionFromTriangleNormals(
+  currentLandmarks: ReferenceLandmark[],
+  displayedContentRect: Rect,
+  currentYawDeg: number | null,
+): ActualVisibleLandmarkSelection {
+  const selection = createEmptyActualVisibleLandmarkSelection(currentLandmarks.length, currentYawDeg)
+  const debug = selection.actualVisibilityDebug
+
+  if (
+    displayedContentRect.width <= 0 ||
+    displayedContentRect.height <= 0
+  ) {
+    return markActualVisibilitySelectionSkipped(selection, "invalid_displayed_content_rect")
+  }
+
+  const workPoints = currentLandmarks.map((landmark, index) => {
+    if (index >= MEDIAPIPE_FACE_MESH_TOPOLOGY_LANDMARK_COUNT || !isFiniteLandmark(landmark)) {
+      return null
+    }
+    return {
+      x: landmark.x * displayedContentRect.width,
+      y: landmark.y * displayedContentRect.height,
+      z: landmark.z * displayedContentRect.width,
+    }
+  })
+  const triangleRecords: Array<{
+    indices: readonly [number, number, number]
+    normalZ: number
+    valid: boolean
+    frontFacing: boolean
+  }> = []
+  const validNormalZValues: number[] = []
+  let degenerateTriangleCount = 0
+
+  for (let offset = 0; offset + 2 < MEDIAPIPE_FACE_MESH_TRIANGLE_INDICES.length; offset += 3) {
+    const firstIndex = MEDIAPIPE_FACE_MESH_TRIANGLE_INDICES[offset]
+    const secondIndex = MEDIAPIPE_FACE_MESH_TRIANGLE_INDICES[offset + 1]
+    const thirdIndex = MEDIAPIPE_FACE_MESH_TRIANGLE_INDICES[offset + 2]
+    const first = workPoints[firstIndex]
+    const second = workPoints[secondIndex]
+    const third = workPoints[thirdIndex]
+    const indices = [firstIndex, secondIndex, thirdIndex] as const
+
+    if (!first || !second || !third) {
+      triangleRecords.push({
+        indices,
+        normalZ: Number.NaN,
+        valid: false,
+        frontFacing: false,
+      })
+      continue
+    }
+
+    const ab = {
+      x: second.x - first.x,
+      y: second.y - first.y,
+      z: second.z - first.z,
+    }
+    const ac = {
+      x: third.x - first.x,
+      y: third.y - first.y,
+      z: third.z - first.z,
+    }
+    const normal = {
+      x: ab.y * ac.z - ab.z * ac.y,
+      y: ab.z * ac.x - ab.x * ac.z,
+      z: ab.x * ac.y - ab.y * ac.x,
+    }
+    const normalLength = Math.sqrt(normal.x * normal.x + normal.y * normal.y + normal.z * normal.z)
+    if (
+      !Number.isFinite(normalLength) ||
+      normalLength <= ACTUAL_VISIBLE_DEGENERATE_NORMAL_LENGTH_EPSILON
+    ) {
+      degenerateTriangleCount += 1
+      triangleRecords.push({
+        indices,
+        normalZ: Number.NaN,
+        valid: false,
+        frontFacing: false,
+      })
+      continue
+    }
+
+    validNormalZValues.push(normal.z)
+    triangleRecords.push({
+      indices,
+      normalZ: normal.z,
+      valid: true,
+      frontFacing: false,
+    })
+  }
+
+  const normalZSummary = summarizeActualVisibilityNumbers(validNormalZValues)
+  const centerNormalZValues = triangleRecords
+    .filter((record) =>
+      record.valid &&
+      record.indices.some((index) => ACTUAL_VISIBLE_CENTER_LANDMARK_INDICES.has(index)),
+    )
+    .map((record) => record.normalZ)
+  const centerSign = getActualVisibilityFrontFacingSign(centerNormalZValues)
+  const allSign = centerSign ?? getActualVisibilityFrontFacingSign(validNormalZValues)
+  const frontFacingSignSource =
+    centerSign !== null
+      ? "center_triangle_normal_z_median"
+      : allSign !== null
+        ? "all_triangle_normal_z_median"
+        : "unavailable"
+
+  debug.triangleNormalSummary = {
+    totalTriangleCount: MEDIAPIPE_FACE_MESH_TRIANGLE_COUNT,
+    validTriangleCount: validNormalZValues.length,
+    frontFacingTriangleCount: 0,
+    backFacingTriangleCount: 0,
+    degenerateTriangleCount,
+    frontFacingSign: allSign,
+    frontFacingSignSource,
+    normalZMin: normalZSummary.min,
+    normalZMax: normalZSummary.max,
+    normalZMean: normalZSummary.mean,
+    normalZMedian: normalZSummary.p50,
+  }
+
+  if (allSign === null) {
+    return markActualVisibilitySelectionSkipped(selection, "front_facing_sign_unavailable")
+  }
+
+  const validAdjacentTriangleCounts = Array.from(
+    { length: currentLandmarks.length },
+    () => 0,
+  )
+  const frontFacingAdjacentTriangleCounts = Array.from(
+    { length: currentLandmarks.length },
+    () => 0,
+  )
+  let frontFacingTriangleCount = 0
+  let backFacingTriangleCount = 0
+
+  for (const record of triangleRecords) {
+    if (!record.valid) {
+      continue
+    }
+    record.frontFacing = record.normalZ * allSign > 0
+    if (record.frontFacing) {
+      frontFacingTriangleCount += 1
+    } else {
+      backFacingTriangleCount += 1
+    }
+    for (const landmarkIndex of record.indices) {
+      if (landmarkIndex < currentLandmarks.length) {
+        validAdjacentTriangleCounts[landmarkIndex] += 1
+        if (record.frontFacing) {
+          frontFacingAdjacentTriangleCounts[landmarkIndex] += 1
+        }
+      }
+    }
+  }
+
+  debug.triangleNormalSummary = {
+    ...debug.triangleNormalSummary,
+    frontFacingTriangleCount,
+    backFacingTriangleCount,
+  }
+
+  const frontFacingRatios: number[] = []
+  const frontFacingCountsForSummary: number[] = []
+  for (let index = 0; index < currentLandmarks.length; index += 1) {
+    const landmark = currentLandmarks[index]
+    const topologyAdjacentTriangleCount =
+      index < MEDIAPIPE_FACE_MESH_TRIANGLE_ADJACENCY.length
+        ? MEDIAPIPE_FACE_MESH_TRIANGLE_ADJACENCY[index].length
+        : 0
+    const validAdjacentTriangleCount = validAdjacentTriangleCounts[index] ?? 0
+    const frontFacingAdjacentTriangleCount = frontFacingAdjacentTriangleCounts[index] ?? 0
+    const frontFacingRatio =
+      validAdjacentTriangleCount > 0
+        ? frontFacingAdjacentTriangleCount / validAdjacentTriangleCount
+        : 0
+
+    if (isIrisLandmarkIndex(index)) {
+      addActualVisibilityExcludedLandmark(selection, index, "iris")
+      continue
+    }
+    if (!isFiniteLandmark(landmark)) {
+      addActualVisibilityExcludedLandmark(selection, index, "invalid")
+      continue
+    }
+    if (topologyAdjacentTriangleCount === 0) {
+      addActualVisibilityExcludedLandmark(selection, index, "noAdjacentTriangle")
+      continue
+    }
+    if (validAdjacentTriangleCount === 0) {
+      addActualVisibilityExcludedLandmark(selection, index, "degenerateTriangleOnly")
+      continue
+    }
+
+    frontFacingRatios.push(frontFacingRatio)
+    frontFacingCountsForSummary.push(frontFacingAdjacentTriangleCount)
+    if (
+      frontFacingAdjacentTriangleCount >= ACTUAL_VISIBLE_MIN_FRONT_FACING_TRIANGLE_COUNT &&
+      frontFacingRatio >= ACTUAL_VISIBLE_MIN_FRONT_FACING_RATIO
+    ) {
+      selection.actualVisibleCurrentLandmarkIndices.push(index)
+      selection.actualVisibleCurrentLandmarks.push(cloneReferenceLandmark(landmark))
+    } else {
+      addActualVisibilityExcludedLandmark(selection, index, "backFacingSurface")
+    }
+  }
+
+  const ratioSummary = summarizeActualVisibilityNumbers(frontFacingRatios)
+  const countSummary = summarizeActualVisibilityNumbers(frontFacingCountsForSummary)
+  debug.landmarkVisibilitySummary = {
+    minFrontFacingRatio: ratioSummary.min,
+    maxFrontFacingRatio: ratioSummary.max,
+    meanFrontFacingRatio: ratioSummary.mean,
+    p50FrontFacingRatio: ratioSummary.p50,
+    minFrontFacingTriangleCount: countSummary.min,
+    maxFrontFacingTriangleCount: countSummary.max,
+  }
+  return finalizeActualVisibleLandmarkSelection(selection)
+}
+
+function markActualVisibilitySelectionSkipped(
+  selection: ActualVisibleLandmarkSelection,
+  reason: string,
+): ActualVisibleLandmarkSelection {
+  selection.actualVisibilityDebug.skippedReason = reason
+  for (let index = 0; index < selection.actualVisibilityDebug.inputLandmarkCount; index += 1) {
+    if (isIrisLandmarkIndex(index)) {
+      addActualVisibilityExcludedLandmark(selection, index, "iris")
+    } else {
+      addActualVisibilityExcludedLandmark(selection, index, "other")
+    }
+  }
+  return finalizeActualVisibleLandmarkSelection(selection)
+}
+
+function addActualVisibilityExcludedLandmark(
+  selection: ActualVisibleLandmarkSelection,
+  index: number,
+  reason: ActualVisibilityExcludedReason,
+) {
+  selection.actualHiddenCurrentLandmarkIndices.push(index)
+  selection.landmarkExcludedReasons[index] = [reason]
+  selection.actualVisibilityDebug.excludedReasonCounts[reason] += 1
+  const samples = selection.actualVisibilityDebug.excludedReasonSamples[reason]
+  if (samples.length < ACTUAL_VISIBLE_EXCLUDED_REASON_SAMPLE_LIMIT) {
+    samples.push(index)
+  }
+}
+
+function finalizeActualVisibleLandmarkSelection(
+  selection: ActualVisibleLandmarkSelection,
+): ActualVisibleLandmarkSelection {
+  const debug = selection.actualVisibilityDebug
+  debug.usedLandmarkCount = selection.actualVisibleCurrentLandmarkIndices.length
+  debug.excludedLandmarkCount = Math.max(0, debug.inputLandmarkCount - debug.usedLandmarkCount)
+  debug.currentOverlayPointCount = debug.usedLandmarkCount
+  debug.usedForScaleCandidateCount = debug.usedLandmarkCount
+  return selection
+}
+
+function attachActualVisibleAlignedIdealLandmarks(
+  selection: ActualVisibleLandmarkSelection,
+  alignedRenderedIdeal478: ReferenceLandmark[] | null,
+): ActualVisibleLandmarkSelection {
+  const actualVisibleAlignedIdealLandmarks = alignedRenderedIdeal478
+    ? selectLandmarksByIndices(alignedRenderedIdeal478, selection.actualVisibleCurrentLandmarkIndices)
+    : []
+  return {
+    ...selection,
+    actualVisibleAlignedIdealLandmarks,
+    actualVisibilityDebug: {
+      ...selection.actualVisibilityDebug,
+      alignedIdealOverlayPointCount: actualVisibleAlignedIdealLandmarks.length,
+    },
+  }
+}
+
+function selectLandmarksByIndices(
+  landmarks: ReferenceLandmark[],
+  indices: readonly number[],
+): ReferenceLandmark[] {
+  const selected: ReferenceLandmark[] = []
+  for (const index of indices) {
+    const landmark = landmarks[index]
+    if (landmark) {
+      selected.push(cloneReferenceLandmark(landmark))
+    }
+  }
+  return selected
+}
+
+function getActualVisibilityFrontFacingSign(values: number[]) {
+  const summary = summarizeActualVisibilityNumbers(values)
+  const median = summary.p50
+  if (median !== null && Math.abs(median) > ACTUAL_VISIBLE_DEGENERATE_NORMAL_LENGTH_EPSILON) {
+    return median > 0 ? 1 : -1
+  }
+  const mean = summary.mean
+  if (mean !== null && Math.abs(mean) > ACTUAL_VISIBLE_DEGENERATE_NORMAL_LENGTH_EPSILON) {
+    return mean > 0 ? 1 : -1
+  }
+  return null
+}
+
+function summarizeActualVisibilityNumbers(values: number[]): {
+  min: number | null
+  max: number | null
+  mean: number | null
+  p50: number | null
+} {
+  const finiteValues = values.filter((value) => Number.isFinite(value)).sort((a, b) => a - b)
+  if (finiteValues.length === 0) {
+    return {
+      min: null,
+      max: null,
+      mean: null,
+      p50: null,
+    }
+  }
+  const sum = finiteValues.reduce((acc, value) => acc + value, 0)
+  return {
+    min: finiteValues[0],
+    max: finiteValues[finiteValues.length - 1],
+    mean: sum / finiteValues.length,
+    p50: percentileSorted(finiteValues, 0.5),
+  }
+}
+
 function createEmptyPoseMappingAlignmentState(
   status: PoseMappingAlignmentStatus = "skipped_no_current_face",
   alignmentSkippedReason: PoseMappingAlignmentSkippedReason = "no_current_face",
@@ -23538,6 +24177,11 @@ function createEmptyPoseMappingAlignmentState(
     displayedContentRect: null,
     placementDebug: buildPlacementDebugState(null, null, null, null),
     semantic5ptDebug: createEmptySemantic5ptDebug(),
+    actualVisibleCurrentLandmarkIndices: [],
+    actualHiddenCurrentLandmarkIndices: [],
+    actualVisibleCurrentLandmarks: [],
+    actualVisibleAlignedIdealLandmarks: [],
+    actualVisibilityDebug: createEmptyActualVisibilityDebug(),
     excludedReasonCounts: createEmptyPoseMappingExcludedReasonCounts(),
     displacementSummary: createEmptyPoseMappingDisplacementSummary(),
     landmarkReasons: [],
@@ -27509,6 +28153,37 @@ function roundDisplacementSummary(summary: PoseMappingDisplacementSummary): Pose
   }
 }
 
+function roundActualVisibilityDebugForState(debug: ActualVisibilityDebug): ActualVisibilityDebug {
+  return {
+    ...debug,
+    currentYawDeg: roundForState(debug.currentYawDeg),
+    excludedReasonCounts: { ...debug.excludedReasonCounts },
+    excludedReasonSamples: {
+      invalid: [...debug.excludedReasonSamples.invalid],
+      iris: [...debug.excludedReasonSamples.iris],
+      backFacingSurface: [...debug.excludedReasonSamples.backFacingSurface],
+      noAdjacentTriangle: [...debug.excludedReasonSamples.noAdjacentTriangle],
+      degenerateTriangleOnly: [...debug.excludedReasonSamples.degenerateTriangleOnly],
+      other: [...debug.excludedReasonSamples.other],
+    },
+    triangleNormalSummary: {
+      ...debug.triangleNormalSummary,
+      normalZMin: roundForState(debug.triangleNormalSummary.normalZMin),
+      normalZMax: roundForState(debug.triangleNormalSummary.normalZMax),
+      normalZMean: roundForState(debug.triangleNormalSummary.normalZMean),
+      normalZMedian: roundForState(debug.triangleNormalSummary.normalZMedian),
+    },
+    landmarkVisibilitySummary: {
+      minFrontFacingRatio: roundForState(debug.landmarkVisibilitySummary.minFrontFacingRatio),
+      maxFrontFacingRatio: roundForState(debug.landmarkVisibilitySummary.maxFrontFacingRatio),
+      meanFrontFacingRatio: roundForState(debug.landmarkVisibilitySummary.meanFrontFacingRatio),
+      p50FrontFacingRatio: roundForState(debug.landmarkVisibilitySummary.p50FrontFacingRatio),
+      minFrontFacingTriangleCount: roundForState(debug.landmarkVisibilitySummary.minFrontFacingTriangleCount),
+      maxFrontFacingTriangleCount: roundForState(debug.landmarkVisibilitySummary.maxFrontFacingTriangleCount),
+    },
+  }
+}
+
 function formatPoseMappingSummary(
   value: Record<string, unknown> | undefined,
   keys: string[],
@@ -28152,6 +28827,11 @@ function getPoseMappingAlignmentDebugSummary(alignment: PoseMappingAlignmentStat
     displayedContentRect: roundRectForState(alignment.displayedContentRect),
     placementDebug: roundPlacementDebugForState(alignment.placementDebug),
     semantic5ptDebug: roundSemantic5ptDebugForState(alignment.semantic5ptDebug),
+    actualVisibleCurrentLandmarkIndices: [...alignment.actualVisibleCurrentLandmarkIndices],
+    actualHiddenCurrentLandmarkIndices: [...alignment.actualHiddenCurrentLandmarkIndices],
+    actualVisibleCurrentLandmarkCount: alignment.actualVisibleCurrentLandmarks.length,
+    actualVisibleAlignedIdealLandmarkCount: alignment.actualVisibleAlignedIdealLandmarks.length,
+    actualVisibilityDebug: roundActualVisibilityDebugForState(alignment.actualVisibilityDebug),
     excludedReasonCounts: alignment.excludedReasonCounts,
     displacementSummary: roundDisplacementSummary(alignment.displacementSummary),
   }

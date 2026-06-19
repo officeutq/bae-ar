@@ -7,7 +7,7 @@ MP4 再生中の Pose Mapping runtime では、matrix-based placement function �
 
 現在の live runtime は `state.placementAnalysis.candidate` を参照せず、`DEFAULT_LIVE_PLACEMENT_FUNCTION_CANDIDATE` や `direct_linear_normalized_v1` fallback も持たない。旧方式へ fallback しない。
 
-live alignment は `semantic_5pt_center_scale_v1`（意味点5点中心スケール方式 v1）へ移行済みです。`currentMatrix` / `facialTransformationMatrix` から scale / translate を推定せず、center は固定5点から作り、scale line は表示重ね描き view の current478 pixel coordinate（現在顔478点ピクセル座標）から選びます。
+live alignment は `semantic_5pt_center_scale_v1`（意味点5点中心スケール方式 v1）へ移行済みです。`currentMatrix` / `facialTransformationMatrix` から scale / translate を推定せず、center は固定5点から作り、scale line は表示重ね描き view の actual visible current landmarks（実可視の現在顔ランドマーク）から選びます。
 
 役割分担は以下です。
 
@@ -19,7 +19,45 @@ semantic_5pt_center_scale_v1:
   center と scale だけを合わせる
 ```
 
-`semantic_5pt_center_scale_v1` は姿勢補正ではなく配置補正です。center は従来通り `topCenter: 10 -> chinCenter: 152` と `leftSideCenter: 234 -> rightSideCenter: 454` の交点で作ります。center 計算に使う座標は、scale と同じ表示重ね描き view の pixel coordinate（ピクセル座標）です。scale line は `center -> eyeMid: 6` ではなく、表示重ね描き view 上で実際に描かれる current478 の全478点から、x が最小の landmark と x が最大の landmark を選びます。現段階では face boundary candidate（顔外周候補）では絞り込まず、NaN / Infinity / 欠損を除いた全478点を対象にします。ideal 側は x 最小 / x 最大を選び直さず、current 側で選ばれた同一 index（同一ランドマーク番号）の点を使います。2D rotation は適用せず、matrix-based placement も復活させません。WebGL mesh warp はまだ未接続で、`meshTargetVertices` は生成しません。
+`semantic_5pt_center_scale_v1` は姿勢補正ではなく配置補正です。center は従来通り `topCenter: 10 -> chinCenter: 152` と `leftSideCenter: 234 -> rightSideCenter: 454` の交点で作ります。center 計算に使う座標は、scale と同じ表示重ね描き view の pixel coordinate（ピクセル座標）です。scale line は `center -> eyeMid: 6` ではなく、表示重ね描き view 上で actual visible（実可視）になった current478 の中から、x が最小の landmark と x が最大の landmark を選びます。ideal 側は x 最小 / x 最大を選び直さず、current 側で選ばれた同一 index（同一ランドマーク番号）の点を使います。2D rotation は適用せず、matrix-based placement も復活させません。WebGL mesh warp はまだ未接続で、`meshTargetVertices` は生成しません。
+
+## Actual Visible Landmark Selection（実可視ランドマーク選択）
+
+#278 で検討した `usageWeight`（使用重み）方式は、この Lab の本線として採用しません。今回の方式は `actual_visible_triangle_normal_v1`（実可視・三角形法線方式 v1）です。
+
+actual visible（実可視）は `usageWeight` ではなく boolean（真偽値）として扱います。
+
+```text
+actualVisible = true
+actualVisible = false
+```
+
+`current478`（現在顔478点）の `x / y / z` と MediaPipe face mesh triangle topology（顔メッシュ三角形接続）から triangle normal（三角形法線）を計算し、front-facing surface（カメラ側を向いている面）に属する landmark だけを使います。法線計算では表示領域の単位へ合わせ、`x = landmark.x * displayedContentRect.width`、`y = landmark.y * displayedContentRect.height`、`z = landmark.z * displayedContentRect.width` を使います。`z` 単体のしきい値判定や yaw sign（左右向き符号）だけの hidden side 判定は使いません。
+
+front-facing sign（表向き符号）は固定せず、顔中央付近の triangle normal.z の median sign を優先し、取れない場合は valid triangle 全体の median sign を fallback にします。sign を決められない場合は実可視選択を skip し、`actualVisibilityDebug` に理由を出します。
+
+landmark ごとに隣接 triangle を集め、以下で boolean 判定します。
+
+```text
+frontFacingAdjacentTriangleCount >= 1
+frontFacingRatio >= 0.25
+```
+
+iris landmarks（虹彩ランドマーク）`468..477` は、MediaPipe face mesh 本体の triangle normal 判定対象ではないため常に除外します。invalid landmarks（NaN / Infinity / 欠損）も除外します。
+
+aligned ideal（位置合わせ済み理想顔）側では独自に実可視判定しません。current 側で `actualVisible = true` になった同じ index の `alignedRenderedIdeal478` だけを overlay に使います。`alignedRenderedIdeal478` の保存形式は full 478 points（478点全体）のままです。
+
+scale candidate（スケール候補）も actual visible current landmarks（実可視の現在顔ランドマーク）から選びます。current 側で選んだ `minXIndex` / `maxXIndex` と同じ index を ideal scale line に使います。
+
+今回やらないもの:
+
+- background grid（背景格子）
+- `gridStepPx`（格子間隔ピクセル）
+- triangle indices（三角形接続情報）の warp 接続
+- WebGL mesh warp
+- `meshTargetVertices`
+- `finalSourceVertices` / `finalTargetVertices`
+- `usageWeight` / `usageWeightSummary`
 
 成功時は以下になります。
 
@@ -263,24 +301,24 @@ CSV export には既存の image coordinate 系の列を維持したうえで、
 
 しかし、同じ動画を model video と live video の両方に使っても、top1 reference matching は完全に同じ時刻のフレームを選ばず、pose が数度ズレることが分かりました。そのため、reference frame matching で選んだ 2D landmarks をそのまま target にする方式は、自然美顔の本線として危険です。
 
-一方で、`ideal-reference-mesh-warp-lab` の以下の成果は有用です。
+一方で、`ideal-reference-mesh-warp-lab` の以下の成果は後続検証で再利用候補になります。
 
 - live video / current frame MediaPipe analysis
 - `current478` / pose / expression
-- visible / safe current landmarks
-- dynamic nearFaceGrid
-- backgroundGrid
-- screenEdgeAnchors
-- current source vertices
-- ideal target vertices
-- triangle indices
-- WebGL mesh warp preview
-- mesh pair preview
+- actual visible current landmarks
+- dynamic nearFaceGrid（今回未実装）
+- backgroundGrid（今回未実装）
+- screenEdgeAnchors（今回未実装）
+- current source vertices（今回未接続）
+- ideal target vertices（今回未生成）
+- triangle indices（今回 warp 未接続）
+- WebGL mesh warp preview（今回未実装）
+- mesh pair preview（今回未実装）
 - image-normalized coordinate
 - aspect-corrected image coordinate
 - `displayedContentRect` を使った overlay 変換
 
-`tools/ideal-obj-render-warp-lab` では、これらの座標系・メッシュ生成・WebGL mesh warp を踏襲し、理想側 landmarks の供給元だけを差し替えます。
+`tools/ideal-obj-render-warp-lab` では、まず `displayedContentRect` overlay と actual visible landmark selection を踏襲し、メッシュ生成・WebGL mesh warp は後続課題に回します。
 
 ## MediaPipe mode comparison
 
@@ -533,10 +571,10 @@ Live タブの旧 `現姿勢OBJ` 欄と独立した `現姿勢理想478プレビ
 `poseMappingProfile` で得た `p` により理想OBJをレンダーし、そのレンダー画像から得た
 `renderedIdeal478` を `current478` に alignment したうえで、ライブ映像上に以下を overlay 表示します。
 
-- `current478`
-- `alignedRenderedIdeal478`
-- `current478 -> alignedRenderedIdeal478` の対応線
-- 除外 / 固定 landmark
+- `actualVisibleCurrentLandmarks`
+- `actualVisibleAlignedIdealLandmarks`
+- `actualVisibleCurrentLandmarks -> actualVisibleAlignedIdealLandmarks` の対応線
+- actual hidden landmarks（非実可視ランドマーク）
 - mesh source / mesh target
 - alignment anchors
 
@@ -547,7 +585,7 @@ Live overlay の描画は必ず `displayedContentRect` を使い、動画の let
 
 overlay controls は中央ペイン上部の共通領域には置かず、対象 coordinate tab（座標系タブ）内に置きます。
 `ライブ座標（live image-normalized座標）` では `current478` / aspect 変換なしの `renderedIdeal478` / `meshSourceVertices` を確認します。
-`表示重ね描き（displayedContentRect pixel座標）` では、`alignedRenderedIdeal478` を理想側だけ正方形の equal-axis pixel coordinate（等倍軸ピクセル座標）へ変換した点を確認します。実体がまだない no-op checkbox は残さず、
+`表示重ね描き（displayedContentRect pixel座標）` では、current 側で actual visible（実可視）になった同じ index の `alignedRenderedIdeal478` だけを、理想側の正方形 equal-axis pixel coordinate（等倍軸ピクセル座標）へ変換して確認します。実体がまだない no-op checkbox は残さず、
 未対応のものは disabled または非表示にします。現時点では triangle mesh と grid / anchors は未生成なので
 disabled とします。
 
@@ -614,19 +652,10 @@ pixel coordinate、OBJ vertex coordinate、WebGL clip space は、MediaPipe retu
 - current frame MediaPipe analysis
 - current478 overlay
 - pose / expression / quality debug
-- visible / safe current landmarks
-- iris landmarks 468..477 の除外または current 固定
-- `faceMedianNearestDistance`
-- dynamic nearFaceGrid
-- backgroundGrid
-- screenEdgeAnchors
-- current source vertices
-- ideal target vertices
-- triangle indices
-- mesh pair preview
-- WebGL mesh warp preview
 - summary / raw debug
 - `displayedContentRect` を使った overlay 変換
+
+今回追加する landmark selection は、従来の visible / safe current landmarks や `usageWeight` 方式ではなく、`actual_visible_triangle_normal_v1` です。dynamic nearFaceGrid、backgroundGrid、screenEdgeAnchors、triangle mesh、WebGL mesh warp preview は今回の実装対象外です。
 
 ## 差し替える核
 
@@ -666,10 +695,9 @@ top1 reference matching は使いません。current pose で render した OBJ 
    -> expression
    -> quality
 
-2. current478 から visible / safe landmarks を選ぶ
+2. current478 x / y / z と face mesh triangle topology から actual visible landmarks を選ぶ
 
-3. visible / safe landmarks + dynamic nearFaceGrid + backgroundGrid + screenEdgeAnchors で
-   current source mesh を作る
+3. actual visible landmarks を overlay と scale candidate に使う
 
 4. OBJ file を読み込む
 
@@ -681,81 +709,28 @@ top1 reference matching は使いません。current pose で render した OBJ 
 7. renderedIdeal478 を current478 へ alignment する
    -> alignedRenderedIdeal478
 
-8. current source mesh と同じ頂点構成で ideal target mesh を作る
+8. alignedRenderedIdeal478 のうち current 側で actual visible になった同じ index だけを overlay に使う
 
-9. triangle indices を作る
+9. background grid と triangle mesh は今回まだ接続しない
 
-10. WebGL mesh warp で加工する
+10. WebGL mesh warp は今回まだ行わない
 
-11. warped preview を表示する
+11. displayedContentRect 上で current / aligned ideal の実可視 overlay を確認する
 ```
 
-## 表情部分の初期ルール
+## 表情部分の扱い
 
-`テスト.obj` は neutral であり、カメラ映像と同じ表情を持ちません。そのため、初期ラボでは expression-sensitive landmarks は current をそのまま使います。
+今回の `actual_visible_triangle_normal_v1` では target vertices を生成しません。`usageWeight` で `current` と `alignedRenderedIdeal` を lerp する方式は採用しません。
 
-基本ルール:
+`テスト.obj` は neutral であり、カメラ映像と同じ表情を持ちません。そのため、表情差分をどう扱うかは後続課題です。今回の Lab では、actual visible current landmarks と同じ index の aligned ideal landmarks を overlay / scale candidate 確認に使うところまでに留めます。
 
-```text
-if landmark is expressionSensitive:
-  target = current
-else:
-  target = lerp(current, alignedRenderedIdeal, usageWeight)
-```
-
-意味:
-
-```text
-口・目・虹彩など、表情で大きく動く点はカメラ映像を優先する。
-顔の土台・輪郭・頬・鼻・額など、表情影響が比較的小さい点だけ理想OBJ方向へ寄せる。
-```
-
-初期の current 固定候補:
-
-- mouth
-- lips
-- inner mouth
-- left_eye
-- right_eye
-- eyelids
-- iris 468..477
-- jawOpen で大きく動く下口周辺
-
-chin や jaw side は判断が難しいため、初期は弱く寄せるか、current 固定寄りで安全側に倒します。
-
-これは `expressionFollow v1` の正式実装ではなく、Lab 内の debug rule として扱います。`expressionFollow v1` の schema、Engine 実装、Authoring Tool export へは入れません。
+iris 468..477 は triangle normal 判定対象から除外し、将来の warp でも current fixed（現在顔固定）寄りに扱う候補として分けます。
 
 ## Target vertices 生成ルール
 
-ideal target vertices は、`ideal-reference-mesh-warp-lab` と同じく、source vertices と同じ頂点数・同じ順番で作ります。
+今回の `actual_visible_triangle_normal_v1` では `meshTargetVertices`、`finalSourceVertices`、`finalTargetVertices` を生成しません。triangle indices（三角形接続情報）も warp 用には接続しません。
 
-```text
-sourceVertices[i] と targetVertices[i] は必ず対応する
-```
-
-target rule:
-
-```text
-faceLandmark:
-  if excluded or expressionSensitive or iris:
-    target = current
-  else:
-    target = alignedRenderedIdeal478[index]
-
-nearFaceGrid:
-  target = source
-  または後続検証で弱く face boundary に追従
-
-backgroundGrid:
-  target = source
-
-screenEdgeAnchor:
-  target = source
-```
-
-初期版では nearFaceGrid / backgroundGrid / screenEdgeAnchor は source = target を基本にします。現時点の
-Live overlay では landmark ベースの mesh source / target debug を先に表示し、triangle mesh と実 warp は
-まだ接続しません。
+Live overlay では landmark ベースの current / aligned ideal 実可視点 debug を先に表示し、background grid、triangle mesh、WebGL mesh warp は後続検証に回します。
 
 ## 最初の成功判定
 
@@ -769,10 +744,10 @@ Live overlay では landmark ベースの mesh source / target debug を先に�
 - renderedIdeal pose
 - current pose と renderedIdeal pose の差
 - `alignedRenderedIdeal478` の bounds / center / scale
-- live overlay で current と target が破綻していないか
-- expressionSensitive landmarks が current 固定になっているか
-- 口・目が無表情 OBJ 側へ引っ張られていないか
-- WebGL mesh warp preview で顔全体が自然に少しだけ寄るか
+- `actualVisibilityDebug.method = actual_visible_triangle_normal_v1`
+- `currentOverlayPointCount = alignedIdealOverlayPointCount = usedForScaleCandidateCount`
+- 横向き frame で `backFacingSurface > 0` になるか
+- `usageWeightSummary` が出ていないか
 
 ## 後続の実装単位案
 
@@ -781,10 +756,10 @@ Live overlay では landmark ベースの mesh source / target debug を先に�
 PR:
 
 ```text
-expressionSensitive current固定 rule を入れる
-finalSourceVertices / finalTargetVertices を作る
-triangle indices を作る
-WebGL mesh warp preview へ接続
+実映像で actual_visible_triangle_normal_v1 の threshold を調整する
+center 固定点が actual hidden になる frame の扱いを決める
+finalSourceVertices / finalTargetVertices を後続で作る
+triangle indices と WebGL mesh warp preview を後続で接続する
 ```
 
 ## Non-goals
