@@ -386,6 +386,12 @@ h3 {
   margin-bottom: 0;
 }
 
+.webgl-warp-preview-panel {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
 .preview-stage {
   background: #f8fafc;
   border: 1px dashed #b8c5d0;
@@ -427,6 +433,7 @@ h3 {
 }
 
 canvas.webgl-warp-preview {
+  background: #111820;
   box-sizing: border-box;
   display: none;
   grid-area: 1 / 1;
@@ -452,6 +459,19 @@ img[data-webgl-warp-snapshot] {
 
 .preview-stage[data-loaded="true"] canvas.webgl-warp-preview[data-warp-visible="true"] {
   display: block;
+}
+
+.webgl-warp-stage {
+  background: #111820;
+  border-style: solid;
+  min-height: 300px;
+}
+
+.webgl-warp-stage canvas.webgl-warp-preview {
+  display: block;
+  max-height: none;
+  min-height: 300px;
+  object-fit: contain;
 }
 
 .preview-stage[data-loaded="true"] .landmark-overlay {
@@ -499,7 +519,6 @@ img[data-webgl-warp-snapshot] {
 }
 
 .live-face-stage .video-preview,
-.live-face-stage canvas.webgl-warp-preview,
 .live-face-stage .landmark-overlay,
 .live-obj-preview-stage .obj-preview-canvas {
   min-height: 300px;

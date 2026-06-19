@@ -4678,13 +4678,18 @@ function renderDisplayOverlayPreview() {
           <h3>表示重ね描きプレビュー</h3>
           <div class="preview-stage live-face-stage" data-live-stage data-loaded="false">
             <video class="video-preview" data-video="live" preload="metadata" playsinline controls></video>
-            <canvas class="webgl-warp-preview" data-canvas="webgl-warp" data-warp-visible="false" aria-label="WebGL warp preview"></canvas>
             <canvas class="landmark-overlay" data-overlay="live"></canvas>
             <div class="preview-placeholder">
               <h3>ライブプレビュー</h3>
               <p>ライブ動画を読み込むと、ここにライブプレビューを表示します。</p>
             </div>
           </div>
+          <section class="webgl-warp-preview-panel" aria-label="WebGL変形プレビュー">
+            <h3>WebGL変形プレビュー</h3>
+            <div class="preview-stage webgl-warp-stage" data-webgl-warp-stage>
+              <canvas class="webgl-warp-preview" data-canvas="webgl-warp" data-warp-visible="true" aria-label="WebGL warp preview"></canvas>
+            </div>
+          </section>
           <div class="review-card live-input-source-card" data-live-input-source>
             <p>入力ソース: 未選択</p>
           </div>
@@ -8859,8 +8864,8 @@ function linkWebglProgram(gl: WebGLRenderingContext, vertexShader: WebGLShader, 
 }
 
 function ensureWebglWarpPreviewCanvas(): HTMLCanvasElement {
-  const stage = getElement<HTMLElement>("[data-live-stage]")
-  stage
+  const stage = getElement<HTMLElement>("[data-webgl-warp-stage]")
+  app
     .querySelectorAll<HTMLImageElement>(
       'img.webgl-warp-preview, img[data-canvas="webgl-warp"], img[data-webgl-warp-snapshot]',
     )
@@ -8868,25 +8873,22 @@ function ensureWebglWarpPreviewCanvas(): HTMLCanvasElement {
 
   let canvas = stage.querySelector<HTMLCanvasElement>('canvas[data-canvas="webgl-warp"]')
   if (!canvas) {
-    canvas = document.createElement("canvas")
-    const overlayCanvas = stage.querySelector<HTMLCanvasElement>("[data-overlay='live']")
-    if (overlayCanvas) {
-      stage.insertBefore(canvas, overlayCanvas)
-    } else {
-      stage.appendChild(canvas)
-    }
+    canvas = app.querySelector<HTMLCanvasElement>('canvas[data-canvas="webgl-warp"]') ?? document.createElement("canvas")
+    stage.appendChild(canvas)
   } else if (canvas.parentElement !== stage) {
-    const overlayCanvas = stage.querySelector<HTMLCanvasElement>("[data-overlay='live']")
-    if (overlayCanvas) {
-      stage.insertBefore(canvas, overlayCanvas)
-    } else {
-      stage.appendChild(canvas)
-    }
+    stage.appendChild(canvas)
   }
+  app
+    .querySelectorAll<HTMLCanvasElement>('canvas[data-canvas="webgl-warp"]')
+    .forEach((element) => {
+      if (element !== canvas) {
+        element.remove()
+      }
+    })
 
   canvas.classList.add("webgl-warp-preview")
   canvas.dataset.canvas = "webgl-warp"
-  canvas.dataset.warpVisible = canvas.dataset.warpVisible === "true" ? "true" : "false"
+  canvas.dataset.warpVisible = "true"
   canvas.setAttribute("aria-label", "WebGL warp preview")
   webglWarpCanvas = canvas
   return canvas
@@ -9004,29 +9006,29 @@ function createWebglMeshWarpRenderer(canvas: HTMLCanvasElement): WebglMeshWarpRe
   }
 }
 
-function resizeWebglMeshWarpRenderer(renderer: WebglMeshWarpRenderer, width: number, height: number) {
+function resizeWebglWarpCanvasElement(canvas: HTMLCanvasElement, width: number, height: number) {
   const canvasWidth = Math.max(1, Math.round(width))
   const canvasHeight = Math.max(1, Math.round(height))
-  if (renderer.canvas.width !== canvasWidth || renderer.canvas.height !== canvasHeight) {
-    renderer.canvas.width = canvasWidth
-    renderer.canvas.height = canvasHeight
+  if (canvas.width !== canvasWidth || canvas.height !== canvasHeight) {
+    canvas.width = canvasWidth
+    canvas.height = canvasHeight
   }
+  canvas.style.aspectRatio = `${canvasWidth} / ${canvasHeight}`
+  canvas.style.height = "auto"
+  canvas.style.width = "100%"
+}
+
+function resizeWebglMeshWarpRenderer(renderer: WebglMeshWarpRenderer, width: number, height: number) {
+  resizeWebglWarpCanvasElement(renderer.canvas, width, height)
 }
 
 function setWebglWarpCanvasVisible(visible: boolean) {
   ensureWebglWarpPreviewCanvas().dataset.warpVisible = visible ? "true" : "false"
 }
 
-function shouldKeepWebglWarpCanvasVisibleWhenCleared() {
-  return (
-    state.activePreviewTab === "displayOverlay" &&
-    state.liveVideo.loaded
-  )
-}
-
 function clearWebglWarpCanvas() {
   const canvas = ensureWebglWarpPreviewCanvas()
-  canvas.dataset.warpVisible = shouldKeepWebglWarpCanvasVisibleWhenCleared() ? "true" : "false"
+  canvas.dataset.warpVisible = "true"
   if (!webglMeshWarpRenderer) {
     return
   }
@@ -9086,6 +9088,7 @@ function updateWebglWarpDebug(debug: WebglWarpDebug) {
 function renderWebglWarpPreviewFromCurrentState(displayedContentRect: Rect | null, canvasRect: DOMRect) {
   const canvasWidth = Math.max(1, Math.round(canvasRect.width))
   const canvasHeight = Math.max(1, Math.round(canvasRect.height))
+  resizeWebglWarpCanvasElement(ensureWebglWarpPreviewCanvas(), canvasWidth, canvasHeight)
   if (!state.liveVideo.loaded || liveVideoElement.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
     clearWebglWarpCanvas()
     updateWebglWarpDebug(createWebglWarpSkippedDebug("missing_video", {
