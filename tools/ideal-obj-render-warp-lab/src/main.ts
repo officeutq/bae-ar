@@ -1437,6 +1437,58 @@ type CombinedMeshState = {
   triangleIndices: number[]
   combinedMeshDebug: CombinedMeshDebug
 }
+type WebglWarpStatus =
+  | "not_ready"
+  | "skipped"
+  | "available"
+  | "rendering"
+  | "completed"
+  | "error"
+type WebglWarpSkippedReason =
+  | "none"
+  | "disabled"
+  | "missing_video"
+  | "missing_displayed_content_rect"
+  | "missing_combined_vertices"
+  | "missing_triangle_indices"
+  | "source_target_count_mismatch"
+  | "invalid_texture_coordinates"
+  | "webgl_context_unavailable"
+  | "shader_compile_failed"
+  | "draw_failed"
+type WebglWarpCoordinateSpace = "displayedContentRect_pixel_coordinate"
+type WebglWarpDebug = {
+  status: WebglWarpStatus
+  skippedReason: WebglWarpSkippedReason
+  coordinateSpace: WebglWarpCoordinateSpace
+  canvasWidth: number | null
+  canvasHeight: number | null
+  displayedContentRect: Rect | null
+  sourceVertexCount: number
+  targetVertexCount: number
+  triangleCount: number
+  drawIndexCount: number
+  textureSource: string
+  textureWidth: number | null
+  textureHeight: number | null
+  textureFlipYApplied: boolean
+  webglContextStatus: string
+  shaderStatus: string
+  bufferStatus: string
+  cullingEnabled: boolean
+  blendEnabled: boolean
+  vertexBufferUpdateMs: number | null
+  indexBufferUpdateMs: number | null
+  textureUploadMs: number | null
+  drawMs: number | null
+  totalWarpRenderMs: number | null
+  invalidTextureCoordinateCount: number
+  outOfBoundsTextureCoordinateCount: number
+  potentialTargetInversionTriangleCount: number
+  lastRenderedFrameId: number | null
+  lastRenderedMediaTimeSec: number | null
+  errorMessage: string | null
+}
 type PoseMappingBounds = {
   minX: number
   maxX: number
@@ -1599,6 +1651,7 @@ type PoseMappingAlignmentState = {
   triangulationVertexIndices: number[]
   triangleIndices: number[]
   combinedMeshDebug: CombinedMeshDebug
+  webglWarpDebug: WebglWarpDebug
   excludedReasonCounts: PoseMappingExcludedReasonCounts
   displacementSummary: PoseMappingDisplacementSummary
   landmarkReasons: Array<PoseMappingExcludedReason[]>
@@ -2030,6 +2083,22 @@ type WebglObjRenderer = {
   clipTranslateLocation: WebGLUniformLocation | null
   rendererInfo: string | null
   vendorInfo: string | null
+}
+
+type WebglMeshWarpRenderer = {
+  canvas: HTMLCanvasElement
+  gl: WebGLRenderingContext
+  contextType: "webgl" | "experimental-webgl"
+  program: WebGLProgram
+  positionBuffer: WebGLBuffer
+  texCoordBuffer: WebGLBuffer
+  indexBuffer: WebGLBuffer
+  texture: WebGLTexture
+  positionLocation: number
+  texCoordLocation: number
+  textureLocation: WebGLUniformLocation | null
+  indexType: number
+  lastIndexBufferKey: string | null
 }
 
 type WebglClipPlacementTransform = {
@@ -3595,6 +3664,7 @@ type LabState = {
     showSourceTriangleMesh: boolean
     showTargetTriangleMesh: boolean
     showSampleSourceTargetLines: boolean
+    showWebglWarpPreview: boolean
     showGridAnchors: boolean
     showTriangleMesh: boolean
     showDisplayedContentRect: boolean
@@ -3713,6 +3783,8 @@ const BACKGROUND_GRID_POINT_IN_TRIANGLE_EPSILON = 0.000001
 const BACKGROUND_GRID_POSITION_EPSILON = 0.000001
 const BACKGROUND_GRID_DEBUG_SAMPLE_LIMIT = 12
 const COMBINED_MESH_COORDINATE_SPACE: CombinedMeshCoordinateSpace =
+  "displayedContentRect_pixel_coordinate"
+const WEBGL_WARP_COORDINATE_SPACE: WebglWarpCoordinateSpace =
   "displayedContentRect_pixel_coordinate"
 const COMBINED_MESH_DEBUG_SAMPLE_LIMIT = 12
 const COMBINED_MESH_DUPLICATE_EPSILON_PX = 0.25
@@ -4158,6 +4230,7 @@ const state: LabState = {
     showSourceTriangleMesh: false,
     showTargetTriangleMesh: false,
     showSampleSourceTargetLines: false,
+    showWebglWarpPreview: false,
     showGridAnchors: false,
     showTriangleMesh: false,
     showDisplayedContentRect: true,
@@ -4322,6 +4395,7 @@ const poseMappingProfileFileInput = getElement<HTMLInputElement>("[data-input='p
 const liveFileInput = getElement<HTMLInputElement>("[data-input='live-video']")
 const liveVideoElement = getElement<HTMLVideoElement>("[data-video='live']")
 const liveOverlayCanvas = getElement<HTMLCanvasElement>("[data-overlay='live']")
+const webglWarpCanvas = getElement<HTMLCanvasElement>("[data-canvas='webgl-warp']")
 const objPreviewCanvas = getElement<HTMLCanvasElement>('[data-canvas="obj-preview"]')
 const renderedIdealCanvas = getElement<HTMLCanvasElement>('[data-canvas="rendered-ideal"]')
 const renderedIdealOverlayCanvas = getElement<HTMLCanvasElement>('[data-overlay="rendered-ideal"]')
@@ -4361,6 +4435,9 @@ let detectPerformanceCancelRequested = false
 let renderDetectHandoffCancelRequested = false
 let webglObjBenchmarkCancelRequested = false
 let webglObjBenchmarkRenderer: WebglObjRenderer | null = null
+let webglMeshWarpRenderer: WebglMeshWarpRenderer | null = null
+let webglWarpAnimationFrameId: number | null = null
+let lastWebglWarpDebugDomUpdateAtMs = 0
 let placementAnalysisCancelRequested = false
 let placementFunctionConditionBatchRoundtripCancelRequested = false
 let placementAnalysisRenderer: WebglObjRenderer | null = null
@@ -4602,6 +4679,7 @@ function renderDisplayOverlayPreview() {
           <h3>表示重ね描きプレビュー</h3>
           <div class="preview-stage live-face-stage" data-live-stage data-loaded="false">
             <video class="video-preview" data-video="live" preload="metadata" playsinline controls></video>
+            <canvas class="webgl-warp-preview" data-canvas="webgl-warp" data-warp-visible="false" aria-label="WebGL warp preview"></canvas>
             <canvas class="landmark-overlay" data-overlay="live"></canvas>
             <div class="preview-placeholder">
               <h3>ライブプレビュー</h3>
@@ -4633,6 +4711,7 @@ function renderDisplayOverlayPreview() {
               ${renderOverlayToggle("toggle-source-triangle-mesh", "変形元三角形メッシュ（source triangle mesh）を表示")}
               ${renderOverlayToggle("toggle-target-triangle-mesh", "変形先三角形メッシュ（target triangle mesh）を表示")}
               ${renderOverlayToggle("toggle-sample-source-target-lines", "変形元・変形先サンプル対応線を表示")}
+              ${renderOverlayToggle("toggle-webgl-warp-preview", "WebGL warp preview（WebGL変形プレビュー）")}
             </fieldset>
           </div>
           <div class="review-card" data-display-overlay-summary>
@@ -4834,6 +4913,7 @@ function bindEvents() {
     syncLiveVideoMetadata()
     addLog("ライブ動画 metadata を取得しました。")
     renderAll()
+    restartWebglWarpPreviewLoop()
   })
 
   liveVideoElement.addEventListener("timeupdate", () => {
@@ -4866,6 +4946,7 @@ function bindEvents() {
     state.liveVideo.playbackStatus = "playing"
     syncLiveInputState()
     renderAll()
+    restartWebglWarpPreviewLoop()
   })
 
   liveVideoElement.addEventListener("pause", () => {
@@ -4880,6 +4961,7 @@ function bindEvents() {
       void analyzeCurrentLiveFrame("pause")
     }
     renderAll()
+    restartWebglWarpPreviewLoop()
   })
 
   liveVideoElement.addEventListener("ended", () => {
@@ -4898,6 +4980,7 @@ function bindEvents() {
       void analyzeCurrentLiveFrame("ended")
     }
     renderAll()
+    restartWebglWarpPreviewLoop()
   })
 
   getElement<HTMLButtonElement>('[data-action="live-play"]').addEventListener("click", () => {
@@ -5320,6 +5403,7 @@ function bindEvents() {
   bindOverlayToggle("toggle-source-triangle-mesh", "showSourceTriangleMesh")
   bindOverlayToggle("toggle-target-triangle-mesh", "showTargetTriangleMesh")
   bindOverlayToggle("toggle-sample-source-target-lines", "showSampleSourceTargetLines")
+  bindOverlayToggle("toggle-webgl-warp-preview", "showWebglWarpPreview")
   bindOverlayToggle("toggle-displayed-content-rect", "showDisplayedContentRect")
   bindOverlayToggle("toggle-overlay-skipped-reason", "showSkippedReason")
   bindOverlayToggle("toggle-grid-anchors", "showGridAnchors")
@@ -5386,6 +5470,7 @@ function bindOverlayToggle(
     if (state.activePreviewTab === "displayOverlay") {
       scheduleDisplayOverlayRedraw("toggle_changed")
     }
+    restartWebglWarpPreviewLoop()
   })
 }
 
@@ -8774,6 +8859,522 @@ function linkWebglProgram(gl: WebGLRenderingContext, vertexShader: WebGLShader, 
     throw new Error(message)
   }
   return program
+}
+
+class WebglWarpRenderError extends Error {
+  reason: WebglWarpSkippedReason
+
+  constructor(reason: WebglWarpSkippedReason, message: string) {
+    super(message)
+    this.name = "WebglWarpRenderError"
+    this.reason = reason
+  }
+}
+
+function getOrCreateWebglMeshWarpRenderer() {
+  if (webglMeshWarpRenderer) {
+    return webglMeshWarpRenderer
+  }
+  webglMeshWarpRenderer = createWebglMeshWarpRenderer(webglWarpCanvas)
+  return webglMeshWarpRenderer
+}
+
+function createWebglMeshWarpRenderer(canvas: HTMLCanvasElement): WebglMeshWarpRenderer {
+  let context = canvas.getContext("webgl", { alpha: true, premultipliedAlpha: false }) as WebGLRenderingContext | null
+  let contextType: "webgl" | "experimental-webgl" = "webgl"
+  if (!context) {
+    context = canvas.getContext("experimental-webgl", {
+      alpha: true,
+      premultipliedAlpha: false,
+    }) as WebGLRenderingContext | null
+    contextType = "experimental-webgl"
+  }
+  if (!context) {
+    throw new WebglWarpRenderError("webgl_context_unavailable", "WebGL context is unavailable.")
+  }
+  const gl = context as WebGLRenderingContext
+  let program: WebGLProgram
+  try {
+    const vertexShader = compileWebglShader(gl, gl.VERTEX_SHADER, `
+      attribute vec2 a_position;
+      attribute vec2 a_texCoord;
+      varying vec2 v_texCoord;
+      void main() {
+        gl_Position = vec4(a_position, 0.0, 1.0);
+        v_texCoord = a_texCoord;
+      }
+    `)
+    const fragmentShader = compileWebglShader(gl, gl.FRAGMENT_SHADER, `
+      precision mediump float;
+      uniform sampler2D u_texture;
+      varying vec2 v_texCoord;
+      void main() {
+        gl_FragColor = texture2D(u_texture, v_texCoord);
+      }
+    `)
+    program = linkWebglProgram(gl, vertexShader, fragmentShader)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new WebglWarpRenderError("shader_compile_failed", message)
+  }
+
+  const positionBuffer = gl.createBuffer()
+  const texCoordBuffer = gl.createBuffer()
+  const indexBuffer = gl.createBuffer()
+  const texture = gl.createTexture()
+  if (!positionBuffer || !texCoordBuffer || !indexBuffer || !texture) {
+    throw new WebglWarpRenderError("draw_failed", "WebGL buffer or texture creation failed.")
+  }
+
+  gl.bindTexture(gl.TEXTURE_2D, texture)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+  gl.bindTexture(gl.TEXTURE_2D, null)
+  const positionLocation = gl.getAttribLocation(program, "a_position")
+  const texCoordLocation = gl.getAttribLocation(program, "a_texCoord")
+  if (positionLocation < 0 || texCoordLocation < 0) {
+    throw new WebglWarpRenderError("shader_compile_failed", "WebGL warp shader attributes are unavailable.")
+  }
+
+  return {
+    canvas,
+    gl,
+    contextType,
+    program,
+    positionBuffer,
+    texCoordBuffer,
+    indexBuffer,
+    texture,
+    positionLocation,
+    texCoordLocation,
+    textureLocation: gl.getUniformLocation(program, "u_texture"),
+    indexType: gl.UNSIGNED_SHORT,
+    lastIndexBufferKey: null,
+  }
+}
+
+function resizeWebglMeshWarpRenderer(renderer: WebglMeshWarpRenderer, width: number, height: number) {
+  const canvasWidth = Math.max(1, Math.round(width))
+  const canvasHeight = Math.max(1, Math.round(height))
+  if (renderer.canvas.width !== canvasWidth || renderer.canvas.height !== canvasHeight) {
+    renderer.canvas.width = canvasWidth
+    renderer.canvas.height = canvasHeight
+  }
+}
+
+function setWebglWarpCanvasVisible(visible: boolean) {
+  webglWarpCanvas.dataset.warpVisible = visible ? "true" : "false"
+}
+
+function clearWebglWarpCanvas() {
+  setWebglWarpCanvasVisible(false)
+  if (!webglMeshWarpRenderer) {
+    return
+  }
+  const { gl, canvas } = webglMeshWarpRenderer
+  gl.viewport(0, 0, canvas.width, canvas.height)
+  gl.clearColor(0, 0, 0, 0)
+  gl.clear(gl.COLOR_BUFFER_BIT)
+}
+
+function createWebglWarpSkippedDebug(
+  skippedReason: WebglWarpSkippedReason,
+  input?: {
+    canvasWidth?: number | null
+    canvasHeight?: number | null
+    displayedContentRect?: Rect | null
+  },
+  errorMessage: string | null = null,
+): WebglWarpDebug {
+  const alignment = state.poseMappingRuntime.alignment
+  return {
+    ...createEmptyWebglWarpDebug(
+      skippedReason === "none" ? "not_ready" : "skipped",
+      skippedReason,
+    ),
+    canvasWidth: input?.canvasWidth ?? null,
+    canvasHeight: input?.canvasHeight ?? null,
+    displayedContentRect: input?.displayedContentRect ? cloneRect(input.displayedContentRect) : null,
+    sourceVertexCount: alignment.combinedSourceVerticesPx.length,
+    targetVertexCount: alignment.combinedTargetVerticesPx.length,
+    triangleCount: alignment.triangleIndices.length / 3,
+    drawIndexCount: alignment.triangleIndices.length,
+    textureSource: state.liveInput.sourceType ?? "none",
+    textureWidth: liveVideoElement.videoWidth || state.liveVideo.width,
+    textureHeight: liveVideoElement.videoHeight || state.liveVideo.height,
+    webglContextStatus: webglMeshWarpRenderer ? webglMeshWarpRenderer.contextType : "not_created",
+    shaderStatus: webglMeshWarpRenderer ? "compiled" : "not_created",
+    bufferStatus: webglMeshWarpRenderer ? "ready" : "not_created",
+    potentialTargetInversionTriangleCount: alignment.combinedMeshDebug.potentialTargetInversionTriangleCount,
+    lastRenderedFrameId: state.poseMappingRuntime.frameLifecycle?.frameId ?? null,
+    lastRenderedMediaTimeSec: getLiveVideoMediaTimeSec(),
+    errorMessage,
+  }
+}
+
+function updateWebglWarpDebug(debug: WebglWarpDebug) {
+  state.poseMappingRuntime.alignment = {
+    ...state.poseMappingRuntime.alignment,
+    webglWarpDebug: debug,
+  }
+}
+
+function renderWebglWarpPreviewFromCurrentState(displayedContentRect: Rect | null, canvasRect: DOMRect) {
+  const canvasWidth = Math.max(1, Math.round(canvasRect.width))
+  const canvasHeight = Math.max(1, Math.round(canvasRect.height))
+  if (!state.overlay.showWebglWarpPreview) {
+    clearWebglWarpCanvas()
+    updateWebglWarpDebug(createWebglWarpSkippedDebug("disabled", {
+      canvasWidth,
+      canvasHeight,
+      displayedContentRect,
+    }))
+    return
+  }
+  if (!state.liveVideo.loaded || liveVideoElement.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+    clearWebglWarpCanvas()
+    updateWebglWarpDebug(createWebglWarpSkippedDebug("missing_video", {
+      canvasWidth,
+      canvasHeight,
+      displayedContentRect,
+    }))
+    return
+  }
+  if (!displayedContentRect || getDisplayedContentRectStatus(displayedContentRect) !== "valid") {
+    clearWebglWarpCanvas()
+    updateWebglWarpDebug(createWebglWarpSkippedDebug("missing_displayed_content_rect", {
+      canvasWidth,
+      canvasHeight,
+      displayedContentRect,
+    }))
+    return
+  }
+
+  const alignment = state.poseMappingRuntime.alignment
+  if (
+    alignment.combinedSourceVerticesPx.length === 0 ||
+    alignment.combinedTargetVerticesPx.length === 0
+  ) {
+    clearWebglWarpCanvas()
+    updateWebglWarpDebug(createWebglWarpSkippedDebug("missing_combined_vertices", {
+      canvasWidth,
+      canvasHeight,
+      displayedContentRect,
+    }))
+    return
+  }
+  if (
+    alignment.combinedSourceVerticesPx.length !== alignment.combinedTargetVerticesPx.length ||
+    !alignment.combinedMeshDebug.sourceTargetCountMatches ||
+    !alignment.combinedMeshDebug.indexCorrespondenceValid
+  ) {
+    clearWebglWarpCanvas()
+    updateWebglWarpDebug(createWebglWarpSkippedDebug("source_target_count_mismatch", {
+      canvasWidth,
+      canvasHeight,
+      displayedContentRect,
+    }))
+    return
+  }
+  if (alignment.triangleIndices.length === 0) {
+    clearWebglWarpCanvas()
+    updateWebglWarpDebug(createWebglWarpSkippedDebug("missing_triangle_indices", {
+      canvasWidth,
+      canvasHeight,
+      displayedContentRect,
+    }))
+    return
+  }
+
+  try {
+    const renderer = getOrCreateWebglMeshWarpRenderer()
+    resizeWebglMeshWarpRenderer(renderer, canvasWidth, canvasHeight)
+    updateWebglWarpDebug({
+      ...createWebglWarpSkippedDebug("none", {
+        canvasWidth,
+        canvasHeight,
+        displayedContentRect,
+      }),
+      status: "rendering",
+      skippedReason: "none",
+    })
+    const debug = renderWebglMeshWarp(renderer, {
+      displayedContentRect,
+      sourceVertices: alignment.combinedSourceVerticesPx,
+      targetVertices: alignment.combinedTargetVerticesPx,
+      triangleIndices: alignment.triangleIndices,
+      potentialTargetInversionTriangleCount:
+        alignment.combinedMeshDebug.potentialTargetInversionTriangleCount,
+    })
+    if (debug.status === "completed") {
+      setWebglWarpCanvasVisible(true)
+    } else {
+      clearWebglWarpCanvas()
+    }
+    updateWebglWarpDebug(debug)
+  } catch (error) {
+    const reason = error instanceof WebglWarpRenderError ? error.reason : "draw_failed"
+    const message = error instanceof Error ? error.message : String(error)
+    clearWebglWarpCanvas()
+    updateWebglWarpDebug({
+      ...createWebglWarpSkippedDebug(reason, {
+        canvasWidth,
+        canvasHeight,
+        displayedContentRect,
+      }, message),
+      status: "error",
+      skippedReason: reason,
+      shaderStatus: reason === "shader_compile_failed" ? "failed" : webglMeshWarpRenderer ? "compiled" : "not_created",
+      webglContextStatus: reason === "webgl_context_unavailable" ? "unavailable" : webglMeshWarpRenderer ? webglMeshWarpRenderer.contextType : "not_created",
+      bufferStatus: reason === "draw_failed" ? "failed" : webglMeshWarpRenderer ? "ready" : "not_created",
+    })
+  }
+}
+
+function renderWebglMeshWarp(
+  renderer: WebglMeshWarpRenderer,
+  input: {
+    displayedContentRect: Rect
+    sourceVertices: readonly CombinedMeshPointPx[]
+    targetVertices: readonly CombinedMeshPointPx[]
+    triangleIndices: readonly number[]
+    potentialTargetInversionTriangleCount: number
+  },
+): WebglWarpDebug {
+  const { gl, canvas } = renderer
+  const totalStartMs = performance.now()
+  const canvasWidth = Math.max(1, canvas.width)
+  const canvasHeight = Math.max(1, canvas.height)
+  const textureFlipYApplied = false
+  const vertexCount = input.sourceVertices.length
+  const positions = new Float32Array(vertexCount * 2)
+  const texCoords = new Float32Array(vertexCount * 2)
+  let invalidTextureCoordinateCount = 0
+  let outOfBoundsTextureCoordinateCount = 0
+
+  const vertexStartMs = performance.now()
+  for (let index = 0; index < vertexCount; index += 1) {
+    const source = input.sourceVertices[index]
+    const target = input.targetVertices[index]
+    if (!isFinitePoint2(source) || !isFinitePoint2(target)) {
+      invalidTextureCoordinateCount += 1
+      continue
+    }
+    const u = (source.x - input.displayedContentRect.x) / input.displayedContentRect.width
+    const rawV = (source.y - input.displayedContentRect.y) / input.displayedContentRect.height
+    const v = textureFlipYApplied ? 1 - rawV : rawV
+    if (!Number.isFinite(u) || !Number.isFinite(v)) {
+      invalidTextureCoordinateCount += 1
+      continue
+    }
+    if (u < 0 || u > 1 || v < 0 || v > 1) {
+      outOfBoundsTextureCoordinateCount += 1
+    }
+    positions[index * 2] = (target.x / canvasWidth) * 2 - 1
+    positions[index * 2 + 1] = 1 - (target.y / canvasHeight) * 2
+    texCoords[index * 2] = u
+    texCoords[index * 2 + 1] = v
+  }
+
+  if (invalidTextureCoordinateCount > 0) {
+    return {
+      ...createWebglWarpSkippedDebug("invalid_texture_coordinates", {
+        canvasWidth,
+        canvasHeight,
+        displayedContentRect: input.displayedContentRect,
+      }, `invalidTextureCoordinateCount = ${invalidTextureCoordinateCount}`),
+      sourceVertexCount: input.sourceVertices.length,
+      targetVertexCount: input.targetVertices.length,
+      triangleCount: input.triangleIndices.length / 3,
+      drawIndexCount: input.triangleIndices.length,
+      textureSource: state.liveInput.sourceType ?? "video",
+      textureWidth: liveVideoElement.videoWidth || state.liveVideo.width,
+      textureHeight: liveVideoElement.videoHeight || state.liveVideo.height,
+      textureFlipYApplied,
+      webglContextStatus: renderer.contextType,
+      shaderStatus: "compiled",
+      bufferStatus: "ready",
+      vertexBufferUpdateMs: performance.now() - vertexStartMs,
+      invalidTextureCoordinateCount,
+      outOfBoundsTextureCoordinateCount,
+      potentialTargetInversionTriangleCount: input.potentialTargetInversionTriangleCount,
+    }
+  }
+
+  gl.bindBuffer(gl.ARRAY_BUFFER, renderer.positionBuffer)
+  gl.bufferData(gl.ARRAY_BUFFER, positions, gl.DYNAMIC_DRAW)
+  gl.bindBuffer(gl.ARRAY_BUFFER, renderer.texCoordBuffer)
+  gl.bufferData(gl.ARRAY_BUFFER, texCoords, gl.DYNAMIC_DRAW)
+  const vertexBufferUpdateMs = performance.now() - vertexStartMs
+
+  const indexStartMs = performance.now()
+  const indexBufferKey = createTriangleIndexBufferKey(input.triangleIndices, vertexCount)
+  let indexBufferUpdateMs = 0
+  if (renderer.lastIndexBufferKey !== indexBufferKey) {
+    const { array, type } = createWebglIndexArray(gl, input.triangleIndices, vertexCount)
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, renderer.indexBuffer)
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, array, gl.STATIC_DRAW)
+    renderer.indexType = type
+    renderer.lastIndexBufferKey = indexBufferKey
+    indexBufferUpdateMs = performance.now() - indexStartMs
+  }
+
+  const textureStartMs = performance.now()
+  gl.activeTexture(gl.TEXTURE0)
+  gl.bindTexture(gl.TEXTURE_2D, renderer.texture)
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, textureFlipYApplied)
+  gl.texImage2D(
+    gl.TEXTURE_2D,
+    0,
+    gl.RGBA,
+    gl.RGBA,
+    gl.UNSIGNED_BYTE,
+    liveVideoElement,
+  )
+  const textureUploadMs = performance.now() - textureStartMs
+
+  const drawStartMs = performance.now()
+  gl.viewport(0, 0, canvasWidth, canvasHeight)
+  gl.clearColor(0, 0, 0, 0)
+  gl.clear(gl.COLOR_BUFFER_BIT)
+  gl.disable(gl.CULL_FACE)
+  gl.disable(gl.BLEND)
+  gl.useProgram(renderer.program)
+  gl.uniform1i(renderer.textureLocation, 0)
+  gl.bindBuffer(gl.ARRAY_BUFFER, renderer.positionBuffer)
+  gl.enableVertexAttribArray(renderer.positionLocation)
+  gl.vertexAttribPointer(renderer.positionLocation, 2, gl.FLOAT, false, 0, 0)
+  gl.bindBuffer(gl.ARRAY_BUFFER, renderer.texCoordBuffer)
+  gl.enableVertexAttribArray(renderer.texCoordLocation)
+  gl.vertexAttribPointer(renderer.texCoordLocation, 2, gl.FLOAT, false, 0, 0)
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, renderer.indexBuffer)
+  gl.drawElements(gl.TRIANGLES, input.triangleIndices.length, renderer.indexType, 0)
+  const drawError = gl.getError()
+  if (drawError !== gl.NO_ERROR) {
+    throw new WebglWarpRenderError("draw_failed", `gl.drawElements error = ${drawError}`)
+  }
+  const drawMs = performance.now() - drawStartMs
+
+  return {
+    status: "completed",
+    skippedReason: "none",
+    coordinateSpace: WEBGL_WARP_COORDINATE_SPACE,
+    canvasWidth,
+    canvasHeight,
+    displayedContentRect: cloneRect(input.displayedContentRect),
+    sourceVertexCount: input.sourceVertices.length,
+    targetVertexCount: input.targetVertices.length,
+    triangleCount: input.triangleIndices.length / 3,
+    drawIndexCount: input.triangleIndices.length,
+    textureSource: state.liveInput.sourceType ?? "video",
+    textureWidth: liveVideoElement.videoWidth || state.liveVideo.width,
+    textureHeight: liveVideoElement.videoHeight || state.liveVideo.height,
+    textureFlipYApplied,
+    webglContextStatus: renderer.contextType,
+    shaderStatus: "compiled",
+    bufferStatus: "ready",
+    cullingEnabled: gl.isEnabled(gl.CULL_FACE),
+    blendEnabled: gl.isEnabled(gl.BLEND),
+    vertexBufferUpdateMs,
+    indexBufferUpdateMs,
+    textureUploadMs,
+    drawMs,
+    totalWarpRenderMs: performance.now() - totalStartMs,
+    invalidTextureCoordinateCount,
+    outOfBoundsTextureCoordinateCount,
+    potentialTargetInversionTriangleCount: input.potentialTargetInversionTriangleCount,
+    lastRenderedFrameId: state.poseMappingRuntime.frameLifecycle?.frameId ?? null,
+    lastRenderedMediaTimeSec: getLiveVideoMediaTimeSec(),
+    errorMessage: null,
+  }
+}
+
+function createWebglIndexArray(
+  gl: WebGLRenderingContext,
+  triangleIndices: readonly number[],
+  vertexCount: number,
+) {
+  for (const index of triangleIndices) {
+    if (!Number.isInteger(index) || index < 0 || index >= vertexCount) {
+      throw new WebglWarpRenderError("draw_failed", `invalid triangle index = ${index}`)
+    }
+  }
+  if (vertexCount <= 65535) {
+    return {
+      array: new Uint16Array(triangleIndices),
+      type: gl.UNSIGNED_SHORT,
+    }
+  }
+  if (!gl.getExtension("OES_element_index_uint")) {
+    throw new WebglWarpRenderError("draw_failed", "OES_element_index_uint is unavailable.")
+  }
+  return {
+    array: new Uint32Array(triangleIndices),
+    type: gl.UNSIGNED_INT,
+  }
+}
+
+function createTriangleIndexBufferKey(triangleIndices: readonly number[], vertexCount: number) {
+  let hash = 2166136261
+  for (const index of triangleIndices) {
+    hash ^= index
+    hash = Math.imul(hash, 16777619)
+  }
+  return `${vertexCount}:${triangleIndices.length}:${hash >>> 0}`
+}
+
+function getLiveVideoMediaTimeSec() {
+  const currentTime = liveVideoElement.currentTime
+  if (Number.isFinite(currentTime)) {
+    return currentTime
+  }
+  return state.liveVideo.currentTimeSec
+}
+
+function shouldRunWebglWarpPreviewLoop() {
+  return (
+    state.overlay.showWebglWarpPreview &&
+    state.activePreviewTab === "displayOverlay" &&
+    state.liveVideo.loaded &&
+    state.liveVideo.playbackStatus === "playing"
+  )
+}
+
+function restartWebglWarpPreviewLoop() {
+  if (webglWarpAnimationFrameId !== null) {
+    window.cancelAnimationFrame(webglWarpAnimationFrameId)
+    webglWarpAnimationFrameId = null
+  }
+  if (shouldRunWebglWarpPreviewLoop()) {
+    scheduleWebglWarpPreviewLoop()
+    return
+  }
+  if (!state.overlay.showWebglWarpPreview) {
+    clearWebglWarpCanvas()
+  }
+}
+
+function scheduleWebglWarpPreviewLoop() {
+  if (!shouldRunWebglWarpPreviewLoop() || webglWarpAnimationFrameId !== null) {
+    return
+  }
+  webglWarpAnimationFrameId = window.requestAnimationFrame(() => {
+    webglWarpAnimationFrameId = null
+    const rect = liveOverlayCanvas.getBoundingClientRect()
+    const displayedContentRect = state.poseMappingRuntime.alignment.displayedContentRect
+    renderWebglWarpPreviewFromCurrentState(displayedContentRect, rect)
+    const now = performance.now()
+    if (now - lastWebglWarpDebugDomUpdateAtMs > 250) {
+      lastWebglWarpDebugDomUpdateAtMs = now
+      renderDisplayOverlaySummaryCard()
+      if (state.activeDebugTab === "warpMesh" || state.activeDebugTab === "raw") {
+        renderDebugContent()
+      }
+    }
+    scheduleWebglWarpPreviewLoop()
+  })
 }
 
 function resizeWebglObjBenchmarkRenderer(renderer: WebglObjRenderer, width: number, height: number) {
@@ -19336,6 +19937,7 @@ function activatePreviewTab(nextTab: PreviewTab) {
     displayOverlayRedrawReason: nextTab === "displayOverlay" ? "tab_activated" : "manual_render",
   })
   scheduleActivePreviewTabRedraw()
+  restartWebglWarpPreviewLoop()
 
   if (nextTab === "displayOverlay" && previousTab !== "displayOverlay") {
     scheduleDisplayOverlayRedraw("tab_activated")
@@ -19776,6 +20378,33 @@ function getCombinedSampleLinesAvailability(): DataAvailability {
   return available()
 }
 
+function getWebglWarpAvailability(): DataAvailability {
+  const video = getDisplayOverlayVideoAvailability()
+  if (!video.available) {
+    return video
+  }
+  const alignment = state.poseMappingRuntime.alignment
+  if (!alignment.combinedMeshDebug.sourceTargetCountMatches) {
+    return unavailable("sourceTargetCountMatches = false")
+  }
+  if (!alignment.combinedMeshDebug.indexCorrespondenceValid) {
+    return unavailable("indexCorrespondenceValid = false")
+  }
+  const source = getCombinedSourceVerticesAvailability()
+  if (!source.available) {
+    return source
+  }
+  const target = getCombinedTargetVerticesAvailability()
+  if (!target.available) {
+    return target
+  }
+  const triangles = getCombinedTriangleIndicesAvailability()
+  if (!triangles.available) {
+    return triangles
+  }
+  return available()
+}
+
 function getNotImplementedAvailability(): DataAvailability {
   return unavailable("未実装（今回対象外）")
 }
@@ -19797,6 +20426,7 @@ function renderControls() {
   const combinedTargetVerticesAvailability = getCombinedTargetVerticesAvailability()
   const combinedTriangleIndicesAvailability = getCombinedTriangleIndicesAvailability()
   const combinedSampleLinesAvailability = getCombinedSampleLinesAvailability()
+  const webglWarpAvailability = getWebglWarpAvailability()
   const notImplementedAvailability = getNotImplementedAvailability()
 
   setToggleState(
@@ -19918,6 +20548,12 @@ function renderControls() {
     state.overlay.showSampleSourceTargetLines,
     !combinedSampleLinesAvailability.available,
     combinedSampleLinesAvailability.reason,
+  )
+  setToggleState(
+    "toggle-webgl-warp-preview",
+    state.overlay.showWebglWarpPreview,
+    !webglWarpAvailability.available,
+    webglWarpAvailability.reason,
   )
   setToggleState(
     "toggle-displayed-content-rect",
@@ -20114,6 +20750,7 @@ function renderDisplayOverlaySummaryCard() {
   const actualVisibilityDebug = runtime.alignment.actualVisibilityDebug
   const backgroundGridDebug = runtime.alignment.backgroundGridDebug
   const combinedMeshDebug = runtime.alignment.combinedMeshDebug
+  const webglWarpDebug = runtime.alignment.webglWarpDebug
   card.innerHTML = `
     <p>displayedContentRect（動画の実表示領域）を使い、overlay canvas（重ね描きcanvas）上で表示ズレを確認します。</p>
     <dl class="review-grid">
@@ -20144,6 +20781,12 @@ function renderDisplayOverlaySummaryCard() {
       <div><dt>triangleIndices（三角形接続情報）</dt><dd>${escapeHtml(formatAvailability(getCombinedTriangleIndicesAvailability(), runtime.alignment.triangleIndices.length / 3 || null))}</dd></div>
       <div><dt>triangulation input（分割入力）</dt><dd>used ${formatNullableCount(combinedMeshDebug.triangulationInputVertexCount)} / duplicate skipped ${formatNullableCount(combinedMeshDebug.duplicateSkippedVertexCount)} / invalid ${formatNullableCount(combinedMeshDebug.invalidVertexCount)}</dd></div>
       <div><dt>triangle diagnostics（三角形診断）</dt><dd>triangles ${formatNullableCount(combinedMeshDebug.triangleCount)} / filtered ${formatNullableCount(combinedMeshDebug.filteredTriangleCount)} / degenerate ${formatNullableCount(combinedMeshDebug.sourceDegenerateTriangleCount)} / target inversion ${formatNullableCount(combinedMeshDebug.potentialTargetInversionTriangleCount)} / long ${formatNullableCount(combinedMeshDebug.longTriangleCount)}</dd></div>
+      <div><dt>webglWarpStatus（WebGL変形状態）</dt><dd>${escapeHtml(webglWarpDebug.status)} / ${escapeHtml(webglWarpDebug.skippedReason)}</dd></div>
+      <div><dt>webglWarp canvas / draw</dt><dd>${formatNullableCount(webglWarpDebug.canvasWidth)} x ${formatNullableCount(webglWarpDebug.canvasHeight)} / vertices ${formatNullableCount(webglWarpDebug.sourceVertexCount)} -> ${formatNullableCount(webglWarpDebug.targetVertexCount)} / draw indices ${formatNullableCount(webglWarpDebug.drawIndexCount)}</dd></div>
+      <div><dt>webglWarp texture（画像素材）</dt><dd>${escapeHtml(webglWarpDebug.textureSource)} / ${formatNullableCount(webglWarpDebug.textureWidth)} x ${formatNullableCount(webglWarpDebug.textureHeight)} / flipY ${String(webglWarpDebug.textureFlipYApplied)}</dd></div>
+      <div><dt>webglWarp render flags</dt><dd>culling ${String(webglWarpDebug.cullingEnabled)} / blend ${String(webglWarpDebug.blendEnabled)} / context ${escapeHtml(webglWarpDebug.webglContextStatus)} / shader ${escapeHtml(webglWarpDebug.shaderStatus)} / buffer ${escapeHtml(webglWarpDebug.bufferStatus)}</dd></div>
+      <div><dt>webglWarp timing ms</dt><dd>vertex ${formatRealtimeNullableNumber(webglWarpDebug.vertexBufferUpdateMs)} / index ${formatRealtimeNullableNumber(webglWarpDebug.indexBufferUpdateMs)} / texture ${formatRealtimeNullableNumber(webglWarpDebug.textureUploadMs)} / draw ${formatRealtimeNullableNumber(webglWarpDebug.drawMs)} / total ${formatRealtimeNullableNumber(webglWarpDebug.totalWarpRenderMs)}</dd></div>
+      <div><dt>webglWarp diagnostics</dt><dd>invalid tex ${formatNullableCount(webglWarpDebug.invalidTextureCoordinateCount)} / out-of-bounds tex ${formatNullableCount(webglWarpDebug.outOfBoundsTextureCoordinateCount)} / target inversion ${formatNullableCount(webglWarpDebug.potentialTargetInversionTriangleCount)} / frame ${formatNullableCount(webglWarpDebug.lastRenderedFrameId)} / mediaTime ${formatRealtimeNullableNumber(webglWarpDebug.lastRenderedMediaTimeSec)}</dd></div>
       <div><dt>overlayLifecycle（重ね表示ライフサイクル）</dt><dd>visible ${String(lifecycle.alignedRenderedIdealVisible)} / gen ${String(lifecycle.generationMatch)} / token ${String(lifecycle.tokenMatch)} / renderPose ${String(lifecycle.renderPoseValid)}</dd></div>
       <div><dt>overlay skipped reason（重ね表示スキップ理由）</dt><dd>${escapeHtml(lifecycle.skippedReason)}</dd></div>
       <div><dt>renderedIdeal478（レンダー理想478点）</dt><dd>live video（ライブ映像）上には直接表示しません。</dd></div>
@@ -20391,6 +21034,7 @@ function renderPoseMappingDebugTab() {
         <div><dt>actualVisibilityDebug</dt><dd>${escapeHtml(JSON.stringify(roundActualVisibilityDebugForState(runtime.alignment.actualVisibilityDebug)))}</dd></div>
         <div><dt>backgroundGridDebug</dt><dd>${escapeHtml(JSON.stringify(roundBackgroundGridDebugForState(runtime.alignment.backgroundGridDebug)))}</dd></div>
         <div><dt>combinedMeshDebug（結合メッシュデバッグ）</dt><dd>${escapeHtml(JSON.stringify(roundCombinedMeshDebugForState(runtime.alignment.combinedMeshDebug)))}</dd></div>
+        <div><dt>webglWarpDebug（WebGL変形デバッグ）</dt><dd>${escapeHtml(JSON.stringify(roundWebglWarpDebugForState(runtime.alignment.webglWarpDebug)))}</dd></div>
         <div><dt>displacementSummary</dt><dd>${escapeHtml(JSON.stringify(roundDisplacementSummary(runtime.alignment.displacementSummary)))}</dd></div>
         <div><dt>semantic5ptDebug</dt><dd>${escapeHtml(JSON.stringify(roundSemantic5ptDebugForState(runtime.alignment.semantic5ptDebug)))}</dd></div>
         <div><dt>alignedRenderedIdeal478</dt><dd>${formatNullableCount(runtime.alignedRenderedIdeal478?.length ?? null)}</dd></div>
@@ -21952,6 +22596,7 @@ function drawLiveOverlay(reason: DisplayOverlayRedrawReason = "manual_render") {
       overlayCanvasCssHeight: rect.height,
       displayedContentRect: null,
     }
+    setWebglWarpCanvasVisible(false)
     return
   }
 
@@ -21978,6 +22623,7 @@ function drawLiveOverlay(reason: DisplayOverlayRedrawReason = "manual_render") {
       overlayCanvasCssHeight: rect.height,
       displayedContentRect: null,
     }
+    renderWebglWarpPreviewFromCurrentState(null, rect)
     return
   }
 
@@ -22014,6 +22660,10 @@ function drawLiveOverlay(reason: DisplayOverlayRedrawReason = "manual_render") {
     overlayCanvasCssHeight: rect.height,
     displayedContentRect: displayedContentRectStatus === "valid" ? displayedContentRect : null,
   }
+  renderWebglWarpPreviewFromCurrentState(
+    displayedContentRectStatus === "valid" ? displayedContentRect : null,
+    rect,
+  )
 
   if (displayedContentRectStatus !== "valid") {
     return
@@ -22950,7 +23600,10 @@ function getSummaryItems(): Array<[string, string]> {
     ["skippedByInProgressCount", formatNullableCount(state.realtimeDebug.skippedByInProgressCount)],
     ["skippedByNoVideoCount", formatNullableCount(state.realtimeDebug.skippedByNoVideoCount)],
     ["skippedByPausedVideoCount", formatNullableCount(state.realtimeDebug.skippedByPausedVideoCount)],
-    ["warpStatus", "not_implemented"],
+    [
+      "webglWarpStatus",
+      `${state.poseMappingRuntime.alignment.webglWarpDebug.status} / ${state.poseMappingRuntime.alignment.webglWarpDebug.skippedReason}`,
+    ],
   ]
 }
 
@@ -23167,6 +23820,7 @@ function getRealtimeItems(): Array<[string, string]> {
 function getWarpMeshItems(): Array<[string, string]> {
   const alignment = state.poseMappingRuntime.alignment
   const debug = alignment.combinedMeshDebug
+  const webglWarpDebug = alignment.webglWarpDebug
   return [
     ["combinedMeshStatus", `${debug.status} / ${debug.skipReason ?? "none"}`],
     ["coordinateSpace", debug.coordinateSpace],
@@ -23195,7 +23849,18 @@ function getWarpMeshItems(): Array<[string, string]> {
     ["sampleCombinedVertices", JSON.stringify(debug.sampleCombinedVertices.map(roundCombinedMeshSampleVertexForState))],
     ["sampleTriangleIndices", JSON.stringify(debug.sampleTriangleIndices)],
     ["samplePotentialTargetInversionTriangles", JSON.stringify(debug.samplePotentialTargetInversionTriangles.map(roundCombinedMeshPotentialInversionSampleForState))],
-    ["webglWarpStatus", "not_implemented"],
+    ["webglWarpStatus", `${webglWarpDebug.status} / ${webglWarpDebug.skippedReason}`],
+    ["webglWarpCoordinateSpace", webglWarpDebug.coordinateSpace],
+    ["webglWarpCanvas", `${formatNullableCount(webglWarpDebug.canvasWidth)} x ${formatNullableCount(webglWarpDebug.canvasHeight)}`],
+    ["webglWarpDisplayedContentRect", formatRect(webglWarpDebug.displayedContentRect)],
+    ["webglWarpVertexCounts", `source ${formatNullableCount(webglWarpDebug.sourceVertexCount)} / target ${formatNullableCount(webglWarpDebug.targetVertexCount)} / triangles ${formatNullableCount(webglWarpDebug.triangleCount)} / drawIndex ${formatNullableCount(webglWarpDebug.drawIndexCount)}`],
+    ["webglWarpTexture", `${webglWarpDebug.textureSource} / ${formatNullableCount(webglWarpDebug.textureWidth)} x ${formatNullableCount(webglWarpDebug.textureHeight)} / flipY ${String(webglWarpDebug.textureFlipYApplied)}`],
+    ["webglWarpContextShaderBuffer", `${webglWarpDebug.webglContextStatus} / ${webglWarpDebug.shaderStatus} / ${webglWarpDebug.bufferStatus}`],
+    ["webglWarpRenderFlags", `culling ${String(webglWarpDebug.cullingEnabled)} / blend ${String(webglWarpDebug.blendEnabled)}`],
+    ["webglWarpTimingMs", `vertex ${formatRealtimeNullableNumber(webglWarpDebug.vertexBufferUpdateMs)} / index ${formatRealtimeNullableNumber(webglWarpDebug.indexBufferUpdateMs)} / texture ${formatRealtimeNullableNumber(webglWarpDebug.textureUploadMs)} / draw ${formatRealtimeNullableNumber(webglWarpDebug.drawMs)} / total ${formatRealtimeNullableNumber(webglWarpDebug.totalWarpRenderMs)}`],
+    ["webglWarpTextureCoordinateDiagnostics", `invalid ${formatNullableCount(webglWarpDebug.invalidTextureCoordinateCount)} / outOfBounds ${formatNullableCount(webglWarpDebug.outOfBoundsTextureCoordinateCount)}`],
+    ["webglWarpFrame", `frameId ${formatNullableCount(webglWarpDebug.lastRenderedFrameId)} / mediaTimeSec ${formatRealtimeNullableNumber(webglWarpDebug.lastRenderedMediaTimeSec)}`],
+    ["webglWarpErrorMessage", webglWarpDebug.errorMessage ?? "none"],
   ]
 }
 
@@ -23318,7 +23983,8 @@ function getRawState() {
       triangulationVertexIndexCount: state.poseMappingRuntime.alignment.triangulationVertexIndices.length,
       triangleIndexCount: state.poseMappingRuntime.alignment.triangleIndices.length,
       triangleCount: state.poseMappingRuntime.alignment.triangleIndices.length / 3,
-      webglWarpStatus: "not_implemented",
+      webglWarpDebug: roundWebglWarpDebugForState(state.poseMappingRuntime.alignment.webglWarpDebug),
+      webglWarpStatus: state.poseMappingRuntime.alignment.webglWarpDebug.status,
     },
     logs: state.logs.slice(-20),
   }
@@ -25420,6 +26086,44 @@ function createEmptyCombinedMeshState(
   }
 }
 
+function createEmptyWebglWarpDebug(
+  status: WebglWarpStatus = "not_ready",
+  skippedReason: WebglWarpSkippedReason = "none",
+): WebglWarpDebug {
+  return {
+    status,
+    skippedReason,
+    coordinateSpace: WEBGL_WARP_COORDINATE_SPACE,
+    canvasWidth: null,
+    canvasHeight: null,
+    displayedContentRect: null,
+    sourceVertexCount: 0,
+    targetVertexCount: 0,
+    triangleCount: 0,
+    drawIndexCount: 0,
+    textureSource: "none",
+    textureWidth: null,
+    textureHeight: null,
+    textureFlipYApplied: false,
+    webglContextStatus: "not_created",
+    shaderStatus: "not_created",
+    bufferStatus: "not_created",
+    cullingEnabled: false,
+    blendEnabled: false,
+    vertexBufferUpdateMs: null,
+    indexBufferUpdateMs: null,
+    textureUploadMs: null,
+    drawMs: null,
+    totalWarpRenderMs: null,
+    invalidTextureCoordinateCount: 0,
+    outOfBoundsTextureCoordinateCount: 0,
+    potentialTargetInversionTriangleCount: 0,
+    lastRenderedFrameId: null,
+    lastRenderedMediaTimeSec: null,
+    errorMessage: null,
+  }
+}
+
 function buildCombinedMeshState(input: {
   currentLandmarks: ReferenceLandmark[] | null
   alignedRenderedIdeal478: ReferenceLandmark[] | null
@@ -26118,6 +26822,7 @@ function createEmptyPoseMappingAlignmentState(
     triangulationVertexIndices: combinedMesh.triangulationVertexIndices,
     triangleIndices: combinedMesh.triangleIndices,
     combinedMeshDebug: combinedMesh.combinedMeshDebug,
+    webglWarpDebug: createEmptyWebglWarpDebug(),
     excludedReasonCounts: createEmptyPoseMappingExcludedReasonCounts(),
     displacementSummary: createEmptyPoseMappingDisplacementSummary(),
     landmarkReasons: [],
@@ -30773,6 +31478,7 @@ function getPoseMappingAlignmentDebugSummary(alignment: PoseMappingAlignmentStat
     targetBackgroundGridPointCount: alignment.targetBackgroundGridPointsPx.length,
     faceInteriorTriangleCount: alignment.faceInteriorTrianglesPx.length,
     combinedMeshDebug: roundCombinedMeshDebugForState(alignment.combinedMeshDebug),
+    webglWarpDebug: roundWebglWarpDebugForState(alignment.webglWarpDebug),
     combinedSourceVertexCount: alignment.combinedSourceVerticesPx.length,
     combinedTargetVertexCount: alignment.combinedTargetVerticesPx.length,
     combinedVertexMetadataCount: alignment.combinedVertexMetadata.length,
@@ -30833,6 +31539,7 @@ function getPoseMappingRuntimeRawSummary() {
     combinedTargetVertexCount: runtime.alignment.combinedTargetVerticesPx.length,
     triangleCount: runtime.alignment.triangleIndices.length / 3,
     combinedMeshDebug: roundCombinedMeshDebugForState(runtime.alignment.combinedMeshDebug),
+    webglWarpDebug: roundWebglWarpDebugForState(runtime.alignment.webglWarpDebug),
     alignment: getPoseMappingAlignmentDebugSummary(runtime.alignment),
     canvasWidth: runtime.canvasWidth,
     canvasHeight: runtime.canvasHeight,
@@ -31305,6 +32012,23 @@ function roundCombinedMeshDebugForState(debug: CombinedMeshDebug): CombinedMeshD
     samplePotentialTargetInversionTriangles: debug.samplePotentialTargetInversionTriangles.map(
       roundCombinedMeshPotentialInversionSampleForState,
     ),
+  }
+}
+
+function roundWebglWarpDebugForState(debug: WebglWarpDebug): WebglWarpDebug {
+  return {
+    ...debug,
+    canvasWidth: roundForState(debug.canvasWidth),
+    canvasHeight: roundForState(debug.canvasHeight),
+    displayedContentRect: roundRectForState(debug.displayedContentRect),
+    textureWidth: roundForState(debug.textureWidth),
+    textureHeight: roundForState(debug.textureHeight),
+    vertexBufferUpdateMs: roundForState(debug.vertexBufferUpdateMs),
+    indexBufferUpdateMs: roundForState(debug.indexBufferUpdateMs),
+    textureUploadMs: roundForState(debug.textureUploadMs),
+    drawMs: roundForState(debug.drawMs),
+    totalWarpRenderMs: roundForState(debug.totalWarpRenderMs),
+    lastRenderedMediaTimeSec: roundForState(debug.lastRenderedMediaTimeSec),
   }
 }
 
