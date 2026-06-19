@@ -25,6 +25,8 @@ visible / safe current landmarks は、`tools/ideal-reference-mesh-warp-lab` の
 
 表示重ね描き view では、current overlay と aligned ideal overlay は visible / safe index のみを描画します。`alignedRenderedIdeal478` の保存形式は従来通り full 478 点の `idealOverlayRect` normalized coordinate（正規化座標）で維持し、overlay 表示時に visible / safe index へ絞ります。debug / JSON export には `visibilityDebug` として counts と sample のみを出し、full index array や full landmark array は無条件に出しません。
 
+`visibilityDebug` は `inputLandmarkCount`、`usedLandmarkCount`、`excludedLandmarkCount`、overlay / scale candidate に実際に使った点数、`excludedReasonCounts`、`excludedReasonSamples`、`usageWeightSummary`、`usageWeightThreshold`、hidden side / expression sensitive / iris / invalid の summary を持ちます。除外理由は既存実装の reason name を優先し、sample は reason ごとに少数の index だけを出します。
+
 今回の段階では background grid（背景格子）、gridStepPx、background grid points、face-only triangle indices（三角形内部判定）、finalSourceVertices / finalTargetVertices、triangle indices、WebGL mesh warp は実装しません。face-only triangle indices は次以降の grid 工程で扱います。
 
 成功時は以下になります。

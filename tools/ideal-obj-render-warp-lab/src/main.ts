@@ -1305,20 +1305,71 @@ type VisibilityDebugSkipReason =
   | "not_enough_visible_scale_candidates"
   | "invalid_visible_scale_span"
 type VisibilityDebugCoordinateSpace = "existing_overlay_coordinate_contract"
+type VisibilityUsageWeightSummary = {
+  count: number
+  min: number | null
+  max: number | null
+  mean: number | null
+  p50: number | null
+}
+type VisibilityHiddenSideSummary = {
+  yawDeg: number | null
+  yawThresholdDeg: number
+  affectedCount: number
+  excludedCount: number
+  affectedIndicesSample: number[]
+  excludedIndicesSample: number[]
+}
+type VisibilityExpressionSensitiveSummary = {
+  threshold: number
+  mouthActivity: number
+  eyeActivity: number
+  mouthAffectedCount: number
+  eyeAffectedCount: number
+  mouthExcludedCount: number
+  eyeExcludedCount: number
+  mouthAffectedIndicesSample: number[]
+  eyeAffectedIndicesSample: number[]
+}
+type VisibilityIrisSummary = {
+  indexRange: string
+  expectedCount: number
+  excludedCount: number
+  excludedIndicesSample: number[]
+}
+type VisibilityInvalidSummary = {
+  invalidCount: number
+  unsafeCount: number
+  invalidIndicesSample: number[]
+  unsafeIndicesSample: number[]
+}
 type VisibilityDebugState = {
   status: VisibilityDebugStatus
   skipReason: VisibilityDebugSkipReason
   method: string
   source: string
+  inputLandmarkCount: number
+  usedLandmarkCount: number
+  excludedLandmarkCount: number
   visibleCurrentLandmarkCount: number
   hiddenCurrentLandmarkCount: number
   visibleCurrentLandmarkIndicesSample: number[]
   hiddenCurrentLandmarkIndicesSample: number[]
   scaleCandidateCount: number
+  usedForOverlayCount: number
+  usedForScaleCandidateCount: number
   minXIndex: number | null
   maxXIndex: number | null
   currentOverlayPointCount: number
   alignedIdealOverlayPointCount: number
+  excludedReasonCounts: Record<string, number>
+  excludedReasonSamples: Record<string, number[]>
+  usageWeightSummary: VisibilityUsageWeightSummary
+  usageWeightThreshold: number
+  hiddenSideSummary: VisibilityHiddenSideSummary
+  expressionSensitiveSummary: VisibilityExpressionSensitiveSummary
+  irisSummary: VisibilityIrisSummary
+  invalidSummary: VisibilityInvalidSummary
   coordinateSpace: VisibilityDebugCoordinateSpace
 }
 type VisibilitySelectionResult = {
@@ -1326,6 +1377,23 @@ type VisibilitySelectionResult = {
   visibleCurrentLandmarkIndices: number[]
   hiddenCurrentLandmarkIndices: number[]
   landmarkReasons: Array<PoseMappingExcludedReason[]>
+}
+type VisibilityDebugDetails = {
+  inputLandmarkCount: number
+  landmarkReasons: Array<PoseMappingExcludedReason[]>
+  usageWeights: number[]
+  hiddenSideAffectedIndices: number[]
+  hiddenSideExcludedIndices: number[]
+  mouthActivity: number
+  eyeActivity: number
+  mouthAffectedIndices: number[]
+  eyeAffectedIndices: number[]
+  mouthExcludedIndices: number[]
+  eyeExcludedIndices: number[]
+  irisExcludedIndices: number[]
+  invalidIndices: number[]
+  unsafeIndices: number[]
+  currentPose: ObjPoseMappingPose | null
 }
 type Semantic5ptDebugGuard = {
   minScaleRatio: number
@@ -3493,6 +3561,21 @@ const EXCLUDE_USAGE_WEIGHT_THRESHOLD = 0.15
 const VISIBILITY_DEBUG_SAMPLE_COUNT = 12
 const VISIBILITY_DEBUG_METHOD = "reference_mesh_warp_lab_usage_weight_v1"
 const VISIBILITY_DEBUG_SOURCE = "tools/ideal-reference-mesh-warp-lab/src/main.ts:selectCurrentMeshLandmarkVertices"
+const VISIBILITY_REASON_NAMES = [
+  "invalid",
+  "unsafe",
+  "iris",
+  "hiddenSideSuppressed",
+  "boundarySuppressed",
+  "mouthSuppressed",
+  "eyeSuppressed",
+  "usageWeightExcluded",
+  "expressionSensitive",
+  "missingCurrent",
+  "missingIdeal",
+  "largeDisplacement",
+  "other",
+] as const
 const SEMANTIC_5PT_FEATURE_LANDMARKS = {
   topCenter: 10,
   chinCenter: 152,
@@ -9317,6 +9400,7 @@ function buildPoseMappingAlignment(
     visibilitySelectionForAlignment.visibleCurrentLandmarkIndices,
   )
   visibilitySelectionForAlignment.debug.scaleCandidateCount = scaleCandidateCount
+  visibilitySelectionForAlignment.debug.usedForScaleCandidateCount = scaleCandidateCount
   if (scaleCandidateCount < 2) {
     visibilitySelectionForAlignment.debug = {
       ...visibilitySelectionForAlignment.debug,
@@ -9415,6 +9499,8 @@ function buildPoseMappingAlignment(
     currentLandmarksImage,
     visibilitySelectionForAlignment.visibleCurrentLandmarkIndices,
   )
+  visibilitySelectionForAlignment.debug.usedForOverlayCount =
+    visibilitySelectionForAlignment.debug.currentOverlayPointCount
   if (
     !isFinitePoint2(currentMinXPointPx) ||
     !isFinitePoint2(currentMaxXPointPx) ||
@@ -9871,6 +9957,16 @@ function buildVisibleCurrentLandmarkSelection(
     { length: REQUIRED_LANDMARK_COUNT },
     () => [] as PoseMappingExcludedReason[],
   )
+  const usageWeights: number[] = []
+  const hiddenSideAffectedIndices: number[] = []
+  const hiddenSideExcludedIndices: number[] = []
+  const mouthAffectedIndices: number[] = []
+  const eyeAffectedIndices: number[] = []
+  const mouthExcludedIndices: number[] = []
+  const eyeExcludedIndices: number[] = []
+  const irisExcludedIndices: number[] = []
+  const invalidIndices: number[] = []
+  const unsafeIndices: number[] = []
 
   for (let index = 0; index < REQUIRED_LANDMARK_COUNT; index += 1) {
     const landmark = currentLandmarks[index]
@@ -9879,18 +9975,24 @@ function buildVisibleCurrentLandmarkSelection(
     let safetyWeight = 1
 
     if (!landmark || !isFiniteLandmark(landmark)) {
+      usageWeights.push(0)
+      invalidIndices.push(index)
       hiddenCurrentLandmarkIndices.push(index)
       landmarkReasons[index] = ["invalid"]
       continue
     }
 
     if (isUnsafeImageLandmark(landmark)) {
+      usageWeights.push(0)
+      unsafeIndices.push(index)
       hiddenCurrentLandmarkIndices.push(index)
       landmarkReasons[index] = ["unsafe"]
       continue
     }
 
     if (isIrisLandmarkIndex(index)) {
+      usageWeights.push(0)
+      irisExcludedIndices.push(index)
       hiddenCurrentLandmarkIndices.push(index)
       landmarkReasons[index] = ["iris"]
       continue
@@ -9904,20 +10006,33 @@ function buildVisibleCurrentLandmarkSelection(
     if (isPoseHiddenSideLandmark(landmark, currentCenter, currentPose)) {
       visibilityWeight *= HIDDEN_SIDE_USAGE_MULTIPLIER
       reasons.push("hiddenSideSuppressed")
+      hiddenSideAffectedIndices.push(index)
     }
 
     if (mouthActivity >= MIXED_EXPRESSION_THRESHOLD && MOUTH_LANDMARK_INDICES.has(index)) {
       safetyWeight *= EXPRESSION_REGION_USAGE_MULTIPLIER
       reasons.push("mouthSuppressed")
+      mouthAffectedIndices.push(index)
     }
 
     if (eyeActivity >= MIXED_EXPRESSION_THRESHOLD && EYE_LANDMARK_INDICES.has(index)) {
       safetyWeight *= EXPRESSION_REGION_USAGE_MULTIPLIER
       reasons.push("eyeSuppressed")
+      eyeAffectedIndices.push(index)
     }
 
     const usageWeight = clamp(visibilityWeight * safetyWeight, 0, 1)
+    usageWeights.push(usageWeight)
     if (usageWeight <= EXCLUDE_USAGE_WEIGHT_THRESHOLD) {
+      if (reasons.includes("hiddenSideSuppressed")) {
+        hiddenSideExcludedIndices.push(index)
+      }
+      if (reasons.includes("mouthSuppressed")) {
+        mouthExcludedIndices.push(index)
+      }
+      if (reasons.includes("eyeSuppressed")) {
+        eyeExcludedIndices.push(index)
+      }
       hiddenCurrentLandmarkIndices.push(index)
       landmarkReasons[index] = uniquePoseMappingExcludedReasons([...reasons, "usageWeightExcluded"])
       continue
@@ -9931,6 +10046,23 @@ function buildVisibleCurrentLandmarkSelection(
     visibleCurrentLandmarkIndices,
     hiddenCurrentLandmarkIndices,
     visibleCurrentLandmarkIndices.length > 0 ? "none" : "empty_visible_landmarks",
+    {
+      inputLandmarkCount: currentLandmarks.length,
+      landmarkReasons,
+      usageWeights,
+      hiddenSideAffectedIndices,
+      hiddenSideExcludedIndices,
+      mouthActivity,
+      eyeActivity,
+      mouthAffectedIndices,
+      eyeAffectedIndices,
+      mouthExcludedIndices,
+      eyeExcludedIndices,
+      irisExcludedIndices,
+      invalidIndices,
+      unsafeIndices,
+      currentPose,
+    },
   )
 
   return {
@@ -9945,14 +10077,156 @@ function createVisibilityDebugFromIndices(
   visibleCurrentLandmarkIndices: number[],
   hiddenCurrentLandmarkIndices: number[],
   skipReason: VisibilityDebugSkipReason,
+  details: VisibilityDebugDetails,
 ): VisibilityDebugState {
+  const reasonBreakdown = buildVisibilityExcludedReasonBreakdown(
+    hiddenCurrentLandmarkIndices,
+    details.landmarkReasons,
+  )
   return {
     ...createEmptyVisibilityDebug(skipReason),
     status: skipReason === "none" ? "generated" : "skipped",
+    inputLandmarkCount: details.inputLandmarkCount,
+    usedLandmarkCount: visibleCurrentLandmarkIndices.length,
+    excludedLandmarkCount: Math.max(0, details.inputLandmarkCount - visibleCurrentLandmarkIndices.length),
     visibleCurrentLandmarkCount: visibleCurrentLandmarkIndices.length,
     hiddenCurrentLandmarkCount: hiddenCurrentLandmarkIndices.length,
     visibleCurrentLandmarkIndicesSample: visibleCurrentLandmarkIndices.slice(0, VISIBILITY_DEBUG_SAMPLE_COUNT),
     hiddenCurrentLandmarkIndicesSample: hiddenCurrentLandmarkIndices.slice(0, VISIBILITY_DEBUG_SAMPLE_COUNT),
+    excludedReasonCounts: reasonBreakdown.counts,
+    excludedReasonSamples: reasonBreakdown.samples,
+    usageWeightSummary: createVisibilityUsageWeightSummary(details.usageWeights),
+    hiddenSideSummary: {
+      yawDeg: details.currentPose?.yaw ?? null,
+      yawThresholdDeg: HIDDEN_SIDE_YAW_THRESHOLD_DEG,
+      affectedCount: details.hiddenSideAffectedIndices.length,
+      excludedCount: details.hiddenSideExcludedIndices.length,
+      affectedIndicesSample: details.hiddenSideAffectedIndices.slice(0, VISIBILITY_DEBUG_SAMPLE_COUNT),
+      excludedIndicesSample: details.hiddenSideExcludedIndices.slice(0, VISIBILITY_DEBUG_SAMPLE_COUNT),
+    },
+    expressionSensitiveSummary: {
+      threshold: MIXED_EXPRESSION_THRESHOLD,
+      mouthActivity: details.mouthActivity,
+      eyeActivity: details.eyeActivity,
+      mouthAffectedCount: details.mouthAffectedIndices.length,
+      eyeAffectedCount: details.eyeAffectedIndices.length,
+      mouthExcludedCount: details.mouthExcludedIndices.length,
+      eyeExcludedCount: details.eyeExcludedIndices.length,
+      mouthAffectedIndicesSample: details.mouthAffectedIndices.slice(0, VISIBILITY_DEBUG_SAMPLE_COUNT),
+      eyeAffectedIndicesSample: details.eyeAffectedIndices.slice(0, VISIBILITY_DEBUG_SAMPLE_COUNT),
+    },
+    irisSummary: {
+      indexRange: `${IRIS_LANDMARK_START}..${IRIS_LANDMARK_END}`,
+      expectedCount: IRIS_LANDMARK_END - IRIS_LANDMARK_START + 1,
+      excludedCount: details.irisExcludedIndices.length,
+      excludedIndicesSample: details.irisExcludedIndices.slice(0, VISIBILITY_DEBUG_SAMPLE_COUNT),
+    },
+    invalidSummary: {
+      invalidCount: details.invalidIndices.length,
+      unsafeCount: details.unsafeIndices.length,
+      invalidIndicesSample: details.invalidIndices.slice(0, VISIBILITY_DEBUG_SAMPLE_COUNT),
+      unsafeIndicesSample: details.unsafeIndices.slice(0, VISIBILITY_DEBUG_SAMPLE_COUNT),
+    },
+  }
+}
+
+function buildVisibilityExcludedReasonBreakdown(
+  hiddenCurrentLandmarkIndices: number[],
+  landmarkReasons: Array<PoseMappingExcludedReason[]>,
+) {
+  const counts = createEmptyVisibilityReasonCounts()
+  const samples = createEmptyVisibilityReasonSamples()
+
+  for (const index of hiddenCurrentLandmarkIndices) {
+    const reasons = landmarkReasons[index]?.length ? landmarkReasons[index] : ["other"]
+    for (const reason of reasons) {
+      const reasonKey = getVisibilityReasonKey(reason)
+      counts[reasonKey] = (counts[reasonKey] ?? 0) + 1
+      if (samples[reasonKey].length < VISIBILITY_DEBUG_SAMPLE_COUNT) {
+        samples[reasonKey].push(index)
+      }
+    }
+  }
+
+  return { counts, samples }
+}
+
+function createEmptyVisibilityReasonCounts(): Record<string, number> {
+  return Object.fromEntries(VISIBILITY_REASON_NAMES.map((reason) => [reason, 0]))
+}
+
+function createEmptyVisibilityReasonSamples(): Record<string, number[]> {
+  return Object.fromEntries(VISIBILITY_REASON_NAMES.map((reason) => [reason, [] as number[]]))
+}
+
+function getVisibilityReasonKey(reason: PoseMappingExcludedReason | "other") {
+  return VISIBILITY_REASON_NAMES.includes(reason as typeof VISIBILITY_REASON_NAMES[number])
+    ? reason
+    : "other"
+}
+
+function createVisibilityUsageWeightSummary(values: number[]): VisibilityUsageWeightSummary {
+  const finiteValues = values.filter(Number.isFinite).sort((a, b) => a - b)
+  if (finiteValues.length === 0) {
+    return {
+      count: 0,
+      min: null,
+      max: null,
+      mean: null,
+      p50: null,
+    }
+  }
+
+  const sum = finiteValues.reduce((acc, value) => acc + value, 0)
+  return {
+    count: finiteValues.length,
+    min: finiteValues[0],
+    max: finiteValues[finiteValues.length - 1],
+    mean: sum / finiteValues.length,
+    p50: percentileSorted(finiteValues, 0.5),
+  }
+}
+
+function createEmptyVisibilityHiddenSideSummary(): VisibilityHiddenSideSummary {
+  return {
+    yawDeg: null,
+    yawThresholdDeg: HIDDEN_SIDE_YAW_THRESHOLD_DEG,
+    affectedCount: 0,
+    excludedCount: 0,
+    affectedIndicesSample: [],
+    excludedIndicesSample: [],
+  }
+}
+
+function createEmptyVisibilityExpressionSensitiveSummary(): VisibilityExpressionSensitiveSummary {
+  return {
+    threshold: MIXED_EXPRESSION_THRESHOLD,
+    mouthActivity: 0,
+    eyeActivity: 0,
+    mouthAffectedCount: 0,
+    eyeAffectedCount: 0,
+    mouthExcludedCount: 0,
+    eyeExcludedCount: 0,
+    mouthAffectedIndicesSample: [],
+    eyeAffectedIndicesSample: [],
+  }
+}
+
+function createEmptyVisibilityIrisSummary(): VisibilityIrisSummary {
+  return {
+    indexRange: `${IRIS_LANDMARK_START}..${IRIS_LANDMARK_END}`,
+    expectedCount: IRIS_LANDMARK_END - IRIS_LANDMARK_START + 1,
+    excludedCount: 0,
+    excludedIndicesSample: [],
+  }
+}
+
+function createEmptyVisibilityInvalidSummary(): VisibilityInvalidSummary {
+  return {
+    invalidCount: 0,
+    unsafeCount: 0,
+    invalidIndicesSample: [],
+    unsafeIndicesSample: [],
   }
 }
 
@@ -20041,9 +20315,15 @@ function renderDisplayOverlaySummaryCard() {
       <div><dt>currentOverlayCurrentFrameId（現在フレームID）</dt><dd>${formatNullableCount(currentOverlayDebug.currentFrameId)}</dd></div>
       <div><dt>aligned ideal overlay（位置合わせ済み理想顔重ね表示）</dt><dd>${escapeHtml(formatAvailability(getDisplayOverlayAlignedIdealAvailability(), runtime.alignedRenderedIdeal478?.length ?? null))}</dd></div>
       <div><dt>visibilityDebug（表示対象デバッグ）</dt><dd>${escapeHtml(visibilityDebug.status)} / ${escapeHtml(visibilityDebug.skipReason)} / method ${escapeHtml(visibilityDebug.method)}</dd></div>
+      <div><dt>input / used / excluded（入力 / 使用 / 除外）</dt><dd>${formatNullableCount(visibilityDebug.inputLandmarkCount)} / ${formatNullableCount(visibilityDebug.usedLandmarkCount)} / ${formatNullableCount(visibilityDebug.excludedLandmarkCount)}</dd></div>
       <div><dt>visible / hidden landmarks（表示 / 非表示点数）</dt><dd>${formatNullableCount(visibilityDebug.visibleCurrentLandmarkCount)} / ${formatNullableCount(visibilityDebug.hiddenCurrentLandmarkCount)}</dd></div>
       <div><dt>overlay visible points（重ね描き表示点数）</dt><dd>current ${formatNullableCount(visibilityDebug.currentOverlayPointCount)} / aligned ideal ${formatNullableCount(visibilityDebug.alignedIdealOverlayPointCount)}</dd></div>
+      <div><dt>usedForOverlay / usedForScaleCandidate（重ね描き / スケール候補使用）</dt><dd>${formatNullableCount(visibilityDebug.usedForOverlayCount)} / ${formatNullableCount(visibilityDebug.usedForScaleCandidateCount)}</dd></div>
       <div><dt>visible scale candidate（表示対象スケール候補）</dt><dd>${formatNullableCount(visibilityDebug.scaleCandidateCount)} / minX ${formatNullableCount(visibilityDebug.minXIndex)} / maxX ${formatNullableCount(visibilityDebug.maxXIndex)}</dd></div>
+      <div><dt>excludedReasonCounts（除外理由別件数）</dt><dd>${escapeHtml(JSON.stringify(visibilityDebug.excludedReasonCounts))}</dd></div>
+      <div><dt>excludedReasonSamples（除外理由別sample）</dt><dd>${escapeHtml(JSON.stringify(visibilityDebug.excludedReasonSamples))}</dd></div>
+      <div><dt>usageWeightThreshold（使用重みしきい値）</dt><dd>${formatRealtimeNullableNumber(visibilityDebug.usageWeightThreshold)}</dd></div>
+      <div><dt>usageWeightSummary（使用重み要約）</dt><dd>${escapeHtml(JSON.stringify(visibilityDebug.usageWeightSummary))}</dd></div>
       <div><dt>visible sample（表示対象sample）</dt><dd>${escapeHtml(JSON.stringify(visibilityDebug.visibleCurrentLandmarkIndicesSample))}</dd></div>
       <div><dt>hidden sample（非表示sample）</dt><dd>${escapeHtml(JSON.stringify(visibilityDebug.hiddenCurrentLandmarkIndicesSample))}</dd></div>
       <div><dt>overlayLifecycle（重ね表示ライフサイクル）</dt><dd>visible ${String(lifecycle.alignedRenderedIdealVisible)} / gen ${String(lifecycle.generationMatch)} / token ${String(lifecycle.tokenMatch)} / renderPose ${String(lifecycle.renderPoseValid)}</dd></div>
@@ -23955,15 +24235,28 @@ function createEmptyVisibilityDebug(skipReason: VisibilityDebugSkipReason = "mis
     skipReason,
     method: VISIBILITY_DEBUG_METHOD,
     source: VISIBILITY_DEBUG_SOURCE,
+    inputLandmarkCount: 0,
+    usedLandmarkCount: 0,
+    excludedLandmarkCount: 0,
     visibleCurrentLandmarkCount: 0,
     hiddenCurrentLandmarkCount: 0,
     visibleCurrentLandmarkIndicesSample: [],
     hiddenCurrentLandmarkIndicesSample: [],
     scaleCandidateCount: 0,
+    usedForOverlayCount: 0,
+    usedForScaleCandidateCount: 0,
     minXIndex: null,
     maxXIndex: null,
     currentOverlayPointCount: 0,
     alignedIdealOverlayPointCount: 0,
+    excludedReasonCounts: createEmptyVisibilityReasonCounts(),
+    excludedReasonSamples: createEmptyVisibilityReasonSamples(),
+    usageWeightSummary: createVisibilityUsageWeightSummary([]),
+    usageWeightThreshold: EXCLUDE_USAGE_WEIGHT_THRESHOLD,
+    hiddenSideSummary: createEmptyVisibilityHiddenSideSummary(),
+    expressionSensitiveSummary: createEmptyVisibilityExpressionSensitiveSummary(),
+    irisSummary: createEmptyVisibilityIrisSummary(),
+    invalidSummary: createEmptyVisibilityInvalidSummary(),
     coordinateSpace: "existing_overlay_coordinate_contract",
   }
 }
