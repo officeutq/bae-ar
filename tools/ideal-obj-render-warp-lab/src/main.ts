@@ -1287,9 +1287,23 @@ type BackgroundGridSkipReason =
   | "empty_face_interior_triangles"
   | "empty_background_grid"
 type BackgroundGridCoordinateSpace = "displayedContentRect_pixel_coordinate"
+type BackgroundGridPointKind =
+  | "backgroundGridInterior"
+  | "backgroundGridBoundary"
 type BackgroundGridPointPx = {
   x: number
   y: number
+  kind?: BackgroundGridPointKind
+}
+type BackgroundGridGenerationResult = {
+  pointsPx: BackgroundGridPointPx[]
+  xPositions: number[]
+  yPositions: number[]
+  hasTopEdgePoints: boolean
+  hasBottomEdgePoints: boolean
+  hasLeftEdgePoints: boolean
+  hasRightEdgePoints: boolean
+  hasFourCorners: boolean
 }
 type BackgroundGridTrianglePx = {
   a: BackgroundGridPointPx
@@ -1306,8 +1320,13 @@ type BackgroundGridDebug = {
   coordinateSpace: BackgroundGridCoordinateSpace
   domainRectPx: Rect | null
   gridStepPx: number | null
+  boundaryGuaranteeEnabled: boolean
+  xPositionCount: number
+  yPositionCount: number
   contourMedianSpacingPx: number | null
   contourDistanceCount: number
+  backgroundGridBoundaryPointCount: number
+  backgroundGridInteriorPointCount: number
   generatedGridPointCount: number
   excludedInsideFaceTrianglePointCount: number
   keptBackgroundGridPointCount: number
@@ -1317,8 +1336,15 @@ type BackgroundGridDebug = {
   maxAllowedGridPointCount: number
   sourceBackgroundGridPointCount: number
   targetBackgroundGridPointCount: number
+  sampleBoundaryGridPointsPx: BackgroundGridPointPx[]
+  sampleInteriorGridPointsPx: BackgroundGridPointPx[]
   sampleKeptBackgroundGridPointsPx: BackgroundGridPointPx[]
   sampleExcludedBackgroundGridPointsPx: BackgroundGridPointPx[]
+  hasTopEdgePoints: boolean
+  hasBottomEdgePoints: boolean
+  hasLeftEdgePoints: boolean
+  hasRightEdgePoints: boolean
+  hasFourCorners: boolean
 }
 type BackgroundGridState = {
   debug: BackgroundGridDebug
@@ -3588,6 +3614,7 @@ const BACKGROUND_GRID_MIN_CONTOUR_DISTANCE_COUNT = 4
 const BACKGROUND_GRID_MAX_ALLOWED_GRID_POINT_COUNT = 20000
 const BACKGROUND_GRID_MIN_FACE_TRIANGLE_AREA_PX2 = 0.05
 const BACKGROUND_GRID_POINT_IN_TRIANGLE_EPSILON = 0.000001
+const BACKGROUND_GRID_POSITION_EPSILON = 0.000001
 const BACKGROUND_GRID_DEBUG_SAMPLE_LIMIT = 12
 const MEDIAPIPE_FACE_MESH_TRIANGLE_INDICES = buildTriangleIndicesFromTessellation(
   FaceLandmarker.FACE_LANDMARKS_TESSELATION as readonly LandmarkConnection[],
@@ -19868,6 +19895,9 @@ function renderDisplayOverlaySummaryCard() {
       <div><dt>backgroundGridStatus（背景格子状態）</dt><dd>${escapeHtml(backgroundGridDebug.status)} / ${escapeHtml(backgroundGridDebug.skipReason ?? "none")}</dd></div>
       <div><dt>gridStepPx（格子間隔px）</dt><dd>${formatRealtimeNullableNumber(backgroundGridDebug.gridStepPx)}</dd></div>
       <div><dt>background grid points（背景格子点）</dt><dd>generated ${formatNullableCount(backgroundGridDebug.generatedGridPointCount)} / excluded ${formatNullableCount(backgroundGridDebug.excludedInsideFaceTrianglePointCount)} / kept ${formatNullableCount(backgroundGridDebug.keptBackgroundGridPointCount)}</dd></div>
+      <div><dt>境界保証</dt><dd>enabled ${String(backgroundGridDebug.boundaryGuaranteeEnabled)} / x ${formatNullableCount(backgroundGridDebug.xPositionCount)} / y ${formatNullableCount(backgroundGridDebug.yPositionCount)}</dd></div>
+      <div><dt>背景格子 boundary / interior</dt><dd>${formatNullableCount(backgroundGridDebug.backgroundGridBoundaryPointCount)} / ${formatNullableCount(backgroundGridDebug.backgroundGridInteriorPointCount)}</dd></div>
+      <div><dt>背景格子 edge check</dt><dd>top ${String(backgroundGridDebug.hasTopEdgePoints)} / bottom ${String(backgroundGridDebug.hasBottomEdgePoints)} / left ${String(backgroundGridDebug.hasLeftEdgePoints)} / right ${String(backgroundGridDebug.hasRightEdgePoints)} / corners ${String(backgroundGridDebug.hasFourCorners)}</dd></div>
       <div><dt>faceInteriorTriangle（顔内部判定三角形）</dt><dd>${formatNullableCount(backgroundGridDebug.faceInteriorTriangleCount)}</dd></div>
       <div><dt>source / target background grid（変形元 / 変形先背景格子）</dt><dd>${formatNullableCount(backgroundGridDebug.sourceBackgroundGridPointCount)} / ${formatNullableCount(backgroundGridDebug.targetBackgroundGridPointCount)}</dd></div>
       <div><dt>overlayLifecycle（重ね表示ライフサイクル）</dt><dd>visible ${String(lifecycle.alignedRenderedIdealVisible)} / gen ${String(lifecycle.generationMatch)} / token ${String(lifecycle.tokenMatch)} / renderPose ${String(lifecycle.renderPoseValid)}</dd></div>
@@ -22208,8 +22238,13 @@ function drawBackgroundGridOverlay(
     context.stroke()
   }
 
-  context.fillStyle = "rgba(15, 170, 132, 0.74)"
   for (const point of alignment.sourceBackgroundGridPointsPx) {
+    if (isBackgroundGridBoundaryPoint(point)) {
+      context.fillStyle = "rgba(255, 214, 102, 0.92)"
+      context.fillRect(point.x - 1.4, point.y - 1.4, 2.8, 2.8)
+      continue
+    }
+    context.fillStyle = "rgba(15, 170, 132, 0.74)"
     context.fillRect(point.x - 0.75, point.y - 0.75, 1.5, 1.5)
   }
   context.restore()
@@ -24350,8 +24385,13 @@ function createEmptyBackgroundGridDebug(
     coordinateSpace: BACKGROUND_GRID_COORDINATE_SPACE,
     domainRectPx: null,
     gridStepPx: null,
+    boundaryGuaranteeEnabled: true,
+    xPositionCount: 0,
+    yPositionCount: 0,
     contourMedianSpacingPx: null,
     contourDistanceCount: 0,
+    backgroundGridBoundaryPointCount: 0,
+    backgroundGridInteriorPointCount: 0,
     generatedGridPointCount: 0,
     excludedInsideFaceTrianglePointCount: 0,
     keptBackgroundGridPointCount: 0,
@@ -24361,8 +24401,15 @@ function createEmptyBackgroundGridDebug(
     maxAllowedGridPointCount: BACKGROUND_GRID_MAX_ALLOWED_GRID_POINT_COUNT,
     sourceBackgroundGridPointCount: 0,
     targetBackgroundGridPointCount: 0,
+    sampleBoundaryGridPointsPx: [],
+    sampleInteriorGridPointsPx: [],
     sampleKeptBackgroundGridPointsPx: [],
     sampleExcludedBackgroundGridPointsPx: [],
+    hasTopEdgePoints: false,
+    hasBottomEdgePoints: false,
+    hasLeftEdgePoints: false,
+    hasRightEdgePoints: false,
+    hasFourCorners: false,
   }
 }
 
@@ -24447,9 +24494,13 @@ function buildBackgroundGridPreview(
     return createSkippedBackgroundGridState("invalid_grid_step", contourDebug)
   }
 
+  const estimatedXPositionCount = estimateBackgroundGridPositionCount(displayedContentRect.width, gridStepPx)
+  const estimatedYPositionCount = estimateBackgroundGridPositionCount(displayedContentRect.height, gridStepPx)
   const estimatedGridPointCount = estimateBackgroundGridPointCount(displayedContentRect, gridStepPx)
   const gridStepDebug: Partial<BackgroundGridDebug> = {
     ...contourDebug,
+    xPositionCount: Number.isFinite(estimatedXPositionCount) ? estimatedXPositionCount : 0,
+    yPositionCount: Number.isFinite(estimatedYPositionCount) ? estimatedYPositionCount : 0,
     generatedGridPointCount: Number.isFinite(estimatedGridPointCount) ? estimatedGridPointCount : 0,
   }
   if (!Number.isFinite(estimatedGridPointCount) || estimatedGridPointCount <= 0) {
@@ -24468,18 +24519,34 @@ function buildBackgroundGridPreview(
     return createSkippedBackgroundGridState("empty_face_interior_triangles", triangleDebug)
   }
 
-  const generatedGridPointsPx = generateBackgroundGridPointsPx(displayedContentRect, gridStepPx)
+  const generatedBackgroundGrid = generateBackgroundGridPointsPx(displayedContentRect, gridStepPx)
+  const generatedGridPointsPx = generatedBackgroundGrid.pointsPx
+  const backgroundGridBoundaryPointCount = generatedGridPointsPx.filter(isBackgroundGridBoundaryPoint).length
+  const backgroundGridInteriorPointCount =
+    generatedGridPointsPx.length - backgroundGridBoundaryPointCount
   if (generatedGridPointsPx.length > BACKGROUND_GRID_MAX_ALLOWED_GRID_POINT_COUNT) {
     return createSkippedBackgroundGridState("too_many_grid_points", {
       ...triangleDebug,
+      xPositionCount: generatedBackgroundGrid.xPositions.length,
+      yPositionCount: generatedBackgroundGrid.yPositions.length,
+      backgroundGridBoundaryPointCount,
+      backgroundGridInteriorPointCount,
       generatedGridPointCount: generatedGridPointsPx.length,
+      hasTopEdgePoints: generatedBackgroundGrid.hasTopEdgePoints,
+      hasBottomEdgePoints: generatedBackgroundGrid.hasBottomEdgePoints,
+      hasLeftEdgePoints: generatedBackgroundGrid.hasLeftEdgePoints,
+      hasRightEdgePoints: generatedBackgroundGrid.hasRightEdgePoints,
+      hasFourCorners: generatedBackgroundGrid.hasFourCorners,
     })
   }
 
   const keptBackgroundGridPointsPx: BackgroundGridPointPx[] = []
   const sampleExcludedBackgroundGridPointsPx: BackgroundGridPointPx[] = []
   for (const point of generatedGridPointsPx) {
-    if (isPointInsideAnyBackgroundGridTriangle(point, faceInteriorTrianglesPx)) {
+    if (
+      !isBackgroundGridBoundaryPoint(point) &&
+      isPointInsideAnyBackgroundGridTriangle(point, faceInteriorTrianglesPx)
+    ) {
       if (sampleExcludedBackgroundGridPointsPx.length < BACKGROUND_GRID_DEBUG_SAMPLE_LIMIT) {
         sampleExcludedBackgroundGridPointsPx.push(cloneBackgroundGridPoint(point))
       }
@@ -24493,6 +24560,14 @@ function buildBackgroundGridPreview(
   const sampleKeptBackgroundGridPointsPx = keptBackgroundGridPointsPx
     .slice(0, BACKGROUND_GRID_DEBUG_SAMPLE_LIMIT)
     .map(cloneBackgroundGridPoint)
+  const sampleBoundaryGridPointsPx = keptBackgroundGridPointsPx
+    .filter(isBackgroundGridBoundaryPoint)
+    .slice(0, BACKGROUND_GRID_DEBUG_SAMPLE_LIMIT)
+    .map(cloneBackgroundGridPoint)
+  const sampleInteriorGridPointsPx = keptBackgroundGridPointsPx
+    .filter((point) => point.kind === "backgroundGridInterior")
+    .slice(0, BACKGROUND_GRID_DEBUG_SAMPLE_LIMIT)
+    .map(cloneBackgroundGridPoint)
   const sourceBackgroundGridPointsPx = keptBackgroundGridPointsPx.map(cloneBackgroundGridPoint)
   const targetBackgroundGridPointsPx = keptBackgroundGridPointsPx.map(cloneBackgroundGridPoint)
   const completedDebug: BackgroundGridDebug = {
@@ -24501,8 +24576,13 @@ function buildBackgroundGridPreview(
     skipReason: null,
     domainRectPx,
     gridStepPx,
+    boundaryGuaranteeEnabled: true,
+    xPositionCount: generatedBackgroundGrid.xPositions.length,
+    yPositionCount: generatedBackgroundGrid.yPositions.length,
     contourMedianSpacingPx,
     contourDistanceCount: contourDistancesPx.length,
+    backgroundGridBoundaryPointCount,
+    backgroundGridInteriorPointCount,
     generatedGridPointCount: generatedGridPointsPx.length,
     excludedInsideFaceTrianglePointCount,
     keptBackgroundGridPointCount: keptBackgroundGridPointsPx.length,
@@ -24512,8 +24592,15 @@ function buildBackgroundGridPreview(
     maxAllowedGridPointCount: BACKGROUND_GRID_MAX_ALLOWED_GRID_POINT_COUNT,
     sourceBackgroundGridPointCount: sourceBackgroundGridPointsPx.length,
     targetBackgroundGridPointCount: targetBackgroundGridPointsPx.length,
+    sampleBoundaryGridPointsPx,
+    sampleInteriorGridPointsPx,
     sampleKeptBackgroundGridPointsPx,
     sampleExcludedBackgroundGridPointsPx,
+    hasTopEdgePoints: generatedBackgroundGrid.hasTopEdgePoints,
+    hasBottomEdgePoints: generatedBackgroundGrid.hasBottomEdgePoints,
+    hasLeftEdgePoints: generatedBackgroundGrid.hasLeftEdgePoints,
+    hasRightEdgePoints: generatedBackgroundGrid.hasRightEdgePoints,
+    hasFourCorners: generatedBackgroundGrid.hasFourCorners,
   }
 
   if (keptBackgroundGridPointsPx.length === 0) {
@@ -24552,36 +24639,157 @@ function calculateActualVisibleContourDistancesPx(
   return distances
 }
 
-function estimateBackgroundGridPointCount(rect: Rect, gridStepPx: number) {
+function estimateBackgroundGridPositionCount(sizePx: number, gridStepPx: number) {
   if (!Number.isFinite(gridStepPx) || gridStepPx <= 0) {
     return Number.POSITIVE_INFINITY
   }
-  const columnCount = Math.floor(rect.width / gridStepPx) + 1
-  const rowCount = Math.floor(rect.height / gridStepPx) + 1
+  if (!Number.isFinite(sizePx) || sizePx < 0) {
+    return Number.POSITIVE_INFINITY
+  }
+  if (sizePx === 0) {
+    return 1
+  }
+  const nearestStepCount = Math.round(sizePx / gridStepPx)
+  if (Math.abs(nearestStepCount * gridStepPx - sizePx) <= BACKGROUND_GRID_POSITION_EPSILON) {
+    return nearestStepCount + 1
+  }
+  return Math.floor(sizePx / gridStepPx) + 2
+}
+
+function estimateBackgroundGridPointCount(rect: Rect, gridStepPx: number) {
+  const columnCount = estimateBackgroundGridPositionCount(rect.width, gridStepPx)
+  const rowCount = estimateBackgroundGridPositionCount(rect.height, gridStepPx)
   const count = columnCount * rowCount
   return Number.isFinite(count) && count > 0 ? count : Number.POSITIVE_INFINITY
 }
 
-function generateBackgroundGridPointsPx(rect: Rect, gridStepPx: number): BackgroundGridPointPx[] {
+function generateBackgroundGridPointsPx(rect: Rect, gridStepPx: number): BackgroundGridGenerationResult {
   const points: BackgroundGridPointPx[] = []
-  const columnCount = Math.floor(rect.width / gridStepPx) + 1
-  const rowCount = Math.floor(rect.height / gridStepPx) + 1
-  const maxX = rect.x + rect.width
-  const maxY = rect.y + rect.height
-  for (let row = 0; row < rowCount; row += 1) {
-    const y = rect.y + row * gridStepPx
-    if (y > maxY + BACKGROUND_GRID_POINT_IN_TRIANGLE_EPSILON) {
-      continue
-    }
-    for (let column = 0; column < columnCount; column += 1) {
-      const x = rect.x + column * gridStepPx
-      if (x > maxX + BACKGROUND_GRID_POINT_IN_TRIANGLE_EPSILON) {
+  const xPositions = buildBackgroundGridPositionList(rect.width, gridStepPx)
+  const yPositions = buildBackgroundGridPositionList(rect.height, gridStepPx)
+  const seenLocalPointKeys = new Set<string>()
+  for (const localY of yPositions) {
+    for (const localX of xPositions) {
+      const dedupeKey = getBackgroundGridLocalPointDedupeKey(localX, localY)
+      if (seenLocalPointKeys.has(dedupeKey)) {
         continue
       }
-      points.push({ x, y })
+      seenLocalPointKeys.add(dedupeKey)
+      const kind = isBackgroundGridBoundaryLocalPoint(localX, localY, rect.width, rect.height)
+        ? "backgroundGridBoundary"
+        : "backgroundGridInterior"
+      points.push({
+        x: rect.x + localX,
+        y: rect.y + localY,
+        kind,
+      })
     }
   }
-  return points
+  return {
+    pointsPx: points,
+    xPositions,
+    yPositions,
+    hasTopEdgePoints: xPositions.length > 0 && yPositions.some((value) => isBackgroundGridEdgeValue(value, 0)),
+    hasBottomEdgePoints: xPositions.length > 0 && yPositions.some((value) => isBackgroundGridEdgeValue(value, rect.height)),
+    hasLeftEdgePoints: yPositions.length > 0 && xPositions.some((value) => isBackgroundGridEdgeValue(value, 0)),
+    hasRightEdgePoints: yPositions.length > 0 && xPositions.some((value) => isBackgroundGridEdgeValue(value, rect.width)),
+    hasFourCorners:
+      hasBackgroundGridLocalPoint(points, 0, 0, rect.x, rect.y) &&
+      hasBackgroundGridLocalPoint(points, rect.width, 0, rect.x, rect.y) &&
+      hasBackgroundGridLocalPoint(points, 0, rect.height, rect.x, rect.y) &&
+      hasBackgroundGridLocalPoint(points, rect.width, rect.height, rect.x, rect.y),
+  }
+}
+
+function buildBackgroundGridPositionList(sizePx: number, gridStepPx: number): number[] {
+  if (
+    !Number.isFinite(sizePx) ||
+    sizePx < 0 ||
+    !Number.isFinite(gridStepPx) ||
+    gridStepPx <= 0
+  ) {
+    return []
+  }
+  const positions: number[] = [0]
+  if (sizePx === 0) {
+    return positions
+  }
+  for (let position = gridStepPx; position < sizePx; position += gridStepPx) {
+    if (!Number.isFinite(position)) {
+      break
+    }
+    if (isBackgroundGridEdgeValue(position, sizePx)) {
+      break
+    }
+    positions.push(position)
+  }
+  const lastIndex = positions.length - 1
+  if (isBackgroundGridEdgeValue(positions[lastIndex], sizePx)) {
+    positions[lastIndex] = sizePx
+  } else {
+    positions.push(sizePx)
+  }
+  return dedupeBackgroundGridPositions(positions)
+}
+
+function dedupeBackgroundGridPositions(positions: readonly number[]) {
+  const deduped: number[] = []
+  const seen = new Set<string>()
+  for (const position of positions) {
+    const key = getBackgroundGridPositionDedupeKey(position)
+    if (seen.has(key)) {
+      continue
+    }
+    seen.add(key)
+    deduped.push(position)
+  }
+  return deduped
+}
+
+function getBackgroundGridPositionDedupeKey(position: number) {
+  return String(Math.round(position / BACKGROUND_GRID_POSITION_EPSILON))
+}
+
+function getBackgroundGridLocalPointDedupeKey(localX: number, localY: number) {
+  return `${getBackgroundGridPositionDedupeKey(localX)}:${getBackgroundGridPositionDedupeKey(localY)}`
+}
+
+function isBackgroundGridEdgeValue(value: number, edgeValue: number) {
+  return Math.abs(value - edgeValue) <= BACKGROUND_GRID_POSITION_EPSILON
+}
+
+function isBackgroundGridBoundaryLocalPoint(
+  localX: number,
+  localY: number,
+  width: number,
+  height: number,
+) {
+  return (
+    isBackgroundGridEdgeValue(localX, 0) ||
+    isBackgroundGridEdgeValue(localX, width) ||
+    isBackgroundGridEdgeValue(localY, 0) ||
+    isBackgroundGridEdgeValue(localY, height)
+  )
+}
+
+function isBackgroundGridBoundaryPoint(point: BackgroundGridPointPx) {
+  return point.kind === "backgroundGridBoundary"
+}
+
+function hasBackgroundGridLocalPoint(
+  points: readonly BackgroundGridPointPx[],
+  localX: number,
+  localY: number,
+  rectX = 0,
+  rectY = 0,
+) {
+  const expectedX = rectX + localX
+  const expectedY = rectY + localY
+  return points.some(
+    (point) =>
+      isBackgroundGridEdgeValue(point.x, expectedX) &&
+      isBackgroundGridEdgeValue(point.y, expectedY),
+  )
 }
 
 function buildFaceInteriorTrianglesForBackgroundGrid(
@@ -24691,10 +24899,14 @@ function calculateTriangleAreaPx2(
 }
 
 function cloneBackgroundGridPoint(point: BackgroundGridPointPx): BackgroundGridPointPx {
-  return {
+  const cloned: BackgroundGridPointPx = {
     x: point.x,
     y: point.y,
   }
+  if (point.kind) {
+    cloned.kind = point.kind
+  }
+  return cloned
 }
 
 function cloneBackgroundGridTriangle(triangle: BackgroundGridTrianglePx): BackgroundGridTrianglePx {
@@ -29854,6 +30066,12 @@ function roundBackgroundGridDebugForState(debug: BackgroundGridDebug): Backgroun
     domainRectPx: roundRectForState(debug.domainRectPx),
     gridStepPx: roundForState(debug.gridStepPx),
     contourMedianSpacingPx: roundForState(debug.contourMedianSpacingPx),
+    sampleBoundaryGridPointsPx: debug.sampleBoundaryGridPointsPx.map(
+      roundBackgroundGridPointForState,
+    ),
+    sampleInteriorGridPointsPx: debug.sampleInteriorGridPointsPx.map(
+      roundBackgroundGridPointForState,
+    ),
     sampleKeptBackgroundGridPointsPx: debug.sampleKeptBackgroundGridPointsPx.map(
       roundBackgroundGridPointForState,
     ),
@@ -29864,10 +30082,14 @@ function roundBackgroundGridDebugForState(debug: BackgroundGridDebug): Backgroun
 }
 
 function roundBackgroundGridPointForState(point: BackgroundGridPointPx): BackgroundGridPointPx {
-  return {
+  const rounded: BackgroundGridPointPx = {
     x: roundForState(point.x) ?? 0,
     y: roundForState(point.y) ?? 0,
   }
+  if (point.kind) {
+    rounded.kind = point.kind
+  }
+  return rounded
 }
 
 function roundMatrixDebugSummaryForState(summary: MatrixDebugSummary | null): MatrixDebugSummary | null {
