@@ -1352,6 +1352,91 @@ type BackgroundGridState = {
   targetBackgroundGridPointsPx: BackgroundGridPointPx[]
   faceInteriorTrianglesPx: BackgroundGridTrianglePx[]
 }
+type CombinedMeshStatus = "available" | "skipped"
+type CombinedMeshSkipReason =
+  | "missing_displayed_content_rect"
+  | "missing_actual_visible_landmarks"
+  | "missing_current_landmarks"
+  | "missing_aligned_rendered_ideal"
+  | "missing_background_grid_points"
+  | "source_target_background_grid_mismatch"
+  | "invalid_combined_vertices"
+  | "too_few_triangulation_vertices"
+  | "triangulation_failed"
+  | "empty_triangle_indices"
+type CombinedMeshCoordinateSpace = "displayedContentRect_pixel_coordinate"
+type CombinedMeshVertexKind =
+  | "faceLandmark"
+  | "backgroundGridInterior"
+  | "backgroundGridBoundary"
+type CombinedMeshPointPx = {
+  x: number
+  y: number
+}
+type CombinedVertexMetadata = {
+  kind: CombinedMeshVertexKind
+  sourceIndex: number
+  targetIndex: number
+  landmarkIndex: number | null
+  backgroundGridIndex: number | null
+}
+type NumericSummary = {
+  min: number | null
+  max: number | null
+  mean: number | null
+  p50: number | null
+  p95: number | null
+}
+type CombinedMeshSampleVertex = {
+  index: number
+  kind: CombinedMeshVertexKind
+  landmarkIndex: number | null
+  backgroundGridIndex: number | null
+  source: CombinedMeshPointPx
+  target: CombinedMeshPointPx
+}
+type CombinedMeshPotentialInversionTriangleSample = {
+  triangleIndex: number
+  indices: [number, number, number]
+  sourceSignedAreaPx2: number
+  targetSignedAreaPx2: number
+}
+type CombinedMeshDebug = {
+  status: CombinedMeshStatus
+  skipReason: CombinedMeshSkipReason | null
+  coordinateSpace: CombinedMeshCoordinateSpace
+  combinedSourceVertexCount: number
+  combinedTargetVertexCount: number
+  sourceTargetCountMatches: boolean
+  indexCorrespondenceValid: boolean
+  faceLandmarkVertexCount: number
+  backgroundGridInteriorVertexCount: number
+  backgroundGridBoundaryVertexCount: number
+  triangulationInputVertexCount: number
+  duplicateSkippedVertexCount: number
+  invalidVertexCount: number
+  triangleCount: number
+  filteredTriangleCount: number
+  sourceDegenerateTriangleCount: number
+  potentialTargetInversionTriangleCount: number
+  sourceBoundsPx: Rect | null
+  targetBoundsPx: Rect | null
+  sourceTriangleAreaSummaryPx2: NumericSummary
+  targetTriangleAreaSummaryPx2: NumericSummary
+  edgeLengthSummaryPx: NumericSummary
+  longTriangleCount: number
+  sampleCombinedVertices: CombinedMeshSampleVertex[]
+  sampleTriangleIndices: Array<[number, number, number]>
+  samplePotentialTargetInversionTriangles: CombinedMeshPotentialInversionTriangleSample[]
+}
+type CombinedMeshState = {
+  combinedSourceVerticesPx: CombinedMeshPointPx[]
+  combinedTargetVerticesPx: CombinedMeshPointPx[]
+  combinedVertexMetadata: CombinedVertexMetadata[]
+  triangulationVertexIndices: number[]
+  triangleIndices: number[]
+  combinedMeshDebug: CombinedMeshDebug
+}
 type PoseMappingBounds = {
   minX: number
   maxX: number
@@ -1508,6 +1593,12 @@ type PoseMappingAlignmentState = {
   sourceBackgroundGridPointsPx: BackgroundGridPointPx[]
   targetBackgroundGridPointsPx: BackgroundGridPointPx[]
   faceInteriorTrianglesPx: BackgroundGridTrianglePx[]
+  combinedSourceVerticesPx: CombinedMeshPointPx[]
+  combinedTargetVerticesPx: CombinedMeshPointPx[]
+  combinedVertexMetadata: CombinedVertexMetadata[]
+  triangulationVertexIndices: number[]
+  triangleIndices: number[]
+  combinedMeshDebug: CombinedMeshDebug
   excludedReasonCounts: PoseMappingExcludedReasonCounts
   displacementSummary: PoseMappingDisplacementSummary
   landmarkReasons: Array<PoseMappingExcludedReason[]>
@@ -3499,6 +3590,11 @@ type LabState = {
     showMeshPairs: boolean
     showExcludedLandmarks: boolean
     showBackgroundGrid: boolean
+    showCombinedSourceVertices: boolean
+    showCombinedTargetVertices: boolean
+    showSourceTriangleMesh: boolean
+    showTargetTriangleMesh: boolean
+    showSampleSourceTargetLines: boolean
     showGridAnchors: boolean
     showTriangleMesh: boolean
     showDisplayedContentRect: boolean
@@ -3616,6 +3712,13 @@ const BACKGROUND_GRID_MIN_FACE_TRIANGLE_AREA_PX2 = 0.05
 const BACKGROUND_GRID_POINT_IN_TRIANGLE_EPSILON = 0.000001
 const BACKGROUND_GRID_POSITION_EPSILON = 0.000001
 const BACKGROUND_GRID_DEBUG_SAMPLE_LIMIT = 12
+const COMBINED_MESH_COORDINATE_SPACE: CombinedMeshCoordinateSpace =
+  "displayedContentRect_pixel_coordinate"
+const COMBINED_MESH_DEBUG_SAMPLE_LIMIT = 12
+const COMBINED_MESH_DUPLICATE_EPSILON_PX = 0.25
+const COMBINED_MESH_MIN_TRIANGLE_AREA_PX2 = 0.05
+const COMBINED_MESH_LONG_EDGE_SOURCE_BOUNDS_RATIO = 0.35
+const COMBINED_MESH_CORRESPONDENCE_LINE_SAMPLE_LIMIT = 96
 const MEDIAPIPE_FACE_MESH_TRIANGLE_INDICES = buildTriangleIndicesFromTessellation(
   FaceLandmarker.FACE_LANDMARKS_TESSELATION as readonly LandmarkConnection[],
 )
@@ -4050,6 +4153,11 @@ const state: LabState = {
     showMeshPairs: false,
     showExcludedLandmarks: false,
     showBackgroundGrid: true,
+    showCombinedSourceVertices: false,
+    showCombinedTargetVertices: false,
+    showSourceTriangleMesh: false,
+    showTargetTriangleMesh: false,
+    showSampleSourceTargetLines: false,
     showGridAnchors: false,
     showTriangleMesh: false,
     showDisplayedContentRect: true,
@@ -4517,6 +4625,14 @@ function renderDisplayOverlayPreview() {
               ${renderOverlayToggle("toggle-overlay-skipped-reason", "skipped reason（スキップ理由）を表示")}
               ${renderOverlayToggle("toggle-grid-anchors", "legacy grid debug（旧グリッドデバッグ）を表示")}
               ${renderOverlayToggle("toggle-triangle-mesh", "triangle mesh（トライアングルメッシュ）を表示")}
+            </fieldset>
+            <fieldset class="overlay-toggle-group coordinate-toggle-group">
+              <legend>結合メッシュプレビュー</legend>
+              ${renderOverlayToggle("toggle-combined-source-vertices", "結合変形元頂点（combined source vertices）を表示")}
+              ${renderOverlayToggle("toggle-combined-target-vertices", "結合変形先頂点（combined target vertices）を表示")}
+              ${renderOverlayToggle("toggle-source-triangle-mesh", "変形元三角形メッシュ（source triangle mesh）を表示")}
+              ${renderOverlayToggle("toggle-target-triangle-mesh", "変形先三角形メッシュ（target triangle mesh）を表示")}
+              ${renderOverlayToggle("toggle-sample-source-target-lines", "変形元・変形先サンプル対応線を表示")}
             </fieldset>
           </div>
           <div class="review-card" data-display-overlay-summary>
@@ -5199,6 +5315,11 @@ function bindEvents() {
   bindOverlayToggle("toggle-mesh-pairs", "showMeshPairs")
   bindOverlayToggle("toggle-excluded-landmarks", "showExcludedLandmarks")
   bindOverlayToggle("toggle-background-grid-overlay", "showBackgroundGrid")
+  bindOverlayToggle("toggle-combined-source-vertices", "showCombinedSourceVertices")
+  bindOverlayToggle("toggle-combined-target-vertices", "showCombinedTargetVertices")
+  bindOverlayToggle("toggle-source-triangle-mesh", "showSourceTriangleMesh")
+  bindOverlayToggle("toggle-target-triangle-mesh", "showTargetTriangleMesh")
+  bindOverlayToggle("toggle-sample-source-target-lines", "showSampleSourceTargetLines")
   bindOverlayToggle("toggle-displayed-content-rect", "showDisplayedContentRect")
   bindOverlayToggle("toggle-overlay-skipped-reason", "showSkippedReason")
   bindOverlayToggle("toggle-grid-anchors", "showGridAnchors")
@@ -9124,6 +9245,9 @@ function buildPoseMappingAlignment(
   let backgroundGrid = createEmptyBackgroundGridState(
     displayOverlayRects ? "missing_current_landmarks" : "missing_display_rect",
   )
+  let combinedMesh = createEmptyCombinedMeshState(
+    displayOverlayRects ? "missing_current_landmarks" : "missing_displayed_content_rect",
+  )
   const createAlignmentState = (
     status: PoseMappingAlignmentStatus,
     reason: PoseMappingAlignmentSkippedReason,
@@ -9153,6 +9277,12 @@ function buildPoseMappingAlignment(
     sourceBackgroundGridPointsPx: backgroundGrid.sourceBackgroundGridPointsPx.map(cloneBackgroundGridPoint),
     targetBackgroundGridPointsPx: backgroundGrid.targetBackgroundGridPointsPx.map(cloneBackgroundGridPoint),
     faceInteriorTrianglesPx: backgroundGrid.faceInteriorTrianglesPx.map(cloneBackgroundGridTriangle),
+    combinedSourceVerticesPx: combinedMesh.combinedSourceVerticesPx.map(cloneCombinedMeshPoint),
+    combinedTargetVerticesPx: combinedMesh.combinedTargetVerticesPx.map(cloneCombinedMeshPoint),
+    combinedVertexMetadata: combinedMesh.combinedVertexMetadata.map(cloneCombinedVertexMetadata),
+    triangulationVertexIndices: [...combinedMesh.triangulationVertexIndices],
+    triangleIndices: [...combinedMesh.triangleIndices],
+    combinedMeshDebug: cloneCombinedMeshDebug(combinedMesh.combinedMeshDebug),
     ...overrides,
   })
   const emptyPlacementDebug = buildPlacementDebugState(currentMatrix, null, idealMatrix, null)
@@ -9205,6 +9335,13 @@ function buildPoseMappingAlignment(
     actualVisibilitySelection.actualVisibleCurrentLandmarkIndices,
     actualVisibilitySelection.actualHiddenCurrentLandmarkIndices,
   )
+  combinedMesh =
+    actualVisibilitySelection.actualVisibleCurrentLandmarkIndices.length === 0
+      ? createEmptyCombinedMeshState("missing_actual_visible_landmarks")
+      : backgroundGrid.sourceBackgroundGridPointsPx.length === 0 ||
+          backgroundGrid.targetBackgroundGridPointsPx.length === 0
+        ? createEmptyCombinedMeshState("missing_background_grid_points")
+        : createEmptyCombinedMeshState("missing_aligned_rendered_ideal")
   if (!renderedIdealLandmarksImage || renderedIdealLandmarksImage.length !== REQUIRED_LANDMARK_COUNT) {
     return {
       alignedRenderedIdeal478: null,
@@ -9682,6 +9819,15 @@ function buildPoseMappingAlignment(
     actualVisibilitySelection,
     alignedRenderedIdeal478,
   )
+  combinedMesh = buildCombinedMeshState({
+    currentLandmarks: currentLandmarksImage,
+    alignedRenderedIdeal478,
+    displayedContentRect,
+    idealOverlayRect,
+    actualVisibleCurrentLandmarkIndices: actualVisibilitySelection.actualVisibleCurrentLandmarkIndices,
+    sourceBackgroundGridPointsPx: backgroundGrid.sourceBackgroundGridPointsPx,
+    targetBackgroundGridPointsPx: backgroundGrid.targetBackgroundGridPointsPx,
+  })
 
   const displacementValues: number[] = []
   const displacementNormalizeLength = Math.max(
@@ -19573,6 +19719,63 @@ function getBackgroundGridAvailability(): DataAvailability {
   return unavailable(`backgroundGridStatus = ${debug.status}; reason = ${debug.skipReason ?? "none"}`)
 }
 
+function getCombinedSourceVerticesAvailability(): DataAvailability {
+  const alignment = state.poseMappingRuntime.alignment
+  if (
+    alignment.combinedSourceVerticesPx.length > 0 &&
+    alignment.combinedSourceVerticesPx.length === alignment.combinedTargetVerticesPx.length
+  ) {
+    return {
+      available: true,
+      reason: `combinedSourceVertexCount = ${alignment.combinedSourceVerticesPx.length}`,
+    }
+  }
+  return unavailable(
+    `combinedMeshStatus = ${alignment.combinedMeshDebug.status}; reason = ${alignment.combinedMeshDebug.skipReason ?? "none"}`,
+  )
+}
+
+function getCombinedTargetVerticesAvailability(): DataAvailability {
+  const alignment = state.poseMappingRuntime.alignment
+  if (
+    alignment.combinedTargetVerticesPx.length > 0 &&
+    alignment.combinedSourceVerticesPx.length === alignment.combinedTargetVerticesPx.length
+  ) {
+    return {
+      available: true,
+      reason: `combinedTargetVertexCount = ${alignment.combinedTargetVerticesPx.length}`,
+    }
+  }
+  return unavailable(
+    `combinedMeshStatus = ${alignment.combinedMeshDebug.status}; reason = ${alignment.combinedMeshDebug.skipReason ?? "none"}`,
+  )
+}
+
+function getCombinedTriangleIndicesAvailability(): DataAvailability {
+  const alignment = state.poseMappingRuntime.alignment
+  if (alignment.triangleIndices.length > 0) {
+    return {
+      available: true,
+      reason: `triangleCount = ${alignment.triangleIndices.length / 3}`,
+    }
+  }
+  return unavailable(
+    `combinedMeshStatus = ${alignment.combinedMeshDebug.status}; reason = ${alignment.combinedMeshDebug.skipReason ?? "none"}`,
+  )
+}
+
+function getCombinedSampleLinesAvailability(): DataAvailability {
+  const source = getCombinedSourceVerticesAvailability()
+  if (!source.available) {
+    return source
+  }
+  const target = getCombinedTargetVerticesAvailability()
+  if (!target.available) {
+    return target
+  }
+  return available()
+}
+
 function getNotImplementedAvailability(): DataAvailability {
   return unavailable("未実装（今回対象外）")
 }
@@ -19590,6 +19793,10 @@ function renderControls() {
   const displayOverlayVideoAvailability = getDisplayOverlayVideoAvailability()
   const displayOverlayAlignedIdealAvailability = getDisplayOverlayAlignedIdealAvailability()
   const backgroundGridAvailability = getBackgroundGridAvailability()
+  const combinedSourceVerticesAvailability = getCombinedSourceVerticesAvailability()
+  const combinedTargetVerticesAvailability = getCombinedTargetVerticesAvailability()
+  const combinedTriangleIndicesAvailability = getCombinedTriangleIndicesAvailability()
+  const combinedSampleLinesAvailability = getCombinedSampleLinesAvailability()
   const notImplementedAvailability = getNotImplementedAvailability()
 
   setToggleState(
@@ -19681,6 +19888,36 @@ function renderControls() {
     state.overlay.showBackgroundGrid,
     !backgroundGridAvailability.available,
     backgroundGridAvailability.reason,
+  )
+  setToggleState(
+    "toggle-combined-source-vertices",
+    state.overlay.showCombinedSourceVertices,
+    !combinedSourceVerticesAvailability.available,
+    combinedSourceVerticesAvailability.reason,
+  )
+  setToggleState(
+    "toggle-combined-target-vertices",
+    state.overlay.showCombinedTargetVertices,
+    !combinedTargetVerticesAvailability.available,
+    combinedTargetVerticesAvailability.reason,
+  )
+  setToggleState(
+    "toggle-source-triangle-mesh",
+    state.overlay.showSourceTriangleMesh,
+    !combinedTriangleIndicesAvailability.available,
+    combinedTriangleIndicesAvailability.reason,
+  )
+  setToggleState(
+    "toggle-target-triangle-mesh",
+    state.overlay.showTargetTriangleMesh,
+    !combinedTriangleIndicesAvailability.available,
+    combinedTriangleIndicesAvailability.reason,
+  )
+  setToggleState(
+    "toggle-sample-source-target-lines",
+    state.overlay.showSampleSourceTargetLines,
+    !combinedSampleLinesAvailability.available,
+    combinedSampleLinesAvailability.reason,
   )
   setToggleState(
     "toggle-displayed-content-rect",
@@ -19876,6 +20113,7 @@ function renderDisplayOverlaySummaryCard() {
   const displayOverlayRedrawDebug = displayOverlayRedrawDebugState
   const actualVisibilityDebug = runtime.alignment.actualVisibilityDebug
   const backgroundGridDebug = runtime.alignment.backgroundGridDebug
+  const combinedMeshDebug = runtime.alignment.combinedMeshDebug
   card.innerHTML = `
     <p>displayedContentRect（動画の実表示領域）を使い、overlay canvas（重ね描きcanvas）上で表示ズレを確認します。</p>
     <dl class="review-grid">
@@ -19900,6 +20138,12 @@ function renderDisplayOverlaySummaryCard() {
       <div><dt>背景格子 edge check</dt><dd>top ${String(backgroundGridDebug.hasTopEdgePoints)} / bottom ${String(backgroundGridDebug.hasBottomEdgePoints)} / left ${String(backgroundGridDebug.hasLeftEdgePoints)} / right ${String(backgroundGridDebug.hasRightEdgePoints)} / corners ${String(backgroundGridDebug.hasFourCorners)}</dd></div>
       <div><dt>faceInteriorTriangle（顔内部判定三角形）</dt><dd>${formatNullableCount(backgroundGridDebug.faceInteriorTriangleCount)}</dd></div>
       <div><dt>source / target background grid（変形元 / 変形先背景格子）</dt><dd>${formatNullableCount(backgroundGridDebug.sourceBackgroundGridPointCount)} / ${formatNullableCount(backgroundGridDebug.targetBackgroundGridPointCount)}</dd></div>
+      <div><dt>combined mesh status（結合メッシュ状態）</dt><dd>${escapeHtml(combinedMeshDebug.status)} / ${escapeHtml(combinedMeshDebug.skipReason ?? "none")}</dd></div>
+      <div><dt>combined vertices（結合頂点）</dt><dd>source ${formatNullableCount(combinedMeshDebug.combinedSourceVertexCount)} / target ${formatNullableCount(combinedMeshDebug.combinedTargetVertexCount)} / match ${String(combinedMeshDebug.sourceTargetCountMatches)}</dd></div>
+      <div><dt>combined vertex kinds（結合頂点種別）</dt><dd>face ${formatNullableCount(combinedMeshDebug.faceLandmarkVertexCount)} / interior ${formatNullableCount(combinedMeshDebug.backgroundGridInteriorVertexCount)} / boundary ${formatNullableCount(combinedMeshDebug.backgroundGridBoundaryVertexCount)}</dd></div>
+      <div><dt>triangleIndices（三角形接続情報）</dt><dd>${escapeHtml(formatAvailability(getCombinedTriangleIndicesAvailability(), runtime.alignment.triangleIndices.length / 3 || null))}</dd></div>
+      <div><dt>triangulation input（分割入力）</dt><dd>used ${formatNullableCount(combinedMeshDebug.triangulationInputVertexCount)} / duplicate skipped ${formatNullableCount(combinedMeshDebug.duplicateSkippedVertexCount)} / invalid ${formatNullableCount(combinedMeshDebug.invalidVertexCount)}</dd></div>
+      <div><dt>triangle diagnostics（三角形診断）</dt><dd>triangles ${formatNullableCount(combinedMeshDebug.triangleCount)} / filtered ${formatNullableCount(combinedMeshDebug.filteredTriangleCount)} / degenerate ${formatNullableCount(combinedMeshDebug.sourceDegenerateTriangleCount)} / target inversion ${formatNullableCount(combinedMeshDebug.potentialTargetInversionTriangleCount)} / long ${formatNullableCount(combinedMeshDebug.longTriangleCount)}</dd></div>
       <div><dt>overlayLifecycle（重ね表示ライフサイクル）</dt><dd>visible ${String(lifecycle.alignedRenderedIdealVisible)} / gen ${String(lifecycle.generationMatch)} / token ${String(lifecycle.tokenMatch)} / renderPose ${String(lifecycle.renderPoseValid)}</dd></div>
       <div><dt>overlay skipped reason（重ね表示スキップ理由）</dt><dd>${escapeHtml(lifecycle.skippedReason)}</dd></div>
       <div><dt>renderedIdeal478（レンダー理想478点）</dt><dd>live video（ライブ映像）上には直接表示しません。</dd></div>
@@ -19927,6 +20171,10 @@ function formatAvailability(availability: DataAvailability, count: number | null
     return `available（生成済み） / count = ${formatNullableCount(count)}`
   }
   return `not available（未生成） / count = ${formatNullableCount(count)} / reason: ${availability.reason}`
+}
+
+function formatNumericSummary(summary: NumericSummary) {
+  return `min ${formatRealtimeNullableNumber(summary.min)} / p50 ${formatRealtimeNullableNumber(summary.p50)} / p95 ${formatRealtimeNullableNumber(summary.p95)} / max ${formatRealtimeNullableNumber(summary.max)} / mean ${formatRealtimeNullableNumber(summary.mean)}`
 }
 
 function renderPoseMappingDebugTab() {
@@ -20142,6 +20390,7 @@ function renderPoseMappingDebugTab() {
         <div><dt>excludedReasonCounts</dt><dd>${escapeHtml(JSON.stringify(runtime.alignment.excludedReasonCounts))}</dd></div>
         <div><dt>actualVisibilityDebug</dt><dd>${escapeHtml(JSON.stringify(roundActualVisibilityDebugForState(runtime.alignment.actualVisibilityDebug)))}</dd></div>
         <div><dt>backgroundGridDebug</dt><dd>${escapeHtml(JSON.stringify(roundBackgroundGridDebugForState(runtime.alignment.backgroundGridDebug)))}</dd></div>
+        <div><dt>combinedMeshDebug（結合メッシュデバッグ）</dt><dd>${escapeHtml(JSON.stringify(roundCombinedMeshDebugForState(runtime.alignment.combinedMeshDebug)))}</dd></div>
         <div><dt>displacementSummary</dt><dd>${escapeHtml(JSON.stringify(roundDisplacementSummary(runtime.alignment.displacementSummary)))}</dd></div>
         <div><dt>semantic5ptDebug</dt><dd>${escapeHtml(JSON.stringify(roundSemantic5ptDebugForState(runtime.alignment.semantic5ptDebug)))}</dd></div>
         <div><dt>alignedRenderedIdeal478</dt><dd>${formatNullableCount(runtime.alignedRenderedIdeal478?.length ?? null)}</dd></div>
@@ -21795,6 +22044,8 @@ function drawLiveOverlay(reason: DisplayOverlayRedrawReason = "manual_render") {
     drawBackgroundGridOverlay(context, state.poseMappingRuntime.alignment)
   }
 
+  drawCombinedMeshOverlay(context, state.poseMappingRuntime.alignment)
+
   if (
     canDrawAlignedIdeal &&
     state.overlay.showMeshPairs &&
@@ -22247,6 +22498,153 @@ function drawBackgroundGridOverlay(
     context.fillStyle = "rgba(15, 170, 132, 0.74)"
     context.fillRect(point.x - 0.75, point.y - 0.75, 1.5, 1.5)
   }
+  context.restore()
+}
+
+function drawCombinedMeshOverlay(
+  context: CanvasRenderingContext2D,
+  alignment: PoseMappingAlignmentState,
+) {
+  const hasVertices =
+    alignment.combinedSourceVerticesPx.length > 0 &&
+    alignment.combinedSourceVerticesPx.length === alignment.combinedTargetVerticesPx.length
+  const hasTriangles = alignment.triangleIndices.length > 0
+  if (!hasVertices && !hasTriangles) {
+    return
+  }
+
+  if (state.overlay.showSourceTriangleMesh && hasTriangles) {
+    drawTriangleMeshPx(
+      context,
+      alignment.combinedSourceVerticesPx,
+      alignment.triangleIndices,
+      "rgba(41, 92, 218, 0.20)",
+      0.55,
+    )
+  }
+  if (state.overlay.showTargetTriangleMesh && hasTriangles) {
+    drawTriangleMeshPx(
+      context,
+      alignment.combinedTargetVerticesPx,
+      alignment.triangleIndices,
+      "rgba(220, 71, 94, 0.20)",
+      0.55,
+    )
+  }
+  if (state.overlay.showSampleSourceTargetLines && hasVertices) {
+    drawSampleCombinedMeshPairLines(context, alignment)
+  }
+  if (state.overlay.showCombinedSourceVertices && hasVertices) {
+    drawCombinedMeshVerticesPx(
+      context,
+      alignment.combinedSourceVerticesPx,
+      alignment.combinedVertexMetadata,
+      {
+        faceLandmark: "rgba(41, 92, 218, 0.88)",
+        backgroundGridInterior: "rgba(15, 170, 132, 0.78)",
+        backgroundGridBoundary: "rgba(255, 194, 64, 0.95)",
+      },
+      1.45,
+    )
+  }
+  if (state.overlay.showCombinedTargetVertices && hasVertices) {
+    drawCombinedMeshVerticesPx(
+      context,
+      alignment.combinedTargetVerticesPx,
+      alignment.combinedVertexMetadata,
+      {
+        faceLandmark: "rgba(220, 71, 94, 0.9)",
+        backgroundGridInterior: "rgba(15, 170, 132, 0.52)",
+        backgroundGridBoundary: "rgba(255, 194, 64, 0.76)",
+      },
+      1.35,
+    )
+  }
+}
+
+function drawTriangleMeshPx(
+  context: CanvasRenderingContext2D,
+  vertices: readonly CombinedMeshPointPx[],
+  triangleIndices: readonly number[],
+  color: string,
+  lineWidth: number,
+) {
+  context.save()
+  context.strokeStyle = color
+  context.lineWidth = lineWidth
+  context.beginPath()
+  for (let offset = 0; offset + 2 < triangleIndices.length; offset += 3) {
+    const a = vertices[triangleIndices[offset]]
+    const b = vertices[triangleIndices[offset + 1]]
+    const c = vertices[triangleIndices[offset + 2]]
+    if (!isFinitePoint2(a) || !isFinitePoint2(b) || !isFinitePoint2(c)) {
+      continue
+    }
+    context.moveTo(a.x, a.y)
+    context.lineTo(b.x, b.y)
+    context.lineTo(c.x, c.y)
+    context.closePath()
+  }
+  context.stroke()
+  context.restore()
+}
+
+function drawCombinedMeshVerticesPx(
+  context: CanvasRenderingContext2D,
+  vertices: readonly CombinedMeshPointPx[],
+  metadata: readonly CombinedVertexMetadata[],
+  colors: Record<CombinedMeshVertexKind, string>,
+  faceRadius: number,
+) {
+  context.save()
+  for (let index = 0; index < Math.min(vertices.length, metadata.length); index += 1) {
+    const point = vertices[index]
+    if (!isFinitePoint2(point)) {
+      continue
+    }
+    const kind = metadata[index].kind
+    context.fillStyle = colors[kind]
+    if (kind === "backgroundGridBoundary") {
+      context.fillRect(point.x - 1.45, point.y - 1.45, 2.9, 2.9)
+      continue
+    }
+    if (kind === "backgroundGridInterior") {
+      context.fillRect(point.x - 0.9, point.y - 0.9, 1.8, 1.8)
+      continue
+    }
+    context.beginPath()
+    context.arc(point.x, point.y, faceRadius, 0, Math.PI * 2)
+    context.fill()
+  }
+  context.restore()
+}
+
+function drawSampleCombinedMeshPairLines(
+  context: CanvasRenderingContext2D,
+  alignment: PoseMappingAlignmentState,
+) {
+  const vertexCount = Math.min(
+    alignment.combinedSourceVerticesPx.length,
+    alignment.combinedTargetVerticesPx.length,
+  )
+  if (vertexCount === 0) {
+    return
+  }
+  const step = Math.max(1, Math.ceil(vertexCount / COMBINED_MESH_CORRESPONDENCE_LINE_SAMPLE_LIMIT))
+  context.save()
+  context.strokeStyle = "rgba(48, 118, 92, 0.28)"
+  context.lineWidth = 0.8
+  context.beginPath()
+  for (let index = 0; index < vertexCount; index += step) {
+    const source = alignment.combinedSourceVerticesPx[index]
+    const target = alignment.combinedTargetVerticesPx[index]
+    if (!isFinitePoint2(source) || !isFinitePoint2(target)) {
+      continue
+    }
+    context.moveTo(source.x, source.y)
+    context.lineTo(target.x, target.y)
+  }
+  context.stroke()
   context.restore()
 }
 
@@ -22767,10 +23165,36 @@ function getRealtimeItems(): Array<[string, string]> {
 }
 
 function getWarpMeshItems(): Array<[string, string]> {
+  const alignment = state.poseMappingRuntime.alignment
+  const debug = alignment.combinedMeshDebug
   return [
-    ["sourceVerticesStatus", "not_ready"],
-    ["targetVerticesStatus", "not_ready"],
-    ["triangleIndicesStatus", "not_ready"],
+    ["combinedMeshStatus", `${debug.status} / ${debug.skipReason ?? "none"}`],
+    ["coordinateSpace", debug.coordinateSpace],
+    ["combinedSourceVerticesPx", formatAvailability(getCombinedSourceVerticesAvailability(), alignment.combinedSourceVerticesPx.length || null)],
+    ["combinedTargetVerticesPx", formatAvailability(getCombinedTargetVerticesAvailability(), alignment.combinedTargetVerticesPx.length || null)],
+    ["combinedVertexMetadata", formatNullableCount(alignment.combinedVertexMetadata.length)],
+    ["sourceTargetCountMatches", String(debug.sourceTargetCountMatches)],
+    ["indexCorrespondenceValid", String(debug.indexCorrespondenceValid)],
+    ["faceLandmarkVertexCount", formatNullableCount(debug.faceLandmarkVertexCount)],
+    ["backgroundGridInteriorVertexCount", formatNullableCount(debug.backgroundGridInteriorVertexCount)],
+    ["backgroundGridBoundaryVertexCount", formatNullableCount(debug.backgroundGridBoundaryVertexCount)],
+    ["triangulationInputVertexCount", formatNullableCount(debug.triangulationInputVertexCount)],
+    ["duplicateSkippedVertexCount", formatNullableCount(debug.duplicateSkippedVertexCount)],
+    ["invalidVertexCount", formatNullableCount(debug.invalidVertexCount)],
+    ["triangleIndicesStatus", formatAvailability(getCombinedTriangleIndicesAvailability(), alignment.triangleIndices.length / 3 || null)],
+    ["triangleCount", formatNullableCount(debug.triangleCount)],
+    ["filteredTriangleCount", formatNullableCount(debug.filteredTriangleCount)],
+    ["sourceDegenerateTriangleCount", formatNullableCount(debug.sourceDegenerateTriangleCount)],
+    ["potentialTargetInversionTriangleCount", formatNullableCount(debug.potentialTargetInversionTriangleCount)],
+    ["longTriangleCount", formatNullableCount(debug.longTriangleCount)],
+    ["sourceBoundsPx", formatRect(debug.sourceBoundsPx)],
+    ["targetBoundsPx", formatRect(debug.targetBoundsPx)],
+    ["sourceTriangleAreaSummaryPx2", formatNumericSummary(debug.sourceTriangleAreaSummaryPx2)],
+    ["targetTriangleAreaSummaryPx2", formatNumericSummary(debug.targetTriangleAreaSummaryPx2)],
+    ["edgeLengthSummaryPx", formatNumericSummary(debug.edgeLengthSummaryPx)],
+    ["sampleCombinedVertices", JSON.stringify(debug.sampleCombinedVertices.map(roundCombinedMeshSampleVertexForState))],
+    ["sampleTriangleIndices", JSON.stringify(debug.sampleTriangleIndices)],
+    ["samplePotentialTargetInversionTriangles", JSON.stringify(debug.samplePotentialTargetInversionTriangles.map(roundCombinedMeshPotentialInversionSampleForState))],
     ["webglWarpStatus", "not_implemented"],
   ]
 }
@@ -22887,9 +23311,13 @@ function getRawState() {
     objPoseMapping: getObjPoseMappingDebugExport(),
     placementAnalysis: getPlacementFunctionAnalysisRawSummary(),
     warpMesh: {
-      sourceVerticesStatus: "not_ready",
-      targetVerticesStatus: "not_ready",
-      triangleIndicesStatus: "not_ready",
+      combinedMeshDebug: roundCombinedMeshDebugForState(state.poseMappingRuntime.alignment.combinedMeshDebug),
+      combinedSourceVertexCount: state.poseMappingRuntime.alignment.combinedSourceVerticesPx.length,
+      combinedTargetVertexCount: state.poseMappingRuntime.alignment.combinedTargetVerticesPx.length,
+      combinedVertexMetadataCount: state.poseMappingRuntime.alignment.combinedVertexMetadata.length,
+      triangulationVertexIndexCount: state.poseMappingRuntime.alignment.triangulationVertexIndices.length,
+      triangleIndexCount: state.poseMappingRuntime.alignment.triangleIndices.length,
+      triangleCount: state.poseMappingRuntime.alignment.triangleIndices.length / 3,
       webglWarpStatus: "not_implemented",
     },
     logs: state.logs.slice(-20),
@@ -24921,6 +25349,725 @@ function cloneBackgroundGridTriangle(triangle: BackgroundGridTrianglePx): Backgr
   }
 }
 
+function createEmptyNumericSummary(): NumericSummary {
+  return {
+    min: null,
+    max: null,
+    mean: null,
+    p50: null,
+    p95: null,
+  }
+}
+
+function createNumericSummary(values: readonly number[]): NumericSummary {
+  const finiteValues = values.filter(Number.isFinite).sort((a, b) => a - b)
+  if (finiteValues.length === 0) {
+    return createEmptyNumericSummary()
+  }
+  const sum = finiteValues.reduce((total, value) => total + value, 0)
+  return {
+    min: finiteValues[0],
+    max: finiteValues[finiteValues.length - 1],
+    mean: sum / finiteValues.length,
+    p50: percentileSorted(finiteValues, 0.5),
+    p95: percentileSorted(finiteValues, 0.95),
+  }
+}
+
+function createEmptyCombinedMeshDebug(
+  skipReason: CombinedMeshSkipReason | null = null,
+): CombinedMeshDebug {
+  return {
+    status: "skipped",
+    skipReason,
+    coordinateSpace: COMBINED_MESH_COORDINATE_SPACE,
+    combinedSourceVertexCount: 0,
+    combinedTargetVertexCount: 0,
+    sourceTargetCountMatches: true,
+    indexCorrespondenceValid: true,
+    faceLandmarkVertexCount: 0,
+    backgroundGridInteriorVertexCount: 0,
+    backgroundGridBoundaryVertexCount: 0,
+    triangulationInputVertexCount: 0,
+    duplicateSkippedVertexCount: 0,
+    invalidVertexCount: 0,
+    triangleCount: 0,
+    filteredTriangleCount: 0,
+    sourceDegenerateTriangleCount: 0,
+    potentialTargetInversionTriangleCount: 0,
+    sourceBoundsPx: null,
+    targetBoundsPx: null,
+    sourceTriangleAreaSummaryPx2: createEmptyNumericSummary(),
+    targetTriangleAreaSummaryPx2: createEmptyNumericSummary(),
+    edgeLengthSummaryPx: createEmptyNumericSummary(),
+    longTriangleCount: 0,
+    sampleCombinedVertices: [],
+    sampleTriangleIndices: [],
+    samplePotentialTargetInversionTriangles: [],
+  }
+}
+
+function createEmptyCombinedMeshState(
+  skipReason: CombinedMeshSkipReason | null = null,
+): CombinedMeshState {
+  return {
+    combinedSourceVerticesPx: [],
+    combinedTargetVerticesPx: [],
+    combinedVertexMetadata: [],
+    triangulationVertexIndices: [],
+    triangleIndices: [],
+    combinedMeshDebug: createEmptyCombinedMeshDebug(skipReason),
+  }
+}
+
+function buildCombinedMeshState(input: {
+  currentLandmarks: ReferenceLandmark[] | null
+  alignedRenderedIdeal478: ReferenceLandmark[] | null
+  displayedContentRect: Rect | null
+  idealOverlayRect: Rect | null
+  actualVisibleCurrentLandmarkIndices: readonly number[]
+  sourceBackgroundGridPointsPx: readonly BackgroundGridPointPx[]
+  targetBackgroundGridPointsPx: readonly BackgroundGridPointPx[]
+}): CombinedMeshState {
+  if (
+    !input.displayedContentRect ||
+    input.displayedContentRect.width <= 0 ||
+    input.displayedContentRect.height <= 0 ||
+    !input.idealOverlayRect ||
+    input.idealOverlayRect.width <= 0 ||
+    input.idealOverlayRect.height <= 0
+  ) {
+    return createEmptyCombinedMeshState("missing_displayed_content_rect")
+  }
+  if (!input.currentLandmarks || input.currentLandmarks.length !== REQUIRED_LANDMARK_COUNT) {
+    return createEmptyCombinedMeshState("missing_current_landmarks")
+  }
+  if (input.actualVisibleCurrentLandmarkIndices.length === 0) {
+    return createEmptyCombinedMeshState("missing_actual_visible_landmarks")
+  }
+  if (!input.alignedRenderedIdeal478 || input.alignedRenderedIdeal478.length !== REQUIRED_LANDMARK_COUNT) {
+    return createEmptyCombinedMeshState("missing_aligned_rendered_ideal")
+  }
+  if (
+    input.sourceBackgroundGridPointsPx.length === 0 ||
+    input.targetBackgroundGridPointsPx.length === 0
+  ) {
+    return createEmptyCombinedMeshState("missing_background_grid_points")
+  }
+  if (input.sourceBackgroundGridPointsPx.length !== input.targetBackgroundGridPointsPx.length) {
+    return createEmptyCombinedMeshState("source_target_background_grid_mismatch")
+  }
+
+  const combinedSourceVerticesPx: CombinedMeshPointPx[] = []
+  const combinedTargetVerticesPx: CombinedMeshPointPx[] = []
+  const combinedVertexMetadata: CombinedVertexMetadata[] = []
+  const currentPointsPx = createDisplayedLandmarkPointsPx(input.currentLandmarks, input.displayedContentRect)
+  let invalidVertexCount = 0
+
+  const pushVertex = (
+    kind: CombinedMeshVertexKind,
+    source: CombinedMeshPointPx | null,
+    target: CombinedMeshPointPx | null,
+    landmarkIndex: number | null,
+    backgroundGridIndex: number | null,
+  ) => {
+    if (!isFinitePoint2(source) || !isFinitePoint2(target)) {
+      invalidVertexCount += 1
+      return
+    }
+    const index = combinedSourceVerticesPx.length
+    combinedSourceVerticesPx.push(cloneCombinedMeshPoint(source))
+    combinedTargetVerticesPx.push(cloneCombinedMeshPoint(target))
+    combinedVertexMetadata.push({
+      kind,
+      sourceIndex: index,
+      targetIndex: index,
+      landmarkIndex,
+      backgroundGridIndex,
+    })
+  }
+
+  for (const landmarkIndex of input.actualVisibleCurrentLandmarkIndices) {
+    if (
+      landmarkIndex < 0 ||
+      landmarkIndex >= REQUIRED_LANDMARK_COUNT ||
+      !Number.isInteger(landmarkIndex)
+    ) {
+      invalidVertexCount += 1
+      continue
+    }
+    const source = currentPointsPx[landmarkIndex]
+    const targetLandmark = input.alignedRenderedIdeal478[landmarkIndex]
+    const target = isFiniteLandmark(targetLandmark)
+      ? normalizedLandmarkToPreviewPixel(targetLandmark, input.idealOverlayRect)
+      : null
+    pushVertex("faceLandmark", source, target, landmarkIndex, null)
+  }
+
+  const pushBackgroundGridVertices = (kind: BackgroundGridPointKind) => {
+    for (let backgroundGridIndex = 0; backgroundGridIndex < input.sourceBackgroundGridPointsPx.length; backgroundGridIndex += 1) {
+      const source = input.sourceBackgroundGridPointsPx[backgroundGridIndex]
+      const target = input.targetBackgroundGridPointsPx[backgroundGridIndex]
+      if (source.kind !== kind) {
+        continue
+      }
+      if (target.kind !== kind) {
+        invalidVertexCount += 1
+        continue
+      }
+      pushVertex(kind, source, target, null, backgroundGridIndex)
+    }
+  }
+
+  pushBackgroundGridVertices("backgroundGridInterior")
+  pushBackgroundGridVertices("backgroundGridBoundary")
+
+  const baseDebug = buildCombinedMeshBaseDebug({
+    combinedSourceVerticesPx,
+    combinedTargetVerticesPx,
+    combinedVertexMetadata,
+    invalidVertexCount,
+  })
+
+  if (
+    combinedSourceVerticesPx.length === 0 ||
+    combinedTargetVerticesPx.length === 0 ||
+    !baseDebug.sourceTargetCountMatches ||
+    !baseDebug.indexCorrespondenceValid
+  ) {
+    return {
+      combinedSourceVerticesPx,
+      combinedTargetVerticesPx,
+      combinedVertexMetadata,
+      triangulationVertexIndices: [],
+      triangleIndices: [],
+      combinedMeshDebug: {
+        ...createEmptyCombinedMeshDebug("invalid_combined_vertices"),
+        ...baseDebug,
+        status: "skipped",
+        skipReason: "invalid_combined_vertices",
+      },
+    }
+  }
+
+  const triangulationInput = buildTriangulationVertexIndices(
+    combinedSourceVerticesPx,
+    combinedTargetVerticesPx,
+  )
+  if (triangulationInput.triangulationVertexIndices.length < 3) {
+    return {
+      combinedSourceVerticesPx,
+      combinedTargetVerticesPx,
+      combinedVertexMetadata,
+      triangulationVertexIndices: triangulationInput.triangulationVertexIndices,
+      triangleIndices: [],
+      combinedMeshDebug: {
+        ...createEmptyCombinedMeshDebug("too_few_triangulation_vertices"),
+        ...baseDebug,
+        status: "skipped",
+        skipReason: "too_few_triangulation_vertices",
+        triangulationInputVertexCount: triangulationInput.triangulationVertexIndices.length,
+        duplicateSkippedVertexCount: triangulationInput.duplicateSkippedVertexCount,
+        invalidVertexCount: invalidVertexCount + triangulationInput.invalidVertexCount,
+      },
+    }
+  }
+
+  let rawTriangleIndices: Array<[number, number, number]>
+  try {
+    rawTriangleIndices = buildCombinedMeshDelaunayTriangleIndices(
+      combinedSourceVerticesPx,
+      triangulationInput.triangulationVertexIndices,
+    )
+  } catch {
+    return {
+      combinedSourceVerticesPx,
+      combinedTargetVerticesPx,
+      combinedVertexMetadata,
+      triangulationVertexIndices: triangulationInput.triangulationVertexIndices,
+      triangleIndices: [],
+      combinedMeshDebug: {
+        ...createEmptyCombinedMeshDebug("triangulation_failed"),
+        ...baseDebug,
+        status: "skipped",
+        skipReason: "triangulation_failed",
+        triangulationInputVertexCount: triangulationInput.triangulationVertexIndices.length,
+        duplicateSkippedVertexCount: triangulationInput.duplicateSkippedVertexCount,
+        invalidVertexCount: invalidVertexCount + triangulationInput.invalidVertexCount,
+      },
+    }
+  }
+
+  const filtered = filterCombinedMeshTriangles(
+    rawTriangleIndices,
+    combinedSourceVerticesPx,
+    combinedTargetVerticesPx,
+  )
+  if (filtered.triangleIndices.length === 0) {
+    return {
+      combinedSourceVerticesPx,
+      combinedTargetVerticesPx,
+      combinedVertexMetadata,
+      triangulationVertexIndices: triangulationInput.triangulationVertexIndices,
+      triangleIndices: [],
+      combinedMeshDebug: {
+        ...createEmptyCombinedMeshDebug("empty_triangle_indices"),
+        ...baseDebug,
+        status: "skipped",
+        skipReason: "empty_triangle_indices",
+        triangulationInputVertexCount: triangulationInput.triangulationVertexIndices.length,
+        duplicateSkippedVertexCount: triangulationInput.duplicateSkippedVertexCount,
+        invalidVertexCount: invalidVertexCount + triangulationInput.invalidVertexCount,
+        filteredTriangleCount: filtered.filteredTriangleCount,
+        sourceDegenerateTriangleCount: filtered.sourceDegenerateTriangleCount,
+      },
+    }
+  }
+
+  return {
+    combinedSourceVerticesPx,
+    combinedTargetVerticesPx,
+    combinedVertexMetadata,
+    triangulationVertexIndices: triangulationInput.triangulationVertexIndices,
+    triangleIndices: filtered.triangleIndices,
+    combinedMeshDebug: {
+      ...createEmptyCombinedMeshDebug(),
+      ...baseDebug,
+      status: "available",
+      skipReason: null,
+      triangulationInputVertexCount: triangulationInput.triangulationVertexIndices.length,
+      duplicateSkippedVertexCount: triangulationInput.duplicateSkippedVertexCount,
+      invalidVertexCount: invalidVertexCount + triangulationInput.invalidVertexCount,
+      triangleCount: filtered.triangleIndices.length / 3,
+      filteredTriangleCount: filtered.filteredTriangleCount,
+      sourceDegenerateTriangleCount: filtered.sourceDegenerateTriangleCount,
+      potentialTargetInversionTriangleCount: filtered.potentialTargetInversionTriangleCount,
+      sourceTriangleAreaSummaryPx2: createNumericSummary(filtered.sourceTriangleAreasPx2),
+      targetTriangleAreaSummaryPx2: createNumericSummary(filtered.targetTriangleAreasPx2),
+      edgeLengthSummaryPx: createNumericSummary(filtered.edgeLengthsPx),
+      longTriangleCount: filtered.longTriangleCount,
+      sampleTriangleIndices: filtered.sampleTriangleIndices,
+      samplePotentialTargetInversionTriangles: filtered.samplePotentialTargetInversionTriangles,
+    },
+  }
+}
+
+function buildCombinedMeshBaseDebug(input: {
+  combinedSourceVerticesPx: readonly CombinedMeshPointPx[]
+  combinedTargetVerticesPx: readonly CombinedMeshPointPx[]
+  combinedVertexMetadata: readonly CombinedVertexMetadata[]
+  invalidVertexCount: number
+}): Partial<CombinedMeshDebug> {
+  const sourceTargetCountMatches =
+    input.combinedSourceVerticesPx.length === input.combinedTargetVerticesPx.length
+  const indexCorrespondenceValid =
+    sourceTargetCountMatches &&
+    input.combinedVertexMetadata.length === input.combinedSourceVerticesPx.length &&
+    input.combinedVertexMetadata.every((metadata, index) =>
+      metadata.sourceIndex === index &&
+      metadata.targetIndex === index
+    )
+  return {
+    combinedSourceVertexCount: input.combinedSourceVerticesPx.length,
+    combinedTargetVertexCount: input.combinedTargetVerticesPx.length,
+    sourceTargetCountMatches,
+    indexCorrespondenceValid,
+    faceLandmarkVertexCount: input.combinedVertexMetadata.filter((metadata) => metadata.kind === "faceLandmark").length,
+    backgroundGridInteriorVertexCount: input.combinedVertexMetadata.filter((metadata) => metadata.kind === "backgroundGridInterior").length,
+    backgroundGridBoundaryVertexCount: input.combinedVertexMetadata.filter((metadata) => metadata.kind === "backgroundGridBoundary").length,
+    invalidVertexCount: input.invalidVertexCount,
+    sourceBoundsPx: calculateCombinedMeshBounds(input.combinedSourceVerticesPx),
+    targetBoundsPx: calculateCombinedMeshBounds(input.combinedTargetVerticesPx),
+    sampleCombinedVertices: createCombinedMeshSampleVertices(
+      input.combinedSourceVerticesPx,
+      input.combinedTargetVerticesPx,
+      input.combinedVertexMetadata,
+    ),
+  }
+}
+
+function buildTriangulationVertexIndices(
+  sourceVertices: readonly CombinedMeshPointPx[],
+  targetVertices: readonly CombinedMeshPointPx[],
+) {
+  const triangulationVertexIndices: number[] = []
+  const occupiedBuckets = new Map<string, number[]>()
+  let duplicateSkippedVertexCount = 0
+  let invalidVertexCount = 0
+
+  for (let vertexIndex = 0; vertexIndex < sourceVertices.length; vertexIndex += 1) {
+    const source = sourceVertices[vertexIndex]
+    const target = targetVertices[vertexIndex]
+    if (!isFinitePoint2(source) || !isFinitePoint2(target)) {
+      invalidVertexCount += 1
+      continue
+    }
+    if (hasNearbyTriangulationPoint(source, sourceVertices, occupiedBuckets)) {
+      duplicateSkippedVertexCount += 1
+      continue
+    }
+    const bucketKey = getTriangulationPointBucketKey(source)
+    const bucket = occupiedBuckets.get(bucketKey) ?? []
+    bucket.push(vertexIndex)
+    occupiedBuckets.set(bucketKey, bucket)
+    triangulationVertexIndices.push(vertexIndex)
+  }
+
+  return {
+    triangulationVertexIndices,
+    duplicateSkippedVertexCount,
+    invalidVertexCount,
+  }
+}
+
+function hasNearbyTriangulationPoint(
+  point: CombinedMeshPointPx,
+  sourceVertices: readonly CombinedMeshPointPx[],
+  occupiedBuckets: ReadonlyMap<string, readonly number[]>,
+) {
+  const bucketX = getTriangulationPointBucketPosition(point.x)
+  const bucketY = getTriangulationPointBucketPosition(point.y)
+  for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+    for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+      const bucket = occupiedBuckets.get(`${bucketX + offsetX}:${bucketY + offsetY}`)
+      if (!bucket) {
+        continue
+      }
+      for (const existingIndex of bucket) {
+        const existing = sourceVertices[existingIndex]
+        if (isFinitePoint2(existing) && distance2d(point, existing) <= COMBINED_MESH_DUPLICATE_EPSILON_PX) {
+          return true
+        }
+      }
+    }
+  }
+  return false
+}
+
+function getTriangulationPointBucketPosition(value: number) {
+  return Math.floor(value / COMBINED_MESH_DUPLICATE_EPSILON_PX)
+}
+
+function getTriangulationPointBucketKey(point: CombinedMeshPointPx) {
+  return `${getTriangulationPointBucketPosition(point.x)}:${getTriangulationPointBucketPosition(point.y)}`
+}
+
+function buildCombinedMeshDelaunayTriangleIndices(
+  sourceVertices: readonly CombinedMeshPointPx[],
+  triangulationVertexIndices: readonly number[],
+): Array<[number, number, number]> {
+  const points = triangulationVertexIndices
+    .map((combinedVertexIndex) => {
+      const point = sourceVertices[combinedVertexIndex]
+      return {
+        x: point.x,
+        y: point.y,
+        combinedVertexIndex,
+      }
+    })
+    .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
+
+  if (points.length < 3) {
+    return []
+  }
+
+  const bounds = calculateCombinedMeshBounds(points)
+  if (!bounds) {
+    return []
+  }
+  const center = {
+    x: bounds.x + bounds.width / 2,
+    y: bounds.y + bounds.height / 2,
+  }
+  const span = Math.max(bounds.width, bounds.height, 0.001) * 24
+  const superPointStart = points.length
+  const workingPoints = [
+    ...points,
+    { x: center.x - span, y: center.y - span, combinedVertexIndex: -1 },
+    { x: center.x, y: center.y + span, combinedVertexIndex: -1 },
+    { x: center.x + span, y: center.y - span, combinedVertexIndex: -1 },
+  ]
+  let triangles: Array<[number, number, number]> = [
+    [superPointStart, superPointStart + 1, superPointStart + 2],
+  ]
+
+  for (let pointIndex = 0; pointIndex < points.length; pointIndex += 1) {
+    const point = workingPoints[pointIndex]
+    const badTriangles = triangles.filter((triangle) =>
+      isCombinedMeshPointInCircumcircle(point, triangle, workingPoints),
+    )
+    const boundaryEdges = getCombinedMeshBoundaryEdges(badTriangles)
+    triangles = triangles.filter((triangle) => !badTriangles.includes(triangle))
+    triangles.push(
+      ...boundaryEdges.map((edge) => [edge[0], edge[1], pointIndex] as [number, number, number]),
+    )
+  }
+
+  return triangles
+    .filter((triangle) => triangle.every((index) => index < superPointStart))
+    .map((triangle) => {
+      const indices = triangle.map((index) => workingPoints[index].combinedVertexIndex)
+      return normalizeCombinedMeshTriangleWinding(
+        indices as [number, number, number],
+        sourceVertices,
+      )
+    })
+    .filter((triangle) => new Set(triangle).size === 3)
+}
+
+function getCombinedMeshBoundaryEdges(triangles: Array<[number, number, number]>) {
+  const edgeCounts = new Map<string, { edge: [number, number]; count: number }>()
+  for (const triangle of triangles) {
+    const edges: Array<[number, number]> = [
+      [triangle[0], triangle[1]],
+      [triangle[1], triangle[2]],
+      [triangle[2], triangle[0]],
+    ]
+    for (const edge of edges) {
+      const key = [...edge].sort((a, b) => a - b).join(":")
+      const current = edgeCounts.get(key)
+      if (current) {
+        current.count += 1
+      } else {
+        edgeCounts.set(key, { edge, count: 1 })
+      }
+    }
+  }
+  return Array.from(edgeCounts.values())
+    .filter((entry) => entry.count === 1)
+    .map((entry) => entry.edge)
+}
+
+function isCombinedMeshPointInCircumcircle(
+  point: CombinedMeshPointPx,
+  triangle: [number, number, number],
+  points: readonly CombinedMeshPointPx[],
+) {
+  const a = points[triangle[0]]
+  const b = points[triangle[1]]
+  const c = points[triangle[2]]
+  const ax = a.x - point.x
+  const ay = a.y - point.y
+  const bx = b.x - point.x
+  const by = b.y - point.y
+  const cx = c.x - point.x
+  const cy = c.y - point.y
+  const determinant =
+    (ax * ax + ay * ay) * (bx * cy - cx * by) -
+    (bx * bx + by * by) * (ax * cy - cx * ay) +
+    (cx * cx + cy * cy) * (ax * by - bx * ay)
+  const orientation = signedTriangleAreaPx2(a, b, c)
+  return orientation > 0 ? determinant > 0 : determinant < 0
+}
+
+function normalizeCombinedMeshTriangleWinding(
+  indices: [number, number, number],
+  sourceVertices: readonly CombinedMeshPointPx[],
+): [number, number, number] {
+  const a = sourceVertices[indices[0]]
+  const b = sourceVertices[indices[1]]
+  const c = sourceVertices[indices[2]]
+  return signedTriangleAreaPx2(a, b, c) >= 0
+    ? indices
+    : [indices[0], indices[2], indices[1]]
+}
+
+function filterCombinedMeshTriangles(
+  rawTriangleIndices: readonly Array<[number, number, number]>,
+  sourceVertices: readonly CombinedMeshPointPx[],
+  targetVertices: readonly CombinedMeshPointPx[],
+) {
+  const triangleIndices: number[] = []
+  const sourceTriangleAreasPx2: number[] = []
+  const targetTriangleAreasPx2: number[] = []
+  const edgeLengthsPx: number[] = []
+  const sampleTriangleIndices: Array<[number, number, number]> = []
+  const samplePotentialTargetInversionTriangles: CombinedMeshPotentialInversionTriangleSample[] = []
+  const sourceBounds = calculateCombinedMeshBounds(sourceVertices)
+  const longEdgeThresholdPx = sourceBounds
+    ? Math.hypot(sourceBounds.width, sourceBounds.height) * COMBINED_MESH_LONG_EDGE_SOURCE_BOUNDS_RATIO
+    : Number.POSITIVE_INFINITY
+  let filteredTriangleCount = 0
+  let sourceDegenerateTriangleCount = 0
+  let potentialTargetInversionTriangleCount = 0
+  let longTriangleCount = 0
+
+  for (const indices of rawTriangleIndices) {
+    if (
+      indices.some((index) => !Number.isInteger(index) || index < 0 || index >= sourceVertices.length) ||
+      new Set(indices).size !== 3
+    ) {
+      filteredTriangleCount += 1
+      continue
+    }
+    const sourceA = sourceVertices[indices[0]]
+    const sourceB = sourceVertices[indices[1]]
+    const sourceC = sourceVertices[indices[2]]
+    const targetA = targetVertices[indices[0]]
+    const targetB = targetVertices[indices[1]]
+    const targetC = targetVertices[indices[2]]
+    if (
+      !isFinitePoint2(sourceA) ||
+      !isFinitePoint2(sourceB) ||
+      !isFinitePoint2(sourceC) ||
+      !isFinitePoint2(targetA) ||
+      !isFinitePoint2(targetB) ||
+      !isFinitePoint2(targetC)
+    ) {
+      filteredTriangleCount += 1
+      continue
+    }
+
+    const sourceSignedAreaPx2 = signedTriangleAreaPx2(sourceA, sourceB, sourceC)
+    const targetSignedAreaPx2 = signedTriangleAreaPx2(targetA, targetB, targetC)
+    const sourceAreaPx2 = Math.abs(sourceSignedAreaPx2)
+    if (!Number.isFinite(sourceAreaPx2) || sourceAreaPx2 <= COMBINED_MESH_MIN_TRIANGLE_AREA_PX2) {
+      sourceDegenerateTriangleCount += 1
+      filteredTriangleCount += 1
+      continue
+    }
+
+    const edgeLengths = [
+      distance2d(sourceA, sourceB),
+      distance2d(sourceB, sourceC),
+      distance2d(sourceC, sourceA),
+    ]
+    edgeLengthsPx.push(...edgeLengths)
+    if (edgeLengths.some((edgeLength) => edgeLength > longEdgeThresholdPx)) {
+      longTriangleCount += 1
+    }
+
+    const triangleIndex = triangleIndices.length / 3
+    const sourceSign = Math.sign(sourceSignedAreaPx2)
+    const targetSign = Math.sign(targetSignedAreaPx2)
+    if (sourceSign !== targetSign) {
+      potentialTargetInversionTriangleCount += 1
+      if (samplePotentialTargetInversionTriangles.length < COMBINED_MESH_DEBUG_SAMPLE_LIMIT) {
+        samplePotentialTargetInversionTriangles.push({
+          triangleIndex,
+          indices,
+          sourceSignedAreaPx2,
+          targetSignedAreaPx2,
+        })
+      }
+    }
+
+    triangleIndices.push(indices[0], indices[1], indices[2])
+    sourceTriangleAreasPx2.push(sourceAreaPx2)
+    targetTriangleAreasPx2.push(Math.abs(targetSignedAreaPx2))
+    if (sampleTriangleIndices.length < COMBINED_MESH_DEBUG_SAMPLE_LIMIT) {
+      sampleTriangleIndices.push(indices)
+    }
+  }
+
+  return {
+    triangleIndices,
+    filteredTriangleCount,
+    sourceDegenerateTriangleCount,
+    potentialTargetInversionTriangleCount,
+    sourceTriangleAreasPx2,
+    targetTriangleAreasPx2,
+    edgeLengthsPx,
+    longTriangleCount,
+    sampleTriangleIndices,
+    samplePotentialTargetInversionTriangles,
+  }
+}
+
+function signedTriangleAreaPx2(
+  a: CombinedMeshPointPx,
+  b: CombinedMeshPointPx,
+  c: CombinedMeshPointPx,
+) {
+  return (
+    (b.x - a.x) * (c.y - a.y) -
+    (b.y - a.y) * (c.x - a.x)
+  ) / 2
+}
+
+function calculateCombinedMeshBounds(points: readonly CombinedMeshPointPx[]): Rect | null {
+  const finitePoints = points.filter(isFinitePoint2)
+  if (finitePoints.length === 0) {
+    return null
+  }
+  const xValues = finitePoints.map((point) => point.x)
+  const yValues = finitePoints.map((point) => point.y)
+  const minX = Math.min(...xValues)
+  const maxX = Math.max(...xValues)
+  const minY = Math.min(...yValues)
+  const maxY = Math.max(...yValues)
+  return {
+    x: minX,
+    y: minY,
+    width: maxX - minX,
+    height: maxY - minY,
+  }
+}
+
+function createCombinedMeshSampleVertices(
+  sourceVertices: readonly CombinedMeshPointPx[],
+  targetVertices: readonly CombinedMeshPointPx[],
+  metadata: readonly CombinedVertexMetadata[],
+): CombinedMeshSampleVertex[] {
+  const samples: CombinedMeshSampleVertex[] = []
+  for (
+    let index = 0;
+    index < sourceVertices.length &&
+      index < targetVertices.length &&
+      index < metadata.length &&
+      samples.length < COMBINED_MESH_DEBUG_SAMPLE_LIMIT;
+    index += 1
+  ) {
+    samples.push({
+      index,
+      kind: metadata[index].kind,
+      landmarkIndex: metadata[index].landmarkIndex,
+      backgroundGridIndex: metadata[index].backgroundGridIndex,
+      source: cloneCombinedMeshPoint(sourceVertices[index]),
+      target: cloneCombinedMeshPoint(targetVertices[index]),
+    })
+  }
+  return samples
+}
+
+function cloneCombinedMeshPoint(point: CombinedMeshPointPx): CombinedMeshPointPx {
+  return {
+    x: point.x,
+    y: point.y,
+  }
+}
+
+function cloneCombinedVertexMetadata(metadata: CombinedVertexMetadata): CombinedVertexMetadata {
+  return {
+    kind: metadata.kind,
+    sourceIndex: metadata.sourceIndex,
+    targetIndex: metadata.targetIndex,
+    landmarkIndex: metadata.landmarkIndex,
+    backgroundGridIndex: metadata.backgroundGridIndex,
+  }
+}
+
+function cloneCombinedMeshDebug(debug: CombinedMeshDebug): CombinedMeshDebug {
+  return {
+    ...debug,
+    sourceBoundsPx: debug.sourceBoundsPx ? cloneRect(debug.sourceBoundsPx) : null,
+    targetBoundsPx: debug.targetBoundsPx ? cloneRect(debug.targetBoundsPx) : null,
+    sourceTriangleAreaSummaryPx2: { ...debug.sourceTriangleAreaSummaryPx2 },
+    targetTriangleAreaSummaryPx2: { ...debug.targetTriangleAreaSummaryPx2 },
+    edgeLengthSummaryPx: { ...debug.edgeLengthSummaryPx },
+    sampleCombinedVertices: debug.sampleCombinedVertices.map((sample) => ({
+      ...sample,
+      source: cloneCombinedMeshPoint(sample.source),
+      target: cloneCombinedMeshPoint(sample.target),
+    })),
+    sampleTriangleIndices: debug.sampleTriangleIndices.map((indices) => [...indices] as [number, number, number]),
+    samplePotentialTargetInversionTriangles: debug.samplePotentialTargetInversionTriangles.map((sample) => ({
+      ...sample,
+      indices: [...sample.indices] as [number, number, number],
+    })),
+  }
+}
+
 function cloneRect(rect: Rect): Rect {
   return {
     x: rect.x,
@@ -24935,6 +26082,7 @@ function createEmptyPoseMappingAlignmentState(
   alignmentSkippedReason: PoseMappingAlignmentSkippedReason = "no_current_face",
 ): PoseMappingAlignmentState {
   const backgroundGrid = createEmptyBackgroundGridState("missing_current_landmarks")
+  const combinedMesh = createEmptyCombinedMeshState("missing_current_landmarks")
   return {
     status,
     alignmentMethod: "none",
@@ -24964,6 +26112,12 @@ function createEmptyPoseMappingAlignmentState(
     sourceBackgroundGridPointsPx: backgroundGrid.sourceBackgroundGridPointsPx,
     targetBackgroundGridPointsPx: backgroundGrid.targetBackgroundGridPointsPx,
     faceInteriorTrianglesPx: backgroundGrid.faceInteriorTrianglesPx,
+    combinedSourceVerticesPx: combinedMesh.combinedSourceVerticesPx,
+    combinedTargetVerticesPx: combinedMesh.combinedTargetVerticesPx,
+    combinedVertexMetadata: combinedMesh.combinedVertexMetadata,
+    triangulationVertexIndices: combinedMesh.triangulationVertexIndices,
+    triangleIndices: combinedMesh.triangleIndices,
+    combinedMeshDebug: combinedMesh.combinedMeshDebug,
     excludedReasonCounts: createEmptyPoseMappingExcludedReasonCounts(),
     displacementSummary: createEmptyPoseMappingDisplacementSummary(),
     landmarkReasons: [],
@@ -29618,6 +30772,13 @@ function getPoseMappingAlignmentDebugSummary(alignment: PoseMappingAlignmentStat
     sourceBackgroundGridPointCount: alignment.sourceBackgroundGridPointsPx.length,
     targetBackgroundGridPointCount: alignment.targetBackgroundGridPointsPx.length,
     faceInteriorTriangleCount: alignment.faceInteriorTrianglesPx.length,
+    combinedMeshDebug: roundCombinedMeshDebugForState(alignment.combinedMeshDebug),
+    combinedSourceVertexCount: alignment.combinedSourceVerticesPx.length,
+    combinedTargetVertexCount: alignment.combinedTargetVerticesPx.length,
+    combinedVertexMetadataCount: alignment.combinedVertexMetadata.length,
+    triangulationVertexIndexCount: alignment.triangulationVertexIndices.length,
+    triangleIndexCount: alignment.triangleIndices.length,
+    triangleCount: alignment.triangleIndices.length / 3,
     excludedReasonCounts: alignment.excludedReasonCounts,
     displacementSummary: roundDisplacementSummary(alignment.displacementSummary),
   }
@@ -29668,6 +30829,10 @@ function getPoseMappingRuntimeRawSummary() {
     alignedRenderedIdealLandmarkCount: runtime.alignedRenderedIdeal478?.length ?? null,
     meshSourceVertexCount: runtime.meshSourceVertices?.length ?? null,
     meshTargetVertexCount: runtime.meshTargetVertices?.length ?? null,
+    combinedSourceVertexCount: runtime.alignment.combinedSourceVerticesPx.length,
+    combinedTargetVertexCount: runtime.alignment.combinedTargetVerticesPx.length,
+    triangleCount: runtime.alignment.triangleIndices.length / 3,
+    combinedMeshDebug: roundCombinedMeshDebugForState(runtime.alignment.combinedMeshDebug),
     alignment: getPoseMappingAlignmentDebugSummary(runtime.alignment),
     canvasWidth: runtime.canvasWidth,
     canvasHeight: runtime.canvasHeight,
@@ -29796,6 +30961,7 @@ function getPoseMappingRuntimeDebugExport() {
     current478: runtime.current478?.map(roundLandmarkForState) ?? null,
     renderedIdeal478: runtime.renderedIdeal478?.map(roundLandmarkForState) ?? null,
     alignedRenderedIdeal478: runtime.alignedRenderedIdeal478?.map(roundLandmarkForState) ?? null,
+    combinedMeshDebug: roundCombinedMeshDebugForState(runtime.alignment.combinedMeshDebug),
   }
 }
 
@@ -30090,6 +31256,56 @@ function roundBackgroundGridPointForState(point: BackgroundGridPointPx): Backgro
     rounded.kind = point.kind
   }
   return rounded
+}
+
+function roundCombinedMeshPointForState(point: CombinedMeshPointPx): CombinedMeshPointPx {
+  return {
+    x: roundForState(point.x) ?? 0,
+    y: roundForState(point.y) ?? 0,
+  }
+}
+
+function roundNumericSummaryForState(summary: NumericSummary): NumericSummary {
+  return {
+    min: roundForState(summary.min),
+    max: roundForState(summary.max),
+    mean: roundForState(summary.mean),
+    p50: roundForState(summary.p50),
+    p95: roundForState(summary.p95),
+  }
+}
+
+function roundCombinedMeshSampleVertexForState(sample: CombinedMeshSampleVertex): CombinedMeshSampleVertex {
+  return {
+    ...sample,
+    source: roundCombinedMeshPointForState(sample.source),
+    target: roundCombinedMeshPointForState(sample.target),
+  }
+}
+
+function roundCombinedMeshPotentialInversionSampleForState(
+  sample: CombinedMeshPotentialInversionTriangleSample,
+): CombinedMeshPotentialInversionTriangleSample {
+  return {
+    ...sample,
+    sourceSignedAreaPx2: roundForState(sample.sourceSignedAreaPx2) ?? 0,
+    targetSignedAreaPx2: roundForState(sample.targetSignedAreaPx2) ?? 0,
+  }
+}
+
+function roundCombinedMeshDebugForState(debug: CombinedMeshDebug): CombinedMeshDebug {
+  return {
+    ...debug,
+    sourceBoundsPx: roundRectForState(debug.sourceBoundsPx),
+    targetBoundsPx: roundRectForState(debug.targetBoundsPx),
+    sourceTriangleAreaSummaryPx2: roundNumericSummaryForState(debug.sourceTriangleAreaSummaryPx2),
+    targetTriangleAreaSummaryPx2: roundNumericSummaryForState(debug.targetTriangleAreaSummaryPx2),
+    edgeLengthSummaryPx: roundNumericSummaryForState(debug.edgeLengthSummaryPx),
+    sampleCombinedVertices: debug.sampleCombinedVertices.map(roundCombinedMeshSampleVertexForState),
+    samplePotentialTargetInversionTriangles: debug.samplePotentialTargetInversionTriangles.map(
+      roundCombinedMeshPotentialInversionSampleForState,
+    ),
+  }
 }
 
 function roundMatrixDebugSummaryForState(summary: MatrixDebugSummary | null): MatrixDebugSummary | null {
