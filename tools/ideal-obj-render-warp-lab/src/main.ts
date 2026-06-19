@@ -1275,6 +1275,57 @@ type ActualVisibleLandmarkSelection = {
   landmarkExcludedReasons: ActualVisibilityExcludedReason[][]
   actualVisibilityDebug: ActualVisibilityDebug
 }
+type BackgroundGridStatus = "ready" | "skipped"
+type BackgroundGridSkipReason =
+  | "missing_display_rect"
+  | "missing_current_landmarks"
+  | "missing_actual_visible_landmarks"
+  | "missing_face_triangle_topology"
+  | "invalid_contour_distances"
+  | "invalid_grid_step"
+  | "too_many_grid_points"
+  | "empty_face_interior_triangles"
+  | "empty_background_grid"
+type BackgroundGridCoordinateSpace = "displayedContentRect_pixel_coordinate"
+type BackgroundGridPointPx = {
+  x: number
+  y: number
+}
+type BackgroundGridTrianglePx = {
+  a: BackgroundGridPointPx
+  b: BackgroundGridPointPx
+  c: BackgroundGridPointPx
+  minX: number
+  maxX: number
+  minY: number
+  maxY: number
+}
+type BackgroundGridDebug = {
+  status: BackgroundGridStatus
+  skipReason: BackgroundGridSkipReason | null
+  coordinateSpace: BackgroundGridCoordinateSpace
+  domainRectPx: Rect | null
+  gridStepPx: number | null
+  contourMedianSpacingPx: number | null
+  contourDistanceCount: number
+  generatedGridPointCount: number
+  excludedInsideFaceTrianglePointCount: number
+  keptBackgroundGridPointCount: number
+  faceInteriorTriangleCount: number
+  actualVisibleLandmarkCount: number
+  actualHiddenLandmarkCount: number
+  maxAllowedGridPointCount: number
+  sourceBackgroundGridPointCount: number
+  targetBackgroundGridPointCount: number
+  sampleKeptBackgroundGridPointsPx: BackgroundGridPointPx[]
+  sampleExcludedBackgroundGridPointsPx: BackgroundGridPointPx[]
+}
+type BackgroundGridState = {
+  debug: BackgroundGridDebug
+  sourceBackgroundGridPointsPx: BackgroundGridPointPx[]
+  targetBackgroundGridPointsPx: BackgroundGridPointPx[]
+  faceInteriorTrianglesPx: BackgroundGridTrianglePx[]
+}
 type PoseMappingBounds = {
   minX: number
   maxX: number
@@ -1427,6 +1478,10 @@ type PoseMappingAlignmentState = {
   actualVisibleCurrentLandmarks: ReferenceLandmark[]
   actualVisibleAlignedIdealLandmarks: ReferenceLandmark[]
   actualVisibilityDebug: ActualVisibilityDebug
+  backgroundGridDebug: BackgroundGridDebug
+  sourceBackgroundGridPointsPx: BackgroundGridPointPx[]
+  targetBackgroundGridPointsPx: BackgroundGridPointPx[]
+  faceInteriorTrianglesPx: BackgroundGridTrianglePx[]
   excludedReasonCounts: PoseMappingExcludedReasonCounts
   displacementSummary: PoseMappingDisplacementSummary
   landmarkReasons: Array<PoseMappingExcludedReason[]>
@@ -3417,6 +3472,7 @@ type LabState = {
     showMeshTarget: boolean
     showMeshPairs: boolean
     showExcludedLandmarks: boolean
+    showBackgroundGrid: boolean
     showGridAnchors: boolean
     showTriangleMesh: boolean
     showDisplayedContentRect: boolean
@@ -3526,6 +3582,13 @@ const ACTUAL_VISIBLE_CENTER_LANDMARK_INDICES = new Set([
   1, 4, 5, 6, 8, 9, 10, 151, 168, 195, 197,
 ])
 const ACTUAL_VISIBLE_EXCLUDED_REASON_SAMPLE_LIMIT = 12
+const BACKGROUND_GRID_COORDINATE_SPACE: BackgroundGridCoordinateSpace =
+  "displayedContentRect_pixel_coordinate"
+const BACKGROUND_GRID_MIN_CONTOUR_DISTANCE_COUNT = 4
+const BACKGROUND_GRID_MAX_ALLOWED_GRID_POINT_COUNT = 20000
+const BACKGROUND_GRID_MIN_FACE_TRIANGLE_AREA_PX2 = 0.05
+const BACKGROUND_GRID_POINT_IN_TRIANGLE_EPSILON = 0.000001
+const BACKGROUND_GRID_DEBUG_SAMPLE_LIMIT = 12
 const MEDIAPIPE_FACE_MESH_TRIANGLE_INDICES = buildTriangleIndicesFromTessellation(
   FaceLandmarker.FACE_LANDMARKS_TESSELATION as readonly LandmarkConnection[],
 )
@@ -3533,6 +3596,9 @@ const MEDIAPIPE_FACE_MESH_TRIANGLE_COUNT = MEDIAPIPE_FACE_MESH_TRIANGLE_INDICES.
 const MEDIAPIPE_FACE_MESH_TRIANGLE_ADJACENCY = buildTriangleAdjacency(
   MEDIAPIPE_FACE_MESH_TRIANGLE_INDICES,
   MEDIAPIPE_FACE_MESH_TOPOLOGY_LANDMARK_COUNT,
+)
+const FACE_CONTOUR_INDICES = buildOrderedLandmarkPathFromConnections(
+  FaceLandmarker.FACE_LANDMARKS_FACE_OVAL as readonly LandmarkConnection[],
 )
 let previousSemantic5ptScaleBasisUsed: Semantic5ptScaleBasisUsed | null = null
 const MEDIAPIPE_TIMESTAMP_STEP_MS = 1000 / 30
@@ -3956,6 +4022,7 @@ const state: LabState = {
     showMeshTarget: false,
     showMeshPairs: false,
     showExcludedLandmarks: false,
+    showBackgroundGrid: true,
     showGridAnchors: false,
     showTriangleMesh: false,
     showDisplayedContentRect: true,
@@ -4375,7 +4442,7 @@ function renderLiveCoordinatePreview() {
           ${renderOverlayToggle("toggle-live-coordinate-rendered-ideal-landmarks", "renderedIdeal478（レンダー理想478点）を表示")}
           ${renderOverlayToggle("toggle-live-coordinate-mesh-source", "meshSourceVertices（変形元メッシュ頂点）を表示")}
           ${renderOverlayToggle("toggle-live-coordinate-excluded-landmarks", "除外 / 固定 landmark（ランドマーク）を表示")}
-          ${renderOverlayToggle("toggle-live-coordinate-grid-anchors", "grid / anchors（グリッド / アンカー）を表示")}
+          ${renderOverlayToggle("toggle-live-coordinate-grid-anchors", "legacy grid debug（旧グリッドデバッグ）を表示")}
           ${renderOverlayToggle("toggle-live-coordinate-triangle-mesh", "triangle mesh（トライアングルメッシュ）を表示")}
         </fieldset>
       </div>
@@ -4418,9 +4485,10 @@ function renderDisplayOverlayPreview() {
               ${renderOverlayToggle("toggle-mesh-source", "mesh source overlay（変形元メッシュ重ね表示）を表示")}
               ${renderOverlayToggle("toggle-mesh-target", "mesh target overlay（変形先メッシュ重ね表示）を表示")}
               ${renderOverlayToggle("toggle-excluded-landmarks", "actual hidden landmarks（非実可視ランドマーク）を表示")}
+              ${renderOverlayToggle("toggle-background-grid-overlay", "background grid overlay（背景格子重ね描き）を表示")}
               ${renderOverlayToggle("toggle-displayed-content-rect", "displayedContentRect（表示領域）を表示")}
               ${renderOverlayToggle("toggle-overlay-skipped-reason", "skipped reason（スキップ理由）を表示")}
-              ${renderOverlayToggle("toggle-grid-anchors", "grid / anchors（グリッド / アンカー）を表示")}
+              ${renderOverlayToggle("toggle-grid-anchors", "legacy grid debug（旧グリッドデバッグ）を表示")}
               ${renderOverlayToggle("toggle-triangle-mesh", "triangle mesh（トライアングルメッシュ）を表示")}
             </fieldset>
           </div>
@@ -5103,6 +5171,7 @@ function bindEvents() {
   bindOverlayToggle("toggle-mesh-target", "showMeshTarget")
   bindOverlayToggle("toggle-mesh-pairs", "showMeshPairs")
   bindOverlayToggle("toggle-excluded-landmarks", "showExcludedLandmarks")
+  bindOverlayToggle("toggle-background-grid-overlay", "showBackgroundGrid")
   bindOverlayToggle("toggle-displayed-content-rect", "showDisplayedContentRect")
   bindOverlayToggle("toggle-overlay-skipped-reason", "showSkippedReason")
   bindOverlayToggle("toggle-grid-anchors", "showGridAnchors")
@@ -9025,6 +9094,9 @@ function buildPoseMappingAlignment(
   const videoAspectRatio = getLiveVideoAspectRatio()
   const semantic5ptDebug = createEmptySemantic5ptDebug()
   let actualVisibilitySelection = createEmptyActualVisibleLandmarkSelection(0, currentPose?.yaw ?? null)
+  let backgroundGrid = createEmptyBackgroundGridState(
+    displayOverlayRects ? "missing_current_landmarks" : "missing_display_rect",
+  )
   const createAlignmentState = (
     status: PoseMappingAlignmentStatus,
     reason: PoseMappingAlignmentSkippedReason,
@@ -9050,6 +9122,10 @@ function buildPoseMappingAlignment(
     actualVisibleCurrentLandmarks: actualVisibilitySelection.actualVisibleCurrentLandmarks.map(cloneReferenceLandmark),
     actualVisibleAlignedIdealLandmarks: actualVisibilitySelection.actualVisibleAlignedIdealLandmarks.map(cloneReferenceLandmark),
     actualVisibilityDebug: actualVisibilitySelection.actualVisibilityDebug,
+    backgroundGridDebug: backgroundGrid.debug,
+    sourceBackgroundGridPointsPx: backgroundGrid.sourceBackgroundGridPointsPx.map(cloneBackgroundGridPoint),
+    targetBackgroundGridPointsPx: backgroundGrid.targetBackgroundGridPointsPx.map(cloneBackgroundGridPoint),
+    faceInteriorTrianglesPx: backgroundGrid.faceInteriorTrianglesPx.map(cloneBackgroundGridTriangle),
     ...overrides,
   })
   const emptyPlacementDebug = buildPlacementDebugState(currentMatrix, null, idealMatrix, null)
@@ -9095,6 +9171,12 @@ function buildPoseMappingAlignment(
     currentLandmarksImage,
     displayedContentRect,
     currentPose?.yaw ?? null,
+  )
+  backgroundGrid = buildBackgroundGridPreview(
+    currentLandmarksImage,
+    displayedContentRect,
+    actualVisibilitySelection.actualVisibleCurrentLandmarkIndices,
+    actualVisibilitySelection.actualHiddenCurrentLandmarkIndices,
   )
   if (!renderedIdealLandmarksImage || renderedIdealLandmarksImage.length !== REQUIRED_LANDMARK_COUNT) {
     return {
@@ -19453,6 +19535,17 @@ function getDisplayOverlayVideoAvailability(): DataAvailability {
   return unavailable(`liveVideo.status = ${state.liveVideo.status}`)
 }
 
+function getBackgroundGridAvailability(): DataAvailability {
+  const debug = state.poseMappingRuntime.alignment.backgroundGridDebug
+  if (
+    debug.status === "ready" &&
+    state.poseMappingRuntime.alignment.sourceBackgroundGridPointsPx.length > 0
+  ) {
+    return available()
+  }
+  return unavailable(`backgroundGridStatus = ${debug.status}; reason = ${debug.skipReason ?? "none"}`)
+}
+
 function getNotImplementedAvailability(): DataAvailability {
   return unavailable("未実装（今回対象外）")
 }
@@ -19469,6 +19562,7 @@ function renderControls() {
   const actualHiddenLandmarksAvailability = getActualHiddenLandmarksAvailability()
   const displayOverlayVideoAvailability = getDisplayOverlayVideoAvailability()
   const displayOverlayAlignedIdealAvailability = getDisplayOverlayAlignedIdealAvailability()
+  const backgroundGridAvailability = getBackgroundGridAvailability()
   const notImplementedAvailability = getNotImplementedAvailability()
 
   setToggleState(
@@ -19554,6 +19648,12 @@ function renderControls() {
     state.overlay.showExcludedLandmarks,
     !actualHiddenLandmarksAvailability.available,
     actualHiddenLandmarksAvailability.reason,
+  )
+  setToggleState(
+    "toggle-background-grid-overlay",
+    state.overlay.showBackgroundGrid,
+    !backgroundGridAvailability.available,
+    backgroundGridAvailability.reason,
   )
   setToggleState(
     "toggle-displayed-content-rect",
@@ -19748,6 +19848,7 @@ function renderDisplayOverlaySummaryCard() {
   const currentOverlayDebug = getCurrentOverlayDebugState()
   const displayOverlayRedrawDebug = displayOverlayRedrawDebugState
   const actualVisibilityDebug = runtime.alignment.actualVisibilityDebug
+  const backgroundGridDebug = runtime.alignment.backgroundGridDebug
   card.innerHTML = `
     <p>displayedContentRect（動画の実表示領域）を使い、overlay canvas（重ね描きcanvas）上で表示ズレを確認します。</p>
     <dl class="review-grid">
@@ -19764,6 +19865,11 @@ function renderDisplayOverlaySummaryCard() {
       <div><dt>aligned ideal overlay（位置合わせ済み理想顔・同一実可視点のみ）</dt><dd>${escapeHtml(formatAvailability(getDisplayOverlayAlignedIdealAvailability(), actualVisibilityDebug.alignedIdealOverlayPointCount))}</dd></div>
       <div><dt>usedForScaleCandidateCount（スケール候補使用点数）</dt><dd>${formatNullableCount(actualVisibilityDebug.usedForScaleCandidateCount)}</dd></div>
       <div><dt>actual hidden reason counts（非実可視理由別件数）</dt><dd>${escapeHtml(JSON.stringify(actualVisibilityDebug.excludedReasonCounts))}</dd></div>
+      <div><dt>backgroundGridStatus（背景格子状態）</dt><dd>${escapeHtml(backgroundGridDebug.status)} / ${escapeHtml(backgroundGridDebug.skipReason ?? "none")}</dd></div>
+      <div><dt>gridStepPx（格子間隔px）</dt><dd>${formatRealtimeNullableNumber(backgroundGridDebug.gridStepPx)}</dd></div>
+      <div><dt>background grid points（背景格子点）</dt><dd>generated ${formatNullableCount(backgroundGridDebug.generatedGridPointCount)} / excluded ${formatNullableCount(backgroundGridDebug.excludedInsideFaceTrianglePointCount)} / kept ${formatNullableCount(backgroundGridDebug.keptBackgroundGridPointCount)}</dd></div>
+      <div><dt>faceInteriorTriangle（顔内部判定三角形）</dt><dd>${formatNullableCount(backgroundGridDebug.faceInteriorTriangleCount)}</dd></div>
+      <div><dt>source / target background grid（変形元 / 変形先背景格子）</dt><dd>${formatNullableCount(backgroundGridDebug.sourceBackgroundGridPointCount)} / ${formatNullableCount(backgroundGridDebug.targetBackgroundGridPointCount)}</dd></div>
       <div><dt>overlayLifecycle（重ね表示ライフサイクル）</dt><dd>visible ${String(lifecycle.alignedRenderedIdealVisible)} / gen ${String(lifecycle.generationMatch)} / token ${String(lifecycle.tokenMatch)} / renderPose ${String(lifecycle.renderPoseValid)}</dd></div>
       <div><dt>overlay skipped reason（重ね表示スキップ理由）</dt><dd>${escapeHtml(lifecycle.skippedReason)}</dd></div>
       <div><dt>renderedIdeal478（レンダー理想478点）</dt><dd>live video（ライブ映像）上には直接表示しません。</dd></div>
@@ -20005,6 +20111,7 @@ function renderPoseMappingDebugTab() {
         <div><dt>displayedContentRect</dt><dd>${escapeHtml(formatRect(runtime.alignment.displayedContentRect))}</dd></div>
         <div><dt>excludedReasonCounts</dt><dd>${escapeHtml(JSON.stringify(runtime.alignment.excludedReasonCounts))}</dd></div>
         <div><dt>actualVisibilityDebug</dt><dd>${escapeHtml(JSON.stringify(roundActualVisibilityDebugForState(runtime.alignment.actualVisibilityDebug)))}</dd></div>
+        <div><dt>backgroundGridDebug</dt><dd>${escapeHtml(JSON.stringify(roundBackgroundGridDebugForState(runtime.alignment.backgroundGridDebug)))}</dd></div>
         <div><dt>displacementSummary</dt><dd>${escapeHtml(JSON.stringify(roundDisplacementSummary(runtime.alignment.displacementSummary)))}</dd></div>
         <div><dt>semantic5ptDebug</dt><dd>${escapeHtml(JSON.stringify(roundSemantic5ptDebugForState(runtime.alignment.semantic5ptDebug)))}</dd></div>
         <div><dt>alignedRenderedIdeal478</dt><dd>${formatNullableCount(runtime.alignedRenderedIdeal478?.length ?? null)}</dd></div>
@@ -21654,6 +21761,10 @@ function drawLiveOverlay(reason: DisplayOverlayRedrawReason = "manual_render") {
   const canDrawAlignedIdeal = canDrawPoseMappingAlignedIdealOverlay()
   const overlayLifecycle = createOverlayLifecycleFromRuntime(state.poseMappingRuntime)
 
+  if (state.overlay.showBackgroundGrid) {
+    drawBackgroundGridOverlay(context, state.poseMappingRuntime.alignment)
+  }
+
   if (
     canDrawAlignedIdeal &&
     state.overlay.showMeshPairs &&
@@ -22070,6 +22181,38 @@ function canDrawPoseMappingAlignedIdealOverlay() {
     runtime.overlayLifecycle.generationMatch &&
     runtime.overlayLifecycle.tokenMatch
   )
+}
+
+function drawBackgroundGridOverlay(
+  context: CanvasRenderingContext2D,
+  alignment: PoseMappingAlignmentState,
+) {
+  if (
+    alignment.backgroundGridDebug.status !== "ready" ||
+    alignment.sourceBackgroundGridPointsPx.length === 0
+  ) {
+    return
+  }
+
+  context.save()
+  if (alignment.faceInteriorTrianglesPx.length > 0) {
+    context.strokeStyle = "rgba(255, 171, 64, 0.18)"
+    context.lineWidth = 0.6
+    context.beginPath()
+    for (const triangle of alignment.faceInteriorTrianglesPx) {
+      context.moveTo(triangle.a.x, triangle.a.y)
+      context.lineTo(triangle.b.x, triangle.b.y)
+      context.lineTo(triangle.c.x, triangle.c.y)
+      context.closePath()
+    }
+    context.stroke()
+  }
+
+  context.fillStyle = "rgba(15, 170, 132, 0.74)"
+  for (const point of alignment.sourceBackgroundGridPointsPx) {
+    context.fillRect(point.x - 0.75, point.y - 0.75, 1.5, 1.5)
+  }
+  context.restore()
 }
 
 function drawLandmarkPoints(
@@ -23713,6 +23856,51 @@ function buildTriangleIndicesFromTessellation(
   return triangleIndices
 }
 
+function buildOrderedLandmarkPathFromConnections(
+  connections: readonly LandmarkConnection[],
+): number[] {
+  if (connections.length === 0) {
+    return []
+  }
+
+  const ordered = [connections[0].start, connections[0].end]
+  const usedConnectionIndices = new Set([0])
+  while (usedConnectionIndices.size < connections.length) {
+    const tail = ordered[ordered.length - 1]
+    const head = ordered[0]
+    let nextConnectionIndex = -1
+    let nextIndex: number | null = null
+    for (let index = 0; index < connections.length; index += 1) {
+      if (usedConnectionIndices.has(index)) {
+        continue
+      }
+      const connection = connections[index]
+      if (connection.start === tail) {
+        nextConnectionIndex = index
+        nextIndex = connection.end
+        break
+      }
+      if (connection.end === tail) {
+        nextConnectionIndex = index
+        nextIndex = connection.start
+        break
+      }
+    }
+    if (nextConnectionIndex < 0 || nextIndex === null) {
+      break
+    }
+    usedConnectionIndices.add(nextConnectionIndex)
+    if (nextIndex === head) {
+      continue
+    }
+    ordered.push(nextIndex)
+  }
+
+  return ordered.filter(
+    (index) => index >= 0 && index < MEDIAPIPE_FACE_MESH_TOPOLOGY_LANDMARK_COUNT,
+  )
+}
+
 function buildTriangleAdjacency(
   triangleIndices: readonly number[],
   landmarkCount: number,
@@ -24153,10 +24341,388 @@ function summarizeActualVisibilityNumbers(values: number[]): {
   }
 }
 
+function createEmptyBackgroundGridDebug(
+  skipReason: BackgroundGridSkipReason | null = null,
+): BackgroundGridDebug {
+  return {
+    status: "skipped",
+    skipReason,
+    coordinateSpace: BACKGROUND_GRID_COORDINATE_SPACE,
+    domainRectPx: null,
+    gridStepPx: null,
+    contourMedianSpacingPx: null,
+    contourDistanceCount: 0,
+    generatedGridPointCount: 0,
+    excludedInsideFaceTrianglePointCount: 0,
+    keptBackgroundGridPointCount: 0,
+    faceInteriorTriangleCount: 0,
+    actualVisibleLandmarkCount: 0,
+    actualHiddenLandmarkCount: 0,
+    maxAllowedGridPointCount: BACKGROUND_GRID_MAX_ALLOWED_GRID_POINT_COUNT,
+    sourceBackgroundGridPointCount: 0,
+    targetBackgroundGridPointCount: 0,
+    sampleKeptBackgroundGridPointsPx: [],
+    sampleExcludedBackgroundGridPointsPx: [],
+  }
+}
+
+function createEmptyBackgroundGridState(
+  skipReason: BackgroundGridSkipReason | null = null,
+): BackgroundGridState {
+  return {
+    debug: createEmptyBackgroundGridDebug(skipReason),
+    sourceBackgroundGridPointsPx: [],
+    targetBackgroundGridPointsPx: [],
+    faceInteriorTrianglesPx: [],
+  }
+}
+
+function createSkippedBackgroundGridState(
+  skipReason: BackgroundGridSkipReason,
+  overrides: Partial<BackgroundGridDebug> = {},
+): BackgroundGridState {
+  const state = createEmptyBackgroundGridState(skipReason)
+  return {
+    ...state,
+    debug: {
+      ...state.debug,
+      ...overrides,
+      status: "skipped",
+      skipReason,
+    },
+  }
+}
+
+function buildBackgroundGridPreview(
+  currentLandmarks: ReferenceLandmark[] | null,
+  displayedContentRect: Rect | null,
+  actualVisibleCurrentLandmarkIndices: readonly number[],
+  actualHiddenCurrentLandmarkIndices: readonly number[],
+): BackgroundGridState {
+  if (
+    !displayedContentRect ||
+    displayedContentRect.width <= 0 ||
+    displayedContentRect.height <= 0
+  ) {
+    return createSkippedBackgroundGridState("missing_display_rect")
+  }
+
+  const domainRectPx = cloneRect(displayedContentRect)
+  const baseDebug: Partial<BackgroundGridDebug> = {
+    domainRectPx,
+    actualVisibleLandmarkCount: actualVisibleCurrentLandmarkIndices.length,
+    actualHiddenLandmarkCount: actualHiddenCurrentLandmarkIndices.length,
+  }
+
+  if (!currentLandmarks || currentLandmarks.length !== REQUIRED_LANDMARK_COUNT) {
+    return createSkippedBackgroundGridState("missing_current_landmarks", baseDebug)
+  }
+  if (actualVisibleCurrentLandmarkIndices.length === 0) {
+    return createSkippedBackgroundGridState("missing_actual_visible_landmarks", baseDebug)
+  }
+  if (MEDIAPIPE_FACE_MESH_TRIANGLE_INDICES.length === 0) {
+    return createSkippedBackgroundGridState("missing_face_triangle_topology", baseDebug)
+  }
+
+  const actualVisibleSet = new Set(actualVisibleCurrentLandmarkIndices)
+  const currentPointsPx = createDisplayedLandmarkPointsPx(currentLandmarks, displayedContentRect)
+  const contourDistancesPx = calculateActualVisibleContourDistancesPx(currentPointsPx, actualVisibleSet)
+  const sortedContourDistances = [...contourDistancesPx].sort((a, b) => a - b)
+  const contourMedianSpacingPx = percentileSorted(sortedContourDistances, 0.5)
+  const contourDebug: Partial<BackgroundGridDebug> = {
+    ...baseDebug,
+    contourDistanceCount: contourDistancesPx.length,
+    contourMedianSpacingPx,
+    gridStepPx: contourMedianSpacingPx,
+  }
+  if (
+    contourDistancesPx.length < BACKGROUND_GRID_MIN_CONTOUR_DISTANCE_COUNT ||
+    contourMedianSpacingPx === null
+  ) {
+    return createSkippedBackgroundGridState("invalid_contour_distances", contourDebug)
+  }
+
+  const gridStepPx = contourMedianSpacingPx
+  if (!Number.isFinite(gridStepPx) || gridStepPx <= 0) {
+    return createSkippedBackgroundGridState("invalid_grid_step", contourDebug)
+  }
+
+  const estimatedGridPointCount = estimateBackgroundGridPointCount(displayedContentRect, gridStepPx)
+  const gridStepDebug: Partial<BackgroundGridDebug> = {
+    ...contourDebug,
+    generatedGridPointCount: Number.isFinite(estimatedGridPointCount) ? estimatedGridPointCount : 0,
+  }
+  if (!Number.isFinite(estimatedGridPointCount) || estimatedGridPointCount <= 0) {
+    return createSkippedBackgroundGridState("invalid_grid_step", gridStepDebug)
+  }
+  if (estimatedGridPointCount > BACKGROUND_GRID_MAX_ALLOWED_GRID_POINT_COUNT) {
+    return createSkippedBackgroundGridState("too_many_grid_points", gridStepDebug)
+  }
+
+  const faceInteriorTrianglesPx = buildFaceInteriorTrianglesForBackgroundGrid(currentPointsPx, actualVisibleSet)
+  const triangleDebug: Partial<BackgroundGridDebug> = {
+    ...gridStepDebug,
+    faceInteriorTriangleCount: faceInteriorTrianglesPx.length,
+  }
+  if (faceInteriorTrianglesPx.length === 0) {
+    return createSkippedBackgroundGridState("empty_face_interior_triangles", triangleDebug)
+  }
+
+  const generatedGridPointsPx = generateBackgroundGridPointsPx(displayedContentRect, gridStepPx)
+  if (generatedGridPointsPx.length > BACKGROUND_GRID_MAX_ALLOWED_GRID_POINT_COUNT) {
+    return createSkippedBackgroundGridState("too_many_grid_points", {
+      ...triangleDebug,
+      generatedGridPointCount: generatedGridPointsPx.length,
+    })
+  }
+
+  const keptBackgroundGridPointsPx: BackgroundGridPointPx[] = []
+  const sampleExcludedBackgroundGridPointsPx: BackgroundGridPointPx[] = []
+  for (const point of generatedGridPointsPx) {
+    if (isPointInsideAnyBackgroundGridTriangle(point, faceInteriorTrianglesPx)) {
+      if (sampleExcludedBackgroundGridPointsPx.length < BACKGROUND_GRID_DEBUG_SAMPLE_LIMIT) {
+        sampleExcludedBackgroundGridPointsPx.push(cloneBackgroundGridPoint(point))
+      }
+      continue
+    }
+    keptBackgroundGridPointsPx.push(point)
+  }
+
+  const excludedInsideFaceTrianglePointCount =
+    generatedGridPointsPx.length - keptBackgroundGridPointsPx.length
+  const sampleKeptBackgroundGridPointsPx = keptBackgroundGridPointsPx
+    .slice(0, BACKGROUND_GRID_DEBUG_SAMPLE_LIMIT)
+    .map(cloneBackgroundGridPoint)
+  const sourceBackgroundGridPointsPx = keptBackgroundGridPointsPx.map(cloneBackgroundGridPoint)
+  const targetBackgroundGridPointsPx = keptBackgroundGridPointsPx.map(cloneBackgroundGridPoint)
+  const completedDebug: BackgroundGridDebug = {
+    ...createEmptyBackgroundGridDebug(),
+    status: "ready",
+    skipReason: null,
+    domainRectPx,
+    gridStepPx,
+    contourMedianSpacingPx,
+    contourDistanceCount: contourDistancesPx.length,
+    generatedGridPointCount: generatedGridPointsPx.length,
+    excludedInsideFaceTrianglePointCount,
+    keptBackgroundGridPointCount: keptBackgroundGridPointsPx.length,
+    faceInteriorTriangleCount: faceInteriorTrianglesPx.length,
+    actualVisibleLandmarkCount: actualVisibleCurrentLandmarkIndices.length,
+    actualHiddenLandmarkCount: actualHiddenCurrentLandmarkIndices.length,
+    maxAllowedGridPointCount: BACKGROUND_GRID_MAX_ALLOWED_GRID_POINT_COUNT,
+    sourceBackgroundGridPointCount: sourceBackgroundGridPointsPx.length,
+    targetBackgroundGridPointCount: targetBackgroundGridPointsPx.length,
+    sampleKeptBackgroundGridPointsPx,
+    sampleExcludedBackgroundGridPointsPx,
+  }
+
+  if (keptBackgroundGridPointsPx.length === 0) {
+    return createSkippedBackgroundGridState("empty_background_grid", completedDebug)
+  }
+
+  return {
+    debug: completedDebug,
+    sourceBackgroundGridPointsPx,
+    targetBackgroundGridPointsPx,
+    faceInteriorTrianglesPx,
+  }
+}
+
+function calculateActualVisibleContourDistancesPx(
+  currentPointsPx: Array<BackgroundGridPointPx | null>,
+  actualVisibleSet: ReadonlySet<number>,
+) {
+  const distances: number[] = []
+  for (let index = 0; index < FACE_CONTOUR_INDICES.length; index += 1) {
+    const startIndex = FACE_CONTOUR_INDICES[index]
+    const endIndex = FACE_CONTOUR_INDICES[(index + 1) % FACE_CONTOUR_INDICES.length]
+    if (!actualVisibleSet.has(startIndex) || !actualVisibleSet.has(endIndex)) {
+      continue
+    }
+    const start = currentPointsPx[startIndex]
+    const end = currentPointsPx[endIndex]
+    if (!isFinitePoint2(start) || !isFinitePoint2(end)) {
+      continue
+    }
+    const distance = distance2d(start, end)
+    if (Number.isFinite(distance) && distance > 0) {
+      distances.push(distance)
+    }
+  }
+  return distances
+}
+
+function estimateBackgroundGridPointCount(rect: Rect, gridStepPx: number) {
+  if (!Number.isFinite(gridStepPx) || gridStepPx <= 0) {
+    return Number.POSITIVE_INFINITY
+  }
+  const columnCount = Math.floor(rect.width / gridStepPx) + 1
+  const rowCount = Math.floor(rect.height / gridStepPx) + 1
+  const count = columnCount * rowCount
+  return Number.isFinite(count) && count > 0 ? count : Number.POSITIVE_INFINITY
+}
+
+function generateBackgroundGridPointsPx(rect: Rect, gridStepPx: number): BackgroundGridPointPx[] {
+  const points: BackgroundGridPointPx[] = []
+  const columnCount = Math.floor(rect.width / gridStepPx) + 1
+  const rowCount = Math.floor(rect.height / gridStepPx) + 1
+  const maxX = rect.x + rect.width
+  const maxY = rect.y + rect.height
+  for (let row = 0; row < rowCount; row += 1) {
+    const y = rect.y + row * gridStepPx
+    if (y > maxY + BACKGROUND_GRID_POINT_IN_TRIANGLE_EPSILON) {
+      continue
+    }
+    for (let column = 0; column < columnCount; column += 1) {
+      const x = rect.x + column * gridStepPx
+      if (x > maxX + BACKGROUND_GRID_POINT_IN_TRIANGLE_EPSILON) {
+        continue
+      }
+      points.push({ x, y })
+    }
+  }
+  return points
+}
+
+function buildFaceInteriorTrianglesForBackgroundGrid(
+  currentPointsPx: Array<BackgroundGridPointPx | null>,
+  actualVisibleSet: ReadonlySet<number>,
+): BackgroundGridTrianglePx[] {
+  const triangles: BackgroundGridTrianglePx[] = []
+  for (let offset = 0; offset + 2 < MEDIAPIPE_FACE_MESH_TRIANGLE_INDICES.length; offset += 3) {
+    const firstIndex = MEDIAPIPE_FACE_MESH_TRIANGLE_INDICES[offset]
+    const secondIndex = MEDIAPIPE_FACE_MESH_TRIANGLE_INDICES[offset + 1]
+    const thirdIndex = MEDIAPIPE_FACE_MESH_TRIANGLE_INDICES[offset + 2]
+    if (
+      firstIndex < 0 ||
+      secondIndex < 0 ||
+      thirdIndex < 0 ||
+      firstIndex >= MEDIAPIPE_FACE_MESH_TOPOLOGY_LANDMARK_COUNT ||
+      secondIndex >= MEDIAPIPE_FACE_MESH_TOPOLOGY_LANDMARK_COUNT ||
+      thirdIndex >= MEDIAPIPE_FACE_MESH_TOPOLOGY_LANDMARK_COUNT ||
+      !actualVisibleSet.has(firstIndex) ||
+      !actualVisibleSet.has(secondIndex) ||
+      !actualVisibleSet.has(thirdIndex)
+    ) {
+      continue
+    }
+    const first = currentPointsPx[firstIndex]
+    const second = currentPointsPx[secondIndex]
+    const third = currentPointsPx[thirdIndex]
+    if (!isFinitePoint2(first) || !isFinitePoint2(second) || !isFinitePoint2(third)) {
+      continue
+    }
+    if (calculateTriangleAreaPx2(first, second, third) <= BACKGROUND_GRID_MIN_FACE_TRIANGLE_AREA_PX2) {
+      continue
+    }
+    const minX = Math.min(first.x, second.x, third.x)
+    const maxX = Math.max(first.x, second.x, third.x)
+    const minY = Math.min(first.y, second.y, third.y)
+    const maxY = Math.max(first.y, second.y, third.y)
+    triangles.push({
+      a: cloneBackgroundGridPoint(first),
+      b: cloneBackgroundGridPoint(second),
+      c: cloneBackgroundGridPoint(third),
+      minX,
+      maxX,
+      minY,
+      maxY,
+    })
+  }
+  return triangles
+}
+
+function isPointInsideAnyBackgroundGridTriangle(
+  point: BackgroundGridPointPx,
+  triangles: readonly BackgroundGridTrianglePx[],
+) {
+  for (const triangle of triangles) {
+    if (isPointInsideBackgroundGridTriangle(point, triangle)) {
+      return true
+    }
+  }
+  return false
+}
+
+function isPointInsideBackgroundGridTriangle(
+  point: BackgroundGridPointPx,
+  triangle: BackgroundGridTrianglePx,
+) {
+  if (
+    point.x < triangle.minX - BACKGROUND_GRID_POINT_IN_TRIANGLE_EPSILON ||
+    point.x > triangle.maxX + BACKGROUND_GRID_POINT_IN_TRIANGLE_EPSILON ||
+    point.y < triangle.minY - BACKGROUND_GRID_POINT_IN_TRIANGLE_EPSILON ||
+    point.y > triangle.maxY + BACKGROUND_GRID_POINT_IN_TRIANGLE_EPSILON
+  ) {
+    return false
+  }
+  const d1 = signedTriangleEdge(point, triangle.a, triangle.b)
+  const d2 = signedTriangleEdge(point, triangle.b, triangle.c)
+  const d3 = signedTriangleEdge(point, triangle.c, triangle.a)
+  const hasNegative =
+    d1 < -BACKGROUND_GRID_POINT_IN_TRIANGLE_EPSILON ||
+    d2 < -BACKGROUND_GRID_POINT_IN_TRIANGLE_EPSILON ||
+    d3 < -BACKGROUND_GRID_POINT_IN_TRIANGLE_EPSILON
+  const hasPositive =
+    d1 > BACKGROUND_GRID_POINT_IN_TRIANGLE_EPSILON ||
+    d2 > BACKGROUND_GRID_POINT_IN_TRIANGLE_EPSILON ||
+    d3 > BACKGROUND_GRID_POINT_IN_TRIANGLE_EPSILON
+  return !(hasNegative && hasPositive)
+}
+
+function signedTriangleEdge(
+  point: BackgroundGridPointPx,
+  a: BackgroundGridPointPx,
+  b: BackgroundGridPointPx,
+) {
+  return (point.x - b.x) * (a.y - b.y) - (a.x - b.x) * (point.y - b.y)
+}
+
+function calculateTriangleAreaPx2(
+  a: BackgroundGridPointPx,
+  b: BackgroundGridPointPx,
+  c: BackgroundGridPointPx,
+) {
+  const area = Math.abs(
+    (b.x - a.x) * (c.y - a.y) -
+      (b.y - a.y) * (c.x - a.x),
+  ) / 2
+  return Number.isFinite(area) ? area : 0
+}
+
+function cloneBackgroundGridPoint(point: BackgroundGridPointPx): BackgroundGridPointPx {
+  return {
+    x: point.x,
+    y: point.y,
+  }
+}
+
+function cloneBackgroundGridTriangle(triangle: BackgroundGridTrianglePx): BackgroundGridTrianglePx {
+  return {
+    a: cloneBackgroundGridPoint(triangle.a),
+    b: cloneBackgroundGridPoint(triangle.b),
+    c: cloneBackgroundGridPoint(triangle.c),
+    minX: triangle.minX,
+    maxX: triangle.maxX,
+    minY: triangle.minY,
+    maxY: triangle.maxY,
+  }
+}
+
+function cloneRect(rect: Rect): Rect {
+  return {
+    x: rect.x,
+    y: rect.y,
+    width: rect.width,
+    height: rect.height,
+  }
+}
+
 function createEmptyPoseMappingAlignmentState(
   status: PoseMappingAlignmentStatus = "skipped_no_current_face",
   alignmentSkippedReason: PoseMappingAlignmentSkippedReason = "no_current_face",
 ): PoseMappingAlignmentState {
+  const backgroundGrid = createEmptyBackgroundGridState("missing_current_landmarks")
   return {
     status,
     alignmentMethod: "none",
@@ -24182,6 +24748,10 @@ function createEmptyPoseMappingAlignmentState(
     actualVisibleCurrentLandmarks: [],
     actualVisibleAlignedIdealLandmarks: [],
     actualVisibilityDebug: createEmptyActualVisibilityDebug(),
+    backgroundGridDebug: backgroundGrid.debug,
+    sourceBackgroundGridPointsPx: backgroundGrid.sourceBackgroundGridPointsPx,
+    targetBackgroundGridPointsPx: backgroundGrid.targetBackgroundGridPointsPx,
+    faceInteriorTrianglesPx: backgroundGrid.faceInteriorTrianglesPx,
     excludedReasonCounts: createEmptyPoseMappingExcludedReasonCounts(),
     displacementSummary: createEmptyPoseMappingDisplacementSummary(),
     landmarkReasons: [],
@@ -28832,6 +29402,10 @@ function getPoseMappingAlignmentDebugSummary(alignment: PoseMappingAlignmentStat
     actualVisibleCurrentLandmarkCount: alignment.actualVisibleCurrentLandmarks.length,
     actualVisibleAlignedIdealLandmarkCount: alignment.actualVisibleAlignedIdealLandmarks.length,
     actualVisibilityDebug: roundActualVisibilityDebugForState(alignment.actualVisibilityDebug),
+    backgroundGridDebug: roundBackgroundGridDebugForState(alignment.backgroundGridDebug),
+    sourceBackgroundGridPointCount: alignment.sourceBackgroundGridPointsPx.length,
+    targetBackgroundGridPointCount: alignment.targetBackgroundGridPointsPx.length,
+    faceInteriorTriangleCount: alignment.faceInteriorTrianglesPx.length,
     excludedReasonCounts: alignment.excludedReasonCounts,
     displacementSummary: roundDisplacementSummary(alignment.displacementSummary),
   }
@@ -29272,6 +29846,28 @@ function roundRectForState(rect: Rect | null): Rect | null {
         height: roundForState(rect.height) ?? 0,
       }
     : null
+}
+
+function roundBackgroundGridDebugForState(debug: BackgroundGridDebug): BackgroundGridDebug {
+  return {
+    ...debug,
+    domainRectPx: roundRectForState(debug.domainRectPx),
+    gridStepPx: roundForState(debug.gridStepPx),
+    contourMedianSpacingPx: roundForState(debug.contourMedianSpacingPx),
+    sampleKeptBackgroundGridPointsPx: debug.sampleKeptBackgroundGridPointsPx.map(
+      roundBackgroundGridPointForState,
+    ),
+    sampleExcludedBackgroundGridPointsPx: debug.sampleExcludedBackgroundGridPointsPx.map(
+      roundBackgroundGridPointForState,
+    ),
+  }
+}
+
+function roundBackgroundGridPointForState(point: BackgroundGridPointPx): BackgroundGridPointPx {
+  return {
+    x: roundForState(point.x) ?? 0,
+    y: roundForState(point.y) ?? 0,
+  }
 }
 
 function roundMatrixDebugSummaryForState(summary: MatrixDebugSummary | null): MatrixDebugSummary | null {

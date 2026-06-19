@@ -51,8 +51,6 @@ scale candidate（スケール候補）も actual visible current landmarks（�
 
 今回やらないもの:
 
-- background grid（背景格子）
-- `gridStepPx`（格子間隔ピクセル）
 - triangle indices（三角形接続情報）の warp 接続
 - WebGL mesh warp
 - `meshTargetVertices`
@@ -84,6 +82,24 @@ meshTargetVertices = null
 主な guard は、表示重ね描き view の `displayedContentRect` 不足、478点不足、固定5点の欠損 / NaN / Infinity、current 側 scale candidate 不正、x 最小 / x 最大 index 不正、center 交点不正、center bounds 外、scale line が短すぎる、scaleRatio 不正 / 範囲外、強い yaw / pitch / roll です。初期しきい値は `minScaleRatio = 0.5`、`maxScaleRatio = 2.0`、`maxYawDeg = 30`、`maxPitchDeg = 25`、`maxRollDeg = 25` として debug に出します。
 
 `placement mapping samples` は session memory に frame ごとの small summary として保存し、JSON / CSV で export できる。sample には `frameId`、`mediaTimeSec`、`P_camera`、`p`、`P_confirm`、`poseDiffMagnitude`、matrix column-major translation / scale、current / rendered / aligned bounds、`alignmentMethod`、`liveAlignmentStatus`、scale / translate、aspect ratio、`qualityUsable`、`skippedReason` を含める。live runtime sample には placement function candidate id / status や `matrixFeatures` は含めない。
+
+## Background Grid Preview（背景格子プレビュー）
+
+`actual_visible_triangle_normal_v1` を前提に、表示重ね描き view へ background grid preview（背景格子プレビュー）を追加する。background grid（背景格子）は `displayedContentRect_pixel_coordinate`（表示領域ピクセル座標）に作り、domain（領域）は `displayedContentRect` 全体とする。
+
+`gridStepPx`（格子間隔ピクセル）は毎フレーム、actual visible current face contour density（実可視の現在顔輪郭密度）から算出する。current478（現在顔478点）を `displayedContentRect` pixel coordinate に変換し、MediaPipe face oval 相当の `FACE_CONTOUR_INDICES` を使う。隣接する contour landmarks（輪郭ランドマーク）の距離を測り、両端が actual visible（実可視）の contour edge（輪郭辺）だけを有効距離にする。actual hidden（非実可視）を含む輪郭辺は初期版では距離計算から除外する。有効距離の median（中央値）を `gridStepPx` とする。
+
+preview（プレビュー）全体には一様密度で grid point（格子点）を生成する。grid origin（格子原点）は `displayedContentRect.x` / `displayedContentRect.y` を基準にし、`displayedContentRect` 内に入る点だけを扱う。`gridStepPx` は smoothing（平滑化）、quantization（段階丸め）、density falloff（密度低下）で変えない。異常値で点数が多くなりすぎる場合は `too_many_grid_points` として skip する。
+
+background grid point（背景格子点）の顔内部除外には、actual visible current landmarks（実可視の現在顔ランドマーク）と MediaPipe face mesh triangle topology（顔メッシュ三角形接続）を使う。`faceInteriorTriangle`（顔内部判定三角形）は 3 頂点がすべて 0..467 の face mesh landmarks（顔メッシュランドマーク）で、iris 468..477 を含まず、3 頂点がすべて actual visible、finite（有限値）、`displayedContentRect` pixel coordinate へ変換可能で、面積が小さすぎない三角形だけにする。
+
+grid point がいずれかの `faceInteriorTriangle` の内部または境界上にある場合は除外する。これは debug-only triangle（デバッグ専用三角形）であり、warp triangle indices（変形用三角形接続情報）ではない。
+
+`sourceBackgroundGridPointsPx`（変形元背景格子）と `targetBackgroundGridPointsPx`（変形先背景格子）は、同じ点群・同じ index correspondence（番号対応）を持つ。初期版では target background position（変形先背景位置）は source position（変形元位置）と同一にする。これらはまだ `finalSourceVertices` / `finalTargetVertices` や WebGL mesh warp（WebGLメッシュ変形）へ接続しない。
+
+debug には `backgroundGridDebug` として status、skipReason、coordinateSpace、domainRectPx、gridStepPx、contourMedianSpacingPx、contourDistanceCount、生成点数、顔内部除外点数、採用点数、faceInteriorTriangle 数、actual visible / hidden 数、maxAllowedGridPointCount、source / target 点数、sampleKeptBackgroundGridPointsPx、sampleExcludedBackgroundGridPointsPx を出す。debug panel（デバッグパネル）と export（書き出し）は summary（要約）と sample（サンプル）中心にし、巨大な background grid point 配列を無条件で出さない。
+
+現時点では smoothing、density falloff、triangle topology stabilization（三角形接続構造の安定化）、nearFaceGrid（顔近傍格子）、screenEdgeAnchors（画面端固定アンカー）、WebGL mesh warp は未接続とする。
 
 ## Central Pane Coordinate Tabs（中央ペイン座標系タブ）
 
@@ -307,7 +323,7 @@ CSV export には既存の image coordinate 系の列を維持したうえで、
 - `current478` / pose / expression
 - actual visible current landmarks
 - dynamic nearFaceGrid（今回未実装）
-- backgroundGrid（今回未実装）
+- backgroundGrid preview（今回追加、warp 未接続）
 - screenEdgeAnchors（今回未実装）
 - current source vertices（今回未接続）
 - ideal target vertices（今回未生成）
@@ -586,8 +602,7 @@ Live overlay の描画は必ず `displayedContentRect` を使い、動画の let
 overlay controls は中央ペイン上部の共通領域には置かず、対象 coordinate tab（座標系タブ）内に置きます。
 `ライブ座標（live image-normalized座標）` では `current478` / aspect 変換なしの `renderedIdeal478` / `meshSourceVertices` を確認します。
 `表示重ね描き（displayedContentRect pixel座標）` では、current 側で actual visible（実可視）になった同じ index の `alignedRenderedIdeal478` だけを、理想側の正方形 equal-axis pixel coordinate（等倍軸ピクセル座標）へ変換して確認します。実体がまだない no-op checkbox は残さず、
-未対応のものは disabled または非表示にします。現時点では triangle mesh と grid / anchors は未生成なので
-disabled とします。
+未対応のものは disabled または非表示にします。現時点では background grid overlay は表示できますが、warp 用 triangle mesh と legacy grid debug は未生成なので disabled とします。
 
 初期 profile:
 
@@ -655,7 +670,7 @@ pixel coordinate、OBJ vertex coordinate、WebGL clip space は、MediaPipe retu
 - summary / raw debug
 - `displayedContentRect` を使った overlay 変換
 
-今回追加する landmark selection は、従来の visible / safe current landmarks や `usageWeight` 方式ではなく、`actual_visible_triangle_normal_v1` です。dynamic nearFaceGrid、backgroundGrid、screenEdgeAnchors、triangle mesh、WebGL mesh warp preview は今回の実装対象外です。
+今回追加する landmark selection は、従来の visible / safe current landmarks や `usageWeight` 方式ではなく、`actual_visible_triangle_normal_v1` です。background grid preview は `displayedContentRect` pixel coordinate に作りますが、dynamic nearFaceGrid、screenEdgeAnchors、warp 用 triangle mesh、WebGL mesh warp preview はまだ実装対象外です。
 
 ## 差し替える核
 
@@ -711,11 +726,11 @@ top1 reference matching は使いません。current pose で render した OBJ 
 
 8. alignedRenderedIdeal478 のうち current 側で actual visible になった同じ index だけを overlay に使う
 
-9. background grid と triangle mesh は今回まだ接続しない
+9. background grid preview を displayedContentRect pixel coordinate に生成し、顔内部の格子点を actual visible faceInteriorTriangle で除外する
 
 10. WebGL mesh warp は今回まだ行わない
 
-11. displayedContentRect 上で current / aligned ideal の実可視 overlay を確認する
+11. displayedContentRect 上で current / aligned ideal の実可視 overlay と background grid overlay を確認する
 ```
 
 ## 表情部分の扱い
@@ -730,7 +745,7 @@ iris 468..477 は triangle normal 判定対象から除外し、将来の warp �
 
 今回の `actual_visible_triangle_normal_v1` では `meshTargetVertices`、`finalSourceVertices`、`finalTargetVertices` を生成しません。triangle indices（三角形接続情報）も warp 用には接続しません。
 
-Live overlay では landmark ベースの current / aligned ideal 実可視点 debug を先に表示し、background grid、triangle mesh、WebGL mesh warp は後続検証に回します。
+Live overlay では landmark ベースの current / aligned ideal 実可視点 debug と background grid preview を表示します。warp 用 triangle mesh、`finalSourceVertices` / `finalTargetVertices`、WebGL mesh warp は後続検証に回します。
 
 ## 最初の成功判定
 
