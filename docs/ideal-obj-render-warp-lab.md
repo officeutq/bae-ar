@@ -147,6 +147,8 @@ triangle mesh overlay（三角形メッシュ線表示）は debug 用であり�
 
 WebGL mesh warp preview は img snapshot（画像スナップショット）ではなく dedicated persistent canvas（専用の永続キャンバス）で表示する。`表示重ね描き（displayedContentRect pixel座標）` tab では toggle 操作に依存させず常時表示し、skipped（スキップ）時は壊れた画像要素を出さず、専用 canvas を clear（消去）する。
 
+WebGL mesh warp preview は、入力が一時的に missing になって skipped しても、`表示重ね描き（displayedContentRect pixel座標）` tab が active の間は次 frame で復帰できる lifecycle とする。skipped は frame-local state として扱い、renderer / canvas を終端状態にしない。
+
 ## Central Pane Coordinate Tabs（中央ペイン座標系タブ）
 
 中央ペインは処理名ではなく coordinate system（座標系）ごとに tab（タブ）を分ける。

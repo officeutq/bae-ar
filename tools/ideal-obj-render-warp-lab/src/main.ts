@@ -9424,13 +9424,7 @@ function getLiveVideoMediaTimeSec() {
 }
 
 function shouldRunWebglWarpPreviewLoop() {
-  if (state.activePreviewTab !== "displayOverlay" || !state.liveVideo.loaded) {
-    return false
-  }
-  return (
-    state.liveVideo.playbackStatus === "playing" ||
-    state.poseMappingRuntime.alignment.webglWarpDebug.status !== "completed"
-  )
+  return state.activePreviewTab === "displayOverlay" && state.liveVideo.loaded
 }
 
 function restartWebglWarpPreviewLoop() {
