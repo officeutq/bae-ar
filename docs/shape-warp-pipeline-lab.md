@@ -132,6 +132,12 @@ download:
 
 ### Alignment Overlay Preview
 
+Alignment Overlay Preview は `semantic_5pt_center_scale_v1` を使います。
+
+`semantic_5pt_center_scale_v1` は固定5点 `10 / 152 / 234 / 454 / 6` を使い、`10 -> 152` の縦線と `234 -> 454` の横線の交点から `currentCenter` / `idealCenter` を作ります。scale line は actual visible current landmarks の minX / maxX index を使います。ideal 側は current 側で選んだ同じ index の rendered ideal landmark を使い、ideal 側で minX / maxX を選び直しません。
+
+2D rotation、matrix-based placement、bounds fallback は使いません。
+
 中央 preview:
 
 - MP4 video frame
@@ -149,6 +155,11 @@ download:
 - `currentCenter`
 - `idealCenter`
 - `scaleRatio`
+- `semanticFixedPointIndices`
+- `scaleLineCurrentMinXIndex`
+- `scaleLineCurrentMaxXIndex`
+- `scaleLineCurrentLengthPx`
+- `scaleLineIdealLengthPx`
 - `actualVisibleIndexCount`
 - `currentOverlayPointCount`
 - `alignedIdealOverlayPointCount`

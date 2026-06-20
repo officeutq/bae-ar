@@ -299,16 +299,28 @@ export type ActualVisibleLandmarkSelection = {
 }
 
 export type AlignmentStatus = "idle" | "completed" | "skipped" | "error"
+export type AlignmentMethod = "semantic_5pt_center_scale_v1"
 
 export type AlignmentDebug = {
   currentFaceStatus: CurrentFaceStatus
   renderedIdealStatus: RenderedIdealStatus
   alignmentStatus: AlignmentStatus
   alignmentSkippedReason: string | null
-  alignmentMethod: string
+  alignmentMethod: AlignmentMethod
   currentCenter: Point2 | null
   idealCenter: Point2 | null
   scaleRatio: number | null
+  semanticFixedPointIndices: {
+    topCenter: 10
+    chinCenter: 152
+    leftSideCenter: 234
+    rightSideCenter: 454
+    eyeMid: 6
+  }
+  scaleLineCurrentMinXIndex: number | null
+  scaleLineCurrentMaxXIndex: number | null
+  scaleLineCurrentLengthPx: number | null
+  scaleLineIdealLengthPx: number | null
   actualVisibleIndexCount: number
   currentOverlayPointCount: number
   alignedIdealOverlayPointCount: number
