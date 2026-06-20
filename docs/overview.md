@@ -32,6 +32,8 @@ BAE AR
 
 `tools/ideal-obj-render-warp-lab` は、FaceBuilder + Blender sculpt で作成した OBJ を current yaw / pitch / roll で render し、その rendered ideal image を MediaPipe に再入力して `renderedIdeal478` を取得する debug / research lab 候補です。`ideal-reference-mesh-warp-lab` とは異なり、理想モデル動画の top1 reference matching は使わず、OBJ render -> MediaPipe returned 478 を理想側 landmarks の供給元にします。現在は、複数の `renderPose p` で OBJ をレンダーし、MediaPipe returnedPose `P` を取得して p,P dataset JSON として出力する役割に整理しています。MediaPipe が見るのは 3D 形状そのものではなくレンダリング画像であるため、光・影・背景・FOV・scale などの `renderAppearanceProfile` は p,P mapping の条件として dataset JSON に保存します。統計解析、関数推定、model tree / regression / KNN 比較は Python / Colab 側で行います。座標系・dynamic grid・anchors・triangle indices・WebGL mesh warp preview は `ideal-reference-mesh-warp-lab` の coordinate lifecycle を踏襲し、OBJ vertex coordinate や render image pixel coordinate を alignment / mesh pair 処理へ混ぜません。詳細は [Ideal OBJ Render Warp Lab](ideal-obj-render-warp-lab.md) を参照してください。
 
+`tools/shape-warp-pipeline-lab` は、`tools/ideal-obj-render-warp-lab` から shape warp pipeline の確認だけを切り分ける debug / research lab です。current478、renderedIdeal478、alignedRenderedIdeal478、actual visible landmarks、background grid、combined vertices、triangleIndices の preview / debug / download に範囲を絞ります。Placement Function Analysis、p,P dataset generation、benchmark、WebGL mesh warp preview は含めません。詳細は [Shape Warp Pipeline Lab](shape-warp-pipeline-lab.md) を参照してください。
+
 Ideal Reference Mesh Warp Lab の mesh prototype では、MediaPipe returned landmarks は
 image-normalized coordinate として保存します。ただし、bounds / center / uniform scale /
 distance / large displacement 判定では、Render Consistency Lab / Rotation Fit 系と同じ
@@ -71,6 +73,8 @@ Engine Runtime では、IdealFace の `idealLandmarks3D` 478点を現在顔の `
 ただし、理想モデル動画から MediaPipe に対応する姿勢非依存 `idealLandmarks3D` 478点を安定して作ることには難しさがあります。`Ideal Reference Mesh Warp Lab` では、`IdealFace 3D478` ではなく、理想モデル動画の実測 MediaPipe 478 landmarks を reference frame として保存し、pose / expression の近い reference を Runtime 実験で参照する別方針を検証します。
 
 別の debug line として、`Ideal OBJ Render Warp Lab` では neutral OBJ を current pose で render し、その render image を MediaPipe に通して得た `renderedIdeal478` を理想側 1 フレームとして扱う方針を検証します。これは production 方式確定ではなく、Runtime / Studio / Authoring Tool 本線にはまだ接続しません。
+
+`Shape Warp Pipeline Lab` では、OBJ render 後段の current face -> rendered ideal face -> aligned ideal face -> background grid -> combined vertices -> triangleIndices を分離して検証します。初期版では WebGL mesh warp は扱わず、復帰ライフサイクルと preview tab 別 debug を確認対象にします。
 
 ## correctionProfile v1 の位置づけ
 
@@ -455,6 +459,9 @@ Step 2-G v1 five-pose candidate generation has been removed from the current cod
 詳細な段階分け、座標系方針、未決定事項は [Shape Warp production direction](shape-warp-production-direction.md) を参照してください。最初の WebGL mesh warp prototype は Studio processed preview 限定とし、Engine Runtime への本格統合、temporal smoothing、mask / boundary、glasses / hair、performance 対応は後段で扱います。
 
 理想モデル動画の実測 MediaPipe 478 reference library を使う新しい matching / mesh warp 検証は [Ideal Reference Mesh Warp Lab](ideal-reference-mesh-warp-lab.md) に整理します。`tools/ideal-reference-mesh-warp-lab` はモデル動画の MediaPipe 解析と raw ideal reference frames 作成、accepted / excluded frame 管理、ライブ動画 current frame の MediaPipe 解析、current478 overlay、raw ideal reference frames からの top1 reference matching、dynamic grid prototype、model scan JSON export / import までを本線として残します。model MediaPipe は authoring / library creation 用として raw ideal reference frames 作成後に破棄し、Runtime 相当の処理では live MediaPipe と memory 上の reference library だけを使います。MediaPipe timestamp は `video.currentTime` ではなく stream ごとの単調増加 counter です。model scan JSON は `rawIdealReferenceFrames` と accepted / excluded frame 管理を保存し、model video 再解析なしで reference library と top1 matching を再利用するための Lab 検証効率化機能です。JSON には model video 本体、live video 本体、current mesh、triangle indices、WebGL runtime state は含めません。alignedIdeal 478点全体 displacement / raw displacement mesh warp / rawWarpOnly / sideBySide / texture flip 実験は本線から外しました。次の本線は current mesh source / ideal mesh target の mesh pair prototype です。topK weighted blend、visibilityWeight / warpSafetyWeight の本格化、hybrid mesh、triangle mesh、temporal smoothing、production mesh warp、Runtime renderer integration、IndexedDB、compression、validator package 化は未実装です。
+
+OBJ render 後段の current face / rendered ideal / alignment / background grid / combined mesh 確認は [Shape Warp Pipeline Lab](shape-warp-pipeline-lab.md) に分離します。`tools/shape-warp-pipeline-lab` は中央 preview area に debug text を置かず、active preview tab に対応する debug / download を右ペインへ集約します。初期版では WebGL mesh warp は `not_implemented` の placeholder に留めます。
+
 # Ideal Reference Mesh Warp Lab の現状
 
 `tools/ideal-reference-mesh-warp-lab` は、top1 reference matching 後に、現在顔の見えている / 安全な landmarks を選び、それに dynamic near-face grid / background grid / screen edge anchors を加えて current mesh source を作る prototype まで進んでいます。grid / anchors は fixed grid / anchors から dynamic grid prototype に進み、採用済み current face landmarks の `faceMedianNearestDistance` を基準に near-face grid は顔内部 landmark density に近づけ、background grid は少し粗くし、screen edge anchors は固定します。
