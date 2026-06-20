@@ -359,10 +359,13 @@ export type BackgroundGridDebug = {
   backgroundGridStatus: BackgroundGridStatus
   skipReason: string | null
   gridStepPx: number | null
+  nearFaceExclusionEnabled: boolean
+  nearFaceExclusionRadiusPx: number | null
   generatedGridPointCount: number
   backgroundGridBoundaryPointCount: number
   backgroundGridInteriorPointCount: number
   excludedInsideFaceTrianglePointCount: number
+  excludedNearActualVisibleLandmarkPointCount: number
   keptBackgroundGridPointCount: number
   faceInteriorTriangleCount: number
   xPositionCount: number

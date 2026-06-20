@@ -103,7 +103,23 @@ export function buildBackgroundGridDebugJson(
 ): Record<string, unknown> {
   return {
     schemaVersion: "background_grid_preview_debug_v1",
-    summary: roundDebugValue(debug),
+    summary: roundDebugValue({
+      backgroundGridStatus: debug.backgroundGridStatus,
+      skipReason: debug.skipReason,
+      gridStepPx: debug.gridStepPx,
+      nearFaceExclusionEnabled: debug.nearFaceExclusionEnabled,
+      nearFaceExclusionRadiusPx: debug.nearFaceExclusionRadiusPx,
+      generatedGridPointCount: debug.generatedGridPointCount,
+      backgroundGridBoundaryPointCount: debug.backgroundGridBoundaryPointCount,
+      backgroundGridInteriorPointCount: debug.backgroundGridInteriorPointCount,
+      excludedInsideFaceTrianglePointCount: debug.excludedInsideFaceTrianglePointCount,
+      excludedNearActualVisibleLandmarkPointCount:
+        debug.excludedNearActualVisibleLandmarkPointCount,
+      keptBackgroundGridPointCount: debug.keptBackgroundGridPointCount,
+      faceInteriorTriangleCount: debug.faceInteriorTriangleCount,
+      xPositionCount: debug.xPositionCount,
+      yPositionCount: debug.yPositionCount,
+    }),
   }
 }
 
