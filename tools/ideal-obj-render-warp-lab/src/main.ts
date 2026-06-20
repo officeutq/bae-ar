@@ -1320,6 +1320,8 @@ type BackgroundGridDebug = {
   coordinateSpace: BackgroundGridCoordinateSpace
   domainRectPx: Rect | null
   gridStepPx: number | null
+  nearFaceExclusionEnabled: boolean
+  nearFaceExclusionRadiusPx: number | null
   boundaryGuaranteeEnabled: boolean
   xPositionCount: number
   yPositionCount: number
@@ -1329,6 +1331,7 @@ type BackgroundGridDebug = {
   backgroundGridInteriorPointCount: number
   generatedGridPointCount: number
   excludedInsideFaceTrianglePointCount: number
+  excludedNearActualVisibleLandmarkPointCount: number
   keptBackgroundGridPointCount: number
   faceInteriorTriangleCount: number
   actualVisibleLandmarkCount: number
@@ -24893,6 +24896,8 @@ function createEmptyBackgroundGridDebug(
     coordinateSpace: BACKGROUND_GRID_COORDINATE_SPACE,
     domainRectPx: null,
     gridStepPx: null,
+    nearFaceExclusionEnabled: false,
+    nearFaceExclusionRadiusPx: null,
     boundaryGuaranteeEnabled: true,
     xPositionCount: 0,
     yPositionCount: 0,
@@ -24902,6 +24907,7 @@ function createEmptyBackgroundGridDebug(
     backgroundGridInteriorPointCount: 0,
     generatedGridPointCount: 0,
     excludedInsideFaceTrianglePointCount: 0,
+    excludedNearActualVisibleLandmarkPointCount: 0,
     keptBackgroundGridPointCount: 0,
     faceInteriorTriangleCount: 0,
     actualVisibleLandmarkCount: 0,
@@ -25001,12 +25007,19 @@ function buildBackgroundGridPreview(
   if (!Number.isFinite(gridStepPx) || gridStepPx <= 0) {
     return createSkippedBackgroundGridState("invalid_grid_step", contourDebug)
   }
+  const nearFaceExclusionRadiusPx = gridStepPx * 0.5
+  const nearFaceExclusionRadiusPx2 = nearFaceExclusionRadiusPx ** 2
+  const nearFaceExclusionDebug: Partial<BackgroundGridDebug> = {
+    nearFaceExclusionEnabled: true,
+    nearFaceExclusionRadiusPx,
+  }
 
   const estimatedXPositionCount = estimateBackgroundGridPositionCount(displayedContentRect.width, gridStepPx)
   const estimatedYPositionCount = estimateBackgroundGridPositionCount(displayedContentRect.height, gridStepPx)
   const estimatedGridPointCount = estimateBackgroundGridPointCount(displayedContentRect, gridStepPx)
   const gridStepDebug: Partial<BackgroundGridDebug> = {
     ...contourDebug,
+    ...nearFaceExclusionDebug,
     xPositionCount: Number.isFinite(estimatedXPositionCount) ? estimatedXPositionCount : 0,
     yPositionCount: Number.isFinite(estimatedYPositionCount) ? estimatedYPositionCount : 0,
     generatedGridPointCount: Number.isFinite(estimatedGridPointCount) ? estimatedGridPointCount : 0,
@@ -25050,21 +25063,45 @@ function buildBackgroundGridPreview(
 
   const keptBackgroundGridPointsPx: BackgroundGridPointPx[] = []
   const sampleExcludedBackgroundGridPointsPx: BackgroundGridPointPx[] = []
+  const actualVisibleCurrentPointsPx = actualVisibleCurrentLandmarkIndices
+    .filter(
+      (landmarkIndex) =>
+        Number.isInteger(landmarkIndex) &&
+        landmarkIndex >= 0 &&
+        landmarkIndex < MEDIAPIPE_FACE_MESH_TOPOLOGY_LANDMARK_COUNT,
+    )
+    .map((landmarkIndex) => currentPointsPx[landmarkIndex])
+    .filter(isFinitePoint2)
+  let excludedInsideFaceTrianglePointCount = 0
+  let excludedNearActualVisibleLandmarkPointCount = 0
   for (const point of generatedGridPointsPx) {
+    if (isBackgroundGridBoundaryPoint(point)) {
+      keptBackgroundGridPointsPx.push(point)
+      continue
+    }
+    if (isPointInsideAnyBackgroundGridTriangle(point, faceInteriorTrianglesPx)) {
+      if (sampleExcludedBackgroundGridPointsPx.length < BACKGROUND_GRID_DEBUG_SAMPLE_LIMIT) {
+        sampleExcludedBackgroundGridPointsPx.push(cloneBackgroundGridPoint(point))
+      }
+      excludedInsideFaceTrianglePointCount += 1
+      continue
+    }
     if (
-      !isBackgroundGridBoundaryPoint(point) &&
-      isPointInsideAnyBackgroundGridTriangle(point, faceInteriorTrianglesPx)
+      isBackgroundGridPointNearActualVisibleCurrentLandmark(
+        point,
+        actualVisibleCurrentPointsPx,
+        nearFaceExclusionRadiusPx2,
+      )
     ) {
       if (sampleExcludedBackgroundGridPointsPx.length < BACKGROUND_GRID_DEBUG_SAMPLE_LIMIT) {
         sampleExcludedBackgroundGridPointsPx.push(cloneBackgroundGridPoint(point))
       }
+      excludedNearActualVisibleLandmarkPointCount += 1
       continue
     }
     keptBackgroundGridPointsPx.push(point)
   }
 
-  const excludedInsideFaceTrianglePointCount =
-    generatedGridPointsPx.length - keptBackgroundGridPointsPx.length
   const sampleKeptBackgroundGridPointsPx = keptBackgroundGridPointsPx
     .slice(0, BACKGROUND_GRID_DEBUG_SAMPLE_LIMIT)
     .map(cloneBackgroundGridPoint)
@@ -25084,6 +25121,7 @@ function buildBackgroundGridPreview(
     skipReason: null,
     domainRectPx,
     gridStepPx,
+    ...nearFaceExclusionDebug,
     boundaryGuaranteeEnabled: true,
     xPositionCount: generatedBackgroundGrid.xPositions.length,
     yPositionCount: generatedBackgroundGrid.yPositions.length,
@@ -25093,6 +25131,7 @@ function buildBackgroundGridPreview(
     backgroundGridInteriorPointCount,
     generatedGridPointCount: generatedGridPointsPx.length,
     excludedInsideFaceTrianglePointCount,
+    excludedNearActualVisibleLandmarkPointCount,
     keptBackgroundGridPointCount: keptBackgroundGridPointsPx.length,
     faceInteriorTriangleCount: faceInteriorTrianglesPx.length,
     actualVisibleLandmarkCount: actualVisibleCurrentLandmarkIndices.length,
@@ -25145,6 +25184,25 @@ function calculateActualVisibleContourDistancesPx(
     }
   }
   return distances
+}
+
+function isBackgroundGridPointNearActualVisibleCurrentLandmark(
+  point: BackgroundGridPointPx,
+  actualVisibleCurrentPointsPx: readonly { x: number; y: number }[],
+  radiusPx2: number,
+) {
+  if (!Number.isFinite(radiusPx2) || radiusPx2 < 0) {
+    return false
+  }
+  for (const landmark of actualVisibleCurrentPointsPx) {
+    const dx = point.x - landmark.x
+    const dy = point.y - landmark.y
+    const distancePx2 = dx * dx + dy * dy
+    if (Number.isFinite(distancePx2) && distancePx2 <= radiusPx2) {
+      return true
+    }
+  }
+  return false
 }
 
 function estimateBackgroundGridPositionCount(sizePx: number, gridStepPx: number) {
@@ -31311,6 +31369,7 @@ function roundBackgroundGridDebugForState(debug: BackgroundGridDebug): Backgroun
     ...debug,
     domainRectPx: roundRectForState(debug.domainRectPx),
     gridStepPx: roundForState(debug.gridStepPx),
+    nearFaceExclusionRadiusPx: roundForState(debug.nearFaceExclusionRadiusPx),
     contourMedianSpacingPx: roundForState(debug.contourMedianSpacingPx),
     sampleBoundaryGridPointsPx: debug.sampleBoundaryGridPointsPx.map(
       roundBackgroundGridPointForState,

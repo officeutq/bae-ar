@@ -95,9 +95,13 @@ background grid point（背景格子点）の顔内部除外には、actual visi
 
 grid point がいずれかの `faceInteriorTriangle` の内部または境界上にある場合は除外する。これは debug-only triangle（デバッグ専用三角形）であり、warp triangle indices（変形用三角形接続情報）ではない。
 
+backgroundGridInterior（背景格子内部点）は、`faceInteriorTriangle`（顔内部判定三角形）内部除外の後、actual visible current landmark（実可視の現在顔ランドマーク）に近すぎる場合も除外する。nearFaceExclusionRadiusPx（顔近接除外半径px）は `gridStepPx * 0.5` とする。backgroundGridBoundary（背景格子境界点）は perimeter anchor（外周固定点）相当なので、この近接除外では除外しない。
+
+距離判定は source side（変形元側）の `displayedContentRect_pixel_coordinate`（表示領域ピクセル座標）で行う。目的は、顔ランドマーク点と背景格子点の近接による極小 triangle（三角形）や target inversion（変形先反転候補）を減らすこと。この変更では WebGL warp preview（WebGL変形プレビュー）、canvas lifecycle（キャンバス表示ライフサイクル）、rAF loop（画面更新ループ）、CSS visibility（表示制御）は触らない。
+
 `sourceBackgroundGridPointsPx`（変形元背景格子）と `targetBackgroundGridPointsPx`（変形先背景格子）は、同じ点群・同じ index correspondence（番号対応）を持つ。初期版では target background position（変形先背景位置）は source position（変形元位置）と同一にする。これらはまだ `finalSourceVertices` / `finalTargetVertices` や WebGL mesh warp（WebGLメッシュ変形）へ接続しない。
 
-debug には `backgroundGridDebug` として status、skipReason、coordinateSpace、domainRectPx、gridStepPx、contourMedianSpacingPx、contourDistanceCount、生成点数、顔内部除外点数、採用点数、faceInteriorTriangle 数、actual visible / hidden 数、maxAllowedGridPointCount、source / target 点数、sampleKeptBackgroundGridPointsPx、sampleExcludedBackgroundGridPointsPx を出す。debug panel（デバッグパネル）と export（書き出し）は summary（要約）と sample（サンプル）中心にし、巨大な background grid point 配列を無条件で出さない。
+debug には `backgroundGridDebug` として status、skipReason、coordinateSpace、domainRectPx、gridStepPx、nearFaceExclusionEnabled、nearFaceExclusionRadiusPx、contourMedianSpacingPx、contourDistanceCount、生成点数、顔内部除外点数、実可視現在顔ランドマーク近接除外点数、採用点数、faceInteriorTriangle 数、actual visible / hidden 数、maxAllowedGridPointCount、source / target 点数、sampleKeptBackgroundGridPointsPx、sampleExcludedBackgroundGridPointsPx を出す。debug panel（デバッグパネル）と export（書き出し）は summary（要約）と sample（サンプル）中心にし、巨大な background grid point 配列を無条件で出さない。
 
 現時点では smoothing、density falloff、triangle topology stabilization（三角形接続構造の安定化）、nearFaceGrid（顔近傍格子）、screenEdgeAnchors（画面端固定アンカー）、WebGL mesh warp は未接続とする。
 
