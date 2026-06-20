@@ -185,11 +185,16 @@ download:
 - `gridStepPx`
 - `nearFaceExclusionEnabled`
 - `nearFaceExclusionRadiusPx`
+- `excludedNearActualVisibleLandmarkPointCount`
+- `sweptPathExclusionEnabled`
+- `sweptPathExclusionRadiusPx`
+- `excludedSweptPathPointCount`
+- `sweptPathSegmentCount`
+- `sweptPathExclusionSkippedReason`
 - `generatedGridPointCount`
 - `backgroundGridBoundaryPointCount`
 - `backgroundGridInteriorPointCount`
 - `excludedInsideFaceTrianglePointCount`
-- `excludedNearActualVisibleLandmarkPointCount`
 - `keptBackgroundGridPointCount`
 - `faceInteriorTriangleCount`
 - `xPositionCount`
@@ -199,15 +204,19 @@ download:
 
 - `schemaVersion: background_grid_preview_debug_v1`
 
-Background Grid Preview では、`backgroundGridInterior`（背景格子内部点）に対して、`faceInteriorTriangle`（顔内部判定三角形）内部除外の後、actual visible current landmarks（実可視の現在顔ランドマーク）に近すぎる点も除外します。
+Background Grid Preview では、`backgroundGridInterior`（背景格子内部点）に対して、`faceInteriorTriangle`（顔内部判定三角形）内部除外、actual visible current landmarks（実可視の現在顔ランドマーク）近接除外の後、current -> aligned ideal の変形ルートに近すぎる点も除外します。
 
 `nearFaceExclusionRadiusPx`（現在顔近接除外半径px）は `gridStepPx * 0.5` とします。
 
-`backgroundGridBoundary`（背景格子境界点）は perimeter anchor（外周固定点）相当なので、この近接除外では除外しません。
+`sweptPathExclusionRadiusPx`（変形ルート除外半径px）は `gridStepPx * 0.75` とします。
 
-距離判定は source side（変形元側）の pixel coordinate（ピクセル座標）で行います。
+変形ルートは、actual visible current landmark から、同じ index の `alignedRenderedIdeal478` への線分として扱います。
 
-この PR では source-target swept exclusion（変形元→変形先の移動経路除外）、WebGL mesh warp（WebGLメッシュ変形）、combined mesh（結合メッシュ）、`triangleIndices`（三角形接続情報）は変更しません。
+距離判定は source / overlay pixel coordinate（変形元・重ね描きピクセル座標）で行います。
+
+`backgroundGridBoundary`（背景格子境界点）は perimeter anchor（外周固定点）相当なので、この除外でも除外しません。
+
+この PR では WebGL mesh warp（WebGLメッシュ変形）、combined mesh（結合メッシュ）の設計、`triangleIndices`（三角形接続情報）は変更しません。
 
 ### Combined Mesh Preview
 

@@ -34,6 +34,7 @@ export function createEmptyBackgroundGridState(skipReason: string | null = null)
 
 export function buildBackgroundGrid(input: {
   currentLandmarks: Landmark[] | null
+  alignedRenderedIdeal478: Landmark[] | null
   displayedContentRect: Rect
   actualVisibleCurrentLandmarkIndices: readonly number[]
   actualHiddenCurrentLandmarkIndices: readonly number[]
@@ -71,6 +72,7 @@ export function buildBackgroundGrid(input: {
     return createSkippedBackgroundGridState("invalid_grid_step", { gridStepPx })
   }
   const nearFaceExclusionRadiusPx = gridStepPx * 0.5
+  const sweptPathExclusionRadiusPx = gridStepPx * 0.75
 
   const estimatedGridPointCount = estimateBackgroundGridPointCount(displayedContentRect, gridStepPx)
   if (!Number.isFinite(estimatedGridPointCount) || estimatedGridPointCount <= 0) {
@@ -99,9 +101,16 @@ export function buildBackgroundGrid(input: {
   const backgroundGridBoundaryPointCount = generatedGridPointsPx.filter(isBackgroundGridBoundaryPoint).length
   const backgroundGridInteriorPointCount = generatedGridPointsPx.length - backgroundGridBoundaryPointCount
   const actualVisibleCurrentPointsPx = getActualVisibleCurrentPointsPx(currentPointsPx, actualVisibleSet)
+  const sweptPathSegments = buildSweptPathSegmentsPx({
+    currentPointsPx,
+    alignedRenderedIdeal478: input.alignedRenderedIdeal478,
+    displayedContentRect,
+    actualVisibleCurrentLandmarkIndices: input.actualVisibleCurrentLandmarkIndices,
+  })
   const keptBackgroundGridPointsPx: BackgroundGridPointPx[] = []
   let excludedInsideFaceTrianglePointCount = 0
   let excludedNearActualVisibleLandmarkPointCount = 0
+  let excludedSweptPathPointCount = 0
 
   for (const point of generatedGridPointsPx) {
     if (!isBackgroundGridBoundaryPoint(point)) {
@@ -119,6 +128,17 @@ export function buildBackgroundGrid(input: {
         excludedNearActualVisibleLandmarkPointCount += 1
         continue
       }
+      if (
+        sweptPathSegments.reason === null &&
+        isPointNearAnySweptPathSegment(
+          point,
+          sweptPathSegments.segments,
+          sweptPathExclusionRadiusPx,
+        )
+      ) {
+        excludedSweptPathPointCount += 1
+        continue
+      }
     }
     keptBackgroundGridPointsPx.push(point)
   }
@@ -131,11 +151,16 @@ export function buildBackgroundGrid(input: {
     gridStepPx,
     nearFaceExclusionEnabled: true,
     nearFaceExclusionRadiusPx,
+    excludedNearActualVisibleLandmarkPointCount,
+    sweptPathExclusionEnabled: sweptPathSegments.reason === null,
+    sweptPathExclusionRadiusPx,
+    excludedSweptPathPointCount,
+    sweptPathSegmentCount: sweptPathSegments.segments.length,
+    sweptPathExclusionSkippedReason: sweptPathSegments.reason,
     generatedGridPointCount: generatedGridPointsPx.length,
     backgroundGridBoundaryPointCount,
     backgroundGridInteriorPointCount,
     excludedInsideFaceTrianglePointCount,
-    excludedNearActualVisibleLandmarkPointCount,
     keptBackgroundGridPointCount: keptBackgroundGridPointsPx.length,
     faceInteriorTriangleCount: faceInteriorTrianglesPx.length,
     xPositionCount: generatedBackgroundGrid.xPositions.length,
@@ -157,11 +182,16 @@ function createEmptyBackgroundGridDebug(skipReason: string | null = null): Backg
     gridStepPx: null,
     nearFaceExclusionEnabled: false,
     nearFaceExclusionRadiusPx: null,
+    excludedNearActualVisibleLandmarkPointCount: 0,
+    sweptPathExclusionEnabled: false,
+    sweptPathExclusionRadiusPx: null,
+    excludedSweptPathPointCount: 0,
+    sweptPathSegmentCount: 0,
+    sweptPathExclusionSkippedReason: skipReason,
     generatedGridPointCount: 0,
     backgroundGridBoundaryPointCount: 0,
     backgroundGridInteriorPointCount: 0,
     excludedInsideFaceTrianglePointCount: 0,
-    excludedNearActualVisibleLandmarkPointCount: 0,
     keptBackgroundGridPointCount: 0,
     faceInteriorTriangleCount: 0,
     xPositionCount: 0,
@@ -413,6 +443,93 @@ function isPointNearAnyActualVisibleCurrentLandmark(
     }
   }
   return false
+}
+
+function buildSweptPathSegmentsPx(input: {
+  currentPointsPx: readonly Array<Point2 | null>
+  alignedRenderedIdeal478: readonly Landmark[] | null
+  displayedContentRect: Rect
+  actualVisibleCurrentLandmarkIndices: readonly number[]
+}): {
+  segments: Array<{ start: Point2; end: Point2 }>
+  reason: string | null
+} {
+  if (!input.alignedRenderedIdeal478) {
+    return { segments: [], reason: "missing_aligned_rendered_ideal" }
+  }
+  if (input.alignedRenderedIdeal478.length < REQUIRED_LANDMARK_COUNT) {
+    return { segments: [], reason: "aligned_rendered_ideal_count_below_478" }
+  }
+  if (input.actualVisibleCurrentLandmarkIndices.length === 0) {
+    return { segments: [], reason: "missing_actual_visible_current_landmarks" }
+  }
+
+  const alignedIdealPointsPx = createDisplayedLandmarkPointsPx(
+    input.alignedRenderedIdeal478,
+    input.displayedContentRect,
+  )
+  const segments: Array<{ start: Point2; end: Point2 }> = []
+  for (const landmarkIndex of input.actualVisibleCurrentLandmarkIndices) {
+    if (
+      !Number.isInteger(landmarkIndex) ||
+      landmarkIndex < 0 ||
+      landmarkIndex >= MEDIAPIPE_FACE_MESH_TOPOLOGY_LANDMARK_COUNT
+    ) {
+      continue
+    }
+    const currentPoint = input.currentPointsPx[landmarkIndex]
+    const alignedIdealPoint = alignedIdealPointsPx[landmarkIndex]
+    if (!isFinitePoint2(currentPoint) || !isFinitePoint2(alignedIdealPoint)) {
+      return { segments: [], reason: "invalid_swept_path_landmark" }
+    }
+    segments.push({
+      start: clonePoint(currentPoint),
+      end: clonePoint(alignedIdealPoint),
+    })
+  }
+
+  if (segments.length === 0) {
+    return { segments: [], reason: "empty_swept_path_segments" }
+  }
+  return { segments, reason: null }
+}
+
+function isPointNearAnySweptPathSegment(
+  point: BackgroundGridPointPx,
+  sweptPathSegments: readonly Array<{ start: Point2; end: Point2 }>,
+  radiusPx: number,
+): boolean {
+  if (!Number.isFinite(radiusPx) || radiusPx <= 0) {
+    return false
+  }
+  const radiusPx2 = radiusPx * radiusPx
+  for (const segment of sweptPathSegments) {
+    if (distanceSquaredPointToSegment(point, segment.start, segment.end) <= radiusPx2) {
+      return true
+    }
+  }
+  return false
+}
+
+function distanceSquaredPointToSegment(point: Point2, start: Point2, end: Point2): number {
+  const segmentX = end.x - start.x
+  const segmentY = end.y - start.y
+  const lengthPx2 = segmentX * segmentX + segmentY * segmentY
+  if (!Number.isFinite(lengthPx2) || lengthPx2 <= 0) {
+    const dx = point.x - start.x
+    const dy = point.y - start.y
+    return dx * dx + dy * dy
+  }
+
+  const t = Math.min(
+    1,
+    Math.max(0, ((point.x - start.x) * segmentX + (point.y - start.y) * segmentY) / lengthPx2),
+  )
+  const nearestX = start.x + t * segmentX
+  const nearestY = start.y + t * segmentY
+  const dx = point.x - nearestX
+  const dy = point.y - nearestY
+  return dx * dx + dy * dy
 }
 
 function signedTriangleEdge(point: Point2, a: Point2, b: Point2): number {

@@ -655,6 +655,7 @@ async function runPipeline(frame: CurrentFaceFrame): Promise<void> {
     state.actualVisibilitySelection = state.alignment.actualVisibilitySelection
     state.backgroundGrid = buildBackgroundGrid({
       currentLandmarks: frame.current478,
+      alignedRenderedIdeal478: state.alignment.alignedRenderedIdeal478,
       displayedContentRect: rect,
       actualVisibleCurrentLandmarkIndices:
         state.alignment.actualVisibilitySelection.actualVisibleCurrentLandmarkIndices,
