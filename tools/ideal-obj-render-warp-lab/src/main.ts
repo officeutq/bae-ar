@@ -1404,10 +1404,6 @@ type CombinedMeshPotentialInversionTriangleSample = {
   sourceSignedAreaPx2: number
   targetSignedAreaPx2: number
 }
-type SourceTargetFacePathSegmentPx = {
-  source: CombinedMeshPointPx
-  target: CombinedMeshPointPx
-}
 type CombinedMeshDebug = {
   status: CombinedMeshStatus
   skipReason: CombinedMeshSkipReason | null
@@ -1419,9 +1415,6 @@ type CombinedMeshDebug = {
   faceLandmarkVertexCount: number
   backgroundGridInteriorVertexCount: number
   backgroundGridBoundaryVertexCount: number
-  sweptFaceExclusionEnabled: boolean
-  sweptFaceExclusionRadiusPx: number | null
-  excludedNearSourceTargetFacePathPointCount: number
   triangulationInputVertexCount: number
   duplicateSkippedVertexCount: number
   invalidVertexCount: number
@@ -10532,7 +10525,6 @@ function buildPoseMappingAlignment(
     actualVisibleCurrentLandmarkIndices: actualVisibilitySelection.actualVisibleCurrentLandmarkIndices,
     sourceBackgroundGridPointsPx: backgroundGrid.sourceBackgroundGridPointsPx,
     targetBackgroundGridPointsPx: backgroundGrid.targetBackgroundGridPointsPx,
-    backgroundGridStepPx: backgroundGrid.debug.gridStepPx,
   })
 
   const displacementValues: number[] = []
@@ -20851,7 +20843,6 @@ function renderDisplayOverlaySummaryCard() {
       <div><dt>combined mesh status（結合メッシュ状態）</dt><dd>${escapeHtml(combinedMeshDebug.status)} / ${escapeHtml(combinedMeshDebug.skipReason ?? "none")}</dd></div>
       <div><dt>combined vertices（結合頂点）</dt><dd>source ${formatNullableCount(combinedMeshDebug.combinedSourceVertexCount)} / target ${formatNullableCount(combinedMeshDebug.combinedTargetVertexCount)} / match ${String(combinedMeshDebug.sourceTargetCountMatches)}</dd></div>
       <div><dt>combined vertex kinds（結合頂点種別）</dt><dd>face ${formatNullableCount(combinedMeshDebug.faceLandmarkVertexCount)} / interior ${formatNullableCount(combinedMeshDebug.backgroundGridInteriorVertexCount)} / boundary ${formatNullableCount(combinedMeshDebug.backgroundGridBoundaryVertexCount)}</dd></div>
-      <div><dt>sweptFaceExclusion（顔移動経路除外）</dt><dd>enabled ${String(combinedMeshDebug.sweptFaceExclusionEnabled)} / radius ${formatRealtimeNullableNumber(combinedMeshDebug.sweptFaceExclusionRadiusPx)} / excluded ${formatNullableCount(combinedMeshDebug.excludedNearSourceTargetFacePathPointCount)}</dd></div>
       <div><dt>triangleIndices（三角形接続情報）</dt><dd>${escapeHtml(formatAvailability(getCombinedTriangleIndicesAvailability(), runtime.alignment.triangleIndices.length / 3 || null))}</dd></div>
       <div><dt>triangulation input（分割入力）</dt><dd>used ${formatNullableCount(combinedMeshDebug.triangulationInputVertexCount)} / duplicate skipped ${formatNullableCount(combinedMeshDebug.duplicateSkippedVertexCount)} / invalid ${formatNullableCount(combinedMeshDebug.invalidVertexCount)}</dd></div>
       <div><dt>triangle diagnostics（三角形診断）</dt><dd>triangles ${formatNullableCount(combinedMeshDebug.triangleCount)} / filtered ${formatNullableCount(combinedMeshDebug.filteredTriangleCount)} / degenerate ${formatNullableCount(combinedMeshDebug.sourceDegenerateTriangleCount)} / target inversion ${formatNullableCount(combinedMeshDebug.potentialTargetInversionTriangleCount)} / long ${formatNullableCount(combinedMeshDebug.longTriangleCount)}</dd></div>
@@ -26176,9 +26167,6 @@ function createEmptyCombinedMeshDebug(
     faceLandmarkVertexCount: 0,
     backgroundGridInteriorVertexCount: 0,
     backgroundGridBoundaryVertexCount: 0,
-    sweptFaceExclusionEnabled: false,
-    sweptFaceExclusionRadiusPx: null,
-    excludedNearSourceTargetFacePathPointCount: 0,
     triangulationInputVertexCount: 0,
     duplicateSkippedVertexCount: 0,
     invalidVertexCount: 0,
@@ -26257,7 +26245,6 @@ function buildCombinedMeshState(input: {
   actualVisibleCurrentLandmarkIndices: readonly number[]
   sourceBackgroundGridPointsPx: readonly BackgroundGridPointPx[]
   targetBackgroundGridPointsPx: readonly BackgroundGridPointPx[]
-  backgroundGridStepPx: number | null
 }): CombinedMeshState {
   if (
     !input.displayedContentRect ||
@@ -26292,23 +26279,6 @@ function buildCombinedMeshState(input: {
   const combinedTargetVerticesPx: CombinedMeshPointPx[] = []
   const combinedVertexMetadata: CombinedVertexMetadata[] = []
   const currentPointsPx = createDisplayedLandmarkPointsPx(input.currentLandmarks, input.displayedContentRect)
-  const sweptFaceExclusionRadiusPx =
-    input.backgroundGridStepPx !== null &&
-    Number.isFinite(input.backgroundGridStepPx) &&
-    input.backgroundGridStepPx > 0
-      ? input.backgroundGridStepPx * 0.75
-      : null
-  const sweptFaceExclusionRadiusPx2 =
-    sweptFaceExclusionRadiusPx !== null ? sweptFaceExclusionRadiusPx ** 2 : null
-  const sourceTargetFacePathSegmentsPx = buildSourceTargetFacePathSegmentsPx({
-    actualVisibleCurrentLandmarkIndices: input.actualVisibleCurrentLandmarkIndices,
-    currentPointsPx,
-    alignedRenderedIdeal478: input.alignedRenderedIdeal478,
-    idealOverlayRect: input.idealOverlayRect,
-  })
-  const sweptFaceExclusionEnabled =
-    sweptFaceExclusionRadiusPx2 !== null && sourceTargetFacePathSegmentsPx.length > 0
-  let excludedNearSourceTargetFacePathPointCount = 0
   let invalidVertexCount = 0
 
   const pushVertex = (
@@ -26362,18 +26332,6 @@ function buildCombinedMeshState(input: {
         invalidVertexCount += 1
         continue
       }
-      if (
-        kind === "backgroundGridInterior" &&
-        sweptFaceExclusionEnabled &&
-        isBackgroundGridPointNearAnySourceTargetFacePath(
-          source,
-          sourceTargetFacePathSegmentsPx,
-          sweptFaceExclusionRadiusPx2,
-        )
-      ) {
-        excludedNearSourceTargetFacePathPointCount += 1
-        continue
-      }
       pushVertex(kind, source, target, null, backgroundGridIndex)
     }
   }
@@ -26386,9 +26344,6 @@ function buildCombinedMeshState(input: {
     combinedTargetVerticesPx,
     combinedVertexMetadata,
     invalidVertexCount,
-    sweptFaceExclusionEnabled,
-    sweptFaceExclusionRadiusPx,
-    excludedNearSourceTargetFacePathPointCount,
   })
 
   if (
@@ -26519,9 +26474,6 @@ function buildCombinedMeshBaseDebug(input: {
   combinedTargetVerticesPx: readonly CombinedMeshPointPx[]
   combinedVertexMetadata: readonly CombinedVertexMetadata[]
   invalidVertexCount: number
-  sweptFaceExclusionEnabled: boolean
-  sweptFaceExclusionRadiusPx: number | null
-  excludedNearSourceTargetFacePathPointCount: number
 }): Partial<CombinedMeshDebug> {
   const sourceTargetCountMatches =
     input.combinedSourceVerticesPx.length === input.combinedTargetVerticesPx.length
@@ -26540,9 +26492,6 @@ function buildCombinedMeshBaseDebug(input: {
     faceLandmarkVertexCount: input.combinedVertexMetadata.filter((metadata) => metadata.kind === "faceLandmark").length,
     backgroundGridInteriorVertexCount: input.combinedVertexMetadata.filter((metadata) => metadata.kind === "backgroundGridInterior").length,
     backgroundGridBoundaryVertexCount: input.combinedVertexMetadata.filter((metadata) => metadata.kind === "backgroundGridBoundary").length,
-    sweptFaceExclusionEnabled: input.sweptFaceExclusionEnabled,
-    sweptFaceExclusionRadiusPx: input.sweptFaceExclusionRadiusPx,
-    excludedNearSourceTargetFacePathPointCount: input.excludedNearSourceTargetFacePathPointCount,
     invalidVertexCount: input.invalidVertexCount,
     sourceBoundsPx: calculateCombinedMeshBounds(input.combinedSourceVerticesPx),
     targetBoundsPx: calculateCombinedMeshBounds(input.combinedTargetVerticesPx),
@@ -26552,76 +26501,6 @@ function buildCombinedMeshBaseDebug(input: {
       input.combinedVertexMetadata,
     ),
   }
-}
-
-function buildSourceTargetFacePathSegmentsPx(input: {
-  actualVisibleCurrentLandmarkIndices: readonly number[]
-  currentPointsPx: readonly Array<CombinedMeshPointPx | null>
-  alignedRenderedIdeal478: readonly ReferenceLandmark[]
-  idealOverlayRect: Rect
-}): SourceTargetFacePathSegmentPx[] {
-  const segments: SourceTargetFacePathSegmentPx[] = []
-  for (const landmarkIndex of input.actualVisibleCurrentLandmarkIndices) {
-    if (
-      !Number.isInteger(landmarkIndex) ||
-      landmarkIndex < 0 ||
-      landmarkIndex >= MEDIAPIPE_FACE_MESH_TOPOLOGY_LANDMARK_COUNT
-    ) {
-      continue
-    }
-    const source = input.currentPointsPx[landmarkIndex]
-    const targetLandmark = input.alignedRenderedIdeal478[landmarkIndex]
-    const target = isFiniteLandmark(targetLandmark)
-      ? normalizedLandmarkToPreviewPixel(targetLandmark, input.idealOverlayRect)
-      : null
-    if (!isFinitePoint2(source) || !isFinitePoint2(target)) {
-      continue
-    }
-    segments.push({
-      source: cloneCombinedMeshPoint(source),
-      target: cloneCombinedMeshPoint(target),
-    })
-  }
-  return segments
-}
-
-function isBackgroundGridPointNearAnySourceTargetFacePath(
-  point: BackgroundGridPointPx,
-  segments: readonly SourceTargetFacePathSegmentPx[],
-  maxDistanceSquaredPx: number | null,
-) {
-  if (maxDistanceSquaredPx === null || !Number.isFinite(maxDistanceSquaredPx) || maxDistanceSquaredPx < 0) {
-    return false
-  }
-  for (const segment of segments) {
-    if (distancePointToSegmentSquaredPx(point, segment.source, segment.target) <= maxDistanceSquaredPx) {
-      return true
-    }
-  }
-  return false
-}
-
-function distancePointToSegmentSquaredPx(
-  point: CombinedMeshPointPx,
-  start: CombinedMeshPointPx,
-  end: CombinedMeshPointPx,
-) {
-  const segmentDx = end.x - start.x
-  const segmentDy = end.y - start.y
-  const segmentLengthSquared = segmentDx * segmentDx + segmentDy * segmentDy
-  if (!Number.isFinite(segmentLengthSquared) || segmentLengthSquared <= 0) {
-    const dx = point.x - start.x
-    const dy = point.y - start.y
-    return dx * dx + dy * dy
-  }
-  const projected =
-    ((point.x - start.x) * segmentDx + (point.y - start.y) * segmentDy) / segmentLengthSquared
-  const t = Math.max(0, Math.min(1, projected))
-  const closestX = start.x + segmentDx * t
-  const closestY = start.y + segmentDy * t
-  const dx = point.x - closestX
-  const dy = point.y - closestY
-  return dx * dx + dy * dy
 }
 
 function buildTriangulationVertexIndices(
@@ -32238,7 +32117,6 @@ function roundCombinedMeshPotentialInversionSampleForState(
 function roundCombinedMeshDebugForState(debug: CombinedMeshDebug): CombinedMeshDebug {
   return {
     ...debug,
-    sweptFaceExclusionRadiusPx: roundForState(debug.sweptFaceExclusionRadiusPx),
     sourceBoundsPx: roundRectForState(debug.sourceBoundsPx),
     targetBoundsPx: roundRectForState(debug.targetBoundsPx),
     sourceTriangleAreaSummaryPx2: roundNumericSummaryForState(debug.sourceTriangleAreaSummaryPx2),

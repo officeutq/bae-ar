@@ -119,10 +119,6 @@ triangle indices（三角形接続情報）は WebGL mesh warp preview（WebGL�
 
 `combinedTargetVerticesPx`（結合変形先頂点）は、同じ index の aligned rendered ideal landmarks（位置合わせ済み理想顔ランドマーク）、同じ background grid interior points（同じ背景格子内部点）、同じ background grid boundary points（同じ背景格子境界点）から作る。
 
-combined mesh（結合メッシュ）へ渡す `backgroundGridInterior`（背景格子内部点）は、current `faceInteriorTriangle`（現在顔の顔内部判定三角形）と current landmark 近接除外に加えて、actual visible current landmark（実可視の現在顔ランドマーク）から same index aligned rendered ideal landmark（同じ番号の位置合わせ済み理想顔ランドマーク）へ移動する線分に近すぎる場合も除外する。`sweptFaceExclusionRadiusPx`（顔移動経路除外半径px）は `gridStepPx * 0.75` とする。目的は、current face（現在顔）と aligned ideal face（位置合わせ済み理想顔）のズレの間に残る格子点を減らし、極小 triangle（三角形）や target inversion（変形先反転候補）を減らすことである。
-
-`backgroundGridBoundary`（背景格子境界点）は perimeter anchor（外周固定点）相当なので、この source-target swept face exclusion（変形元→変形先の顔移動経路除外）では除外しない。WebGL warp preview（WebGL変形プレビュー）の canvas / rAF / CSS / shader / buffer / texture lifecycle はこの変更では触らない。
-
 background grid boundary points（背景格子境界点）は perimeter anchors（外周固定点）を兼ねる。ただし、この段階では別機能としての screenEdgeAnchors（画面端固定アンカー）や表示領域外 padding anchors は追加しない。
 
 `combinedSourceVerticesPx[i]` と `combinedTargetVerticesPx[i]` は同じ意味の点として扱い、`combinedVertexMetadata` で `faceLandmark` / `backgroundGridInterior` / `backgroundGridBoundary`、MediaPipe landmark index、background grid index を追跡する。`sourceIndex` と `targetIndex` は一致させる。
