@@ -9423,8 +9423,26 @@ function getLiveVideoMediaTimeSec() {
   return state.liveVideo.currentTimeSec
 }
 
+function isLiveVideoReadyForWebglWarpPreviewLoop() {
+  return (
+    state.liveVideo.loaded ||
+    liveVideoElement.readyState >= HTMLMediaElement.HAVE_METADATA
+  )
+}
+
+function hasWebglWarpPreviewCanvas() {
+  return Boolean(
+    webglWarpCanvas?.isConnected ||
+      app.querySelector<HTMLCanvasElement>('canvas[data-canvas="webgl-warp"]'),
+  )
+}
+
 function shouldRunWebglWarpPreviewLoop() {
-  return state.activePreviewTab === "displayOverlay" && state.liveVideo.loaded
+  return (
+    state.activePreviewTab === "displayOverlay" &&
+    isLiveVideoReadyForWebglWarpPreviewLoop() &&
+    hasWebglWarpPreviewCanvas()
+  )
 }
 
 function restartWebglWarpPreviewLoop() {
@@ -9445,27 +9463,40 @@ function scheduleWebglWarpPreviewLoop() {
   if (!shouldRunWebglWarpPreviewLoop() || webglWarpAnimationFrameId !== null) {
     return
   }
-  webglWarpAnimationFrameId = window.requestAnimationFrame(() => {
-    webglWarpAnimationFrameId = null
+  webglWarpAnimationFrameId = window.requestAnimationFrame(runWebglWarpPreviewLoopFrame)
+}
+
+function runWebglWarpPreviewLoopFrame() {
+  webglWarpAnimationFrameId = null
+  try {
+    if (!shouldRunWebglWarpPreviewLoop()) {
+      return
+    }
     const now = performance.now()
     const shouldAttemptRender =
       state.liveVideo.playbackStatus === "playing" ||
       now - lastWebglWarpRenderAttemptAtMs >= WEBGL_WARP_RETRY_INTERVAL_MS
-    if (shouldAttemptRender) {
-      lastWebglWarpRenderAttemptAtMs = now
-      const rect = liveOverlayCanvas.getBoundingClientRect()
-      const displayedContentRect = state.poseMappingRuntime.alignment.displayedContentRect
-      renderWebglWarpPreviewFromCurrentState(displayedContentRect, rect)
-      if (now - lastWebglWarpDebugDomUpdateAtMs > 250) {
-        lastWebglWarpDebugDomUpdateAtMs = now
-        renderDisplayOverlaySummaryCard()
-        if (state.activeDebugTab === "warpMesh" || state.activeDebugTab === "raw") {
-          renderDebugContent()
-        }
+    if (!shouldAttemptRender) {
+      return
+    }
+    lastWebglWarpRenderAttemptAtMs = now
+    const rect = liveOverlayCanvas.getBoundingClientRect()
+    const displayedContentRect = state.poseMappingRuntime.alignment.displayedContentRect
+    renderWebglWarpPreviewFromCurrentState(displayedContentRect, rect)
+    if (now - lastWebglWarpDebugDomUpdateAtMs > 250) {
+      lastWebglWarpDebugDomUpdateAtMs = now
+      renderDisplayOverlaySummaryCard()
+      if (state.activeDebugTab === "warpMesh" || state.activeDebugTab === "raw") {
+        renderDebugContent()
       }
     }
-    scheduleWebglWarpPreviewLoop()
-  })
+  } catch (error) {
+    console.error("WebGL warp preview loop failed", error)
+  } finally {
+    if (shouldRunWebglWarpPreviewLoop()) {
+      scheduleWebglWarpPreviewLoop()
+    }
+  }
 }
 
 function resizeWebglObjBenchmarkRenderer(renderer: WebglObjRenderer, width: number, height: number) {
