@@ -70,6 +70,7 @@ export function buildBackgroundGrid(input: {
   if (!Number.isFinite(gridStepPx) || gridStepPx <= 0) {
     return createSkippedBackgroundGridState("invalid_grid_step", { gridStepPx })
   }
+  const nearFaceExclusionRadiusPx = gridStepPx * 0.5
 
   const estimatedGridPointCount = estimateBackgroundGridPointCount(displayedContentRect, gridStepPx)
   if (!Number.isFinite(estimatedGridPointCount) || estimatedGridPointCount <= 0) {
@@ -97,30 +98,44 @@ export function buildBackgroundGrid(input: {
   const generatedGridPointsPx = generatedBackgroundGrid.pointsPx
   const backgroundGridBoundaryPointCount = generatedGridPointsPx.filter(isBackgroundGridBoundaryPoint).length
   const backgroundGridInteriorPointCount = generatedGridPointsPx.length - backgroundGridBoundaryPointCount
+  const actualVisibleCurrentPointsPx = getActualVisibleCurrentPointsPx(currentPointsPx, actualVisibleSet)
   const keptBackgroundGridPointsPx: BackgroundGridPointPx[] = []
+  let excludedInsideFaceTrianglePointCount = 0
+  let excludedNearActualVisibleLandmarkPointCount = 0
 
   for (const point of generatedGridPointsPx) {
-    if (
-      !isBackgroundGridBoundaryPoint(point) &&
-      isPointInsideAnyBackgroundGridTriangle(point, faceInteriorTrianglesPx)
-    ) {
-      continue
+    if (!isBackgroundGridBoundaryPoint(point)) {
+      if (isPointInsideAnyBackgroundGridTriangle(point, faceInteriorTrianglesPx)) {
+        excludedInsideFaceTrianglePointCount += 1
+        continue
+      }
+      if (
+        isPointNearAnyActualVisibleCurrentLandmark(
+          point,
+          actualVisibleCurrentPointsPx,
+          nearFaceExclusionRadiusPx,
+        )
+      ) {
+        excludedNearActualVisibleLandmarkPointCount += 1
+        continue
+      }
     }
     keptBackgroundGridPointsPx.push(point)
   }
 
-  const excludedInsideFaceTrianglePointCount =
-    generatedGridPointsPx.length - keptBackgroundGridPointsPx.length
   const sourceBackgroundGridPointsPx = keptBackgroundGridPointsPx.map(cloneBackgroundGridPoint)
   const targetBackgroundGridPointsPx = keptBackgroundGridPointsPx.map(cloneBackgroundGridPoint)
   const debug: BackgroundGridDebug = {
     backgroundGridStatus: keptBackgroundGridPointsPx.length > 0 ? "ready" : "skipped",
     skipReason: keptBackgroundGridPointsPx.length > 0 ? null : "empty_background_grid",
     gridStepPx,
+    nearFaceExclusionEnabled: true,
+    nearFaceExclusionRadiusPx,
     generatedGridPointCount: generatedGridPointsPx.length,
     backgroundGridBoundaryPointCount,
     backgroundGridInteriorPointCount,
     excludedInsideFaceTrianglePointCount,
+    excludedNearActualVisibleLandmarkPointCount,
     keptBackgroundGridPointCount: keptBackgroundGridPointsPx.length,
     faceInteriorTriangleCount: faceInteriorTrianglesPx.length,
     xPositionCount: generatedBackgroundGrid.xPositions.length,
@@ -140,10 +155,13 @@ function createEmptyBackgroundGridDebug(skipReason: string | null = null): Backg
     backgroundGridStatus: "skipped",
     skipReason,
     gridStepPx: null,
+    nearFaceExclusionEnabled: false,
+    nearFaceExclusionRadiusPx: null,
     generatedGridPointCount: 0,
     backgroundGridBoundaryPointCount: 0,
     backgroundGridInteriorPointCount: 0,
     excludedInsideFaceTrianglePointCount: 0,
+    excludedNearActualVisibleLandmarkPointCount: 0,
     keptBackgroundGridPointCount: 0,
     faceInteriorTriangleCount: 0,
     xPositionCount: 0,
@@ -354,6 +372,47 @@ function isPointInsideBackgroundGridTriangle(
     d2 > BACKGROUND_GRID_POINT_IN_TRIANGLE_EPSILON ||
     d3 > BACKGROUND_GRID_POINT_IN_TRIANGLE_EPSILON
   return !(hasNegative && hasPositive)
+}
+
+function getActualVisibleCurrentPointsPx(
+  currentPointsPx: Array<Point2 | null>,
+  actualVisibleSet: ReadonlySet<number>,
+): Point2[] {
+  const points: Point2[] = []
+  for (const landmarkIndex of actualVisibleSet) {
+    if (
+      landmarkIndex < 0 ||
+      landmarkIndex >= MEDIAPIPE_FACE_MESH_TOPOLOGY_LANDMARK_COUNT ||
+      !Number.isInteger(landmarkIndex)
+    ) {
+      continue
+    }
+    const point = currentPointsPx[landmarkIndex]
+    if (isFinitePoint2(point)) {
+      points.push(point)
+    }
+  }
+  return points
+}
+
+function isPointNearAnyActualVisibleCurrentLandmark(
+  point: BackgroundGridPointPx,
+  actualVisibleCurrentPointsPx: readonly Point2[],
+  radiusPx: number,
+): boolean {
+  if (!Number.isFinite(radiusPx) || radiusPx <= 0) {
+    return false
+  }
+  const radiusPx2 = radiusPx * radiusPx
+  for (const currentPoint of actualVisibleCurrentPointsPx) {
+    const dx = point.x - currentPoint.x
+    const dy = point.y - currentPoint.y
+    const distancePx2 = dx * dx + dy * dy
+    if (distancePx2 <= radiusPx2) {
+      return true
+    }
+  }
+  return false
 }
 
 function signedTriangleEdge(point: Point2, a: Point2, b: Point2): number {
