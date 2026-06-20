@@ -1329,9 +1329,6 @@ type BackgroundGridDebug = {
   backgroundGridInteriorPointCount: number
   generatedGridPointCount: number
   excludedInsideFaceTrianglePointCount: number
-  nearFaceExclusionEnabled: boolean
-  nearFaceExclusionRadiusPx: number | null
-  excludedNearActualVisibleLandmarkPointCount: number
   keptBackgroundGridPointCount: number
   faceInteriorTriangleCount: number
   actualVisibleLandmarkCount: number
@@ -20833,8 +20830,7 @@ function renderDisplayOverlaySummaryCard() {
       <div><dt>actual hidden reason counts（非実可視理由別件数）</dt><dd>${escapeHtml(JSON.stringify(actualVisibilityDebug.excludedReasonCounts))}</dd></div>
       <div><dt>backgroundGridStatus（背景格子状態）</dt><dd>${escapeHtml(backgroundGridDebug.status)} / ${escapeHtml(backgroundGridDebug.skipReason ?? "none")}</dd></div>
       <div><dt>gridStepPx（格子間隔px）</dt><dd>${formatRealtimeNullableNumber(backgroundGridDebug.gridStepPx)}</dd></div>
-      <div><dt>background grid points（背景格子点）</dt><dd>generated ${formatNullableCount(backgroundGridDebug.generatedGridPointCount)} / excluded face ${formatNullableCount(backgroundGridDebug.excludedInsideFaceTrianglePointCount)} / excluded near ${formatNullableCount(backgroundGridDebug.excludedNearActualVisibleLandmarkPointCount)} / kept ${formatNullableCount(backgroundGridDebug.keptBackgroundGridPointCount)}</dd></div>
-      <div><dt>nearFaceExclusion（顔近接除外）</dt><dd>enabled ${String(backgroundGridDebug.nearFaceExclusionEnabled)} / radius ${formatRealtimeNullableNumber(backgroundGridDebug.nearFaceExclusionRadiusPx)}</dd></div>
+      <div><dt>background grid points（背景格子点）</dt><dd>generated ${formatNullableCount(backgroundGridDebug.generatedGridPointCount)} / excluded ${formatNullableCount(backgroundGridDebug.excludedInsideFaceTrianglePointCount)} / kept ${formatNullableCount(backgroundGridDebug.keptBackgroundGridPointCount)}</dd></div>
       <div><dt>境界保証</dt><dd>enabled ${String(backgroundGridDebug.boundaryGuaranteeEnabled)} / x ${formatNullableCount(backgroundGridDebug.xPositionCount)} / y ${formatNullableCount(backgroundGridDebug.yPositionCount)}</dd></div>
       <div><dt>背景格子 boundary / interior</dt><dd>${formatNullableCount(backgroundGridDebug.backgroundGridBoundaryPointCount)} / ${formatNullableCount(backgroundGridDebug.backgroundGridInteriorPointCount)}</dd></div>
       <div><dt>背景格子 edge check</dt><dd>top ${String(backgroundGridDebug.hasTopEdgePoints)} / bottom ${String(backgroundGridDebug.hasBottomEdgePoints)} / left ${String(backgroundGridDebug.hasLeftEdgePoints)} / right ${String(backgroundGridDebug.hasRightEdgePoints)} / corners ${String(backgroundGridDebug.hasFourCorners)}</dd></div>
@@ -25553,9 +25549,6 @@ function createEmptyBackgroundGridDebug(
     backgroundGridInteriorPointCount: 0,
     generatedGridPointCount: 0,
     excludedInsideFaceTrianglePointCount: 0,
-    nearFaceExclusionEnabled: false,
-    nearFaceExclusionRadiusPx: null,
-    excludedNearActualVisibleLandmarkPointCount: 0,
     keptBackgroundGridPointCount: 0,
     faceInteriorTriangleCount: 0,
     actualVisibleLandmarkCount: 0,
@@ -25655,19 +25648,12 @@ function buildBackgroundGridPreview(
   if (!Number.isFinite(gridStepPx) || gridStepPx <= 0) {
     return createSkippedBackgroundGridState("invalid_grid_step", contourDebug)
   }
-  const nearFaceExclusionRadiusPx = gridStepPx * 0.5
-  const nearFaceExclusionRadiusPx2 = nearFaceExclusionRadiusPx ** 2
-  const actualVisibleCurrentPointsPx = actualVisibleCurrentLandmarkIndices
-    .map((landmarkIndex) => currentPointsPx[landmarkIndex])
-    .filter(isFinitePoint2)
 
   const estimatedXPositionCount = estimateBackgroundGridPositionCount(displayedContentRect.width, gridStepPx)
   const estimatedYPositionCount = estimateBackgroundGridPositionCount(displayedContentRect.height, gridStepPx)
   const estimatedGridPointCount = estimateBackgroundGridPointCount(displayedContentRect, gridStepPx)
   const gridStepDebug: Partial<BackgroundGridDebug> = {
     ...contourDebug,
-    nearFaceExclusionEnabled: true,
-    nearFaceExclusionRadiusPx,
     xPositionCount: Number.isFinite(estimatedXPositionCount) ? estimatedXPositionCount : 0,
     yPositionCount: Number.isFinite(estimatedYPositionCount) ? estimatedYPositionCount : 0,
     generatedGridPointCount: Number.isFinite(estimatedGridPointCount) ? estimatedGridPointCount : 0,
@@ -25711,38 +25697,21 @@ function buildBackgroundGridPreview(
 
   const keptBackgroundGridPointsPx: BackgroundGridPointPx[] = []
   const sampleExcludedBackgroundGridPointsPx: BackgroundGridPointPx[] = []
-  let excludedInsideFaceTrianglePointCount = 0
-  let excludedNearActualVisibleLandmarkPointCount = 0
   for (const point of generatedGridPointsPx) {
-    if (isBackgroundGridBoundaryPoint(point)) {
-      keptBackgroundGridPointsPx.push(point)
-      continue
-    }
-
-    if (isPointInsideAnyBackgroundGridTriangle(point, faceInteriorTrianglesPx)) {
-      if (sampleExcludedBackgroundGridPointsPx.length < BACKGROUND_GRID_DEBUG_SAMPLE_LIMIT) {
-        sampleExcludedBackgroundGridPointsPx.push(cloneBackgroundGridPoint(point))
-      }
-      excludedInsideFaceTrianglePointCount += 1
-      continue
-    }
-
     if (
-      isBackgroundGridPointNearAnyActualVisibleCurrentLandmark(
-        point,
-        actualVisibleCurrentPointsPx,
-        nearFaceExclusionRadiusPx2,
-      )
+      !isBackgroundGridBoundaryPoint(point) &&
+      isPointInsideAnyBackgroundGridTriangle(point, faceInteriorTrianglesPx)
     ) {
       if (sampleExcludedBackgroundGridPointsPx.length < BACKGROUND_GRID_DEBUG_SAMPLE_LIMIT) {
         sampleExcludedBackgroundGridPointsPx.push(cloneBackgroundGridPoint(point))
       }
-      excludedNearActualVisibleLandmarkPointCount += 1
       continue
     }
     keptBackgroundGridPointsPx.push(point)
   }
 
+  const excludedInsideFaceTrianglePointCount =
+    generatedGridPointsPx.length - keptBackgroundGridPointsPx.length
   const sampleKeptBackgroundGridPointsPx = keptBackgroundGridPointsPx
     .slice(0, BACKGROUND_GRID_DEBUG_SAMPLE_LIMIT)
     .map(cloneBackgroundGridPoint)
@@ -25771,9 +25740,6 @@ function buildBackgroundGridPreview(
     backgroundGridInteriorPointCount,
     generatedGridPointCount: generatedGridPointsPx.length,
     excludedInsideFaceTrianglePointCount,
-    nearFaceExclusionEnabled: true,
-    nearFaceExclusionRadiusPx,
-    excludedNearActualVisibleLandmarkPointCount,
     keptBackgroundGridPointCount: keptBackgroundGridPointsPx.length,
     faceInteriorTriangleCount: faceInteriorTrianglesPx.length,
     actualVisibleLandmarkCount: actualVisibleCurrentLandmarkIndices.length,
@@ -25963,24 +25929,6 @@ function isBackgroundGridBoundaryLocalPoint(
 
 function isBackgroundGridBoundaryPoint(point: BackgroundGridPointPx) {
   return point.kind === "backgroundGridBoundary"
-}
-
-function isBackgroundGridPointNearAnyActualVisibleCurrentLandmark(
-  point: BackgroundGridPointPx,
-  actualVisibleCurrentPointsPx: readonly { x: number; y: number }[],
-  maxDistanceSquaredPx: number,
-) {
-  if (!Number.isFinite(maxDistanceSquaredPx) || maxDistanceSquaredPx < 0) {
-    return false
-  }
-  for (const landmark of actualVisibleCurrentPointsPx) {
-    const dx = point.x - landmark.x
-    const dy = point.y - landmark.y
-    if (dx * dx + dy * dy <= maxDistanceSquaredPx) {
-      return true
-    }
-  }
-  return false
 }
 
 function hasBackgroundGridLocalPoint(
@@ -32051,7 +31999,6 @@ function roundBackgroundGridDebugForState(debug: BackgroundGridDebug): Backgroun
     ...debug,
     domainRectPx: roundRectForState(debug.domainRectPx),
     gridStepPx: roundForState(debug.gridStepPx),
-    nearFaceExclusionRadiusPx: roundForState(debug.nearFaceExclusionRadiusPx),
     contourMedianSpacingPx: roundForState(debug.contourMedianSpacingPx),
     sampleBoundaryGridPointsPx: debug.sampleBoundaryGridPointsPx.map(
       roundBackgroundGridPointForState,
