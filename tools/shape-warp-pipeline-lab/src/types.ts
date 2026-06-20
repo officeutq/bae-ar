@@ -361,11 +361,16 @@ export type BackgroundGridDebug = {
   gridStepPx: number | null
   nearFaceExclusionEnabled: boolean
   nearFaceExclusionRadiusPx: number | null
+  excludedNearActualVisibleLandmarkPointCount: number
+  sweptPathExclusionEnabled: boolean
+  sweptPathExclusionRadiusPx: number | null
+  excludedSweptPathPointCount: number
+  sweptPathSegmentCount: number
+  sweptPathExclusionSkippedReason: string | null
   generatedGridPointCount: number
   backgroundGridBoundaryPointCount: number
   backgroundGridInteriorPointCount: number
   excludedInsideFaceTrianglePointCount: number
-  excludedNearActualVisibleLandmarkPointCount: number
   keptBackgroundGridPointCount: number
   faceInteriorTriangleCount: number
   xPositionCount: number
