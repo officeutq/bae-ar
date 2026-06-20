@@ -467,11 +467,19 @@ img[data-webgl-warp-snapshot] {
   min-height: 300px;
 }
 
+.webgl-warp-stage[data-warp-visible="false"] {
+  background: #f8fafc;
+}
+
 .webgl-warp-stage canvas.webgl-warp-preview {
   display: block;
   max-height: none;
   min-height: 300px;
   object-fit: contain;
+}
+
+.webgl-warp-stage canvas.webgl-warp-preview[data-warp-visible="false"] {
+  display: none;
 }
 
 .preview-stage[data-loaded="true"] .landmark-overlay {

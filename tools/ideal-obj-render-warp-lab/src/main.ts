@@ -8900,7 +8900,8 @@ function ensureWebglWarpPreviewCanvas(): HTMLCanvasElement {
 
   canvas.classList.add("webgl-warp-preview")
   canvas.dataset.canvas = "webgl-warp"
-  canvas.dataset.warpVisible = "true"
+  canvas.dataset.warpVisible = canvas.dataset.warpVisible ?? "true"
+  stage.dataset.warpVisible = canvas.dataset.warpVisible
   canvas.setAttribute("aria-label", "WebGL warp preview")
   webglWarpCanvas = canvas
   return canvas
@@ -9046,15 +9047,22 @@ function resizeWebglMeshWarpRenderer(renderer: WebglMeshWarpRenderer, width: num
 }
 
 function setWebglWarpCanvasVisible(visible: boolean) {
-  ensureWebglWarpPreviewCanvas().dataset.warpVisible = visible ? "true" : "false"
+  const canvas = ensureWebglWarpPreviewCanvas()
+  const visibleValue = visible ? "true" : "false"
+  canvas.dataset.warpVisible = visibleValue
+  const stage = canvas.closest<HTMLElement>("[data-webgl-warp-stage]")
+  if (stage) {
+    stage.dataset.warpVisible = visibleValue
+  }
 }
 
 function clearWebglWarpCanvas(options: { preserveCompletedFrame?: boolean } = {}) {
   const canvas = ensureWebglWarpPreviewCanvas()
-  canvas.dataset.warpVisible = "true"
   if (options.preserveCompletedFrame && webglMeshWarpRenderer?.hasCompletedFrame) {
+    setWebglWarpCanvasVisible(true)
     return
   }
+  setWebglWarpCanvasVisible(false)
   if (!webglMeshWarpRenderer) {
     return
   }
